@@ -33,6 +33,14 @@ Test installs against a **clean clone**, in a throwaway home (`HOME=$(mktemp -d)
 checkout. `claude plugin marketplace add <folder>` and `skills add <folder>` copy the folder as it is on disk,
 including untracked files such as a `.env` holding your key. Installs from GitHub only ever see tracked files.
 
+## Building
+
+The source is plain JavaScript under `skills/routr/scripts/`, run with Bun while developing
+(`bun skills/routr/scripts/routr.mjs doctor`). Releases are standalone binaries built with `bun build --compile` by
+`.github/workflows/release.yml` when a `v*` tag is pushed; the tag must match `lib/version.mjs` and the plugin
+manifest. macOS binaries are built on macOS and signed ad hoc, because Apple Silicon will not run an unsigned binary.
+The guides are embedded in the binary (`routr skill install`), so a guide change ships with the next release.
+
 ## Tests
 
     bun test

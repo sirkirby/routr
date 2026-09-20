@@ -22,6 +22,8 @@ import { launch } from "./lib/launch.mjs";
 import { rankSubscriptions } from "./lib/pick.mjs";
 import { CHECK_VERSION, checkQuestions, questions, VERSION } from "./lib/questions.mjs";
 import { readUsage } from "./lib/usage.mjs";
+import { installSkill } from "./lib/skill-install.mjs";
+import { statusline } from "./lib/statusline.mjs";
 import { ROUTR_VERSION } from "./lib/version.mjs";
 import { COMMANDS, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "./lib/help.mjs";
 
@@ -58,7 +60,9 @@ if (argv[0] === "launch") {
   console.log(JSON.stringify(result));
   process.exit(result.ok ? 0 : 1);
 }
+if (argv[0] === "statusline" && !argv.includes("--help") && !argv.includes("-h")) { statusline(); process.exit(0); } // before anything else: it runs on every Claude turn
 if (argv.includes("--version")) { console.log(ROUTR_VERSION); process.exit(0); }
+if (argv[0] === "skill" && argv[1] === "install" && !argv.includes("--help") && !argv.includes("-h")) { console.log(JSON.stringify(installSkill({ dryRun: argv.includes("--dry-run") }), null, 1)); process.exit(0); }
 const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv.splice(i, 2)[1] : undefined; };
 const configPath = flag("--config");
 // --headroom cursor=0.97 : usage the caller read itself (repeatable), for harnesses with no local source

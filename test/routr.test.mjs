@@ -621,7 +621,7 @@ test("the symptom-patch answer is ignored on work that is not a fix", () => {
 });
 
 test("help table covers every command the CLI dispatches", () => {
-  const dispatched = ["subagent", "dispatch", "launch", "doctor", "check", "record", "assess"];
+  const dispatched = ["subagent", "dispatch", "launch", "doctor", "check", "record", "assess", "statusline", "skill"];
   expect(Object.keys(COMMANDS).sort()).toEqual(dispatched.sort());
 
   // Every command has a valid description, non-empty synopsis, and flags/args
@@ -764,4 +764,17 @@ test("the version inside the skill matches the plugin manifest (the manifest is 
   const { ROUTR_VERSION } = await import("../skills/routr/scripts/lib/version.mjs");
   const { readFileSync } = await import("node:fs");
   expect(JSON.parse(readFileSync(`${import.meta.dir}/../.claude-plugin/plugin.json`, "utf8")).version).toBe(ROUTR_VERSION);
+});
+
+test("routr skill install writes the guides and links them for Claude Code", async () => {
+  const { installSkill } = await import("../skills/routr/scripts/lib/skill-install.mjs");
+  const { mkdtempSync, mkdirSync, readFileSync, existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const home = mkdtempSync(`${tmpdir()}/routr-skill-`); mkdirSync(`${home}/.claude`);
+  const r = installSkill({ home });
+  expect(readFileSync(`${home}/.agents/skills/routr/SKILL.md`, "utf8")).toContain("name: routr");
+  expect(existsSync(`${home}/.agents/skills/routr/references/worker.md`)).toBe(true);
+  expect(readFileSync(`${home}/.claude/skills/routr/SKILL.md`, "utf8")).toContain("name: routr");
+  expect(r.installed.length).toBe(2);
+  installSkill({ home });                                  // installing again replaces, never fails
 });

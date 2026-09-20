@@ -12,13 +12,13 @@ live usage of each subscription. **You make the decision**: how much intelligenc
 so which model and effort. You know the codebase and the purpose of the work; routr does not. It gives you the same
 consistent starting point every time, so the decision is not made from habit.
 
-The command lives in this skill's folder. Run it with Bun from wherever this skill is installed:
+routr is one standalone command, `routr`, normally at `~/.local/bin/routr` (`routr.exe` on Windows). If it is not on
+your PATH, call it by that full path. If it is not installed at all, tell the user to install it
+(https://github.com/sirkirby/routr#install); someone working on routr itself can run it from source with
+`bun <this skill's folder>/scripts/routr.mjs`.
 
-    bun <this skill's folder>/scripts/routr.mjs <subagent|dispatch|launch|doctor> ...
-
-The advisory commands (`subagent`, `dispatch`, `doctor`, `assess`) write nothing and never fail: with no network or
-no key they still print advice, marked as a fallback. Two commands do act, and say so when they cannot: `record`
-appends one line to your ledger, and `launch` starts a worker in a herdr pane (see `references/orchestrator.md`).
+The advice commands write nothing and never fail: with no network or no key they still print advice, marked as a
+fallback.
 
 ## Which part applies to you
 

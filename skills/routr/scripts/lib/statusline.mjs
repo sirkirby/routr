@@ -1,12 +1,11 @@
-#!/usr/bin/env bun
-// Claude Code statusline: shows model + subscription usage, and records the usage snapshot
-// for routr routing (~/.cache/routr/claude-usage.json). Same behaviour as the .sh, with no
-// dependency on sh, jq, or other Unix tools. Installed 2026-09-20.
+// `routr statusline`: Claude Code's statusline command. Claude reports subscription usage ONLY to its statusline, so
+// this prints the model and usage there and saves each snapshot to ~/.cache/routr/claude-usage.json, which the usage
+// reader picks up. It must never fail or print an error: a broken statusline is visible in every Claude session.
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
-try { run(); } catch {}
+export function statusline() { try { run(); } catch {} }
 
 function run() {
   let raw;

@@ -6,6 +6,7 @@ import { delimiter, join } from "node:path";
 import { CONFIG_PATH, loadConfig } from "./config.mjs";
 import { ask, KEY_FILES, loadKey } from "./jev.mjs";
 import { CLAUDE_SNAPSHOT, readUsage, run } from "./usage.mjs";
+import { ROUTR_VERSION } from "./version.mjs";
 
 // Subscription name → the command its harness is launched with.
 const HARNESSES = { claude: "claude", codex: "codex", cursor: "cursor-agent", agy: "agy" };
@@ -42,7 +43,9 @@ function offPath(cmd) {
 const MODELS_SHOWN = 12;
 
 export async function doctor({ json, configPath }) {
-  const r = { runtime: globalThis.Bun ? `bun ${Bun.version}` : `node ${process.version}`, herdr: { path: which("herdr"), inside_session: process.env.HERDR_ENV === "1" }, harnesses: {}, key: {}, config: {}, starter_config: null };
+  // A compiled release binary has no script path of its own; a source checkout runs under Bun.
+  const standalone = !/\.m?js$/.test(process.argv[1] ?? "");
+  const r = { runtime: `routr ${ROUTR_VERSION} (${standalone ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, herdr: { path: which("herdr"), inside_session: process.env.HERDR_ENV === "1" }, harnesses: {}, key: {}, config: {}, starter_config: null };
   const found = Object.keys(HARNESSES).filter((n) => which(HARNESSES[n]));
   const usage = await readUsage(found);
   for (const n of Object.keys(HARNESSES)) {
@@ -66,7 +69,7 @@ export async function doctor({ json, configPath }) {
   }
   // Configured but no snapshot yet is not a failure: Claude writes the first snapshot on its next turn.
   let wired = false;
-  try { wired = /claude-statusline-usage/.test(JSON.parse(readFileSync(join(homedir(), ".claude/settings.json"), "utf8")).statusLine?.command ?? ""); } catch {}
+  try { wired = /claude-statusline-usage|routr(\.exe)?"? statusline/.test(JSON.parse(readFileSync(join(homedir(), ".claude/settings.json"), "utf8")).statusLine?.command ?? ""); } catch {}
   r.claude_usage_statusline = existsSync(CLAUDE_SNAPSHOT) ? "installed" : !found.includes("claude") ? "not needed"
     : wired ? "configured: the first snapshot appears after the next Claude Code turn" : "missing: without it Claude usage is assumed, not read";
   if (!r.config.exists) r.starter_config = { fallback_level: "standard", sure_at: 0.8, risk_above: 0.75, prefer: { research: "strong", review: "strong" }, subscriptions: Object.fromEntries(found.map((n) => [n, { ...SUGGESTED[n], default_model: "<choose from the models listed above>", default_effort: "medium" }])) };

@@ -53,7 +53,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 
 ## Commands
 
-    bun <skill folder>/scripts/routr.mjs <command> --help
+    routr <command> --help
 
 | Command | What it does |
 |---|---|
@@ -69,17 +69,21 @@ a fallback.
 
 ## Install
 
-You need [Bun](https://bun.sh), a [TypeSafe](https://typesafe.ai) API key, and herdr for orchestration (sizing
-subagents works without it).
+routr is one standalone binary. It needs no Node, Bun, or packages.
 
-The easy way: paste [INSTALL.md](INSTALL.md) into your coding agent and ask it to install routr. By hand:
+    curl -fsSL https://raw.githubusercontent.com/sirkirby/routr/main/install.sh | sh          # macOS, Linux
+    irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex               # Windows PowerShell
 
-    npx skills add sirkirby/routr -g      # every harness on this machine
-    bunx skills add sirkirby/routr -g     # the same, if you have no Node: bunx comes with Bun
-    # or, for Claude Code alone: /plugin marketplace add sirkirby/routr, then /plugin install routr
+That puts `routr` in `~/.local/bin`, checks the download against the release checksums, and installs the routr skill
+for your agents. Then ask your agent to "set up routr": it runs `routr doctor`, stores your
+[TypeSafe](https://typesafe.ai) API key in `~/.config/routr/env`, and writes `~/.config/routr/config.json` with you.
+Or paste [INSTALL.md](INSTALL.md) into your agent and let it do all of it.
 
-Then ask your agent to set routr up. It follows `skills/routr/references/setup.md`: `routr doctor`, the key in
-`~/.config/routr/env`, and a config at `~/.config/routr/config.json` that it writes with you.
+You need herdr for orchestration; sizing subagents works without it. The skill alone can also be installed with
+`npx skills add sirkirby/routr -g` or, in Claude Code, `/plugin marketplace add sirkirby/routr`.
+
+The macOS binaries are signed ad hoc, not notarized. Installed by the script they run as they are; if you download
+one in a browser instead, clear the quarantine flag with `xattr -d com.apple.quarantine routr`.
 
 ## Configuration
 
@@ -91,7 +95,7 @@ goes stale when models change.
   `assumed_headroom` for a subscription whose usage cannot be read.
 - `prefer`: your standing preference per kind of work, for example `"review": "strong"`.
 
-Usage is read live for Claude Code (through a small statusline script that ships with the skill), Codex, and
+Usage is read live for Claude Code (through `routr statusline`, set up as Claude's statusline command), Codex, and
 Antigravity. Cursor has no local source; the orchestrator reads its `/usage` panel through a pane and passes the
 number in. Usage is re-read on every call and never cached.
 
