@@ -1,0 +1,9 @@
+{
+  "name": "routr",
+  "version": "0.1.0",
+  "description": "Spread coding work across several AI subscriptions and harnesses from one orchestrating agent in herdr, and size subagents to the work.",
+  "author": { "name": "Chris Kirby", "url": "https://github.com/sirkirby" },
+  "homepage": "https://github.com/sirkirby/routr",
+  "repository": "https://github.com/sirkirby/routr",
+  "license": "MIT"
+}

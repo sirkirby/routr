@@ -1,0 +1,14 @@
+# Secrets and local state
+.env
+.env.*
+node_modules/
+.DS_Store
+*.log
+test/.*
+
+# The lab: working notes, prototypes, eval runners, raw results, and the measured ledger stay local. They hold local paths and
+# data sampled from private session history. What they taught us lives in EVALS.md and docs/.
+prototypes/
+results/
+ledger/
+lab/
