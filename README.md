@@ -74,7 +74,8 @@ subagents works without it).
 
 The easy way: paste [INSTALL.md](INSTALL.md) into your coding agent and ask it to install routr. By hand:
 
-    bunx skills add sirkirby/routr -g     # every harness on this machine (npx works too)
+    npx skills add sirkirby/routr -g      # every harness on this machine
+    bunx skills add sirkirby/routr -g     # the same, if you have no Node: bunx comes with Bun
     # or, for Claude Code alone: /plugin marketplace add sirkirby/routr, then /plugin install routr
 
 Then ask your agent to set routr up. It follows `skills/routr/references/setup.md`: `routr doctor`, the key in
