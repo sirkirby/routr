@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { isAbsolute } from "node:path";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { advise } from "../skills/routr/scripts/lib/advise.mjs";
@@ -108,7 +109,7 @@ test("launch prompt preserves the required opening, task with verification, and 
   const prompt = composePrompt(task);
   const doc = readFileSync(new URL("../skills/routr/references/orchestrator.md", import.meta.url), "utf8");
   const opening = doc.match(/       You are a routr worker\.[\s\S]*?orchestrator parses\./)[0].trim().replace(/\s*\n\s*/g, " ").replace("<routr skill folder>/references/worker.md", WORKER_GUIDE);
-  expect(WORKER_GUIDE.startsWith("/")).toBe(true);
+  expect(isAbsolute(WORKER_GUIDE)).toBe(true);
   expect(prompt).toBe(`${opening}\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`);
 });
 test("shell detection distinguishes dotenv, a clean prompt, and unfinished startup", () => {
@@ -546,7 +547,10 @@ test("failure before start closes only newly created panes and reports cleanup f
   }
 });
 
-test("Cursor removes configs on pre-start failure and on worker exit without changing the source", async () => {
+// The next two tests stand in for cursor-agent and herdr with /bin/sh stubs, so they run on macOS and Linux only.
+// `routr launch` has not been run against herdr on Windows at all (docs/evidence.md).
+const unixOnly = test.skipIf(process.platform === "win32");
+unixOnly("Cursor removes configs on pre-start failure and on worker exit without changing the source", async () => {
   const root = mkdtempSync(join(import.meta.dir, ".cursor-launch-"));
   const source = join(root, "source.json");
   writeFileSync(source, '{"model":"original"}');
@@ -593,7 +597,7 @@ test("dry-run plans include geometry and shell checks, and skip geometry for exp
   expect(explicit.planned_command.some((s) => /pane (current|layout)/.test(s))).toBe(false);
 });
 
-test("transport timeouts return a timeout code, even if the subprocess printed JSON", async () => {
+unixOnly("transport timeouts return a timeout code, even if the subprocess printed JSON", async () => {
   const root = mkdtempSync(join(import.meta.dir, ".herdr-stub-"));
   try {
     const executable = join(root, "herdr");
