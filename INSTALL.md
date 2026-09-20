@@ -15,9 +15,9 @@ Windows), then use `~/.bun/bin/bun` until the user's shell picks it up. routr ne
 
 **2. The skill.** Install it for every harness on this machine:
 
-    bunx skills add sirkirby/routr -g -y
+    npx skills add sirkirby/routr -g -y
 
-(`npx skills add sirkirby/routr -g -y` does the same if the user prefers Node.) The installer tries every harness it
+If the machine has no Node, `bunx skills add sirkirby/routr -g -y` does the same; `bunx` comes with Bun. The installer tries every harness it
 detects and may report that one of them does not support global skills; that is harmless as long as it says the
 skill was installed. It lands in `~/.agents/skills/routr`
 and is linked into each harness's skills folder. If the user only uses Claude Code and prefers its plugin system:
