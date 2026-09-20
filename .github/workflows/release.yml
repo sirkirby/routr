@@ -1,0 +1,54 @@
+# Build the standalone routr binaries and attach them to a GitHub release. Runs when a version tag is pushed.
+name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  contents: write
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun test
+      - name: The tag must match the version in the skill and the plugin manifest
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          grep -q "\"$v\"" skills/routr/scripts/lib/version.mjs
+          grep -q "\"version\": \"$v\"" .claude-plugin/plugin.json
+  build:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: linux-x64 }
+          - { os: ubuntu-latest, target: linux-arm64 }
+          - { os: ubuntu-latest, target: windows-x64, ext: .exe }
+          # macOS binaries are built on macOS so they can be signed: Apple Silicon refuses to run an unsigned binary.
+          - { os: macos-latest, target: darwin-arm64, sign: true }
+          - { os: macos-latest, target: darwin-x64, sign: true }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun build --compile --minify --target=bun-${{ matrix.target }} skills/routr/scripts/routr.mjs --outfile routr-${{ matrix.target }}${{ matrix.ext }}
+      - if: matrix.sign
+        run: codesign --sign - --force routr-${{ matrix.target }}   # ad-hoc: no Apple account needed
+      - if: matrix.target == 'linux-x64'
+        run: ./routr-linux-x64 --version   # the one target this runner can execute
+      - if: matrix.target == 'darwin-arm64'
+        run: ./routr-darwin-arm64 --version && ./routr-darwin-arm64 skill install --dry-run
+      - uses: actions/upload-artifact@v4
+        with: { name: "routr-${{ matrix.target }}", path: "routr-${{ matrix.target }}${{ matrix.ext }}" }
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - run: cd dist && sha256sum routr-* > SHA256SUMS && cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

@@ -14,9 +14,9 @@ need it. Spawn subagents only for work that can run in parallel; doing the same 
 
 For each subagent, ask first. If routr's `worker` field says `do it yourself`, do not spawn one.
 
-Ask like this (the routr skill folder is the folder two levels above this file):
+Ask like this:
 
-    bun <routr skill folder>/scripts/routr.mjs subagent "<the brief you are about to give it>"
+    routr subagent "<the brief you are about to give it>"
 
 Then decide how much intelligence and reasoning that piece of work needs, from the facts routr returns and what
 you know of the code, and choose the model and effort that match: never one stronger than yourself, and never your

@@ -41,6 +41,17 @@ export const COMMANDS = {
       { name: "--dry-run", arg: null, description: "plan commands without executing or writing files", required: false, default: false },
     ],
   },
+  statusline: {
+    name: "statusline",
+    description: "Claude Code's statusline command: prints model and usage, and saves the usage snapshot routr reads",
+    flags: [],
+  },
+  skill: {
+    name: "skill",
+    description: "`routr skill install` writes the routr skill into ~/.agents/skills and links it for Claude Code",
+    args: [{ name: "install", description: "install or update the skill", required: true }],
+    flags: [{ name: "--dry-run", description: "show where it would be written", required: false }],
+  },
   doctor: {
     name: "doctor",
     description: "check the setup; changes nothing",
@@ -145,8 +156,8 @@ export function formatCommandHelp(cmd) {
       lines.push(`  ${arg.name.padEnd(maxArgLen + 2)}${arg.description}${req}${def}`);
     }
   }
-  if (cmd.flags?.length) {
-    const flagStrs = cmd.flags.map((f) => (f.arg ? `${f.name} ${f.arg}` : f.name));
+  {
+    const flagStrs = (cmd.flags ??= []).map((f) => (f.arg ? `${f.name} ${f.arg}` : f.name));
     const maxFlagLen = Math.max(12, "--help, -h".length, ...flagStrs.map((s) => s.length));
     lines.push("", "flags:");
     for (let i = 0; i < cmd.flags.length; i++) {

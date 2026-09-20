@@ -1,11 +1,14 @@
 # Setting up routr
 
 Walk the user through this. Ask before you write or install anything, and show what you are about to write.
-Requirements: Bun (https://bun.sh) on PATH; herdr for orchestration (the worker and subagent parts work without it).
+Requirements: the `routr` command (one standalone binary; `routr --version` shows it) and, for orchestration, herdr.
+The worker and subagent parts work without herdr. If `routr` is missing, install it first:
+`curl -fsSL https://raw.githubusercontent.com/sirkirby/routr/main/install.sh | sh` on macOS and Linux,
+`irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex` in PowerShell on Windows.
 
 ## 1. Check
 
-    bun <routr skill folder>/scripts/routr.mjs doctor
+    routr doctor
 
 It changes nothing. It reports which harnesses are installed, which have a live usage source, whether the TypeSafe
 key works, and whether a config exists; with no config it prints a starter one for the harnesses it found.
@@ -38,33 +41,23 @@ one is their preference, and none describes a model.
 
 ## 4. Claude usage (only if Claude Code is a subscription)
 
-Claude Code reports usage only to its statusline. `scripts/claude-statusline-usage.mjs` in this skill shows the model
-and usage in the statusline and saves each snapshot to `~/.cache/routr/claude-usage.json`, which routr reads. It is a
-Bun script with no other dependency. If the user agrees:
+Claude Code reports usage only to its statusline. `routr statusline` is a statusline command: it prints the model and
+usage there and saves each snapshot to `~/.cache/routr/claude-usage.json`, which routr reads. If the user agrees, set
 
-1. Copy it to `~/.config/routr/claude-statusline-usage.mjs`. Do not point Claude at the copy inside the skill folder:
-   that path changes when the skill is updated or was installed as a plugin.
-2. Set `"statusLine": { "type": "command", "command": "bun ~/.config/routr/claude-statusline-usage.mjs" }` in
-   `~/.claude/settings.json`, using the full path to `bun` if it is not on Claude's PATH. If the user already has a
-   statusline, keep theirs and add the snapshot step to it instead of replacing it.
+    "statusLine": { "type": "command", "command": "<full path to routr> statusline" }
 
-The snapshot appears after the next Claude Code turn. Codex and Antigravity are read from the harness directly and
-need nothing; Cursor's usage is read by the orchestrator from its `/usage` panel.
+in `~/.claude/settings.json`. Use the full path (`~/.local/bin/routr`, written out), because Claude's PATH may not
+include it. If the user already has a statusline, keep theirs and have it call `routr statusline` for the snapshot,
+or ask them which they prefer. The first snapshot appears after the next Claude Code turn. Codex and Antigravity are
+read from the harness directly and need nothing; Cursor's usage is read by the orchestrator from its `/usage` panel.
 
-## 5. A `routr` command (optional)
+## 5. PATH
 
-Agents run routr from the skill folder and do not need this. It lets the user run `routr doctor` and `routr assess`
-themselves. If they want it, write a two-line launcher to a folder on their PATH (for example `~/.local/bin/routr`,
-made executable):
-
-    #!/bin/sh
-    exec bun "<routr skill folder>/scripts/routr.mjs" "$@"
-
-On Windows write `routr.cmd` containing `@bun "<routr skill folder>\scripts\routr.mjs" %*`. Do not name it `route`:
-that is a system command.
+`routr doctor` and the install script both say when `~/.local/bin` is not on the user's PATH. Offer to add it to their
+shell profile (or the user PATH on Windows), so that agents and herdr panes can run `routr` by name.
 
 ## 6. Confirm
 
 Run doctor again, then one real call, and show the user the result:
 
-    bun <routr skill folder>/scripts/routr.mjs dispatch "Rename getUsr to getUser in src/api/users.ts and update its call sites"
+    routr dispatch "Rename getUsr to getUser in src/api/users.ts and update its call sites"

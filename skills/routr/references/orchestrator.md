@@ -16,7 +16,7 @@ while you do something else or your own subscription is close to its reserve.
 
 ## 2. Ask for the facts, then decide
 
-    bun <routr skill folder>/scripts/routr.mjs dispatch [--headroom cursor=<0..1>] "<the brief you are about to hand over>"
+    routr dispatch [--headroom cursor=<0..1>] "<the brief you are about to hand over>"
 
 First, the brief: if `states_check` or `standalone` reads `no`, fix the brief and ask again. A worker cannot ask you
 questions.
@@ -44,7 +44,7 @@ your head. It splits the pane, answers whatever the user's shell asks first, app
 flags and its model/effort syntax, deals with the folder-trust dialog, waits until the agent is really ready,
 composes the four-part launch prompt around your task, and prints one JSON object describing all of it.
 
-    bun <routr skill folder>/scripts/routr.mjs launch --kind <claude|codex|cursor|agy> --name <agent-name> \
+    routr launch --kind <claude|codex|cursor|agy> --name <agent-name> \
         --cwd <dir> --model <id> [--effort <level>] [--task-file <path>] [--trust ask|auto] [--dry-run]
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
@@ -133,7 +133,7 @@ result against the project's own standards, not just the brief.
 Keep the advice when you ask for it (`routr dispatch … > <scratch>/advice-<n>.json`), and once you have verified the
 result, record it. This is the only routr command that writes anything; it appends one line to the user's ledger.
 
-    bun <routr skill folder>/scripts/routr.mjs record --advice <file> --subscription <s> --model <m> --effort <e> \
+    routr record --advice <file> --subscription <s> --model <m> --effort <e> \
         [--level <the level you settled on, if not the advised one>] --verdict <done|partial|blocked> \
         --check <pass|fail|none> [--attempts <n>] [--seconds <n>] [--note "<why you went against the advice, or what went wrong>"]
 
