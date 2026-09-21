@@ -23,6 +23,12 @@ export const COMMANDS = {
       { name: "--headroom", arg: "<subscription>=<0..1>", description: "caller-reported usage headroom", required: false, repeatable: true },
     ],
   },
+  usage: {
+    name: "usage",
+    description: "read Cursor's /usage panel in a throwaway pane and print headroom JSON",
+    args: [{ name: "cursor", description: "open cursor-agent, send /usage, print JSON for --headroom", required: true }],
+    flags: [],
+  },
   launch: {
     name: "launch",
     description: "start a worker, handle startup, and submit its task",

@@ -6,6 +6,7 @@
 //   routr check --brief <f> --report <f>   a quick first read of a worker's report (pure); you remain the judge
 //   routr record ...           append what you chose and how it turned out to the ledger
 //   routr launch ...           start a worker, handle startup, and submit its task
+//   routr usage cursor         read Cursor's /usage panel in a throwaway pane and print headroom JSON
 //   routr assess               what the ledger says: where a level looks too low or too high, and how usage moved
 // The brief may come on stdin. Jev (TypeSafe System One) judges the WORK in ~300 ms; code does the arithmetic;
 // the agent that asked makes the decision. Never names a model.
@@ -18,6 +19,7 @@ import { loadConfig } from "./lib/config.mjs";
 import { doctor } from "./lib/doctor.mjs";
 import { ask } from "./lib/jev.mjs";
 import { append, assess, LEDGER_PATH, read, toEntry } from "./lib/ledger.mjs";
+import { cursorUsage } from "./lib/cursor-usage.mjs";
 import { launch } from "./lib/launch.mjs";
 import { rankSubscriptions } from "./lib/pick.mjs";
 import { CHECK_VERSION, checkQuestions, questions, VERSION } from "./lib/questions.mjs";
@@ -60,6 +62,11 @@ if (argv[0] === "launch") {
   const result = await launch(argv.slice(1));
   console.log(JSON.stringify(result));
   process.exit(result.ok ? 0 : 1);
+}
+if (argv[0] === "usage") {
+  const result = await cursorUsage(argv.slice(1));
+  console.log(JSON.stringify(result));
+  process.exit(0); // never blocks an agent
 }
 if (argv[0] === "statusline" && !argv.includes("--help") && !argv.includes("-h")) { statusline(); process.exit(0); } // before anything else: it runs on every Claude turn
 if (argv.includes("--version")) { console.log(ROUTR_VERSION); process.exit(0); }

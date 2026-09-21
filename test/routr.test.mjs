@@ -8,6 +8,7 @@ import { readReport } from "../skills/routr/scripts/lib/check.mjs";
 import { DEFAULTS, loadConfig } from "../skills/routr/scripts/lib/config.mjs";
 import { rankSubscriptions } from "../skills/routr/scripts/lib/pick.mjs";
 import { plan } from "../skills/routr/scripts/lib/harness.mjs";
+import { parseCursorUsage, cursorUsage } from "../skills/routr/scripts/lib/cursor-usage.mjs";
 import { composePrompt, promptSettled, launch, paneText, parseLaunchArgs, quote, shellPrompt, trustDialog, WORKER_GUIDE } from "../skills/routr/scripts/lib/launch.mjs";
 import { COMMANDS, DESCRIPTION, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "../skills/routr/scripts/lib/help.mjs";
 
@@ -152,6 +153,36 @@ test("trust detection chooses the affirmative option even when No is selected", 
   expect(trustDialog("Folder trust is configured.\nReady\n❯")).toBeNull();
   expect(trustDialog("Ready\n❯")).toBeNull();
 });
+const CURSOR_USAGE_PANEL = ` Usage • Pro
+ Monthly plan and on-demand usage
+ Category        Current             Usage
+ Included        3% used             ████░░░░
+   Auto          3% used             ████░░░░
+   API           1% used             █░░░░░░░
+ On-Demand       Disabled            ————————
+ View in dashboard: cursor.com/dashboard?tab=usage
+ Esc to close
+  Cursor Grok 4.6 High · 8.7%`;
+
+test("parseCursorUsage reads Included, Auto, API, and the plan, and ignores the footer meter", () => {
+  expect(parseCursorUsage(CURSOR_USAGE_PANEL)).toEqual({
+    plan: "Pro", included_used_pct: 3, auto_used_pct: 3, api_used_pct: 1,
+  });
+  expect(parseCursorUsage(" Usage • Pro                                                                     Resets Oct 9\n Included        4% used").plan).toBe("Pro");
+});
+test("parseCursorUsage accepts a panel that only has the Included line", () => {
+  expect(parseCursorUsage("Included        3% used             ████░░░░")).toEqual({
+    plan: null, included_used_pct: 3, auto_used_pct: null, api_used_pct: null,
+  });
+});
+test("parseCursorUsage returns null for the footer context meter alone", () => {
+  expect(parseCursorUsage("  Cursor Grok 4.6 High · 8.7%")).toBeNull();
+});
+test("parseCursorUsage returns null for empty text", () => {
+  expect(parseCursorUsage("")).toBeNull();
+  expect(parseCursorUsage("   \n  ")).toBeNull();
+});
+
 test("pane reads extract text from JSON without mistaking envelope fields for pane contents", () => {
   expect(paneText({ id: "cli:pane:read", result: { text: claudeTrust, type: "pane_read" } })).toBe(claudeTrust);
   expect(paneText({ result: { snapshot: { lines: ["hello", "❯"] } } })).toBe("hello\n❯");
@@ -265,6 +296,87 @@ test("launch CLI emits one JSON object for invalid input and preserves --version
 const herdrOK = (result = {}) => ({ ok: true, data: { result } });
 const herdrError = (code) => ({ ok: false, data: { error: { code, message: code } } });
 const shellInfo = (foreground_processes = [{ pid: 1, cwd: process.cwd() }]) => herdrOK({ process_info: { shell_pid: 1, foreground_processes } });
+const CURSOR_UI = "  Cursor Agent\n  Grok 4.6 High\n  /tmp";
+
+function fakeCursorUsage({ delayPanel = false } = {}) {
+  let stage = "shell", dotenv = true, ticks = 0, extraEnter = false;
+  const calls = [];
+  const deps = {
+    env: { HERDR_ENV: "1" }, tmp: "/tmp", now: () => ticks, sleep: async (ms) => { ticks += ms; },
+    run: async (a) => {
+      calls.push(a);
+      if (a[0] === "pane" && a[1] === "split") {
+        expect(a).toEqual(["pane", "split", "--current", "--direction", "down", "--cwd", "/tmp", "--no-focus"]);
+        return herdrOK({ pane: { pane_id: "w1:p2" } });
+      }
+      if (a[1] === "read") {
+        if (stage === "shell") return herdrOK({ text: dotenv ? "found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)" : "chris % " });
+        if (stage === "usage") return herdrOK({ text: delayPanel && !extraEnter ? CURSOR_UI : CURSOR_USAGE_PANEL });
+        return herdrOK({ text: CURSOR_UI });
+      }
+      if (a[1] === "process-info") return shellInfo();
+      if (a[1] === "send-keys") {
+        if (stage === "shell") { expect(a.slice(3)).toEqual(["n", "enter"]); dotenv = false; }
+        else if (a[3] === "enter" && stage === "starting") stage = "usage";
+        else if (a[3] === "enter") extraEnter = true;
+        return herdrOK({});
+      }
+      if (a[1] === "send-text") { expect(a.slice(3)).toEqual(["/usage"]); return herdrOK({}); }
+      if (a[1] === "run") { expect(a[3]).toBe("cursor-agent --trust"); stage = "starting"; return herdrOK({}); }
+      if (a[1] === "close") return herdrOK({});
+      throw new Error(`Unexpected command ${a.join(" ")}`);
+    },
+  };
+  return { calls, deps };
+}
+
+test("cursorUsage answers dotenv, opens /usage, and always closes the pane", async () => {
+  const f = fakeCursorUsage();
+  const r = await cursorUsage(["cursor"], f.deps);
+  expect(r).toEqual({ ok: true, subscription: "cursor", plan: "Pro", included_used_pct: 3, auto_used_pct: 3, api_used_pct: 1, headroom: 0.97, pass_as: "--headroom cursor=0.97" });
+  expect(f.calls.some((a) => a[1] === "run" && a[3] === "cursor-agent --trust")).toBe(true);
+  expect(f.calls.filter((a) => a[1] === "send-keys" && a[3] === "enter")).toHaveLength(1);
+  expect(f.calls.at(-2)).toEqual(["pane", "send-keys", "w1:p2", "esc"]);
+  expect(f.calls.at(-1)).toEqual(["pane", "close", "w1:p2"]);
+});
+test("cursorUsage sends a second enter if the panel is slow, and still closes the pane", async () => {
+  const f = fakeCursorUsage({ delayPanel: true });
+  const r = await cursorUsage(["cursor"], f.deps);
+  expect(r.ok).toBe(true);
+  expect(f.calls.filter((a) => a[1] === "send-keys" && a[3] === "enter").length).toBeGreaterThanOrEqual(2);
+  expect(f.calls.at(-1)).toEqual(["pane", "close", "w1:p2"]);
+});
+test("cursorUsage closes a created pane when Cursor never draws", async () => {
+  const f = fakeCursorUsage();
+  f.deps.run = async (a) => {
+    f.calls.push(a);
+    if (a[1] === "split") return herdrOK({ pane: { pane_id: "w1:p2" } });
+    if (a[1] === "read") return herdrOK({ text: "chris % " });
+    if (a[1] === "process-info") return shellInfo();
+    if (a[1] === "run" || a[1] === "send-keys" || a[1] === "close") return herdrOK({});
+    throw new Error(`Unexpected command ${a.join(" ")}`);
+  };
+  const r = await cursorUsage(["cursor"], { ...f.deps, timeout: 1000 });
+  expect(r).toMatchObject({ ok: false });
+  expect(r.error).toContain("timed out");
+  expect(f.calls.at(-1)).toEqual(["pane", "close", "w1:p2"]);
+});
+test("cursorUsage outside herdr fails open without touching a pane", async () => {
+  const calls = [];
+  const r = await cursorUsage(["cursor"], { env: {}, run: async (a) => { calls.push(a); throw new Error("no pane"); } });
+  expect(r).toMatchObject({ ok: false });
+  expect(r.error).toContain("HERDR_ENV");
+  expect(calls).toEqual([]);
+});
+test("usage cursor outside herdr prints JSON and exits 0", () => {
+  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const cleanEnv = { ...process.env };
+  delete cleanEnv.HERDR_ENV;
+  const res = Bun.spawnSync(["bun", script, "usage", "cursor"], { env: cleanEnv });
+  expect(res.exitCode).toBe(0);
+  expect(JSON.parse(res.stdout.toString())).toMatchObject({ ok: false });
+  expect(JSON.parse(res.stdout.toString()).error).toContain("HERDR_ENV");
+});
 
 test("launch rejects missing kinds, flag values, empty values, NUL, and every repeated option", () => {
   for (const args of [[], ["--name", "worker"], ["--kind", "toString", "--name", "worker"], ["--kind", "claude"]])
@@ -626,7 +738,7 @@ test("the symptom-patch answer is ignored on work that is not a fix", () => {
 });
 
 test("help table covers every command the CLI dispatches", () => {
-  const dispatched = ["subagent", "dispatch", "launch", "doctor", "check", "record", "assess", "statusline", "skill", "key"];
+  const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "check", "record", "assess", "statusline", "skill", "key"];
   expect(Object.keys(COMMANDS).sort()).toEqual(dispatched.sort());
 
   // Every command has a valid description, non-empty synopsis, and flags/args
@@ -686,7 +798,7 @@ test("top-level help flags and help command print usage and exit 0", () => {
 
 test("command help prints usage for each command and exits 0", () => {
   const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
-  const commands = ["subagent", "dispatch", "launch", "doctor", "check", "record", "assess"];
+  const commands = ["subagent", "dispatch", "launch", "usage", "doctor", "check", "record", "assess"];
   for (const cmd of commands) {
     for (const flag of ["--help", "-h"]) {
       const res = Bun.spawnSync(["bun", script, cmd, flag]);
