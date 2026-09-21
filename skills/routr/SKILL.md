@@ -2,7 +2,7 @@
 name: routr
 description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity) from one orchestrating agent in herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before spawning subagents in a routr-managed session; or when asked to set up, configure, or check routr.
 metadata:
-  version: "0.1.12"
+  version: "0.1.13"
 ---
 
 # routr
@@ -30,7 +30,7 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
 ```
 
 Then run `routr doctor`; if it reports no key or no config, read `references/setup.md`. Someone working on routr
-itself can run it from source instead: `bun <this skill's folder>/scripts/routr.mjs`.
+itself can run it from a checkout instead: `bun src/routr.mjs`.
 
 The advice commands write nothing and never fail: with no network or no key they still print advice, marked as a
 fallback.

@@ -34,7 +34,7 @@ jobs:
           fi
           # The version lives in three files; each must carry the tag's base version, so `routr --version` is honest.
           BASE="${VERSION%%-*}"
-          grep -q "\"$BASE\"" skills/routr/scripts/lib/version.mjs || { echo "lib/version.mjs does not say $BASE" >&2; exit 1; }
+          grep -q "\"$BASE\"" src/lib/version.mjs || { echo "lib/version.mjs does not say $BASE" >&2; exit 1; }
           grep -q "\"version\":\"$BASE\"" package.json || { echo "package.json does not say $BASE" >&2; exit 1; }
           grep -q "version: \"$BASE\"" skills/routr/SKILL.md || { echo "skills/routr/SKILL.md does not say $BASE" >&2; exit 1; }
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
@@ -71,7 +71,7 @@ jobs:
         run: >-
           bun build --compile --minify --target=bun-${{ matrix.target }}
           --define 'ROUTR_BUILD_VERSION="${{ needs.validate-tag.outputs.version }}"'
-          skills/routr/scripts/routr.mjs --outfile routr-${{ matrix.target }}${{ matrix.ext }}
+          src/routr.mjs --outfile routr-${{ matrix.target }}${{ matrix.ext }}
       - name: Sign (ad hoc; no Apple account needed)
         if: matrix.sign
         run: codesign --sign - --force routr-${{ matrix.target }}

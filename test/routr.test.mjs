@@ -3,14 +3,14 @@ import { isAbsolute } from "node:path";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { advise } from "../skills/routr/scripts/lib/advise.mjs";
-import { readReport } from "../skills/routr/scripts/lib/check.mjs";
-import { DEFAULTS, loadConfig } from "../skills/routr/scripts/lib/config.mjs";
-import { rankSubscriptions } from "../skills/routr/scripts/lib/pick.mjs";
-import { plan } from "../skills/routr/scripts/lib/harness.mjs";
-import { parseCursorUsage, cursorUsage } from "../skills/routr/scripts/lib/cursor-usage.mjs";
-import { composePrompt, promptSettled, launch, paneText, parseLaunchArgs, quote, shellPrompt, trustDialog, WORKER_GUIDE } from "../skills/routr/scripts/lib/launch.mjs";
-import { COMMANDS, DESCRIPTION, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "../skills/routr/scripts/lib/help.mjs";
+import { advise } from "../src/lib/advise.mjs";
+import { readReport } from "../src/lib/check.mjs";
+import { DEFAULTS, loadConfig } from "../src/lib/config.mjs";
+import { rankSubscriptions } from "../src/lib/pick.mjs";
+import { plan } from "../src/lib/harness.mjs";
+import { parseCursorUsage, cursorUsage } from "../src/lib/cursor-usage.mjs";
+import { composePrompt, promptSettled, launch, paneText, parseLaunchArgs, quote, shellPrompt, trustDialog, WORKER_GUIDE } from "../src/lib/launch.mjs";
+import { COMMANDS, DESCRIPTION, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "../src/lib/help.mjs";
 
 const cfg = (over = {}) => ({ ...DEFAULTS, subscriptions: {
   claude: { hardest_work: "strong", reserve: 0.25, assumed_headroom: 0.5 },
@@ -283,7 +283,7 @@ test("task files are read and wrapped before any launch operation", async () => 
   expect(missing).toMatchObject({ ok: false, state: "failed", command: [] });
 });
 test("launch CLI emits one JSON object for invalid input and preserves --version", () => {
-  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const script = `${import.meta.dir}/../src/routr.mjs`;
   const result = Bun.spawnSync(["bun", script, "launch", ...launchArgs, "--timeout", "bad"]);
   expect(result.exitCode).toBe(1);
   expect(result.stderr.toString()).toBe("");
@@ -369,7 +369,7 @@ test("cursorUsage outside herdr fails open without touching a pane", async () =>
   expect(calls).toEqual([]);
 });
 test("usage cursor outside herdr prints JSON and exits 0", () => {
-  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const script = `${import.meta.dir}/../src/routr.mjs`;
   const cleanEnv = { ...process.env };
   delete cleanEnv.HERDR_ENV;
   const res = Bun.spawnSync(["bun", script, "usage", "cursor"], { env: cleanEnv });
@@ -407,7 +407,7 @@ test("preflight failures never read an adopted pane, even for dry runs or outsid
 });
 
 test("launch dispatch cannot be intercepted by a --version option or task value", () => {
-  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const script = `${import.meta.dir}/../src/routr.mjs`;
   for (const suffix of [["--version"], ["--task", "--version"]]) {
     const r = Bun.spawnSync(["bun", script, "launch", ...launchArgs, ...suffix]);
     expect(r.exitCode).toBe(1);
@@ -715,7 +715,7 @@ unixOnly("transport timeouts return a timeout code, even if the subprocess print
   try {
     const executable = join(root, "herdr");
     writeFileSync(executable, '#!/bin/sh\nprintf \'{"result":{}}\'\nexec sleep 30\n'); chmodSync(executable, 0o755);
-    const modulePath = new URL("../skills/routr/scripts/lib/launch.mjs", import.meta.url).href;
+    const modulePath = new URL("../src/lib/launch.mjs", import.meta.url).href;
     const result = Bun.spawnSync(["bun", "-e", `import { runHerdr } from ${JSON.stringify(modulePath)}; console.log(JSON.stringify(await runHerdr([], 50)));`],
       { env: { ...process.env, PATH: `${root}:${process.env.PATH}` } });
     expect(result.exitCode).toBe(0);
@@ -782,7 +782,7 @@ test("help table covers every command the CLI dispatches", () => {
 });
 
 test("top-level help flags and help command print usage and exit 0", () => {
-  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const script = `${import.meta.dir}/../src/routr.mjs`;
   for (const flag of ["--help", "-h", "help"]) {
     const res = Bun.spawnSync(["bun", script, flag]);
     expect(res.exitCode).toBe(0);
@@ -797,7 +797,7 @@ test("top-level help flags and help command print usage and exit 0", () => {
 });
 
 test("command help prints usage for each command and exits 0", () => {
-  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const script = `${import.meta.dir}/../src/routr.mjs`;
   const commands = ["subagent", "dispatch", "launch", "usage", "doctor", "check", "record", "assess"];
   for (const cmd of commands) {
     for (const flag of ["--help", "-h"]) {
@@ -831,7 +831,7 @@ test("command help prints usage for each command and exits 0", () => {
 });
 
 test("a brief containing --help as a separate word is routed as a brief, not as help", () => {
-  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const script = `${import.meta.dir}/../src/routr.mjs`;
   for (const cmd of ["subagent", "dispatch"]) {
     // A throwaway HOME with no key and no config: the command falls back at once instead of calling the network,
     // so this test is about argument handling only and cannot time out on a slow connection.
@@ -847,7 +847,7 @@ test("a brief containing --help as a separate word is routed as a brief, not as 
 });
 
 test("unrecognized mode prints usage from table to stderr and exits 2", () => {
-  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const script = `${import.meta.dir}/../src/routr.mjs`;
   for (const args of [["unknown-mode"], []]) {
     const res = Bun.spawnSync(["bun", script, ...args]);
     expect(res.exitCode).toBe(2);
@@ -882,14 +882,14 @@ test("worth a worker: tiny work stays with the agent, a user decision comes firs
 });
 
 test("package.json and the skill carry the same version as the binary", async () => {
-  const { ROUTR_VERSION } = await import("../skills/routr/scripts/lib/version.mjs");
+  const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
   const root = `${import.meta.dir}/..`;
   expect(JSON.parse(readFileSync(`${root}/package.json`, "utf8")).version).toBe(ROUTR_VERSION);
   expect(readFileSync(`${root}/skills/routr/SKILL.md`, "utf8")).toContain(`version: "${ROUTR_VERSION}"`);
 });
 
 test("routr skill install writes the guides and links them for Claude Code", async () => {
-  const { installSkill } = await import("../skills/routr/scripts/lib/skill-install.mjs");
+  const { installSkill } = await import("../src/lib/skill-install.mjs");
   const { mkdtempSync, mkdirSync, readFileSync, existsSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const home = mkdtempSync(`${tmpdir()}/routr-skill-`); mkdirSync(`${home}/.claude`);
@@ -902,7 +902,7 @@ test("routr skill install writes the guides and links them for Claude Code", asy
 });
 
 test("routr key set stores a piped key owner-only, never prints it, and refuses junk", () => {
-  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const script = `${import.meta.dir}/../src/routr.mjs`;
   const home = mkdtempSync(join(tmpdir(), "routr-key-"));
   const env = { ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "" };
   const good = Bun.spawnSync(["bun", script, "key", "set", "--no-verify"], { env, stdin: Buffer.from("ts_test_0123456789abcdef\n") });
@@ -918,7 +918,7 @@ test("routr key set stores a piped key owner-only, never prints it, and refuses 
 });
 
 test("unnumbered trust menus are parsed: Antigravity selects Yes already, Claude Code defaults to No", async () => {
-  const { trustDialog } = await import("../skills/routr/scripts/lib/launch.mjs");
+  const { trustDialog } = await import("../src/lib/launch.mjs");
   const agy = trustDialog("Accessing workspace:\n\n/w/x\n\nDo you trust the contents of this project?\n\nAntigravity CLI requires permission to read, edit, and execute files here.\n\n> Yes, I trust this folder\n  No, exit\n\n  ↑/↓ Navigate · enter Confirm\n");
   expect(agy.affirmative.text).toBe("Yes, I trust this folder"); expect(agy.keys).toEqual(["enter"]);
   const claude = trustDialog(" Accessing workspace:\n /w/x\n Quick safety check: Is this a project you created or one you trust? If not, review it first.\n Do you trust the files in this folder?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel\n");
@@ -928,7 +928,7 @@ test("unnumbered trust menus are parsed: Antigravity selects Yes already, Claude
 });
 
 test("launch --copy is repeatable, needs --worktree, and refuses paths outside the repository", async () => {
-  const { parseLaunchArgs } = await import("../skills/routr/scripts/lib/launch.mjs");
+  const { parseLaunchArgs } = await import("../src/lib/launch.mjs");
   const base = ["--kind", "codex", "--name", "w", "--model", "m"];
   expect(parseLaunchArgs([...base, "--worktree", "b", "--copy", ".env.test", "--copy", "fixtures"]).copy).toEqual([".env.test", "fixtures"]);
   expect(() => parseLaunchArgs([...base, "--copy", "x"])).toThrow("--worktree");
@@ -944,7 +944,7 @@ test("an unsure level reads as the lower of the two most likely levels", () => {
   expect(advise(ans(1.6, 0.9), cfg()).between).toBeUndefined();             // sure: plain rounding, no range
 });
 test("parsing of →, ->, none, and malformed lines for subagents", async () => {
-  const { parseSubagent, parseReportSubagents } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const { parseSubagent, parseReportSubagents } = await import("../src/lib/ledger.mjs");
 
   // unicode arrow →
   expect(parseSubagent("Count Python files → basic → haiku")).toEqual({
@@ -1010,7 +1010,7 @@ test("parsing of →, ->, none, and malformed lines for subagents", async () => 
 });
 
 test("toEntry stores subagents correctly and never stores brief or report text", async () => {
-  const { toEntry } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const { toEntry } = await import("../src/lib/ledger.mjs");
   const advice = {
     id: "a1b2c3d4",
     ts: "2026-09-21T12:00:00.000Z",
@@ -1075,7 +1075,7 @@ test("toEntry stores subagents correctly and never stores brief or report text",
 });
 
 test("assess includes subagent section with counts and models by advised level", async () => {
-  const { toEntry, assess } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const { toEntry, assess } = await import("../src/lib/ledger.mjs");
   const advice = {
     id: "a1",
     ts: "2026-09-21T12:00:00.000Z",
@@ -1113,7 +1113,7 @@ test("assess includes subagent section with counts and models by advised level",
 });
 
 test("old ledger rows without a subagents field assess without error", async () => {
-  const { assess } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const { assess } = await import("../src/lib/ledger.mjs");
   const oldRow = {
     ts: "2026-09-20T10:00:00.000Z",
     id: "old12345",
@@ -1136,7 +1136,7 @@ test("old ledger rows without a subagents field assess without error", async () 
 });
 
 test("CLI round trip for record with repeatable --subagent and --report flags", () => {
-  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const script = `${import.meta.dir}/../src/routr.mjs`;
   const tempDir = mkdtempSync(join(tmpdir(), "routr-record-test-"));
   const adviceFile = join(tempDir, "advice.json");
   const reportFile = join(tempDir, "report.txt");
@@ -1227,7 +1227,7 @@ const row = (over = {}) => ({ ts: "2026-09-21T10:11:12.000Z", id: "abc12345", as
   headroom: { codex: { usable: 0.3, usage: "live" } }, chose: { subscription: "codex", model: "big-model", effort: "medium", level: "standard" },
   outcome: { verdict: "done", check: "pass", seconds: 60, attempts: 1, note: "private note about the client's billing bug" }, subagents: [{ subtask: "count files in the acme repo", advised: "basic", model: "small-model" }], ...over });
 test("shared rows carry what tuning needs and nothing that identifies the user or the work", async () => {
-  const { shareRows } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const { shareRows } = await import("../src/lib/ledger.mjs");
   const text = JSON.stringify(shareRows([row()]));
   for (const secret of ["abc12345", "deadbeefcafe", "billing", "acme", "10:11", "big-model", "small-model", "usable"]) expect(text).not.toContain(secret);
   const [r] = shareRows([row()]);
@@ -1235,7 +1235,7 @@ test("shared rows carry what tuning needs and nothing that identifies the user o
   expect(JSON.stringify(shareRows([row()], { withModels: true }))).toContain("big-model");
 });
 test("assess turns the ledger into suggestions about the user's own settings, and only with enough runs", async () => {
-  const { assess } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const { assess } = await import("../src/lib/ledger.mjs");
   const c = { prefer: { research: "strong" }, subscriptions: { codex: { hardest_work: "standard", reserve: 0.2 } } };
   expect(assess([row(), row()], c)).toContain("Nothing here argues for changing your settings yet");
   const six = Array.from({ length: 6 }, () => row());                       // six research pieces run BELOW the preference, all delivered
@@ -1248,7 +1248,7 @@ test("assess turns the ledger into suggestions about the user's own settings, an
 });
 
 test("ledger rows are labelled with their project, a worktree counts as its repository, and the label is never shared", async () => {
-  const { projectName, toEntry, shareRows, assess } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const { projectName, toEntry, shareRows, assess } = await import("../src/lib/ledger.mjs");
   const root = mkdtempSync(join(tmpdir(), "routr-proj-"));
   mkdirSync(join(root, "acme-api", ".git"), { recursive: true }); mkdirSync(join(root, "acme-api", "src", "deep"), { recursive: true });
   expect(projectName(join(root, "acme-api", "src", "deep"))).toBe("acme-api");
@@ -1265,7 +1265,7 @@ test("ledger rows are labelled with their project, a worktree counts as its repo
 });
 
 test("update picks the right release asset and compares versions like semver", async () => {
-  const { assetName, newer } = await import("../skills/routr/scripts/lib/update.mjs");
+  const { assetName, newer } = await import("../src/lib/update.mjs");
   expect(assetName("darwin", "arm64")).toBe("routr-darwin-arm64");
   expect(assetName("linux", "x64")).toBe("routr-linux-x64");
   expect(assetName("win32", "arm64")).toBe("routr-windows-x64.exe");
@@ -1278,7 +1278,7 @@ test("update picks the right release asset and compares versions like semver", a
 });
 
 test("the background update check is due at most once a day, and the config can turn it off", async () => {
-  const { dueForCheck } = await import("../skills/routr/scripts/lib/update.mjs");
+  const { dueForCheck } = await import("../src/lib/update.mjs");
   const now = 1_800_000_000_000;
   expect(dueForCheck(NaN, now)).toBe(true);                               // never checked
   expect(dueForCheck(now - 2 * 3600 * 1000, now)).toBe(false);            // two hours ago
@@ -1289,8 +1289,8 @@ test("the background update check is due at most once a day, and the config can 
 });
 
 test("doctor's next steps name the command for each thing missing, most important first", async () => {
-  const { nextSteps, starterConfig } = await import("../skills/routr/scripts/lib/doctor.mjs");
-  const { ROUTR_VERSION } = await import("../skills/routr/scripts/lib/version.mjs");
+  const { nextSteps, starterConfig } = await import("../src/lib/doctor.mjs");
+  const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
   const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true } }, claude_usage_statusline: "installed", skill: [{ version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
   expect(nextSteps(base)).toEqual([]);
   const fresh = nextSteps({ ...base, key: { works: false, found: false }, config: { exists: false, subscriptions: [] }, claude_usage_statusline: "missing: without it Claude usage is assumed, not read" });
@@ -1305,7 +1305,7 @@ test("doctor's next steps name the command for each thing missing, most importan
 });
 
 test("setup never replaces a statusline the user already has", async () => {
-  const { statuslinePlan, parseModels } = await import("../skills/routr/scripts/lib/setup.mjs");
+  const { statuslinePlan, parseModels } = await import("../src/lib/setup.mjs");
   expect(statuslinePlan(null, "/b/routr statusline")).toEqual({ action: "write", settings: { statusLine: { type: "command", command: "/b/routr statusline" } } });
   expect(statuslinePlan('{"model":"opus"}', "/b/routr statusline").settings.model).toBe("opus");
   expect(statuslinePlan('{"statusLine":{"command":"~/mine.sh"}}', "x").action).toBe("skip");
@@ -1316,7 +1316,7 @@ test("setup never replaces a statusline the user already has", async () => {
 });
 
 test("routr setup --yes writes the config once, keeps it afterwards, and starts no harness", () => {
-  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const script = `${import.meta.dir}/../src/routr.mjs`;
   const home = mkdtempSync(join(tmpdir(), "routr-setup-"));
   // An empty PATH: no harness is found, so none is started (a logged-out harness opens a browser to sign in).
   const env = { ...process.env, HOME: home, USERPROFILE: home, PATH: home, TYPESAFE_API_KEY: "", ROUTR_NO_UPDATE: "1" };
@@ -1334,7 +1334,7 @@ test("routr setup --yes writes the config once, keeps it afterwards, and starts 
 });
 
 test("setup searches a long model list instead of printing it", async () => {
-  const { narrow, pickModel } = await import("../skills/routr/scripts/lib/setup.mjs");
+  const { narrow, pickModel } = await import("../src/lib/setup.mjs");
   const list = Array.from({ length: 230 }, (_, i) => `vendor-model-${i}`).concat(["cursor-grok-4.6-high", "cursor-grok-4.7-high", "cursor-grok-4.7-low"]);
   expect(narrow(list, "grok high")).toEqual(["cursor-grok-4.6-high", "cursor-grok-4.7-high"]);
   const drive = async (answers, l = list) => { const said = []; const got = await pickModel(l, async () => answers.shift(), (s) => said.push(s)); return { got, said }; };
@@ -1347,8 +1347,8 @@ test("setup searches a long model list instead of printing it", async () => {
 });
 
 test("routr uninstall keeps the user's data unless purged, unlinks a linked skill, and removes only its own statusline", async () => {
-  const { uninstallPlan } = await import("../skills/routr/scripts/lib/uninstall.mjs");
-  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const { uninstallPlan } = await import("../src/lib/uninstall.mjs");
+  const script = `${import.meta.dir}/../src/routr.mjs`;
   const home = mkdtempSync(join(tmpdir(), "routr-un-"));
   const checkout = join(home, "checkout"); mkdirSync(checkout); writeFileSync(join(checkout, "SKILL.md"), "mine");
   for (const d of [".config/routr", ".local/share/routr", ".cache/routr", ".agents/skills/routr", ".claude/skills"]) mkdirSync(join(home, d), { recursive: true });
