@@ -34,8 +34,8 @@ written by the people building it; each entry says so. "Jev" is TypeSafe's Syste
 | Question | How it was checked | Result |
 |---|---|---|
 | Do the standalone binaries run with no runtime installed? | built with `bun build --compile` for five targets; run on macOS (arm64) with Node and Bun off the PATH, in an Ubuntu VM (arm64) likewise, and in a Windows 11 VM that has neither | Yes on all three: `--version`, `doctor`, fallback advice, `launch --dry-run`, `statusline`, `skill install`. macOS arm64 needs the binary signed (ad hoc is enough); unsigned, the system kills it. Not run: darwin-x64, linux-x64 |
-| Do the install scripts work? | `install.sh` piped from curl on macOS and Ubuntu, `install.ps1` piped from `irm` on Windows, each in a clean home, downloading from a local server standing in for GitHub releases | Binary installed to `~/.local/bin`, checksum verified, skill written to `~/.agents/skills/routr` and linked (copied on Windows) for Claude Code; a tampered checksum installs nothing. Found on the way: `launch` looked for the worker guide beside its source file, which does not exist in a binary |
-| Can an agent install it from the pasted instructions? | Claude Code (Sonnet) in the Ubuntu VM, given an earlier Bun-based INSTALL.md and the user's answers up front; every file it wrote was inspected | Yes, in about 2 minutes ($0.44): config with the requested reserve and a default model from the harness's list, statusline added to Claude's settings without disturbing existing hooks, MCP servers, or permissions, clean `doctor`. To be repeated with the binary-based instructions |
+| Do the install scripts work? | `install.sh` piped from curl on macOS and Ubuntu, `install.ps1` piped from `irm` on Windows, each in a clean home, first against a local server standing in for GitHub releases, then (macOS, Ubuntu) against the real v0.1.0 release | Binary installed to `~/.local/bin`, checksum verified, skill written to `~/.agents/skills/routr` and linked (copied on Windows) for Claude Code; a tampered checksum installs nothing. Found on the way: `launch` looked for the worker guide beside its source file, which does not exist in a binary |
+| Can an agent install it from the pasted instructions? | Claude Code (Sonnet) in a clean Ubuntu VM, given only the public INSTALL.md URL and the user's answers up front; every file it wrote was inspected afterwards | Yes, in about 2 minutes ($0.27): binary from the v0.1.0 release, skill installed, config with the requested reserve and a default model from the harness's list, `routr statusline` added to Claude's settings without disturbing existing hooks, MCP servers, or permissions, clean `doctor`. One run; an earlier run against a Bun-based version of the instructions also succeeded |
 | Does the Claude Code plugin marketplace install work? | from a clean local clone into a throwaway home | The plugin installs and registers the skill (about 114 tokens per session). Installing from a working checkout copies untracked files, including a `.env`: test from a clean clone |
 
 ## Not measured
@@ -44,7 +44,7 @@ written by the people building it; each entry says so. "Jev" is TypeSafe's Syste
 - How often real worker reports need to be sent back, and whether escalating one level fixes them. The ledger is
   built to answer this from use.
 - On Windows: anything beyond install, `doctor`, advice, and the launch plan. No harness has been launched there.
-- Installing from GitHub itself: the release workflow has not run yet, and the repository was private while this
-  was written, so the scripts were tested against a local server serving the same files.
+- `install.ps1` against the real GitHub release (it was tested on Windows against a local server serving the same
+  files), and the darwin-x64 and linux-x64 binaries, which no test machine could run.
 - Usage pools routr cannot see: Claude's separate weekly limit for its largest model, and third-party models inside
   Cursor and Antigravity (routr routes to each harness's own models).

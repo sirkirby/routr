@@ -17,7 +17,7 @@ key works, and whether a config exists; with no config it prints a starter one f
 
 routr needs one secret: a TypeSafe API key (https://typesafe.ai). Either the user exports `TYPESAFE_API_KEY` in
 their shell profile, or you write it, with their agreement, to `~/.config/routr/env` as `TYPESAFE_API_KEY=...`
-(create the file with owner-only permissions). Prefer this file over a project `.env`: workers run in worktrees and
+(create the file with owner-only permissions: `chmod 600` on macOS and Linux). Prefer this file over a project `.env`: workers run in worktrees and
 other folders, where a project `.env` does not exist. Never print the key or put it in a repository. Without a key
 routr still answers, but only with the fallback level.
 
