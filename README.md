@@ -110,7 +110,8 @@ routr setup
 
 It finds your harnesses, asks for your everyday model on each, writes `~/.config/routr/config.json`, sets up Claude
 Code's usage reading, and asks for your [TypeSafe API key](https://console.typesafe.ai/keys) (typed without echo,
-never shown). `routr doctor` then shows what is in place and lists anything left to do. Or ask your agent to "set up
+never shown). `routr doctor` then shows what is in place and lists anything left to do, and `routr doctor --fix` is
+the same command as `routr setup`: safe to run again, it only fills in what is missing. Or ask your agent to "set up
 routr", or paste [INSTALL.md](INSTALL.md) into it: it uses the same command and talks the choices through with you.
 
 routr keeps itself current. At most once a day a command starts a background check; a new release is downloaded,

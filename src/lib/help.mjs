@@ -111,6 +111,7 @@ export const COMMANDS = {
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--json", arg: null, description: "output JSON instead of text", required: false, default: false },
+      { name: "--fix", arg: null, description: "do what can be done of the next steps: the same as `routr setup` (takes its flags, such as --yes)", required: false, default: false },
     ],
   },
   check: {

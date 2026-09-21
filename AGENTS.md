@@ -20,7 +20,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - Questions judge the WORK or the REPORT, never a model. They are narrow and literal, about what the text states.
 - A question's wording changes only with a measurement against the old wording on the same items, and a bumped
   `VERSION` / `CHECK_VERSION` in `src/lib/questions.mjs`. Public summary: `docs/evidence.md`.
-- The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`) write nothing and fail open: any error
+- The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`) write nothing (`doctor --fix` is `setup`
+  under another name) and fail open: any error
   still prints usable output and exits 0. Only `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `launch`,
   and `usage cursor` act (the last two drive herdr panes), and each says so.
 - Updates are automatic but never in the way: at most once a day a command may start a DETACHED updater and carry

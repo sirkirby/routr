@@ -1323,10 +1323,11 @@ test("routr setup --yes writes the config once, keeps it afterwards, and starts 
   const first = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--json"], { env });
   expect(first.exitCode).toBe(0);
   const file = join(home, ".config/routr/config.json");
-  expect(JSON.parse(first.stdout.toString()).did[0]).toContain("wrote");
+  expect(JSON.parse(first.stdout.toString()).did.join("\n")).toContain("wrote");
+  expect(existsSync(join(home, ".agents/skills/routr/SKILL.md"))).toBe(true);              // a missing skill is repaired too
   expect(JSON.parse(readFileSync(file, "utf8")).subscriptions).toEqual({});
   writeFileSync(file, JSON.stringify({ subscriptions: {}, sure_at: 0.9 }));
-  const again = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--json"], { env });
+  const again = Bun.spawnSync([process.execPath, script, "doctor", "--fix", "--yes", "--json"], { env }); // the same command under its familiar name
   expect(JSON.parse(again.stdout.toString()).did).toEqual([]);
   expect(JSON.parse(readFileSync(file, "utf8")).sure_at).toBe(0.9);
   const bad = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--model", "codex=m"], { env });

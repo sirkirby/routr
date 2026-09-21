@@ -22,7 +22,7 @@ export function loadConfig(path = CONFIG_PATH) {
   let raw = {};
   try {
     if (existsSync(path)) raw = JSON.parse(readFileSync(path, "utf8"));
-    else notes.push(`no config at ${path}: using defaults (run the routr-setup skill, or \`routr doctor\`)`);
+    else notes.push(`no config at ${path}: using defaults (run \`routr setup\`)`);
   } catch (e) {
     notes.push(`config unreadable (${String(e?.message ?? e).slice(0, 80)}): using defaults`);
   }
