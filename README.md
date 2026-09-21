@@ -97,8 +97,8 @@ For orchestration you also need [herdr](https://herdr.dev) and its agent skill
 either is missing. Sizing subagents works without them. routr's own skill can also be installed with
 `npx skills add sirkirby/routr -g` or, in Claude Code, `/plugin marketplace add sirkirby/routr`.
 
-The macOS binaries are signed ad hoc, not notarized. Installed by the script they run as they are; if you download
-one in a browser instead, clear the quarantine flag with `xattr -d com.apple.quarantine routr`.
+Something not working? `routr doctor` says what is missing, and [docs/troubleshooting.md](docs/troubleshooting.md)
+covers the rest.
 
 ## Configuration
 
