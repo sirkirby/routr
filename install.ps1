@@ -2,6 +2,7 @@
 #   irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
 # Settings: $env:ROUTR_INSTALL_DIR (default ~\.local\bin), $env:ROUTR_VERSION (default: latest release).
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"   # the progress bar makes Invoke-WebRequest many times slower in Windows PowerShell
 $dir = if ($env:ROUTR_INSTALL_DIR) { $env:ROUTR_INSTALL_DIR } else { Join-Path $env:USERPROFILE ".local\bin" }
 $asset = "routr-windows-x64.exe"
 $base = if ($env:ROUTR_VERSION) { "https://github.com/sirkirby/routr/releases/download/v$($env:ROUTR_VERSION.TrimStart('v'))" } else { "https://github.com/sirkirby/routr/releases/latest/download" }
