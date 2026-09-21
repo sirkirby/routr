@@ -1,8 +1,8 @@
 # Setting up routr
 
 Walk the user through this. Ask before you write or install anything, and show what you are about to write.
-Requirements: the `routr` command (one standalone binary; `routr --version` shows it) and, for orchestration, herdr.
-The worker and subagent parts work without herdr. If `routr` is missing, install it first:
+Requirements: the `routr` command (one standalone binary; `routr --version` shows it) and, for orchestration, herdr
+with its agent skill (step 5). The worker and subagent parts work without herdr. If `routr` is missing, install it first:
 `curl -fsSL https://raw.githubusercontent.com/sirkirby/routr/main/install.sh | sh` on macOS and Linux,
 `irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex` in PowerShell on Windows.
 
@@ -51,12 +51,24 @@ include it. If the user already has a statusline, keep theirs and have it call `
 or ask them which they prefer. The first snapshot appears after the next Claude Code turn. Codex and Antigravity are
 read from the harness directly and need nothing; Cursor's usage is read by the orchestrator from its `/usage` panel.
 
-## 5. PATH
+## 5. herdr (only for orchestration)
+
+routr's orchestrator part runs workers in [herdr](https://herdr.dev) panes and uses herdr's own skill for pane and
+agent commands. Both belong to herdr and are installed from herdr, not bundled with routr. If `routr doctor` shows
+either missing and the user wants orchestration, offer to install them:
+
+    curl -fsSL https://herdr.dev/install.sh | sh                 # herdr itself (see herdr.dev for brew and Windows)
+    npx skills add herdrdev/herdr --skill herdr -g               # herdr's agent skill (bunx works where there is no Node)
+
+Sizing subagents (`routr subagent`) needs neither. routr needs no TypeSafe skill either: it calls TypeSafe's API
+itself, and the only thing the user supplies is the key.
+
+## 6. PATH
 
 `routr doctor` and the install script both say when `~/.local/bin` is not on the user's PATH. Offer to add it to their
 shell profile (or the user PATH on Windows), so that agents and herdr panes can run `routr` by name.
 
-## 6. Confirm
+## 7. Confirm
 
 Run doctor again, then one real call, and show the user the result:
 

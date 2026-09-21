@@ -23,14 +23,15 @@ whether the key works, and, with no config yet, a starter config and each harnes
 
 **3. Set up.** Read `~/.agents/skills/routr/references/setup.md` and follow it with the user: the TypeSafe API key
 into `~/.config/routr/env`, the config into `~/.config/routr/config.json` (reserves and a default model per
-subscription, settled with the user), and the Claude usage statusline if they use Claude Code.
+subscription, settled with the user), the Claude usage statusline if they use Claude Code, and, if they want
+orchestration, herdr and herdr's agent skill.
 
 **4. Confirm.** Run `routr doctor` again and show it to the user, then one real call:
 
     routr dispatch "Rename getUsr to getUser in src/api/users.ts and update its call sites"
 
-**5. Tell the user how to use it.** For orchestration they need [herdr](https://github.com/herdrdev/herdr): inside a
-herdr session, they ask their lead agent to "use routr" for a piece of work. Sizing subagents works in any session.
+**5. Tell the user how to use it.** Inside a [herdr](https://herdr.dev) session, they ask their lead agent to "use
+routr" for a piece of work. Sizing subagents works in any session, with or without herdr.
 
 Other ways to get the skill (the binary is still needed): `npx skills add sirkirby/routr -g`, or in Claude Code
 `/plugin marketplace add sirkirby/routr` then `/plugin install routr`.
