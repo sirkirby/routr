@@ -10,10 +10,12 @@ started in [herdr](https://github.com/herdrdev/herdr) panes (routr is named afte
 keys to hand over, no proxy, and no new accounts: your subscriptions, your logins, your settings. The one key routr
 needs is for its own decision model.
 
-**The quick decisions come from a model built for them.** Each time the lead is about to hand out work, and again
-when the work comes back, a System One model ([TypeSafe's Jev](https://docs.typesafe.ai)) reads the text in about
-300 ms and returns calibrated yes-or-no facts, the same way every time. Code adds each subscription's live usage.
-The lead agent, your smartest model, stays the judge.
+**The questions are the product.** Each time the lead is about to hand out work, and again when the work comes
+back, routr asks a fixed set of narrow yes-or-no questions about the text. They were tuned against real briefs and
+real worker reports: the ones that separated easy work from hard work, and good reports from flawed ones, stayed,
+and the rest were dropped ([the evidence](docs/evidence.md)). A System One model
+([TypeSafe's Jev](https://docs.typesafe.ai)) answers them in about 300 ms with calibrated probabilities, the same
+way every time. Code adds each subscription's live usage. The lead agent, your smartest model, stays the judge.
 
 A long task on one subscription runs it hot, and an agent left to itself gives every subagent its own, largest
 model. routr spreads the work across what you have, and starts each piece at the level it needs.
