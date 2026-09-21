@@ -1246,3 +1246,20 @@ test("assess turns the ledger into suggestions about the user's own settings, an
   expect(assess(struggling, c)).toContain("subscriptions.codex.hardest_work");
   expect(report).not.toContain("TOO LOW");                                    // the level review is for the lab, not the user
 });
+
+test("ledger rows are labelled with their project, a worktree counts as its repository, and the label is never shared", async () => {
+  const { projectName, toEntry, shareRows, assess } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const root = mkdtempSync(join(tmpdir(), "routr-proj-"));
+  mkdirSync(join(root, "acme-api", ".git"), { recursive: true }); mkdirSync(join(root, "acme-api", "src", "deep"), { recursive: true });
+  expect(projectName(join(root, "acme-api", "src", "deep"))).toBe("acme-api");
+  mkdirSync(join(root, "wt", "fix-branch"), { recursive: true });
+  writeFileSync(join(root, "wt", "fix-branch", ".git"), `gitdir: ${join(root, "acme-api", ".git", "worktrees", "fix-branch")}\n`);
+  expect(projectName(join(root, "wt", "fix-branch"))).toBe("acme-api");
+  const e = toEntry({ id: "x", level: "basic", sure: true, facts: {} }, { project: "acme-api", verdict: "done", check: "pass" });
+  expect(e.project).toBe("acme-api");
+  expect(JSON.stringify(shareRows([e]))).not.toContain("acme-api");
+  const other = { ...e, project: "site" };
+  expect(assess([e, other])).toContain("by project");
+  expect(assess([e])).not.toContain("by project");                        // one project: no breakdown to show
+  rmSync(root, { recursive: true, force: true });
+});
