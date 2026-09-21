@@ -12,7 +12,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
   that go stale at the next model release. What varies by user is a plain setting in `~/.config/routr/config.json`.
 - It does not estimate or manage context, proxy model traffic, or hold provider API keys. Workers are the harness
   CLIs the user already has installed and logged in.
-- It is not a published package. It installs from GitHub release binaries and as an agent skill.
+- It is not a published package or a marketplace plugin. There is ONE install path: the install scripts, which
+  download a release binary and have it install its own skill. Do not add a second one.
 
 ## Invariants
 
@@ -46,8 +47,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
 ## Releasing
 
 Merging to `main` only runs tests. A release happens when a `vX.Y.Z` tag is pushed (`-alpha.N` / `-beta.N` / `-rc.N`
-for a pre-release); the version in `lib/version.mjs`, `.claude-plugin/plugin.json`, and `package.json` MUST match the
-tag's base version. Commit subjects become the release notes: write them for a user. Details: `CONTRIBUTING.md`.
+for a pre-release); the version in `lib/version.mjs`, `package.json`, and the `version` line of
+`skills/routr/SKILL.md` MUST match the tag's base version. Commit subjects become the release notes: write them for a user. Details: `CONTRIBUTING.md`.
 
 ## Working style
 

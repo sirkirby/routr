@@ -1,6 +1,5 @@
 // `routr skill install`: write the routr skill (the guides agents read) into the shared skills folder, so a machine
 // with no Node and no Bun needs nothing but the routr binary. The guides are embedded at build time.
-// `npx skills add sirkirby/routr` does the same job for people who prefer that tool.
 import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";

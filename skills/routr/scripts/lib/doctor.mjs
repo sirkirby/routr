@@ -61,8 +61,8 @@ export async function doctor({ json, configPath }) {
   } catch (e) { r.key.found ??= false; r.key.works = false; r.key.error = String(e?.message ?? e).slice(0, 160); r.key.where = `set TYPESAFE_API_KEY, or put TYPESAFE_API_KEY=... in ${KEY_FILES[0]}`; }
   const lists = Object.fromEntries(await Promise.all(found.map(async (n) => [n, (await MODEL_LISTS[n]?.()) || null])));
   for (const n of found) r.harnesses[n].models = lists[n];
-  // The skill can arrive two ways (the installer / `routr skill install`, or a harness plugin), so it can drift from
-  // the binary. A skill newer than the binary may name commands the binary lacks, and the other way round.
+  // The installer writes the skill and the binary together, but a skill copied by hand or left behind by an older
+  // install can drift: it may name commands this binary lacks, or miss ones it has.
   r.skill = [".agents/skills/routr", ".claude/skills/routr"].map((d) => {
     try { return { where: `~/${d}`, version: readFileSync(join(homedir(), d, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\n]+)"?/m)?.[1] ?? "unknown" }; } catch { return null; }
   }).filter(Boolean);

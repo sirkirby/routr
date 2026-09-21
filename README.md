@@ -103,10 +103,7 @@ Or paste [INSTALL.md](INSTALL.md) into your agent and let it do all of it.
 
 For orchestration you also need [herdr](https://herdr.dev) and its agent skill
 (`npx skills add herdrdev/herdr --skill herdr -g`); setup offers to install both, and `routr doctor` tells you when
-either is missing. Sizing subagents works without them. routr's skill can also come through your
-harness's plugin system (the repo carries the [Agent Plugins](https://agent-plugins.org) manifest and the Claude
-Code, Codex, and Cursor ones) or `npx skills add sirkirby/routr -g`. The skill still needs the `routr` command from
-the installer, and `routr doctor` tells you if the two have drifted apart.
+either is missing. Sizing subagents works without them.
 
 Something not working? `routr doctor` says what is missing, and [docs/troubleshooting.md](docs/troubleshooting.md)
 covers the rest.
