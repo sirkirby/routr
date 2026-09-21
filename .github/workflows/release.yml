@@ -51,7 +51,7 @@ jobs:
 
   build:
     name: Build ${{ matrix.target }}
-    needs: test
+    needs: [validate-tag, test]
     strategy:
       fail-fast: true
       matrix:
@@ -67,14 +67,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - name: Compile a standalone binary
-        run: bun build --compile --minify --target=bun-${{ matrix.target }} skills/routr/scripts/routr.mjs --outfile routr-${{ matrix.target }}${{ matrix.ext }}
+        run: >-
+          bun build --compile --minify --target=bun-${{ matrix.target }}
+          --define 'ROUTR_BUILD_VERSION="${{ needs.validate-tag.outputs.version }}"'
+          skills/routr/scripts/routr.mjs --outfile routr-${{ matrix.target }}${{ matrix.ext }}
       - name: Sign (ad hoc; no Apple account needed)
         if: matrix.sign
         run: codesign --sign - --force routr-${{ matrix.target }}
       - name: Smoke-test the binary this runner can execute
         if: matrix.target == 'linux-x64' || matrix.target == 'darwin-arm64'
         run: |
-          ./routr-${{ matrix.target }} --version
+          test "$(./routr-${{ matrix.target }} --version)" = "${{ needs.validate-tag.outputs.version }}"
           ./routr-${{ matrix.target }} skill install --dry-run
       - uses: actions/upload-artifact@v4
         with:

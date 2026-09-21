@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { isAbsolute } from "node:path";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { advise } from "../skills/routr/scripts/lib/advise.mjs";
 import { readReport } from "../skills/routr/scripts/lib/check.mjs";
@@ -720,7 +721,11 @@ test("command help prints usage for each command and exits 0", () => {
 test("a brief containing --help as a separate word is routed as a brief, not as help", () => {
   const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
   for (const cmd of ["subagent", "dispatch"]) {
-    const res = Bun.spawnSync(["bun", script, cmd, "add", "--help", "to", "the", "CLI"]);
+    // A throwaway HOME with no key and no config: the command falls back at once instead of calling the network,
+    // so this test is about argument handling only and cannot time out on a slow connection.
+    const home = mkdtempSync(join(tmpdir(), "routr-nokey-"));
+    const res = Bun.spawnSync(["bun", script, cmd, "add", "--help", "to", "the", "CLI"], { env: { ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "" } });
+    rmSync(home, { recursive: true, force: true });
     expect(res.exitCode).toBe(0);
     expect(res.stderr.toString()).toBe("");
     const data = JSON.parse(res.stdout.toString());
