@@ -2,7 +2,7 @@
 name: routr
 description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity) from one orchestrating agent in herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before spawning subagents in a routr-managed session; or when asked to set up, configure, or check routr.
 metadata:
-  version: "0.1.10"
+  version: "0.1.11"
 ---
 
 # routr

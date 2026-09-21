@@ -78,6 +78,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
 | `update` | Update to the latest release now (routr also does this by itself in the background, at most once a day). |
 | `setup` | Write your config for the harnesses found, set Claude Code's usage statusline, ask for the key. Asks at a terminal; agents pass `--yes`. |
+| `uninstall` | Remove routr: the binary, the skill, the cache, its Claude statusline entry. Keeps your config, key, and ledger; `--purge` removes those too. |
 | `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list, and what to do next. Changes nothing. |
 
 The advice commands write nothing and never block an agent: with no network or no key they still answer, marked as
@@ -116,6 +117,9 @@ routr keeps itself current. At most once a day a command starts a background che
 verified against its checksums, and swapped in, and your next `routr` run uses it. Nothing you are running is
 interrupted. `routr update` does it on demand, `routr doctor` shows when it last checked, and `"auto_update": false`
 in the config turns it off.
+
+To remove it, run `routr uninstall`. It shows what it will remove and asks first. Your config, key, and ledger stay
+for a later reinstall unless you choose otherwise (`--purge`).
 
 For orchestration you also need [herdr](https://herdr.dev) and its agent skill
 (`npx skills add herdrdev/herdr --skill herdr -g`); setup offers to install both, and `routr doctor` tells you when
