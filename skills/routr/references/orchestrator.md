@@ -32,11 +32,9 @@ already running in other panes, what comes next, which harness suits this reposi
 
 Usage moves while you work, so ask again before every launch; never reuse an earlier answer.
 
-**Cursor's usage** has no local source, but you can read it: in a fresh pane (read it first, see `harnesses.md`
-rule 0) run `cursor-agent --trust`, type `/usage` and press Enter (twice if an autocomplete menu opens), read the
-panel ("Included N% used"), press Esc, close the pane. It costs no agent turn. Pass it as
-`--headroom cursor=<1 − N/100>`. Do this at the start of a run and again every so often, not on every launch.
-Claude, Codex, and Antigravity are read live by routr itself.
+**Cursor's usage** has no local source: run `routr usage cursor` at the start of a run (and again every so often, not
+on every launch) and pass its `pass_as` value to `routr dispatch`. Claude, Codex, and Antigravity are read live by
+routr itself.
 
 ## 3. Launch
 
