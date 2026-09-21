@@ -2,7 +2,7 @@
 name: routr
 description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity) from one orchestrating agent in herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before spawning subagents in a routr-managed session; or when asked to set up, configure, or check routr.
 metadata:
-  version: "0.1.3"
+  version: "0.1.4"
 ---
 
 # routr
@@ -17,8 +17,8 @@ consistent starting point every time, so the decision is not made from habit.
 routr is one standalone command, `routr`, normally at `~/.local/bin/routr` (`routr.exe` on Windows). If it is not on
 your PATH, call it by that full path.
 
-**If `routr` is not installed** (this skill can arrive through a plugin, which cannot carry the binary): tell the user
-routr needs its command, ask whether you may install it, and run the installer for their system. It takes a few
+**If `routr` is not installed:** tell the user routr needs its command, ask whether you may install it, and run the
+installer for their system. It takes a few
 seconds, needs no Node or Bun, verifies the download's checksum, and installs to `~/.local/bin`.
 
 ```sh

@@ -42,6 +42,3 @@ orchestration, herdr and herdr's agent skill.
 
 **5. Tell the user how to use it.** Inside a [herdr](https://herdr.dev) session, they ask their lead agent to "use
 routr" for a piece of work. Sizing subagents works in any session, with or without herdr.
-
-Other ways to get the skill (the binary is still needed): `npx skills add sirkirby/routr -g`, or in Claude Code
-`/plugin marketplace add sirkirby/routr` then `/plugin install routr`.
