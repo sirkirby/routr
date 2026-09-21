@@ -21,7 +21,12 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - A question's wording changes only with a measurement against the old wording on the same items, and a bumped
   `VERSION` / `CHECK_VERSION` in `skills/routr/scripts/lib/questions.mjs`. Public summary: `docs/evidence.md`.
 - The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`) write nothing and fail open: any error
-  still prints usable output and exits 0. Only `record`, `key set`, `skill install`, `launch`, and `usage cursor` act (the last two drive herdr panes), and each says so.
+  still prints usable output and exits 0. Only `record`, `key set`, `skill install`, `share`, `update`, `launch`, and
+  `usage cursor` act (the last two drive herdr panes), and each says so.
+- Updates are automatic but never in the way: at most once a day a command may start a DETACHED updater and carry
+  on. The command itself MUST NOT wait for it, make a network call for it, or change its own output because of it.
+  The updater verifies the release checksum, swaps the binary in place, and reinstalls the skill; a run in progress
+  keeps its binary. `"auto_update": false` turns it off. Never from a source checkout, never from `statusline`.
 - Usage is re-read on every call and never cached. A reserve is never offered.
 - Standard mechanisms only: skills, prompts, the harness's own CLI flags. No dependence on a harness's private
   environment variables or config internals beyond what `references/harnesses.md` records as observed.

@@ -76,6 +76,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `record`, `assess` | Write one ledger line; read the ledger back as advice about your own settings. |
 | `share` | Write a file of your outcomes, with nothing identifying in it, to attach to a GitHub issue. Sends nothing. |
 | `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
+| `update` | Update to the latest release now (routr also does this by itself in the background, at most once a day). |
 | `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list. Changes nothing. |
 
 The advice commands write nothing and never block an agent: with no network or no key they still answer, marked as
@@ -102,6 +103,11 @@ for your agents. Then ask your agent to "set up routr": it runs `routr doctor`, 
 [TypeSafe API key](https://console.typesafe.ai/keys) (you store it yourself with `routr key set`, which never shows
 it), and writes `~/.config/routr/config.json` with you.
 Or paste [INSTALL.md](INSTALL.md) into your agent and let it do all of it.
+
+routr keeps itself current. At most once a day a command starts a background check; a new release is downloaded,
+verified against its checksums, and swapped in, and your next `routr` run uses it. Nothing you are running is
+interrupted. `routr update` does it on demand, `routr doctor` shows when it last checked, and `"auto_update": false`
+in the config turns it off.
 
 For orchestration you also need [herdr](https://herdr.dev) and its agent skill
 (`npx skills add herdrdev/herdr --skill herdr -g`); setup offers to install both, and `routr doctor` tells you when

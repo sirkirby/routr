@@ -19,6 +19,13 @@ mark once:
 xattr -d com.apple.quarantine ~/.local/bin/routr
 ```
 
+## Updates
+
+routr updates itself in the background, at most once a day, and the new version takes effect on your next run.
+`routr doctor` shows when it last checked and the result. `routr update` updates now; `routr update --check` only
+looks. To stop automatic updates, set `"auto_update": false` in `~/.config/routr/config.json`. Versions before
+0.1.7 do not update themselves: run the install command once more.
+
 ## Every answer says `fallback`
 
 routr could not reach TypeSafe: there is no key, the key is wrong, or there is no network. `routr doctor` shows which.

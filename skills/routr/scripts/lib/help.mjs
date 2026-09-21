@@ -58,6 +58,14 @@ export const COMMANDS = {
       { name: "--ledger", arg: "<path>", description: "ledger to read", required: false, default: "~/.local/share/routr/ledger.jsonl" },
     ],
   },
+  update: {
+    name: "update",
+    description: "replace this routr with the latest release (checksum verified) and reinstall the skill; never runs by itself",
+    flags: [
+      { name: "--check", description: "only say whether a newer release exists", required: false },
+      { name: "--force", description: "reinstall the latest release even if this one is current", required: false },
+    ],
+  },
   statusline: {
     name: "statusline",
     description: "Claude Code's statusline command: prints model and usage, and saves the usage snapshot routr reads",

@@ -8,6 +8,7 @@
 //   routr launch ...           start a worker, handle startup, and submit its task
 //   routr usage cursor         read Cursor's /usage panel in a throwaway pane and print headroom JSON
 //   routr assess               what your ledger says about YOUR settings (reserves, preferences, what each subscription can take)
+//   routr update [--check]     replace this binary with the latest verified release and reinstall the skill (never automatic)
 //   routr share                prepare a file of outcomes (nothing identifying) to attach to a GitHub issue; sends nothing
 // The brief may come on stdin. Jev (TypeSafe System One) judges the WORK in ~300 ms; code does the arithmetic;
 // the agent that asked makes the decision. Never names a model.
@@ -28,6 +29,7 @@ import { readUsage } from "./lib/usage.mjs";
 import { setKey } from "./lib/key.mjs";
 import { installSkill } from "./lib/skill-install.mjs";
 import { statusline } from "./lib/statusline.mjs";
+import { backgroundUpdate, maybeAutoUpdate, update } from "./lib/update.mjs";
 import { ROUTR_VERSION } from "./lib/version.mjs";
 import { COMMANDS, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "./lib/help.mjs";
 
@@ -71,6 +73,8 @@ if (argv[0] === "usage") {
 }
 if (argv[0] === "statusline" && !argv.includes("--help") && !argv.includes("-h")) { statusline(); process.exit(0); } // before anything else: it runs on every Claude turn
 if (argv.includes("--version")) { console.log(ROUTR_VERSION); process.exit(0); }
+if (argv[0] === "update" && argv.includes("--background")) { await backgroundUpdate(); process.exit(0); }
+if (argv[0] === "update" && !argv.includes("--help") && !argv.includes("-h")) { const r = await update({ checkOnly: argv.includes("--check"), force: argv.includes("--force") }); console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1); }
 if (argv[0] === "key" && argv[1] === "set" && !argv.includes("--help") && !argv.includes("-h")) { const r = await setKey({ verify: !argv.includes("--no-verify") }); console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1); }
 if (argv[0] === "skill" && argv[1] === "install" && !argv.includes("--help") && !argv.includes("-h")) { console.log(JSON.stringify(installSkill({ dryRun: argv.includes("--dry-run") }), null, 1)); process.exit(0); }
 const flag = (name, repeatable = false) => {
@@ -86,6 +90,8 @@ const configPath = flag("--config");
 // --headroom cursor=0.97 : usage the caller read itself (repeatable), for harnesses with no local source
 const given = {}; for (let h; (h = flag("--headroom")); ) { const [k, v] = h.split("="); if (k && !Number.isNaN(+v)) given[k] = +v; }
 const [mode, ...rest] = argv;
+// At most once a day this starts a detached background updater; it never delays or changes the command itself.
+if (["subagent", "dispatch", "check", "launch", "record", "assess", "share", "doctor", "usage"].includes(mode)) maybeAutoUpdate(loadConfig(configPath).config);
 
 if (mode === "check") {
   // usage: routr check --brief <file> --report <file>    a quick first read of a worker's report; you remain the judge

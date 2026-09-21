@@ -738,7 +738,7 @@ test("the symptom-patch answer is ignored on work that is not a fix", () => {
 });
 
 test("help table covers every command the CLI dispatches", () => {
-  const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "check", "record", "assess", "share", "statusline", "skill", "key"];
+  const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "check", "record", "assess", "share", "update", "statusline", "skill", "key"];
   expect(Object.keys(COMMANDS).sort()).toEqual(dispatched.sort());
 
   // Every command has a valid description, non-empty synopsis, and flags/args
@@ -1262,4 +1262,28 @@ test("ledger rows are labelled with their project, a worktree counts as its repo
   expect(assess([e, other])).toContain("by project");
   expect(assess([e])).not.toContain("by project");                        // one project: no breakdown to show
   rmSync(root, { recursive: true, force: true });
+});
+
+test("update picks the right release asset and compares versions like semver", async () => {
+  const { assetName, newer } = await import("../skills/routr/scripts/lib/update.mjs");
+  expect(assetName("darwin", "arm64")).toBe("routr-darwin-arm64");
+  expect(assetName("linux", "x64")).toBe("routr-linux-x64");
+  expect(assetName("win32", "arm64")).toBe("routr-windows-x64.exe");
+  expect(assetName("freebsd", "x64")).toBeNull();
+  expect(newer("0.1.10", "0.1.9")).toBe(true);
+  expect(newer("v0.2.0", "0.1.99")).toBe(true);
+  expect(newer("0.1.6", "0.1.6")).toBe(false);
+  expect(newer("0.1.6", "0.1.6-rc.1")).toBe(true);        // the release is newer than its own pre-release
+  expect(newer("0.1.5", "0.1.6")).toBe(false);
+});
+
+test("the background update check is due at most once a day, and the config can turn it off", async () => {
+  const { dueForCheck } = await import("../skills/routr/scripts/lib/update.mjs");
+  const now = 1_800_000_000_000;
+  expect(dueForCheck(NaN, now)).toBe(true);                               // never checked
+  expect(dueForCheck(now - 2 * 3600 * 1000, now)).toBe(false);            // two hours ago
+  expect(dueForCheck(now - 25 * 3600 * 1000, now)).toBe(true);
+  const off = `${import.meta.dir}/.noupdate.json`; writeFileSync(off, JSON.stringify({ auto_update: false }));
+  expect(loadConfig(off).config.auto_update).toBe(false);
+  expect(loadConfig("/nonexistent/config.json").config.auto_update).toBe(true);
 });

@@ -10,6 +10,7 @@ export const DEFAULTS = {
   sure_at: 0.8,                // Jev confidence from which its level is presented as settled. P23: 89% correct at or above 0.8, 56% below 0.5
   risk_above: 0.75,            // high_blast_radius probability that gets called out as high risk
   prefer: { research: "strong", review: "strong" }, // your preference per kind of work; shown to the agent as advice, never forced
+  auto_update: true,           // check for a new release at most once a day, in the background; applied on the next run
   subscriptions: {},
 };
 const SUB_DEFAULTS = { hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null };
@@ -26,7 +27,7 @@ export function loadConfig(path = CONFIG_PATH) {
     notes.push(`config unreadable (${String(e?.message ?? e).slice(0, 80)}): using defaults`);
   }
   const num = (k) => (typeof raw[k] === "number" ? raw[k] : DEFAULTS[k]);
-  const config = { fallback_level: isLevel(raw.fallback_level) ? raw.fallback_level : DEFAULTS.fallback_level, sure_at: num("sure_at"), risk_above: num("risk_above"), prefer: {}, subscriptions: {} };
+  const config = { fallback_level: isLevel(raw.fallback_level) ? raw.fallback_level : DEFAULTS.fallback_level, sure_at: num("sure_at"), risk_above: num("risk_above"), auto_update: raw.auto_update !== false, prefer: {}, subscriptions: {} };
   for (const [k, v] of Object.entries(raw.prefer ?? DEFAULTS.prefer)) isLevel(v) ? (config.prefer[k] = v) : notes.push(`prefer.${k}: "${v}" is not a level, ignored`);
   for (const [name, s] of Object.entries(raw.subscriptions ?? {})) {
     if (s?.hardest_work !== undefined && !isLevel(s.hardest_work)) notes.push(`subscriptions.${name}.hardest_work: "${s.hardest_work}" is not a level, using strong`);
