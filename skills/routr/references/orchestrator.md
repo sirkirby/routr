@@ -47,7 +47,9 @@ the harness already trusts. A subfolder of a trusted folder starts with no trust
 under `~/.herdr/worktrees` come up clean.
 
 Workers run without a human, so their permissions must cover the scope of the task, and the task must stay inside
-that scope. When the work's correct behaviour is to write outside its folder (a script that writes to the home
+that scope. They also run on the user's machine, in front of the user: do not brief an experiment that pops system
+dialogs (running a quarantined binary, touching the keychain, asking for a system permission) without telling the
+user first. One such brief put a run of "Move to Trash" dialogs on the user's screen. When the work's correct behaviour is to write outside its folder (a script that writes to the home
 directory, say), tell the worker to verify under a temporary `HOME` inside its worktree.
 
 **Write the task.** Every launch prompt has four parts. `routr launch --task-file` supplies the first and the
