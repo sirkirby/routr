@@ -7,19 +7,20 @@
 //   routr record ...           append what you chose and how it turned out to the ledger
 //   routr launch ...           start a worker, handle startup, and submit its task
 //   routr usage cursor         read Cursor's /usage panel in a throwaway pane and print headroom JSON
-//   routr assess               what the ledger says: where a level looks too low or too high, and how usage moved
+//   routr assess               what your ledger says about YOUR settings (reserves, preferences, what each subscription can take)
+//   routr share                prepare a file of outcomes (nothing identifying) to attach to a GitHub issue; sends nothing
 // The brief may come on stdin. Jev (TypeSafe System One) judges the WORK in ~300 ms; code does the arithmetic;
 // the agent that asked makes the decision. Never names a model.
 // Advice is side-effect free and fail-open; launch reports failures as JSON and exits nonzero.
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { advise } from "./lib/advise.mjs";
 import { readReport } from "./lib/check.mjs";
 import { loadConfig } from "./lib/config.mjs";
 import { doctor } from "./lib/doctor.mjs";
 import { ask } from "./lib/jev.mjs";
 import { cursorUsage } from "./lib/cursor-usage.mjs";
-import { append, assess, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./lib/ledger.mjs";
+import { append, assess, LEDGER_PATH, parseReportSubagents, read, shareRows, toEntry } from "./lib/ledger.mjs";
 import { launch } from "./lib/launch.mjs";
 import { rankSubscriptions } from "./lib/pick.mjs";
 import { CHECK_VERSION, checkQuestions, questions, VERSION } from "./lib/questions.mjs";
@@ -97,7 +98,26 @@ if (mode === "check") {
   } catch (e) { Object.assign(out, { headline: "routr: could not read the report; judge it yourself", fallback: true, error: String(e?.message ?? e).slice(0, 160) }); }
   console.log(JSON.stringify(out)); process.exit(0);
 }
-if (mode === "assess") { console.log(assess(read(flag("--ledger") ?? LEDGER_PATH))); process.exit(0); }
+if (mode === "assess") { console.log(assess(read(flag("--ledger") ?? LEDGER_PATH), loadConfig(configPath).config)); process.exit(0); }
+if (mode === "share") {
+  // Prepare (never send) a file the user can attach to a GitHub issue, to help tune routr's questions on real outcomes.
+  const rows = shareRows(read(flag("--ledger") ?? LEDGER_PATH), { withModels: rest.includes("--with-models") });
+  if (!rows.length) { console.log("The ledger is empty: there is nothing to share yet."); process.exit(0); }
+  const file = flag("--out") ?? `routr-ledger-${new Date().toISOString().slice(0, 10)}.jsonl`;
+  writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  console.log([
+    `Wrote ${rows.length} rows to ${file}. Nothing has been sent anywhere.`,
+    "",
+    "In the file: what routr read from each brief (yes/no probabilities, level), the level and subscription chosen,",
+    `the outcome and attempt count${rest.includes("--with-models") ? ", and the model names you chose" : ""}. Day-level dates only.`,
+    `Left out: the briefs (routr never stores them), their hashes, your notes, ids, usage numbers${rest.includes("--with-models") ? "" : ", model names (add --with-models to include them)"}.`,
+    "",
+    "Read it, then attach it to a new issue using the \"Share your ledger\" form:",
+    "  https://github.com/sirkirby/routr/issues/new?template=share-ledger.yml",
+    "Issues are public. That is why the file holds nothing that identifies you or your work.",
+  ].join("\n"));
+  process.exit(0);
+}
 if (mode === "record") {
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]
   const o = Object.fromEntries(["--advice", "--subscription", "--model", "--effort", "--level", "--verdict", "--check", "--seconds", "--attempts", "--note", "--ledger", "--report"].map((f) => [f.slice(2), flag(f)]));

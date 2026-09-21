@@ -49,6 +49,15 @@ export const COMMANDS = {
       { name: "--dry-run", arg: null, description: "plan commands without executing or writing files", required: false, default: false },
     ],
   },
+  share: {
+    name: "share",
+    description: "write a file of your outcomes (no briefs, notes, or anything identifying) to attach to a GitHub issue; sends nothing",
+    flags: [
+      { name: "--with-models", description: "include the model names you chose", required: false },
+      { name: "--out", arg: "<file>", description: "where to write it", required: false, default: "./routr-ledger-<date>.jsonl" },
+      { name: "--ledger", arg: "<path>", description: "ledger to read", required: false, default: "~/.local/share/routr/ledger.jsonl" },
+    ],
+  },
   statusline: {
     name: "statusline",
     description: "Claude Code's statusline command: prints model and usage, and saves the usage snapshot routr reads",
@@ -103,7 +112,7 @@ export const COMMANDS = {
   },
   assess: {
     name: "assess",
-    description: "what the ledger says: where a level looks too low or too high, and how usage moved",
+    description: "what your ledger says about your own settings: reserves, preferences, and what each subscription can take",
     flags: [
       { name: "--ledger", arg: "<path>", description: "path to ledger file", required: false, default: "~/.local/share/routr/ledger.jsonl" },
     ],
