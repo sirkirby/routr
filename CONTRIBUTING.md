@@ -33,13 +33,24 @@ Test installs against a **clean clone**, in a throwaway home (`HOME=$(mktemp -d)
 checkout. `claude plugin marketplace add <folder>` and `skills add <folder>` copy the folder as it is on disk,
 including untracked files such as a `.env` holding your key. Installs from GitHub only ever see tracked files.
 
-## Building
+## Building and releasing
 
 The source is plain JavaScript under `skills/routr/scripts/`, run with Bun while developing
-(`bun skills/routr/scripts/routr.mjs doctor`). Releases are standalone binaries built with `bun build --compile` by
-`.github/workflows/release.yml` when a `v*` tag is pushed; the tag must match `lib/version.mjs` and the plugin
-manifest. macOS binaries are built on macOS and signed ad hoc, because Apple Silicon will not run an unsigned binary.
-The guides are embedded in the binary (`routr skill install`), so a guide change ships with the next release.
+(`bun skills/routr/scripts/routr.mjs doctor`). Releases are standalone binaries built with `bun build --compile`.
+
+Merging to `main` only runs the tests. **A release happens when a version tag is pushed, and only then:**
+
+1. Set the new version in `skills/routr/scripts/lib/version.mjs` and `.claude-plugin/plugin.json` (a test keeps them
+   in step) and merge that.
+2. `git tag v0.2.0 && git push origin v0.2.0`. For a pre-release use `v0.2.0-rc.1` (`-alpha.N`, `-beta.N`, `-rc.N`);
+   the files keep the base version `0.2.0`.
+
+`.github/workflows/release.yml` then checks the tag against those files, runs the tests, builds the five binaries
+(macOS ones on macOS, signed ad hoc, because Apple Silicon will not run an unsigned binary), and creates the GitHub
+release with checksums, install commands, and a "What's Changed" list of the commit subjects since the previous
+stable tag. Write commit subjects a user can read: they become the release notes. Pre-releases are marked as such
+and are never "latest", so the install scripts ignore them unless `ROUTR_VERSION` names one. The guides are embedded
+in the binary (`routr skill install`), so a guide change ships with the next release.
 
 ## Tests
 
