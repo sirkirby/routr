@@ -813,3 +813,12 @@ test("unnumbered trust menus are parsed: Antigravity selects Yes already, Claude
   // A menu with no selection marker is never guessed at.
   expect(trustDialog("Do you trust the contents of this project?\n  Yes, I trust this folder\n  No, exit\n").keys).toBeNull();
 });
+
+test("launch --copy is repeatable, needs --worktree, and refuses paths outside the repository", async () => {
+  const { parseLaunchArgs } = await import("../skills/routr/scripts/lib/launch.mjs");
+  const base = ["--kind", "codex", "--name", "w", "--model", "m"];
+  expect(parseLaunchArgs([...base, "--worktree", "b", "--copy", ".env.test", "--copy", "fixtures"]).copy).toEqual([".env.test", "fixtures"]);
+  expect(() => parseLaunchArgs([...base, "--copy", "x"])).toThrow("--worktree");
+  expect(() => parseLaunchArgs([...base, "--worktree", "b", "--copy", "../secrets"])).toThrow("inside the repository");
+  expect(() => parseLaunchArgs([...base, "--worktree", "b", "--copy", "/etc/passwd"])).toThrow("inside the repository");
+});

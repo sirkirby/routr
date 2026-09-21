@@ -44,7 +44,8 @@ Claude, Codex, and Antigravity are read live by routr itself.
 repository in `--cwd`, which herdr opens as a workspace nested under the repository in the sidebar, and launches the
 worker there. This is the rule for read-only workers too. The user can find every worker in one place and click into
 it, your own tab stays clean, and no worker can touch the main checkout. A worktree holds tracked files only: if the
-work needs an untracked file (a local config, a data file), say where it is in the task. Worktrees live under
+work needs an untracked file or folder (a local config, test data), pass `--copy <path>` for each one and the
+launcher copies it across. Never copy a file holding secrets unless the task needs it. Worktrees live under
 `~/.herdr/worktrees`; where the harness asks whether it trusts a new folder, `--trust auto` answers for a worktree
 you just created. Outside a git repository there is nothing to nest under: leave `--worktree` off and the launcher
 splits a pane beside you.
