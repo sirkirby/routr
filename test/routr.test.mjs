@@ -1332,3 +1332,16 @@ test("routr setup --yes writes the config once, keeps it afterwards, and starts 
   const bad = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--model", "codex=m"], { env });
   expect(bad.exitCode).toBe(1);
 });
+
+test("setup searches a long model list instead of printing it", async () => {
+  const { narrow, pickModel } = await import("../skills/routr/scripts/lib/setup.mjs");
+  const list = Array.from({ length: 230 }, (_, i) => `vendor-model-${i}`).concat(["cursor-grok-4.6-high", "cursor-grok-4.7-high", "cursor-grok-4.7-low"]);
+  expect(narrow(list, "grok high")).toEqual(["cursor-grok-4.6-high", "cursor-grok-4.7-high"]);
+  const drive = async (answers, l = list) => { const said = []; const got = await pickModel(l, async () => answers.shift(), (s) => said.push(s)); return { got, said }; };
+  const r = await drive(["grok", "2"]);
+  expect(r.got).toBe("cursor-grok-4.7-high");
+  expect(r.said.length).toBeLessThan(8);                                 // the count and three matches, never 233 lines
+  expect((await drive(["grok 4.7 low"])).got).toBe("cursor-grok-4.7-low"); // a single match is taken
+  expect((await drive(["vendor", "zzz", ""])).got).toBeUndefined();        // too many, then none, then Enter: left to the lead
+  expect((await drive(["2"], ["a", "b"])).got).toBe("b");                  // a short list is printed and picked by number
+});

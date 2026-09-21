@@ -21,6 +21,31 @@ export function parseModels(args) {
   return models;
 }
 
+// A list longer than this is searched, not printed: Cursor offers over 200 models (231 seen), and routr keeps no
+// idea of which ones matter, so the user narrows it by typing part of a name.
+const LIST_IN_FULL = 20;
+
+// Every word typed must appear in the id: "grok high" finds `cursor-grok-4.6-high`.
+export const narrow = (list, query) => { const words = query.toLowerCase().split(/\s+/).filter(Boolean); return list.filter((m) => words.every((w) => m.toLowerCase().includes(w))); };
+
+// Returns the chosen id, or undefined when the user leaves it to the lead agent. `question` and `say` are passed in so a test can drive it.
+export async function pickModel(list, question, say) {
+  let shown = list.length <= LIST_IN_FULL ? list : [];
+  if (!shown.length) say(`  ${list.length} models. Type part of a name to search (for example a family or a size).`);
+  for (;;) {
+    shown.forEach((m, i) => say(`  ${String(i + 1).padStart(2)}. ${m}`));
+    const a = (await question(shown.length ? "Number, model id, or text to search (Enter to leave it to the lead agent): " : "Search, or a full model id (Enter to leave it to the lead agent): ")).trim();
+    if (!a) return undefined;
+    if (/^\d+$/.test(a) && shown[Number(a) - 1]) return shown[Number(a) - 1];
+    if (list.includes(a)) return a;
+    const hits = narrow(list, a);
+    if (hits.length === 1) return hits[0];
+    if (!hits.length) say(`  nothing matches "${a}"`);
+    else if (hits.length > LIST_IN_FULL * 2) { say(`  ${hits.length} match "${a}": add a word to narrow it`); shown = []; continue; }
+    shown = hits;
+  }
+}
+
 // What to do with Claude Code's settings. Someone else's statusline is never replaced.
 export function statuslinePlan(settingsText, command) {
   let settings = {};
@@ -66,10 +91,7 @@ export async function setup(args) {
     const list = r.harnesses[n].models;
     if (models[n] || !list?.length) continue;
     say(`\n${paint(1, n)}: your everyday model there. Your agents start from it and go higher or lower as the work needs.`);
-    list.forEach((m, i) => say(`  ${String(i + 1).padStart(2)}. ${m}`));
-    const a = (await rl.question("Number or model id (Enter to leave it to the lead agent): ")).trim();
-    const pick = /^\d+$/.test(a) ? list[Number(a) - 1] : a;
-    if (pick && list.includes(pick)) models[n] = pick; else if (a) say(`  "${a}" is not in the list: left unset`);
+    models[n] = await pickModel(list, (q) => rl.question(q), say);
   }
   if (!config) config = starterConfig(found, models);
   else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models).subscriptions[n] };
