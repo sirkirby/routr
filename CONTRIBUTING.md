@@ -20,7 +20,7 @@ commit subject and, at the next tag, a line in the release notes: write it for a
 
 ## Changing a question
 
-The question sets live in `skills/routr/scripts/lib/questions.mjs` and carry a version (`VERSION` for the advice,
+The question sets live in `src/lib/questions.mjs` and carry a version (`VERSION` for the advice,
 `CHECK_VERSION` for the judge step). A wording change is a new version. In the pull request, say what you ran it
 against (the briefs or reports, how they were labelled, by whom) and the result next to the old wording's result on
 the same items. Narrow, literal questions about what a text states do well; questions that estimate what work will
@@ -29,7 +29,7 @@ design or debug a question. Users of routr do not need it: routr calls the API i
 
 ## Changing a harness recipe
 
-`skills/routr/references/harnesses.md` and `lib/harness.mjs` record flags and failure modes that were observed, not
+`skills/routr/references/harnesses.md` and `src/lib/harness.mjs` record flags and failure modes that were observed, not
 read from documentation. Say which version of the harness you ran and what you saw.
 
 ## Testing an install
@@ -40,12 +40,12 @@ holding your key. The install scripts only ever download release assets.
 
 ## Building and releasing
 
-The source is plain JavaScript under `skills/routr/scripts/`, run with Bun while developing
-(`bun skills/routr/scripts/routr.mjs doctor`). Releases are standalone binaries built with `bun build --compile`.
+The source is plain JavaScript under `src/`, run with Bun while developing
+(`bun src/routr.mjs doctor`). Releases are standalone binaries built with `bun build --compile`.
 
 Merging to `main` only runs the tests. **A release happens when a version tag is pushed, and only then:**
 
-1. Set the new version in `skills/routr/scripts/lib/version.mjs`, `package.json`, and the `version` line in
+1. Set the new version in `src/lib/version.mjs`, `package.json`, and the `version` line in
    `skills/routr/SKILL.md`. A test and the release workflow both refuse a mismatch. Merge that.
 2. `git tag v0.2.0 && git push origin v0.2.0`. For a pre-release use `v0.2.0-rc.1` (`-alpha.N`, `-beta.N`, `-rc.N`);
    the files keep the base version `0.2.0`.

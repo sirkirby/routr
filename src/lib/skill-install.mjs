@@ -3,11 +3,11 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import skillMd from "../../SKILL.md" with { type: "text" };
-import worker from "../../references/worker.md" with { type: "text" };
-import orchestrator from "../../references/orchestrator.md" with { type: "text" };
-import harnesses from "../../references/harnesses.md" with { type: "text" };
-import setup from "../../references/setup.md" with { type: "text" };
+import skillMd from "../../skills/routr/SKILL.md" with { type: "text" };
+import worker from "../../skills/routr/references/worker.md" with { type: "text" };
+import orchestrator from "../../skills/routr/references/orchestrator.md" with { type: "text" };
+import harnesses from "../../skills/routr/references/harnesses.md" with { type: "text" };
+import setup from "../../skills/routr/references/setup.md" with { type: "text" };
 
 const FILES = { "SKILL.md": skillMd, "references/worker.md": worker, "references/orchestrator.md": orchestrator, "references/harnesses.md": harnesses, "references/setup.md": setup };
 // Harnesses that read their own skills folder rather than the shared one. Codex and Cursor read ~/.agents/skills.

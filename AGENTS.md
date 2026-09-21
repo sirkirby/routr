@@ -19,7 +19,7 @@ measured questions about a brief or a worker report; code adds live usage; the l
 
 - Questions judge the WORK or the REPORT, never a model. They are narrow and literal, about what the text states.
 - A question's wording changes only with a measurement against the old wording on the same items, and a bumped
-  `VERSION` / `CHECK_VERSION` in `skills/routr/scripts/lib/questions.mjs`. Public summary: `docs/evidence.md`.
+  `VERSION` / `CHECK_VERSION` in `src/lib/questions.mjs`. Public summary: `docs/evidence.md`.
 - The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`) write nothing and fail open: any error
   still prints usable output and exits 0. Only `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `launch`,
   and `usage cursor` act (the last two drive herdr panes), and each says so.
@@ -30,8 +30,9 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - Usage is re-read on every call and never cached. A reserve is never offered.
 - Standard mechanisms only: skills, prompts, the harness's own CLI flags. No dependence on a harness's private
   environment variables or config internals beyond what `references/harnesses.md` records as observed.
-- The binary is self-contained: everything it needs lives under `skills/routr/` (the guides are embedded at build
-  time), and it MUST NOT depend on a repository checkout at run time. It reads the user's harness state read-only
+- The code lives in `src/` and compiles into the binary. `skills/routr/` holds exactly what is installed for agents
+  (`SKILL.md` and the guides) and no code.
+- The binary is self-contained: the guides under `skills/routr/` are embedded at build time, and it MUST NOT depend on a repository checkout at run time. It reads the user's harness state read-only
   (usage sources, settings, model lists) and writes only under `~/.config/routr`, `~/.cache/routr`,
   `~/.local/share/routr`, the skill folders on `skill install`, and temporary files it removes. One exception:
   `setup` sets `statusLine` in `~/.claude/settings.json` when there is none, after a backup, and never replaces one; `uninstall` removes that
@@ -44,7 +45,7 @@ measured questions about a brief or a worker report; code adds live usage; the l
 ## Quality gates
 
 - `bun test` MUST pass. Tests cover the pure parts and call no model and no harness.
-- A change to the guides or the CLI surface updates `lib/help.mjs` (one table drives all help text) and the guide
+- A change to the guides or the CLI surface updates `src/lib/help.mjs` (one table drives all help text) and the guide
   that mentions it; the launch prompt text in `references/orchestrator.md` is checked word for word by a test.
 - Installs are tested from a clean clone into a throwaway `HOME`, never from a working checkout: installers copy
   untracked files, including `.env`.
@@ -54,7 +55,7 @@ measured questions about a brief or a worker report; code adds live usage; the l
 ## Releasing
 
 Merging to `main` only runs tests. A release happens when a `vX.Y.Z` tag is pushed (`-alpha.N` / `-beta.N` / `-rc.N`
-for a pre-release); the version in `lib/version.mjs`, `package.json`, and the `version` line of
+for a pre-release); the version in `src/lib/version.mjs`, `package.json`, and the `version` line of
 `skills/routr/SKILL.md` MUST match the tag's base version. Commit subjects become the release notes: write them for a user. Details: `CONTRIBUTING.md`.
 
 ## Working style

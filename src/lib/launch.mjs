@@ -9,7 +9,7 @@ import { HARNESSES, plan } from "./harness.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
 // around it, so it points at the installed skill (written by the installer or `routr skill install`).
-const besideSource = fileURLToPath(new URL("../../references/worker.md", import.meta.url));
+const besideSource = fileURLToPath(new URL("../../skills/routr/references/worker.md", import.meta.url));
 export const WORKER_GUIDE = existsSync(besideSource) ? besideSource : join(homedir(), ".agents/skills/routr/references/worker.md");
 export function composePrompt(task, guide = WORKER_GUIDE) {
   return `You are a routr worker. Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
