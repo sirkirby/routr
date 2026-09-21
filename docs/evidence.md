@@ -1,4 +1,4 @@
-# What is measured
+# Evidence
 
 routr's claims rest on small evals run while it was built (2026-09). Sample sizes are small and most labels were
 written by the people building it; each entry says so. "Jev" is TypeSafe's System One model, pinned at `jev-1.13.0`.
@@ -28,23 +28,3 @@ written by the people building it; each entry says so. "Jev" is TypeSafe's Syste
 | Can each harness be launched unattended in a herdr pane? | the orchestrator's own check of each result | 4/4. Found on the way: folder-trust dialogs (Claude Code, Codex), shell start-up prompts that swallow the launch command, Antigravity having no skill mechanism and silently running its high variant when given both a model and an effort, Cursor's `--model` persisting as the account default |
 | Does a real lead, given only the skill, deliver across subscriptions? | three runs with an Opus lead; transcripts, ledger, and an independent re-check | All work delivered and verified, spread over four subscriptions. Left to itself the lead went above the advice on 5 of 7 briefs and set effort to high every time; after the guides said "start at the advice; go higher only on a fact", it stayed at the advice where no fact called for more, gave reasons where one did, and ran the judge loop (2 attempts on both pieces, recorded). One run after the change |
 | Are the usage numbers right? | each harness's own usage screen | Claude Code matches its usage page; Antigravity and Codex are read from the harness itself. A flat reserve made a subscription look spent a day before its reset, so the reserve now shrinks toward the reset |
-
-## Installing
-
-| Question | How it was checked | Result |
-|---|---|---|
-| Do the standalone binaries run with no runtime installed? | built with `bun build --compile` for five targets; run on macOS (arm64) with Node and Bun off the PATH, in an Ubuntu VM (arm64) likewise, and in a Windows 11 VM that has neither | Yes on all three: `--version`, `doctor`, fallback advice, `launch --dry-run`, `statusline`, `skill install`. macOS arm64 needs the binary signed (ad hoc is enough); unsigned, the system kills it. Not run: darwin-x64, linux-x64 |
-| Do the install scripts work? | `install.sh` piped from curl on macOS and Ubuntu, `install.ps1` piped from `irm` on Windows, each in a clean home, first against a local server standing in for GitHub releases, then against the real v0.1.0 release: macOS, Ubuntu (arm64), a Windows 11 ARM VM running the x64 binary under emulation, and a physical x64 Windows 11 machine | Binary installed to `~/.local/bin`, checksum verified, skill written to `~/.agents/skills/routr` and linked (copied on Windows) for Claude Code; a tampered checksum installs nothing. Found on the way: `launch` looked for the worker guide beside its source file, which does not exist in a binary |
-| Can an agent install it from the pasted instructions? | Claude Code (Sonnet) in a clean Ubuntu VM, given only the public INSTALL.md URL and the user's answers up front; every file it wrote was inspected afterwards | Yes, in about 2 minutes ($0.27): binary from the v0.1.0 release, skill installed, config with the requested reserve and a default model from the harness's list, `routr statusline` added to Claude's settings without disturbing existing hooks, MCP servers, or permissions, clean `doctor`. One run; an earlier run against a Bun-based version of the instructions also succeeded |
-| Does the Claude Code plugin marketplace install work? | from a clean local clone into a throwaway home | The plugin installs and registers the skill (about 114 tokens per session). Installing from a working checkout copies untracked files, including a `.env`: test from a clean clone |
-
-## Not measured
-
-- Whether choosing intelligence and reasoning effort separately, as the guides describe, gives better results.
-- How often real worker reports need to be sent back, and whether escalating one level fixes them. The ledger is
-  built to answer this from use.
-- On Windows: anything beyond install, `doctor`, advice, and the launch plan. No harness has been launched there.
-- The darwin-x64 and linux-x64 binaries: CI builds them and runs the linux-x64 one (`--version`), but no install was
-  tested on those platforms.
-- Usage pools routr cannot see: Claude's separate weekly limit for its largest model, and third-party models inside
-  Cursor and Antigravity (routr routes to each harness's own models).

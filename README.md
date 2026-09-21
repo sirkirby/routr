@@ -2,19 +2,26 @@
 
 ![routr: one lead agent plans and decides, then hands work to Claude Code, Codex, Cursor, and Antigravity workers](assets/routr-banner.png)
 
-routr helps one coding agent run a team of others across the AI subscriptions you already pay for: Claude Code,
-Codex, Cursor, and Antigravity. It pairs with [herdr](https://github.com/herdrdev/herdr), which provides the panes
-the workers run in, and is named after it.
+routr lets one coding agent run a team of others across the AI subscriptions you already pay for: Claude Code,
+Codex, Cursor, and Antigravity.
+
+**It uses what is already on your machine.** The workers are the harness CLIs you have installed and logged in to,
+started in [herdr](https://github.com/herdrdev/herdr) panes (routr is named after it). There are no provider API
+keys to hand over, no proxy, and no new accounts: your subscriptions, your logins, your settings. The one key routr
+needs is for its own decision model.
+
+**The quick decisions come from a model built for them.** Each time the lead is about to hand out work, and again
+when the work comes back, a System One model ([TypeSafe's Jev](https://docs.typesafe.ai)) reads the text in about
+300 ms and returns calibrated yes-or-no facts, the same way every time. Code adds each subscription's live usage.
+The lead agent, your smartest model, stays the judge.
 
 A long task on one subscription runs it hot, and an agent left to itself gives every subagent its own, largest
-model. routr spreads the work instead. The lead agent stays the judge. routr gives it the same fast, consistent
-read every time it is about to hand out work, and again when the work comes back.
+model. routr spreads the work across what you have, and starts each piece at the level it needs.
 
 ## The loop
 
-1. **Plan.** The lead asks `routr dispatch "<brief>"`. A small decision model
-   ([TypeSafe's Jev](https://docs.typesafe.ai)) reads the brief in about 300 ms and answers a fixed set of narrow
-   questions. Code adds each subscription's live usage. routr never names a model.
+1. **Plan.** The lead asks `routr dispatch "<brief>"` and gets a fixed set of narrow facts about the brief, plus
+   each subscription's usable headroom. routr never names a model.
 2. **Build.** The lead picks the subscription, the model, and the reasoning effort, and `routr launch` starts the
    worker in a herdr pane with that harness's flags, handling shell prompts and trust dialogs on the way.
 3. **Judge.** When the worker reports, `routr check` takes a first read of the report against the brief. The lead
@@ -114,13 +121,13 @@ Usage is read live for Claude Code (through `routr statusline`, set up as Claude
 Antigravity. Cursor has no local source; the orchestrator reads its `/usage` panel through a pane and passes the
 number in. Usage is re-read on every call and never cached.
 
-## What is measured, and what is not
+## Evidence
 
-[docs/evidence.md](docs/evidence.md) lists what has been measured and how. In short: the facts are decisive and
-stable, the judge questions separate good reports from flawed ones, workers on all four harnesses follow the skill,
-and three end-to-end runs with a real lead delivered verified work across subscriptions. Predicting the right
-capability level from a brief alone is not reliable, which is why routr is built around the loop rather than the
-prediction. routr does not estimate or manage context; harnesses own that.
+[docs/evidence.md](docs/evidence.md) shows how the decisions and the scoring were measured. In short: the facts
+routr reads from a brief are decisive and come out the same every time; the level is right on 61 of 68 labelled
+briefs; the judge questions separate good worker reports from flawed ones; workers on all four harnesses follow the
+skill; and end-to-end runs with a real lead delivered verified work across subscriptions. routr does not estimate
+or manage context; harnesses own that.
 
 ## Contributing
 
