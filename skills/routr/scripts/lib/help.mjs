@@ -95,6 +95,16 @@ export const COMMANDS = {
       { name: "--json", arg: null, description: "output JSON instead of text", required: false, default: false },
     ],
   },
+  uninstall: {
+    name: "uninstall",
+    description: "remove routr from this machine: the binary, the skill, the cache, and its Claude statusline entry. Keeps your config, key, and ledger unless you say otherwise. Shows the plan and asks first",
+    flags: [
+      { name: "--purge", description: "also remove your config, TypeSafe key, and ledger", required: false },
+      { name: "--yes", description: "ask nothing (needed when there is no terminal)", required: false },
+      { name: "--dry-run", description: "show what would be removed and kept", required: false },
+      { name: "--json", arg: null, description: "output JSON instead of text", required: false, default: false },
+    ],
+  },
   doctor: {
     name: "doctor",
     description: "check the setup and list what to do next; changes nothing",

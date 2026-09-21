@@ -738,7 +738,7 @@ test("the symptom-patch answer is ignored on work that is not a fix", () => {
 });
 
 test("help table covers every command the CLI dispatches", () => {
-  const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "setup", "check", "record", "assess", "share", "update", "statusline", "skill", "key"];
+  const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "setup", "uninstall", "check", "record", "assess", "share", "update", "statusline", "skill", "key"];
   expect(Object.keys(COMMANDS).sort()).toEqual(dispatched.sort());
 
   // Every command has a valid description, non-empty synopsis, and flags/args
@@ -1344,4 +1344,33 @@ test("setup searches a long model list instead of printing it", async () => {
   expect((await drive(["grok 4.7 low"])).got).toBe("cursor-grok-4.7-low"); // a single match is taken
   expect((await drive(["vendor", "zzz", ""])).got).toBeUndefined();        // too many, then none, then Enter: left to the lead
   expect((await drive(["2"], ["a", "b"])).got).toBe("b");                  // a short list is printed and picked by number
+});
+
+test("routr uninstall keeps the user's data unless purged, unlinks a linked skill, and removes only its own statusline", async () => {
+  const { uninstallPlan } = await import("../skills/routr/scripts/lib/uninstall.mjs");
+  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const home = mkdtempSync(join(tmpdir(), "routr-un-"));
+  const checkout = join(home, "checkout"); mkdirSync(checkout); writeFileSync(join(checkout, "SKILL.md"), "mine");
+  for (const d of [".config/routr", ".local/share/routr", ".cache/routr", ".agents/skills/routr", ".claude/skills"]) mkdirSync(join(home, d), { recursive: true });
+  writeFileSync(join(home, ".config/routr/config.json"), "{}");
+  writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ model: "opus", statusLine: { type: "command", command: "/x/routr statusline" } }));
+  const linked = process.platform !== "win32";
+  if (linked) (await import("node:fs")).symlinkSync(checkout, join(home, ".claude/skills/routr"), "dir");
+  expect(uninstallPlan({ home }).keep.length).toBe(2);
+  expect(uninstallPlan({ home, purge: true }).keep.length).toBe(0);
+  const env = { ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "" };
+  expect(Bun.spawnSync([process.execPath, script, "uninstall"], { env, stdin: Buffer.from("") }).exitCode).toBe(1); // no terminal and no --yes: refuses
+  expect(Bun.spawnSync([process.execPath, script, "uninstall", "--dry-run"], { env }).exitCode).toBe(0);
+  expect(existsSync(join(home, ".cache/routr"))).toBe(true);
+  expect(Bun.spawnSync([process.execPath, script, "uninstall", "--yes"], { env }).exitCode).toBe(0);
+  expect(existsSync(join(home, ".agents/skills/routr"))).toBe(false);
+  expect(existsSync(join(home, ".cache/routr"))).toBe(false);
+  expect(existsSync(join(home, ".config/routr/config.json"))).toBe(true);
+  if (linked) expect(readFileSync(join(checkout, "SKILL.md"), "utf8")).toBe("mine");    // the link went, its target did not
+  expect(JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8"))).toEqual({ model: "opus" });
+  expect(Bun.spawnSync([process.execPath, script, "uninstall", "--yes", "--purge"], { env }).exitCode).toBe(0);
+  expect(existsSync(join(home, ".config/routr"))).toBe(false);
+  // Someone else's statusline is not ours to remove.
+  writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ statusLine: { command: "~/mine.sh" } }));
+  expect(uninstallPlan({ home }).statusline).toBe(false);
 });
