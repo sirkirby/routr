@@ -95,15 +95,20 @@ export async function readCodexLive() {
 // Antigravity: `/usage` in print mode is answered without an agent turn (0 tokens, ~2 s). It reports two pools;
 // routr routes to the harness's OWN models, so only the pool named for Gemini counts.
 export async function readAgy() {
-  const out = await run("agy", ["-p", "/usage", "--output-format", "json"], { timeoutMs: 8000 });
-  try {
-    const groups = JSON.parse(out).command.data.groups;
-    const named = groups.find((g) => /gemini/i.test(g.name));
-    const own = named ?? groups[0];
-    const mins = { weekly: 10080, "5h": 300 };
-    const ws = own.buckets.map((b) => ({ name: b.id, usedPct: (1 - b.remaining_fraction) * 100, windowMin: mins[b.window] ?? 0, resetsAt: Date.parse(b.reset_time) / 1000 }));
-    return summarize("agy", "agy /usage", now(), ws, `pool: ${own.name}${named ? "" : " (no pool named for Gemini; using the first listed)"}`);
-  } catch { return summarize("agy", "agy /usage", null, [], "could not read `agy -p /usage`"); }
+  // Measured: the command answers in ~2 s, but about one call in six hangs. A short timeout and one retry turn that
+  // into a rare failure instead of a common one; two hangs in a row are reported, never papered over.
+  for (const timeoutMs of [4000, 5000]) {
+    const out = await run("agy", ["-p", "/usage", "--output-format", "json"], { timeoutMs });
+    try {
+      const groups = JSON.parse(out).command.data.groups;
+      const named = groups.find((g) => /gemini/i.test(g.name));
+      const own = named ?? groups[0];
+      const mins = { weekly: 10080, "5h": 300 };
+      const ws = own.buckets.map((b) => ({ name: b.id, usedPct: (1 - b.remaining_fraction) * 100, windowMin: mins[b.window] ?? 0, resetsAt: Date.parse(b.reset_time) / 1000 }));
+      return summarize("agy", "agy /usage", now(), ws, `pool: ${own.name}${named ? "" : " (no pool named for Gemini; using the first listed)"}`);
+    } catch {}
+  }
+  return summarize("agy", "agy /usage", null, [], "`agy -p /usage` did not answer in two tries; using the assumed headroom");
 }
 
 const READERS = { claude: readClaude, codex: readCodexLive, agy: readAgy };

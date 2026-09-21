@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { HARNESSES, plan } from "./harness.mjs";
@@ -107,7 +107,11 @@ export function parseLaunchArgs(args) {
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
-    if (!args[i].startsWith("--") || (!values.includes(key) && key !== "dry-run")) throw new Error(`Unknown launch option: ${args[i]}`);
+    if (!args[i].startsWith("--") || (!values.includes(key) && key !== "dry-run" && key !== "copy")) throw new Error(`Unknown launch option: ${args[i]}`);
+    if (key === "copy") {
+      if (!args[i + 1]?.trim() || /^-\S/.test(args[i + 1])) throw new Error("--copy requires a path");
+      (o.copy ??= []).push(args[++i]); continue;
+    }
     if (seen.has(key)) throw new Error(`Repeated launch option: --${key}`);
     seen.add(key);
     if (key === "dry-run") { o.dryRun = true; continue; }
@@ -117,6 +121,8 @@ export function parseLaunchArgs(args) {
   }
   if (!Object.hasOwn(HARNESSES, o.kind)) throw new Error("--kind must be claude, codex, cursor, or agy");
   if (o.worktree && o.pane) throw new Error("--worktree creates its own pane; do not pass --pane with it");
+  if (o.copy && !o.worktree) throw new Error("--copy only makes sense with --worktree");
+  for (const c of o.copy ?? []) if (isAbsolute(c) || c.split(/[\\/]/).includes("..")) throw new Error("--copy takes paths inside the repository, relative to --cwd");
   if (o.worktree && !/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,80}$/.test(o.worktree)) throw new Error("--worktree must be a plain branch name");
   if (!/^[a-z][a-z0-9_-]{0,31}$/.test(o.name ?? "")) throw new Error("--name must match [a-z][a-z0-9_-]{0,31}");
   if (!["ask", "auto"].includes(o.trust)) throw new Error("--trust must be ask or auto");
@@ -259,6 +265,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       chmodSync(join(configDir, "cli-config.json"), 0o600);
       step("cursor_config", true, `Private config at ${configDir}; the launch shell removes it when Cursor exits`);
     }
+    const repoCwd = out.cwd;
     if (!out.pane && o.worktree) {
       // The rule for workers: each gets its own git worktree. herdr opens it as a workspace NESTED under the repository
       // in the sidebar, so the lead's tab stays clean and even a read-only worker cannot touch the main checkout.
@@ -270,6 +277,14 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       out.pane = w.root_pane.pane_id; out.cwd = w.worktree.path;
       out.worktree = { branch: o.worktree, path: w.worktree.path, workspace: w.workspace?.workspace_id ?? null };
       step("worktree", true, `Created ${out.cwd} on branch ${o.worktree}, workspace ${out.worktree.workspace}, pane ${out.pane}`);
+      // A worktree holds tracked files only. --copy brings named untracked files or folders (a local config, test data)
+      // across from the main checkout, at the same relative path.
+      for (const rel of o.copy ?? []) {
+        const from = join(repoCwd, rel), to = join(out.cwd, rel);
+        if (!existsSync(from)) { out.warnings.push(`--copy ${rel}: not found in ${repoCwd}; skipped`); continue; }
+        mkdirSync(dirname(to), { recursive: true }); cpSync(from, to, { recursive: true });
+        step("copy", true, `Copied ${rel} into the worktree`);
+      }
     }
     if (!out.pane) {
       let direction = o.direction;
