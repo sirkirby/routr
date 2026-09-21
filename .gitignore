@@ -6,10 +6,5 @@ node_modules/
 *.log
 test/.*
 
-# The lab: working notes, prototypes, eval runners, raw results, and the measured ledger stay local. They hold local paths and
-# data sampled from private session history. What they taught us lives in EVALS.md and docs/.
-prototypes/
-results/
-ledger/
-lab/
+# Build output (release binaries are built by .github/workflows/release.yml)
 dist/
