@@ -17,6 +17,10 @@ export function composePrompt(task, guide = WORKER_GUIDE) {
 
 export const quote = (s) => /^[a-zA-Z0-9_./:=@+-]+$/.test(s) ? s : `'${String(s).replaceAll("'", "'\\''")}'`;
 const command = (args) => ["herdr", ...args].map(quote).join(" ");
+// The command log is printed and may be stored by whoever called launch: it carries the prompt's length, never its
+// text (the brief must not be printed, logged, or stored).
+const PANE_WITHHELD = "withheld: the prompt was already submitted, so the pane shows the task. Read the pane yourself.";
+const promptForLog = (args) => command(args.map((a, i) => (args[0] === "agent" && args[1] === "prompt" && i === 3 ? `<prompt: ${String(a).length} chars>` : a)));
 // Polling repeats the same read; record it once with a count so the result stays readable.
 export function logCommand(log, text) {
   const last = log.at(-1);
@@ -163,7 +167,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
   let configDir, createdPane = false, startAttempted = false, touchedPane = false, promptAttempted = false;
   const human = (why, text) => {
-    out.ok = false; out.state = "needs_human"; out.needs_human = { why, pane_text: text }; step("needs_human", false, why); return out;
+    out.ok = false; out.state = "needs_human"; out.needs_human = { why, pane_text: promptAttempted ? PANE_WITHHELD : text }; step("needs_human", false, why); return out;
   };
   try {
     const o = parseLaunchArgs(args);
@@ -199,7 +203,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         command(["pane", "read", pane, "--source", "visible"]),
         command(["agent", "get", pane]),
         ...(o.kind === "cursor" ? [command(["agent", "rename", pane, o.name])] : []),
-        ...(prompt ? [command(promptArgs(pane, Math.max(1, Math.min(Math.floor(o.timeout / 2), 30000)))), command(["agent", "get", pane])] : []),
+        ...(prompt ? [promptForLog(promptArgs(pane, Math.max(1, Math.min(Math.floor(o.timeout / 2), 30000)))), command(["agent", "get", pane])] : []),
       ];
       step("plan", true, "No commands executed or files written. Pane ids, geometry, polling, timeouts, shell questions and trust options are resolved at launch.");
       return { ...out, ok: true, state: "planned" };
@@ -361,7 +365,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       if (budget < 2) throw new Error("No time left to submit and verify the prompt");
       const submitMs = Math.min(30000, Math.floor(budget / 2));
       const a = promptArgs(out.pane, submitMs);
-      logCommand(out.command, command(a));
+      logCommand(out.command, promptForLog(a));
       promptAttempted = true;
       const r = await run(a, Math.min(budget, submitMs + Math.min(1000, Math.floor((budget - submitMs) / 2))));
       const got = await call(["agent", "get", out.pane]);
@@ -390,7 +394,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         logCommand(out.command, command(a));
         const tail = clean(paneText((await run(a, 1000)).data))
           .split("\n").filter((l) => l.trim()).slice(-8).map((l) => (l.length > 200 ? `${l.slice(0, 200)}…` : l)).join("\n");
-        if (tail) out.pane_text = tail;
+        if (tail) out.pane_text = promptAttempted ? PANE_WITHHELD : tail; // once the prompt is on the pane, its text is the brief
       } catch {}
     }
   } finally {

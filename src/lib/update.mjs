@@ -3,7 +3,7 @@
 // rows stay comparable, and a tool that swaps its own binary unasked is a supply-chain risk.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ROUTR_VERSION } from "./version.mjs";
@@ -50,18 +50,15 @@ export async function update({ checkOnly = false, force = false, base = process.
     const got = createHash("sha256").update(bin).digest("hex");
     if (!want || want !== got) throw new Error(`checksum mismatch for ${asset}; nothing was changed`);
 
-    const self = process.execPath, fresh = `${self}.new`, old = `${self}.old`;
-    writeFileSync(fresh, bin); chmodSync(fresh, 0o755);
-    rmSync(old, { force: true });
-    // A running binary can be renamed on every system, but on Windows it cannot be overwritten: move it aside first.
-    renameSync(self, old); renameSync(fresh, self);
-    try { rmSync(old, { force: true }); } catch {} // Windows keeps it locked until this process exits; the next update removes it
+    swapBinary(process.execPath, bin);
     const v = spawnSync(self, ["--version"], { encoding: "utf8" });
     out.now = (v.stdout ?? "").trim() || null;
     const skill = spawnSync(self, ["skill", "install"], { encoding: "utf8" });
     return { ...out, ok: true, updated: true, skill_reinstalled: skill.status === 0, note: `updated ${ROUTR_VERSION} → ${out.now ?? out.latest}` };
   } catch (e) {
-    return { ...out, ok: false, error: String(e?.message ?? e).slice(0, 200), note: "Nothing was changed. You can also re-run the install command from the README." };
+    // Say what is true: after a failed swap the old binary was put back, unless that failed too.
+    const intact = existsSync(process.execPath);
+    return { ...out, ok: false, error: String(e?.message ?? e).slice(0, 200), note: intact ? "Nothing was changed. You can also re-run the install command from the README." : `routr is no longer at ${process.execPath}: the previous binary is beside it as routr.old. Re-run the install command from the README.` };
   }
 }
 
@@ -69,6 +66,26 @@ export async function update({ checkOnly = false, force = false, base = process.
 // A normal command only looks at one file's age. When the last check is more than a day old it starts a DETACHED
 // updater and carries on; it never waits for it and makes no network call itself. The updater swaps the binary in
 // place, so a run already in progress keeps the binary it started with and the next run gets the new one.
+// A lock is only taken over when its owner is gone: age alone would let a slow download be overlapped by a second swap.
+// A lock with no readable pid (written by an older routr) falls back to age.
+export function lockIsStale(file, { alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } } } = {}) {
+  const pid = Number(readFileSync(file, "utf8").trim());
+  if (Number.isInteger(pid) && pid > 0) return !alive(pid);
+  return Date.now() - statSync(file).mtimeMs >= 10 * 60 * 1000;
+}
+
+// Put `bin` where `self` is. A running binary can be renamed on every system, but on Windows it cannot be overwritten,
+// so it is moved aside first. If the new file cannot be moved in, the old one goes back: never leave no binary.
+export function swapBinary(self, bin, { rename = renameSync } = {}) {
+  const fresh = `${self}.new`, old = `${self}.old`;
+  writeFileSync(fresh, bin); chmodSync(fresh, 0o755);
+  rmSync(old, { force: true });
+  rename(self, old);
+  try { rename(fresh, self); }
+  catch (e) { try { renameSync(old, self); } catch {} try { rmSync(fresh, { force: true }); } catch {} throw e; }
+  try { rmSync(old, { force: true }); } catch {} // Windows keeps it locked until this process exits; the next update removes it
+}
+
 const CACHE = () => join(homedir(), ".cache/routr");
 const STAMP = () => join(CACHE(), "update-check");     // its mtime is the time of the last check
 const LOCK = () => join(CACHE(), "update.lock");
@@ -93,7 +110,8 @@ export async function backgroundUpdate() {
   mkdirSync(CACHE(), { recursive: true });
   let fd;
   try { fd = openSync(LOCK(), "wx"); } // one updater at a time
-  catch { try { if (Date.now() - statSync(LOCK()).mtimeMs < 10 * 60 * 1000) return; rmSync(LOCK(), { force: true }); fd = openSync(LOCK(), "wx"); } catch { return; } }
+  catch { try { if (!lockIsStale(LOCK())) return; rmSync(LOCK(), { force: true }); fd = openSync(LOCK(), "wx"); } catch { return; } }
+  try { writeSync(fd, String(process.pid)); } catch {}
   try {
     writeFileSync(STAMP(), new Date().toISOString() + "\n"); // first, so a failing check is not retried on every command
     const r = await update({});

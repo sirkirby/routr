@@ -101,11 +101,13 @@ export async function readAgy() {
     const out = await run("agy", ["-p", "/usage", "--output-format", "json"], { timeoutMs });
     try {
       const groups = JSON.parse(out).command.data.groups;
-      const named = groups.find((g) => /gemini/i.test(g.name));
-      const own = named ?? groups[0];
+      // Only the Gemini pool is the subscription's own. With none named, the usage is unknown: another pool's numbers
+      // presented as live headroom would steer work on a guess.
+      const own = groups.find((g) => /gemini/i.test(g.name));
+      if (!own) return summarize("agy", "agy /usage", null, [], "`agy /usage` lists no Gemini pool; using the assumed headroom");
       const mins = { weekly: 10080, "5h": 300 };
       const ws = own.buckets.map((b) => ({ name: b.id, usedPct: (1 - b.remaining_fraction) * 100, windowMin: mins[b.window] ?? 0, resetsAt: Date.parse(b.reset_time) / 1000 }));
-      return summarize("agy", "agy /usage", now(), ws, `pool: ${own.name}${named ? "" : " (no pool named for Gemini; using the first listed)"}`);
+      return summarize("agy", "agy /usage", now(), ws, `pool: ${own.name}`);
     } catch {}
   }
   return summarize("agy", "agy /usage", null, [], "`agy -p /usage` did not answer in two tries; using the assumed headroom");

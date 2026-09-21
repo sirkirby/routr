@@ -6,8 +6,8 @@ import { copyFileSync, lstatSync, readFileSync, renameSync, rmSync, unlinkSync, 
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { isOurStatusline } from "./statusline.mjs";
 
-const OURS = /routr(\.exe)?"? statusline/; // only a statusline that setup (or the guide) pointed at routr
 
 // What would be removed, as data: a test can check the plan without touching a disk.
 export function uninstallPlan({ home = homedir(), purge = false, binary = null } = {}) {
@@ -19,7 +19,7 @@ export function uninstallPlan({ home = homedir(), purge = false, binary = null }
   (purge ? remove : keep).push(...data);
   const present = (l) => l.filter((x) => { try { lstatSync(x.path); return true; } catch { return false; } });
   let statusline = false;
-  try { statusline = OURS.test(JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8")).statusLine?.command ?? ""); } catch {}
+  try { statusline = isOurStatusline(JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8")).statusLine?.command); } catch {}
   return { remove: present(remove), keep: present(keep), statusline };
 }
 
@@ -49,17 +49,22 @@ export async function uninstall(args, { home = homedir() } = {}) {
 
   const removed = [], failed = [];
   if (plan.statusline) try {
+    // Read again now: the plan may be minutes old (a person was asked), and the entry may have been replaced since.
     const file = join(home, ".claude/settings.json"), settings = JSON.parse(readFileSync(file, "utf8"));
-    copyFileSync(file, `${file}.bak-before-routr-uninstall`);
-    delete settings.statusLine;
-    writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
-    removed.push("the statusline entry in ~/.claude/settings.json");
+    if (isOurStatusline(settings.statusLine?.command)) {
+      copyFileSync(file, `${file}.bak-before-routr-uninstall`);
+      delete settings.statusLine;
+      writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+      removed.push("the statusline entry in ~/.claude/settings.json");
+    }
   } catch (e) { failed.push(`~/.claude/settings.json: ${String(e?.message ?? e).slice(0, 100)}`); }
   for (const x of plan.remove) {
     try {
       if (x.path === process.execPath && process.platform === "win32") {
         // Windows will not delete a running program. Move it aside (allowed), then a detached `cmd` deletes it once we exit.
         const aside = `${x.path}.old`; rmSync(aside, { force: true }); renameSync(x.path, aside);
+        // The name goes into a `cmd` line unquoted, so only a plain one is allowed there; anything else is left for the user.
+        if (!/^[\w.-]+$/.test(basename(aside))) throw new Error(`moved aside as ${aside}; delete that file yourself`);
         // Run from the binary's folder with a bare file name: a quoted path does not survive argument quoting on its way to `cmd` (seen: the file stayed).
         spawn("cmd", ["/c", `ping -n 4 127.0.0.1 >nul & del /f /q ${basename(aside)}`], { cwd: dirname(aside), detached: true, stdio: "ignore", windowsHide: true }).unref();
       } else removePath(x.path);

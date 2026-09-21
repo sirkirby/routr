@@ -1,9 +1,9 @@
 // The run ledger: one JSON line per piece of work handed out: what routr advised, what the agent chose, how it turned
 // out. It is how routr's questions get judged against real work instead of dedicated experiments.
-// `routr record` is the ONLY command that writes anything; the advice commands stay side-effect free.
+// `routr record` is the only command that writes the ledger; the advice commands stay side-effect free.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { LEVELS } from "./questions.mjs";
 
 // The ledger is one file per user, shared by every project on the machine. Each row is labelled with its project so
@@ -187,6 +187,7 @@ export function assess(entries, config = null) {
 }
 
 // For the people tuning routr's questions (the lab), not for a user's report: where does the ADVISED level look wrong?
+// Nothing in this repository calls it: the private workbench imports it, so the review reads rows exactly as routr writes them.
 export function levelReview(entries) {
   const flags = [];
   for (const L of LEVELS) {

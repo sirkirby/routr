@@ -18,6 +18,9 @@ try {
   $got = (Get-FileHash "$tmp\$asset" -Algorithm SHA256).Hash.ToLower()
   if (-not $want -or $want -ne $got) { throw "routr: checksum mismatch for $asset; nothing was installed" }
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  # Windows will not overwrite a program that is running (an agent may be using routr right now): move it aside first.
+  # routr removes routr.exe.old on a later run.
+  if (Test-Path "$dir\routr.exe") { Remove-Item -Force "$dir\routr.exe.old" -ErrorAction SilentlyContinue; Move-Item -Force "$dir\routr.exe" "$dir\routr.exe.old" }
   Move-Item -Force "$tmp\$asset" "$dir\routr.exe"
   $version = & "$dir\routr.exe" --version
   Write-Host "routr: installed $version to $dir\routr.exe"

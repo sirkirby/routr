@@ -54,7 +54,7 @@ export const COMMANDS = {
     description: "write a file of your outcomes (no briefs, notes, or anything identifying) to attach to a GitHub issue; sends nothing",
     flags: [
       { name: "--with-models", description: "include the model names you chose", required: false },
-      { name: "--out", arg: "<file>", description: "where to write it", required: false, default: "./routr-ledger-<date>.jsonl" },
+      { name: "--out", arg: "<file>", description: "where to write it", required: false, default: "~/.local/share/routr/routr-ledger-<date>.jsonl" },
       { name: "--ledger", arg: "<path>", description: "ledger to read", required: false, default: "~/.local/share/routr/ledger.jsonl" },
     ],
   },

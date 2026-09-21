@@ -1375,3 +1375,70 @@ test("routr uninstall keeps the user's data unless purged, unlinks a linked skil
   writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ statusLine: { command: "~/mine.sh" } }));
   expect(uninstallPlan({ home }).statusline).toBe(false);
 });
+
+// ---- Findings from the independent review (2026-09-21) ----
+
+test("launch never puts the brief in its result: not in the command log, not in a dry run", async () => {
+  const { launch } = await import("../src/lib/launch.mjs");
+  const secret = "REFACTOR-THE-PAYMENTS-LEDGER-7731";
+  const r = await launch(["--kind", "codex", "--name", "w", "--cwd", process.cwd(), "--worktree", "b", "--model", "m", "--task", `Do this: ${secret}`, "--dry-run"]);
+  expect(r.prompt_chars).toBeGreaterThan(secret.length);
+  expect(JSON.stringify(r)).not.toContain(secret);
+  expect(r.planned_command.join("\n")).toContain("<prompt: ");
+});
+
+test("a failed binary swap puts the old binary back", async () => {
+  const { swapBinary } = await import("../src/lib/update.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "routr-swap-")), self = join(dir, "routr");
+  writeFileSync(self, "old");
+  let calls = 0;
+  const failSecond = (a, b) => { if (++calls === 2) throw new Error("locked"); (require("node:fs")).renameSync(a, b); };
+  expect(() => swapBinary(self, Buffer.from("new"), { rename: failSecond })).toThrow("locked");
+  expect(readFileSync(self, "utf8")).toBe("old");
+  expect(existsSync(`${self}.new`)).toBe(false);
+  swapBinary(self, Buffer.from("new"));
+  expect(readFileSync(self, "utf8")).toBe("new");
+});
+
+test("an update lock is taken over only when its owner is gone", async () => {
+  const { lockIsStale } = await import("../src/lib/update.mjs");
+  const f = join(mkdtempSync(join(tmpdir(), "routr-lock-")), "update.lock");
+  writeFileSync(f, String(process.pid));
+  expect(lockIsStale(f)).toBe(false);                                    // we are alive
+  expect(lockIsStale(f, { alive: () => false })).toBe(true);
+  writeFileSync(f, "");                                                  // a lock from an older routr: no pid, fresh
+  expect(lockIsStale(f)).toBe(false);
+});
+
+test("a config share outside 0..1 is reported and replaced: a negative reserve must not create capacity", () => {
+  const f = join(mkdtempSync(join(tmpdir(), "routr-cfg-")), "config.json");
+  writeFileSync(f, JSON.stringify({ sure_at: 7, subscriptions: { claude: { reserve: -1, assumed_headroom: 2 }, codex: { reserve: 0.2 } } }));
+  const { config, notes } = loadConfig(f);
+  expect(config.sure_at).toBe(DEFAULTS.sure_at);
+  expect(config.subscriptions.claude.reserve).toBe(0);
+  expect(config.subscriptions.claude.assumed_headroom).toBe(0.5);
+  expect(config.subscriptions.codex.reserve).toBe(0.2);
+  expect(notes.length).toBe(3);
+});
+
+test("only routr's own statusline counts as ours", async () => {
+  const { isOurStatusline } = await import("../src/lib/statusline.mjs");
+  for (const c of ["/home/u/.local/bin/routr statusline", '"C:\\Users\\u\\.local\\bin\\routr.exe" statusline', "routr statusline", "~/.claude/claude-statusline-usage.sh"]) expect(isOurStatusline(c)).toBe(true);
+  for (const c of ["myroutr statusline", "~/mine.sh", "routr-statusline-fork", "", undefined]) expect(isOurStatusline(c)).toBe(false);
+});
+
+test("record --project labels the row, assess answers on an unreadable ledger, and share never writes into the current folder", () => {
+  const script = `${import.meta.dir}/../src/routr.mjs`;
+  const home = mkdtempSync(join(tmpdir(), "routr-cli-")), work = join(home, "work"); mkdirSync(work);
+  const env = { ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "", ROUTR_NO_UPDATE: "1" };
+  const advice = JSON.stringify({ id: "a1", mode: "dispatch", level: "basic", sure: true, facts: {} });
+  const rec = Bun.spawnSync([process.execPath, script, "record", "--subscription", "codex", "--model", "m", "--effort", "low", "--verdict", "done", "--check", "pass", "--project", "other"], { env, cwd: work, stdin: Buffer.from(advice) });
+  expect(rec.exitCode).toBe(0);
+  expect(JSON.parse(readFileSync(join(home, ".local/share/routr/ledger.jsonl"), "utf8").trim()).project).toBe("other");
+  expect(Bun.spawnSync([process.execPath, script, "share"], { env, cwd: work }).exitCode).toBe(0);
+  expect(readdirSync(work)).toEqual([]);
+  expect(readdirSync(join(home, ".local/share/routr")).some((f) => f.startsWith("routr-ledger-"))).toBe(true);
+  const bad = Bun.spawnSync([process.execPath, script, "assess", "--ledger", home], { env, cwd: work }); // a folder, not a file
+  expect(bad.exitCode).toBe(0);
+  expect(bad.stdout.toString()).toContain("could not read the ledger");
+});
