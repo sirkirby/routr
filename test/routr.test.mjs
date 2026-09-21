@@ -109,7 +109,7 @@ test("launch prompt preserves the required opening, task with verification, and 
   const task = "TASK\nFix the parser. Work only in /work.\n\nHOW TO VERIFY\nbun test";
   const prompt = composePrompt(task);
   const doc = readFileSync(new URL("../skills/routr/references/orchestrator.md", import.meta.url), "utf8");
-  const opening = doc.match(/       You are a routr worker\.[\s\S]*?orchestrator parses\./)[0].trim().replace(/\s*\n\s*/g, " ").replace("<routr skill folder>/references/worker.md", WORKER_GUIDE);
+  const opening = doc.match(/       You are a routr worker\.[\s\S]*?orchestrator parses\./)[0].trim().replace(/\s*\n\s*/g, " ").replace("~/.agents/skills/routr/references/worker.md", WORKER_GUIDE);
   expect(isAbsolute(WORKER_GUIDE)).toBe(true);
   expect(prompt).toBe(`${opening}\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`);
 });
