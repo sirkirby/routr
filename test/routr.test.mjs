@@ -881,10 +881,14 @@ test("worth a worker: tiny work stays with the agent, a user decision comes firs
   expect(advise(fact(ans(1, 1), { tiny: 0.5 }), cfg()).worker.suggestion).toBe("worth a worker");
 });
 
-test("the version inside the skill matches the plugin manifest (the manifest is not installed with the skill)", async () => {
+test("every manifest and the skill carry the same version as the binary", async () => {
   const { ROUTR_VERSION } = await import("../skills/routr/scripts/lib/version.mjs");
-  const { readFileSync } = await import("node:fs");
-  expect(JSON.parse(readFileSync(`${import.meta.dir}/../.claude-plugin/plugin.json`, "utf8")).version).toBe(ROUTR_VERSION);
+  const root = `${import.meta.dir}/..`;
+  for (const f of ["plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json", ".cursor-plugin/plugin.json", "package.json"])
+    expect([f, JSON.parse(readFileSync(`${root}/${f}`, "utf8")).version]).toEqual([f, ROUTR_VERSION]);
+  expect(JSON.parse(readFileSync(`${root}/.claude-plugin/marketplace.json`, "utf8")).plugins[0].version).toBe(ROUTR_VERSION);
+  expect(readFileSync(`${root}/skills/routr/SKILL.md`, "utf8")).toContain(`version: "${ROUTR_VERSION}"`);
+  expect(JSON.parse(readFileSync(`${root}/plugin.json`, "utf8")).$schema).toContain("agent-plugins.org");
 });
 
 test("routr skill install writes the guides and links them for Claude Code", async () => {

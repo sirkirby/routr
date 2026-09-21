@@ -35,7 +35,10 @@ jobs:
           # The version lives in two files; both must carry the tag's base version, so `routr --version` is honest.
           BASE="${VERSION%%-*}"
           grep -q "\"$BASE\"" skills/routr/scripts/lib/version.mjs || { echo "lib/version.mjs does not say $BASE" >&2; exit 1; }
-          grep -q "\"version\": \"$BASE\"" .claude-plugin/plugin.json || { echo ".claude-plugin/plugin.json does not say $BASE" >&2; exit 1; }
+          for f in plugin.json .claude-plugin/plugin.json .codex-plugin/plugin.json .cursor-plugin/plugin.json; do
+            grep -q "\"version\": \"$BASE\"" "$f" || { echo "$f does not say $BASE" >&2; exit 1; }
+          done
+          grep -q "version: \"$BASE\"" skills/routr/SKILL.md || { echo "skills/routr/SKILL.md does not say $BASE" >&2; exit 1; }
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if [[ "$VERSION" == *-* ]]; then echo "is_prerelease=true" >> "$GITHUB_OUTPUT"; else echo "is_prerelease=false" >> "$GITHUB_OUTPUT"; fi

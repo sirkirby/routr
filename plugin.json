@@ -1,4 +1,5 @@
 {
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "routr",
   "version": "0.1.3",
   "description": "Help one lead coding agent hand work to workers on your own AI subscriptions (Claude Code, Codex, Cursor, Antigravity) in herdr panes. Fixed, measured questions about each brief and each report; live usage per subscription; the lead agent decides.",
@@ -18,5 +19,6 @@
     "codex",
     "cursor",
     "antigravity"
-  ]
+  ],
+  "skills": "./skills/"
 }

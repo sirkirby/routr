@@ -61,6 +61,11 @@ export async function doctor({ json, configPath }) {
   } catch (e) { r.key.found ??= false; r.key.works = false; r.key.error = String(e?.message ?? e).slice(0, 160); r.key.where = `set TYPESAFE_API_KEY, or put TYPESAFE_API_KEY=... in ${KEY_FILES[0]}`; }
   const lists = Object.fromEntries(await Promise.all(found.map(async (n) => [n, (await MODEL_LISTS[n]?.()) || null])));
   for (const n of found) r.harnesses[n].models = lists[n];
+  // The skill can arrive two ways (the installer / `routr skill install`, or a harness plugin), so it can drift from
+  // the binary. A skill newer than the binary may name commands the binary lacks, and the other way round.
+  r.skill = [".agents/skills/routr", ".claude/skills/routr"].map((d) => {
+    try { return { where: `~/${d}`, version: readFileSync(join(homedir(), d, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\n]+)"?/m)?.[1] ?? "unknown" }; } catch { return null; }
+  }).filter(Boolean);
   const path = configPath ?? CONFIG_PATH;
   const { config, notes } = loadConfig(path);
   r.config = { path, exists: existsSync(path), subscriptions: Object.keys(config.subscriptions), notes };
@@ -80,6 +85,9 @@ export async function doctor({ json, configPath }) {
   const ok = (b) => (b ? "ok " : "-- ");
   console.log(`routr doctor (changes nothing)\n\n${ok(true)}${r.runtime}\n${ok(r.herdr.path)}herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: orchestration needs it (https://herdr.dev). Sizing subagents works without it"}`);
   if (r.herdr.path) console.log(`${ok(r.herdr.skill)}herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
+  const base = ROUTR_VERSION.split("-")[0];
+  if (!r.skill.length) console.log(`${ok(false)}routr skill not installed for your agents: run \`routr skill install\``);
+  for (const k of r.skill) console.log(`${ok(k.version === base)}routr skill ${k.where} is ${k.version}${k.version === base ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
   for (const [n, h] of Object.entries(r.harnesses)) console.log(`${ok(h.installed)}${n.padEnd(7)} ${h.installed ? `\`${h.command}\` found · usage ${h.usage}` : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it` : `\`${h.command}\` not found`}${h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${h.models.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${h.command} models\` for the rest)` : ""}` : ""}`);
   console.log(`${ok(r.key.works)}TypeSafe key ${r.key.works ? `works (${r.key.model}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
   console.log(`${ok(r.config.exists)}config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found"}${r.config.exists && notes.length ? `\n   ${notes.join("\n   ")}` : ""}`);
