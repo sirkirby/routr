@@ -52,6 +52,10 @@ for a pre-release); the version in `lib/version.mjs`, `package.json`, and the `v
 
 ## Working style
 
+- Changes reach `main` by pull request from a branch, squash-merged, with the three test jobs green. `main` and the
+  `v*` tags are protected by rulesets; the maintainer can bypass them, an agent MUST NOT, even when its credentials
+  would allow it. The PR title becomes the commit subject and a release-note line: write it for a user.
+
 - Evals, tuning data, and working notes live in a separate private workbench, not here. This repo holds what ships.
 - Match the surrounding code: dense, commented where a decision is non-obvious, with the measurement that justified
   it named in the comment.
