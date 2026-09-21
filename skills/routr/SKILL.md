@@ -15,9 +15,22 @@ so which model and effort. You know the codebase and the purpose of the work; ro
 consistent starting point every time, so the decision is not made from habit.
 
 routr is one standalone command, `routr`, normally at `~/.local/bin/routr` (`routr.exe` on Windows). If it is not on
-your PATH, call it by that full path. If it is not installed at all, tell the user to install it
-(https://github.com/sirkirby/routr#install); someone working on routr itself can run it from source with
-`bun <this skill's folder>/scripts/routr.mjs`.
+your PATH, call it by that full path.
+
+**If `routr` is not installed** (this skill can arrive through a plugin, which cannot carry the binary): tell the user
+routr needs its command, ask whether you may install it, and run the installer for their system. It takes a few
+seconds, needs no Node or Bun, verifies the download's checksum, and installs to `~/.local/bin`.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sirkirby/routr/main/install.sh | sh
+```
+
+```powershell
+irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
+```
+
+Then run `routr doctor`; if it reports no key or no config, read `references/setup.md`. Someone working on routr
+itself can run it from source instead: `bun <this skill's folder>/scripts/routr.mjs`.
 
 The advice commands write nothing and never fail: with no network or no key they still print advice, marked as a
 fallback.
