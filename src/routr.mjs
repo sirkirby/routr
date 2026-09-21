@@ -79,7 +79,7 @@ if (argv[0] === "update" && argv.includes("--background")) { await backgroundUpd
 if (argv[0] === "update" && !argv.includes("--help") && !argv.includes("-h")) { const r = await update({ checkOnly: argv.includes("--check"), force: argv.includes("--force") }); console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1); }
 if (argv[0] === "key" && argv[1] === "set" && !argv.includes("--help") && !argv.includes("-h")) { const r = await setKey({ verify: !argv.includes("--no-verify") }); console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1); }
 if (argv[0] === "uninstall" && !argv.includes("--help") && !argv.includes("-h")) { const r = await uninstall(argv.slice(1)); if (argv.includes("--json")) console.log(JSON.stringify(r, null, 1)); else if (r.error) console.error(r.error); else if (r.dry_run) console.log(JSON.stringify(r, null, 1)); else if (r.note) console.log(r.note); process.exit(r.ok ? 0 : 1); }
-if (argv[0] === "setup" && !argv.includes("--help") && !argv.includes("-h")) { const r = await setup(argv.slice(1)); if (argv.includes("--json")) console.log(JSON.stringify(r, null, 1)); else if (!r.ok) console.error(r.error); process.exit(r.ok ? 0 : 1); }
+if (((argv[0] === "doctor" && argv.includes("--fix")) || argv[0] === "setup") && !argv.includes("--help") && !argv.includes("-h")) { const r = await setup(argv.slice(1)); if (argv.includes("--json")) console.log(JSON.stringify(r, null, 1)); else if (!r.ok) console.error(r.error); process.exit(r.ok ? 0 : 1); }
 if (argv[0] === "skill" && argv[1] === "install" && !argv.includes("--help") && !argv.includes("-h")) { console.log(JSON.stringify(installSkill({ dryRun: argv.includes("--dry-run") }), null, 1)); process.exit(0); }
 const flag = (name, repeatable = false) => {
   if (repeatable) {

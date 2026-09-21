@@ -129,7 +129,7 @@ export async function inspect({ configPath, quiet } = {}) {
 export async function doctor({ json, configPath }) {
   const r = await inspect({ configPath, quiet: json });
   if (json) return console.log(JSON.stringify(r, null, 1));
-  console.log(`routr doctor (changes nothing)\n\n${render(r)}`);
+  console.log(`routr doctor (changes nothing; \`routr doctor --fix\` does what it can of the next steps)\n\n${render(r)}`);
 }
 
 // Colour only for a person at a terminal, and never when NO_COLOR is set (https://no-color.org).
