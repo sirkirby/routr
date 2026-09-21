@@ -3,8 +3,18 @@
 Walk the user through this. Ask before you write or install anything, and show what you are about to write.
 Requirements: the `routr` command (one standalone binary; `routr --version` shows it) and, for orchestration, herdr
 with its agent skill (step 5). The worker and subagent parts work without herdr. If `routr` is missing, install it first:
-`curl -fsSL https://raw.githubusercontent.com/sirkirby/routr/main/install.sh | sh` on macOS and Linux,
-`irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex` in PowerShell on Windows.
+
+macOS and Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sirkirby/routr/main/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
+```
 
 ## 1. Check
 

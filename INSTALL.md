@@ -11,8 +11,17 @@ are about to write, and never print the user's API key.
 
 **1. Install.** routr is one standalone binary; it needs no Node, Bun, or packages. Run the installer for this system:
 
-    curl -fsSL https://raw.githubusercontent.com/sirkirby/routr/main/install.sh | sh          # macOS, Linux
-    irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex               # Windows PowerShell
+   macOS and Linux:
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/sirkirby/routr/main/install.sh | sh
+   ```
+
+   Windows (PowerShell):
+
+   ```powershell
+   irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
+   ```
 
 It downloads the binary for this machine from the latest GitHub release, checks its checksum, puts it at
 `~/.local/bin/routr`, and installs the routr skill to `~/.agents/skills/routr` (linked for Claude Code). If it says
