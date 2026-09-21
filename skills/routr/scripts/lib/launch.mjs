@@ -79,9 +79,15 @@ export function trustDialog(text) {
   const below = t.slice(question.index + question[0].length);
   // A later input prompt means the question has already scrolled past.
   if (shellPrompt(below) === "ready") return null;
-  const matches = [...below.matchAll(/^[ \t]*([❯›>→▶]?)[ \t]*(\d+)[.)][ \t]+(.+)$/gm)];
-  const options = matches
+  let matches = [...below.matchAll(/^[ \t]*([❯›>→▶]?)[ \t]*(\d+)[.)][ \t]+(.+)$/gm)];
+  let options = matches
     .map((m) => ({ number: m[2], text: m[3].trim(), selected: !!m[1] }));
+  if (!options.length) {
+    // Unnumbered menus (Claude Code, Antigravity): "> Yes, I trust this folder" / "  No, exit". Only lines that START
+    // with Yes or No count as options, so a tip or a status line can never be taken for one; they are numbered by order.
+    matches = [...below.matchAll(/^[ \t]*([❯›>→▶]?)[ \t]*((?:Yes|No)\b[^\n]*)$/gmi)];
+    options = matches.map((m, i) => ({ number: String(i + 1), text: m[2].trim(), selected: !!m[1] }));
+  }
   const affirmative = options.filter((o) => /^(?:yes(?:$|,?\s+(?:I trust\b|continue\b|trust\b))|trust (?:this|the)\b)/i.test(o.text)
     && !/\b(?:don't|do not|no)\b/i.test(o.text));
   const yes = affirmative.length === 1 ? options.indexOf(affirmative[0]) : -1;
@@ -97,7 +103,7 @@ export function trustDialog(text) {
 
 export function parseLaunchArgs(args) {
   const o = { trust: "ask", timeout: 120000, dryRun: false };
-  const values = ["kind", "name", "cwd", "model", "effort", "pane", "direction", "task", "task-file", "trust", "timeout"];
+  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "direction", "task", "task-file", "trust", "timeout"];
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
@@ -110,6 +116,8 @@ export function parseLaunchArgs(args) {
     o[key] = args[++i];
   }
   if (!Object.hasOwn(HARNESSES, o.kind)) throw new Error("--kind must be claude, codex, cursor, or agy");
+  if (o.worktree && o.pane) throw new Error("--worktree creates its own pane; do not pass --pane with it");
+  if (o.worktree && !/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,80}$/.test(o.worktree)) throw new Error("--worktree must be a plain branch name");
   if (!/^[a-z][a-z0-9_-]{0,31}$/.test(o.name ?? "")) throw new Error("--name must match [a-z][a-z0-9_-]{0,31}");
   if (!["ask", "auto"].includes(o.trust)) throw new Error("--trust must be ask or auto");
   if (o.direction && !["right", "down"].includes(o.direction)) throw new Error("--direction must be right or down");
@@ -170,7 +178,8 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     if (o.dryRun) {
       const pane = o.pane ?? "<new-pane>";
       out.planned_command = [
-        ...(!o.pane ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(["pane", "split", "--current", "--direction", o.direction ?? "<right-if-wide-else-down>", "--cwd", out.cwd, "--no-focus"])] : []),
+        ...(o.worktree ? [command(["worktree", "create", "--cwd", out.cwd, "--branch", o.worktree, "--no-focus"])] : []),
+        ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(["pane", "split", "--current", "--direction", o.direction ?? "<right-if-wide-else-down>", "--cwd", out.cwd, "--no-focus"])] : []),
         command(["pane", "read", pane, "--source", "visible"]),
         command(["pane", "process-info", "--pane", pane]),
         ...(o.pane ? [command(["pane", "run", pane, `cd -- ${quote(out.cwd)}`]),
@@ -249,6 +258,18 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       copyFileSync(cursorConfigSource, join(configDir, "cli-config.json"));
       chmodSync(join(configDir, "cli-config.json"), 0o600);
       step("cursor_config", true, `Private config at ${configDir}; the launch shell removes it when Cursor exits`);
+    }
+    if (!out.pane && o.worktree) {
+      // The rule for workers: each gets its own git worktree. herdr opens it as a workspace NESTED under the repository
+      // in the sidebar, so the lead's tab stays clean and even a read-only worker cannot touch the main checkout.
+      const r = await call(["worktree", "create", "--cwd", out.cwd, "--branch", o.worktree, "--no-focus"]);
+      const w = r.data?.result;
+      if (!r.ok || typeof w?.root_pane?.pane_id !== "string" || typeof w?.worktree?.path !== "string") {
+        throw new Error(`Could not create worktree ${o.worktree}: ${r.data?.error?.message ?? r.data?.error?.code ?? "unexpected Herdr response"}`);
+      }
+      out.pane = w.root_pane.pane_id; out.cwd = w.worktree.path;
+      out.worktree = { branch: o.worktree, path: w.worktree.path, workspace: w.workspace?.workspace_id ?? null };
+      step("worktree", true, `Created ${out.cwd} on branch ${o.worktree}, workspace ${out.worktree.workspace}, pane ${out.pane}`);
     }
     if (!out.pane) {
       let direction = o.direction;

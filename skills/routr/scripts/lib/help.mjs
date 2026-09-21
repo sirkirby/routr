@@ -33,6 +33,7 @@ export const COMMANDS = {
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
       { name: "--effort", arg: "<level>", description: "reasoning effort", required: false },
       { name: "--pane", arg: "<id>", description: "existing herdr pane id to run in", required: false },
+      { name: "--worktree", arg: "<branch>", description: "give the worker its own git worktree, opened as a workspace nested under the repo (the rule for workers)", required: false },
       { name: "--direction", arg: "<right|down>", description: "split direction", required: false, default: "right if wide else down" },
       { name: "--task", arg: "<text>", description: "task prompt string (mutually exclusive with --task-file)", required: false },
       { name: "--task-file", arg: "<path>", description: "file containing task prompt (mutually exclusive with --task)", required: false },

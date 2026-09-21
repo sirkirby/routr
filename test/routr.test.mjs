@@ -803,3 +803,13 @@ test("routr key set stores a piped key owner-only, never prints it, and refuses 
   expect(readFileSync(file, "utf8")).toContain("0123456789abcdef");    // the earlier key is untouched
   rmSync(home, { recursive: true, force: true });
 });
+
+test("unnumbered trust menus are parsed: Antigravity selects Yes already, Claude Code defaults to No", async () => {
+  const { trustDialog } = await import("../skills/routr/scripts/lib/launch.mjs");
+  const agy = trustDialog("Accessing workspace:\n\n/w/x\n\nDo you trust the contents of this project?\n\nAntigravity CLI requires permission to read, edit, and execute files here.\n\n> Yes, I trust this folder\n  No, exit\n\n  ↑/↓ Navigate · enter Confirm\n");
+  expect(agy.affirmative.text).toBe("Yes, I trust this folder"); expect(agy.keys).toEqual(["enter"]);
+  const claude = trustDialog(" Accessing workspace:\n /w/x\n Quick safety check: Is this a project you created or one you trust? If not, review it first.\n Do you trust the files in this folder?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel\n");
+  expect(claude.keys).toEqual(["down", "enter"]);
+  // A menu with no selection marker is never guessed at.
+  expect(trustDialog("Do you trust the contents of this project?\n  Yes, I trust this folder\n  No, exit\n").keys).toBeNull();
+});

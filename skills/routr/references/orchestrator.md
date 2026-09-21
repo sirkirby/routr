@@ -40,11 +40,14 @@ Claude, Codex, and Antigravity are read live by routr itself.
 
 ## 3. Launch
 
-**Pick the directory first.** A worker that writes gets its own worktree; a read-only worker may share the main
-checkout. `herdr worktree create` returns a workspace whose root pane is already at a shell prompt: pass that pane
-to `routr launch --pane <id>` instead of splitting another one. Put worktrees and scratch directories under a parent
-the harness already trusts. A subfolder of a trusted folder starts with no trust dialog, which is why worktrees
-under `~/.herdr/worktrees` come up clean.
+**Every worker gets its own worktree.** Pass `--worktree <branch>` to `routr launch`: it creates a git worktree of the
+repository in `--cwd`, which herdr opens as a workspace nested under the repository in the sidebar, and launches the
+worker there. This is the rule for read-only workers too. The user can find every worker in one place and click into
+it, your own tab stays clean, and no worker can touch the main checkout. A worktree holds tracked files only: if the
+work needs an untracked file (a local config, a data file), say where it is in the task. Worktrees live under
+`~/.herdr/worktrees`; where the harness asks whether it trusts a new folder, `--trust auto` answers for a worktree
+you just created. Outside a git repository there is nothing to nest under: leave `--worktree` off and the launcher
+splits a pane beside you.
 
 Workers run without a human, so their permissions must cover the scope of the task, and the task must stay inside
 that scope. They also run on the user's machine, in front of the user: do not brief an experiment that pops system
@@ -76,7 +79,7 @@ dialog, waits until the agent is ready, wraps your task in the opening and closi
 object describing what it did.
 
     routr launch --kind <claude|codex|cursor|agy> --name <agent-name> \
-        --cwd <dir> --model <id> [--effort <level>] [--task-file <path>] [--pane <id>] [--trust ask|auto] [--dry-run]
+        --cwd <repo> --worktree <branch> --model <id> [--effort <level>] [--task-file <path>] [--trust ask|auto] [--dry-run]
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
   `--effort` where the harness takes it separately. On Antigravity the model id already carries it, and routr says so
@@ -95,7 +98,7 @@ object describing what it did.
 `references/harnesses.md` records what each harness does and what goes wrong with it. Read it when a launch surprises
 you, when you are choosing a model, or when you launch by hand. The by-hand sequence is what `routr launch` performs:
 
-1. `herdr pane split --current --direction <right|down> --cwd <dir> --no-focus`.
+1. `herdr worktree create --cwd <repo> --branch <name> --no-focus`, and take the root pane it returns.
 2. Read the pane; wait for a clean shell prompt before typing (see `harnesses.md` rule 0).
 3. `herdr agent start <name> --kind <kind> --pane <id> -- <permissive flags>`.
 4. **Read the pane after every start**, whatever state herdr reports. A folder-trust dialog may be showing (herdr
