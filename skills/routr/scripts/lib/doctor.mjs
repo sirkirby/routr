@@ -6,6 +6,7 @@ import { delimiter, join } from "node:path";
 import { CONFIG_PATH, loadConfig } from "./config.mjs";
 import { ask, KEY_FILES, loadKey } from "./jev.mjs";
 import { CLAUDE_SNAPSHOT, readUsage, run } from "./usage.mjs";
+import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 // Subscription name → the command its harness is launched with.
@@ -48,6 +49,8 @@ export async function doctor({ json, configPath }) {
   const r = { runtime: `routr ${ROUTR_VERSION} (${standalone ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, herdr: { path: which("herdr") ?? offPath("herdr"), inside_session: process.env.HERDR_ENV === "1",
     // The orchestrator guide leans on herdr's own skill for pane and agent commands; routr does not bundle it.
     skill: [".agents/skills/herdr", ".claude/skills/herdr"].some((d) => existsSync(join(homedir(), d, "SKILL.md"))) }, harnesses: {}, key: {}, config: {}, starter_config: null };
+  // One short, non-fatal look at the latest release. Only doctor and `routr update` do this; the advice commands never call home.
+  try { const latest = await latestVersion(3000); if (newer(latest, ROUTR_VERSION)) r.update_available = latest; } catch {}
   const found = Object.keys(HARNESSES).filter((n) => which(HARNESSES[n]));
   const usage = await readUsage(found);
   for (const n of Object.keys(HARNESSES)) {
@@ -83,7 +86,7 @@ export async function doctor({ json, configPath }) {
 
   if (json) return console.log(JSON.stringify(r, null, 1));
   const ok = (b) => (b ? "ok " : "-- ");
-  console.log(`routr doctor (changes nothing)\n\n${ok(true)}${r.runtime}\n${ok(r.herdr.path)}herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: orchestration needs it (https://herdr.dev). Sizing subagents works without it"}`);
+  console.log(`routr doctor (changes nothing)\n\n${ok(!r.update_available)}${r.runtime}${r.update_available ? ` · ${r.update_available} is available: run \`routr update\`` : ""}\n${ok(r.herdr.path)}herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: orchestration needs it (https://herdr.dev). Sizing subagents works without it"}`);
   if (r.herdr.path) console.log(`${ok(r.herdr.skill)}herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
   const base = ROUTR_VERSION.split("-")[0];
   if (!r.skill.length) console.log(`${ok(false)}routr skill not installed for your agents: run \`routr skill install\``);
@@ -92,5 +95,7 @@ export async function doctor({ json, configPath }) {
   console.log(`${ok(r.key.works)}TypeSafe key ${r.key.works ? `works (${r.key.model}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
   console.log(`${ok(r.config.exists)}config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found"}${r.config.exists && notes.length ? `\n   ${notes.join("\n   ")}` : ""}`);
   console.log(`${ok(r.claude_usage_statusline !== "missing: without it Claude usage is assumed, not read")}Claude usage statusline: ${r.claude_usage_statusline}`);
+  const au = autoUpdateStatus(config);
+  console.log(`${ok(true)}automatic updates ${au.on ? `on · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off}`}`);
   if (r.starter_config) console.log(`\nStarter config for what was found (review the reserves, then save to ${path}):\n${JSON.stringify(r.starter_config, null, 2)}`);
 }

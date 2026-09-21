@@ -60,6 +60,8 @@ one is their preference, and none describes a model.
 - `prefer`: the user's standing preference per kind of work (`implement`, `debug`, `refactor`, `review`, `research`,
   `test_writing`, `docs`), for example `"research": "strong"`. Shown to agents as advice, never forced.
 - `sure_at` (0.8), `risk_above` (0.75), `fallback_level` (`standard`): leave at the defaults unless asked.
+- `auto_update` (`true`): routr checks for a new release in the background at most once a day and uses it from the
+  next run. Set it to `false` if the user wants to update only by hand with `routr update`.
 
 ## 4. Claude usage (only if Claude Code is a subscription)
 
