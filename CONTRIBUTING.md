@@ -2,6 +2,10 @@
 
 routr improves by pull request. It does not modify itself.
 
+`main` is protected: changes arrive as pull requests, the tests must pass on Linux, macOS, and Windows, and the
+maintainer (see `.github/CODEOWNERS`) reviews them. Pull requests are squash-merged, so the PR title becomes the
+commit subject and, at the next tag, a line in the release notes: write it for a user.
+
 ## Ground rules
 
 - **Questions are about the work, never about models.** routr does not encode how good or how expensive a model is,
