@@ -86,6 +86,8 @@ export const COMMANDS = {
       { name: "--verdict", arg: "<done|partial|blocked>", description: "worker outcome verdict", required: true },
       { name: "--check", arg: "<pass|fail|none>", description: "verification outcome", required: true },
       { name: "--advice", arg: "<file>", description: "path to advice JSON file (or pipe on stdin)", required: false, default: "stdin" },
+      { name: "--report", arg: "<file>", description: "path to worker report file", required: false },
+      { name: "--subagent", arg: '"<subtask> → <level advised> → <model chosen>"', description: "subagent sizing decision", required: false, repeatable: true },
       { name: "--level", arg: "<level>", description: "level chosen (basic, standard, strong)", required: false, default: "advised level" },
       { name: "--seconds", arg: "<n>", description: "duration in seconds", required: false },
       { name: "--attempts", arg: "<n>", description: "number of attempts", required: false, default: 1 },
