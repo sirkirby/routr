@@ -813,3 +813,274 @@ test("unnumbered trust menus are parsed: Antigravity selects Yes already, Claude
   // A menu with no selection marker is never guessed at.
   expect(trustDialog("Do you trust the contents of this project?\n  Yes, I trust this folder\n  No, exit\n").keys).toBeNull();
 });
+
+test("parsing of →, ->, none, and malformed lines for subagents", async () => {
+  const { parseSubagent, parseReportSubagents } = await import("../skills/routr/scripts/lib/ledger.mjs");
+
+  // unicode arrow →
+  expect(parseSubagent("Count Python files → basic → haiku")).toEqual({
+    subtask: "Count Python files",
+    advised: "basic",
+    model: "haiku",
+  });
+
+  // ascii arrow ->
+  expect(parseSubagent("Review runtime.py error handling -> standard -> sonnet")).toEqual({
+    subtask: "Review runtime.py error handling",
+    advised: "standard",
+    model: "sonnet",
+  });
+
+  // extra spaces and mixed arrows
+  expect(parseSubagent("   Count Python files   →   basic   ->   haiku   ")).toEqual({
+    subtask: "Count Python files",
+    advised: "basic",
+    model: "haiku",
+  });
+
+  // none and SUBAGENTS: none
+  expect(parseSubagent("none")).toBeNull();
+  expect(parseSubagent("SUBAGENTS: none")).toBeNull();
+  expect(parseSubagent("  none  ")).toBeNull();
+  expect(parseSubagent("SUBAGENTS: none (one line per subagent, or \"none\")")).toBeNull();
+
+  // malformed lines
+  expect(parseSubagent("Count Python files")).toEqual({
+    subtask: "Count Python files",
+    advised: null,
+    model: null,
+  });
+  expect(parseSubagent("Count Python files → medium → haiku")).toEqual({
+    subtask: "Count Python files → medium → haiku",
+    advised: null,
+    model: null,
+  });
+  expect(parseSubagent("Count Python files -> basic")).toEqual({
+    subtask: "Count Python files -> basic",
+    advised: null,
+    model: null,
+  });
+
+  // parsing from report file
+  const reportText = [
+    "VERDICT: done",
+    "SUMMARY: fixed the bugs",
+    "CHECKED: bun test",
+    "FILES: file.ts",
+    "SUBAGENTS: Count Python files → basic → haiku",
+    "SUBAGENTS: none",
+    "SUBAGENTS: Review runtime.py error handling -> standard -> sonnet",
+    "SUBAGENTS: Malformed text without level",
+  ].join("\n");
+
+  expect(parseReportSubagents(reportText)).toEqual([
+    { subtask: "Count Python files", advised: "basic", model: "haiku" },
+    { subtask: "Review runtime.py error handling", advised: "standard", model: "sonnet" },
+    { subtask: "Malformed text without level", advised: null, model: null },
+  ]);
+});
+
+test("toEntry stores subagents correctly and never stores brief or report text", async () => {
+  const { toEntry } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const advice = {
+    id: "a1b2c3d4",
+    ts: "2026-09-21T12:00:00.000Z",
+    mode: "dispatch",
+    question_set: "r3",
+    brief_sha: "123456789abc",
+    brief_chars: 42,
+    level: "standard",
+    sure: true,
+    work_type: "feature",
+    high_risk: false,
+    facts: { tiny: { p: 0.1 } },
+    subscriptions: { ranked: [{ subscription: "codex", usable: 0.8, usage: "live" }] },
+  };
+
+  // With subagents
+  const entryWithSubagents = toEntry(advice, {
+    subscription: "codex",
+    model: "gpt-5",
+    effort: "medium",
+    verdict: "done",
+    check: "pass",
+    subagents: [
+      "Count Python files → basic → haiku",
+      "Review runtime.py error handling -> standard -> sonnet",
+      "Count Python files → unknownlevel → haiku",
+    ],
+    report: "/tmp/report.txt",
+    brief: "secret brief text",
+  });
+
+  expect(entryWithSubagents.subagents).toEqual([
+    { subtask: "Count Python files", advised: "basic", model: "haiku" },
+    { subtask: "Review runtime.py error handling", advised: "standard", model: "sonnet" },
+    { subtask: "Count Python files → unknownlevel → haiku", advised: null, model: null },
+  ]);
+  expect(entryWithSubagents.brief).toBeUndefined();
+  expect(entryWithSubagents.report).toBeUndefined();
+  expect(JSON.stringify(entryWithSubagents)).not.toContain("secret brief text");
+  expect(JSON.stringify(entryWithSubagents)).not.toContain("/tmp/report.txt");
+
+  // Without subagents
+  const entryEmpty = toEntry(advice, {
+    subscription: "codex",
+    model: "gpt-5",
+    effort: "medium",
+    verdict: "done",
+    check: "pass",
+  });
+  expect(entryEmpty.subagents).toEqual([]);
+
+  // Subagents with "none"
+  const entryNone = toEntry(advice, {
+    subscription: "codex",
+    model: "gpt-5",
+    effort: "medium",
+    verdict: "done",
+    check: "pass",
+    subagents: ["none"],
+  });
+  expect(entryNone.subagents).toEqual([]);
+});
+
+test("assess includes subagent section with counts and models by advised level", async () => {
+  const { toEntry, assess } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const advice = {
+    id: "a1",
+    ts: "2026-09-21T12:00:00.000Z",
+    mode: "dispatch",
+    question_set: "r3",
+    brief_sha: "sha1",
+    brief_chars: 20,
+    level: "standard",
+    sure: true,
+    work_type: "refactor",
+    high_risk: false,
+    facts: {},
+    subscriptions: { ranked: [] },
+  };
+
+  const entry = toEntry(advice, {
+    subscription: "codex",
+    model: "m",
+    effort: "low",
+    verdict: "done",
+    check: "pass",
+    subagents: [
+      "Task 1 → basic → haiku",
+      "Task 2 → basic → haiku",
+      "Task 3 → basic → haiku",
+      "Task 4 → basic → sonnet",
+      "Task 5 → standard → sonnet",
+    ],
+  });
+
+  const report = assess([entry]);
+  expect(report).toContain("subagents: 5 recorded");
+  expect(report).toContain("basic: haiku 3, sonnet 1");
+  expect(report).toContain("standard: sonnet 1");
+});
+
+test("old ledger rows without a subagents field assess without error", async () => {
+  const { assess } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const oldRow = {
+    ts: "2026-09-20T10:00:00.000Z",
+    id: "old12345",
+    asked_at: "2026-09-20T10:00:00.000Z",
+    mode: "dispatch",
+    question_set: "r3",
+    brief_sha: "abc123456789",
+    brief_chars: 30,
+    advised: { level: "basic", sure: true, work_type: "fix", high_risk: false, fallback: false, facts: {} },
+    headroom: {},
+    chose: { subscription: "claude", model: "sonnet", effort: "medium", level: "basic" },
+    outcome: { verdict: "done", check: "pass", seconds: 12, attempts: 1, note: null },
+    // Notice: NO subagents field
+  };
+
+  expect(() => assess([oldRow])).not.toThrow();
+  const report = assess([oldRow]);
+  expect(report).toContain("1 recorded pieces of work");
+  expect(report).not.toContain("subagents:");
+});
+
+test("CLI round trip for record with repeatable --subagent and --report flags", () => {
+  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const tempDir = mkdtempSync(join(tmpdir(), "routr-record-test-"));
+  const adviceFile = join(tempDir, "advice.json");
+  const reportFile = join(tempDir, "report.txt");
+  const ledgerFile = join(tempDir, "ledger.jsonl");
+
+  writeFileSync(
+    adviceFile,
+    JSON.stringify({
+      id: "test1234",
+      ts: "2026-09-21T12:00:00.000Z",
+      mode: "dispatch",
+      question_set: "r3",
+      brief_sha: "abc",
+      brief_chars: 10,
+      level: "basic",
+      sure: true,
+      work_type: "fix",
+      high_risk: false,
+      facts: {},
+      subscriptions: { ranked: [] },
+    })
+  );
+
+  writeFileSync(
+    reportFile,
+    [
+      "VERDICT: done",
+      "SUMMARY: fixed the bug",
+      "CHECKED: bun test",
+      "FILES: test.js",
+      "SUBAGENTS: Count files → basic → haiku",
+      "SUBAGENTS: Review diff -> standard -> sonnet",
+    ].join("\n")
+  );
+
+  // Run record with both --report and repeatable --subagent
+  const rec = Bun.spawnSync([
+    "bun",
+    script,
+    "record",
+    "--advice", adviceFile,
+    "--report", reportFile,
+    "--subagent", "Extra task → strong → opus",
+    "--subagent", "Another extra -> basic -> haiku",
+    "--subscription", "codex",
+    "--model", "m",
+    "--effort", "low",
+    "--verdict", "done",
+    "--check", "pass",
+    "--ledger", ledgerFile,
+  ]);
+  expect(rec.exitCode).toBe(0);
+  const recOut = JSON.parse(rec.stdout.toString().trim());
+  expect(recOut.recorded).toBe("test1234");
+
+  // Read ledger entry
+  const entry = JSON.parse(readFileSync(ledgerFile, "utf8").trim());
+  expect(entry.subagents).toEqual([
+    { subtask: "Count files", advised: "basic", model: "haiku" },
+    { subtask: "Review diff", advised: "standard", model: "sonnet" },
+    { subtask: "Extra task", advised: "strong", model: "opus" },
+    { subtask: "Another extra", advised: "basic", model: "haiku" },
+  ]);
+
+  // Run assess
+  const ass = Bun.spawnSync(["bun", script, "assess", "--ledger", ledgerFile]);
+  expect(ass.exitCode).toBe(0);
+  const assOut = ass.stdout.toString();
+  expect(assOut).toContain("subagents: 4 recorded");
+  expect(assOut).toContain("basic: haiku 2");
+  expect(assOut).toContain("standard: sonnet 1");
+  expect(assOut).toContain("strong: opus 1");
+
+  rmSync(tempDir, { recursive: true, force: true });
+});
+
