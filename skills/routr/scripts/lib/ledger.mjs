@@ -9,7 +9,57 @@ import { LEVELS } from "./questions.mjs";
 export const LEDGER_PATH = join(homedir(), ".local/share/routr/ledger.jsonl");
 
 // advice = the JSON that `routr dispatch|subagent` printed. chose/outcome = what the agent did and what it verified.
-export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, note }) {
+export function parseSubagent(s) {
+  if (!s) return null;
+  if (typeof s === "object") {
+    const rawAdvised = s.advised ? String(s.advised).trim().toLowerCase() : null;
+    const advised = LEVELS.includes(rawAdvised) ? rawAdvised : null;
+    if (advised) {
+      return {
+        subtask: String(s.subtask ?? "").trim(),
+        advised,
+        model: s.model ? String(s.model).trim() : null,
+      };
+    }
+    return {
+      subtask: String(s.raw ?? s.subtask ?? "").trim(),
+      advised: null,
+      model: null,
+    };
+  }
+  const raw = String(s).trim();
+  const text = raw.replace(/^SUBAGENTS:\s*/i, "").trim();
+  if (!text || text.toLowerCase() === "none" || /^none\s*\(.*\)$/i.test(text)) return null;
+  const m = text.match(/^(.*?)\s*(?:→|->)\s*(basic|standard|strong)\s*(?:→|->)\s*(.*)$/i);
+  if (m && m[1].trim()) {
+    return {
+      subtask: m[1].trim(),
+      advised: m[2].trim().toLowerCase(),
+      model: m[3].trim() || null,
+    };
+  }
+  return {
+    subtask: text,
+    advised: null,
+    model: null,
+  };
+}
+
+export function parseReportSubagents(reportText) {
+  if (!reportText) return [];
+  const lines = reportText.split("\n");
+  const result = [];
+  for (const line of lines) {
+    const m = line.match(/^\s*SUBAGENTS:\s*(.*)$/i);
+    if (m) {
+      const parsed = parseSubagent(m[1]);
+      if (parsed) result.push(parsed);
+    }
+  }
+  return result;
+}
+
+export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, note, subagents }) {
   return {
     ts: new Date().toISOString(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set,
     brief_sha: advice.brief_sha, brief_chars: advice.brief_chars, // never the brief itself: briefs can be private
@@ -18,6 +68,7 @@ export function toEntry(advice, { subscription, model, effort, level, verdict, c
     headroom: Object.fromEntries((advice.subscriptions?.ranked ?? []).map((r) => [r.subscription, { usable: r.usable, usage: r.usage }])),
     chose: { subscription: subscription ?? null, model: model ?? null, effort: effort ?? null, level: LEVELS.includes(level) ? level : advice.level },
     outcome: { verdict: verdict ?? "unknown", check: check ?? "none", seconds: seconds ? +seconds : null, attempts: attempts ? +attempts : 1, note: note ?? null },
+    subagents: (subagents ?? []).map(parseSubagent).filter(Boolean),
   };
 }
 
@@ -55,6 +106,25 @@ export function assess(entries) {
   const unsure = entries.filter((e) => !e.advised.sure);
   out.push(`\nroutr was unsure on ${unsure.length}/${entries.length}; agents changed the level on ${entries.filter((e) => e.chose.level !== e.advised.level).length}.`.replace("rouтr", "routr"));
   out.push(flags.length ? "\n" + flags.join("\n") : `\nNo level looks too low or too high yet (a flag needs at least ${MIN} runs behind it).`);
+  const allSubagents = entries.flatMap((e) => e.subagents ?? []);
+  if (allSubagents.length) {
+    out.push(`\nsubagents: ${allSubagents.length} recorded`);
+    for (const L of LEVELS) {
+      const at = allSubagents.filter((s) => s.advised === L);
+      if (at.length) {
+        const counts = {};
+        for (const s of at) {
+          const m = s.model ?? "unknown";
+          counts[m] = (counts[m] ?? 0) + 1;
+        }
+        const summary = Object.entries(counts)
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+          .map(([m, c]) => `${m} ${c}`)
+          .join(", ");
+        out.push(`  ${L}: ${summary}`);
+      }
+    }
+  }
   // Usage over time comes free: every dispatch recorded each subscription's usable headroom.
   const subs = [...new Set(entries.flatMap((e) => Object.keys(e.headroom ?? {})))];
   if (subs.length) {
