@@ -41,8 +41,9 @@ The source is plain JavaScript under `skills/routr/scripts/`, run with Bun while
 
 Merging to `main` only runs the tests. **A release happens when a version tag is pushed, and only then:**
 
-1. Set the new version in `skills/routr/scripts/lib/version.mjs` and `.claude-plugin/plugin.json` (a test keeps them
-   in step) and merge that.
+1. Set the new version in `skills/routr/scripts/lib/version.mjs`, the four plugin manifests (`plugin.json`,
+   `.claude-plugin/`, `.codex-plugin/`, `.cursor-plugin/`), `package.json`, and the `version` line in
+   `skills/routr/SKILL.md`. A test and the release workflow both refuse a mismatch. Merge that.
 2. `git tag v0.2.0 && git push origin v0.2.0`. For a pre-release use `v0.2.0-rc.1` (`-alpha.N`, `-beta.N`, `-rc.N`);
    the files keep the base version `0.2.0`.
 

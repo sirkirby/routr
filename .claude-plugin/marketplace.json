@@ -1,8 +1,28 @@
 {
   "name": "routr",
   "description": "routr: quick, calibrated routing advice for a lead coding agent that hands work to others across your AI subscriptions.",
-  "owner": { "name": "Chris Kirby", "url": "https://github.com/sirkirby" },
+  "owner": {
+    "name": "Chris Kirby",
+    "url": "https://github.com/sirkirby"
+  },
   "plugins": [
-    { "name": "routr", "source": "./", "description": "Facts about the work, live usage per subscription, a first read of worker reports, and a ledger. The lead agent decides." }
+    {
+      "name": "routr",
+      "source": "./",
+      "description": "Facts about the work, live usage per subscription, a first read of worker reports, and a ledger. The lead agent decides.",
+      "version": "0.1.3",
+      "license": "MIT",
+      "homepage": "https://github.com/sirkirby/routr",
+      "keywords": [
+        "orchestration",
+        "agents",
+        "subagents",
+        "herdr",
+        "claude-code",
+        "codex",
+        "cursor",
+        "antigravity"
+      ]
+    }
   ]
 }
