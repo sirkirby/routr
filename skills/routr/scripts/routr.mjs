@@ -17,7 +17,7 @@ import { readReport } from "./lib/check.mjs";
 import { loadConfig } from "./lib/config.mjs";
 import { doctor } from "./lib/doctor.mjs";
 import { ask } from "./lib/jev.mjs";
-import { append, assess, LEDGER_PATH, read, toEntry } from "./lib/ledger.mjs";
+import { append, assess, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./lib/ledger.mjs";
 import { launch } from "./lib/launch.mjs";
 import { rankSubscriptions } from "./lib/pick.mjs";
 import { CHECK_VERSION, checkQuestions, questions, VERSION } from "./lib/questions.mjs";
@@ -65,7 +65,15 @@ if (argv[0] === "statusline" && !argv.includes("--help") && !argv.includes("-h")
 if (argv.includes("--version")) { console.log(ROUTR_VERSION); process.exit(0); }
 if (argv[0] === "key" && argv[1] === "set" && !argv.includes("--help") && !argv.includes("-h")) { const r = await setKey({ verify: !argv.includes("--no-verify") }); console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1); }
 if (argv[0] === "skill" && argv[1] === "install" && !argv.includes("--help") && !argv.includes("-h")) { console.log(JSON.stringify(installSkill({ dryRun: argv.includes("--dry-run") }), null, 1)); process.exit(0); }
-const flag = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv.splice(i, 2)[1] : undefined; };
+const flag = (name, repeatable = false) => {
+  if (repeatable) {
+    const r = [];
+    for (let i; (i = argv.indexOf(name)) >= 0; ) r.push(argv.splice(i, 2)[1]);
+    return r;
+  }
+  const i = argv.indexOf(name);
+  return i >= 0 ? argv.splice(i, 2)[1] : undefined;
+};
 const configPath = flag("--config");
 // --headroom cursor=0.97 : usage the caller read itself (repeatable), for harnesses with no local source
 const given = {}; for (let h; (h = flag("--headroom")); ) { const [k, v] = h.split("="); if (k && !Number.isNaN(+v)) given[k] = +v; }
@@ -85,10 +93,13 @@ if (mode === "check") {
 if (mode === "assess") { console.log(assess(read(flag("--ledger") ?? LEDGER_PATH))); process.exit(0); }
 if (mode === "record") {
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]
-  const o = Object.fromEntries(["--advice", "--subscription", "--model", "--effort", "--level", "--verdict", "--check", "--seconds", "--attempts", "--note", "--ledger"].map((f) => [f.slice(2), flag(f)]));
+  const o = Object.fromEntries(["--advice", "--subscription", "--model", "--effort", "--level", "--verdict", "--check", "--seconds", "--attempts", "--note", "--ledger", "--report"].map((f) => [f.slice(2), flag(f)]));
+  const subagentFlags = flag("--subagent", true);
   try {
     const advice = JSON.parse(o.advice ? readFileSync(o.advice, "utf8") : readFileSync(0, "utf8"));
-    append(toEntry(advice, o), o.ledger ?? LEDGER_PATH);
+    const reportSubagents = o.report ? parseReportSubagents(readFileSync(o.report, "utf8")) : [];
+    const subagents = [...reportSubagents, ...subagentFlags];
+    append(toEntry(advice, { ...o, subagents }), o.ledger ?? LEDGER_PATH);
     console.log(JSON.stringify({ recorded: advice.id, ledger: o.ledger ?? LEDGER_PATH }));
   } catch (e) { console.log(JSON.stringify({ recorded: null, error: String(e?.message ?? e).slice(0, 160) })); } // never blocks the agent
   process.exit(0);

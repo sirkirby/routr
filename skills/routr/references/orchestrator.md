@@ -143,11 +143,13 @@ ledger.
 
     routr record --advice <file> --subscription <s> --model <m> --effort <e> \
         [--level <the level you settled on, if not the advised one>] --verdict <done|partial|blocked> \
-        --check <pass|fail|none> [--attempts <n>] [--seconds <n>] [--note "<why you went against the advice, or what went wrong>"]
+        --check <pass|fail|none> [--report <file>] [--subagent "<subtask> → <level> → <model>"] \
+        [--attempts <n>] [--seconds <n>] [--note "<why you went against the advice, or what went wrong>"]
 
-`--verdict` is the worker's own VERDICT line. `--check` is your verification. `--attempts` counts the tries it took
-(1 means accepted first time); when you escalated, record the level and model that finally delivered. Record
-failures and cut-off workers too: they are what shows a level is too low. The ledger never stores the brief, only its hash and length.
+`--verdict` is the worker's own VERDICT line. `--check` is your verification. Pass the saved report with `--report` so
+the worker's subagent choices are recorded too. `--attempts` counts the tries it took (1 means accepted first time);
+when you escalated, record the level and model that finally delivered. Record failures and cut-off workers too: they are
+what shows a level is too low. The ledger never stores the brief, only its hash and length.
 `routr assess` prints what the ledger says so far.
 
 ## 6. Integrate and clean up
