@@ -100,7 +100,8 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
 ```
 
 That puts `routr` in `~/.local/bin`, checks the download against the release checksums, and installs the routr skill
-for your agents. Then run:
+for your agents, and then starts `routr setup` (run it yourself any time; an agent running the installer is not asked
+anything):
 
 ```sh
 routr setup

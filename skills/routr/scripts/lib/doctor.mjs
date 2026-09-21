@@ -72,26 +72,35 @@ export function nextSteps(r) {
 }
 
 // Everything doctor reports, as data. `routr setup` starts from the same inspection.
-export async function inspect({ configPath } = {}) {
+export async function inspect({ configPath, quiet } = {}) {
   // A compiled release binary has no script path of its own; a source checkout runs under Bun.
   const standalone = !/\.m?js$/.test(process.argv[1] ?? "");
   const r = { runtime: `routr ${ROUTR_VERSION} (${standalone ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, herdr: { path: which("herdr") ?? offPath("herdr"), inside_session: process.env.HERDR_ENV === "1",
     // The orchestrator guide leans on herdr's own skill for pane and agent commands; routr does not bundle it.
     skill: [".agents/skills/herdr", ".claude/skills/herdr"].some((d) => existsSync(join(homedir(), d, "SKILL.md"))) }, harnesses: {}, key: {}, config: {}, starter_config: null };
-  // One short, non-fatal look at the latest release. Only doctor and `routr update` do this; the advice commands never call home.
-  if (!process.env.ROUTR_NO_UPDATE) try { const latest = await latestVersion(3000); if (newer(latest, ROUTR_VERSION)) r.update_available = latest; } catch {}
+  // Every check that waits on something else (the release lookup, each harness, the key's test call) runs at once:
+  // one after another, a logged-out harness that is slow to answer made doctor sit silent for most of a minute.
+  // A person at a terminal sees each one finish, on stderr so the report and `--json` stay clean.
   const found = Object.keys(HARNESSES).filter((n) => which(HARNESSES[n]));
-  const usage = await readUsage(found);
+  const tty = Boolean(process.stderr.isTTY) && !quiet;
+  const step = async (label, p) => { try { return await p; } finally { if (tty) process.stderr.write(`  checked ${label}\n`); } };
+  if (tty) process.stderr.write(`Checking ${["the TypeSafe key", ...found.map((n) => `\`${HARNESSES[n]}\``)].join(", ")} (a harness can take up to 20 s to answer)…\n`);
+  const ping = async () => { loadKey(); r.key.found = true; return ask({ task: { brief: "Fix a typo in README.md" } }, { ping: { type: "noul", instructions: "Does `task.brief` describe a software task?" } }, undefined, 10000); };
+  // The release lookup is one short, non-fatal call. Only doctor and `routr update` make it; the advice commands never call home.
+  const [latest, usage, key, ...models] = await Promise.all([
+    process.env.ROUTR_NO_UPDATE ? null : latestVersion(3000).catch(() => null),
+    step("usage", readUsage(found)),
+    step("the TypeSafe key", ping().then((t) => ({ t }), (e) => ({ e }))),
+    ...found.map((n) => step(`${n}'s models`, Promise.resolve(MODEL_LISTS[n]?.()).then((l) => l || null, () => null))),
+  ]);
+  if (latest && newer(latest, ROUTR_VERSION)) r.update_available = latest;
   for (const n of Object.keys(HARNESSES)) {
     const u = usage.find((x) => x.pool === n);
     r.harnesses[n] = { command: HARNESSES[n], installed: found.includes(n), off_path: found.includes(n) ? null : offPath(HARNESSES[n]), usage: !found.includes(n) ? null : u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left (${u.source}, ${u.ageSec}s old)` : `none: ${u.note}` };
   }
-  try {
-    loadKey(); r.key.found = true;
-    const t = await ask({ task: { brief: "Fix a typo in README.md" } }, { ping: { type: "noul", instructions: "Does `task.brief` describe a software task?" } }, undefined, 10000);
-    r.key.works = true; r.key.ms = Math.round(t.latencyMs); r.key.model = t.model;
-  } catch (e) { r.key.found ??= false; r.key.works = false; r.key.error = String(e?.message ?? e).slice(0, 160); r.key.where = `set TYPESAFE_API_KEY, or put TYPESAFE_API_KEY=... in ${KEY_FILES[0]}`; }
-  const lists = Object.fromEntries(await Promise.all(found.map(async (n) => [n, (await MODEL_LISTS[n]?.()) || null])));
+  if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; }
+  else { r.key.found ??= false; r.key.works = false; r.key.error = String(key.e?.message ?? key.e).slice(0, 160); r.key.where = `set TYPESAFE_API_KEY, or put TYPESAFE_API_KEY=... in ${KEY_FILES[0]}`; }
+  const lists = Object.fromEntries(found.map((n, i) => [n, models[i]]));
   for (const n of found) r.harnesses[n].models = lists[n];
   // The installer writes the skill and the binary together, but a skill copied by hand or left behind by an older
   // install can drift: it may name commands this binary lacks, or miss ones it has.
@@ -118,7 +127,7 @@ export async function inspect({ configPath } = {}) {
 }
 
 export async function doctor({ json, configPath }) {
-  const r = await inspect({ configPath });
+  const r = await inspect({ configPath, quiet: json });
   if (json) return console.log(JSON.stringify(r, null, 1));
   console.log(`routr doctor (changes nothing)\n\n${render(r)}`);
 }

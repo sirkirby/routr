@@ -48,7 +48,7 @@ export async function setup(args) {
   try { models = parseModels(args); } catch (e) { return { ok: false, error: e.message }; }
 
   say("Looking at what is installed…");
-  const r = await inspect({ configPath: path });
+  const r = await inspect({ configPath: path, quiet: args.includes("--json") });
   const found = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed);
   for (const [n, id] of Object.entries(models)) {
     if (!found.includes(n)) return { ok: false, error: `--model ${n}=…: \`${HARNESSES[n]}\` was not found on this machine` };
@@ -96,7 +96,7 @@ export async function setup(args) {
   // 3. The key, last, and only from a person: it must never pass through an agent.
   if (!r.key.works && interactive) { say(""); const k = await setKey(); (k.ok ? did : skipped).push(k.ok ? `saved the TypeSafe key to ${k.file}${k.works ? " and it works" : `: ${k.error}`}` : `TypeSafe key: ${k.error}`); }
 
-  const after = await inspect({ configPath: path });
+  const after = await inspect({ configPath: path, quiet: true });
   const result = { ok: true, did, skipped, config: path, next_steps: after.next_steps };
   if (args.includes("--json")) return result;
   say(`\n${did.map((d) => `${paint(32, "done")} ${d}`).concat(skipped.map((s) => `${paint(33, "kept")} ${s}`)).join("\n")}\n\n${render(after)}`);

@@ -24,5 +24,9 @@ try {
   & "$dir\routr.exe" skill install | Out-Null
   Write-Host "routr: skill installed to ~\.agents\skills\routr"
   if (($env:PATH -split ";") -notcontains $dir) { Write-Host "routr: add $dir to your PATH so agents can run ``routr``" }
-  Write-Host "routr: next, run: routr setup   (or ask your coding agent to ""set up routr"")"
+  # A person at a console goes straight into setup; an agent or a script gets the next step as a line. ROUTR_NO_SETUP=1 skips it.
+  if (-not $env:ROUTR_NO_SETUP -and [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and -not [Console]::IsOutputRedirected) {
+    Write-Host "routr: starting setup (Ctrl+C to stop; run ``routr setup`` any time)"
+    & "$dir\routr.exe" setup
+  } else { Write-Host "routr: next, run: routr setup   (or ask your coding agent to ""set up routr"")" }
 } finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }

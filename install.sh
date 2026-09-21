@@ -26,4 +26,11 @@ chmod +x "$dir/routr"
 echo "routr: installed $("$dir/routr" --version) to $dir/routr"
 "$dir/routr" skill install >/dev/null && echo "routr: skill installed to ~/.agents/skills/routr"
 case ":$PATH:" in *":$dir:"*) ;; *) echo "routr: add $dir to your PATH so agents can run \`routr\`" ;; esac
-echo "routr: next, run: routr setup   (or ask your coding agent to \"set up routr\")"
+# A person at a terminal goes straight into setup (`curl | sh` leaves stdin on the pipe, so read from the terminal).
+# An agent or a script has no terminal: it gets the next step as a line instead. ROUTR_NO_SETUP=1 skips it.
+if [ -z "${ROUTR_NO_SETUP:-}" ] && [ -t 1 ] && (: </dev/tty) 2>/dev/null; then
+  echo "routr: starting setup (Ctrl+C to stop; run \`routr setup\` any time)"
+  "$dir/routr" setup </dev/tty || true
+else
+  echo "routr: next, run: routr setup   (or ask your coding agent to \"set up routr\")"
+fi
