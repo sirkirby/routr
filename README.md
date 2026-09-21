@@ -31,7 +31,8 @@ model. routr spreads the work across what you have, and starts each piece at the
 4. **Fix.** Work that falls short goes back to the same worker. If it falls short again, the lead relaunches it one
    level up. Starting high "to be safe" is not needed, because the loop catches what a lower level misses.
 5. **Record.** `routr record` writes one line to a local ledger: what was advised, what was chosen, how it turned
-   out, how many attempts it took. `routr assess` reads the ledger back.
+   out, how many attempts it took. `routr assess` reads it back as advice about your own settings: what each
+   subscription has handled, which of your preferences your agents keep overriding, whether a reserve is too tight.
 
 ## What the advice looks like
 
@@ -72,7 +73,8 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus subscriptions ranked by usable headroom. `--headroom cursor=0.9` passes usage the caller read itself. |
 | `launch` | Start one worker in its own git worktree, nested under the repo in herdr: flags, model syntax, shell prompts, trust dialog, readiness, prompt. `--dry-run` shows the plan. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
-| `record`, `assess` | Write one ledger line; read the ledger back. |
+| `record`, `assess` | Write one ledger line; read the ledger back as advice about your own settings. |
+| `share` | Write a file of your outcomes, with nothing identifying in it, to attach to a GitHub issue. Sends nothing. |
 | `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
 | `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list. Changes nothing. |
 
@@ -132,8 +134,13 @@ or manage context; harnesses own that.
 
 ## Contributing
 
-Improvements come by pull request. A change to a question's wording is a new question-set version and needs its
-measurement; see [CONTRIBUTING.md](CONTRIBUTING.md).
+The most useful contribution is your outcomes. routr's questions are kept or dropped on real work, and your ledger
+is real work: run `routr share`, read the file it writes (no briefs, notes, hashes, or usage numbers; no model names
+unless you ask), and attach it to a ["Share your ledger" issue](https://github.com/sirkirby/routr/issues/new?template=share-ledger.yml).
+routr never sends anything by itself.
+
+Code and wording changes come by pull request. A change to a question's wording is a new question-set version and
+needs its measurement; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

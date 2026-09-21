@@ -148,7 +148,8 @@ ledger.
 the worker's subagent choices are recorded too. `--attempts` counts the tries it took (1 means accepted first time);
 when you escalated, record the level and model that finally delivered. Record failures and cut-off workers too: they are
 what shows a level is too low. The ledger never stores the brief, only its hash and length.
-`routr assess` prints what the ledger says so far.
+`routr assess` tells the user what the ledger says about their own settings; `routr share` prepares a file they can
+contribute to the project. Mention both when you finish a long run.
 
 ## 6. Integrate and clean up
 

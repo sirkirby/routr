@@ -738,7 +738,7 @@ test("the symptom-patch answer is ignored on work that is not a fix", () => {
 });
 
 test("help table covers every command the CLI dispatches", () => {
-  const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "check", "record", "assess", "statusline", "skill", "key"];
+  const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "check", "record", "assess", "share", "statusline", "skill", "key"];
   expect(Object.keys(COMMANDS).sort()).toEqual(dispatched.sort());
 
   // Every command has a valid description, non-empty synopsis, and flags/args
@@ -1220,4 +1220,29 @@ test("Windows shell prompts count as ready; a bare continuation prompt still doe
   expect(shellPrompt("> ")).toBe("question");
   expect(shellPrompt(">> ")).not.toBe("ready");
   expect(shellPrompt("Do you want to continue? C:\\temp>no")).not.toBe("ready");
+});
+
+const row = (over = {}) => ({ ts: "2026-09-21T10:11:12.000Z", id: "abc12345", asked_at: "2026-09-21T10:11:00.000Z", mode: "dispatch", question_set: "r4", brief_sha: "deadbeefcafe", brief_chars: 300,
+  advised: { level: "standard", sure: true, between: null, work_type: "research", high_risk: false, fallback: false, facts: { approach_open: 0.9 } },
+  headroom: { codex: { usable: 0.3, usage: "live" } }, chose: { subscription: "codex", model: "big-model", effort: "medium", level: "standard" },
+  outcome: { verdict: "done", check: "pass", seconds: 60, attempts: 1, note: "private note about the client's billing bug" }, subagents: [{ subtask: "count files in the acme repo", advised: "basic", model: "small-model" }], ...over });
+test("shared rows carry what tuning needs and nothing that identifies the user or the work", async () => {
+  const { shareRows } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const text = JSON.stringify(shareRows([row()]));
+  for (const secret of ["abc12345", "deadbeefcafe", "billing", "acme", "10:11", "big-model", "small-model", "usable"]) expect(text).not.toContain(secret);
+  const [r] = shareRows([row()]);
+  expect(r).toMatchObject({ v: 1, day: "2026-09-21", advised: { level: "standard", facts: { approach_open: 0.9 } }, chose: { subscription: "codex", level: "standard" }, outcome: { attempts: 1 }, subagents: [{ advised: "basic" }] });
+  expect(JSON.stringify(shareRows([row()], { withModels: true }))).toContain("big-model");
+});
+test("assess turns the ledger into suggestions about the user's own settings, and only with enough runs", async () => {
+  const { assess } = await import("../skills/routr/scripts/lib/ledger.mjs");
+  const c = { prefer: { research: "strong" }, subscriptions: { codex: { hardest_work: "standard", reserve: 0.2 } } };
+  expect(assess([row(), row()], c)).toContain("Nothing here argues for changing your settings yet");
+  const six = Array.from({ length: 6 }, () => row());                       // six research pieces run BELOW the preference, all delivered
+  const report = assess(six, c);
+  expect(report).toContain('prefer.research is "strong": agents went lower 6 times and 6 delivered');
+  expect(report).toContain("If you trust it with more, raise hardest_work");
+  const struggling = Array.from({ length: 5 }, () => row({ outcome: { verdict: "done", check: "pass", attempts: 2 } }));
+  expect(assess(struggling, c)).toContain("subscriptions.codex.hardest_work");
+  expect(report).not.toContain("TOO LOW");                                    // the level review is for the lab, not the user
 });
