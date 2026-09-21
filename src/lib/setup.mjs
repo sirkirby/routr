@@ -8,6 +8,7 @@ import { createInterface } from "node:readline/promises";
 import { CONFIG_PATH } from "./config.mjs";
 import { HARNESSES, inspect, paint, render, starterConfig, SUGGESTED, which } from "./doctor.mjs";
 import { setKey } from "./key.mjs";
+import { standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { installSkill } from "./skill-install.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
@@ -61,8 +62,7 @@ export function statuslinePlan(settingsText, command) {
 
 // The command Claude Code will run on every turn: a full path, because Claude's PATH is not the shell's.
 function statuslineCommand() {
-  const standalone = !/\.m?js$/.test(process.argv[1] ?? "");
-  const bin = standalone ? process.execPath : which("routr") ?? "routr";
+  const bin = standalone() ? process.execPath : which("routr") ?? "routr";
   return `${/\s/.test(bin) ? `"${bin}"` : bin} statusline`;
 }
 

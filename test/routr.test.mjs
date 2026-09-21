@@ -1442,3 +1442,26 @@ test("record --project labels the row, assess answers on an unreadable ledger, a
   expect(bad.exitCode).toBe(0);
   expect(bad.stdout.toString()).toContain("could not read the ledger");
 });
+
+test("the headline reads the same as before it moved out of the entrypoint", async () => {
+  const { headline } = await import("../src/lib/advise.mjs");
+  const facts = { approach_open: { reading: "yes" }, standalone: { reading: "yes" }, cross_cutting: { reading: "no" } };
+  expect(headline({ level: "standard", sure: true, work_type: "debug", facts })).toBe("routr: standard, debug work; approach_open");
+  expect(headline({ level: "standard", sure: false, between: ["standard", "strong"], work_type: "review", facts: {}, high_risk: true, worker: { suggestion: "split it across workers" }, notes: ["Fix the brief: it names no check"] }))
+    .toBe("routr: SPLIT IT ACROSS WORKERS · standard (torn between standard and strong), review work; HIGH RISK; FIX THE BRIEF FIRST");
+  expect(headline({ level: "basic", sure: false })).toBe("routr: basic (unsure), unknown work");
+});
+
+test("the file-and-ledger commands answer instead of failing", async () => {
+  const { checkCommand, recordCommand } = await import("../src/lib/commands.mjs");
+  const missing = await checkCommand({ brief: "/nonexistent/brief", report: "/nonexistent/report" });
+  expect(missing.fallback).toBe(true);
+  expect(recordCommand({ advice: "/nonexistent/advice.json" }).recorded).toBeNull();
+  const dir = mkdtempSync(join(tmpdir(), "routr-check-"));
+  writeFileSync(join(dir, "b"), "Fix the typo in README.md and run bun test."); writeFileSync(join(dir, "r"), "VERDICT: done");
+  const seen = [];
+  const out = await checkCommand({ brief: join(dir, "b"), report: join(dir, "r") }, { askFn: async (input) => { seen.push(input); return { answers: {}, latencyMs: 12 }; } });
+  expect(out.warning).toContain("very short");
+  expect(seen[0].report.text).toBe("VERDICT: done");
+  expect(out.ms).toBe(12);
+});

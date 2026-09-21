@@ -2,8 +2,8 @@
 // this prints the model and usage there and saves each snapshot to ~/.cache/routr/claude-usage.json, which the usage
 // reader picks up. It must never fail or print an error: a broken statusline is visible in every Claude session.
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { dirname } from "node:path";
+import { CLAUDE_SNAPSHOT } from "./runtime.mjs";
 
 export function statusline() { try { run(); } catch {} }
 
@@ -23,7 +23,7 @@ function run() {
   }
 
   if (data.rate_limits != null) {
-    const out = join(homedir(), ".cache", "routr", "claude-usage.json");
+    const out = CLAUDE_SNAPSHOT;
     const snap = { ts: Math.floor(Date.now() / 1000), model: data.model?.id ?? null, rate_limits: data.rate_limits };
     try {
       mkdirSync(dirname(out), { recursive: true });

@@ -41,3 +41,6 @@ export async function ask(state, questions, model = "jev-1.13.0", deadlineMs = 6
     return { ...(await res.json()), latencyMs };
   }
 }
+
+// One tiny real call: "does the key work". `routr key set` and `routr doctor` must mean the same thing by that.
+export const ping = (timeoutMs = 10000) => ask({ task: { brief: "Fix a typo in README.md" } }, { ping: { type: "noul", instructions: "Does `task.brief` describe a software task?" } }, undefined, timeoutMs);

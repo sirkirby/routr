@@ -6,11 +6,11 @@ import { createHash } from "node:crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { CACHE_DIR, standalone } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 const REPO = "sirkirby/routr";
 // A compiled release binary has no script path of its own; a source checkout runs under Bun.
-export const standalone = () => !/\.m?js$/.test(process.argv[1] ?? "");
 
 export function assetName(platform = process.platform, arch = process.arch) {
   const os = { darwin: "darwin", linux: "linux", win32: "windows" }[platform];
@@ -86,7 +86,7 @@ export function swapBinary(self, bin, { rename = renameSync } = {}) {
   try { rmSync(old, { force: true }); } catch {} // Windows keeps it locked until this process exits; the next update removes it
 }
 
-const CACHE = () => join(homedir(), ".cache/routr");
+const CACHE = CACHE_DIR;
 const STAMP = () => join(CACHE(), "update-check");     // its mtime is the time of the last check
 const LOCK = () => join(CACHE(), "update.lock");
 export const UPDATE_LOG = () => join(CACHE(), "update.log");

@@ -45,3 +45,15 @@ export function advise(a, c) {
   const sending = worker.suggestion === "worth a worker" || worker.suggestion === "split it across workers";
   return { level, sure, ...(between ? { between } : {}), work_type: a.work_type.choice, high_risk: risky, worker, facts, notes: sending ? notes : notes.filter((n) => !n.startsWith("Fix the brief first")) };
 }
+
+// The advice in one line, for an agent to read first: what to do with the work, the level, the kind of work, the facts
+// that read yes and bear on difficulty, then the two warnings. Facts about the brief or the launch are left out: they
+// have their own fields.
+const NOT_ABOUT_DIFFICULTY = /^(states_check|standalone|names_location|tiny|separable|needs_user)$/;
+export function headline(advice) {
+  const lead = advice.worker && advice.worker.suggestion !== "worth a worker" ? `${advice.worker.suggestion.toUpperCase()} · ` : "";
+  const level = `${advice.level}${advice.sure ? "" : advice.between ? ` (torn between ${advice.between.join(" and ")})` : " (unsure)"}`;
+  const yes = Object.entries(advice.facts ?? {}).filter(([k, f]) => f.reading === "yes" && !NOT_ABOUT_DIFFICULTY.test(k)).map(([k]) => k);
+  const fixBrief = (advice.notes ?? []).some((n) => n.startsWith("Fix the brief"));
+  return `routr: ${lead}${level}, ${advice.work_type ?? "unknown"} work${yes.length ? `; ${yes.join(", ")}` : ""}${advice.high_risk ? "; HIGH RISK" : ""}${fixBrief ? "; FIX THE BRIEF FIRST" : ""}`;
+}
