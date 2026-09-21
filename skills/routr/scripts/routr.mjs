@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { advise } from "./lib/advise.mjs";
 import { readReport } from "./lib/check.mjs";
 import { loadConfig } from "./lib/config.mjs";
+import { setup } from "./lib/setup.mjs";
 import { doctor } from "./lib/doctor.mjs";
 import { ask } from "./lib/jev.mjs";
 import { cursorUsage } from "./lib/cursor-usage.mjs";
@@ -76,6 +77,7 @@ if (argv.includes("--version")) { console.log(ROUTR_VERSION); process.exit(0); }
 if (argv[0] === "update" && argv.includes("--background")) { await backgroundUpdate(); process.exit(0); }
 if (argv[0] === "update" && !argv.includes("--help") && !argv.includes("-h")) { const r = await update({ checkOnly: argv.includes("--check"), force: argv.includes("--force") }); console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1); }
 if (argv[0] === "key" && argv[1] === "set" && !argv.includes("--help") && !argv.includes("-h")) { const r = await setKey({ verify: !argv.includes("--no-verify") }); console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1); }
+if (argv[0] === "setup" && !argv.includes("--help") && !argv.includes("-h")) { const r = await setup(argv.slice(1)); if (argv.includes("--json")) console.log(JSON.stringify(r, null, 1)); else if (!r.ok) console.error(r.error); process.exit(r.ok ? 0 : 1); }
 if (argv[0] === "skill" && argv[1] === "install" && !argv.includes("--help") && !argv.includes("-h")) { console.log(JSON.stringify(installSkill({ dryRun: argv.includes("--dry-run") }), null, 1)); process.exit(0); }
 const flag = (name, repeatable = false) => {
   if (repeatable) {

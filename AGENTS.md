@@ -21,8 +21,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - A question's wording changes only with a measurement against the old wording on the same items, and a bumped
   `VERSION` / `CHECK_VERSION` in `skills/routr/scripts/lib/questions.mjs`. Public summary: `docs/evidence.md`.
 - The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`) write nothing and fail open: any error
-  still prints usable output and exits 0. Only `record`, `key set`, `skill install`, `share`, `update`, `launch`, and
-  `usage cursor` act (the last two drive herdr panes), and each says so.
+  still prints usable output and exits 0. Only `record`, `setup`, `key set`, `skill install`, `share`, `update`, `launch`,
+  and `usage cursor` act (the last two drive herdr panes), and each says so.
 - Updates are automatic but never in the way: at most once a day a command may start a DETACHED updater and carry
   on. The command itself MUST NOT wait for it, make a network call for it, or change its own output because of it.
   The updater verifies the release checksum, swaps the binary in place, and reinstalls the skill; a run in progress
@@ -33,7 +33,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - The binary is self-contained: everything it needs lives under `skills/routr/` (the guides are embedded at build
   time), and it MUST NOT depend on a repository checkout at run time. It reads the user's harness state read-only
   (usage sources, settings, model lists) and writes only under `~/.config/routr`, `~/.cache/routr`,
-  `~/.local/share/routr`, the skill folders on `skill install`, and temporary files it removes.
+  `~/.local/share/routr`, the skill folders on `skill install`, and temporary files it removes. One exception:
+  `setup` sets `statusLine` in `~/.claude/settings.json` when there is none, after a backup, and never replaces one.
 - No runtime dependencies. `node:` built-ins only, so the same source runs under Bun and compiles for every target.
 - Works on macOS, Linux, and Windows: no shelling out to `sh`, no Unix-only paths in product code.
 - Never print, log, or store a secret or the text of a brief. The ledger stores a hash and a length.

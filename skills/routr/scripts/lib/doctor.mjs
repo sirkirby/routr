@@ -1,5 +1,6 @@
 // `routr doctor`: read-only setup check. Finds the harnesses that are installed, the usage sources that exist,
-// the TypeSafe key, and the config; proposes a starter config. It writes nothing: the setup skill (or you) does.
+// the TypeSafe key, and the config, and ends with the commands that fix what is missing. It writes nothing:
+// `routr setup` (lib/setup.mjs) does, from the same inspection.
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -10,8 +11,8 @@ import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 // Subscription name → the command its harness is launched with.
-const HARNESSES = { claude: "claude", codex: "codex", cursor: "cursor-agent", agy: "agy" };
-const SUGGESTED = { claude: { hardest_work: "strong", reserve: 0.25 }, codex: { hardest_work: "strong", reserve: 0.2 }, cursor: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 }, agy: { hardest_work: "standard", reserve: 0.1 } };
+export const HARNESSES = { claude: "claude", codex: "codex", cursor: "cursor-agent", agy: "agy" };
+export const SUGGESTED = { claude: { hardest_work: "strong", reserve: 0.25 }, codex: { hardest_work: "strong", reserve: 0.2 }, cursor: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 }, agy: { hardest_work: "standard", reserve: 0.1 } };
 
 // Each harness's LIVE model list, asked of the harness itself: routr keeps no model list of its own.
 const MODEL_LISTS = {
@@ -22,7 +23,7 @@ const MODEL_LISTS = {
 };
 
 // Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows.
-function which(cmd) {
+export function which(cmd) {
   const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
   for (const dir of (process.env.PATH ?? "").split(delimiter)) for (const ext of exts) {
     const p = join(dir, cmd + ext);
@@ -43,14 +44,42 @@ function offPath(cmd) {
 
 const MODELS_SHOWN = 12;
 
-export async function doctor({ json, configPath }) {
+// Only Claude Code and Codex take a reasoning effort of their own; Cursor and Antigravity model ids carry it.
+export const TAKES_EFFORT = ["claude", "codex"];
+
+// The config `routr setup` writes: the user's defaults for the harnesses found. A model is set only when the user chose one.
+export function starterConfig(found, models = {}) {
+  return { fallback_level: "standard", sure_at: 0.8, risk_above: 0.75, prefer: { research: "strong", review: "strong" },
+    subscriptions: Object.fromEntries(found.map((n) => [n, { ...SUGGESTED[n], ...(models[n] ? { default_model: models[n] } : {}), ...(TAKES_EFFORT.includes(n) ? { default_effort: "medium" } : {}) }])) };
+}
+
+const STATUSLINE_MISSING = "missing: without it Claude usage is assumed, not read";
+
+// What is left to do, most important first, each with the command that does it.
+export function nextSteps(r) {
+  const steps = [];
+  if (!r.key.works) steps.push(r.key.found ? `The TypeSafe key was found but the test call failed (${r.key.error}). Create a new one at https://console.typesafe.ai/keys and run: routr key set`
+    : "Add your TypeSafe API key. Create one at https://console.typesafe.ai/keys, then run: routr key set");
+  if (!r.config.exists) steps.push("Create your config (your defaults for each subscription found): routr setup");
+  else if (Object.entries(r.harnesses).some(([n, h]) => h.installed && !r.config.subscriptions.includes(n))) steps.push(`Add the harnesses found since the config was written (${Object.entries(r.harnesses).filter(([n, h]) => h.installed && !r.config.subscriptions.includes(n)).map(([n]) => n).join(", ")}): routr setup`);
+  if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push("Install and log in to at least one harness: Claude Code, Codex, Cursor (cursor-agent), or Antigravity (agy)");
+  if (r.claude_usage_statusline === STATUSLINE_MISSING) steps.push("Let routr read Claude Code's usage (sets Claude's statusline command): routr setup");
+  if (!r.skill.length || r.skill.some((k) => k.version !== ROUTR_VERSION.split("-")[0])) steps.push("Install the routr skill that matches this routr: routr skill install");
+  if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
+  if (!r.herdr.path) steps.push("For orchestration, install herdr (https://herdr.dev). Sizing subagents works without it");
+  else if (!r.herdr.skill) steps.push("Install herdr's agent skill: npx skills add herdrdev/herdr --skill herdr -g");
+  return steps;
+}
+
+// Everything doctor reports, as data. `routr setup` starts from the same inspection.
+export async function inspect({ configPath } = {}) {
   // A compiled release binary has no script path of its own; a source checkout runs under Bun.
   const standalone = !/\.m?js$/.test(process.argv[1] ?? "");
   const r = { runtime: `routr ${ROUTR_VERSION} (${standalone ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, herdr: { path: which("herdr") ?? offPath("herdr"), inside_session: process.env.HERDR_ENV === "1",
     // The orchestrator guide leans on herdr's own skill for pane and agent commands; routr does not bundle it.
     skill: [".agents/skills/herdr", ".claude/skills/herdr"].some((d) => existsSync(join(homedir(), d, "SKILL.md"))) }, harnesses: {}, key: {}, config: {}, starter_config: null };
   // One short, non-fatal look at the latest release. Only doctor and `routr update` do this; the advice commands never call home.
-  try { const latest = await latestVersion(3000); if (newer(latest, ROUTR_VERSION)) r.update_available = latest; } catch {}
+  if (!process.env.ROUTR_NO_UPDATE) try { const latest = await latestVersion(3000); if (newer(latest, ROUTR_VERSION)) r.update_available = latest; } catch {}
   const found = Object.keys(HARNESSES).filter((n) => which(HARNESSES[n]));
   const usage = await readUsage(found);
   for (const n of Object.keys(HARNESSES)) {
@@ -81,21 +110,43 @@ export async function doctor({ json, configPath }) {
   let wired = false;
   try { wired = /claude-statusline-usage|routr(\.exe)?"? statusline/.test(JSON.parse(readFileSync(join(homedir(), ".claude/settings.json"), "utf8")).statusLine?.command ?? ""); } catch {}
   r.claude_usage_statusline = existsSync(CLAUDE_SNAPSHOT) ? "installed" : !found.includes("claude") ? "not needed"
-    : wired ? "configured: the first snapshot appears after the next Claude Code turn" : "missing: without it Claude usage is assumed, not read";
-  if (!r.config.exists) r.starter_config = { fallback_level: "standard", sure_at: 0.8, risk_above: 0.75, prefer: { research: "strong", review: "strong" }, subscriptions: Object.fromEntries(found.map((n) => [n, { ...SUGGESTED[n], default_model: "<choose from the models listed above>", default_effort: "medium" }])) };
+    : wired ? "configured: the first snapshot appears after the next Claude Code turn" : STATUSLINE_MISSING;
+  if (!r.config.exists) r.starter_config = starterConfig(found);
+  r.auto_update = autoUpdateStatus(config);
+  r.next_steps = nextSteps(r);
+  return r;
+}
 
+export async function doctor({ json, configPath }) {
+  const r = await inspect({ configPath });
   if (json) return console.log(JSON.stringify(r, null, 1));
-  const ok = (b) => (b ? "ok " : "-- ");
-  console.log(`routr doctor (changes nothing)\n\n${ok(!r.update_available)}${r.runtime}${r.update_available ? ` · ${r.update_available} is available: run \`routr update\`` : ""}\n${ok(r.herdr.path)}herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: orchestration needs it (https://herdr.dev). Sizing subagents works without it"}`);
-  if (r.herdr.path) console.log(`${ok(r.herdr.skill)}herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
+  console.log(`routr doctor (changes nothing)\n\n${render(r)}`);
+}
+
+// Colour only for a person at a terminal, and never when NO_COLOR is set (https://no-color.org).
+const COLOUR = Boolean(process.stdout.isTTY) && !process.env.NO_COLOR;
+export const paint = (code, s) => (COLOUR ? `\x1b[${code}m${s}\x1b[0m` : s);
+
+// `!!` (red) stops routr from working as intended; `--` (yellow) is optional or absent; `ok` (green) is fine.
+export function render(r) {
+  const out = [];
+  const mark = (state) => (state === true || state === "ok" ? paint(32, "ok ") : state === "need" ? paint("1;31", "!! ") : paint(33, "-- "));
+  const line = (state, text) => out.push(mark(state) + (state === "need" ? paint(31, text) : text));
+  const { notes } = r.config;
+  line(!r.update_available, `${r.runtime}${r.update_available ? ` · ${r.update_available} is available: run \`routr update\`` : ""}`);
+  line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: orchestration needs it (https://herdr.dev). Sizing subagents works without it"}`);
+  if (r.herdr.path) line(r.herdr.skill, `herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
   const base = ROUTR_VERSION.split("-")[0];
-  if (!r.skill.length) console.log(`${ok(false)}routr skill not installed for your agents: run \`routr skill install\``);
-  for (const k of r.skill) console.log(`${ok(k.version === base)}routr skill ${k.where} is ${k.version}${k.version === base ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
-  for (const [n, h] of Object.entries(r.harnesses)) console.log(`${ok(h.installed)}${n.padEnd(7)} ${h.installed ? `\`${h.command}\` found · usage ${h.usage}` : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it` : `\`${h.command}\` not found`}${h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${h.models.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${h.command} models\` for the rest)` : ""}` : ""}`);
-  console.log(`${ok(r.key.works)}TypeSafe key ${r.key.works ? `works (${r.key.model}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
-  console.log(`${ok(r.config.exists)}config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found"}${r.config.exists && notes.length ? `\n   ${notes.join("\n   ")}` : ""}`);
-  console.log(`${ok(r.claude_usage_statusline !== "missing: without it Claude usage is assumed, not read")}Claude usage statusline: ${r.claude_usage_statusline}`);
-  const au = autoUpdateStatus(config);
-  console.log(`${ok(true)}automatic updates ${au.on ? `on · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off}`}`);
-  if (r.starter_config) console.log(`\nStarter config for what was found (review the reserves, then save to ${path}):\n${JSON.stringify(r.starter_config, null, 2)}`);
+  if (!r.skill.length) line("need", "routr skill not installed for your agents: run `routr skill install`");
+  for (const k of r.skill) line(k.version === base ? "ok" : "need", `routr skill ${k.where} is ${k.version}${k.version === base ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
+  const any = Object.values(r.harnesses).some((h) => h.installed);
+  for (const [n, h] of Object.entries(r.harnesses)) line(h.installed ? "ok" : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${h.installed ? `\`${h.command}\` found · usage ${h.usage}` : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it` : `\`${h.command}\` not found`}${h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${h.models.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${h.command} models\` for the rest)` : ""}` : ""}`);
+  line(r.key.works ? "ok" : "need", `TypeSafe key ${r.key.works ? `works (${r.key.model}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
+  line(r.config.exists ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && notes.length ? `\n   ${notes.join("\n   ")}` : ""}`);
+  line(r.claude_usage_statusline !== STATUSLINE_MISSING, `Claude usage statusline: ${r.claude_usage_statusline}`);
+  const au = r.auto_update;
+  line("ok", `automatic updates ${au.on ? `on · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off}`}`);
+  out.push("", r.next_steps.length ? paint(1, "Next steps") : paint(32, "Everything routr needs is in place."));
+  r.next_steps.forEach((s, i) => out.push(`  ${i + 1}. ${s}`));
+  return out.join("\n");
 }

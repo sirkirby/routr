@@ -24,5 +24,5 @@ try {
   & "$dir\routr.exe" skill install | Out-Null
   Write-Host "routr: skill installed to ~\.agents\skills\routr"
   if (($env:PATH -split ";") -notcontains $dir) { Write-Host "routr: add $dir to your PATH so agents can run ``routr``" }
-  Write-Host "routr: next, ask your coding agent to ""set up routr"", or run: routr doctor"
+  Write-Host "routr: next, run: routr setup   (or ask your coding agent to ""set up routr"")"
 } finally { Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue }

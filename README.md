@@ -77,7 +77,8 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `share` | Write a file of your outcomes, with nothing identifying in it, to attach to a GitHub issue. Sends nothing. |
 | `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
 | `update` | Update to the latest release now (routr also does this by itself in the background, at most once a day). |
-| `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list. Changes nothing. |
+| `setup` | Write your config for the harnesses found, set Claude Code's usage statusline, ask for the key. Asks at a terminal; agents pass `--yes`. |
+| `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list, and what to do next. Changes nothing. |
 
 The advice commands write nothing and never block an agent: with no network or no key they still answer, marked as
 a fallback.
@@ -99,10 +100,16 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
 ```
 
 That puts `routr` in `~/.local/bin`, checks the download against the release checksums, and installs the routr skill
-for your agents. Then ask your agent to "set up routr": it runs `routr doctor`, walks you through getting a
-[TypeSafe API key](https://console.typesafe.ai/keys) (you store it yourself with `routr key set`, which never shows
-it), and writes `~/.config/routr/config.json` with you.
-Or paste [INSTALL.md](INSTALL.md) into your agent and let it do all of it.
+for your agents. Then run:
+
+```sh
+routr setup
+```
+
+It finds your harnesses, asks for your everyday model on each, writes `~/.config/routr/config.json`, sets up Claude
+Code's usage reading, and asks for your [TypeSafe API key](https://console.typesafe.ai/keys) (typed without echo,
+never shown). `routr doctor` then shows what is in place and lists anything left to do. Or ask your agent to "set up
+routr", or paste [INSTALL.md](INSTALL.md) into it: it uses the same command and talks the choices through with you.
 
 routr keeps itself current. At most once a day a command starts a background check; a new release is downloaded,
 verified against its checksums, and swapped in, and your next `routr` run uses it. Nothing you are running is
