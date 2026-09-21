@@ -58,6 +58,8 @@ for a pre-release); the version in `lib/version.mjs`, `package.json`, and the `v
 - An agent working for the maintainer MAY squash-merge its own pull request with the admin bypass
   (`gh pr merge <n> --squash --admin`) once all three test jobs are green. It MUST NOT use the bypass to push to
   `main` directly, to merge with a failing or pending check, or to move a release tag.
+- After merging, the agent MAY cut a release by pushing a NEW `vX.Y.Z` tag that matches the version files. It never
+  moves or deletes an existing tag.
 - Evals, tuning data, and working notes live in a separate private workbench, not here. This repo holds what ships.
 - Match the surrounding code: dense, commented where a decision is non-obvious, with the measurement that justified
   it named in the comment.

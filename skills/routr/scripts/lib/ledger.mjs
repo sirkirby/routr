@@ -3,8 +3,25 @@
 // `routr record` is the ONLY command that writes anything; the advice commands stay side-effect free.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { LEVELS } from "./questions.mjs";
+
+// The ledger is one file per user, shared by every project on the machine. Each row is labelled with its project so
+// `assess` can tell them apart: the folder name of the git repository the work happened in. A worktree counts as its
+// repository (its `.git` is a file pointing back at it). Local only: `routr share` never includes it.
+export function projectName(cwd = process.cwd()) {
+  for (let dir = resolve(cwd); ; dir = dirname(dir)) {
+    const git = join(dir, ".git");
+    if (existsSync(git)) {
+      try {
+        const m = readFileSync(git, "utf8").match(/^gitdir:\s*(.+?)[\\/]\.git[\\/]worktrees[\\/]/m);
+        if (m) return basename(m[1]);
+      } catch {} // a directory, not a file: this is the repository itself
+      return basename(dir);
+    }
+    if (dirname(dir) === dir) return basename(resolve(cwd));
+  }
+}
 
 export const LEDGER_PATH = join(homedir(), ".local/share/routr/ledger.jsonl");
 
@@ -59,9 +76,9 @@ export function parseReportSubagents(reportText) {
   return result;
 }
 
-export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, note, subagents }) {
+export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, note, subagents, project }) {
   return {
-    ts: new Date().toISOString(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set,
+    ts: new Date().toISOString(), project: project ?? projectName(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set,
     brief_sha: advice.brief_sha, brief_chars: advice.brief_chars, // never the brief itself: briefs can be private
     advised: { level: advice.level, sure: advice.sure, between: advice.between ?? null, work_type: advice.work_type, high_risk: advice.high_risk, fallback: !!advice.fallback,
       facts: Object.fromEntries(Object.entries(advice.facts ?? {}).map(([k, f]) => [k, f.p])) },
@@ -101,6 +118,14 @@ export function assess(entries, config = null) {
   for (const [k, g] of Object.entries(groups).sort((x, y) => y[1].length - x[1].length))
     out.push(`  ${k.padEnd(30)} ${String(g.length).padStart(3)}  ${String(g.filter(firstTime).length).padStart(9)}  ${String(g.filter((e) => good(e) && !firstTime(e)).length).padStart(6)}  ${String(g.filter((e) => !good(e)).length).padStart(13)}${few(g.length)}`);
 
+  const projects = [...new Set(entries.map((e) => e.project ?? "(unlabelled)"))];
+  if (projects.length > 1) {
+    out.push("\nby project                      runs  first time  rework  not delivered");
+    for (const pr of projects) {
+      const g = entries.filter((e) => (e.project ?? "(unlabelled)") === pr);
+      out.push(`  ${pr.padEnd(30)} ${String(g.length).padStart(3)}  ${String(g.filter(firstTime).length).padStart(9)}  ${String(g.filter((e) => good(e) && !firstTime(e)).length).padStart(6)}  ${String(g.filter((e) => !good(e)).length).padStart(13)}${few(g.length)}`);
+    }
+  }
   out.push("\nlevel chosen   runs   delivered (done, check not failed)");
   for (const L of LEVELS) {
     const g = entries.filter((e) => e.chose.level === L);

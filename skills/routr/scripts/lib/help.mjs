@@ -106,6 +106,7 @@ export const COMMANDS = {
       { name: "--level", arg: "<level>", description: "level chosen (basic, standard, strong)", required: false, default: "advised level" },
       { name: "--seconds", arg: "<n>", description: "duration in seconds", required: false },
       { name: "--attempts", arg: "<n>", description: "number of attempts", required: false, default: 1 },
+      { name: "--project", arg: "<name>", description: "label for the row (default: the git repository's folder name; kept local, never shared)", required: false },
       { name: "--note", arg: "<text>", description: "note explaining choice or outcome", required: false },
       { name: "--ledger", arg: "<path>", description: "path to ledger file", required: false, default: "~/.local/share/routr/ledger.jsonl" },
     ],
