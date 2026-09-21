@@ -116,12 +116,12 @@ export async function setup(args) {
   rl?.close();
 
   // 3. The key, last, and only from a person: it must never pass through an agent.
-  if (!r.key.works && interactive) { say(""); const k = await setKey(); (k.ok ? did : skipped).push(k.ok ? `saved the TypeSafe key to ${k.file}${k.works ? " and it works" : `: ${k.error}`}` : `TypeSafe key: ${k.error}`); }
+  if (!r.key.works && interactive) { say(""); const k = await setKey(); (k.ok ? did : skipped).push(k.ok ? `saved the TypeSafe key to ${k.file}${k.works ? " and it works" : `: ${k.error}`}` : `TypeSafe key not saved: ${k.error}. Run \`routr key set\` when you have it`); }
 
   const after = await inspect({ configPath: path, quiet: true });
   const result = { ok: true, did, skipped, config: path, next_steps: after.next_steps };
   if (args.includes("--json")) return result;
-  say(`\n${did.map((d) => `${paint(32, "done")} ${d}`).concat(skipped.map((s) => `${paint(33, "kept")} ${s}`)).join("\n")}\n\n${render(after)}`);
+  say(`\n${did.map((d) => `${paint(32, "done")} ${d}`).concat(skipped.map((s) => `${paint(33, "note")} ${s}`)).join("\n")}\n\n${render(after)}`);
   if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour config is plain JSON at ${path}. \`reserve\` is the share of each subscription routr never offers to workers (${found.map((n) => `${n} ${SUGGESTED[n].reserve}`).join(", ")}), and \`hardest_work\` is the hardest work you would hand it. Change anything there at any time.`);
   return result;
 }

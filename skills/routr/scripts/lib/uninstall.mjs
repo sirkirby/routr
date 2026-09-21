@@ -4,7 +4,7 @@
 import { spawn } from "node:child_process";
 import { copyFileSync, lstatSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 
 const OURS = /routr(\.exe)?"? statusline/; // only a statusline that setup (or the guide) pointed at routr
@@ -60,7 +60,8 @@ export async function uninstall(args, { home = homedir() } = {}) {
       if (x.path === process.execPath && process.platform === "win32") {
         // Windows will not delete a running program. Move it aside (allowed), then a detached `cmd` deletes it once we exit.
         const aside = `${x.path}.old`; rmSync(aside, { force: true }); renameSync(x.path, aside);
-        spawn("cmd", ["/c", `ping -n 3 127.0.0.1 >nul & del /f /q "${aside}"`], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+        // Run from the binary's folder with a bare file name: a quoted path does not survive argument quoting on its way to `cmd` (seen: the file stayed).
+        spawn("cmd", ["/c", `ping -n 4 127.0.0.1 >nul & del /f /q ${basename(aside)}`], { cwd: dirname(aside), detached: true, stdio: "ignore", windowsHide: true }).unref();
       } else removePath(x.path);
       removed.push(x.path);
     } catch (e) { failed.push(`${x.path}: ${String(e?.message ?? e).slice(0, 100)}`); }
