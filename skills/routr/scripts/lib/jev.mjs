@@ -15,7 +15,7 @@ export function loadKey() {
       if (m) return m[1].replace(/^["']|["']$/g, "");
     }
   }
-  throw new Error(`no TypeSafe key: set TYPESAFE_API_KEY or put TYPESAFE_API_KEY=... in ${KEY_FILES[0]}`);
+  throw new Error(`no TypeSafe key: create one at https://console.typesafe.ai/keys, then run \`routr key set\` (or set TYPESAFE_API_KEY)`);
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

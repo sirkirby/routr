@@ -15,11 +15,23 @@ key works, and whether a config exists; with no config it prints a starter one f
 
 ## 2. TypeSafe key
 
-routr needs one secret: a TypeSafe API key (https://typesafe.ai). Either the user exports `TYPESAFE_API_KEY` in
-their shell profile, or you write it, with their agreement, to `~/.config/routr/env` as `TYPESAFE_API_KEY=...`
-(create the file with owner-only permissions: `chmod 600` on macOS and Linux). Prefer this file over a project `.env`: workers run in worktrees and
-other folders, where a project `.env` does not exist. Never print the key or put it in a repository. Without a key
-routr still answers, but only with the fallback level.
+routr needs one secret: an API key for TypeSafe, whose small decision model reads each brief. A call costs a small
+fraction of a cent. Walk the user through it:
+
+1. They sign in (or create an account) at https://console.typesafe.ai/keys and create an API key. TypeSafe's quick
+   start shows the same step: https://docs.typesafe.ai/introduction/quickstart
+2. They store it **themselves**, so the key never passes through this conversation. Ask them to run, in their own
+   terminal (in Claude Code they can type `! routr key set`):
+
+       routr key set
+
+   It asks for the key without showing it, saves it to `~/.config/routr/env` readable only by them, and makes one
+   test call. Do not ask the user to paste the key to you, and never print or log it.
+3. Run `routr doctor`: the TypeSafe line should read "works".
+
+If the user would rather manage it themselves, exporting `TYPESAFE_API_KEY` in their shell profile works too. Do not
+put the key in a project `.env`: workers run in worktrees and other folders where that file does not exist, and it
+risks being committed. Without a key routr still answers, but only with the fallback level.
 
 ## 3. Config
 

@@ -52,6 +52,12 @@ export const COMMANDS = {
     args: [{ name: "install", description: "install or update the skill", required: true }],
     flags: [{ name: "--dry-run", description: "show where it would be written", required: false }],
   },
+  key: {
+    name: "key",
+    description: "`routr key set` stores your TypeSafe API key: typed with no echo (or piped in), saved owner-only, then tested",
+    args: [{ name: "set", description: "store the key in ~/.config/routr/env", required: true }],
+    flags: [{ name: "--no-verify", description: "skip the test call", required: false }],
+  },
   doctor: {
     name: "doctor",
     description: "check the setup; changes nothing",

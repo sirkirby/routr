@@ -61,7 +61,8 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus subscriptions ranked by usable headroom. `--headroom cursor=0.9` passes usage the caller read itself. |
 | `launch` | Start one worker in a herdr pane: flags, model syntax, shell prompts, trust dialog, readiness, prompt. `--dry-run` shows the plan. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
-| `record`, `assess` | Write one ledger line; read the ledger back. `record` is the only command that writes to routr's own state. |
+| `record`, `assess` | Write one ledger line; read the ledger back. |
+| `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
 | `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list. Changes nothing. |
 
 The advice commands write nothing and never block an agent: with no network or no key they still answer, marked as
@@ -75,8 +76,9 @@ routr is one standalone binary. It needs no Node, Bun, or packages.
     irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex               # Windows PowerShell
 
 That puts `routr` in `~/.local/bin`, checks the download against the release checksums, and installs the routr skill
-for your agents. Then ask your agent to "set up routr": it runs `routr doctor`, stores your
-[TypeSafe](https://typesafe.ai) API key in `~/.config/routr/env`, and writes `~/.config/routr/config.json` with you.
+for your agents. Then ask your agent to "set up routr": it runs `routr doctor`, walks you through getting a
+[TypeSafe API key](https://console.typesafe.ai/keys) (you store it yourself with `routr key set`, which never shows
+it), and writes `~/.config/routr/config.json` with you.
 Or paste [INSTALL.md](INSTALL.md) into your agent and let it do all of it.
 
 For orchestration you also need [herdr](https://herdr.dev) and its agent skill

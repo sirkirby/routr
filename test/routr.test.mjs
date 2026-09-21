@@ -626,7 +626,7 @@ test("the symptom-patch answer is ignored on work that is not a fix", () => {
 });
 
 test("help table covers every command the CLI dispatches", () => {
-  const dispatched = ["subagent", "dispatch", "launch", "doctor", "check", "record", "assess", "statusline", "skill"];
+  const dispatched = ["subagent", "dispatch", "launch", "doctor", "check", "record", "assess", "statusline", "skill", "key"];
   expect(Object.keys(COMMANDS).sort()).toEqual(dispatched.sort());
 
   // Every command has a valid description, non-empty synopsis, and flags/args
@@ -786,4 +786,20 @@ test("routr skill install writes the guides and links them for Claude Code", asy
   expect(readFileSync(`${home}/.claude/skills/routr/SKILL.md`, "utf8")).toContain("name: routr");
   expect(r.installed.length).toBe(2);
   installSkill({ home });                                  // installing again replaces, never fails
+});
+
+test("routr key set stores a piped key owner-only, never prints it, and refuses junk", () => {
+  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const home = mkdtempSync(join(tmpdir(), "routr-key-"));
+  const env = { ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "" };
+  const good = Bun.spawnSync(["bun", script, "key", "set", "--no-verify"], { env, stdin: Buffer.from("ts_test_0123456789abcdef\n") });
+  expect(good.exitCode).toBe(0);
+  expect(good.stdout.toString()).not.toContain("0123456789abcdef");
+  const file = join(home, ".config/routr/env");
+  expect(readFileSync(file, "utf8")).toBe("TYPESAFE_API_KEY=ts_test_0123456789abcdef\n");
+  if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
+  const bad = Bun.spawnSync(["bun", script, "key", "set", "--no-verify"], { env, stdin: Buffer.from("nope\n") });
+  expect(bad.exitCode).toBe(1);
+  expect(readFileSync(file, "utf8")).toContain("0123456789abcdef");    // the earlier key is untouched
+  rmSync(home, { recursive: true, force: true });
 });

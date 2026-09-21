@@ -22,7 +22,8 @@ It downloads the binary for this machine from the latest GitHub release, checks 
 whether the key works, and, with no config yet, a starter config and each harness's current model list.
 
 **3. Set up.** Read `~/.agents/skills/routr/references/setup.md` and follow it with the user: the TypeSafe API key
-into `~/.config/routr/env`, the config into `~/.config/routr/config.json` (reserves and a default model per
+(they create one at https://console.typesafe.ai/keys and store it themselves with `routr key set`, so it never
+passes through you), the config into `~/.config/routr/config.json` (reserves and a default model per
 subscription, settled with the user), the Claude usage statusline if they use Claude Code, and, if they want
 orchestration, herdr and herdr's agent skill.
 
