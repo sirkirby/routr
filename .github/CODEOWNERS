@@ -1,0 +1,11 @@
+# Every change is reviewed by the maintainer.
+*       @sirkirby
+
+# The question sets and the evidence behind them: a wording change needs its measurement (see CONTRIBUTING.md).
+/skills/routr/scripts/lib/questions.mjs   @sirkirby
+/docs/evidence.md                         @sirkirby
+
+# Release and install paths.
+/.github/                                 @sirkirby
+/install.sh                               @sirkirby
+/install.ps1                              @sirkirby
