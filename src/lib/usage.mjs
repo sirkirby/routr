@@ -1,11 +1,12 @@
 // Live usage per subscription, read passively from what each harness already writes locally. Read-only.
 // headroom = remaining share of the TIGHTEST window (0..1). No pace or burn modelling: the router decides on what is left.
+import { CLAUDE_SNAPSHOT } from "./runtime.mjs";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export const CLAUDE_SNAPSHOT = join(homedir(), ".cache/routr/claude-usage.json"); // written by the usage statusline
+export { CLAUDE_SNAPSHOT };
 export const CODEX_SESSIONS = join(homedir(), ".codex/sessions");
 const now = () => Date.now() / 1000;
 

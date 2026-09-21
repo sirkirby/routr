@@ -14,20 +14,18 @@
 // the agent that asked makes the decision. Never names a model.
 // Advice is side-effect free and fail-open; launch reports failures as JSON and exits nonzero.
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { advise } from "./lib/advise.mjs";
-import { readReport } from "./lib/check.mjs";
+import { readFileSync } from "node:fs";
+import { advise, headline } from "./lib/advise.mjs";
+import { assessCommand, checkCommand, recordCommand, shareCommand } from "./lib/commands.mjs";
 import { loadConfig } from "./lib/config.mjs";
 import { setup } from "./lib/setup.mjs";
 import { uninstall } from "./lib/uninstall.mjs";
 import { doctor } from "./lib/doctor.mjs";
 import { ask } from "./lib/jev.mjs";
 import { cursorUsage } from "./lib/cursor-usage.mjs";
-import { append, assess, LEDGER_PATH, parseReportSubagents, read, shareRows, toEntry } from "./lib/ledger.mjs";
 import { launch } from "./lib/launch.mjs";
 import { rankSubscriptions } from "./lib/pick.mjs";
-import { CHECK_VERSION, checkQuestions, questions, VERSION } from "./lib/questions.mjs";
+import { questions, VERSION } from "./lib/questions.mjs";
 import { readUsage } from "./lib/usage.mjs";
 import { setKey } from "./lib/key.mjs";
 import { installSkill } from "./lib/skill-install.mjs";
@@ -98,56 +96,13 @@ const [mode, ...rest] = argv;
 // At most once a day this starts a detached background updater; it never delays or changes the command itself.
 if (["subagent", "dispatch", "check", "launch", "record", "assess", "share", "doctor", "usage"].includes(mode)) maybeAutoUpdate(loadConfig(configPath).config);
 
-if (mode === "check") {
-  // usage: routr check --brief <file> --report <file>    a quick first read of a worker's report; you remain the judge
-  const out = { mode: "check", question_set: CHECK_VERSION };
-  try {
-    const brief = readFileSync(flag("--brief"), "utf8").trim(), report = readFileSync(flag("--report"), "utf8").trim();
-    if (report.length < 200) out.warning = "this report is very short: make sure it is the worker's full report, not just its last message";
-    const r = await ask({ task: { brief }, report: { text: report } }, checkQuestions, undefined, 10000);
-    Object.assign(out, readReport(r.answers), { ms: Math.round(r.latencyMs) });
-  } catch (e) { Object.assign(out, { headline: "routr: could not read the report; judge it yourself", fallback: true, error: String(e?.message ?? e).slice(0, 160) }); }
-  console.log(JSON.stringify(out)); process.exit(0);
-}
-if (mode === "assess") {
-  // An advice command: an unreadable ledger still gets an answer and exit 0.
-  let entries = [], unreadable = null;
-  try { entries = read(flag("--ledger") ?? LEDGER_PATH); } catch (e) { unreadable = `routr: could not read the ledger (${String(e?.message ?? e).slice(0, 120)}); reporting as if it were empty.\n`; }
-  console.log((unreadable ?? "") + assess(entries, loadConfig(configPath).config)); process.exit(0);
-}
-if (mode === "share") {
-  // Prepare (never send) a file the user can attach to a GitHub issue, to help tune routr's questions on real outcomes.
-  const rows = shareRows(read(flag("--ledger") ?? LEDGER_PATH), { withModels: rest.includes("--with-models") });
-  if (!rows.length) { console.log("The ledger is empty: there is nothing to share yet."); process.exit(0); }
-  // Beside the ledger by default, never in the current folder: that is usually a repository, and the file could be committed.
-  const file = flag("--out") ?? join(dirname(LEDGER_PATH), `routr-ledger-${new Date().toISOString().slice(0, 10)}.jsonl`);
-  mkdirSync(dirname(file) || ".", { recursive: true });
-  writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
-  console.log([
-    `Wrote ${rows.length} rows to ${file}. Nothing has been sent anywhere.`,
-    "",
-    "In the file: what routr read from each brief (yes/no probabilities, level), the level and subscription chosen,",
-    `the outcome and attempt count${rest.includes("--with-models") ? ", and the model names you chose" : ""}. Day-level dates only.`,
-    `Left out: the briefs (routr never stores them), their hashes, your notes, ids, usage numbers${rest.includes("--with-models") ? "" : ", model names (add --with-models to include them)"}.`,
-    "",
-    "Read it, then attach it to a new issue using the \"Share your ledger\" form:",
-    "  https://github.com/sirkirby/routr/issues/new?template=share-ledger.yml",
-    "Issues are public. That is why the file holds nothing that identifies you or your work.",
-  ].join("\n"));
-  process.exit(0);
-}
+if (mode === "check") { console.log(JSON.stringify(await checkCommand({ brief: flag("--brief"), report: flag("--report") }))); process.exit(0); }
+if (mode === "assess") { console.log(assessCommand({ ledger: flag("--ledger") }, loadConfig(configPath).config)); process.exit(0); }
+if (mode === "share") { console.log(shareCommand({ ledger: flag("--ledger"), out: flag("--out"), withModels: rest.includes("--with-models") })); process.exit(0); }
 if (mode === "record") {
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]
   const o = Object.fromEntries(["--advice", "--subscription", "--model", "--effort", "--level", "--verdict", "--check", "--seconds", "--attempts", "--note", "--ledger", "--report", "--project"].map((f) => [f.slice(2), flag(f)]));
-  const subagentFlags = flag("--subagent", true);
-  try {
-    const advice = JSON.parse(o.advice ? readFileSync(o.advice, "utf8") : readFileSync(0, "utf8"));
-    const reportSubagents = o.report ? parseReportSubagents(readFileSync(o.report, "utf8")) : [];
-    const subagents = [...reportSubagents, ...subagentFlags];
-    append(toEntry(advice, { ...o, subagents }), o.ledger ?? LEDGER_PATH);
-    console.log(JSON.stringify({ recorded: advice.id, ledger: o.ledger ?? LEDGER_PATH }));
-  } catch (e) { console.log(JSON.stringify({ recorded: null, error: String(e?.message ?? e).slice(0, 160) })); } // never blocks the agent
-  process.exit(0);
+  console.log(JSON.stringify(recordCommand(o, flag("--subagent", true)))); process.exit(0); // never blocks the agent
 }
 if (mode === "doctor") { await doctor({ json: rest.includes("--json"), configPath }); process.exit(0); }
 if (mode !== "subagent" && mode !== "dispatch") { console.error(formatUnknownUsage()); process.exit(2); }
@@ -170,8 +125,7 @@ try {
   advice.notes.push(`Router unavailable (${String(e?.message ?? e).slice(0, 120)}). "${config.fallback_level}" is only the user's fallback: judge the level yourself.`);
   out.fallback = true;
 }
-const yes = Object.entries(advice.facts ?? {}).filter(([k, f]) => f.reading === "yes" && !/^(states_check|standalone|names_location|tiny|separable|needs_user)$/.test(k)).map(([k]) => k);
-Object.assign(out, { headline: `routr: ${advice.worker && advice.worker.suggestion !== "worth a worker" ? advice.worker.suggestion.toUpperCase() + " · " : ""}${advice.level}${advice.sure ? "" : advice.between ? ` (torn between ${advice.between.join(" and ")})` : " (unsure)"}, ${advice.work_type ?? "unknown"} work${yes.length ? "; " + yes.join(", ") : ""}${advice.high_risk ? "; HIGH RISK" : ""}${(advice.notes ?? []).some((n) => n.startsWith("Fix the brief")) ? "; FIX THE BRIEF FIRST" : ""}`, ...advice, meaning: MEANING[advice.level] });
+Object.assign(out, { headline: headline(advice), ...advice, meaning: MEANING[advice.level] });
 if (mode === "dispatch") {
   try { out.subscriptions = rankSubscriptions(advice.level, await usageP, config); }
   catch (e) { out.subscriptions = { most_room: null, ranked: [], excluded: [], note: `could not read usage: ${String(e?.message ?? e).slice(0, 120)}` }; }

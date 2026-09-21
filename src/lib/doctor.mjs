@@ -5,14 +5,16 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { CONFIG_PATH, loadConfig } from "./config.mjs";
-import { ask, KEY_FILES, loadKey } from "./jev.mjs";
+import { HARNESSES as HARNESS_TABLE } from "./harness.mjs";
+import { KEY_FILES, loadKey, ping } from "./jev.mjs";
 import { CLAUDE_SNAPSHOT, readUsage, run } from "./usage.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
+import { standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
-// Subscription name → the command its harness is launched with.
-export const HARNESSES = { claude: "claude", codex: "codex", cursor: "cursor-agent", agy: "agy" };
+// Subscription name → the command its harness is launched with, from the one table launch uses.
+export const HARNESSES = Object.fromEntries(Object.entries(HARNESS_TABLE).map(([name, h]) => [name, h.executable]));
 export const SUGGESTED = { claude: { hardest_work: "strong", reserve: 0.25 }, codex: { hardest_work: "strong", reserve: 0.2 }, cursor: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 }, agy: { hardest_work: "standard", reserve: 0.1 } };
 
 // Each harness's LIVE model list, asked of the harness itself: routr keeps no model list of its own.
@@ -47,7 +49,7 @@ function offPath(cmd) {
 const MODELS_SHOWN = 12;
 
 // Only Claude Code and Codex take a reasoning effort of their own; Cursor and Antigravity model ids carry it.
-export const TAKES_EFFORT = ["claude", "codex"];
+export const TAKES_EFFORT = Object.keys(HARNESS_TABLE).filter((n) => HARNESS_TABLE[n].effort);
 
 // The config `routr setup` writes: the user's defaults for the harnesses found. A model is set only when the user chose one.
 export function starterConfig(found, models = {}) {
@@ -75,9 +77,7 @@ export function nextSteps(r) {
 
 // Everything doctor reports, as data. `routr setup` starts from the same inspection.
 export async function inspect({ configPath, quiet } = {}) {
-  // A compiled release binary has no script path of its own; a source checkout runs under Bun.
-  const standalone = !/\.m?js$/.test(process.argv[1] ?? "");
-  const r = { runtime: `routr ${ROUTR_VERSION} (${standalone ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, herdr: { path: which("herdr") ?? offPath("herdr"), inside_session: process.env.HERDR_ENV === "1",
+  const r = { runtime: `routr ${ROUTR_VERSION} (${standalone() ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, herdr: { path: which("herdr") ?? offPath("herdr"), inside_session: process.env.HERDR_ENV === "1",
     // The orchestrator guide leans on herdr's own skill for pane and agent commands; routr does not bundle it.
     skill: [".agents/skills/herdr", ".claude/skills/herdr"].some((d) => existsSync(join(homedir(), d, "SKILL.md"))) }, harnesses: {}, key: {}, config: {}, starter_config: null };
   // Every check that waits on something else (the release lookup, each harness, the key's test call) runs at once:
@@ -87,12 +87,12 @@ export async function inspect({ configPath, quiet } = {}) {
   const tty = Boolean(process.stderr.isTTY) && !quiet;
   const step = async (label, p) => { try { return await p; } finally { if (tty) process.stderr.write(`  checked ${label}\n`); } };
   if (tty) process.stderr.write(`Checking ${["the TypeSafe key", ...found.map((n) => `\`${HARNESSES[n]}\``)].join(", ")} (a harness can take up to 20 s to answer)…\n`);
-  const ping = async () => { loadKey(); r.key.found = true; return ask({ task: { brief: "Fix a typo in README.md" } }, { ping: { type: "noul", instructions: "Does `task.brief` describe a software task?" } }, undefined, 10000); };
+  const keyCheck = async () => { loadKey(); r.key.found = true; return ping(); };
   // The release lookup is one short, non-fatal call. Only doctor and `routr update` make it; the advice commands never call home.
   const [latest, usage, key, ...models] = await Promise.all([
     process.env.ROUTR_NO_UPDATE ? null : latestVersion(3000).catch(() => null),
     step("usage", readUsage(found)),
-    step("the TypeSafe key", ping().then((t) => ({ t }), (e) => ({ e }))),
+    step("the TypeSafe key", keyCheck().then((t) => ({ t }), (e) => ({ e }))),
     ...found.map((n) => step(`${n}'s models`, Promise.resolve(MODEL_LISTS[n]?.()).then((l) => l || null, () => null))),
   ]);
   if (latest && newer(latest, ROUTR_VERSION)) r.update_available = latest;

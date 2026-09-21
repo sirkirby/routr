@@ -86,9 +86,25 @@ jobs:
           path: routr-${{ matrix.target }}${{ matrix.ext }}
           if-no-files-found: error
 
+  # The Windows binary is cross-compiled on Linux, where it cannot run. Run it on Windows before anything is published.
+  smoke-windows:
+    name: Smoke-test the Windows binary
+    needs: [validate-tag, build]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: routr-windows-x64
+      - shell: pwsh
+        run: |
+          $v = & .\routr-windows-x64.exe --version
+          if ($v -ne "${{ needs.validate-tag.outputs.version }}") { throw "routr --version said '$v'" }
+          & .\routr-windows-x64.exe skill install --dry-run
+          if ($LASTEXITCODE -ne 0) { throw "skill install --dry-run failed" }
+
   github-release:
     name: GitHub release
-    needs: [validate-tag, build]
+    needs: [validate-tag, build, smoke-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

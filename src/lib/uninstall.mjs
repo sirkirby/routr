@@ -6,6 +6,7 @@ import { copyFileSync, lstatSync, readFileSync, renameSync, rmSync, unlinkSync, 
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 
 
@@ -27,7 +28,6 @@ export function uninstallPlan({ home = homedir(), purge = false, binary = null }
 function removePath(p) { if (lstatSync(p).isSymbolicLink()) unlinkSync(p); else rmSync(p, { recursive: true, force: true }); }
 
 export async function uninstall(args, { home = homedir() } = {}) {
-  const standalone = !/\.m?js$/.test(process.argv[1] ?? "");
   const json = args.includes("--json"), dry = args.includes("--dry-run");
   const say = (s) => { if (!json) console.log(s); };
   const interactive = Boolean(process.stdin.isTTY) && !args.includes("--yes");
@@ -35,11 +35,11 @@ export async function uninstall(args, { home = homedir() } = {}) {
   if (!interactive && !args.includes("--yes") && !dry) return { ok: false, error: "routr uninstall needs a terminal to ask, or --yes. Add --purge to remove your config, key, and ledger as well; --dry-run shows the plan" };
 
   // From a source checkout there is no installed binary of ours to remove: the launcher is the developer's own.
-  let plan = uninstallPlan({ home, purge, binary: standalone ? process.execPath : null });
+  let plan = uninstallPlan({ home, purge, binary: standalone() ? process.execPath : null });
   if (interactive) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const show = (p) => { say("\nThis removes:"); for (const x of p.remove) say(`  ${x.path}   (${x.what})`); if (p.statusline) say("  the `routr statusline` entry in ~/.claude/settings.json (a backup is kept)"); if (p.keep.length) { say("and keeps:"); for (const x of p.keep) say(`  ${x.path}   (${x.what})`); } };
-    if (!purge && plan.keep.length && /^y/i.test((await rl.question("Also remove your config, TypeSafe key, and ledger? [y/N] ")).trim())) { purge = true; plan = uninstallPlan({ home, purge, binary: standalone ? process.execPath : null }); }
+    if (!purge && plan.keep.length && /^y/i.test((await rl.question("Also remove your config, TypeSafe key, and ledger? [y/N] ")).trim())) { purge = true; plan = uninstallPlan({ home, purge, binary: standalone() ? process.execPath : null }); }
     show(plan);
     const go = /^y/i.test((await rl.question("\nUninstall routr? [y/N] ")).trim());
     rl.close();

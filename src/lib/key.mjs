@@ -2,7 +2,7 @@
 // their own terminal; the key is typed with no echo (or piped in) and written to ~/.config/routr/env, owner-only.
 import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { ask, KEY_FILES } from "./jev.mjs";
+import { KEY_FILES, ping } from "./jev.mjs";
 
 export const KEYS_URL = "https://console.typesafe.ai/keys";
 
@@ -40,7 +40,7 @@ export async function setKey({ file = KEY_FILES[0], verify = true } = {}) {
   const out = { ok: true, file, works: null };
   if (verify) {
     process.env.TYPESAFE_API_KEY = key;
-    try { const r = await ask({ task: { brief: "Fix a typo in README.md" } }, { ping: { type: "noul", instructions: "Does `task.brief` describe a software task?" } }, undefined, 10000); out.works = true; out.ms = Math.round(r.latencyMs); }
+    try { const r = await ping(); out.works = true; out.ms = Math.round(r.latencyMs); }
     catch (e) { out.works = false; out.error = `saved, but the test call failed: ${String(e?.message ?? e).slice(0, 140)}`; }
   }
   return out; // never includes the key
