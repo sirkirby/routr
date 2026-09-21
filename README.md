@@ -74,8 +74,17 @@ a fallback.
 
 routr is one standalone binary. It needs no Node, Bun, or packages.
 
-    curl -fsSL https://raw.githubusercontent.com/sirkirby/routr/main/install.sh | sh          # macOS, Linux
-    irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex               # Windows PowerShell
+macOS and Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/sirkirby/routr/main/install.sh | sh
+```
+
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
+```
 
 That puts `routr` in `~/.local/bin`, checks the download against the release checksums, and installs the routr skill
 for your agents. Then ask your agent to "set up routr": it runs `routr doctor`, walks you through getting a
