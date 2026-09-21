@@ -1,5 +1,7 @@
 # routr
 
+![routr: one lead agent plans and decides, then hands work to Claude Code, Codex, Cursor, and Antigravity workers](assets/routr-banner.png)
+
 routr helps one coding agent run a team of others across the AI subscriptions you already pay for: Claude Code,
 Codex, Cursor, and Antigravity. It pairs with [herdr](https://github.com/herdrdev/herdr), which provides the panes
 the workers run in, and is named after it.
