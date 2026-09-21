@@ -1212,3 +1212,11 @@ test("CLI round trip for record with repeatable --subagent and --report flags", 
   rmSync(tempDir, { recursive: true, force: true });
 });
 
+
+test("Windows shell prompts count as ready; a bare continuation prompt still does not", () => {
+  for (const text of ["PS C:\\Users\\chris>", "PS C:\\Users\\chris\\AppData\\Local\\Temp\\routr-wintest> ", "C:\\Users\\chris>", "Windows PowerShell\nCopyright (C) Microsoft\n\nPS D:\\work\\my repo>"])
+    expect(shellPrompt(text)).toBe("ready");
+  expect(shellPrompt("> ")).toBe("question");
+  expect(shellPrompt(">> ")).not.toBe("ready");
+  expect(shellPrompt("Do you want to continue? C:\\temp>no")).not.toBe("ready");
+});
