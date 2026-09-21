@@ -18,7 +18,8 @@ try {
   if (-not $want -or $want -ne $got) { throw "routr: checksum mismatch for $asset; nothing was installed" }
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   Move-Item -Force "$tmp\$asset" "$dir\routr.exe"
-  Write-Host "routr: installed $(& "$dir\routr.exe" --version) to $dir\routr.exe"
+  $version = & "$dir\routr.exe" --version
+  Write-Host "routr: installed $version to $dir\routr.exe"
   & "$dir\routr.exe" skill install | Out-Null
   Write-Host "routr: skill installed to ~\.agents\skills\routr"
   if (($env:PATH -split ";") -notcontains $dir) { Write-Host "routr: add $dir to your PATH so agents can run ``routr``" }
