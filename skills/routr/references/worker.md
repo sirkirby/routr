@@ -12,16 +12,15 @@ and never touch another branch or the main checkout.
 Subagents are where usage leaks: the easy default is a subagent as strong as you, and most subagent work does not
 need it. Spawn subagents only for work that can run in parallel; doing the same work yourself costs about half.
 
-For each subagent, ask first. If routr's `worker` field says `do it yourself`, do not spawn one.
-
-Ask like this:
+Before each subagent, ask routr about the brief you are about to give it:
 
     routr subagent "<the brief you are about to give it>"
 
-Then decide how much intelligence and reasoning that piece of work needs, from the facts routr returns and what
-you know of the code, and choose the model and effort that match: never one stronger than yourself, and never your
-own model by default. Ask once per subagent: different subtasks need different levels. If `sure` is false, or you disagree with
-the advice, decide yourself and record it (see the ROUTR line below).
+If its `worker` field says `do it yourself`, do not spawn one. Otherwise decide how much intelligence and reasoning
+that piece of work needs, from the facts routr returns and what you know of the code, and choose the model and
+effort that match: never one stronger than yourself, and never your own model by default. Ask once per subagent,
+because different subtasks need different levels. If `sure` is false, or you disagree with the advice, decide
+yourself and record it (see the ROUTR line below).
 
 On Cursor, give subagents Cursor's own models only (Grok, Composer). Other vendors' models inside Cursor draw on a
 separate, smaller usage pool.

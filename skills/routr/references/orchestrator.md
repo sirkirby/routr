@@ -24,7 +24,7 @@ questions.
 Then decide three things yourself, from `facts`, `notes`, `subscriptions.ranked`, and what only you know (what is
 already running in other panes, what comes next, which harness suits this repository):
 
-1. **Intelligence and reasoning** the work needs (see "Deciding" in SKILL.md).
+1. **Intelligence and reasoning** the work needs (see "Deciding" in `SKILL.md`).
 2. **Subscription**: spread load. Prefer one with plenty of usable headroom over your own when both can do the work.
 3. **Model and effort** on that subscription: start from `your_default`, the user's everyday model there, and move up
    or down to match. With no default set, list the harness's models (see `harnesses.md`) and choose. Never launch a
@@ -34,42 +34,64 @@ Usage moves while you work, so ask again before every launch; never reuse an ear
 
 **Cursor's usage** has no local source, but you can read it: in a fresh pane (read it first, see `harnesses.md`
 rule 0) run `cursor-agent --trust`, type `/usage` and press Enter (twice if an autocomplete menu opens), read the
-panel ("Included N% used"), press Esc, close the pane. It costs no agent turn. Pass it as `--headroom cursor=<1 − N/100>`. Do this at the start of a run and again every so often, not on
-every launch. Claude, Codex, and Antigravity are read live by routr itself.
+panel ("Included N% used"), press Esc, close the pane. It costs no agent turn. Pass it as
+`--headroom cursor=<1 − N/100>`. Do this at the start of a run and again every so often, not on every launch.
+Claude, Codex, and Antigravity are read live by routr itself.
 
 ## 3. Launch
 
-`routr launch` does the whole launch sequence in one call, so you do not have to carry the per-harness detail in
-your head. It splits the pane, answers whatever the user's shell asks first, applies that harness's permissive
-flags and its model/effort syntax, deals with the folder-trust dialog, waits until the agent is really ready,
-composes the four-part launch prompt around your task, and prints one JSON object describing all of it.
+**Pick the directory first.** A worker that writes gets its own worktree; a read-only worker may share the main
+checkout. `herdr worktree create` returns a workspace whose root pane is already at a shell prompt: pass that pane
+to `routr launch --pane <id>` instead of splitting another one. Put worktrees and scratch directories under a parent
+the harness already trusts. A subfolder of a trusted folder starts with no trust dialog, which is why worktrees
+under `~/.herdr/worktrees` come up clean.
+
+Workers run without a human, so their permissions must cover the scope of the task, and the task must stay inside
+that scope. When the work's correct behaviour is to write outside its folder (a script that writes to the home
+directory, say), tell the worker to verify under a temporary `HOME` inside its worktree.
+
+**Write the task.** Every launch prompt has four parts. `routr launch --task-file` supplies the first and the
+fourth; you write the second and third.
+
+1. The opening, word for word. Every harness can read a file, so this works even where the harness has no skill
+   mechanism (Antigravity) or does not list the skill. A softer line ("use the routr skill") was measured: the worker
+   skipped it and ran every subagent on its own model.
+
+       You are a routr worker. Your first action, before any other tool call, is to read the routr worker guide at
+       ~/.agents/skills/routr/references/worker.md. It is mandatory for this task: it says how to size each subagent
+       before you spawn it and the exact report format the orchestrator parses.
+
+2. The task: what to do, where, what done looks like, and what is out of scope. For a worker that writes, say that
+   it commits on its own branch and never pushes.
+3. How to verify it (the command to run), so the worker can check its own work.
+4. The closing line. Without it a worker on a small task ended with a sentence instead of the report.
+
+       Finish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.
+
+**Launch.** `routr launch` does the whole sequence in one call. It splits the pane, answers whatever the user's shell
+asks first, applies that harness's permissive flags and its model and effort syntax, deals with the folder-trust
+dialog, waits until the agent is ready, wraps your task in the opening and closing lines, and prints one JSON
+object describing what it did.
 
     routr launch --kind <claude|codex|cursor|agy> --name <agent-name> \
-        --cwd <dir> --model <id> [--effort <level>] [--task-file <path>] [--trust ask|auto] [--dry-run]
+        --cwd <dir> --model <id> [--effort <level>] [--task-file <path>] [--pane <id>] [--trust ask|auto] [--dry-run]
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
-  `--effort` where the harness takes it separately; on Antigravity the model id already carries it, and routr will
-  tell you so rather than pass a flag that silently runs the high variant.
-- `--task-file` is your task alone. routr wraps it in the opening and closing lines below, so you do not have to
-  paste them. Without it the pane is left ready and unprompted, for you to prompt yourself.
+  `--effort` where the harness takes it separately. On Antigravity the model id already carries it, and routr says so
+  instead of passing a flag that silently runs the high variant.
+- `--task-file` holds your task alone (parts 2 and 3). Without it the pane is left ready and unprompted, for you to
+  prompt yourself.
 - `--trust` defaults to `ask`: at a folder-trust dialog routr stops, leaves the pane alive, and reports
   `needs_human` with what the dialog says. Pass `--trust auto` only for a directory you created or a worktree of the
-  repository the user already has you working in — that is you asserting it, not routr deciding.
-- `--dry-run` prints the plan and changes nothing. Use it when you want to see the flags before spending anything.
-- Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_human` or `failed`;
-  `warnings` holds anything it answered on your behalf, and anything it wants you to look at; `steps` says what it
-  did in order. A `needs_human` result is yours to resolve (`herdr notification show`), not to retry.
+  repository the user already has you working in. With `auto` you are vouching for the folder; routr is not judging it.
+- `--dry-run` prints the plan and changes nothing. Use it to see the flags before spending anything.
+- Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_human`, or `failed`.
+  `warnings` holds anything it answered on your behalf and anything it wants you to look at. `steps` says what it
+  did, in order. A `needs_human` result is yours to resolve (`herdr notification show`), not to retry.
 - `prompted` means the worker took the prompt and started, not that it finished. Waiting for the work is step 4.
 
-Before the launch, pick the directory. A worker that writes gets its own worktree; a read-only worker may share the
-main checkout. `herdr worktree create` returns a workspace whose root pane is already at a shell prompt: pass that
-pane to `routr launch --pane <id>` instead of splitting another one. Put worktrees and scratch directories under a
-parent the harness already trusts: a subfolder of a trusted folder starts with no trust dialog, which is why
-worktrees under `~/.herdr/worktrees` come up clean.
-
-`references/harnesses.md` remains the source of truth for what each harness does and what goes wrong with it. Read
-it when a launch surprises you, when you are choosing a model, or when you are doing the sequence by hand — by
-hand is still available, and is what `routr launch` performs:
+`references/harnesses.md` records what each harness does and what goes wrong with it. Read it when a launch surprises
+you, when you are choosing a model, or when you launch by hand. The by-hand sequence is what `routr launch` performs:
 
 1. `herdr pane split --current --direction <right|down> --cwd <dir> --no-focus`.
 2. Read the pane; wait for a clean shell prompt before typing (see `harnesses.md` rule 0).
@@ -77,32 +99,11 @@ hand is still available, and is what `routr launch` performs:
 4. **Read the pane after every start**, whatever state herdr reports. A folder-trust dialog may be showing (herdr
    reports Claude's as `agent_not_ready`, but Codex's as `idle`). You may accept it yourself only for a directory
    you created, or a worktree of the repository the user already has you working in. For anything else, ask the user
-   (`herdr notification show`). Note the default answer can be "No, exit": read the options before sending keys.
+   (`herdr notification show`). The default answer can be "No, exit": read the options before sending keys.
 5. `herdr agent prompt <name> "<text>" --wait`.
 
-Either way: when the worker is finished and verified, close the pane you created. Never reuse a pane for another
-worker: keys sent while an agent is exiting land in the wrong place.
-
-Workers run without a human, so their permissions must cover the scope of the task, and the task must stay inside
-that scope. When the work's correct behaviour is to write outside its folder (a script that writes to the home
-directory, say), tell the worker to verify under a temporary `HOME` inside its worktree.
-
-Every launch prompt has four parts. `routr launch --task-file` supplies the first and the fourth for you; you write
-the second and third.
-
-1. This opening, word for word, with the real path filled in. Every harness can read a file, so this works even
-   where the harness has no skill mechanism (Antigravity) or does not list the skill. A softer line ("use the routr
-   skill") was measured: the worker skipped it and ran every subagent on its own model.
-
-       You are a routr worker. Your first action, before any other tool call, is to read the routr worker guide at
-       <routr skill folder>/references/worker.md. It is mandatory for this task: it says how to size each subagent
-       before you spawn it and the exact report format the orchestrator parses.
-
-2. The task: what to do, where, what done looks like, and what is out of scope.
-3. How to verify it (the command to run), so the worker can check its own work.
-4. This closing line. Without it a worker on a small task ended with a sentence instead of the report.
-
-       Finish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.
+When the worker is finished and verified, close the pane you created. Never reuse a pane for another worker: keys
+sent while an agent is exiting land in the wrong place.
 
 ## 4. Judge, send back, escalate
 
@@ -131,15 +132,16 @@ result against the project's own standards, not just the brief.
 ## 5. Record
 
 Keep the advice when you ask for it (`routr dispatch … > <scratch>/advice-<n>.json`), and once you have verified the
-result, record it. This is the only routr command that writes anything; it appends one line to the user's ledger.
+result, record it. `record` is the only command that writes to routr's own state: it appends one line to the user's
+ledger.
 
     routr record --advice <file> --subscription <s> --model <m> --effort <e> \
         [--level <the level you settled on, if not the advised one>] --verdict <done|partial|blocked> \
         --check <pass|fail|none> [--attempts <n>] [--seconds <n>] [--note "<why you went against the advice, or what went wrong>"]
 
-`--verdict` is the worker's own VERDICT line; `--check` is YOUR verification; `--attempts` counts the tries it took
-(1 = accepted first time), and when you escalated, record the level and model that finally delivered. Record failures and cut-off workers
-too: they are what shows a level is too low. The ledger never stores the brief, only its hash and length.
+`--verdict` is the worker's own VERDICT line. `--check` is your verification. `--attempts` counts the tries it took
+(1 means accepted first time); when you escalated, record the level and model that finally delivered. Record
+failures and cut-off workers too: they are what shows a level is too low. The ledger never stores the brief, only its hash and length.
 `routr assess` prints what the ledger says so far.
 
 ## 6. Integrate and clean up

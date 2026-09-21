@@ -31,34 +31,41 @@ fallback.
 
 `routr subagent "<brief>"` and `routr dispatch "<brief>"` print one JSON object. The brief can also be piped on stdin.
 
-- `facts`: yes / no / unclear readings of what the brief says, each with its probability: does it name where to
-  work, is the approach left open, is the cause unknown, is the change cross-cutting, are concurrency or stored data
-  involved, is it expensive to undo. routr is reliable on these. `unclear` means the brief does not settle it: you
-  can, from the codebase. Two facts are about your brief, not the work: `states_check` and `standalone`. When either
-  reads `no`, fix the brief before you send it.
-- `level`: a one-word summary: `basic` (rote or well-specified), `standard` (must find something out or choose an
-  approach), or `strong` (a wrong or shallow result would be expensive and hard to notice). `sure: false` means routr
-  was split: go by the facts. routr never names a model.
 - `headline`: the advice in one line. Read it first; the rest is the detail behind it.
 - `worker`: whether the work is worth handing out at all: `do it yourself` (one or two small edits), `settle it with
   the user first` (the brief leaves them a decision), `split it across workers` (independent pieces), or `worth a
   worker`. A suggestion with its reason; you know what else is running.
-- Deciding. **Start at the advice, not above it.** The loop is ask, build, judge, fix: work that falls short gets sent
-  back or relaunched one level up, so starting high "to be safe" only costs more. (Measured: a lead left to itself
-  went above the advice on 5 of 7 briefs and set effort to high every time.)
-  - **Intelligence** (which model): start from the advised level and the user's default model. Go higher only when a
-    fact reads `yes` that calls for it: approach open, cross-cutting, concurrency or stored data, expensive to undo,
-    high risk. For `basic` work go BELOW the user's default when the harness has a smaller model.
-  - **Reasoning effort**: start at the user's default effort. Raise it only for work that needs many steps held
-    together: an unknown cause to run down, a long chain of changes that must agree. Size alone is not a reason.
-  - Give one reason for the intelligence you chose and a separate one for the effort, in the record's `--note`.
-  (The intelligence/reasoning split is routr's working guidance, not yet measured.)
+- `facts`: yes / no / unclear readings of what the brief says, each with its probability: does it name where to
+  work, is the approach left open, is the cause unknown, is the change cross-cutting, are concurrency or stored data
+  involved, is it expensive to undo. In testing, 63 to 88% of these readings were decisive, and the same brief got
+  the same reading 107 times out of 108. `unclear` means the brief does not settle it: you can, from the codebase.
+  Two facts are about your brief, not the work: `states_check` and `standalone`. When either reads `no`, fix the
+  brief before you send it.
+- `level`: a one-word summary: `basic` (rote or well-specified), `standard` (must find something out or choose an
+  approach), or `strong` (a wrong or shallow result would be expensive and hard to notice). `sure: false` means routr
+  was split: go by the facts. routr never names a model.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
-- `subscriptions` (dispatch only): `ranked` lists each subscription with its usable headroom and, under `windows`,
-  each usage window as the harness reports it (percent used, hours until it resets). The user's reserve shrinks as a
-  window nears its reset, because unused capacity expires then. Each entry is marked `live`, `given` (you passed it in), or `assumed`, and `your_default`, the user's everyday model there:
-  start from it and move up or down to match the work; `excluded` lists those the user does not give work this hard.
-  Never spend a reserve. When everything is at its reserve, hold the work or ask the user.
+- `subscriptions` (dispatch only). `ranked` lists each subscription with its usable headroom, marked `live`, `given`
+  (you passed it in), or `assumed`. Under `windows` it shows each usage window as the harness reports it: percent
+  used and hours until it resets. The user's reserve shrinks as a window nears its reset, because unused capacity
+  expires then. `your_default` is the user's everyday model on that subscription. `excluded` lists subscriptions the
+  user does not give work this hard. Never spend a reserve: when everything is at its reserve, hold the work or ask
+  the user.
+
+## Deciding
+
+**Start at the advice, not above it.** The loop is ask, build, judge, fix: work that falls short gets sent back or
+relaunched one level up, so starting high "to be safe" only costs more. (Measured: a lead left to itself went above
+the advice on 5 of 7 briefs and set effort to high every time.)
+
+- **Intelligence** (which model): start from the advised level and the user's default model. Go higher only when a
+  fact that calls for it reads `yes`: approach open, cross-cutting, concurrency or stored data, expensive to undo,
+  high risk. For `basic` work go below the user's default when the harness has a smaller model.
+- **Reasoning effort**: start at the user's default effort. Raise it only for work that needs many steps held
+  together: an unknown cause to run down, a long chain of changes that must agree. Size alone is not a reason.
+- Give one reason for the intelligence you chose and a separate one for the effort, in the record's `--note`.
+
+The split between intelligence and reasoning effort is routr's working guidance. It has not been measured.
 
 When you settle on something other than what was advised, say so where the user will see it:
 

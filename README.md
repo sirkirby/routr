@@ -35,7 +35,7 @@ read every time it is about to hand out work, and again when the work comes back
                codex   0.36 usable   weekly 50% used, resets in 116 h
                claude  0.35 usable   weekly 61% used, resets in 28 h · 5-hour 36% used, resets in 2 h
 
-The real output is one JSON object; this is its content.
+routr prints this as one JSON object; the listing shows what is in it.
 
 - **worker**: is this worth handing out at all? `do it yourself` for one or two small edits, `settle it with the
   user first` when the brief leaves them a decision, `split it across workers` for independent pieces.
