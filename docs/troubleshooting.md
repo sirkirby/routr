@@ -34,7 +34,7 @@ but only with your fallback level.
 
 ## Claude's usage shows as "assumed"
 
-Claude Code reports usage only to its statusline. Set `routr statusline` as Claude's statusline command (the setup
+Claude Code reports usage only to its statusline. Run `routr setup`, or set `routr statusline` as Claude's statusline command by hand (the setup
 guide does this with you); the first reading appears after the next Claude Code turn.
 
 ## Cursor's usage is always "assumed" or "given"

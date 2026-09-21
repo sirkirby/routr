@@ -21,7 +21,9 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
     routr doctor
 
 It changes nothing. It reports which harnesses are installed, which have a live usage source, whether the TypeSafe
-key works, and whether a config exists; with no config it prints a starter one for the harnesses it found.
+key works, and whether a config exists. Lines marked `!!` need fixing, and it ends with a numbered list of what to
+do next. `routr setup` does the writing (steps 3 and 4). A person can run it alone in a terminal and answer its
+questions; you run it with `--yes` and the choices you settled with the user.
 
 ## 2. TypeSafe key
 
@@ -45,8 +47,16 @@ risks being committed. Without a key routr still answers, but only with the fall
 
 ## 3. Config
 
-Save to `~/.config/routr/config.json`, starting from doctor's starter config. Settle each value with the user; every
-one is their preference, and none describes a model.
+Do not write the file by hand. Settle the default model for each subscription with the user (doctor prints each
+harness's live list), then run:
+
+    routr setup --yes --model claude=<id> --model codex=<id> ...
+
+It writes `~/.config/routr/config.json` for the harnesses found, with the suggested reserves, and sets the Claude
+statusline (step 4; `--no-statusline` leaves it). A subscription with no `--model` gets no default, and the lead
+picks from the live list. An existing config is kept: setup only adds harnesses found since, and `--force` rewrites
+it (the old file is kept as `config.json.bak`). Then go through the values with the user and edit the file for
+anything they want different; every one is their preference, and none describes a model.
 
 - `subscriptions`: one entry per subscription the orchestrator may launch on, named `claude`, `codex`, `cursor`, `agy`.
   - `reserve`: the share of that subscription routr must never offer (0.25 keeps a quarter for the user's own work).
@@ -66,7 +76,9 @@ one is their preference, and none describes a model.
 ## 4. Claude usage (only if Claude Code is a subscription)
 
 Claude Code reports usage only to its statusline. `routr statusline` is a statusline command: it prints the model and
-usage there and saves each snapshot to `~/.cache/routr/claude-usage.json`, which routr reads. If the user agrees, set
+usage there and saves each snapshot to `~/.cache/routr/claude-usage.json`, which routr reads. If the user agrees,
+`routr setup` sets it when Claude Code has no statusline yet (the old settings are kept as
+`settings.json.bak-before-routr`); it never replaces a statusline the user already has. By hand, it is
 
     "statusLine": { "type": "command", "command": "<full path to routr> statusline" }
 

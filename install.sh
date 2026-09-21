@@ -26,4 +26,4 @@ chmod +x "$dir/routr"
 echo "routr: installed $("$dir/routr" --version) to $dir/routr"
 "$dir/routr" skill install >/dev/null && echo "routr: skill installed to ~/.agents/skills/routr"
 case ":$PATH:" in *":$dir:"*) ;; *) echo "routr: add $dir to your PATH so agents can run \`routr\`" ;; esac
-echo "routr: next, ask your coding agent to \"set up routr\", or run: routr doctor"
+echo "routr: next, run: routr setup   (or ask your coding agent to \"set up routr\")"

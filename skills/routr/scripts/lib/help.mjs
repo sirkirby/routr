@@ -83,9 +83,21 @@ export const COMMANDS = {
     args: [{ name: "set", description: "store the key in ~/.config/routr/env", required: true }],
     flags: [{ name: "--no-verify", description: "skip the test call", required: false }],
   },
+  setup: {
+    name: "setup",
+    description: "do what doctor says is missing: write the config for the harnesses found, set Claude's usage statusline, ask for the key. Asks questions at a terminal; an agent passes --yes",
+    flags: [
+      { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
+      { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list; repeatable", required: false },
+      { name: "--no-statusline", description: "leave Claude Code's settings alone", required: false },
+      { name: "--force", description: "rewrite an existing config (the old one is kept as config.json.bak)", required: false },
+      { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
+      { name: "--json", arg: null, description: "output JSON instead of text", required: false, default: false },
+    ],
+  },
   doctor: {
     name: "doctor",
-    description: "check the setup; changes nothing",
+    description: "check the setup and list what to do next; changes nothing",
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--json", arg: null, description: "output JSON instead of text", required: false, default: false },

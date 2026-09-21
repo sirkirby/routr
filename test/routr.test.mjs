@@ -738,7 +738,7 @@ test("the symptom-patch answer is ignored on work that is not a fix", () => {
 });
 
 test("help table covers every command the CLI dispatches", () => {
-  const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "check", "record", "assess", "share", "update", "statusline", "skill", "key"];
+  const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "setup", "check", "record", "assess", "share", "update", "statusline", "skill", "key"];
   expect(Object.keys(COMMANDS).sort()).toEqual(dispatched.sort());
 
   // Every command has a valid description, non-empty synopsis, and flags/args
@@ -1286,4 +1286,49 @@ test("the background update check is due at most once a day, and the config can 
   const off = `${import.meta.dir}/.noupdate.json`; writeFileSync(off, JSON.stringify({ auto_update: false }));
   expect(loadConfig(off).config.auto_update).toBe(false);
   expect(loadConfig("/nonexistent/config.json").config.auto_update).toBe(true);
+});
+
+test("doctor's next steps name the command for each thing missing, most important first", async () => {
+  const { nextSteps, starterConfig } = await import("../skills/routr/scripts/lib/doctor.mjs");
+  const { ROUTR_VERSION } = await import("../skills/routr/scripts/lib/version.mjs");
+  const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true } }, claude_usage_statusline: "installed", skill: [{ version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
+  expect(nextSteps(base)).toEqual([]);
+  const fresh = nextSteps({ ...base, key: { works: false, found: false }, config: { exists: false, subscriptions: [] }, claude_usage_statusline: "missing: without it Claude usage is assumed, not read" });
+  expect(fresh[0]).toContain("routr key set");
+  expect(fresh[1]).toContain("routr setup");
+  expect(fresh.length).toBe(3);
+  expect(nextSteps({ ...base, harnesses: { claude: { installed: true }, codex: { installed: true } } })[0]).toContain("codex");
+  // The starter config never carries a placeholder: a model is there only when the user chose one.
+  const c = starterConfig(["claude", "agy"], { claude: "sonnet" });
+  expect(c.subscriptions.claude).toEqual({ hardest_work: "strong", reserve: 0.25, default_model: "sonnet", default_effort: "medium" });
+  expect(c.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1 });
+});
+
+test("setup never replaces a statusline the user already has", async () => {
+  const { statuslinePlan, parseModels } = await import("../skills/routr/scripts/lib/setup.mjs");
+  expect(statuslinePlan(null, "/b/routr statusline")).toEqual({ action: "write", settings: { statusLine: { type: "command", command: "/b/routr statusline" } } });
+  expect(statuslinePlan('{"model":"opus"}', "/b/routr statusline").settings.model).toBe("opus");
+  expect(statuslinePlan('{"statusLine":{"command":"~/mine.sh"}}', "x").action).toBe("skip");
+  expect(statuslinePlan('{"statusLine":{"command":"/b/routr statusline"}}', "x").action).toBe("none");
+  expect(statuslinePlan("{not json", "x").action).toBe("skip");
+  expect(parseModels(["--yes", "--model", "claude=sonnet", "--model", "codex=m"])).toEqual({ claude: "sonnet", codex: "m" });
+  expect(() => parseModels(["--model", "gpt=4"])).toThrow();
+});
+
+test("routr setup --yes writes the config once, keeps it afterwards, and starts no harness", () => {
+  const script = `${import.meta.dir}/../skills/routr/scripts/routr.mjs`;
+  const home = mkdtempSync(join(tmpdir(), "routr-setup-"));
+  // An empty PATH: no harness is found, so none is started (a logged-out harness opens a browser to sign in).
+  const env = { ...process.env, HOME: home, USERPROFILE: home, PATH: home, TYPESAFE_API_KEY: "", ROUTR_NO_UPDATE: "1" };
+  const first = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--json"], { env });
+  expect(first.exitCode).toBe(0);
+  const file = join(home, ".config/routr/config.json");
+  expect(JSON.parse(first.stdout.toString()).did[0]).toContain("wrote");
+  expect(JSON.parse(readFileSync(file, "utf8")).subscriptions).toEqual({});
+  writeFileSync(file, JSON.stringify({ subscriptions: {}, sure_at: 0.9 }));
+  const again = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--json"], { env });
+  expect(JSON.parse(again.stdout.toString()).did).toEqual([]);
+  expect(JSON.parse(readFileSync(file, "utf8")).sure_at).toBe(0.9);
+  const bad = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--model", "codex=m"], { env });
+  expect(bad.exitCode).toBe(1);
 });

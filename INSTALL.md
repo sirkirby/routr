@@ -28,12 +28,12 @@ It downloads the binary for this machine from the latest GitHub release, checks 
 `~/.local/bin` is not on the PATH, offer to add it to the user's shell profile, and use the full path meanwhile.
 
 **2. Check.** Run `routr doctor`. It changes nothing. It shows which harnesses are installed, which have live usage,
-whether the key works, and, with no config yet, a starter config and each harness's current model list.
+whether the key works, each harness's current model list, and a numbered list of what is left to do.
 
 **3. Set up.** Read `~/.agents/skills/routr/references/setup.md` and follow it with the user: the TypeSafe API key
 (they create one at https://console.typesafe.ai/keys and store it themselves with `routr key set`, so it never
-passes through you), the config into `~/.config/routr/config.json` (reserves and a default model per
-subscription, settled with the user), the Claude usage statusline if they use Claude Code, and, if they want
+passes through you), the config and the Claude usage statusline with `routr setup --yes --model <subscription>=<id> ...` (a
+default model per subscription, settled with the user; then the reserves, edited in `~/.config/routr/config.json`), and, if they want
 orchestration, herdr and herdr's agent skill.
 
 **4. Confirm.** Run `routr doctor` again and show it to the user, then one real call:
