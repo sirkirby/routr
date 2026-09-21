@@ -165,5 +165,7 @@ Object.assign(out, { headline: `routr: ${advice.worker && advice.worker.suggesti
 if (mode === "dispatch") {
   try { out.subscriptions = rankSubscriptions(advice.level, await usageP, config); }
   catch (e) { out.subscriptions = { most_room: null, ranked: [], excluded: [], note: `could not read usage: ${String(e?.message ?? e).slice(0, 120)}` }; }
+  // An unconfigured routr ranks nothing; say why, so the lead tells the user instead of guessing (seen in a real session).
+  if (!Object.keys(config.subscriptions).length) out.subscriptions.note = "no subscriptions are configured, so none is ranked: the user has not run `routr setup` yet. Tell them, and ask which subscription to use meanwhile";
 }
 console.log(JSON.stringify({ ...out, rule: RULE[mode], ...(configNotes.length ? { config_notes: configNotes } : {}) }));
