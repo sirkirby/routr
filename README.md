@@ -79,7 +79,9 @@ for your agents. Then ask your agent to "set up routr": it runs `routr doctor`, 
 [TypeSafe](https://typesafe.ai) API key in `~/.config/routr/env`, and writes `~/.config/routr/config.json` with you.
 Or paste [INSTALL.md](INSTALL.md) into your agent and let it do all of it.
 
-You need herdr for orchestration; sizing subagents works without it. The skill alone can also be installed with
+For orchestration you also need [herdr](https://herdr.dev) and its agent skill
+(`npx skills add herdrdev/herdr --skill herdr -g`); setup offers to install both, and `routr doctor` tells you when
+either is missing. Sizing subagents works without them. routr's own skill can also be installed with
 `npx skills add sirkirby/routr -g` or, in Claude Code, `/plugin marketplace add sirkirby/routr`.
 
 The macOS binaries are signed ad hoc, not notarized. Installed by the script they run as they are; if you download

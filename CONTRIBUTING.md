@@ -20,7 +20,8 @@ The question sets live in `skills/routr/scripts/lib/questions.mjs` and carry a v
 `CHECK_VERSION` for the judge step). A wording change is a new version. In the pull request, say what you ran it
 against (the briefs or reports, how they were labelled, by whom) and the result next to the old wording's result on
 the same items. Narrow, literal questions about what a text states do well; questions that estimate what work will
-take do not (see the evidence).
+take do not (see the evidence). TypeSafe's own agent skill (https://docs.typesafe.ai/agent-skill) is useful when you
+design or debug a question. Users of routr do not need it: routr calls the API itself.
 
 ## Changing a harness recipe
 

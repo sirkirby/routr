@@ -45,7 +45,9 @@ const MODELS_SHOWN = 12;
 export async function doctor({ json, configPath }) {
   // A compiled release binary has no script path of its own; a source checkout runs under Bun.
   const standalone = !/\.m?js$/.test(process.argv[1] ?? "");
-  const r = { runtime: `routr ${ROUTR_VERSION} (${standalone ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, herdr: { path: which("herdr"), inside_session: process.env.HERDR_ENV === "1" }, harnesses: {}, key: {}, config: {}, starter_config: null };
+  const r = { runtime: `routr ${ROUTR_VERSION} (${standalone ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, herdr: { path: which("herdr") ?? offPath("herdr"), inside_session: process.env.HERDR_ENV === "1",
+    // The orchestrator guide leans on herdr's own skill for pane and agent commands; routr does not bundle it.
+    skill: [".agents/skills/herdr", ".claude/skills/herdr"].some((d) => existsSync(join(homedir(), d, "SKILL.md"))) }, harnesses: {}, key: {}, config: {}, starter_config: null };
   const found = Object.keys(HARNESSES).filter((n) => which(HARNESSES[n]));
   const usage = await readUsage(found);
   for (const n of Object.keys(HARNESSES)) {
@@ -76,7 +78,8 @@ export async function doctor({ json, configPath }) {
 
   if (json) return console.log(JSON.stringify(r, null, 1));
   const ok = (b) => (b ? "ok " : "-- ");
-  console.log(`routr doctor (changes nothing)\n\n${ok(true)}${r.runtime}\n${ok(r.herdr.path)}herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: the orchestrator skill needs it"}`);
+  console.log(`routr doctor (changes nothing)\n\n${ok(true)}${r.runtime}\n${ok(r.herdr.path)}herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: orchestration needs it (https://herdr.dev). Sizing subagents works without it"}`);
+  if (r.herdr.path) console.log(`${ok(r.herdr.skill)}herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
   for (const [n, h] of Object.entries(r.harnesses)) console.log(`${ok(h.installed)}${n.padEnd(7)} ${h.installed ? `\`${h.command}\` found · usage ${h.usage}` : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it` : `\`${h.command}\` not found`}${h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${h.models.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${h.command} models\` for the rest)` : ""}` : ""}`);
   console.log(`${ok(r.key.works)}TypeSafe key ${r.key.works ? `works (${r.key.model}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
   console.log(`${ok(r.config.exists)}config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found"}${r.config.exists && notes.length ? `\n   ${notes.join("\n   ")}` : ""}`);
