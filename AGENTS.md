@@ -52,10 +52,14 @@ for a pre-release); the version in `lib/version.mjs`, `package.json`, and the `v
 
 ## Working style
 
-- Changes reach `main` by pull request from a branch, squash-merged, with the three test jobs green. `main` and the
-  `v*` tags are protected by rulesets; the maintainer can bypass them, an agent MUST NOT, even when its credentials
-  would allow it. The PR title becomes the commit subject and a release-note line: write it for a user.
-
+- Changes reach `main` by pull request from a branch, squash-merged. The PR title becomes the commit subject and a
+  release-note line: write it for a user. `main` and the `v*` tags are protected by rulesets that the maintainer
+  can bypass.
+- An agent working for the maintainer MAY squash-merge its own pull request with the admin bypass
+  (`gh pr merge <n> --squash --admin`) once all three test jobs are green. It MUST NOT use the bypass to push to
+  `main` directly, to merge with a failing or pending check, or to move a release tag.
+- Never put a link to an AI session (for example `claude.ai/code/session_…`) in a commit message, pull request,
+  comment, issue, or release note. This repository is public; sessions are private. A `Co-Authored-By` line is fine.
 - Evals, tuning data, and working notes live in a separate private workbench, not here. This repo holds what ships.
 - Match the surrounding code: dense, commented where a decision is non-obvious, with the measurement that justified
   it named in the comment.
