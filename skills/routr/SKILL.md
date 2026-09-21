@@ -43,7 +43,8 @@ fallback.
   brief before you send it.
 - `level`: a one-word summary: `basic` (rote or well-specified), `standard` (must find something out or choose an
   approach), or `strong` (a wrong or shallow result would be expensive and hard to notice). `sure: false` means routr
-  was split: go by the facts. routr never names a model.
+  was torn between the two levels in `between`; it then reports the lower one, which testing showed is right nine
+  times in ten. routr never names a model.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
 - `subscriptions` (dispatch only). `ranked` lists each subscription with its usable headroom, marked `live`, `given`
   (you passed it in), or `assumed`. Under `windows` it shows each usage window as the harness reports it: percent

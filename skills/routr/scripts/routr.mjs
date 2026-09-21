@@ -115,7 +115,7 @@ try {
   out.fallback = true;
 }
 const yes = Object.entries(advice.facts ?? {}).filter(([k, f]) => f.reading === "yes" && !/^(states_check|standalone|names_location|tiny|separable|needs_user)$/.test(k)).map(([k]) => k);
-Object.assign(out, { headline: `routr: ${advice.worker && advice.worker.suggestion !== "worth a worker" ? advice.worker.suggestion.toUpperCase() + " · " : ""}${advice.level}${advice.sure ? "" : " (unsure)"}, ${advice.work_type ?? "unknown"} work${yes.length ? "; " + yes.join(", ") : ""}${advice.high_risk ? "; HIGH RISK" : ""}${(advice.notes ?? []).some((n) => n.startsWith("Fix the brief")) ? "; FIX THE BRIEF FIRST" : ""}`, ...advice, meaning: MEANING[advice.level] });
+Object.assign(out, { headline: `routr: ${advice.worker && advice.worker.suggestion !== "worth a worker" ? advice.worker.suggestion.toUpperCase() + " · " : ""}${advice.level}${advice.sure ? "" : advice.between ? ` (torn between ${advice.between.join(" and ")})` : " (unsure)"}, ${advice.work_type ?? "unknown"} work${yes.length ? "; " + yes.join(", ") : ""}${advice.high_risk ? "; HIGH RISK" : ""}${(advice.notes ?? []).some((n) => n.startsWith("Fix the brief")) ? "; FIX THE BRIEF FIRST" : ""}`, ...advice, meaning: MEANING[advice.level] });
 if (mode === "dispatch") {
   try { out.subscriptions = rankSubscriptions(advice.level, await usageP, config); }
   catch (e) { out.subscriptions = { most_room: null, ranked: [], excluded: [], note: `could not read usage: ${String(e?.message ?? e).slice(0, 120)}` }; }

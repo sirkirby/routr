@@ -3,7 +3,7 @@
 // (63-88% of answers below 0.2 or above 0.8) and unsure about estimates of what the work will take (22-43%), which
 // depend on the codebase: the asking agent knows that, Jev cannot. So Jev reads the brief; the agent decides.
 // All questions go in ONE request; Jev answers them in parallel and none can see another's answer. Code combines them.
-export const VERSION = "r3";
+export const VERSION = "r4"; // r4 asks the same questions as r3; an unsure level now reads as the lower of the two most likely
 export const LEVELS = ["basic", "standard", "strong"];
 
 

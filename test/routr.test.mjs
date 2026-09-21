@@ -30,7 +30,7 @@ test("rounds to the nearest level and never adjusts it", () => {
 });
 test("says when Jev is unsure and hands the decision to the agent", () => {
   const a = advise(ans(1.2, 0.3), cfg());
-  expect(a.sure).toBe(false); expect(a.notes[0]).toContain("Decide from the facts");
+  expect(a.sure).toBe(false); expect(a.notes[0]).toContain("routr is between");
   expect(advise(ans(1.2, 0.85), cfg()).sure).toBe(true);
 });
 test("a user preference is advice beside the level, not an override", () => {
@@ -821,4 +821,12 @@ test("launch --copy is repeatable, needs --worktree, and refuses paths outside t
   expect(() => parseLaunchArgs([...base, "--copy", "x"])).toThrow("--worktree");
   expect(() => parseLaunchArgs([...base, "--worktree", "b", "--copy", "../secrets"])).toThrow("inside the repository");
   expect(() => parseLaunchArgs([...base, "--worktree", "b", "--copy", "/etc/passwd"])).toThrow("inside the repository");
+});
+
+test("an unsure level reads as the lower of the two most likely levels", () => {
+  const torn = (probabilities, score) => ({ level: { score, confidence: 0.3, probabilities }, work_type: { choice: "implement", confidence: 1, probabilities: { implement: 1 } }, high_blast_radius: { noul: 0.1 } });
+  const a = advise(torn({ 0: 0.05, 1: 0.45, 2: 0.5 }, 1.45), cfg());
+  expect(a.level).toBe("standard"); expect(a.between).toEqual(["standard", "strong"]);
+  expect(advise(torn({ 0: 0.48, 1: 0.52, 2: 0 }, 0.52), cfg()).level).toBe("basic");
+  expect(advise(ans(1.6, 0.9), cfg()).between).toBeUndefined();             // sure: plain rounding, no range
 });
