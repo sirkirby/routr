@@ -7,6 +7,11 @@ import { homedir } from "node:os";
 
 export function statusline() { try { run(); } catch {} }
 
+// Is this Claude Code statusline command routr's? One test for setup, doctor, and uninstall (three copies had drifted).
+// `routr` must be the whole program name (`/x/routr statusline`, `"C:\...\routr.exe" statusline`), so `myroutr statusline`
+// is someone else's. The second form is the script routr shipped before it had a statusline command of its own.
+export const isOurStatusline = (command) => /(^|[\\/\s"'])routr(\.exe)?["']?\s+statusline\b|claude-statusline-usage/.test(String(command ?? ""));
+
 function run() {
   let raw;
   try { raw = readFileSync(0, "utf8"); } catch { return; }

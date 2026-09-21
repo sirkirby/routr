@@ -8,6 +8,7 @@ import { createInterface } from "node:readline/promises";
 import { CONFIG_PATH } from "./config.mjs";
 import { HARNESSES, inspect, paint, render, starterConfig, SUGGESTED, which } from "./doctor.mjs";
 import { setKey } from "./key.mjs";
+import { isOurStatusline } from "./statusline.mjs";
 import { installSkill } from "./skill-install.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
@@ -53,7 +54,7 @@ export function statuslinePlan(settingsText, command) {
   let settings = {};
   if (settingsText != null && settingsText.trim()) { try { settings = JSON.parse(settingsText); } catch { return { action: "skip", why: "~/.claude/settings.json is not valid JSON; left alone" }; } }
   const current = settings.statusLine?.command;
-  if (current && /routr(\.exe)?"? statusline|claude-statusline-usage/.test(current)) return { action: "none", why: "already set" };
+  if (isOurStatusline(current)) return { action: "none", why: "already set" };
   if (current) return { action: "skip", why: `you already have a statusline (${current}). Keep it, and have it pass its input to \`routr statusline\` for the snapshot: see the setup guide` };
   return { action: "write", settings: { ...settings, statusLine: { type: "command", command } } };
 }

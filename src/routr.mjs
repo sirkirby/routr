@@ -14,7 +14,8 @@
 // the agent that asked makes the decision. Never names a model.
 // Advice is side-effect free and fail-open; launch reports failures as JSON and exits nonzero.
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { advise } from "./lib/advise.mjs";
 import { readReport } from "./lib/check.mjs";
 import { loadConfig } from "./lib/config.mjs";
@@ -108,12 +109,19 @@ if (mode === "check") {
   } catch (e) { Object.assign(out, { headline: "routr: could not read the report; judge it yourself", fallback: true, error: String(e?.message ?? e).slice(0, 160) }); }
   console.log(JSON.stringify(out)); process.exit(0);
 }
-if (mode === "assess") { console.log(assess(read(flag("--ledger") ?? LEDGER_PATH), loadConfig(configPath).config)); process.exit(0); }
+if (mode === "assess") {
+  // An advice command: an unreadable ledger still gets an answer and exit 0.
+  let entries = [], unreadable = null;
+  try { entries = read(flag("--ledger") ?? LEDGER_PATH); } catch (e) { unreadable = `routr: could not read the ledger (${String(e?.message ?? e).slice(0, 120)}); reporting as if it were empty.\n`; }
+  console.log((unreadable ?? "") + assess(entries, loadConfig(configPath).config)); process.exit(0);
+}
 if (mode === "share") {
   // Prepare (never send) a file the user can attach to a GitHub issue, to help tune routr's questions on real outcomes.
   const rows = shareRows(read(flag("--ledger") ?? LEDGER_PATH), { withModels: rest.includes("--with-models") });
   if (!rows.length) { console.log("The ledger is empty: there is nothing to share yet."); process.exit(0); }
-  const file = flag("--out") ?? `routr-ledger-${new Date().toISOString().slice(0, 10)}.jsonl`;
+  // Beside the ledger by default, never in the current folder: that is usually a repository, and the file could be committed.
+  const file = flag("--out") ?? join(dirname(LEDGER_PATH), `routr-ledger-${new Date().toISOString().slice(0, 10)}.jsonl`);
+  mkdirSync(dirname(file) || ".", { recursive: true });
   writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
   console.log([
     `Wrote ${rows.length} rows to ${file}. Nothing has been sent anywhere.`,
@@ -130,7 +138,7 @@ if (mode === "share") {
 }
 if (mode === "record") {
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]
-  const o = Object.fromEntries(["--advice", "--subscription", "--model", "--effort", "--level", "--verdict", "--check", "--seconds", "--attempts", "--note", "--ledger", "--report"].map((f) => [f.slice(2), flag(f)]));
+  const o = Object.fromEntries(["--advice", "--subscription", "--model", "--effort", "--level", "--verdict", "--check", "--seconds", "--attempts", "--note", "--ledger", "--report", "--project"].map((f) => [f.slice(2), flag(f)]));
   const subagentFlags = flag("--subagent", true);
   try {
     const advice = JSON.parse(o.advice ? readFileSync(o.advice, "utf8") : readFileSync(0, "utf8"));

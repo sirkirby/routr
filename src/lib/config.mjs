@@ -26,15 +26,18 @@ export function loadConfig(path = CONFIG_PATH) {
   } catch (e) {
     notes.push(`config unreadable (${String(e?.message ?? e).slice(0, 80)}): using defaults`);
   }
-  const num = (k) => (typeof raw[k] === "number" ? raw[k] : DEFAULTS[k]);
+  // Every number here is a share between 0 and 1. Anything else (a reserve of -1 would turn an empty subscription into
+  // a full one) is reported and replaced by the default.
+  const share = (v, fallback, where) => { if (v === undefined) return fallback; if (typeof v === "number" && v >= 0 && v <= 1) return v; notes.push(`${where}: ${JSON.stringify(v)} is not a number from 0 to 1, using ${fallback}`); return fallback; };
+  const num = (k) => share(raw[k], DEFAULTS[k], k);
   const config = { fallback_level: isLevel(raw.fallback_level) ? raw.fallback_level : DEFAULTS.fallback_level, sure_at: num("sure_at"), risk_above: num("risk_above"), auto_update: raw.auto_update !== false, prefer: {}, subscriptions: {} };
   for (const [k, v] of Object.entries(raw.prefer ?? DEFAULTS.prefer)) isLevel(v) ? (config.prefer[k] = v) : notes.push(`prefer.${k}: "${v}" is not a level, ignored`);
   for (const [name, s] of Object.entries(raw.subscriptions ?? {})) {
     if (s?.hardest_work !== undefined && !isLevel(s.hardest_work)) notes.push(`subscriptions.${name}.hardest_work: "${s.hardest_work}" is not a level, using strong`);
     config.subscriptions[name] = {
       hardest_work: isLevel(s?.hardest_work) ? s.hardest_work : SUB_DEFAULTS.hardest_work,
-      reserve: typeof s?.reserve === "number" ? s.reserve : SUB_DEFAULTS.reserve,
-      assumed_headroom: typeof s?.assumed_headroom === "number" ? s.assumed_headroom : SUB_DEFAULTS.assumed_headroom,
+      reserve: share(s?.reserve, SUB_DEFAULTS.reserve, `subscriptions.${name}.reserve`),
+      assumed_headroom: share(s?.assumed_headroom, SUB_DEFAULTS.assumed_headroom, `subscriptions.${name}.assumed_headroom`),
       // The user's everyday model for this harness: where the orchestrator starts before moving up or down. Passed through, never interpreted.
       default_model: typeof s?.default_model === "string" ? s.default_model : null,
       default_effort: typeof s?.default_effort === "string" ? s.default_effort : null,

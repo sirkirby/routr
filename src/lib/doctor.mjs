@@ -8,6 +8,7 @@ import { CONFIG_PATH, loadConfig } from "./config.mjs";
 import { ask, KEY_FILES, loadKey } from "./jev.mjs";
 import { CLAUDE_SNAPSHOT, readUsage, run } from "./usage.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
+import { isOurStatusline } from "./statusline.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 // Subscription name → the command its harness is launched with.
@@ -34,9 +35,10 @@ export function which(cmd) {
 
 // Installed but not on this process's PATH (seen on a fresh Mac: ~/.local/bin is only added by the interactive shell).
 function offPath(cmd) {
-  const home = homedir();
-  for (const dir of [join(home, ".local/bin"), join(home, ".bun/bin"), "/opt/homebrew/bin", "/usr/local/bin", join(home, "bin")]) {
-    const p = join(dir, cmd);
+  const home = homedir(), win = process.platform === "win32";
+  const exts = win ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
+  for (const dir of [join(home, ".local/bin"), join(home, ".bun/bin"), join(home, "bin"), ...(win ? [] : ["/opt/homebrew/bin", "/usr/local/bin"])]) for (const ext of exts) {
+    const p = join(dir, cmd + ext);
     if (existsSync(p)) return p;
   }
   return null;
@@ -117,7 +119,7 @@ export async function inspect({ configPath, quiet } = {}) {
   }
   // Configured but no snapshot yet is not a failure: Claude writes the first snapshot on its next turn.
   let wired = false;
-  try { wired = /claude-statusline-usage|routr(\.exe)?"? statusline/.test(JSON.parse(readFileSync(join(homedir(), ".claude/settings.json"), "utf8")).statusLine?.command ?? ""); } catch {}
+  try { wired = isOurStatusline(JSON.parse(readFileSync(join(homedir(), ".claude/settings.json"), "utf8")).statusLine?.command); } catch {}
   r.claude_usage_statusline = existsSync(CLAUDE_SNAPSHOT) ? "installed" : !found.includes("claude") ? "not needed"
     : wired ? "configured: the first snapshot appears after the next Claude Code turn" : STATUSLINE_MISSING;
   if (!r.config.exists) r.starter_config = starterConfig(found);
