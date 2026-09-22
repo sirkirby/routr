@@ -55,6 +55,41 @@ export function paneText(value) {
   throw new Error("Unrecognized Herdr pane-read response");
 }
 
+// The shell at the pane's prompt, from the process name herdr reports: what gets typed into it depends on this.
+export function shellFamily(name) {
+  const n = String(name ?? "").toLowerCase();
+  if (/^(pwsh|powershell)(\.exe)?$/.test(n)) return "powershell";
+  if (/^cmd(\.exe)?$/.test(n)) return "cmd";
+  return "posix";
+}
+
+// What launch types into a shell, in that shell's own syntax. Cursor gets a private config folder for the life of the
+// process. On a POSIX shell one command starts Cursor and removes the folder when it exits, however it exits (`cursor`).
+// On Windows, herdr sees only the shell in a pane's foreground, so a Cursor started that way is never tracked and its
+// readiness cannot be waited on (seen on Windows 11: `agent get` said not found while Cursor sat at its prompt). There
+// the shell is given the variable first (`cursorEnv`) and herdr starts and tracks Cursor itself, as for every other
+// kind; on PowerShell a watcher removes the folder when that shell is gone, cmd leaves it (one small file in %TEMP%).
+const psq = (s) => `'${String(s).replaceAll("'", "''")}'`;
+const cmdq = (s) => `"${String(s).replaceAll('"', '""')}"`;
+export const SHELLS = {
+  posix: {
+    cd: (dir) => `cd -- ${quote(dir)}`,
+    cursor: (dir, exe, argv) => ["env", `CURSOR_CONFIG_DIR=${dir}`, "sh", "-c",
+      `trap 'rm -rf -- "$CURSOR_CONFIG_DIR"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; ${[exe, ...argv].map(quote).join(" ")}`].map(quote).join(" "),
+  },
+  powershell: {
+    cd: (dir) => `Set-Location -LiteralPath ${psq(dir)}`,
+    // A watcher removes the folder once the pane's shell is gone, however it went: an exit hook in the shell itself did
+    // not fire when herdr closed the pane, and a watcher started as the shell's child made herdr call the pane busy
+    // (both seen on Windows 11). Created through WMI, the watcher is nobody's child.
+    cursorEnv: (dir) => `$env:CURSOR_CONFIG_DIR=${psq(dir)}; Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = "powershell -NoProfile -WindowStyle Hidden -Command Wait-Process -Id $PID; Remove-Item -LiteralPath ${psq(dir)} -Recurse -Force -ErrorAction SilentlyContinue" } | Out-Null`,
+  },
+  cmd: {
+    cd: (dir) => `cd /d ${cmdq(dir)}`,
+    cursorEnv: (dir) => `set ${cmdq(`CURSOR_CONFIG_DIR=${dir}`)}`,
+  },
+};
+
 export function shellPrompt(text) {
   const lines = clean(text).split("\n");
   const last = lines.at(-1)?.trim() ?? "";
@@ -180,11 +215,10 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     if (task != null && !task.trim()) throw new Error("The task must not be empty");
     const prompt = task == null ? null : composePrompt(task);
     out.prompt_chars = prompt?.length ?? null;
-    // Keep the private config while Cursor runs, then remove it even on an ordinary signal/exit.
-    const cursorCommand = ["env", `CURSOR_CONFIG_DIR=${privateDir}`, "sh", "-c",
-      `trap 'rm -rf -- "$CURSOR_CONFIG_DIR"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; ${[p.executable, ...p.argv].map(quote).join(" ")}`].map(quote).join(" ");
-    const startArgs = (pane, timeout) => o.kind === "cursor"
-      ? ["pane", "run", pane, cursorCommand]
+    // Known once the pane's shell has been seen; until then, this platform's usual shell.
+    let shell = process.platform === "win32" ? "powershell" : "posix";
+    const startArgs = (pane, timeout) => o.kind === "cursor" && SHELLS[shell].cursor
+      ? ["pane", "run", pane, SHELLS[shell].cursor(privateDir, p.executable, p.argv)]
       : ["agent", "start", o.name, "--kind", o.kind, "--pane", pane, "--timeout", String(timeout), "--", ...p.argv];
     const promptArgs = (pane, timeout) => ["agent", "prompt", pane, prompt, "--wait", "--until", "working",
       "--until", "idle", "--until", "done", "--until", "blocked", "--timeout", String(timeout)];
@@ -195,8 +229,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(["pane", "split", "--current", "--direction", o.direction ?? "<right-if-wide-else-down>", "--cwd", out.cwd, "--no-focus"])] : []),
         command(["pane", "read", pane, "--source", "visible"]),
         command(["pane", "process-info", "--pane", pane]),
-        ...(o.pane ? [command(["pane", "run", pane, `cd -- ${quote(out.cwd)}`]),
+        ...(o.pane ? [command(["pane", "run", pane, SHELLS[shell].cd(out.cwd)]),
           command(["pane", "read", pane, "--source", "visible"]), command(["pane", "process-info", "--pane", pane])] : []),
+        ...(o.kind === "cursor" && SHELLS[shell].cursorEnv ? [command(["pane", "run", pane, SHELLS[shell].cursorEnv(privateDir)])] : []),
         command(startArgs(pane, Math.min(o.timeout, 30000))),
         command(["pane", "read", pane, "--source", "visible"]),
         command(["agent", "wait", pane, "--timeout", String(Math.min(1000, o.timeout))]),
@@ -233,13 +268,14 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         const text = await readPane();
         const info = (await call(["pane", "process-info", "--pane", out.pane])).data.result.process_info;
         const processes = info.foreground_processes ?? [];
-        const shell = processes.find((p) => p.pid === info.shell_pid);
+        const shellProc = processes.find((p) => p.pid === info.shell_pid);
+        if (shellProc) shell = shellFamily(shellProc.name);
         if (processes.some((p) => p.pid !== info.shell_pid)) {
           if (o.pane && !expectedCwd) return human("Pane has a foreground process; refusing to type shell input", text);
           previous = null;
           await pause(); continue; // New shells and directory hooks can run short foreground commands.
         }
-        if (!shell) { previous = null; await pause(); continue; }
+        if (!shellProc) { previous = null; await pause(); continue; }
         const state = shellPrompt(text);
         if (state === "dotenv") {
           if (!answered) {
@@ -256,8 +292,8 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
           // Even a recognized prompt must settle while the shell remains in the foreground.
           const atPrompt = state === "ready" && promptSettled(text, previous);
           if (atPrompt) {
-            if (expectedCwd && realpathSync(shell.cwd) !== realpathSync(expectedCwd)) return human("Shell is at a prompt in the wrong directory", text);
-            step("shell_ready", true, `Interactive shell in ${shell.cwd}`); return null;
+            if (expectedCwd && realpathSync(shellProc.cwd) !== realpathSync(expectedCwd)) return human("Shell is at a prompt in the wrong directory", text);
+            step("shell_ready", true, `Interactive ${shell} shell in ${shellProc.cwd}`); return null;
           }
         }
         previous = text;
@@ -270,7 +306,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       mkdirSync(configDir, { mode: 0o700 });
       copyFileSync(cursorConfigSource, join(configDir, "cli-config.json"));
       chmodSync(join(configDir, "cli-config.json"), 0o600);
-      step("cursor_config", true, `Private config at ${configDir}; the launch shell removes it when Cursor exits`);
+      step("cursor_config", true, `Private config at ${configDir}; the pane's shell removes it when Cursor (or the shell) exits`);
     }
     const repoCwd = out.cwd;
     if (!out.pane && o.worktree) {
@@ -312,10 +348,16 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     let stop = null;
     if (o.pane) {
       stop = await shellReady(); if (stop) return stop;
-      await call(["pane", "run", out.pane, `cd -- ${quote(out.cwd)}`]);
+      await call(["pane", "run", out.pane, SHELLS[shell].cd(out.cwd)]);
       await pause();
     }
     stop = await shellReady(out.cwd); if (stop) return stop;
+    if (o.kind === "cursor" && SHELLS[shell].cursorEnv) {
+      await call(["pane", "run", out.pane, SHELLS[shell].cursorEnv(privateDir)]);
+      await pause();
+      stop = await shellReady(out.cwd); if (stop) return stop;
+      step("cursor_env", true, `Set CURSOR_CONFIG_DIR in the pane's ${shell} shell`);
+    }
     const startCommand = startArgs(out.pane, Math.min(30000, remaining()));
     startAttempted = true;
     const started = await call(startCommand, true);
@@ -356,7 +398,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) break;
       await pause();
     }
-    if (o.kind === "cursor") await call(["agent", "rename", out.pane, o.name]);
+    if (o.kind === "cursor" && SHELLS[shell].cursor) await call(["agent", "rename", out.pane, o.name]); // pane-run: herdr did not get the name
     step("ready", true, "Herdr wait settled and the pane has no folder-trust dialog");
     out.state = "ready"; out.ok = true;
     if (prompt) {
