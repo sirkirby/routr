@@ -81,8 +81,9 @@ export const SHELLS = {
     cd: (dir) => `Set-Location -LiteralPath ${psq(dir)}`,
     // A watcher removes the folder once the pane's shell is gone, however it went: an exit hook in the shell itself did
     // not fire when herdr closed the pane, and a watcher started as the shell's child made herdr call the pane busy
-    // (both seen on Windows 11). Created through WMI, the watcher is nobody's child.
-    cursorEnv: (dir) => `$env:CURSOR_CONFIG_DIR=${psq(dir)}; Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = "powershell -NoProfile -WindowStyle Hidden -Command Wait-Process -Id $PID; Remove-Item -LiteralPath ${psq(dir)} -Recurse -Force -ErrorAction SilentlyContinue" } | Out-Null`,
+    // (both seen on Windows 11). Created through WMI, the watcher is nobody's child. The command line is built by
+    // concatenation: a hashtable literal holding it failed to parse at the prompt (also seen).
+    cursorEnv: (dir) => `$env:CURSOR_CONFIG_DIR=${psq(dir)}; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ${psq(dir).replaceAll("'", "''")} -Recurse -Force -ErrorAction SilentlyContinue"'; ([wmiclass]'Win32_Process').Create($w) | Out-Null`,
   },
   cmd: {
     cd: (dir) => `cd /d ${cmdq(dir)}`,
