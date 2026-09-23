@@ -7,7 +7,7 @@ import { delimiter, join } from "node:path";
 import { CONFIG_PATH, loadConfig } from "./config.mjs";
 import { HARNESSES as HARNESS_TABLE } from "./harness.mjs";
 import { KEY_FILES, loadKey, ping } from "./jev.mjs";
-import { CLAUDE_SNAPSHOT, readUsage, run } from "./usage.mjs";
+import { CLAUDE_SNAPSHOT, NO_WINDOWS_AFTER_ANSWER, readUsage, run } from "./usage.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
 import { standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
@@ -52,9 +52,10 @@ const MODELS_SHOWN = 12;
 export const TAKES_EFFORT = Object.keys(HARNESS_TABLE).filter((n) => HARNESS_TABLE[n].effort);
 
 // The config `routr setup` writes: the user's defaults for the harnesses found. A model is set only when the user chose one.
-export function starterConfig(found, models = {}) {
+// `ranks` holds `metered_rank` per pool that reads as metered at setup, written out so the key is there to change.
+export function starterConfig(found, models = {}, ranks = {}) {
   return { fallback_level: "standard", sure_at: 0.8, risk_above: 0.75, prefer: { research: "strong", review: "strong" },
-    subscriptions: Object.fromEntries(found.map((n) => [n, { ...SUGGESTED[n], ...(models[n] ? { default_model: models[n] } : {}), ...(TAKES_EFFORT.includes(n) ? { default_effort: "medium" } : {}) }])) };
+    subscriptions: Object.fromEntries(found.map((n) => [n, { ...SUGGESTED[n], ...(models[n] ? { default_model: models[n] } : {}), ...(TAKES_EFFORT.includes(n) ? { default_effort: "medium" } : {}), ...(ranks[n] ? { metered_rank: ranks[n] } : {}) }])) };
 }
 
 const STATUSLINE_MISSING = "missing: without it Claude usage is assumed, not read";
@@ -68,6 +69,11 @@ export function nextSteps(r) {
   else if (Object.entries(r.harnesses).some(([n, h]) => h.installed && !r.config.subscriptions.includes(n))) steps.push(`Add the harnesses found since the config was written (${Object.entries(r.harnesses).filter(([n, h]) => h.installed && !r.config.subscriptions.includes(n)).map(([n]) => n).join(", ")}): routr setup`);
   if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push("Install and log in to at least one harness: Claude Code, Codex, Cursor (cursor-agent), or Antigravity (agy)");
   if (r.claude_usage_statusline === STATUSLINE_MISSING) steps.push("Let routr read Claude Code's usage (sets Claude's statusline command): routr setup");
+  // Claude answered a prompt and still sent no windows: a seat with no quota, or a plan routr has not seen send them.
+  // routr does not guess which; the user says, either way, and the step clears.
+  const cl = r.harnesses.claude;
+  if (cl?.installed && cl.usage_reason === NO_WINDOWS_AFTER_ANSWER && !r.config.billing?.claude)
+    steps.push(`Claude answered a prompt but reported no usage windows, and routr cannot tell why. If this seat has no quota (usage-based Enterprise, an API key), add "billing": "metered" under subscriptions.claude in ${r.config.path} and routr ranks it as billed usage. If it has a quota (routr has not yet seen a Team or Enterprise seat send windows), add "billing": "included", or check again after another turn`);
   if (!r.skill.length || r.skill.some((k) => k.version !== ROUTR_VERSION.split("-")[0])) steps.push("Install the routr skill that matches this routr: routr skill install");
   if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
   if (!r.herdr.path) steps.push("For orchestration, install herdr (https://herdr.dev). Sizing subagents works without it");
@@ -98,7 +104,7 @@ export async function inspect({ configPath, quiet } = {}) {
   if (latest && newer(latest, ROUTR_VERSION)) r.update_available = latest;
   for (const n of Object.keys(HARNESSES)) {
     const u = usage.find((x) => x.pool === n);
-    r.harnesses[n] = { command: HARNESSES[n], installed: found.includes(n), off_path: found.includes(n) ? null : offPath(HARNESSES[n]), usage: !found.includes(n) ? null : u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)` : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note}` };
+    r.harnesses[n] = { command: HARNESSES[n], installed: found.includes(n), off_path: found.includes(n) ? null : offPath(HARNESSES[n]), usage: !found.includes(n) ? null : u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)` : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note}`, ...(found.includes(n) ? { usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) } : {}) };
   }
   if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; }
   else { r.key.found ??= false; r.key.works = false; r.key.error = String(key.e?.message ?? key.e).slice(0, 160); r.key.where = `set TYPESAFE_API_KEY, or put TYPESAFE_API_KEY=... in ${KEY_FILES[0]}`; }
@@ -111,7 +117,15 @@ export async function inspect({ configPath, quiet } = {}) {
   }).filter(Boolean);
   const path = configPath ?? CONFIG_PATH;
   const { config, notes } = loadConfig(path);
-  r.config = { path, exists: existsSync(path), subscriptions: Object.keys(config.subscriptions), notes };
+  r.config = { path, exists: existsSync(path), subscriptions: Object.keys(config.subscriptions), billing: Object.fromEntries(Object.entries(config.subscriptions).filter(([, s]) => s.billing).map(([n, s]) => [n, s.billing])), notes };
+  // A metered pool's place in the ranking is the user's setting; say which applies where the usage is shown. A class
+  // the user set by hand replaces the reader's note, which would otherwise ask for what is already set.
+  for (const [n, sub] of Object.entries(config.subscriptions)) {
+    const h = r.harnesses[n];
+    if (!h?.installed) continue;
+    if (sub.billing) h.usage = h.usage_class === "unknown" ? `${sub.billing} by your setting (billing: ${sub.billing})` : `${h.usage} · billing: ${sub.billing} by your setting`;
+    if ((sub.billing ?? h.usage_class) === "metered") h.usage += sub.metered_rank === "with" ? " · ranked with your subscriptions by assumed_headroom (metered_rank: with)" : " · ranked after your subscriptions (metered_rank: after)";
+  }
   // The one moment a default needs the user's attention: the harness no longer offers it.
   for (const [n, sub] of Object.entries(config.subscriptions)) {
     if (!sub.default_model) notes.push(`subscriptions.${n}: no default_model set; the orchestrator will pick from the harness's live list`);

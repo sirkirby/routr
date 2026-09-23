@@ -1370,10 +1370,28 @@ test("doctor's next steps name the command for each thing missing, most importan
   expect(fresh[1]).toContain("routr setup");
   expect(fresh.length).toBe(3);
   expect(nextSteps({ ...base, harnesses: { claude: { installed: true }, codex: { installed: true } } })[0]).toContain("codex");
+  // Claude answered and sent no windows: the user says whether the seat has a quota; once `billing` is set, nothing to do.
+  const reading = (snap) => { const u = claudeSnapshot(snap, NOW / 1000); return { installed: true, usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) }; };
+  const noWindows = { ...base, harnesses: { claude: reading({ ts: NOW / 1000, rate_limits: null, answered: true, seen: null }) } };
+  expect(nextSteps(noWindows)[0]).toContain('"billing": "metered"'); expect(nextSteps(noWindows)[0]).toContain('"billing": "included"');
+  expect(nextSteps({ ...noWindows, config: { ...base.config, billing: { claude: "metered" } } })).toEqual([]);
+  expect(nextSteps({ ...noWindows, config: { ...base.config, billing: { claude: "included" } } })).toEqual([]);
+  expect(nextSteps({ ...noWindows, harnesses: { claude: reading({ ts: NOW / 1000, rate_limits: null, answered: false, seen: null }) } })).toEqual([]); // before the first response: nothing to say yet
   // The starter config never carries a placeholder: a model is there only when the user chose one.
   const c = starterConfig(["claude", "agy"], { claude: "sonnet" });
   expect(c.subscriptions.claude).toEqual({ hardest_work: "strong", reserve: 0.25, default_model: "sonnet", default_effort: "medium" });
   expect(c.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1 });
+  expect(starterConfig(["codex"], {}, { codex: "with" }).subscriptions.codex).toMatchObject({ metered_rank: "with" });
+  const { parseMetered, meteredRanks } = await import("../src/lib/setup.mjs");
+  expect(parseMetered(["--metered", "codex=with", "--metered", "agy=after"])).toEqual({ codex: "with", agy: "after" });
+  for (const bad of [["--metered", "codex=first"], ["--metered", "nope=after"], ["--metered"]]) expect(() => parseMetered(bad)).toThrow("--metered takes");
+  // The rank question: only for a fresh pool that reads as metered and has no flag; Enter or anything but "w…" is after; --yes (no ask) is after.
+  const hs = { codex: { usage_class: "metered", usage_note: "n" }, claude: { usage_class: "included" } };
+  const asked = [];
+  expect(await meteredRanks(["codex", "claude"], hs, {}, async (n) => { asked.push(n); return " With "; })).toEqual({ codex: "with" }); expect(asked).toEqual(["codex"]);
+  expect(await meteredRanks(["codex"], hs, {}, async () => "")).toEqual({ codex: "after" });
+  expect(await meteredRanks(["codex"], hs, { codex: "with" }, async () => { throw new Error("must not ask"); })).toEqual({ codex: "with" });
+  expect(await meteredRanks(["codex"], hs, {}, null)).toEqual({ codex: "after" });
 });
 
 test("setup never replaces a statusline the user already has", async () => {
@@ -1404,6 +1422,7 @@ test("routr setup --yes writes the config once, keeps it afterwards, and starts 
   expect(JSON.parse(readFileSync(file, "utf8")).sure_at).toBe(0.9);
   const bad = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--model", "codex=m"], { env });
   expect(bad.exitCode).toBe(1);
+  expect(Bun.spawnSync([process.execPath, script, "setup", "--yes", "--metered", "codex=with"], { env }).exitCode).toBe(1); // codex is not found on an empty PATH
 });
 
 test("setup searches a long model list instead of printing it", async () => {

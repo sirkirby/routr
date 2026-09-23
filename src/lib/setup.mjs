@@ -25,6 +25,28 @@ export function parseModels(args) {
   return models;
 }
 
+// `--metered codex=after|with`: where a seat that reads as metered (billed usage, no quota) goes in the ranking.
+export function parseMetered(args) {
+  const ranks = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== "--metered") continue;
+    const [name, rank] = (args[i + 1] ?? "").split("=");
+    if (!HARNESSES[name] || !["after", "with"].includes(rank)) throw new Error(`--metered takes <subscription>=after|with, with one of: ${Object.keys(HARNESSES).join(", ")}`);
+    ranks[name] = rank;
+  }
+  return ranks;
+}
+
+// Where each newly written pool that reads as metered goes in the ranking. `ask(name, note)` is the terminal question
+// (absent under --yes, where the default stands); an answer starting with "w" means with, anything else after.
+export async function meteredRanks(fresh, harnesses, ranks, ask) {
+  for (const n of fresh) {
+    if (harnesses[n]?.usage_class !== "metered" || ranks[n]) continue;
+    ranks[n] = ask ? (/^w/i.test((await ask(n, harnesses[n].usage_note)).trim()) ? "with" : "after") : "after";
+  }
+  return ranks;
+}
+
 // A list longer than this is searched, not printed: Cursor offers over 200 models (231 seen), and routr keeps no
 // idea of which ones matter, so the user narrows it by typing part of a name.
 const LIST_IN_FULL = 20;
@@ -72,12 +94,16 @@ export async function setup(args) {
   const interactive = Boolean(process.stdin.isTTY) && !args.includes("--yes");
   const say = (s) => { if (!args.includes("--json")) console.log(s); };
   const did = [], skipped = [];
-  let models;
-  try { models = parseModels(args); } catch (e) { return { ok: false, error: e.message }; }
+  let models, ranks;
+  try { models = parseModels(args); ranks = parseMetered(args); } catch (e) { return { ok: false, error: e.message }; }
 
   say("Looking at what is installed…");
   const r = await inspect({ configPath: path, quiet: args.includes("--json") });
   const found = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed);
+  for (const n of Object.keys(ranks)) {
+    if (!found.includes(n)) return { ok: false, error: `--metered ${n}=…: \`${HARNESSES[n]}\` was not found on this machine` };
+    if (r.harnesses[n].usage_class !== "metered") return { ok: false, error: `--metered ${n}=…: ${n} does not report as metered (${r.harnesses[n].usage_note ?? r.harnesses[n].usage}). For a seat routr cannot read, set "billing": "metered" in the config instead` };
+  }
   for (const [n, id] of Object.entries(models)) {
     if (!found.includes(n)) return { ok: false, error: `--model ${n}=…: \`${HARNESSES[n]}\` was not found on this machine` };
     const list = r.harnesses[n].models;
@@ -100,8 +126,12 @@ export async function setup(args) {
     say(`\n${paint(1, n)}: your everyday model there. Your agents start from it and go higher or lower as the work needs.`);
     models[n] = await pickModel(list, (q) => rl.question(q), say);
   }
-  if (!config) config = starterConfig(found, models);
-  else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models).subscriptions[n] };
+  // A seat that reads as metered (measured on a ChatGPT Enterprise seat: no windows, unlimited credits) has no headroom
+  // number, so its place in the ranking is the user's call. Asked once, when the pool is first written; `after` is the
+  // default because included usage expires and billed usage does not.
+  await meteredRanks(fresh, r.harnesses, ranks, rl && ((n, note) => { say(`\n${paint(1, n)} reports billed usage with no quota (${note}).`); return rl.question("Your subscriptions' included usage expires; this seat's usage is billed. Rank it after them, so it takes the overflow, or with them by an assumed headroom? [after/with, Enter = after] "); }));
+  if (!config) config = starterConfig(found, models, ranks);
+  else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models, ranks).subscriptions[n] };
   if (!r.config.exists || args.includes("--force") || fresh.length) {
     mkdirSync(dirname(path), { recursive: true });
     if (r.config.exists) copyFileSync(path, `${path}.bak`);
@@ -129,6 +159,6 @@ export async function setup(args) {
   const result = { ok: true, did, skipped, config: path, next_steps: after.next_steps };
   if (args.includes("--json")) return result;
   say(`\n${did.map((d) => `${paint(32, "done")} ${d}`).concat(skipped.map((s) => `${paint(33, "note")} ${s}`)).join("\n")}\n\n${render(after)}`);
-  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour config is plain JSON at ${path}. \`reserve\` is the share of each subscription routr never offers to workers (${found.map((n) => `${n} ${SUGGESTED[n].reserve}`).join(", ")}), and \`hardest_work\` is the hardest work you would hand it. Change anything there at any time.`);
+  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour config is plain JSON at ${path}. \`reserve\` is the share of each subscription routr never offers to workers (${found.map((n) => `${n} ${SUGGESTED[n].reserve}`).join(", ")}), and \`hardest_work\` is the hardest work you would hand it.${fresh.some((n) => ranks[n]) ? ` \`metered_rank\` places a seat billed per token (${fresh.filter((n) => ranks[n]).map((n) => `${n} ${ranks[n]}`).join(", ")}).` : ""} Change anything there at any time.`);
   return result;
 }
