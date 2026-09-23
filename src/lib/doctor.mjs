@@ -98,7 +98,7 @@ export async function inspect({ configPath, quiet } = {}) {
   if (latest && newer(latest, ROUTR_VERSION)) r.update_available = latest;
   for (const n of Object.keys(HARNESSES)) {
     const u = usage.find((x) => x.pool === n);
-    r.harnesses[n] = { command: HARNESSES[n], installed: found.includes(n), off_path: found.includes(n) ? null : offPath(HARNESSES[n]), usage: !found.includes(n) ? null : u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left (${u.source}, ${u.ageSec}s old)` : `none: ${u.note}` };
+    r.harnesses[n] = { command: HARNESSES[n], installed: found.includes(n), off_path: found.includes(n) ? null : offPath(HARNESSES[n]), usage: !found.includes(n) ? null : u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)` : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note}` };
   }
   if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; }
   else { r.key.found ??= false; r.key.works = false; r.key.error = String(key.e?.message ?? key.e).slice(0, 160); r.key.where = `set TYPESAFE_API_KEY, or put TYPESAFE_API_KEY=... in ${KEY_FILES[0]}`; }

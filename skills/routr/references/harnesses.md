@@ -32,3 +32,23 @@ choosing a model, when a launch does something you did not expect, or when you a
    invalid runs.
 5. Where the harness offers a budget cap per run, set one.
 6. One worktree per worker that writes. Keep a worker's directory away from repositories whose hooks should not fire.
+
+## Usage shapes (measured unless marked claimed)
+
+routr classes each pool from the shape of what the harness reports, never from a plan name.
+
+| Seat | What the harness reports | Class |
+|---|---|---|
+| Codex on a subscription (Pro login, 2026-09-22, CLI 0.155.1) | `primary` weekly window with `usedPercent`, `secondary` null, `credits.hasCredits: false` | `included` |
+| Codex on a ChatGPT Enterprise seat with flexible pricing (2026-09-22, CLI 0.155.1) | `primary` and `secondary` **null**, `credits: { hasCredits: true, unlimited: true }`, `individualLimit: null`, `planType: "business"` on an Enterprise contract | `metered` |
+| Codex with a member credit limit set by the workspace owner (claimed: the protocol's `individualLimit { limit, used, remainingPercent, resetsAt }`, not yet read from a seat) | the cap as one more window, its period from `resetsAt` | `capped` |
+| Claude Code on Pro or Max (measured) | statusline `rate_limits.five_hour` and `seven_day` | `included` |
+| Claude Code on Team or seat-based Enterprise (not observed; the statusline docs list only Pro and Max as sending `rate_limits`, one public report shows them on Team) | unknown until measured | `included` if windows arrive; otherwise `unknown`, and the user sets `billing` |
+| Claude Code on usage-based Enterprise, or on an API key (claimed: the docs say `rate_limits` is sent only for plans with a quota) | no `rate_limits` at all, even after a response | `unknown` with a note; the user sets `billing: "metered"`. Absence is not read as "no quota" because a Team seat may also send none |
+| Claude Code behind a Claude apps gateway with spend limits (claimed: docs) | `rate_limits.spend_limit`, `used_percentage` may pass 100 | `capped` |
+
+Statusline fields routr relies on, all in the statusline docs (code.claude.com/docs/en/statusline): `rate_limits.*.used_percentage`
+and `resets_at` (a window is dropped once `resets_at` passes); `prompt_cache` appears after the session's first API
+response (v2.1.251+); `context_window.current_usage` is null before the first API call and after `/compact`. The last
+two only tell the reader whether "no windows" came before or after a response, which changes its note, not its class.
+

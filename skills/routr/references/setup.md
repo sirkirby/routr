@@ -69,6 +69,15 @@ anything they want different; every one is their preference, and none describes 
     work. Doctor warns when the harness no longer offers it; that is the only time it needs attention.
   - `assumed_headroom`: used only when nothing better is known. Claude, Codex, and Antigravity are read live; Cursor's
     is read by the orchestrator from its `/usage` panel and passed in. The advice marks the rest `assumed`.
+  - `billing`: `included` or `metered`, only when the harness cannot show which it is. A Codex Enterprise seat on
+    flexible pricing is detected (measured: no windows, unlimited credits). Claude is never detected: a plan with no
+    quota (usage-based Enterprise, an API key) sends the statusline no windows, and so may a plan routr has not seen
+    yet, so the advice says "no usage windows" and leaves the class to you. Set `"billing": "metered"` for such a
+    Claude seat by hand. Leave it out otherwise.
+  - `metered_rank`: where a metered seat (billed per token, no quota) goes in the ranking. `after` (default): after
+    every subscription that still has room, so it takes the overflow, because included usage expires and billed
+    usage does not. `with`: ranked with the rest by its `assumed_headroom`. A cap the vendor enforces is read as a
+    window and needs neither.
 - `prefer`: the user's standing preference per kind of work (`implement`, `debug`, `refactor`, `review`, `research`,
   `test_writing`, `docs`), for example `"research": "strong"`. Shown to agents as advice, never forced.
 - `sure_at` (0.8), `risk_above` (0.75), `fallback_level` (`standard`): leave at the defaults unless asked.

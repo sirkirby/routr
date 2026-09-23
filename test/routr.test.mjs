@@ -7,6 +7,8 @@ import { advise } from "../src/lib/advise.mjs";
 import { readReport } from "../src/lib/check.mjs";
 import { DEFAULTS, loadConfig } from "../src/lib/config.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
+import { claudeSnapshot, codexSnapshot, monthMinutes } from "../src/lib/usage.mjs";
+import { snapshotFrom } from "../src/lib/statusline.mjs";
 import { plan } from "../src/lib/harness.mjs";
 import { parseCursorUsage, cursorUsage } from "../src/lib/cursor-usage.mjs";
 import { composePrompt, promptSettled, launch, paneText, parseLaunchArgs, quote, shellPrompt, trustDialog, WORKER_GUIDE } from "../src/lib/launch.mjs";
@@ -78,6 +80,76 @@ test("never offers a reserve: all at reserve means no suggestion", () => {
 test("usage is read per call: a drained subscription drops down the ranking (P9)", () => {
   expect(rankSubscriptions("strong", [live("claude", 0.4), live("codex", 0.9)], cfg()).most_room).toBe("codex");
   expect(rankSubscriptions("strong", [live("claude", 0.4), live("codex", 0.15)], cfg()).most_room).toBe("claude");
+});
+// Recorded 2026-09-22 from `codex app-server` (`account/rateLimits/read`, CLI 0.155.1), identifiers removed: a ChatGPT
+// Enterprise seat on flexible pricing, and a Pro login. The capped shape follows the protocol's `SpendControlLimitSnapshot`
+// (openai/codex, codex-rs/protocol/src/protocol.rs); it is claimed until a cap is set on a seat and read.
+const ENTERPRISE_SEAT = { limitId: "codex", limitName: null, normalModelSlug: null, primary: null, secondary: null, credits: { hasCredits: true, unlimited: true, balance: null }, individualLimit: null, spendControlReached: false, planType: "business", rateLimitReachedType: null };
+const PRO_LOGIN = { ...ENTERPRISE_SEAT, primary: { usedPercent: 60, windowDurationMins: 10080, resetsAt: NOW / 1000 + 3 * 86400 }, credits: { hasCredits: false, unlimited: false, balance: "0" }, planType: "pro" };
+const capped = (resetsAt, remainingPercent, over = {}) => ({ ...ENTERPRISE_SEAT, credits: { hasCredits: true, unlimited: false, balance: "1000" }, individualLimit: { limit: "5000", used: String(5000 - 50 * remainingPercent), remainingPercent, resetsAt }, ...over });
+const metered = (pool) => ({ pool, source: "app-server", ageSec: 1, windows: [], headroom: null, class: "metered", note: "metered: unlimited credits, usage is billed, no quota reported" });
+
+test("Codex pool classes come from the shape, not the plan name: an Enterprise seat reports `business` and no windows", () => {
+  const ent = codexSnapshot(ENTERPRISE_SEAT, "app-server", NOW / 1000, NOW / 1000);
+  expect(ent).toMatchObject({ class: "metered", headroom: null, windows: [] }); expect(ent.note).toContain("unlimited credits");
+  const pro = codexSnapshot(PRO_LOGIN, "app-server", NOW / 1000, NOW / 1000);
+  expect(pro).toMatchObject({ class: "included", headroom: 0.4 }); expect(pro.windows).toEqual([{ name: "primary", usedPct: 60, windowMin: 10080, resetsAt: PRO_LOGIN.primary.resetsAt }]);
+  // the session log spells the same fields in snake_case
+  expect(codexSnapshot({ primary: { used_percent: 25, window_minutes: 300, resets_at: NOW / 1000 + 60 }, credits: { has_credits: false, unlimited: false } }, "session log", 1, NOW / 1000)).toMatchObject({ class: "included", headroom: 0.75 });
+});
+test("a member credit cap is one more window with its own period, and the tightest window still wins", () => {
+  const feb1 = Date.UTC(2027, 1, 1) / 1000;
+  const c = codexSnapshot(capped(feb1, 10), "app-server", NOW / 1000, NOW / 1000);
+  expect(c.class).toBe("capped"); expect(c.headroom).toBeCloseTo(0.1);
+  expect(c.windows).toEqual([{ name: "monthly_cap", usedPct: 90, windowMin: 31 * 1440, resetsAt: feb1 }]); // January
+  expect(monthMinutes(Date.UTC(2027, 0, 1) / 1000)).toBe(31 * 1440);                                       // December
+  expect(monthMinutes(Date.UTC(2027, 0, 15) / 1000)).toBeNull();                                            // not a month boundary: length unknown
+  const both = codexSnapshot(capped(feb1, 10, { primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: NOW / 1000 + 60 } }), "app-server", NOW / 1000, NOW / 1000);
+  expect(both.headroom).toBeCloseTo(0.1); expect(both.windows.map((w) => w.name)).toEqual(["primary", "monthly_cap"]);
+  const at = codexSnapshot(capped(feb1, 0, { spendControlReached: true, rateLimitReachedType: "workspace_member_credits_depleted" }), "app-server", NOW / 1000, NOW / 1000);
+  expect(at.headroom).toBe(0); expect(at.note).toContain("workspace_member_credits_depleted"); expect(at.note).toContain("spend control reached");
+  // credits beside windows leave the windows in charge (claimed shape); a finite balance with no windows is metered and named
+  expect(codexSnapshot({ ...PRO_LOGIN, credits: { hasCredits: true, unlimited: true, balance: null } }, "app-server", NOW / 1000, NOW / 1000)).toMatchObject({ class: "included", headroom: 0.4 });
+  expect(codexSnapshot({ ...ENTERPRISE_SEAT, credits: { hasCredits: true, unlimited: false, balance: "250" } }, "app-server", NOW / 1000, NOW / 1000).note).toContain("balance 250");
+});
+test("the statusline writes every render and keeps the last windows seen; absence of windows is unknown, never a class", () => {
+  const t = NOW / 1000, at = (snap, nowSec = t) => claudeSnapshot(snap, nowSec);
+  const pre = snapshotFrom({ model: { id: "m" } }, null, t);                                   // a session's first render
+  expect(pre).toMatchObject({ ts: t, model: "m", rate_limits: null, answered: false, seen: null });
+  expect(at(pre)).toMatchObject({ class: "unknown", headroom: null }); expect(at(pre).note).toContain("no windows yet");
+  const rl = { five_hour: { used_percentage: 5, resets_at: t + 3600 }, seven_day: { used_percentage: 1, resets_at: t + 86400 } };
+  const withWs = snapshotFrom({ model: { id: "m" }, rate_limits: rl, prompt_cache: {} }, pre, t + 1);
+  expect(withWs.seen).toEqual({ ts: t + 1, rate_limits: rl });
+  expect(at(withWs)).toMatchObject({ class: "included", headroom: 0.95 });
+  const next = snapshotFrom({ model: { id: "m" } }, withWs, t + 2);                            // next session, before its first response
+  expect(next.seen).toEqual(withWs.seen); expect(at(next)).toMatchObject({ class: "included", headroom: 0.95, ageSec: -1 });
+  expect(at(next, t + 5 * 3600)).toMatchObject({ class: "included", headroom: 0.99, ageSec: 5 * 3600 - 1 });  // hours later: still served, aged, the 5h window rolled over
+  const noWs = snapshotFrom({ model: { id: "m" }, prompt_cache: { warm: true } }, null, t);    // after a response, still no windows: not classed, the note says what to do
+  expect(noWs.answered).toBe(true); expect(at(noWs)).toMatchObject({ class: "unknown", headroom: null }); expect(at(noWs).note).toContain("billing");
+  expect(at({ ts: t, model: "m", rate_limits: rl })).toMatchObject({ class: "included" });      // a snapshot from an older routr
+  const gw = snapshotFrom({ rate_limits: { spend_limit: { used_percentage: 130, resets_at: t + 86400 } } }, null, t);
+  expect(at(gw)).toMatchObject({ class: "capped", headroom: 0 }); expect(at(gw).windows[0]).toMatchObject({ name: "spend_limit", usedPct: 100, windowMin: null });
+});
+test("a metered seat gets a position, not a number: after every pool with room, and it takes the overflow", () => {
+  const r = rankSubscriptions("strong", [live("claude", 0.6), metered("codex")], cfg());
+  expect(r.ranked.map((x) => [x.subscription, x.usable])).toEqual([["claude", 0.35], ["codex", null]]);
+  expect(r.ranked[1]).toMatchObject({ class: "metered", usage: "metered", headroom: null }); expect(r.ranked[1].note).toContain("billed"); expect(r.most_room).toBe("claude");
+  const spill = rankSubscriptions("strong", [live("claude", 0.2), metered("codex")], cfg());
+  expect(spill.ranked.map((x) => x.subscription)).toEqual(["codex", "claude"]); expect(spill.most_room).toBe("codex"); expect(spill.note).toContain("every token there is billed");
+  const c = cfg(); c.subscriptions.codex.metered_rank = "with";
+  const w = rankSubscriptions("strong", [live("claude", 0.6), metered("codex")], c);
+  expect(w.ranked.map((x) => [x.subscription, x.usable, x.usage])).toEqual([["codex", 0.5, "assumed"], ["claude", 0.35, "live"]]);
+  expect(rankSubscriptions("strong", [metered("codex")], cfg({ subscriptions: { codex: cfg().subscriptions.codex } })).note).toBe("codex is metered: every token there is billed");
+  const g = cfg(); g.subscriptions.cursor.billing = "metered";                                  // a number the caller read wins over the class
+  expect(rankSubscriptions("basic", [{ pool: "cursor", source: "given by caller", ageSec: 0, windows: [], headroom: 0.9 }], g).ranked[0]).toMatchObject({ class: "included", usable: 0.8, usage: "given" });
+  const b = cfg(); b.subscriptions.claude.billing = "metered";                                   // the reader sees nothing; the user knows
+  expect(rankSubscriptions("strong", [none("claude"), live("codex", 0.5)], b).ranked.map((x) => [x.subscription, x.class])).toEqual([["codex", "included"], ["claude", "metered"]]);
+  expect(rankSubscriptions("strong", [live("claude", 0.6), { ...metered("codex"), windows: [win(40, 100, null)], headroom: 0.6, class: "capped" }], cfg()).ranked[0]).toMatchObject({ subscription: "codex", class: "capped", usable: 0.4 }); // a cap is a number: ranked by it; unknown length holds the full reserve
+});
+test("billing and metered_rank are validated like the shares", () => {
+  const odd = `${import.meta.dir}/.odd2.json`; writeFileSync(odd, JSON.stringify({ subscriptions: { x: { billing: "free", metered_rank: "first" }, y: { billing: "metered", metered_rank: "with" } } }));
+  const r = loadConfig(odd);
+  expect(r.config.subscriptions.x).toMatchObject({ billing: null, metered_rank: "after" }); expect(r.config.subscriptions.y).toMatchObject({ billing: "metered", metered_rank: "with" }); expect(r.notes.length).toBe(2);
 });
 test("broken or missing config falls back to defaults with a note", () => {
   const bad = `${import.meta.dir}/.bad.json`; writeFileSync(bad, "{ not json");

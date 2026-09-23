@@ -66,7 +66,9 @@ fallback.
   used and hours until it resets. The user's reserve shrinks as a window nears its reset, because unused capacity
   expires then. `your_default` is the user's everyday model on that subscription. `excluded` lists subscriptions the
   user does not give work this hard. Never spend a reserve: when everything is at its reserve, hold the work or ask
-  the user.
+  the user. `class` says what kind of pool each one is: `included` (a subscription whose windows expire), `capped`
+  (a spend cap the vendor enforces, shown as one more window), `metered` (a seat with no quota, billed per token:
+  no headroom number, listed after every pool that still has room, so it takes the overflow), or `unknown`.
 
 ## Deciding
 

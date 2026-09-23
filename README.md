@@ -136,12 +136,18 @@ goes stale when models change.
 
 - Per subscription: `reserve` (the share routr must never offer), `hardest_work` (the hardest work you would hand
   it), `default_model` and `default_effort` (your everyday choice there, picked from the harness's live list), and
-  `assumed_headroom` for a subscription whose usage cannot be read.
+  `assumed_headroom` for a subscription whose usage cannot be read. For a seat billed per token with no quota (an
+  Enterprise seat), `metered_rank` says whether it takes the overflow after your subscriptions (`after`, the default)
+  or ranks with them (`with`); `billing` names the kind when the harness cannot show it.
 - `prefer`: your standing preference per kind of work, for example `"review": "strong"`.
 
 Usage is read live for Claude Code (through `routr statusline`, set up as Claude's statusline command), Codex, and
 Antigravity. Cursor has no local source; the orchestrator reads its `/usage` panel through a pane and passes the
-number in. Usage is re-read on every call and never cached.
+number in. Usage is re-read on every call and never cached. A seat with no quota reports no windows: measured on a
+ChatGPT Enterprise seat, which routr detects and calls `metered`; for Claude the class is your `billing` setting,
+because the statusline sends nothing to tell a seat with no quota from a plan routr has not seen. A metered seat gets
+no headroom number and is ranked by your setting rather than by a guess. A cap the vendor enforces is read as one
+more window (Codex: from its protocol, not yet observed on a seat).
 
 ## Evidence
 

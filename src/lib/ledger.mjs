@@ -172,7 +172,9 @@ export function assess(entries, config = null) {
   if (subs.length) {
     out.push("\nusable headroom, first → last recorded dispatch · lowest seen (work sent there)");
     for (const name of subs) {
-      const seen = entries.filter((e) => e.headroom?.[name]), us = seen.map((e) => e.headroom[name].usable);
+      // A metered seat records no number (usable null): it has no reserve to lower.
+      const seen = entries.filter((e) => e.headroom?.[name]?.usable != null), us = seen.map((e) => e.headroom[name].usable);
+      if (!seen.length) { out.push(`  ${name.padEnd(8)} metered: no headroom number   (${entries.filter((e) => e.chose.subscription === name).length} pieces)`); continue; }
       out.push(`  ${name.padEnd(8)} ${us[0]} → ${us.at(-1)} · ${Math.min(...us)}   (${entries.filter((e) => e.chose.subscription === name).length} pieces)`);
       const atReserve = us.filter((u) => u <= 0.02).length;
       if (seen.length >= MIN && atReserve / seen.length >= 0.3)
