@@ -1465,3 +1465,19 @@ test("the file-and-ledger commands answer instead of failing", async () => {
   expect(seen[0].report.text).toBe("VERDICT: done");
   expect(out.ms).toBe(12);
 });
+
+test("launch types each shell's own syntax: Cursor's private config is set and removed in PowerShell and cmd too", async () => {
+  const { SHELLS, shellFamily } = await import("../src/lib/launch.mjs");
+  expect(["zsh", "bash", "fish", undefined].map(shellFamily)).toEqual(["posix", "posix", "posix", "posix"]);
+  expect(["powershell.exe", "pwsh", "cmd.exe", "CMD"].map(shellFamily)).toEqual(["powershell", "powershell", "cmd", "cmd"]);
+  const dir = "C:\\Users\\u\\AppData\\Local\\Temp\\routr-cursor-1", argv = ["--yolo", "--trust", "--model", "cursor-grok-4.6-high"];
+  // Windows shells only set the variable; herdr then starts Cursor itself, because it cannot see a Cursor a shell started.
+  expect(SHELLS.powershell.cursor).toBeUndefined();
+  // This exact line was run on Windows 11: the watcher appeared, and the folder was gone once the shell exited.
+  expect(SHELLS.powershell.cursorEnv(dir)).toBe(`$env:CURSOR_CONFIG_DIR='${dir}'; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ''${dir}'' -Recurse -Force -ErrorAction SilentlyContinue"'; ([wmiclass]'Win32_Process').Create($w) | Out-Null`);
+  expect(SHELLS.powershell.cd("C:\\it's here")).toBe("Set-Location -LiteralPath 'C:\\it''s here'");
+  expect(SHELLS.cmd.cursorEnv(dir)).toBe(`set "CURSOR_CONFIG_DIR=${dir}"`);
+  expect(SHELLS.cmd.cd("C:\\a b")).toBe('cd /d "C:\\a b"');
+  expect(SHELLS.posix.cursor("/tmp/x", "cursor-agent", ["--trust"])).toMatch(/^env CURSOR_CONFIG_DIR=\/tmp\/x sh -c 'trap .*cursor-agent --trust'$/);
+  expect(SHELLS.posix.cd("/a b")).toBe("cd -- '/a b'");
+});
