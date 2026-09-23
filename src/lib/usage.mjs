@@ -1,5 +1,9 @@
 // Live usage per subscription, read passively from what each harness already writes locally. Read-only.
 // headroom = remaining share of the TIGHTEST window (0..1). No pace or burn modelling: the router decides on what is left.
+// Every pool is a list of windows plus a CLASS: `included` (windows that expire: a subscription), `capped` (a spend cap
+// the vendor enforces, read as one more window), `metered` (billed usage with no quota, and a working source says so),
+// or `unknown` (nothing readable). Measured 2026-09-22 on a ChatGPT Enterprise seat: no windows at all, only
+// `credits.unlimited: true`, and a plan name of `business`. So the shape is the key, never the plan name.
 import { CLAUDE_SNAPSHOT } from "./runtime.mjs";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -10,13 +14,66 @@ export { CLAUDE_SNAPSHOT };
 export const CODEX_SESSIONS = join(homedir(), ".codex/sessions");
 const now = () => Date.now() / 1000;
 
-function summarize(pool, source, ts, windows, note) {
+// `nowSec` is injectable so the recorded shapes are tests that do not age.
+function summarize(pool, source, ts, windows, note, cls, nowSec = now()) {
   windows = windows.filter((w) => Number.isFinite(w.usedPct)); // a window without a number must not turn headroom into NaN
-  if (!windows.length) return { pool, source, ageSec: null, windows, headroom: null, note: note ?? "no usage data" };
+  cls ??= windows.length ? "included" : "unknown";
+  const ageSec = ts ? Math.round(nowSec - ts) : null;
+  if (!windows.length) return { pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? "no usage data" };
   // A window whose reset time has passed since the snapshot has rolled over: treat as empty.
-  const live = windows.map((w) => (w.resetsAt && w.resetsAt < now() ? { ...w, usedPct: 0 } : w));
+  const live = windows.map((w) => (w.resetsAt && w.resetsAt < nowSec ? { ...w, usedPct: 0 } : w));
   const headroom = Math.min(...live.map((w) => Math.max(0, 1 - w.usedPct / 100)));
-  return { pool, source, ageSec: ts ? Math.round(now() - ts) : null, windows: live, headroom, note };
+  return { pool, source, ageSec, windows: live, headroom, class: cls, note };
+}
+
+// A cap's period is not assumed. When its reset falls on a UTC month boundary the window is that month (the vendors
+// document monthly caps resetting on the 1st at 00:00 UTC); otherwise the length is unknown and the ranker holds the
+// full reserve instead of tapering it.
+export function monthMinutes(resetsAt) {
+  if (!resetsAt) return null;
+  const d = new Date(resetsAt * 1000);
+  if (d.getUTCDate() !== 1 || d.getUTCHours() || d.getUTCMinutes() || d.getUTCSeconds()) return null;
+  return Math.round((d.getTime() - Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)) / 60000);
+}
+
+// One reader for both Codex shapes: the app-server's camelCase and the session log's snake_case. Pure, so the recorded
+// shapes (an Enterprise seat, a Pro login) are tests. Observed 2026-09-22: the Enterprise seat has `primary` and
+// `secondary` null and `credits.unlimited` true; the Pro login one weekly `primary` and credits off.
+export function codexSnapshot(rl, source, ts, nowSec = now()) {
+  const g = (o, camel, snake) => o?.[camel] ?? o?.[snake];
+  const win = (name, w) => ({ name, usedPct: g(w, "usedPercent", "used_percent"), windowMin: g(w, "windowDurationMins", "window_minutes"), resetsAt: g(w, "resetsAt", "resets_at") });
+  const ws = ["primary", "secondary"].filter((k) => rl[k]).map((k) => win(k, rl[k]));
+  const cap = g(rl, "individualLimit", "individual_limit"), credits = rl.credits;
+  const notes = [];
+  // A member credit limit (the owner's monthly cap) is one more window: the tightest wins, as with any other.
+  if (cap) { const resetsAt = g(cap, "resetsAt", "resets_at"); ws.push({ name: "monthly_cap", usedPct: 100 - g(cap, "remainingPercent", "remaining_percent"), windowMin: monthMinutes(resetsAt), resetsAt }); }
+  const reached = g(rl, "rateLimitReachedType", "rate_limit_reached_type");
+  if (reached) notes.push(`limit reached: ${reached}`);
+  if (g(rl, "spendControlReached", "spend_control_reached") === true) notes.push("spend control reached: the cap is used up");
+  const hasCredits = Boolean(g(credits, "hasCredits", "has_credits"));
+  // Metered only with NO windows: the one observed shape. Credits beside windows (a Business seat past its included
+  // usage; claimed, not observed) leave the windows in charge and are only noted. A finite balance without windows is
+  // also claimed: it is a quota of sorts, but not a share, so it is metered with the balance named.
+  const metered = !cap && !ws.length && (credits?.unlimited || hasCredits);
+  if (metered) notes.push(credits.unlimited ? "metered: unlimited credits, usage is billed, no quota reported" : `metered: workspace credits${credits.balance ? ` (balance ${credits.balance})` : ""}, usage is billed, no window reported`);
+  else if (ws.length && (credits?.unlimited || hasCredits)) notes.push("workspace credits are on: the harness keeps working past 100% on billed usage");
+  return summarize("codex", source, ts, ws, notes.join("; ") || undefined, cap ? "capped" : metered ? "metered" : undefined, nowSec);
+}
+
+// The Claude snapshot `routr statusline` writes. Windows come from `rate_limits`; `spend_limit` (behind a Claude apps
+// gateway) is a cap whose used share can pass 100, clamped here. A render with no windows (a session's first renders,
+// or a plan that sends none) is served the last windows seen, however old: `ageSec` says how old, and a lapsed window
+// rolls over to empty, as before. Absence is NOT read as "no quota": the statusline docs list only Pro and Max as
+// sending `rate_limits`, a Team seat is unobserved, and a plan with no quota is the user's `billing: "metered"` to say.
+export function claudeSnapshot(s, nowSec = now()) {
+  const mins = { five_hour: 300, seven_day: 10080, spend_limit: null };
+  const toWs = (rl) => Object.entries(rl ?? {}).filter(([k, v]) => k in mins && v?.used_percentage != null).map(([k, v]) => ({ name: k, usedPct: Math.min(100, v.used_percentage), windowMin: mins[k], resetsAt: v.resets_at }));
+  let ws = toWs(s.rate_limits), ts = s.ts;
+  if (!ws.length && s.seen) { ws = toWs(s.seen.rate_limits); ts = s.seen.ts; }
+  if (ws.length) return summarize("claude", "statusline", ts, ws, undefined, ws.some((w) => w.name === "spend_limit") ? "capped" : "included", nowSec);
+  return summarize("claude", "statusline", s.ts, [], s.answered
+    ? "Claude reports no usage windows for this seat. A plan with no quota (usage-based Enterprise, an API key) sends none: if that is this seat, set `billing: \"metered\"` for claude in the config"
+    : "no windows yet: Claude reports usage after its first response of a session", undefined, nowSec);
 }
 
 function newestFile(dir) {
@@ -40,9 +97,8 @@ export function readCodex() {
     try {
       const o = JSON.parse(lines[i]);
       const rl = o.payload?.rate_limits ?? o.payload?.info?.rate_limits ?? o.rate_limits;
-      if (!rl?.primary) continue;
-      const ws = ["primary", "secondary"].filter((k) => rl[k]).map((k) => ({ name: k, usedPct: rl[k].used_percent, windowMin: rl[k].window_minutes, resetsAt: rl[k].resets_at }));
-      return summarize("codex", "session log", Date.parse(o.timestamp) / 1000, ws, rl.rate_limit_reached_type ? `limit reached: ${rl.rate_limit_reached_type}` : undefined);
+      if (!rl?.primary && !rl?.credits) continue;
+      return codexSnapshot(rl, "session log", Date.parse(o.timestamp) / 1000);
     } catch {}
   }
   return summarize("codex", "session log", null, []);
@@ -50,11 +106,7 @@ export function readCodex() {
 
 export function readClaude() {
   if (!existsSync(CLAUDE_SNAPSHOT)) return summarize("claude", "statusline", null, [], "no snapshot: the usage statusline is not installed, or no Claude Code session has run since");
-  const s = JSON.parse(readFileSync(CLAUDE_SNAPSHOT, "utf8"));
-  const mins = { five_hour: 300, seven_day: 10080 };
-  const ws = Object.entries(s.rate_limits).filter(([k, v]) => mins[k] && v?.used_percentage != null)
-    .map(([k, v]) => ({ name: k, usedPct: v.used_percentage, windowMin: mins[k], resetsAt: v.resets_at }));
-  return summarize("claude", "statusline", s.ts, ws);
+  return claudeSnapshot(JSON.parse(readFileSync(CLAUDE_SNAPSHOT, "utf8")));
 }
 
 // Run a harness command read-only and collect stdout; resolve null on any failure or timeout, never throw.
@@ -86,8 +138,7 @@ export async function readCodexLive() {
       const o = JSON.parse(line);
       const rl = o.id === 2 && o.result?.rateLimits;
       if (!rl) continue;
-      const ws = ["primary", "secondary"].filter((k) => rl[k]).map((k) => ({ name: k, usedPct: rl[k].usedPercent, windowMin: rl[k].windowDurationMins, resetsAt: rl[k].resetsAt }));
-      return summarize("codex", "app-server", now(), ws, rl.rateLimitReachedType ? `limit reached: ${rl.rateLimitReachedType}` : undefined);
+      return codexSnapshot(rl, "app-server", now());
     } catch {}
   }
   return readCodex();

@@ -13,7 +13,11 @@ export const DEFAULTS = {
   auto_update: true,           // check for a new release at most once a day, in the background; applied on the next run
   subscriptions: {},
 };
-const SUB_DEFAULTS = { hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null };
+// `billing` overrides what the usage reader can tell (`included` or `metered`); it is for seats whose harness reports
+// nothing, such as Claude usage-based Enterprise. `metered_rank` places a metered pool: `after` every pool with a quota
+// that still has room (the default: included usage expires, billed usage does not), or `with` the rest by assumed_headroom.
+const SUB_DEFAULTS = { hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after" };
+const BILLING = ["included", "metered"], METERED_RANK = ["after", "with"];
 const isLevel = (v) => LEVELS.includes(v);
 
 // Never throws: a missing or broken config means defaults plus a note, so the router still answers.
@@ -34,6 +38,7 @@ export function loadConfig(path = CONFIG_PATH) {
   for (const [k, v] of Object.entries(raw.prefer ?? DEFAULTS.prefer)) isLevel(v) ? (config.prefer[k] = v) : notes.push(`prefer.${k}: "${v}" is not a level, ignored`);
   for (const [name, s] of Object.entries(raw.subscriptions ?? {})) {
     if (s?.hardest_work !== undefined && !isLevel(s.hardest_work)) notes.push(`subscriptions.${name}.hardest_work: "${s.hardest_work}" is not a level, using strong`);
+    const oneOf = (k, allowed, fallback) => { const v = s?.[k]; if (v === undefined || v === null) return fallback; if (allowed.includes(v)) return v; notes.push(`subscriptions.${name}.${k}: ${JSON.stringify(v)} is not one of ${allowed.join(", ")}, using ${fallback ?? "the harness's own reading"}`); return fallback; };
     config.subscriptions[name] = {
       hardest_work: isLevel(s?.hardest_work) ? s.hardest_work : SUB_DEFAULTS.hardest_work,
       reserve: share(s?.reserve, SUB_DEFAULTS.reserve, `subscriptions.${name}.reserve`),
@@ -41,6 +46,8 @@ export function loadConfig(path = CONFIG_PATH) {
       // The user's everyday model for this harness: where the orchestrator starts before moving up or down. Passed through, never interpreted.
       default_model: typeof s?.default_model === "string" ? s.default_model : null,
       default_effort: typeof s?.default_effort === "string" ? s.default_effort : null,
+      billing: oneOf("billing", BILLING, SUB_DEFAULTS.billing),
+      metered_rank: oneOf("metered_rank", METERED_RANK, SUB_DEFAULTS.metered_rank),
     };
   }
   return { config, notes };
