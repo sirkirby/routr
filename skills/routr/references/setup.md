@@ -52,13 +52,15 @@ risks being committed. Without a key routr still answers, but only with the fall
 Do not write the file by hand. Settle the default model for each subscription with the user (doctor prints each
 harness's live list), then run:
 
-    routr setup --yes --model claude=<id> --model codex=<id> ...
+    routr setup --yes --model claude=<id> --model codex=<id> [--metered codex=after|with] ...
 
 It writes `~/.config/routr/config.json` for the harnesses found, with the suggested reserves, and sets the Claude
 statusline (step 4; `--no-statusline` leaves it). A subscription with no `--model` gets no default, and the lead
 picks from the live list. An existing config is kept: setup only adds harnesses found since, and `--force` rewrites
-it (the old file is kept as `config.json.bak`). Then go through the values with the user and edit the file for
-anything they want different; every one is their preference, and none describes a model.
+it (the old file is kept as `config.json.bak`). A subscription that reads as metered when first written (billed per
+token, no quota: a ChatGPT Enterprise seat) gets `metered_rank` written out, `after` unless `--metered <name>=with`
+is passed or the person answers the question at the terminal. Then go through the values with the user and edit the
+file for anything they want different; every one is their preference, and none describes a model.
 
 - `subscriptions`: one entry per subscription the orchestrator may launch on, named `claude`, `codex`, `cursor`, `agy`.
   - `reserve`: the share of that subscription routr must never offer (0.25 keeps a quarter for the user's own work).
@@ -72,8 +74,9 @@ anything they want different; every one is their preference, and none describes 
   - `billing`: `included` or `metered`, only when the harness cannot show which it is. A Codex Enterprise seat on
     flexible pricing is detected (measured: no windows, unlimited credits). Claude is never detected: a plan with no
     quota (usage-based Enterprise, an API key) sends the statusline no windows, and so may a plan routr has not seen
-    yet, so the advice says "no usage windows" and leaves the class to you. Set `"billing": "metered"` for such a
-    Claude seat by hand. Leave it out otherwise.
+    yet, so the advice says "no usage windows" and leaves the class to you. `routr doctor` lists it as a next step
+    when Claude has answered a prompt and still sent no windows. Set `"billing": "metered"` for such a Claude seat
+    by hand; `"billing": "included"` says the seat has a quota and clears the same step. Leave it out otherwise.
   - `metered_rank`: where a metered seat (billed per token, no quota) goes in the ranking. `after` (default): after
     every subscription that still has room, so it takes the overflow, because included usage expires and billed
     usage does not. `with`: ranked with the rest by its `assumed_headroom`. A cap the vendor enforces is read as a

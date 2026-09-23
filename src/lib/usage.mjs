@@ -15,11 +15,11 @@ export const CODEX_SESSIONS = join(homedir(), ".codex/sessions");
 const now = () => Date.now() / 1000;
 
 // `nowSec` is injectable so the recorded shapes are tests that do not age.
-function summarize(pool, source, ts, windows, note, cls, nowSec = now()) {
+function summarize(pool, source, ts, windows, note, cls, nowSec = now(), reason) {
   windows = windows.filter((w) => Number.isFinite(w.usedPct)); // a window without a number must not turn headroom into NaN
   cls ??= windows.length ? "included" : "unknown";
   const ageSec = ts ? Math.round(nowSec - ts) : null;
-  if (!windows.length) return { pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? "no usage data" };
+  if (!windows.length) return { pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? "no usage data", ...(reason ? { reason } : {}) };
   // A window whose reset time has passed since the snapshot has rolled over: treat as empty.
   const live = windows.map((w) => (w.resetsAt && w.resetsAt < nowSec ? { ...w, usedPct: 0 } : w));
   const headroom = Math.min(...live.map((w) => Math.max(0, 1 - w.usedPct / 100)));
@@ -65,6 +65,8 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
 // or a plan that sends none) is served the last windows seen, however old: `ageSec` says how old, and a lapsed window
 // rolls over to empty, as before. Absence is NOT read as "no quota": the statusline docs list only Pro and Max as
 // sending `rate_limits`, a Team seat is unobserved, and a plan with no quota is the user's `billing: "metered"` to say.
+// The one `reason` a Claude reading carries, so doctor keys on it and not on the wording of the note.
+export const NO_WINDOWS_AFTER_ANSWER = "no_windows_after_answer";
 export function claudeSnapshot(s, nowSec = now()) {
   const mins = { five_hour: 300, seven_day: 10080, spend_limit: null };
   const toWs = (rl) => Object.entries(rl ?? {}).filter(([k, v]) => k in mins && v?.used_percentage != null).map(([k, v]) => ({ name: k, usedPct: Math.min(100, v.used_percentage), windowMin: mins[k], resetsAt: v.resets_at }));
@@ -73,7 +75,7 @@ export function claudeSnapshot(s, nowSec = now()) {
   if (ws.length) return summarize("claude", "statusline", ts, ws, undefined, ws.some((w) => w.name === "spend_limit") ? "capped" : "included", nowSec);
   return summarize("claude", "statusline", s.ts, [], s.answered
     ? "Claude reports no usage windows for this seat. A plan with no quota (usage-based Enterprise, an API key) sends none: if that is this seat, set `billing: \"metered\"` for claude in the config"
-    : "no windows yet: Claude reports usage after its first response of a session", undefined, nowSec);
+    : "no windows yet: Claude reports usage after its first response of a session", undefined, nowSec, s.answered ? NO_WINDOWS_AFTER_ANSWER : undefined);
 }
 
 function newestFile(dir) {

@@ -89,6 +89,7 @@ export const COMMANDS = {
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
       { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list; repeatable", required: false },
+      { name: "--metered", arg: "<subscription>=after|with", description: "where a seat billed per token with no quota goes in the ranking: after your subscriptions (default) or with them; repeatable", required: false },
       { name: "--no-statusline", description: "leave Claude Code's settings alone", required: false },
       { name: "--force", description: "rewrite an existing config (the old one is kept as config.json.bak)", required: false },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
