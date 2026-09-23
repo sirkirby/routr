@@ -1470,7 +1470,7 @@ test("launch types each shell's own syntax: Cursor's private config is set and r
   const { SHELLS, shellFamily } = await import("../src/lib/launch.mjs");
   expect(["zsh", "bash", "fish", undefined].map(shellFamily)).toEqual(["posix", "posix", "posix", "posix"]);
   expect(["powershell.exe", "pwsh", "cmd.exe", "CMD"].map(shellFamily)).toEqual(["powershell", "powershell", "cmd", "cmd"]);
-  const dir = "C:\\Users\\u\\AppData\\Local\\Temp\\routr-cursor-1", argv = ["--yolo", "--trust", "--model", "cursor-grok-4.6-high"];
+  const dir = "C:\\Users\\u\\AppData\\Local\\Temp\\routr-cursor-1";
   // Windows shells only set the variable; herdr then starts Cursor itself, because it cannot see a Cursor a shell started.
   expect(SHELLS.powershell.cursor).toBeUndefined();
   // This exact line was run on Windows 11: the watcher appeared, and the folder was gone once the shell exited.
@@ -1480,4 +1480,25 @@ test("launch types each shell's own syntax: Cursor's private config is set and r
   expect(SHELLS.cmd.cd("C:\\a b")).toBe('cd /d "C:\\a b"');
   expect(SHELLS.posix.cursor("/tmp/x", "cursor-agent", ["--trust"])).toMatch(/^env CURSOR_CONFIG_DIR=\/tmp\/x sh -c 'trap .*cursor-agent --trust'$/);
   expect(SHELLS.posix.cd("/a b")).toBe("cd -- '/a b'");
+});
+
+test("routr update reports a real swap as an update and reinstalls the skill (the 0.1.14 regression)", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "routr-upd-")), self = join(dir, "routr");
+  writeFileSync(self, "OLD");
+  const fresh = Buffer.from("NEW-BINARY");
+  const sum = (await import("node:crypto")).createHash("sha256").update(fresh).digest("hex");
+  const { assetName } = await import("../src/lib/update.mjs");
+  const fetchFn = async (u) => ({ ok: true, status: 200, arrayBuffer: async () => (String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : fresh) });
+  const calls = [];
+  const spawn = (file, args) => { calls.push([file, args[0]]); return { status: 0, stdout: args[0] === "--version" ? "9.9.9\n" : "" }; };
+  const r = await update({ base: "http://fake.invalid/r", self, fetchFn, spawn, isStandalone: () => true });
+  expect(r).toMatchObject({ ok: true, updated: true, now: "9.9.9", skill_reinstalled: true });
+  expect(readFileSync(self, "utf8")).toBe("NEW-BINARY");
+  expect(calls).toEqual([[self, "--version"], [self, "skill install".split(" ")[0]]]);
+  // A failure after the swap is still an update, and says so.
+  writeFileSync(self, "OLD");
+  const bad = await update({ base: "http://fake.invalid/r", self, fetchFn, spawn: () => { throw new Error("spawn broke"); }, isStandalone: () => true });
+  expect(bad.updated).toBe(true); expect(bad.ok).toBe(false); expect(bad.note).toContain("updated to");
+  expect(readFileSync(self, "utf8")).toBe("NEW-BINARY");
 });

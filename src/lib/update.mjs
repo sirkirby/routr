@@ -4,7 +4,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
-import { homedir } from "node:os";
+
 import { join } from "node:path";
 import { CACHE_DIR, standalone } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
@@ -33,32 +33,40 @@ export async function latestVersion(timeoutMs = 4000) {
   return String((await r.json()).tag_name ?? "").replace(/^v/, "");
 }
 
-export async function update({ checkOnly = false, force = false, base = process.env.ROUTR_DOWNLOAD_BASE } = {}) {
+// `self`, `fetchFn`, `spawn`, and `isStandalone` are seams: a test drives a real swap on a scratch file, with no network.
+export async function update({ checkOnly = false, force = false, base = process.env.ROUTR_DOWNLOAD_BASE,
+  self = process.execPath, fetchFn = fetch, spawn = spawnSync, isStandalone = standalone } = {}) {
   const out = { ok: false, current: ROUTR_VERSION, latest: null, updated: false };
   try {
     out.latest = base ? "(from ROUTR_DOWNLOAD_BASE)" : await latestVersion();
     const available = base ? true : newer(out.latest, ROUTR_VERSION);
     if (!available && !force) return { ...out, ok: true, note: "routr is up to date" };
     if (checkOnly) return { ...out, ok: true, available: true, note: `${out.latest} is available: run \`routr update\`` };
-    if (!standalone()) return { ...out, ok: true, available: true, note: "this routr runs from a source checkout: update it with `git pull`" };
+    if (!isStandalone()) return { ...out, ok: true, available: true, note: "this routr runs from a source checkout: update it with `git pull`" };
     const asset = assetName();
     if (!asset) throw new Error(`no release build for ${process.platform}/${process.arch}`);
     const from = base ?? `https://github.com/${REPO}/releases/latest/download`;
-    const get = async (name) => { const r = await fetch(`${from}/${name}`, { redirect: "follow", signal: AbortSignal.timeout(120000) }); if (!r.ok) throw new Error(`download of ${name} failed (${r.status})`); return Buffer.from(await r.arrayBuffer()); };
+    const get = async (name) => { const r = await fetchFn(`${from}/${name}`, { redirect: "follow", signal: AbortSignal.timeout(120000) }); if (!r.ok) throw new Error(`download of ${name} failed (${r.status})`); return Buffer.from(await r.arrayBuffer()); };
     const [bin, sums] = [await get(asset), (await get("SHA256SUMS")).toString("utf8")];
     const want = sums.split("\n").map((l) => l.trim().split(/\s+/)).find((p) => p[1] === asset)?.[0];
     const got = createHash("sha256").update(bin).digest("hex");
     if (!want || want !== got) throw new Error(`checksum mismatch for ${asset}; nothing was changed`);
 
-    swapBinary(process.execPath, bin);
-    const v = spawnSync(self, ["--version"], { encoding: "utf8" });
+    swapBinary(self, bin);
+    // From here on the new binary is in place: whatever happens next, the result must say so (0.1.14 to 0.1.16 threw
+    // on an undeclared name here and reported "Nothing was changed" after every successful update).
+    out.updated = true;
+    const v = spawn(self, ["--version"], { encoding: "utf8" });
     out.now = (v.stdout ?? "").trim() || null;
-    const skill = spawnSync(self, ["skill", "install"], { encoding: "utf8" });
+    const skill = spawn(self, ["skill", "install"], { encoding: "utf8" });
     return { ...out, ok: true, updated: true, skill_reinstalled: skill.status === 0, note: `updated ${ROUTR_VERSION} → ${out.now ?? out.latest}` };
   } catch (e) {
-    // Say what is true: after a failed swap the old binary was put back, unless that failed too.
-    const intact = existsSync(process.execPath);
-    return { ...out, ok: false, error: String(e?.message ?? e).slice(0, 200), note: intact ? "Nothing was changed. You can also re-run the install command from the README." : `routr is no longer at ${process.execPath}: the previous binary is beside it as routr.old. Re-run the install command from the README.` };
+    // Say what is true: after a failed swap the old binary was put back, unless that failed too; after a successful
+    // swap the update happened even if a later step failed.
+    const error = String(e?.message ?? e).slice(0, 200);
+    if (out.updated) return { ...out, ok: false, error, note: `updated to ${out.latest}, but a step after the swap failed (${error}). Run \`routr skill install\` yourself` };
+    const intact = existsSync(self);
+    return { ...out, ok: false, error, note: intact ? "Nothing was changed. You can also re-run the install command from the README." : `routr is no longer at ${self}: the previous binary is beside it as routr.old. Re-run the install command from the README.` };
   }
 }
 
