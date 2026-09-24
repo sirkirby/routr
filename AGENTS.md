@@ -58,8 +58,9 @@ measured questions about a brief or a worker report; code adds live usage; the l
 ## Releasing
 
 Merging to `main` only runs tests. A release happens when a `vX.Y.Z` tag is pushed (`-alpha.N` / `-beta.N` / `-rc.N`
-for a pre-release); the version in `src/lib/version.mjs`, `package.json`, and the `version` line of
-`skills/routr/SKILL.md` MUST match the tag's base version. Commit subjects become the release notes: write them for a user. Details: `CONTRIBUTING.md`.
+for a pre-release). The tag is the ONLY place a version is set: `src/lib/version.mjs`, `package.json`, and the
+`version` line of `skills/routr/SKILL.md` stay `0.0.0-dev` in the repository and are stamped from the tag at build time.
+Never commit a real version into them. Commit subjects become the release notes: write them for a user. Details: `CONTRIBUTING.md`.
 
 ## Working style
 
@@ -69,7 +70,7 @@ for a pre-release); the version in `src/lib/version.mjs`, `package.json`, and th
 - An agent working for the maintainer MAY squash-merge its own pull request with the admin bypass
   (`gh pr merge <n> --squash --admin`) once all three test jobs are green. It MUST NOT use the bypass to push to
   `main` directly, to merge with a failing or pending check, or to move a release tag.
-- After merging, the agent MAY cut a release by pushing a NEW `vX.Y.Z` tag that matches the version files. It never
+- After merging, the agent MAY cut a release by pushing a NEW `vX.Y.Z` tag, one above the latest release. It never
   moves or deletes an existing tag.
 - Evals, tuning data, and working notes live in a separate private workbench, not here. This repo holds what ships.
 - Match the surrounding code: dense, commented where a decision is non-obvious, with the measurement that justified

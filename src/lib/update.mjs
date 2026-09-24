@@ -39,6 +39,8 @@ export async function update({ checkOnly = false, force = false, base = process.
   const out = { ok: false, current: ROUTR_VERSION, latest: null, updated: false };
   try {
     out.latest = base ? "(from ROUTR_DOWNLOAD_BASE)" : await latestVersion();
+    // A source checkout reads 0.0.0-dev, so every release looks newer; it is updated with git, never by this.
+    if (!base && !isStandalone()) return { ...out, ok: true, note: `this routr runs from a source checkout: update it with \`git pull\` (latest release: ${out.latest})` };
     const available = base ? true : newer(out.latest, ROUTR_VERSION);
     if (!available && !force) return { ...out, ok: true, note: "routr is up to date" };
     if (checkOnly) return { ...out, ok: true, available: true, note: `${out.latest} is available: run \`routr update\`` };

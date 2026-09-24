@@ -32,11 +32,7 @@ jobs:
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
             echo "Unsupported release tag: $TAG_NAME (want vX.Y.Z or vX.Y.Z-alpha.N / -beta.N / -rc.N)" >&2; exit 1
           fi
-          # The version lives in three files; each must carry the tag's base version, so `routr --version` is honest.
-          BASE="${VERSION%%-*}"
-          grep -q "\"$BASE\"" src/lib/version.mjs || { echo "lib/version.mjs does not say $BASE" >&2; exit 1; }
-          grep -q "\"version\":\"$BASE\"" package.json || { echo "package.json does not say $BASE" >&2; exit 1; }
-          grep -q "version: \"$BASE\"" skills/routr/SKILL.md || { echo "skills/routr/SKILL.md does not say $BASE" >&2; exit 1; }
+          # The tag is the only place the version is set: the repository reads 0.0.0-dev, and each build stamps this one in.
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           if [[ "$VERSION" == *-* ]]; then echo "is_prerelease=true" >> "$GITHUB_OUTPUT"; else echo "is_prerelease=false" >> "$GITHUB_OUTPUT"; fi
@@ -67,6 +63,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      - name: Stamp the tag's version into the source (the guides embedded in the binary carry it)
+        run: bun scripts/stamp-version.mjs "${{ needs.validate-tag.outputs.version }}"
       - name: Compile a standalone binary
         run: >-
           bun build --compile --minify --target=bun-${{ matrix.target }}
@@ -80,6 +78,9 @@ jobs:
         run: |
           test "$(./routr-${{ matrix.target }} --version)" = "${{ needs.validate-tag.outputs.version }}"
           ./routr-${{ matrix.target }} skill install --dry-run
+          # The skill it installs must name the same release, or doctor tells every user to reinstall it.
+          H="$(mktemp -d)"; HOME="$H" ./routr-${{ matrix.target }} skill install >/dev/null
+          V="${{ needs.validate-tag.outputs.version }}"; grep -q "version: \"${V%%-*}\"" "$H/.agents/skills/routr/SKILL.md"
       - uses: actions/upload-artifact@v4
         with:
           name: routr-${{ matrix.target }}

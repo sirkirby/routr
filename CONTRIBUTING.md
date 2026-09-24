@@ -63,12 +63,14 @@ The source is plain JavaScript under `src/`, run with Bun while developing
 
 Merging to `main` only runs the tests. **A release happens when a version tag is pushed, and only then:**
 
-1. Set the new version in `src/lib/version.mjs`, `package.json`, and the `version` line in
-   `skills/routr/SKILL.md`. A test and the release workflow both refuse a mismatch. Merge that.
-2. `git tag v0.2.0 && git push origin v0.2.0`. For a pre-release use `v0.2.0-rc.1` (`-alpha.N`, `-beta.N`, `-rc.N`);
-   the files keep the base version `0.2.0`.
+    git tag v0.2.0 && git push origin v0.2.0
 
-`.github/workflows/release.yml` then checks the tag against those files, runs the tests, builds the five binaries
+For a pre-release use `v0.2.0-rc.1` (`-alpha.N`, `-beta.N`, `-rc.N`). The tag is the only place a version is set:
+in the repository `src/lib/version.mjs`, `package.json`, and the `version` line in `skills/routr/SKILL.md` all read
+`0.0.0-dev` (a test checks it), so there is nothing to bump before a release and nothing to write back after one.
+
+`.github/workflows/release.yml` then checks the tag's form, runs the tests, stamps the tag's version into those three
+files in each build (`scripts/stamp-version.mjs`; the skill and `package.json` get the base version `0.2.0`), builds the five binaries
 (macOS ones on macOS, signed ad hoc, because Apple Silicon will not run an unsigned binary), and creates the GitHub
 release with checksums, install commands, and a "What's Changed" list of the commit subjects since the previous
 stable tag. Write commit subjects a user can read: they become the release notes. Pre-releases are marked as such
