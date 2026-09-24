@@ -1,7 +1,9 @@
 # Evidence
 
 routr's claims rest on small evals run while it was built (2026-09). Sample sizes are small and most labels were
-written by the people building it; each entry says so. "Jev" is TypeSafe's System One model, pinned at `jev-1.13.0`.
+written by the people building it; each entry says so. "Jev" is TypeSafe's System One model. routr pins an exact version
+and moves the pin when a new one does at least as well on these items (CONTRIBUTING.md). Every result below was measured on
+`jev-1.13.0`, the current pin.
 
 ## Reading a brief
 
@@ -9,7 +11,7 @@ written by the people building it; each entry says so. "Jev" is TypeSafe's Syste
 |---|---|---|
 | Are narrow facts about a brief decisive? | 68 briefs: 28 written fixtures, 35 real prompts from the author's history, 5 real investigation briefs. Decisive = answer below 0.2 or above 0.8 | Facts stated in the brief: 63-88% decisive (says how to check 88%, names the location 84%, concurrency or data 79%, approach open 68%, cause unknown 66%, hard to reverse 65%, cross-cutting 63%). Estimates of what the work will take: 22-43% (wide search, whole picture, broad context, long iteration). routr asks the first kind only |
 | Is the read the same every time? | 12 briefs × 5 repeats | 107 of 108 fact readings identical; largest swing in a probability 0.06; level identical 11/12 |
-| Is the one-word level reliable? | the same 68 briefs, labels by the builders | Rounding the score: 54/68 exact, 13 over, 1 under. Confidence is informative: 34 of 38 right at ≥ 0.8. On the 30 unsure briefs the true level was the LOWER of the two most likely levels 27 times, the higher once. So routr rounds when sure and reports the lower of the two when torn: 61/68. Rounding up when unsure fixed nothing and only over-rated; a level derived by rule from the facts did no better (52/68) |
+| Is the one-word level reliable? | the same 68 briefs, labels by the builders | Rounding the score: 54/68 exact, 13 over, 1 under. Confidence is informative: 34 of 38 right at ≥ 0.8. On the 30 unsure briefs the true level was the LOWER of the two most likely levels 27 times, the higher once. So routr rounds when sure and reports the lower of the two when torn: 61/68 on those saved answers. Asked afresh with the shipped question set by the model gate (2026-09-24, two runs): 59/68 (4 under, 5 over), and on the torn briefs the lower level was right 27 of 32 and 25 of 30 times, the higher 3 times each. Rounding up when unsure fixed nothing and only over-rated; a level derived by rule from the facts did no better (52/68) |
 | Does the level separate work that needs a stronger model? | 5 real read-only investigations run on a mid and a top model, judged blind by a third | The top model clearly won 3 of 5; the level under-rated 1 of those 5 (an earlier question set: 3 of 5). n = 5, one kind of work. This is why routr is built around judge-and-escalate rather than prediction |
 | Is it worth a worker at all? | tiny: 6 rote fixtures vs 24 others; separable, needs-the-user: 10 written briefs | tiny 27/30, never decisively wrong; separable 6/6; needs-the-user 4/4 (written for the eval: optimistic) |
 

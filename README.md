@@ -160,7 +160,7 @@ or manage context; harnesses own that.
 ## Contributing
 
 The most useful contribution is your outcomes. routr's questions are kept or dropped on real work, and your ledger
-is real work: run `routr share`, read the file it writes (no briefs, notes, hashes, or usage numbers; no model names
+is real work: run `routr share`, read the file it writes (no briefs, notes, hashes, or usage numbers; no names of the models you chose
 unless you ask), and attach it to a ["Share your ledger" issue](https://github.com/sirkirby/routr/issues/new?template=share-ledger.yml).
 routr never sends anything by itself.
 

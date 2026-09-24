@@ -2,7 +2,7 @@
 name: routr
 description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity) from one orchestrating agent in herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before spawning subagents in a routr-managed session; or when asked to set up, configure, or check routr.
 metadata:
-  version: "0.1.18"
+  version: "0.1.19"
 ---
 
 # routr
@@ -58,8 +58,8 @@ fallback.
   brief before you send it.
 - `level`: a one-word summary: `basic` (rote or well-specified), `standard` (must find something out or choose an
   approach), or `strong` (a wrong or shallow result would be expensive and hard to notice). `sure: false` means routr
-  was torn between the two levels in `between`; it then reports the lower one, which testing showed is right nine
-  times in ten. routr never names a model.
+  was torn between the two levels in `between`; it then reports the lower one, which testing showed is right about
+  five times in six. routr never names a model.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
 - `subscriptions` (dispatch only). `ranked` lists each subscription with its usable headroom, marked `live`, `given`
   (you passed it in), or `assumed`. Under `windows` it shows each usage window as the harness reports it: percent

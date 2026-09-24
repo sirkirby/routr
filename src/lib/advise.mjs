@@ -10,7 +10,8 @@ export function advise(a, c) {
   const s = a.level;
   const sure = s.confidence >= c.sure_at;
   // Sure: round to the nearest level. Unsure: the LOWER of the two most likely levels. Measured on 68 labelled briefs
-  // (P31): when routr was unsure the true level was the lower of its top two 27 times out of 30, the higher once.
+  // (P31): when routr was unsure the true level was the lower of its top two 27 times out of 30, the higher once; asked
+  // afresh by the model gate (2026-09-24), 27 of 32 and 25 of 30, the higher 3 times each: about five times in six.
   // That lifts the level from 54/68 right to 61/68, and it matches the loop: start low, judge, escalate.
   const probs = LEVELS.map((_, i) => s.probabilities?.[i] ?? 0);
   const topTwo = [0, 1, 2].sort((x, y) => probs[y] - probs[x]).slice(0, 2).sort((x, y) => x - y);
@@ -25,7 +26,7 @@ export function advise(a, c) {
     if (reading === "unclear") unclear.push(k);
     if (f.about === "brief" && reading === "no") notes.push(`Fix the brief first: ${f.say[1]}.`);
   }
-  if (!sure) notes.push(`routr is between ${between ? between.join(" and ") : "levels"} (${LEVELS.map((l, i) => `${l} ${pct(s.probabilities?.[i])}`).join(", ")}). Start at ${level}: when routr is torn, the lower level has been the right one nine times in ten. Go higher only if a fact calls for it.`);
+  if (!sure) notes.push(`routr is between ${between ? between.join(" and ") : "levels"} (${LEVELS.map((l, i) => `${l} ${pct(s.probabilities?.[i])}`).join(", ")}). Start at ${level}: when routr is torn, the lower level has been the right one about five times in six. Go higher only if a fact calls for it.`);
   if (unclear.length) notes.push(`routr could not tell from the brief: ${unclear.join(", ")}. You can: you know the codebase.`);
   // Preferences for every kind of work Jev finds plausible, so an unsure work type does not hide one.
   const kinds = Object.entries(a.work_type.probabilities ?? { [a.work_type.choice]: 1 }).filter(([, p]) => p >= 0.3).map(([k]) => k);
