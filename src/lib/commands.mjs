@@ -44,7 +44,7 @@ export function recordCommand(o, subagentFlags = []) {
 export function shareCommand({ ledger = LEDGER_PATH, out }, config = null) {
   const entries = read(ledger);
   if (!entries.length) return "The ledger is empty: there is nothing to share yet.";
-  const rows = telemetryRows(entries, installId(ledger));
+  const rows = telemetryRows(entries, installId(ledger, { create: false }) ?? "not-yet-created"); // looking must not create an id
   // Beside the ledger by default, never in the current folder: that is usually a repository, and the file could be committed.
   const file = out ?? join(dirname(LEDGER_PATH), `routr-ledger-${new Date().toISOString().slice(0, 10)}.jsonl`);
   mkdirSync(dirname(file) || ".", { recursive: true });
@@ -54,10 +54,12 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null) {
     `Wrote ${rows.length} rows to ${file}: exactly what routr's telemetry sends. Writing it sent nothing.`,
     "",
     "In each row: what routr read from the brief (yes/no probabilities, level, the Jev version), the subscription, model,",
-    "effort and level chosen, the outcome, attempts and seconds, and a random install id. Day-level dates only.",
-    "Never in it: the briefs (routr never stores them) or any other text, notes, project names, ids, usage numbers.",
+    "effort and level chosen, the outcome, attempts and seconds, and a key per row. Day-level dates only. Anything typed by",
+    "hand (a model name, a verdict) is cut to a known value or a short name, or sent as \"other\". Each send also carries",
+    "routr's version, your OS, and a random install id made on this machine. Never sent: the briefs (routr never stores",
+    "them) or any other free text, notes, project names, paths, usage numbers.",
     "",
     st.on ? "Telemetry is on: new rows are sent once a day. To stop: routr telemetry off"
-      : `Telemetry is off (${st.why_off}). To send these rows once anyway: routr telemetry send. To turn it on: routr telemetry on`,
+      : `Telemetry is off (${st.why_off}). To send these rows once anyway: routr telemetry send --all. To turn it on: routr telemetry on`,
   ].join("\n");
 }

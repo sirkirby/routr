@@ -132,7 +132,8 @@ export async function setup(args) {
   // number, so its place in the ranking is the user's call. Asked once, when the pool is first written; `after` is the
   // default because included usage expires and billed usage does not.
   await meteredRanks(fresh, r.harnesses, ranks, rl && ((n, note) => { say(`\n${paint(1, n)} reports billed usage with no quota (${note}).`); return rl.question("Your subscriptions' included usage expires; this seat's usage is billed. Rank it after them, so it takes the overflow, or with them by an assumed headroom? [after/with, Enter = after] "); }));
-  if (!config) config = starterConfig(found, models, ranks);
+  let kept; try { kept = JSON.parse(readFileSync(path, "utf8")).telemetry; } catch {} // --force keeps the person's telemetry choice
+  if (!config) config = { ...starterConfig(found, models, ranks), ...(typeof kept === "boolean" ? { telemetry: kept } : {}) };
   else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models, ranks).subscriptions[n] };
   if (!r.config.exists || args.includes("--force") || fresh.length) {
     mkdirSync(dirname(path), { recursive: true });

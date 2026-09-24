@@ -1342,7 +1342,15 @@ test("telemetry rows carry what tuning needs, never text or anything that points
   const [r] = telemetryRows([row({ jev_model: "jev-1.13.0" })], "install-a");
   const text = JSON.stringify(r);
   for (const secret of ["abc12345", "deadbeefcafe", "billing", "acme", "10:11", "usable", "count files"]) expect(text).not.toContain(secret);
-  expect(r).toMatchObject({ day: "2026-09-21", jev_model: "jev-1.13.0", chose: { model: "big-model" }, seconds: 60, subagents: [{ advised: "basic", model: "small-model" }] });
+  expect(r).toMatchObject({ day: "2026-09-21", jev_model: "jev-1.13.0", chose: { model: "big-model" }, outcome: { seconds: 60 }, subagents: [{ advised: "basic", model: "small-model" }] });
+  // Anything typed by hand is cut to a known value or a short name before it can leave the machine.
+  const [h] = telemetryRows([row({ chose: { subscription: "codex", model: "sonnet, since the acme repo's Stripe key handling is subtle", effort: "high", level: "extreme" },
+    outcome: { verdict: "done: fixed the acme migration", check: "pass", attempts: 1 }, subagents: [{ subtask: "x", advised: "strong", model: "sonnet because billing is hard" }] })], "install-a");
+  expect(h.chose).toEqual({ subscription: "codex", model: "other", effort: "high", level: "other" });
+  expect(h.outcome.verdict).toBe("other");
+  expect(h.subagents).toEqual([{ advised: "strong", model: "other" }]);
+  expect(JSON.stringify(h)).not.toMatch(/acme|billing|Stripe/);
+  expect(telemetryRows([5, null, { ts: "x" }, row()], "install-a")).toHaveLength(1);                   // a line that is not a row is skipped
   expect(r.row_key).toMatch(/^[0-9a-f]{32}$/);
   expect(telemetryRows([row({ jev_model: "jev-1.13.0" })], "install-a")[0].row_key).toBe(r.row_key); // resending is harmless
   expect(telemetryRows([row()], "install-b")[0].row_key).not.toBe(r.row_key);                         // and unlinkable across installs
@@ -1378,12 +1386,17 @@ test("telemetry sends only rows it has not sent, and moves on only after the end
     const bodies = [];
     let status = 500;
     const fetchFn = async (_u, init) => { bodies.push(JSON.parse(init.body)); return new Response("{}", { status }); };
+    // The first send on an install starts from now: history recorded before telemetry arrived stays local.
+    expect(await sendRows({ ledger, fetchFn, now: "2026-09-23T00:00:00.000Z" })).toEqual({ ok: true, sent: 0 });
+    expect(bodies).toHaveLength(0);
+    writeFileSync(join(dir, "telemetry.json"), JSON.stringify({ started: "2026-09-01T00:00:00.000Z", sent_through: "2026-09-01T00:00:00.000Z" }));
     const failed = await sendRows({ ledger, fetchFn });
     expect(failed.ok).toBe(false);
     status = 200;
     expect((await sendRows({ ledger, fetchFn })).sent).toBe(2);   // the failed batch is sent again
     expect((await sendRows({ ledger, fetchFn })).sent).toBe(0);   // and not a third time
     expect(bodies[1].rows.length).toBe(2);
+    expect((await sendRows({ ledger, fetchFn, all: true })).sent).toBe(2);                     // --all: everything, on request
     expect(bodies[1]).toMatchObject({ version: expect.any(String), os: `${process.platform}-${process.arch}` });
     expect(JSON.stringify(bodies)).not.toContain("private note");
     expect(JSON.parse(readFileSync(join(dir, "telemetry.json"), "utf8")).sent_through).toBe("2026-09-22T10:00:00.000Z"); // beside the ledger it read

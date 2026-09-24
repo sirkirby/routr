@@ -60,13 +60,13 @@ export const COMMANDS = {
   telemetry: {
     name: "telemetry",
     description: "anonymous outcomes (never text), sent once a day to tune routr's questions: on by default; `routr share` shows exactly what",
-    args: [{ name: "status|on|off|send", description: "show the setting, turn it on or off, or send the new rows now", required: false }],
-    flags: [],
+    args: [{ name: "status|on|off|send", description: "show the setting, turn it on or off, or send the new rows now (send --all: also rows from before telemetry started here)", required: false }],
+    flags: [{ name: "--config", arg: "<path>", description: "config file that on/off writes", required: false, default: "~/.config/routr/config.json" }],
   },
   feedback: {
     name: "feedback",
     description: 'send the maintainers a note, in your words: routr feedback "what worked, what did not"',
-    args: [{ name: '"<text>"', description: "what you want to tell them (or pipe it on stdin); sent with routr's version and your OS", required: true }],
+    args: [{ name: '"<text>"', description: "what you want to tell them; sent with routr's version and your OS", required: true }],
     flags: [],
   },
   update: {

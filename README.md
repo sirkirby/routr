@@ -162,13 +162,16 @@ or manage context; harnesses own that.
 ## Telemetry
 
 routr's questions are kept or dropped on real outcomes, so once a day it sends its maintainers the ledger rows written
-since the last send. This is on by default; the installer, `routr setup`, and `routr doctor` say so.
+since the last send. This is on by default; the installer, `routr setup`, and `routr doctor` say so. The first send on a
+machine starts from that moment: rows recorded before it stay local unless you run `routr telemetry send --all`.
 
 - **Sent:** what routr read from each brief (yes/no probabilities and the level), the Jev version, the subscription,
-  model, effort and level chosen, the outcome, attempts and seconds, the day, routr's version, your OS, and a random
-  install id made on your machine.
-- **Never sent:** your briefs or any other text, notes, project or repository names, ids, hashes of briefs, usage
-  numbers, file paths, or anything from your code. The endpoint also refuses any row carrying a long string.
+  model, effort and level chosen, the outcome, attempts and seconds, the day, routr's version, your OS, a random
+  install id made on your machine, and a key per row that makes a resend harmless.
+- **Never sent:** your briefs or any other free text, notes, project or repository names, the ledger's own ids,
+  hashes of briefs, usage numbers, file paths, or anything from your code. Values an agent types by hand (a model
+  name, a verdict) are cut to a known value or a short name, or sent as "other"; the endpoint also refuses any row
+  carrying a long string.
 - **See it:** `routr share` writes exactly what would be sent to a file.
 - **Stop it:** `routr telemetry off`, `"telemetry": false` in the config, `ROUTR_TELEMETRY=0`, or `DO_NOT_TRACK=1`.
   It is always off in CI.
