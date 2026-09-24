@@ -41,7 +41,10 @@ const LEVELS3 = ["basic", "standard", "strong"];
 const WORK_TYPES = Object.keys(questions.work_type.criteria);
 const SUBSCRIPTIONS = Object.keys(HARNESSES);                            // routr keys a subscription by its harness
 const questionSet = shaped(/^[rc]\d{1,3}$/), jevVersion = shaped(/^jev-\d+(\.\d+){0,3}$/);
-const effort = shaped(/^[a-z]{1,12}$/);                                   // low, medium, high, xhigh, none...
+const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "auto"]; // what the harnesses take
+// A model name is the one field no list can check (routr holds no model knowledge, and reading the harnesses' lists
+// would mean running them in the background). It must LOOK like one; a slug an agent passes as a model is sent as
+// written, and the README says so.
 const model = shaped(/^[A-Za-z0-9][A-Za-z0-9.:[\]-]{0,47}$/);            // gpt-5.6-terra, claude-opus-5-5[1m], cursor-grok-4.6-high
 const num = (v) => (Number.isFinite(v) ? v : null);
 
@@ -57,7 +60,7 @@ export function telemetryRows(entries, install) {
       advised: { level: pick(a.level, LEVELS3), sure: !!a.sure, between: Array.isArray(a.between) ? a.between.map((l) => pick(l, LEVELS3)) : null,
         work_type: pick(a.work_type, WORK_TYPES), high_risk: !!a.high_risk, fallback: !!a.fallback,
         facts: Object.fromEntries(Object.entries(a.facts ?? {}).filter(([k, p]) => k in FACTS && Number.isFinite(p))) },
-      chose: { subscription: pick(e.chose.subscription, SUBSCRIPTIONS), model: model(e.chose.model), effort: effort(e.chose.effort), level: pick(e.chose.level, LEVELS3) },
+      chose: { subscription: pick(e.chose.subscription, SUBSCRIPTIONS), model: model(e.chose.model), effort: pick(e.chose.effort, EFFORTS), level: pick(e.chose.level, LEVELS3) },
       outcome: { verdict: pick(e.outcome.verdict, ["done", "partial", "blocked", "unknown"]), check: pick(e.outcome.check, ["pass", "fail", "none"]),
         attempts: num(e.outcome.attempts) ?? 1, seconds: num(e.outcome.seconds) },
       subagents: (e.subagents ?? []).slice(0, 20).map((x) => ({ advised: pick(x?.advised, LEVELS3), model: model(x?.model) })),

@@ -170,8 +170,9 @@ machine starts from that moment: rows recorded before it stay local unless you r
   install id made on your machine, and a key per row that makes a resend harmless.
 - **Never sent:** your briefs or any other free text, notes, project or repository names, the ledger's own ids,
   hashes of briefs, usage numbers, file paths, or anything from your code. Values an agent types by hand (a model
-  name, a verdict) are cut to a known value or a short name, or sent as "other"; the endpoint also refuses any row
-  carrying a long string.
+  name, a verdict) are cut to a known value, or sent as "other". A model name is the one exception: anything shaped
+  like one (letters, digits, `.`, `-`, `:`, brackets; no paths, URLs, emails, or tokens) is sent as written. The
+  endpoint also refuses any row carrying a long string.
 - **See it:** `routr share` writes exactly what would be sent to a file.
 - **Stop it:** `routr telemetry off`, `"telemetry": false` in the config, `ROUTR_TELEMETRY=0`, or `DO_NOT_TRACK=1`.
   It is always off in CI.
