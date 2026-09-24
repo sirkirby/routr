@@ -5,7 +5,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readReport } from "./check.mjs";
 import { ask } from "./jev.mjs";
-import { append, assess, LEDGER_PATH, parseReportSubagents, read, shareRows, toEntry } from "./ledger.mjs";
+import { append, assess, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./ledger.mjs";
+import { installId, telemetryRows, telemetryStatus } from "./telemetry.mjs";
 import { CHECK_VERSION, checkQuestions } from "./questions.mjs";
 
 const short = (e, n = 160) => String(e?.message ?? e).slice(0, n);
@@ -39,23 +40,26 @@ export function recordCommand(o, subagentFlags = []) {
   } catch (e) { return { recorded: null, error: short(e) }; }
 }
 
-// Prepare (never send) a file the user can attach to a GitHub issue, to help tune routr's questions on real outcomes.
-export function shareCommand({ ledger = LEDGER_PATH, out, withModels = false }) {
-  const rows = shareRows(read(ledger), { withModels });
-  if (!rows.length) return "The ledger is empty: there is nothing to share yet.";
+// `routr share`: write exactly what telemetry sends to a file the user can read. Sends nothing itself.
+export function shareCommand({ ledger = LEDGER_PATH, out }, config = null) {
+  const entries = read(ledger);
+  if (!entries.length) return "The ledger is empty: there is nothing to share yet.";
+  const rows = telemetryRows(entries, installId(ledger, { create: false }) ?? "not-yet-created"); // looking must not create an id
   // Beside the ledger by default, never in the current folder: that is usually a repository, and the file could be committed.
   const file = out ?? join(dirname(LEDGER_PATH), `routr-ledger-${new Date().toISOString().slice(0, 10)}.jsonl`);
   mkdirSync(dirname(file) || ".", { recursive: true });
   writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  const st = telemetryStatus(config);
   return [
-    `Wrote ${rows.length} rows to ${file}. Nothing has been sent anywhere.`,
+    `Wrote ${rows.length} rows to ${file}: exactly what routr's telemetry sends. Writing it sent nothing.`,
     "",
-    "In the file: what routr read from each brief (yes/no probabilities, level, the Jev version that read it), the level",
-    `and subscription chosen, the outcome and attempt count${withModels ? ", and the model names you chose" : ""}. Day-level dates only.`,
-    `Left out: the briefs (routr never stores them), their hashes, your notes, ids, usage numbers${withModels ? "" : ", the names of the models you chose (add --with-models to include them)"}.`,
+    "In each row: what routr read from the brief (yes/no probabilities, level, the Jev version), the subscription, model,",
+    "effort and level chosen, the outcome, attempts and seconds, and a key per row. Day-level dates only. Anything typed by",
+    "hand (a model name, a verdict) is cut to a known value or a short name, or sent as \"other\". Each send also carries",
+    "routr's version, your OS, and a random install id made on this machine. Never sent: the briefs (routr never stores",
+    "them) or any other free text, notes, project names, paths, usage numbers.",
     "",
-    "Read it, then attach it to a new issue using the \"Share your ledger\" form:",
-    "  https://github.com/sirkirby/routr/issues/new?template=share-ledger.yml",
-    "Issues are public. That is why the file holds nothing that identifies you or your work.",
+    st.on ? "Telemetry is on: new rows are sent once a day. To stop: routr telemetry off"
+      : `Telemetry is off (${st.why_off}). To send these rows once anyway: routr telemetry send --all. To turn it on: routr telemetry on`,
   ].join("\n");
 }

@@ -11,6 +11,7 @@ export const DEFAULTS = {
   risk_above: 0.75,            // high_blast_radius probability that gets called out as high risk
   prefer: { research: "strong", review: "strong" }, // your preference per kind of work; shown to the agent as advice, never forced
   auto_update: true,           // check for a new release at most once a day, in the background; applied on the next run
+  telemetry: true,             // send anonymous outcomes (never text) once a day, in the same background job; telemetry.mjs
   subscriptions: {},
 };
 // `billing` overrides what the usage reader can tell (`included` or `metered`); it is for seats whose harness reports
@@ -34,7 +35,7 @@ export function loadConfig(path = CONFIG_PATH) {
   // a full one) is reported and replaced by the default.
   const share = (v, fallback, where) => { if (v === undefined) return fallback; if (typeof v === "number" && v >= 0 && v <= 1) return v; notes.push(`${where}: ${JSON.stringify(v)} is not a number from 0 to 1, using ${fallback}`); return fallback; };
   const num = (k) => share(raw[k], DEFAULTS[k], k);
-  const config = { fallback_level: isLevel(raw.fallback_level) ? raw.fallback_level : DEFAULTS.fallback_level, sure_at: num("sure_at"), risk_above: num("risk_above"), auto_update: raw.auto_update !== false, prefer: {}, subscriptions: {} };
+  const config = { fallback_level: isLevel(raw.fallback_level) ? raw.fallback_level : DEFAULTS.fallback_level, sure_at: num("sure_at"), risk_above: num("risk_above"), auto_update: raw.auto_update !== false, telemetry: raw.telemetry !== false, prefer: {}, subscriptions: {} };
   for (const [k, v] of Object.entries(raw.prefer ?? DEFAULTS.prefer)) isLevel(v) ? (config.prefer[k] = v) : notes.push(`prefer.${k}: "${v}" is not a level, ignored`);
   for (const [name, s] of Object.entries(raw.subscriptions ?? {})) {
     if (s?.hardest_work !== undefined && !isLevel(s.hardest_work)) notes.push(`subscriptions.${name}.hardest_work: "${s.hardest_work}" is not a level, using strong`);

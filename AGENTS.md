@@ -24,8 +24,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
   shows no question does worse (CONTRIBUTING.md). Never ship an alias.
 - The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`) write nothing (`doctor --fix` is `setup`
   under another name) and fail open: any error
-  still prints usable output and exits 0. Only `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `launch`,
-  and `usage cursor` act (the last two drive herdr panes), and each says so.
+  still prints usable output and exits 0. Only `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`,
+  `feedback`, `launch`, and `usage cursor` act (the last two drive herdr panes), and each says so.
 - Updates are automatic but never in the way: at most once a day a command may start a DETACHED updater and carry
   on. The command itself MUST NOT wait for it, make a network call for it, or change its own output because of it.
   The updater verifies the release checksum, swaps the binary in place, and reinstalls the skill; a run in progress
@@ -43,6 +43,10 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - No runtime dependencies. `node:` built-ins only, so the same source runs under Bun and compiles for every target.
 - Works on macOS, Linux, and Windows: no shelling out to `sh`, no Unix-only paths in product code.
 - Never print, log, or store a secret or the text of a brief. The ledger stores a hash and a length.
+- Telemetry is on by default and disclosed (installer, setup, doctor, README). It sends ledger rows with no text of
+  any kind, only from the detached daily job or `routr telemetry send`, and is off under `routr telemetry off`,
+  `ROUTR_TELEMETRY=0`, `DO_NOT_TRACK=1`, or CI. A new field in a sent row is a README change in the same PR.
+  `routr feedback` is the only text sent, and only what the person typed.
 - Claims in `README.md`, the guides, and `docs/evidence.md` are either measured or say they are not.
 
 ## Quality gates

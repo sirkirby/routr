@@ -51,12 +51,23 @@ export const COMMANDS = {
   },
   share: {
     name: "share",
-    description: "write a file of your outcomes (no briefs, notes, or anything identifying) to attach to a GitHub issue; sends nothing",
+    description: "write exactly what telemetry sends (no briefs or any text, nothing identifying) to a file you can read; sends nothing",
     flags: [
-      { name: "--with-models", description: "include the model names you chose", required: false },
       { name: "--out", arg: "<file>", description: "where to write it", required: false, default: "~/.local/share/routr/routr-ledger-<date>.jsonl" },
       { name: "--ledger", arg: "<path>", description: "ledger to read", required: false, default: "~/.local/share/routr/ledger.jsonl" },
     ],
+  },
+  telemetry: {
+    name: "telemetry",
+    description: "anonymous outcomes (never text), sent once a day to tune routr's questions: on by default; `routr share` shows exactly what",
+    args: [{ name: "status|on|off|send", description: "show the setting, turn it on or off, or send the new rows now (send --all: also rows from before telemetry started here)", required: false }],
+    flags: [{ name: "--config", arg: "<path>", description: "config file that on/off writes", required: false, default: "~/.config/routr/config.json" }],
+  },
+  feedback: {
+    name: "feedback",
+    description: 'send the maintainers a note, in your words: routr feedback "what worked, what did not"',
+    args: [{ name: '"<text>"', description: "what you want to tell them; sent with routr's version and your OS", required: true }],
+    flags: [],
   },
   update: {
     name: "update",

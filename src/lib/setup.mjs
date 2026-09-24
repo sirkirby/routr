@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { CONFIG_PATH } from "./config.mjs";
+import { NOTICE, setTelemetry, telemetryStatus } from "./telemetry.mjs";
 import { HARNESSES, inspect, paint, render, starterConfig, SUGGESTED, which } from "./doctor.mjs";
 import { setKey } from "./key.mjs";
 import { standalone } from "./runtime.mjs";
@@ -131,7 +132,8 @@ export async function setup(args) {
   // number, so its place in the ranking is the user's call. Asked once, when the pool is first written; `after` is the
   // default because included usage expires and billed usage does not.
   await meteredRanks(fresh, r.harnesses, ranks, rl && ((n, note) => { say(`\n${paint(1, n)} reports billed usage with no quota (${note}).`); return rl.question("Your subscriptions' included usage expires; this seat's usage is billed. Rank it after them, so it takes the overflow, or with them by an assumed headroom? [after/with, Enter = after] "); }));
-  if (!config) config = starterConfig(found, models, ranks);
+  let kept; try { kept = JSON.parse(readFileSync(path, "utf8")).telemetry; } catch {} // --force keeps the person's telemetry choice
+  if (!config) config = { ...starterConfig(found, models, ranks), ...(typeof kept === "boolean" ? { telemetry: kept } : {}) };
   else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models, ranks).subscriptions[n] };
   if (!r.config.exists || args.includes("--force") || fresh.length) {
     mkdirSync(dirname(path), { recursive: true });
@@ -151,9 +153,20 @@ export async function setup(args) {
       did.push("set Claude Code's statusline to `routr statusline`: usage is read after your next Claude Code turn");
     } else if (plan.action !== "none") skipped.push(`Claude statusline: ${plan.why ?? "left alone"}`);
   }
+  // 3. Telemetry: on by default; a person is told and asked once, an agent's run leaves the default and says so.
+  let asked = false;
+  try { asked = "telemetry" in JSON.parse(readFileSync(path, "utf8")); } catch {}
+  if (!asked && telemetryStatus({}).on) {
+    if (rl) {
+      say(`\n${NOTICE}`);
+      const keep = await yes("Send them?");
+      setTelemetry(keep, path);
+      (keep ? did : skipped).push(keep ? "telemetry on: anonymous outcomes, once a day (routr telemetry off to stop)" : "telemetry off (routr telemetry on to help tune routr)");
+    } else skipped.push(`telemetry is on by default. ${NOTICE}`);
+  }
   rl?.close();
 
-  // 3. The key, last, and only from a person: it must never pass through an agent.
+  // 4. The key, last, and only from a person: it must never pass through an agent.
   if (!r.key.works && interactive) { say(""); const k = await setKey(); (k.ok ? did : skipped).push(k.ok ? `saved the TypeSafe key to ${k.file}${k.works ? " and it works" : `: ${k.error}`}` : `TypeSafe key not saved: ${k.error}. Run \`routr key set\` when you have it`); }
 
   const after = await inspect({ configPath: path, quiet: true });

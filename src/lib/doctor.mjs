@@ -10,6 +10,7 @@ import { jevModel, KEY_FILES, loadKey, ping } from "./jev.mjs";
 import { JEV_MODEL } from "./questions.mjs";
 import { CLAUDE_SNAPSHOT, NO_WINDOWS_AFTER_ANSWER, readUsage, run } from "./usage.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
+import { telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
@@ -139,6 +140,7 @@ export async function inspect({ configPath, quiet } = {}) {
     : wired ? "configured: the first snapshot appears after the next Claude Code turn" : STATUSLINE_MISSING;
   if (!r.config.exists) r.starter_config = starterConfig(found);
   r.auto_update = autoUpdateStatus(config);
+  r.telemetry = telemetryStatus(config);
   r.next_steps = nextSteps(r);
   return r;
 }
@@ -172,6 +174,7 @@ export function render(r) {
   line(r.claude_usage_statusline !== STATUSLINE_MISSING, `Claude usage statusline: ${r.claude_usage_statusline}`);
   const au = r.auto_update;
   line("ok", `automatic updates ${au.on ? `on · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off}`}`);
+  if (r.telemetry) line("ok", r.telemetry.on ? "telemetry on: anonymous outcomes (never text) once a day · `routr share` shows exactly what · `routr telemetry off` stops it" : `telemetry off: ${r.telemetry.why_off}`);
   out.push("", r.next_steps.length ? paint(1, "Next steps") : paint(32, "Everything routr needs is in place."));
   r.next_steps.forEach((s, i) => out.push(`  ${i + 1}. ${s}`));
   return out.join("\n");
