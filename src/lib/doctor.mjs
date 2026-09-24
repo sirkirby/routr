@@ -12,7 +12,7 @@ import { CLAUDE_SNAPSHOT, NO_WINDOWS_AFTER_ANSWER, readUsage, run } from "./usag
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
 import { standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
-import { ROUTR_VERSION } from "./version.mjs";
+import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 
 // Subscription name → the command its harness is launched with, from the one table launch uses.
 export const HARNESSES = Object.fromEntries(Object.entries(HARNESS_TABLE).map(([name, h]) => [name, h.executable]));
@@ -75,7 +75,7 @@ export function nextSteps(r) {
   const cl = r.harnesses.claude;
   if (cl?.installed && cl.usage_reason === NO_WINDOWS_AFTER_ANSWER && !r.config.billing?.claude)
     steps.push(`Claude answered a prompt but reported no usage windows, and routr cannot tell why. If this seat has no quota (usage-based Enterprise, an API key), add "billing": "metered" under subscriptions.claude in ${r.config.path} and routr ranks it as billed usage. If it has a quota (routr has not yet seen a Team or Enterprise seat send windows), add "billing": "included", or check again after another turn`);
-  if (!r.skill.length || r.skill.some((k) => k.version !== ROUTR_VERSION.split("-")[0])) steps.push("Install the routr skill that matches this routr: routr skill install");
+  if (!r.skill.length || r.skill.some((k) => baseVersion(k.version) !== baseVersion(ROUTR_VERSION))) steps.push("Install the routr skill that matches this routr: routr skill install");
   if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
   if (!r.herdr.path) steps.push("For orchestration, install herdr (https://herdr.dev). Sizing subagents works without it");
   else if (!r.herdr.skill) steps.push("Install herdr's agent skill: npx skills add herdrdev/herdr --skill herdr -g");
@@ -102,7 +102,7 @@ export async function inspect({ configPath, quiet } = {}) {
     step("the TypeSafe key", keyCheck().then((t) => ({ t }), (e) => ({ e }))),
     ...found.map((n) => step(`${n}'s models`, Promise.resolve(MODEL_LISTS[n]?.()).then((l) => l || null, () => null))),
   ]);
-  if (latest && newer(latest, ROUTR_VERSION)) r.update_available = latest;
+  if (latest && standalone() && newer(latest, ROUTR_VERSION)) r.update_available = latest; // a source checkout is not updated
   for (const n of Object.keys(HARNESSES)) {
     const u = usage.find((x) => x.pool === n);
     r.harnesses[n] = { command: HARNESSES[n], installed: found.includes(n), off_path: found.includes(n) ? null : offPath(HARNESSES[n]), usage: !found.includes(n) ? null : u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)` : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note}`, ...(found.includes(n) ? { usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) } : {}) };
@@ -162,9 +162,9 @@ export function render(r) {
   line(!r.update_available, `${r.runtime}${r.update_available ? ` · ${r.update_available} is available: run \`routr update\`` : ""}`);
   line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: orchestration needs it (https://herdr.dev). Sizing subagents works without it"}`);
   if (r.herdr.path) line(r.herdr.skill, `herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
-  const base = ROUTR_VERSION.split("-")[0];
+  const base = baseVersion(ROUTR_VERSION);
   if (!r.skill.length) line("need", "routr skill not installed for your agents: run `routr skill install`");
-  for (const k of r.skill) line(k.version === base ? "ok" : "need", `routr skill ${k.where} is ${k.version}${k.version === base ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
+  for (const k of r.skill) line(baseVersion(k.version) === base ? "ok" : "need", `routr skill ${k.where} is ${k.version}${baseVersion(k.version) === base ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
   const any = Object.values(r.harnesses).some((h) => h.installed);
   for (const [n, h] of Object.entries(r.harnesses)) line(h.installed ? "ok" : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${h.installed ? `\`${h.command}\` found · usage ${h.usage}` : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it` : `\`${h.command}\` not found`}${h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${h.models.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${h.command} models\` for the rest)` : ""}` : ""}`);
   line(r.key.works ? "ok" : "need", `TypeSafe key ${r.key.works ? `works (${r.key.model}${jevModel() !== JEV_MODEL ? `, asked as ${jevModel()} by ROUTR_JEV_MODEL` : ""}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);

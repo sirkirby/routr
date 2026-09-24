@@ -11,7 +11,7 @@ import { setKey } from "./key.mjs";
 import { standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { installSkill } from "./skill-install.mjs";
-import { ROUTR_VERSION } from "./version.mjs";
+import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 
 // `--model claude=sonnet --model codex=<id>`: repeatable name=id pairs.
 export function parseModels(args) {
@@ -113,8 +113,8 @@ export async function setup(args) {
   const yes = async (q) => !rl || !/^n/i.test((await rl.question(`${q} [Y/n] `)).trim());
 
   // 0. The skill agents read: missing, or left behind by an older routr. Writing it again is always safe.
-  const base = ROUTR_VERSION.split("-")[0];
-  if (!r.skill.length || r.skill.some((k) => k.version !== base)) { installSkill(); did.push(`installed the routr skill ${base} for your agents`); }
+  const base = baseVersion(ROUTR_VERSION);
+  if (!r.skill.length || r.skill.some((k) => baseVersion(k.version) !== base)) { installSkill(); did.push(`installed the routr skill ${base} for your agents`); }
 
   // 1. The config. An existing file is kept; harnesses found since then are added, nothing else is touched.
   let config = null;

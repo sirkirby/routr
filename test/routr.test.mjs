@@ -953,11 +953,34 @@ test("worth a worker: tiny work stays with the agent, a user decision comes firs
   expect(advise(fact(ans(1, 1), { tiny: 0.5 }), cfg()).worker.suggestion).toBe("worth a worker");
 });
 
-test("package.json and the skill carry the same version as the binary", async () => {
+test("the repository carries no version: the three version fields read 0.0.0-dev, and only the tag sets one", async () => {
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
   const root = `${import.meta.dir}/..`;
-  expect(JSON.parse(readFileSync(`${root}/package.json`, "utf8")).version).toBe(ROUTR_VERSION);
-  expect(readFileSync(`${root}/skills/routr/SKILL.md`, "utf8")).toContain(`version: "${ROUTR_VERSION}"`);
+  expect(ROUTR_VERSION).toBe("0.0.0-dev");
+  expect(JSON.parse(readFileSync(`${root}/package.json`, "utf8")).version).toBe("0.0.0-dev");
+  expect(readFileSync(`${root}/skills/routr/SKILL.md`, "utf8")).toContain('version: "0.0.0-dev"');
+});
+test("a release build stamps the tag's version into all three files, and refuses anything that is not a release version", () => {
+  const root = mkdtempSync(join(tmpdir(), "routr-stamp-"));
+  try {
+    for (const f of ["src/lib/version.mjs", "package.json", "skills/routr/SKILL.md"]) {
+      mkdirSync(join(root, f, ".."), { recursive: true });
+      writeFileSync(join(root, f), readFileSync(join(import.meta.dir, "..", f), "utf8"));
+    }
+    const stamp = (v) => Bun.spawnSync(["bun", join(import.meta.dir, "../scripts/stamp-version.mjs"), v, root]);
+    expect(stamp("0.3.0-rc.2").exitCode).toBe(0);
+    expect(readFileSync(join(root, "src/lib/version.mjs"), "utf8")).toContain('const BASE = "0.3.0-rc.2";');
+    expect(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version).toBe("0.3.0");   // the base version
+    expect(readFileSync(join(root, "skills/routr/SKILL.md"), "utf8")).toContain('  version: "0.3.0"'); // what doctor compares
+    expect(stamp("v0.3.0").exitCode).not.toBe(0);                                                  // the tag name, not the version
+    expect(stamp("0.3").exitCode).not.toBe(0);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+test("a pre-release or source build and its skill count as the same release", async () => {
+  const { baseVersion } = await import("../src/lib/version.mjs");
+  expect(baseVersion("0.3.0-rc.2")).toBe("0.3.0");
+  expect(baseVersion("0.0.0-dev")).toBe(baseVersion("0.0.0-dev"));
+  expect(baseVersion(undefined)).toBe("");
 });
 
 test("routr skill install writes the guides and links them for Claude Code", async () => {
