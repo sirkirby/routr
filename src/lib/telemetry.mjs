@@ -11,7 +11,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONFIG_PATH } from "./config.mjs";
+import { HARNESSES } from "./harness.mjs";
 import { LEDGER_PATH, read } from "./ledger.mjs";
+import { FACTS, questions } from "./questions.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 export const ENDPOINT = process.env.ROUTR_TELEMETRY_URL || "https://routr-telemetry.goondocks.workers.dev";
@@ -30,13 +32,17 @@ function saveState(s, ledger) { mkdirSync(dirname(STATE(ledger)), { recursive: t
 // A random id made on this machine, so rows from one install can be grouped. It is not derived from anything about you.
 export function installId(ledger, { create = true } = {}) { const s = state(ledger); if (s.install_id || !create) return s.install_id ?? null; s.install_id = randomUUID(); saveState(s, ledger); return s.install_id; }
 
-// Every string a lead can type into the ledger (`record --model/--verdict/...`, a report's SUBAGENTS line) is cut down
-// to a known value or a short identifier here, before it can leave the machine: anything else becomes "other".
-// Free text never survives this, and nothing reaches the endpoint's 80-character refusal.
-const ID_LIKE = /^[A-Za-z0-9._:[\]/@+-]{1,64}$/;
+// Every string a lead can type into the ledger (`record --model/--effort/...`, a report's SUBAGENTS line) is cut down
+// here, before it can leave the machine, to an exact list or a narrow shape; anything else becomes "other". No shape
+// admits a path, URL, email, or token: no "/", "~", "@", "_" or spaces, and no long unbroken run of letters and digits.
 const pick = (v, allowed) => (v == null ? null : allowed.includes(v) ? v : "other");
-const ident = (v) => (v == null || v === "" ? null : ID_LIKE.test(String(v).trim()) ? String(v).trim() : "other");
+const shaped = (re) => (v) => (v == null || v === "" ? null : re.test(String(v)) && !/[A-Za-z0-9]{17,}/.test(String(v)) ? String(v) : "other");
 const LEVELS3 = ["basic", "standard", "strong"];
+const WORK_TYPES = Object.keys(questions.work_type.criteria);
+const SUBSCRIPTIONS = Object.keys(HARNESSES);                            // routr keys a subscription by its harness
+const questionSet = shaped(/^[rc]\d{1,3}$/), jevVersion = shaped(/^jev-\d+(\.\d+){0,3}$/);
+const effort = shaped(/^[a-z]{1,12}$/);                                   // low, medium, high, xhigh, none...
+const model = shaped(/^[A-Za-z0-9][A-Za-z0-9.:[\]-]{0,47}$/);            // gpt-5.6-terra, claude-opus-5-5[1m], cursor-grok-4.6-high
 const num = (v) => (Number.isFinite(v) ? v : null);
 
 // Pure: ledger entries → the rows sent, field by field. A line that is not a ledger row is skipped, never sent.
@@ -47,14 +53,14 @@ export function telemetryRows(entries, install) {
     return {
       row_key: createHash("sha256").update(`${install}|${e.ts}|${e.id}`).digest("hex").slice(0, 32),
       v: 2, day: /^\d{4}-\d{2}-\d{2}/.test(String(e.ts)) ? String(e.ts).slice(0, 10) : null,
-      mode: pick(e.mode, ["subagent", "dispatch"]), question_set: ident(e.question_set), jev_model: ident(e.jev_model), brief_chars: num(e.brief_chars),
+      mode: pick(e.mode, ["subagent", "dispatch"]), question_set: questionSet(e.question_set), jev_model: jevVersion(e.jev_model), brief_chars: num(e.brief_chars),
       advised: { level: pick(a.level, LEVELS3), sure: !!a.sure, between: Array.isArray(a.between) ? a.between.map((l) => pick(l, LEVELS3)) : null,
-        work_type: ident(a.work_type), high_risk: !!a.high_risk, fallback: !!a.fallback,
-        facts: Object.fromEntries(Object.entries(a.facts ?? {}).filter(([k, p]) => /^[a-z_]{1,40}$/.test(k) && Number.isFinite(p))) },
-      chose: { subscription: ident(e.chose.subscription), model: ident(e.chose.model), effort: ident(e.chose.effort), level: pick(e.chose.level, LEVELS3) },
+        work_type: pick(a.work_type, WORK_TYPES), high_risk: !!a.high_risk, fallback: !!a.fallback,
+        facts: Object.fromEntries(Object.entries(a.facts ?? {}).filter(([k, p]) => k in FACTS && Number.isFinite(p))) },
+      chose: { subscription: pick(e.chose.subscription, SUBSCRIPTIONS), model: model(e.chose.model), effort: effort(e.chose.effort), level: pick(e.chose.level, LEVELS3) },
       outcome: { verdict: pick(e.outcome.verdict, ["done", "partial", "blocked", "unknown"]), check: pick(e.outcome.check, ["pass", "fail", "none"]),
         attempts: num(e.outcome.attempts) ?? 1, seconds: num(e.outcome.seconds) },
-      subagents: (e.subagents ?? []).slice(0, 20).map((x) => ({ advised: pick(x?.advised, LEVELS3), model: ident(x?.model) })),
+      subagents: (e.subagents ?? []).slice(0, 20).map((x) => ({ advised: pick(x?.advised, LEVELS3), model: model(x?.model) })),
     };
   });
 }
@@ -68,7 +74,8 @@ export async function sendRows({ ledger = LEDGER_PATH, fetchFn = fetch, timeoutM
   const install = installId(ledger);
   if (!s.started && !all) { s = { ...state(ledger), started: now, sent_through: s.sent_through ?? now }; saveState(s, ledger); }
   const from = all ? "" : s.sent_through ?? "";
-  const fresh = read(ledger).filter((e) => isRow(e) && String(e.ts ?? "") > from);
+  // Oldest first, so a failed batch never holds a row older than the mark an earlier batch moved.
+  const fresh = read(ledger).filter((e) => isRow(e) && String(e.ts ?? "") > from).sort((x, y) => String(x.ts).localeCompare(String(y.ts)));
   const rows = telemetryRows(fresh, install).map((r, i) => ({ r, ts: String(fresh[i].ts) }));
   if (!rows.length) return { ok: true, sent: 0 };
   let sent = 0, refused = 0;

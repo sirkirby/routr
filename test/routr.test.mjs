@@ -1351,6 +1351,15 @@ test("telemetry rows carry what tuning needs, never text or anything that points
   expect(h.subagents).toEqual([{ advised: "strong", model: "other" }]);
   expect(JSON.stringify(h)).not.toMatch(/acme|billing|Stripe/);
   expect(telemetryRows([5, null, { ts: "x" }, row()], "install-a")).toHaveLength(1);                   // a line that is not a row is skipped
+  // No shape admits a path, URL, email, token, or a project name where only a known value belongs (the review's cases).
+  const [p] = telemetryRows([row({ question_set: "https://acme.internal/q", jev_model: "chris@acme.com",
+    advised: { level: "standard", sure: true, work_type: "fix-the-acme-payments-webhook", facts: { approach_open: 0.9, acme_payments_secret_project: 0.5 } },
+    chose: { subscription: "acme-corp-enterprise", model: "/Users/chris/Repos/acme-secret", effort: "ghp_16C7e42F292c6912E7710c838347Ae178B4a", level: "standard" },
+    subagents: [{ advised: "strong", model: "/Users/chris/acme-payments/src/billing.ts" }, { advised: "basic", model: "sk-proj-AbCdEfGhIjKlMnOpQrStUv" }] })], "install-a");
+  expect(JSON.stringify(p)).not.toMatch(/acme|Users|ghp_|sk-proj|@|https/);
+  expect(p.advised.facts).toEqual({ approach_open: 0.9 });
+  for (const m of ["gpt-5.6-terra", "claude-opus-5-5[1m]", "cursor-grok-4.6-high", "gemini-3.8-flash-medium", "opus"])
+    expect(telemetryRows([row({ chose: { subscription: "codex", model: m, effort: "xhigh", level: "strong" } })], "i")[0].chose).toEqual({ subscription: "codex", model: m, effort: "xhigh", level: "strong" });
   expect(r.row_key).toMatch(/^[0-9a-f]{32}$/);
   expect(telemetryRows([row({ jev_model: "jev-1.13.0" })], "install-a")[0].row_key).toBe(r.row_key); // resending is harmless
   expect(telemetryRows([row()], "install-b")[0].row_key).not.toBe(r.row_key);                         // and unlinkable across installs

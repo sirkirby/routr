@@ -82,7 +82,8 @@ if (argv[0] === "uninstall" && !argv.includes("--help") && !argv.includes("-h"))
 if (((argv[0] === "doctor" && argv.includes("--fix")) || argv[0] === "setup") && !argv.includes("--help") && !argv.includes("-h")) { const r = await setup(argv.slice(1)); if (argv.includes("--json")) console.log(JSON.stringify(r, null, 1)); else if (!r.ok) console.error(r.error); process.exit(r.ok ? 0 : 1); }
 if (argv[0] === "telemetry" && !argv.includes("--help") && !argv.includes("-h")) {
   const ci = argv.indexOf("--config"), cfg = ci > 0 ? argv[ci + 1] : undefined;
-  const r = argv[1] === "send" ? await sendRows({ all: argv.includes("--all") }).catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) })) : telemetryCommand(argv.slice(1), loadConfig(cfg).config, cfg);
+  const words = argv.slice(1).filter((a, i) => !a.startsWith("--") && argv[i] !== "--config"); // flags in any order
+  const r = words[0] === "send" ? await sendRows({ all: argv.includes("--all") }).catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) })) : telemetryCommand(words, loadConfig(cfg).config, cfg);
   console.log(JSON.stringify(r, null, 1)); process.exit(r.ok ? 0 : 1);
 }
 if (argv[0] === "feedback" && !argv.includes("--help") && !argv.includes("-h")) {
