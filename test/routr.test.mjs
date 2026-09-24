@@ -1306,6 +1306,35 @@ test("shared rows carry what tuning needs and nothing that identifies the user o
   expect(r).toMatchObject({ v: 1, day: "2026-09-21", advised: { level: "standard", facts: { approach_open: 0.9 } }, chose: { subscription: "codex", level: "standard" }, outcome: { attempts: 1 }, subagents: [{ advised: "basic" }] });
   expect(JSON.stringify(shareRows([row()], { withModels: true }))).toContain("big-model");
 });
+test("the Jev version that answered travels from the advice into the ledger and the shared rows", async () => {
+  const { toEntry, shareRows } = await import("../src/lib/ledger.mjs");
+  const e = toEntry({ id: "x", level: "basic", sure: true, facts: {}, question_set: "r4", jev_model: "jev-9.9.9" }, { verdict: "done", check: "pass" });
+  expect(e.jev_model).toBe("jev-9.9.9");
+  expect(shareRows([e])[0].jev_model).toBe("jev-9.9.9");                   // routr's model, not the user's: it identifies nothing
+  expect(toEntry({ id: "y", level: "basic", sure: false, facts: {}, fallback: true }, {}).jev_model).toBeNull(); // fallback advice: Jev never answered
+  expect(shareRows([row()])[0].jev_model).toBeNull();                         // rows written before the field existed
+});
+test("Jev is asked for the pinned version unless ROUTR_JEV_MODEL names another", async () => {
+  const { JEV_MODEL } = await import("../src/lib/questions.mjs");
+  const { ask, jevModel } = await import("../src/lib/jev.mjs");
+  expect(JEV_MODEL).toMatch(/^jev-\d+\.\d+\.\d+$/);                          // an exact version, never an alias that moves under the evidence
+  const saved = { env: process.env.ROUTR_JEV_MODEL, key: process.env.TYPESAFE_API_KEY, fetch: globalThis.fetch };
+  const sent = [];
+  globalThis.fetch = async (_url, init) => { sent.push(JSON.parse(init.body).model); return new Response(JSON.stringify({ model: "jev-x", answers: {} })); };
+  process.env.TYPESAFE_API_KEY = "test-key";
+  try {
+    delete process.env.ROUTR_JEV_MODEL;
+    expect(jevModel()).toBe(JEV_MODEL);
+    await ask({}, {});
+    process.env.ROUTR_JEV_MODEL = " jev-preview ";
+    expect(jevModel()).toBe("jev-preview");
+    await ask({}, {});
+    expect(sent).toEqual([JEV_MODEL, "jev-preview"]);
+  } finally {
+    globalThis.fetch = saved.fetch;
+    for (const [k, v] of [["ROUTR_JEV_MODEL", saved.env], ["TYPESAFE_API_KEY", saved.key]]) v == null ? delete process.env[k] : (process.env[k] = v);
+  }
+});
 test("assess turns the ledger into suggestions about the user's own settings, and only with enough runs", async () => {
   const { assess } = await import("../src/lib/ledger.mjs");
   const c = { prefer: { research: "strong" }, subscriptions: { codex: { hardest_work: "standard", reserve: 0.2 } } };

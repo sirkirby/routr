@@ -78,7 +78,7 @@ export function parseReportSubagents(reportText) {
 
 export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, note, subagents, project }) {
   return {
-    ts: new Date().toISOString(), project: project ?? projectName(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set,
+    ts: new Date().toISOString(), project: project ?? projectName(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set, jev_model: advice.jev_model ?? null, // the version that answered: a new Jev is compared on real work
     brief_sha: advice.brief_sha, brief_chars: advice.brief_chars, // never the brief itself: briefs can be private
     advised: { level: advice.level, sure: advice.sure, between: advice.between ?? null, work_type: advice.work_type, high_risk: advice.high_risk, fallback: !!advice.fallback,
       facts: Object.fromEntries(Object.entries(advice.facts ?? {}).map(([k, f]) => [k, f.p])) },
@@ -206,10 +206,11 @@ export function levelReview(entries) {
 
 // `routr share`: the rows a user may choose to publish. Everything that could identify them or their work is
 // left out: no ids, no brief hashes, no notes, no timestamps finer than the day, no usage numbers, and no model names
-// unless they ask for them. What remains is what tuning needs: what routr read, what was chosen, how it turned out.
+// unless they ask for them. What remains is what tuning needs: what routr read (and which Jev version read it), what was
+// chosen, how it turned out. The Jev version is routr's, not the user's, so it identifies nothing.
 export function shareRows(entries, { withModels = false } = {}) {
   return entries.map((e) => ({
-    v: 1, day: String(e.ts ?? "").slice(0, 10), mode: e.mode, question_set: e.question_set, brief_chars: e.brief_chars,
+    v: 1, day: String(e.ts ?? "").slice(0, 10), mode: e.mode, question_set: e.question_set, jev_model: e.jev_model ?? null, brief_chars: e.brief_chars,
     advised: { level: e.advised.level, sure: e.advised.sure, between: e.advised.between ?? null, work_type: e.advised.work_type, high_risk: e.advised.high_risk, fallback: e.advised.fallback, facts: e.advised.facts },
     chose: { subscription: e.chose.subscription, level: e.chose.level, effort: e.chose.effort, ...(withModels ? { model: e.chose.model } : {}) },
     outcome: { verdict: e.outcome.verdict, check: e.outcome.check, attempts: e.outcome.attempts ?? 1 },

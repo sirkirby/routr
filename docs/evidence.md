@@ -1,7 +1,9 @@
 # Evidence
 
 routr's claims rest on small evals run while it was built (2026-09). Sample sizes are small and most labels were
-written by the people building it; each entry says so. "Jev" is TypeSafe's System One model, pinned at `jev-1.13.0`.
+written by the people building it; each entry says so. "Jev" is TypeSafe's System One model. routr pins an exact version
+and moves the pin when a new one does at least as well on these items (CONTRIBUTING.md). Every result below was measured on
+`jev-1.13.0`, the current pin.
 
 ## Reading a brief
 

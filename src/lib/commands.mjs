@@ -17,7 +17,7 @@ export async function checkCommand({ brief: briefFile, report: reportFile }, { a
     const brief = readFileSync(briefFile, "utf8").trim(), report = readFileSync(reportFile, "utf8").trim();
     if (report.length < 200) out.warning = "this report is very short: make sure it is the worker's full report, not just its last message";
     const r = await askFn({ task: { brief }, report: { text: report } }, checkQuestions, undefined, 10000);
-    Object.assign(out, readReport(r.answers), { ms: Math.round(r.latencyMs) });
+    Object.assign(out, readReport(r.answers), { jev_model: r.model, ms: Math.round(r.latencyMs) });
   } catch (e) { Object.assign(out, { headline: "routr: could not read the report; judge it yourself", fallback: true, error: short(e) }); }
   return out;
 }

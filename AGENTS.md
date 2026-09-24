@@ -20,6 +20,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - Questions judge the WORK or the REPORT, never a model. They are narrow and literal, about what the text states.
 - A question's wording changes only with a measurement against the old wording on the same items, and a bumped
   `VERSION` / `CHECK_VERSION` in `src/lib/questions.mjs`. Public summary: `docs/evidence.md`.
+- Jev is pinned to an exact version (`JEV_MODEL`), and the pin moves to each new official release once the model gate
+  shows no question does worse (CONTRIBUTING.md). Never ship an alias.
 - The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`) write nothing (`doctor --fix` is `setup`
   under another name) and fail open: any error
   still prints usable output and exits 0. Only `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `launch`,

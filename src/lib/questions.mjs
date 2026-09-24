@@ -5,6 +5,11 @@
 // All questions go in ONE request; Jev answers them in parallel and none can see another's answer. Code combines them.
 export const VERSION = "r4"; // r4 asks the same questions as r3; an unsure level now reads as the lower of the two most likely
 export const LEVELS = ["basic", "standard", "strong"];
+// The Jev version every result in docs/evidence.md was measured on. Answers, and the thresholds tuned on them (0.2/0.8,
+// sure_at, the lower-of-two rule), belong to a version, so the pin moves only after the maintainers' model gate has run
+// the saved items on the new version beside this one (CONTRIBUTING.md, "Moving to a new Jev version"). ROUTR_JEV_MODEL
+// overrides it for that gate and for trying a preview on real work; it is not a user setting.
+export const JEV_MODEL = "jev-1.13.0";
 
 
 // Literal yes/no facts about the brief. Order here is the order they are reported in.

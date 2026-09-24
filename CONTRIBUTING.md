@@ -27,6 +27,24 @@ the same items. Narrow, literal questions about what a text states do well; ques
 take do not (see the evidence). TypeSafe's own agent skill (https://docs.typesafe.ai/agent-skill) is useful when you
 design or debug a question. Users of routr do not need it: routr calls the API itself.
 
+## Moving to a new Jev version
+
+routr asks an exact Jev version (`JEV_MODEL` in `src/lib/questions.mjs`), never an alias, because every result in
+`docs/evidence.md` and every threshold routr applies was measured on that version. The pin is meant to move: TypeSafe
+improves Jev often, and routr should run on the newest version that does at least as well.
+
+1. The maintainers' workbench watches `jev-latest` and `jev-preview` daily and flags a version that differs from the pin.
+2. The candidate is run side by side with the pinned version on the saved items behind the evidence (labelled briefs,
+   worker reports, reviewer reports, repeated readings), and each question is compared: exact, under- and
+   over-rating, how decisive the answers are, and stability. A candidate that does worse on any question is not taken
+   until that question is re-worded or the regression is understood.
+3. A version that passes moves the pin in a pull request that names the gate's result, updates `docs/evidence.md`, and
+   ships in the next release. A preview is tested but not pinned until it becomes the official release.
+
+`ROUTR_JEV_MODEL=<version or alias>` runs routr on another version without a release, for the gate and for trying a
+preview on real work. Every ledger row records the version that answered (`jev_model`), so real outcomes can be compared
+across versions.
+
 ## Changing a harness recipe
 
 `skills/routr/references/harnesses.md` and `src/lib/harness.mjs` record flags and failure modes that were observed, not
