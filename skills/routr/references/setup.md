@@ -118,7 +118,14 @@ itself, and the only thing the user supplies is the key.
 `routr doctor` and the install script both say when `~/.local/bin` is not on the user's PATH. Offer to add it to their
 shell profile (or the user PATH on Windows), so that agents and herdr panes can run `routr` by name.
 
-## 7. Confirm
+## 7. Telemetry
+
+routr sends its maintainers anonymous outcomes once a day: what it read from each brief, what was chosen, and how
+it went; never a brief or any other text. It is on by default. `routr setup --yes` leaves it on without asking, so
+**tell the user** in one line, and that `routr telemetry off` stops it and `routr share` shows exactly what is sent.
+Turn it off only if they say so.
+
+## 8. Confirm
 
 Run doctor again, then one real call, and show the user the result:
 

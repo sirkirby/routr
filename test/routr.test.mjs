@@ -810,7 +810,7 @@ test("the symptom-patch answer is ignored on work that is not a fix", () => {
 });
 
 test("help table covers every command the CLI dispatches", () => {
-  const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "setup", "uninstall", "check", "record", "assess", "share", "update", "statusline", "skill", "key"];
+  const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "setup", "uninstall", "check", "record", "assess", "share", "update", "statusline", "skill", "key", "telemetry", "feedback"];
   expect(Object.keys(COMMANDS).sort()).toEqual(dispatched.sort());
 
   // Every command has a valid description, non-empty synopsis, and flags/args
@@ -1336,6 +1336,70 @@ test("the Jev version that answered travels from the advice into the ledger and 
   expect(shareRows([e])[0].jev_model).toBe("jev-9.9.9");                   // routr's model, not the user's: it identifies nothing
   expect(toEntry({ id: "y", level: "basic", sure: false, facts: {}, fallback: true }, {}).jev_model).toBeNull(); // fallback advice: Jev never answered
   expect(shareRows([row()])[0].jev_model).toBeNull();                         // rows written before the field existed
+});
+test("telemetry rows carry what tuning needs, never text or anything that points back at the user's work", async () => {
+  const { telemetryRows } = await import("../src/lib/telemetry.mjs");
+  const [r] = telemetryRows([row({ jev_model: "jev-1.13.0" })], "install-a");
+  const text = JSON.stringify(r);
+  for (const secret of ["abc12345", "deadbeefcafe", "billing", "acme", "10:11", "usable", "count files"]) expect(text).not.toContain(secret);
+  expect(r).toMatchObject({ day: "2026-09-21", jev_model: "jev-1.13.0", chose: { model: "big-model" }, seconds: 60, subagents: [{ advised: "basic", model: "small-model" }] });
+  expect(r.row_key).toMatch(/^[0-9a-f]{32}$/);
+  expect(telemetryRows([row({ jev_model: "jev-1.13.0" })], "install-a")[0].row_key).toBe(r.row_key); // resending is harmless
+  expect(telemetryRows([row()], "install-b")[0].row_key).not.toBe(r.row_key);                         // and unlinkable across installs
+  // The endpoint refuses any string longer than 80 characters: a row must never need one.
+  const long = []; JSON.stringify(r, (k, v) => { if (typeof v === "string" && v.length > 80) long.push(k); return v; });
+  expect(long).toEqual([]);
+});
+test("telemetry is on by default and off by any of the usual switches, and always in CI", async () => {
+  const { telemetryStatus } = await import("../src/lib/telemetry.mjs");
+  expect(telemetryStatus({}, {}).on).toBe(true);
+  expect(telemetryStatus({ telemetry: false }, {}).on).toBe(false);
+  expect(telemetryStatus({}, { DO_NOT_TRACK: "1" }).why_off).toBe("DO_NOT_TRACK is set");
+  expect(telemetryStatus({}, { DO_NOT_TRACK: "0" }).on).toBe(true);
+  expect(telemetryStatus({}, { ROUTR_TELEMETRY: "off" }).on).toBe(false);
+  expect(telemetryStatus({}, { CI: "true" }).why_off).toBe("running in CI");
+  const { loadConfig } = await import("../src/lib/config.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "routr-tel-"));
+  try {
+    writeFileSync(join(dir, "c.json"), JSON.stringify({ telemetry: false, prefer: { review: "standard" } }));
+    expect(loadConfig(join(dir, "c.json")).config.telemetry).toBe(false);
+    expect(loadConfig(join(dir, "missing.json")).config.telemetry).toBe(true);
+    const { setTelemetry } = await import("../src/lib/telemetry.mjs");
+    expect(setTelemetry(true, join(dir, "c.json")).ok).toBe(true);
+    expect(JSON.parse(readFileSync(join(dir, "c.json"), "utf8"))).toEqual({ telemetry: true, prefer: { review: "standard" } }); // the rest is kept
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+test("telemetry sends only rows it has not sent, and moves on only after the endpoint accepts them", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "routr-send-"));
+  try {
+    const ledger = join(dir, "ledger.jsonl");
+    writeFileSync(ledger, [row({ ts: "2026-09-21T10:00:00.000Z" }), row({ ts: "2026-09-22T10:00:00.000Z" })].map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const { sendRows } = await import("../src/lib/telemetry.mjs");
+    const bodies = [];
+    let status = 500;
+    const fetchFn = async (_u, init) => { bodies.push(JSON.parse(init.body)); return new Response("{}", { status }); };
+    const failed = await sendRows({ ledger, fetchFn });
+    expect(failed.ok).toBe(false);
+    status = 200;
+    expect((await sendRows({ ledger, fetchFn })).sent).toBe(2);   // the failed batch is sent again
+    expect((await sendRows({ ledger, fetchFn })).sent).toBe(0);   // and not a third time
+    expect(bodies[1].rows.length).toBe(2);
+    expect(bodies[1]).toMatchObject({ version: expect.any(String), os: `${process.platform}-${process.arch}` });
+    expect(JSON.stringify(bodies)).not.toContain("private note");
+    expect(JSON.parse(readFileSync(join(dir, "telemetry.json"), "utf8")).sent_through).toBe("2026-09-22T10:00:00.000Z"); // beside the ledger it read
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+test("feedback sends what the person wrote, and nothing when there is nothing to send", async () => {
+  const { sendFeedback } = await import("../src/lib/telemetry.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "routr-fb-")), ledger = join(dir, "ledger.jsonl");
+  const sent = [];
+  const fetchFn = async (_u, init) => { sent.push(JSON.parse(init.body)); return new Response("{}", { status: 200 }); };
+  expect((await sendFeedback("  ", { fetchFn, ledger })).ok).toBe(false);
+  expect((await sendFeedback("x".repeat(4001), { fetchFn, ledger })).ok).toBe(false);
+  expect((await sendFeedback("the cursor usage read failed twice", { fetchFn, ledger })).ok).toBe(true);
+  expect(sent).toHaveLength(1);
+  expect(sent[0].text).toBe("the cursor usage read failed twice");
+  rmSync(dir, { recursive: true, force: true });
 });
 test("Jev is asked for the pinned version unless ROUTR_JEV_MODEL names another", async () => {
   const { JEV_MODEL } = await import("../src/lib/questions.mjs");

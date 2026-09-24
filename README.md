@@ -74,7 +74,9 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `launch` | Start one worker in its own git worktree, nested under the repo in herdr: flags, model syntax, shell prompts, trust dialog, readiness, prompt. `--dry-run` shows the plan. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
 | `record`, `assess` | Write one ledger line; read the ledger back as advice about your own settings. |
-| `share` | Write a file of your outcomes, with nothing identifying in it, to attach to a GitHub issue. Sends nothing. |
+| `share` | Write exactly what telemetry sends to a file you can read. Sends nothing. |
+| `telemetry on\|off\|status\|send` | Anonymous outcomes, once a day (see [Telemetry](#telemetry)). |
+| `feedback "<text>"` | Send the maintainers a note in your own words. |
 | `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
 | `update` | Update to the latest release now (routr also does this by itself in the background, at most once a day). |
 | `setup` | Write your config for the harnesses found, set Claude Code's usage statusline, ask for the key. Asks at a terminal; agents pass `--yes`. |
@@ -152,17 +154,34 @@ more window (Codex: from its protocol, not yet observed on a seat).
 ## Evidence
 
 [docs/evidence.md](docs/evidence.md) shows how the decisions and the scoring were measured. In short: the facts
-routr reads from a brief are decisive and come out the same every time; the level is right on 61 of 68 labelled
+routr reads from a brief are decisive and come out the same every time; the level is right on 59 of 68 labelled
 briefs; the judge questions separate good worker reports from flawed ones; workers on all four harnesses follow the
 skill; and end-to-end runs with a real lead delivered verified work across subscriptions. routr does not estimate
 or manage context; harnesses own that.
 
+## Telemetry
+
+routr's questions are kept or dropped on real outcomes, so once a day it sends its maintainers the ledger rows written
+since the last send. This is on by default; the installer, `routr setup`, and `routr doctor` say so.
+
+- **Sent:** what routr read from each brief (yes/no probabilities and the level), the Jev version, the subscription,
+  model, effort and level chosen, the outcome, attempts and seconds, the day, routr's version, your OS, and a random
+  install id made on your machine.
+- **Never sent:** your briefs or any other text, notes, project or repository names, ids, hashes of briefs, usage
+  numbers, file paths, or anything from your code. The endpoint also refuses any row carrying a long string.
+- **See it:** `routr share` writes exactly what would be sent to a file.
+- **Stop it:** `routr telemetry off`, `"telemetry": false` in the config, `ROUTR_TELEMETRY=0`, or `DO_NOT_TRACK=1`.
+  It is always off in CI.
+- It is sent by the same detached daily job as updates, never during a command, and a failed send is simply retried
+  the next day.
+
+`routr feedback "<text>"` sends the maintainers a note in your own words. It is the only thing routr sends that is text,
+and only when you run it.
+
 ## Contributing
 
-The most useful contribution is your outcomes. routr's questions are kept or dropped on real work, and your ledger
-is real work: run `routr share`, read the file it writes (no briefs, notes, hashes, or usage numbers; no names of the models you chose
-unless you ask), and attach it to a ["Share your ledger" issue](https://github.com/sirkirby/routr/issues/new?template=share-ledger.yml).
-routr never sends anything by itself.
+The most useful contribution is your outcomes: leaving telemetry on is enough. Notes on what worked and what did
+not are next: `routr feedback`.
 
 Code and wording changes come by pull request. A change to a question's wording is a new question-set version and
 needs its measurement; see [CONTRIBUTING.md](CONTRIBUTING.md).

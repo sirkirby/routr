@@ -6,7 +6,9 @@ import { createHash } from "node:crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 
 import { join } from "node:path";
+import { loadConfig } from "./config.mjs";
 import { CACHE_DIR, standalone } from "./runtime.mjs";
+import { sendRows, telemetryStatus } from "./telemetry.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 const REPO = "sirkirby/routr";
@@ -100,15 +102,19 @@ const CACHE = CACHE_DIR;
 const STAMP = () => join(CACHE(), "update-check");     // its mtime is the time of the last check
 const LOCK = () => join(CACHE(), "update.lock");
 export const UPDATE_LOG = () => join(CACHE(), "update.log");
+export const TELEMETRY_LOG = () => join(CACHE(), "telemetry.log");
 const DAY = 24 * 60 * 60 * 1000;
 
 export const dueForCheck = (lastCheckMs, nowMs = Date.now()) => !Number.isFinite(lastCheckMs) || nowMs - lastCheckMs > DAY;
 
+const updatesOn = (config) => config?.auto_update !== false && !process.env.ROUTR_NO_UPDATE;
+
+// The daily job: the update check and the telemetry send share one detached process and one stamp.
 export function maybeAutoUpdate(config) {
   try {
     if (!standalone()) return false;
     try { rmSync(`${process.execPath}.old`, { force: true }); } catch {} // Windows: the binary a previous update moved aside
-    if (config?.auto_update === false || process.env.ROUTR_NO_UPDATE) return false;
+    if (!updatesOn(config) && !telemetryStatus(config).on) return false;
     let last = NaN; try { last = statSync(STAMP()).mtimeMs; } catch {}
     if (!dueForCheck(last)) return false;
     spawn(process.execPath, ["update", "--background"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
@@ -124,13 +130,17 @@ export async function backgroundUpdate() {
   try { writeSync(fd, String(process.pid)); } catch {}
   try {
     writeFileSync(STAMP(), new Date().toISOString() + "\n"); // first, so a failing check is not retried on every command
+    const { config } = loadConfig();
+    // Telemetry first: it is quick, and an update that swaps the binary should not take it with it.
+    if (telemetryStatus(config).on) { const t = await sendRows().catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) })); writeFileSync(TELEMETRY_LOG(), JSON.stringify({ at: new Date().toISOString(), ...t }) + "\n"); }
+    if (!updatesOn(config)) return;
     const r = await update({});
     writeFileSync(UPDATE_LOG(), JSON.stringify({ at: new Date().toISOString(), ok: r.ok, updated: r.updated, note: r.note, error: r.error ?? null }) + "\n");
   } finally { try { closeSync(fd); } catch {} rmSync(LOCK(), { force: true }); }
 }
 
 export function autoUpdateStatus(config) {
-  const on = standalone() && config?.auto_update !== false && !process.env.ROUTR_NO_UPDATE;
+  const on = standalone() && updatesOn(config);
   let checked = null, last = null;
   try { checked = Math.round((Date.now() - statSync(STAMP()).mtimeMs) / 3600000); } catch {}
   try { last = JSON.parse(readFileSync(UPDATE_LOG(), "utf8")); } catch {}
