@@ -114,7 +114,8 @@ export async function setup(args) {
 
   // 0. The skill agents read: missing, or left behind by an older routr. Writing it again is always safe.
   const base = baseVersion(ROUTR_VERSION);
-  if (!r.skill.length || r.skill.some((k) => baseVersion(k.version) !== base)) { installSkill(); did.push(`installed the routr skill ${base} for your agents`); }
+  // From a source checkout (0.0.0-dev) a release's skill never matches, and rewriting it would fight the installed binary.
+  if (!r.skill.length || (standalone() && r.skill.some((k) => baseVersion(k.version) !== base))) { installSkill(); did.push(`installed the routr skill ${base} for your agents`); }
 
   // 1. The config. An existing file is kept; harnesses found since then are added, nothing else is touched.
   let config = null;
