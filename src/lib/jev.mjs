@@ -20,7 +20,6 @@ export function loadKey() {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let KEY; // loaded lazily so a missing key is a catchable error, not an import-time crash
 
 // The pinned version (questions.mjs), or ROUTR_JEV_MODEL when a maintainer is trying another one. Read per call.
 export const jevModel = () => process.env.ROUTR_JEV_MODEL?.trim() || JEV_MODEL;
@@ -28,7 +27,7 @@ export const jevModel = () => process.env.ROUTR_JEV_MODEL?.trim() || JEV_MODEL;
 // deadlineMs is the total budget across retries; the router passes a short one so it can never stall an agent.
 // The response names the version that answered (`model`), which is what the ledger records.
 export async function ask(state, questions, model = jevModel(), deadlineMs = 60000) {
-  KEY ??= loadKey();
+  const KEY = loadKey(); // per call, never at import: a missing key is a catchable error, and nothing stale is kept
   const stopAt = performance.now() + deadlineMs;
   for (let attempt = 0; ; attempt++) {
     const t0 = performance.now();

@@ -10,7 +10,7 @@ body:
 
         Run `routr share`, read the file it writes, and attach it below. It holds what routr read from each brief
         (yes/no probabilities and a level), the level and subscription chosen, the outcome, and the attempt count.
-        It holds **no** briefs, hashes, notes, ids, or usage numbers, and no model names unless you passed
+        It holds **no** briefs, hashes, notes, ids, or usage numbers, and no names of the models you chose unless you passed
         `--with-models`. Issues are public, so please do not add anything about the work itself.
   - type: textarea
     id: file

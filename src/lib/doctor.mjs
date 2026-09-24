@@ -6,7 +6,8 @@ import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { CONFIG_PATH, loadConfig } from "./config.mjs";
 import { HARNESSES as HARNESS_TABLE } from "./harness.mjs";
-import { KEY_FILES, loadKey, ping } from "./jev.mjs";
+import { jevModel, KEY_FILES, loadKey, ping } from "./jev.mjs";
+import { JEV_MODEL } from "./questions.mjs";
 import { CLAUDE_SNAPSHOT, NO_WINDOWS_AFTER_ANSWER, readUsage, run } from "./usage.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
 import { standalone } from "./runtime.mjs";
@@ -166,7 +167,7 @@ export function render(r) {
   for (const k of r.skill) line(k.version === base ? "ok" : "need", `routr skill ${k.where} is ${k.version}${k.version === base ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
   const any = Object.values(r.harnesses).some((h) => h.installed);
   for (const [n, h] of Object.entries(r.harnesses)) line(h.installed ? "ok" : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${h.installed ? `\`${h.command}\` found · usage ${h.usage}` : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it` : `\`${h.command}\` not found`}${h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${h.models.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${h.command} models\` for the rest)` : ""}` : ""}`);
-  line(r.key.works ? "ok" : "need", `TypeSafe key ${r.key.works ? `works (${r.key.model}${process.env.ROUTR_JEV_MODEL ? ", set by ROUTR_JEV_MODEL" : ""}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
+  line(r.key.works ? "ok" : "need", `TypeSafe key ${r.key.works ? `works (${r.key.model}${jevModel() !== JEV_MODEL ? `, asked as ${jevModel()} by ROUTR_JEV_MODEL` : ""}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
   line(r.config.exists ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && notes.length ? `\n   ${notes.join("\n   ")}` : ""}`);
   line(r.claude_usage_statusline !== STATUSLINE_MISSING, `Claude usage statusline: ${r.claude_usage_statusline}`);
   const au = r.auto_update;

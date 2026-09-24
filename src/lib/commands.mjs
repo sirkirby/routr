@@ -50,9 +50,9 @@ export function shareCommand({ ledger = LEDGER_PATH, out, withModels = false }) 
   return [
     `Wrote ${rows.length} rows to ${file}. Nothing has been sent anywhere.`,
     "",
-    "In the file: what routr read from each brief (yes/no probabilities, level), the level and subscription chosen,",
-    `the outcome and attempt count${withModels ? ", and the model names you chose" : ""}. Day-level dates only.`,
-    `Left out: the briefs (routr never stores them), their hashes, your notes, ids, usage numbers${withModels ? "" : ", model names (add --with-models to include them)"}.`,
+    "In the file: what routr read from each brief (yes/no probabilities, level, the Jev version that read it), the level",
+    `and subscription chosen, the outcome and attempt count${withModels ? ", and the model names you chose" : ""}. Day-level dates only.`,
+    `Left out: the briefs (routr never stores them), their hashes, your notes, ids, usage numbers${withModels ? "" : ", the names of the models you chose (add --with-models to include them)"}.`,
     "",
     "Read it, then attach it to a new issue using the \"Share your ledger\" form:",
     "  https://github.com/sirkirby/routr/issues/new?template=share-ledger.yml",
