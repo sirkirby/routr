@@ -181,7 +181,6 @@ const REFRESH_SEC = 4 * 3600;
 // since. Cursor's screen shows no reset time, so age is the only guard. Past it, Cursor is assumed and the note says so.
 const TRUST_SEC = 24 * 3600;
 const LOCK_SEC = 120; // one background reading at a time; a lock older than any reading (90 s at most) is abandoned
-const CURSOR_LOCK = () => `${CURSOR_SNAPSHOT}.lock`;
 const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } };
 // Written whole or not at all (a temp file, then a rename), as the Claude snapshot is: a reader never sees half a file.
 const writeJson = (file, o) => {
