@@ -73,8 +73,11 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null, { env
 // brief. Named, a harness that shows usage only in its own screen has it read there (the one form of this that acts:
 // it drives a throwaway terminal). Either way it fails open.
 export async function usageCommand(words, config, given = {}, { read = readUsage, sources = SOURCES } = {}) {
-  const [name, ...extra] = words, configured = Object.keys(config.subscriptions);
-  if (extra.length) return { ok: false, error: "usage: routr usage [<subscription>]" };
+  const flags = words.filter((w) => w.startsWith("-")), configured = Object.keys(config.subscriptions);
+  const [name, ...extra] = words.filter((w) => !w.startsWith("-"));
+  // The output is JSON already, so --json (which doctor and setup take) is accepted and changes nothing.
+  const unknown = flags.filter((f) => f !== "--json");
+  if (extra.length || unknown.length) return { ok: false, error: `usage: routr usage [--config <path>] [--headroom <subscription>=<0..1>]... [<subscription>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}` };
   if (name && sources[name]?.interactive) return sources[name].interactive();
   if (name && !configured.includes(name)) return { ok: false, error: `${name} is not a configured subscription (configured: ${configured.join(", ") || "none, run routr setup"})` };
   try {

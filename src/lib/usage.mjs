@@ -4,7 +4,7 @@
 // the vendor enforces, read as one more window), `metered` (billed usage with no quota, and a working source says so),
 // or `unknown` (nothing readable). Measured 2026-09-22 on a ChatGPT Enterprise seat: no windows at all, only
 // `credits.unlimited: true`, and a plan name of `business`. So the shape is the key, never the plan name.
-import { CURSOR_BY_HAND, cursorUsage } from "./cursor-usage.mjs";
+import { cursorUsage } from "./cursor-usage.mjs";
 import { CLAUDE_SNAPSHOT } from "./runtime.mjs";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -168,17 +168,17 @@ export async function readAgy() {
   return summarize("agy", "agy /usage", null, [], "`agy -p /usage` did not answer in two tries; using the assumed headroom");
 }
 
-// How each subscription's usage is read, in one place, so doctor, dispatch, `routr usage`, and every error say the same.
+// How each subscription's usage is read, in one place, so doctor, dispatch, and `routr usage` say the same.
 //   read         passive: a file or a command the harness answers without a turn. Read on every call.
 //   interactive  the harness shows usage only in its own screen: `routr usage <name>` opens it in a throwaway terminal
-//                (terminal.mjs) and prints the --headroom value. Advice never does this: it drives no terminal.
-//   by_hand      what a person or agent does when routr cannot open that screen.
+//                (terminal.mjs), prints the --headroom value, and on failure says how to read it by hand. Advice never
+//                does this: it drives no terminal. `command` is what doctor and dispatch tell the caller to run.
 // A harness added later picks its row; nothing else changes.
 export const SOURCES = {
   claude: { read: readClaude },
   codex: { read: readCodexLive },
   agy: { read: readAgy },
-  cursor: { interactive: cursorUsage, command: "routr usage cursor", by_hand: CURSOR_BY_HAND },
+  cursor: { interactive: cursorUsage, command: "routr usage cursor" },
 };
 
 // One unreadable source must not take the others (or the routing advice) down with it. Readers run in parallel.
