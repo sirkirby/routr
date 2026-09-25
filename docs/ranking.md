@@ -40,13 +40,15 @@ invalid, with the command that fixes it.
 
   | Level | What Jev means by it |
   |---|---|
-  | `basic` | Rote or well-specified work; a small, fast model is enough |
-  | `standard` | The worker has to find something out or choose an approach |
-  | `strong` | A wrong or shallow result would be expensive and hard to notice |
+  | `basic` | rote or well-specified work; a small, fast model is enough |
+  | `standard` | the worker must find something out or choose an approach |
+  | `strong` | a wrong or shallow result would be expensive and hard to notice |
 
   The suggestion setup offers is a starting point, not a measurement. Raise it for a subscription you trust with your
-  hardest work; lower it for one you want to keep for your own.
-- **`reserve`**: the share you keep for your own work, for example 25%. routr never offers it to a worker.
+  hardest work; lower it for one you would rather give only lighter work.
+- **`reserve`**: the share of the subscription routr holds back from workers, for example 25%, so the orchestrator
+  (which usually runs on one of your subscriptions) and anything you run outside routr still have room. routr stops
+  sending workers to a subscription when less than its reserve is left; 0% holds nothing back.
 
 Two more you rarely need, set in the file: `assumed_headroom`, the share routr assumes is left when it cannot read a
 subscription's usage, and `metered_rank`, where a seat billed per use with no quota goes in the order (see below).

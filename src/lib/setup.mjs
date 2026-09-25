@@ -6,7 +6,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { CONFIG_PATH, SUB_DEFAULTS } from "./config.mjs";
-import { LEVELS, MEANING } from "./questions.mjs";
+import { LEVELS } from "./questions.mjs";
+import { HARDEST, RESERVE, SETTINGS_INTRO, settingSummary } from "./wording.mjs";
 import { envOff, NOTICE, setTelemetry } from "./telemetry.mjs";
 import { HARNESSES, inspect, paint, render, starterConfig, SUGGESTED, which } from "./doctor.mjs";
 import { setKey } from "./key.mjs";
@@ -40,7 +41,7 @@ export function parseMetered(args) {
 }
 
 // `--hardest cursor=strong`: the most demanding work the user sends to a subscription.
-// `--reserve claude=0.25` (or 25%): the share of it kept for the user's own work, never offered to a worker.
+// `--reserve claude=0.25` (or 25%): the share routr holds back from workers (wording.mjs has the words people see).
 // Both decide the ranking, so both are the user's to set: asked at a terminal, or passed as flags, at setup or any time.
 export const parseLevel = (a) => { const t = String(a ?? "").trim().toLowerCase(); return LEVELS.find((l, i) => t === l || t === String(i + 1)) ?? null; };
 export const parseShare = (a) => { const t = String(a ?? "").trim(), n = t.endsWith("%") ? Number(t.slice(0, -1)) / 100 : Number(t); return t && Number.isFinite(n) && n >= 0 && n <= 1 ? Math.round(n * 100) / 100 : null; };
@@ -61,8 +62,8 @@ export const parseReserve = (args) => parsePairs(args, "--reserve", parseShare, 
 // A person's answer to the two questions; Enter keeps the suggestion, and an answer that is not one asks again.
 export async function askSettings(n, suggested, question, say) {
   let hardest = null, reserve = null;
-  while (!hardest) { const a = (await question(`  The hardest work you will send to ${n}: basic, standard, or strong [Enter = ${suggested.hardest_work}] `)).trim(); hardest = a ? parseLevel(a) : suggested.hardest_work; if (!hardest) say("  one of: basic, standard, strong"); }
-  while (reserve == null) { const a = (await question(`  The share of ${n} to keep for your own work, never given to a worker [Enter = ${Math.round(suggested.reserve * 100)}%] `)).trim(); reserve = a ? parseShare(a) : suggested.reserve; if (reserve == null) say("  a share from 0 to 1, or a percent: 0.25 or 25%"); }
+  while (!hardest) { const a = (await question(HARDEST.question(n, suggested.hardest_work))).trim(); hardest = a ? parseLevel(a) : suggested.hardest_work; if (!hardest) say(HARDEST.retry); }
+  while (reserve == null) { const a = (await question(RESERVE.question(n, `${Math.round(suggested.reserve * 100)}%`))).trim(); reserve = a ? parseShare(a) : suggested.reserve; if (reserve == null) say(RESERVE.retry); }
   return { hardest_work: hardest, reserve };
 }
 
@@ -168,9 +169,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const configured = Object.keys(config?.subscriptions ?? {}).filter((n) => !unset.includes(n));
   let review = [];
   if (ask && configured.length && !flagged) {
-    const pct = (x) => `${Math.round(x * 100)}%`;
-    say(`
-Your settings: ${configured.map((n) => `${n} takes ${config.subscriptions[n].hardest_work} work, keeps ${pct(config.subscriptions[n].reserve)}`).join("; ")}.`);
+    say(`\nYour settings: ${configured.map((n) => settingSummary(n, config.subscriptions[n])).join("; ")}.`);
     if (await yes("Go through them now? Enter keeps each one as it is")) review = configured;
   }
   const settings = {};
@@ -182,7 +181,7 @@ Your settings: ${configured.map((n) => `${n} takes ${config.subscriptions[n].har
       models[n] = await pickModel(list, ask, say);
     }
     if (ask && !(hardest[n] && reserves[n] != null)) {
-      if (!explained) { say(`\nTwo settings decide where routr sends work. The hardest work you will send to a subscription:\n${Object.entries(MEANING).map(([l, m]) => `  ${l.padEnd(8)} ${m}`).join("\n")}\nand the share of it you keep for your own work, which routr never offers to a worker.`); explained = true; }
+      if (!explained) { say(`\n${SETTINGS_INTRO}`); explained = true; }
       if (!fresh.includes(n) || !list?.length) say(`\n${paint(1, n)}:`);
       const now = review.includes(n) ? { hardest_work: config.subscriptions[n].hardest_work, reserve: config.subscriptions[n].reserve } : suggest(n);
       settings[n] = await askSettings(n, now, ask, say);
@@ -248,6 +247,6 @@ Your settings: ${configured.map((n) => `${n} takes ${config.subscriptions[n].har
   const result = { ok: true, did, skipped, config: path, next_steps: after.next_steps };
   if (args.includes("--json")) return result;
   say(`\n${did.map((d) => `${paint(32, "done")} ${d}`).concat(skipped.map((s) => `${paint(33, "note")} ${s}`)).join("\n")}\n\n${render(after)}`);
-  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour settings are plain JSON at ${path}: ${Object.entries(config.subscriptions).map(([n, s]) => `${n} ${s.hardest_work}, reserve ${Math.round(s.reserve * 100)}%`).join("; ")}. Change one any time: routr setup --hardest <name>=basic|standard|strong --reserve <name>=<share>, or edit the file.`);
+  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour settings are plain JSON at ${path}: ${Object.entries(config.subscriptions).map(([n, s]) => settingSummary(n, s)).join("; ")}. Change one any time: routr setup --hardest <name>=basic|standard|strong --reserve <name>=<share>, or edit the file.`);
   return result;
 }

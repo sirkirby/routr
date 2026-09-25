@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { LEVELS } from "./questions.mjs";
+import { HARDEST, RESERVE } from "./wording.mjs";
 
 export const CONFIG_PATH = join(homedir(), ".config/routr/config.json");
 export const DEFAULTS = {
@@ -40,14 +41,15 @@ export function loadConfig(path = CONFIG_PATH) {
   for (const [name, s] of Object.entries(raw.subscriptions ?? {})) {
     // The two settings that decide where work may go are the user's: a missing or invalid one is a problem to fix, and
     // the note says how. Until then the router still answers, on the stand-in named.
-    const fix = (k, what) => `routr setup --${k === "hardest_work" ? "hardest" : "reserve"} ${name}=${what}`;
-    if (s?.hardest_work === undefined) notes.push(`subscriptions.${name}.hardest_work is not set, so strong is used: ${fix("hardest_work", "basic|standard|strong")}`);
-    else if (!isLevel(s.hardest_work)) notes.push(`subscriptions.${name}.hardest_work: "${s.hardest_work}" is not a level, so strong is used: ${fix("hardest_work", "basic|standard|strong")}`);
-    if (s?.reserve === undefined) notes.push(`subscriptions.${name}.reserve is not set, so none is kept and everything is offered: ${fix("reserve", "<share, e.g. 0.25>")}`);
+    if (s?.hardest_work === undefined) notes.push(`${HARDEST.unset(name)}. ${HARDEST.choose(name)}`);
+    else if (!isLevel(s.hardest_work)) notes.push(`${HARDEST.invalid(name, s.hardest_work)}. ${HARDEST.choose(name)}`);
+    const validReserve = typeof s?.reserve === "number" && s.reserve >= 0 && s.reserve <= 1;
+    if (s?.reserve === undefined) notes.push(`${RESERVE.unset(name)}. ${RESERVE.choose(name)}`);
+    else if (!validReserve) notes.push(`${RESERVE.invalid(name, s.reserve)}. ${RESERVE.choose(name)}`);
     const oneOf = (k, allowed, fallback) => { const v = s?.[k]; if (v === undefined || v === null) return fallback; if (allowed.includes(v)) return v; notes.push(`subscriptions.${name}.${k}: ${JSON.stringify(v)} is not one of ${allowed.join(", ")}, using ${fallback ?? "the harness's own reading"}`); return fallback; };
     config.subscriptions[name] = {
       hardest_work: isLevel(s?.hardest_work) ? s.hardest_work : SUB_DEFAULTS.hardest_work,
-      reserve: share(s?.reserve, SUB_DEFAULTS.reserve, `subscriptions.${name}.reserve (${fix("reserve", "<share>")})`),
+      reserve: validReserve ? s.reserve : SUB_DEFAULTS.reserve, // noted above when missing or invalid
       assumed_headroom: share(s?.assumed_headroom, SUB_DEFAULTS.assumed_headroom, `subscriptions.${name}.assumed_headroom`),
       // The user's everyday model for this harness: where the orchestrator starts before moving up or down. Passed through, never interpreted.
       default_model: typeof s?.default_model === "string" ? s.default_model : null,

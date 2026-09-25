@@ -1,6 +1,7 @@
 // Level + live usage + user config → subscriptions ranked by usable headroom. Pure: no I/O.
 // Usable is worked out PER WINDOW and the tightest window counts: what is left, minus the user's reserve. The reserve is
-// what the user keeps for their own work during the REST of the window, so it shrinks as the reset approaches:
+// what routr holds back from workers (for the orchestrator and whatever the user runs outside routr) during the REST of
+// the window, so it shrinks as the reset approaches:
 // unused capacity expires at the reset, and holding a full reserve on the last day only wastes it.
 // A METERED pool (billed usage, no quota: an Enterprise seat) has no window, so it has no number. It gets a position
 // instead: after every pool with a quota that still has room, because included usage expires and billed usage does not.

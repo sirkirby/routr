@@ -4,13 +4,15 @@
 // depend on the codebase: the asking agent knows that, Jev cannot. So Jev reads the brief; the agent decides.
 // All questions go in ONE request; Jev answers them in parallel and none can see another's answer. Code combines them.
 export const VERSION = "r4"; // r4 asks the same questions as r3; an unsure level now reads as the lower of the two most likely
+import { LEVEL_MEANING } from "./wording.mjs";
+
 export const LEVELS = ["basic", "standard", "strong"];
-// What each level means, in one place: dispatch prints it with its advice, and setup shows it when asking how hard the
-// work a subscription takes may be.
+// What each level means for the agent that asked: the work (wording.mjs, shared with setup and the docs), then the kind
+// of model that fits it. Never a model's name.
 export const MEANING = {
-  basic: "rote or well-specified work; a small, fast model is enough",
-  standard: "the agent must find something out or choose an approach; a mid-range model, not the top one",
-  strong: "a wrong or shallow result would be expensive and hard to notice; a strong model",
+  basic: LEVEL_MEANING.basic,
+  standard: `${LEVEL_MEANING.standard}; a mid-range model, not the top one`,
+  strong: `${LEVEL_MEANING.strong}; a strong model`,
 };
 // The Jev version every result in docs/evidence.md was measured on. Answers, and the thresholds tuned on them (0.2/0.8,
 // sure_at, the lower-of-two rule), belong to a version, so the pin moves only after the maintainers' model gate has run

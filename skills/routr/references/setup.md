@@ -51,7 +51,8 @@ risks being committed. Without a key routr still answers, but only with the fall
 
 Do not write the file by hand. For each subscription, settle three things with the user: their everyday model there
 (doctor prints each harness's live list), the hardest work they will send it (`basic`, `standard`, or `strong`; say
-what each means, below), and the share they keep for their own work. Offer the suggestion setup prints for the last
+what each means, below), and the reserve: the share routr holds back from workers, so the orchestrator and anything they run outside routr
+still have room (0% holds nothing back). Offer the suggestion setup prints for the last
 two; the user can take it. Then run:
 
     routr setup --yes --model claude=<id> --hardest cursor=standard --reserve claude=25% [--metered codex=after|with] ...
@@ -71,8 +72,9 @@ the user's preference, and none describes a model. `routr doctor` flags a settin
 the command that fixes it.
 
 - `subscriptions`: one entry per subscription the orchestrator may launch on, named `claude`, `codex`, `cursor`, `agy`.
-  - `reserve`: the share of that subscription routr must never offer (0.25 keeps a quarter for the user's own work).
-  - `hardest_work`: the hardest work the user would hand it. `basic`: rote or well-specified work, a small fast model
+  - `reserve`: the share of that subscription routr never hands to workers, so the orchestrator and anything the user
+    runs outside routr still have room (0.25 holds back a quarter; 0 holds nothing back).
+  - `hardest_work`: the hardest work routr may send to it. `basic`: rote or well-specified work; a small, fast model
     is enough. `standard`: the worker must find something out or choose an approach. `strong`: a wrong or shallow
     result would be expensive and hard to notice. For Cursor this means
     Cursor's own models; other vendors' models inside Cursor draw on a different pool and are not routed to.
