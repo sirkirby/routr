@@ -153,16 +153,16 @@ export async function setup(args) {
       did.push("set Claude Code's statusline to `routr statusline`: usage is read after your next Claude Code turn");
     } else if (plan.action !== "none") skipped.push(`Claude statusline: ${plan.why ?? "left alone"}`);
   }
-  // 3. Telemetry: on by default; a person is told and asked once, an agent's run leaves the default and says so.
+  // 3. Telemetry: off unless a person says yes. Asked once, default no; an agent's run never turns it on.
   let asked = false;
   try { asked = "telemetry" in JSON.parse(readFileSync(path, "utf8")); } catch {}
-  if (!asked && telemetryStatus({}).on) {
+  if (!asked && telemetryStatus({ telemetry: true }).on) {
     if (rl) {
       say(`\n${NOTICE}`);
-      const keep = await yes("Send them?");
-      setTelemetry(keep, path);
-      (keep ? did : skipped).push(keep ? "telemetry on: anonymous outcomes, once a day (routr telemetry off to stop)" : "telemetry off (routr telemetry on to help tune routr)");
-    } else skipped.push(`telemetry is on by default. ${NOTICE}`);
+      const share = /^y/i.test((await rl.question("Share them? [y/N] ")).trim());
+      setTelemetry(share, path);
+      (share ? did : skipped).push(share ? "telemetry on: anonymous outcomes, once a day (routr telemetry off to stop)" : "telemetry off (routr telemetry on, any time, to help tune routr)");
+    } else skipped.push("telemetry is off. Ask the user whether to share anonymous outcomes (docs/telemetry.md); if they say yes: routr telemetry on");
   }
   rl?.close();
 

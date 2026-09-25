@@ -1,11 +1,10 @@
-// Telemetry: once a day routr sends its maintainers the ledger rows written since the last send, so its questions are
-// tuned on real work instead of the maintainers' own. What a row holds is what `routr share` writes to a file you can
-// read: what routr read from each brief (probabilities, level), the Jev version, what was chosen (subscription, model,
-// effort, level), and how it turned out. Never the brief or any other text, notes, project names, ids, hashes of briefs,
-// usage numbers, or anything about your machine beyond the OS and routr's version. The endpoint refuses rows carrying
-// long strings as a backstop (routr-lab/service).
-// ON by default, as most developer tools do it, and said so at install, in setup, and in doctor. Off with
-// `routr telemetry off` ("telemetry": false in the config), ROUTR_TELEMETRY=0, or DO_NOT_TRACK=1; always off in CI.
+// Telemetry: OFF unless the person turns it on (docs/telemetry.md). When on, once a day routr sends its maintainers the
+// ledger rows written since the last send, so its questions are tuned on real work instead of the maintainers' own.
+// A row is what `routr share` writes to a file you can read: what routr read from each brief (probabilities, level),
+// the Jev version, what was chosen (subscription, model, effort, level), and how it turned out. Never the brief or any
+// other text, notes, project names, paths, ids of the ledger, hashes of briefs, or usage numbers. Every field is built
+// below from an exact list or a narrow shape; the endpoint refuses long strings as a backstop (routr-lab/service).
+// On with `routr telemetry on` (setup asks a person once, default no). Kept off by ROUTR_TELEMETRY=0, DO_NOT_TRACK=1, CI.
 // Sending happens only in the detached daily job (update.mjs) or on an explicit command: never inside advice.
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -16,14 +15,14 @@ import { LEDGER_PATH, read } from "./ledger.mjs";
 import { FACTS, questions } from "./questions.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
-export const ENDPOINT = process.env.ROUTR_TELEMETRY_URL || "https://routr-telemetry.goondocks.workers.dev";
+export const ENDPOINT = process.env.ROUTR_TELEMETRY_URL || "https://telemetry.routr.build";
 const STATE = (ledger = LEDGER_PATH) => join(dirname(ledger), "telemetry.json"); // beside the ledger: { install_id, sent_through }
 const OS = `${process.platform}-${process.arch}`;
 const off = (v) => /^(0|false|off|no)$/i.test(String(v ?? "").trim());
 
 export function telemetryStatus(config, env = process.env) {
   const why = env.CI ? "running in CI" : env.DO_NOT_TRACK && !off(env.DO_NOT_TRACK) ? "DO_NOT_TRACK is set"
-    : off(env.ROUTR_TELEMETRY ?? "1") ? "ROUTR_TELEMETRY is off" : config?.telemetry === false ? "turned off (routr telemetry off)" : null;
+    : off(env.ROUTR_TELEMETRY ?? "1") ? "ROUTR_TELEMETRY is off" : config?.telemetry !== true ? "not turned on (the default): routr telemetry on" : null;
   return { on: !why, why_off: why };
 }
 
@@ -120,7 +119,7 @@ export function setTelemetry(on, path = CONFIG_PATH) {
   return { ok: true, telemetry: on ? "on" : "off", config: path };
 }
 
-export const NOTICE = "routr sends its maintainers anonymous outcomes once a day (what it read from each brief, what was chosen, how it went; never your briefs or any text) to tune its questions. See it: routr share · stop it: routr telemetry off";
+export const NOTICE = "routr can share anonymous outcomes with its maintainers once a day to help tune its questions: what it read from each brief, what was chosen, how it went. Never your briefs or any text. It is off unless you turn it on. Details: https://github.com/sirkirby/routr/blob/main/docs/telemetry.md";
 
 export function telemetryCommand(args, config, configPath) {
   const sub = args[0] ?? "status";
@@ -130,5 +129,5 @@ export function telemetryCommand(args, config, configPath) {
     return r.ok && sub === "on" && !st.on ? { ...r, telemetry: "off", why_off: st.why_off, note: `set to on in the config, but it stays off while ${st.why_off}` } : r;
   }
   const st = telemetryStatus(config), s = state();
-  return { ok: true, telemetry: st.on ? "on" : "off", ...(st.why_off ? { why_off: st.why_off } : {}), endpoint: ENDPOINT, last_sent_through: s.sent_through ?? null, what: NOTICE };
+  return { ok: true, telemetry: st.on ? "on" : "off", ...(st.why_off ? { why_off: st.why_off } : {}), endpoint: ENDPOINT, install_id: s.install_id ?? null, last_sent_through: s.sent_through ?? null, what: NOTICE };
 }

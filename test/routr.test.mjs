@@ -1367,23 +1367,25 @@ test("telemetry rows carry what tuning needs, never text or anything that points
   const long = []; JSON.stringify(r, (k, v) => { if (typeof v === "string" && v.length > 80) long.push(k); return v; });
   expect(long).toEqual([]);
 });
-test("telemetry is on by default and off by any of the usual switches, and always in CI", async () => {
+test("telemetry is off unless the person turns it on, and the usual switches keep it off", async () => {
   const { telemetryStatus } = await import("../src/lib/telemetry.mjs");
-  expect(telemetryStatus({}, {}).on).toBe(true);
-  expect(telemetryStatus({ telemetry: false }, {}).on).toBe(false);
-  expect(telemetryStatus({}, { DO_NOT_TRACK: "1" }).why_off).toBe("DO_NOT_TRACK is set");
-  expect(telemetryStatus({}, { DO_NOT_TRACK: "0" }).on).toBe(true);
-  expect(telemetryStatus({}, { ROUTR_TELEMETRY: "off" }).on).toBe(false);
-  expect(telemetryStatus({}, { CI: "true" }).why_off).toBe("running in CI");
+  expect(telemetryStatus({}, {}).on).toBe(false);                                   // the default: nothing is shared
+  expect(telemetryStatus({ telemetry: "yes" }, {}).on).toBe(false);                 // only a real true turns it on
+  expect(telemetryStatus({ telemetry: true }, {}).on).toBe(true);
+  expect(telemetryStatus({ telemetry: true }, { DO_NOT_TRACK: "1" }).why_off).toBe("DO_NOT_TRACK is set");
+  expect(telemetryStatus({ telemetry: true }, { DO_NOT_TRACK: "0" }).on).toBe(true);
+  expect(telemetryStatus({ telemetry: true }, { ROUTR_TELEMETRY: "off" }).on).toBe(false);
+  expect(telemetryStatus({ telemetry: true }, { CI: "true" }).why_off).toBe("running in CI");
   const { loadConfig } = await import("../src/lib/config.mjs");
   const dir = mkdtempSync(join(tmpdir(), "routr-tel-"));
   try {
-    writeFileSync(join(dir, "c.json"), JSON.stringify({ telemetry: false, prefer: { review: "standard" } }));
+    writeFileSync(join(dir, "c.json"), JSON.stringify({ prefer: { review: "standard" } }));
     expect(loadConfig(join(dir, "c.json")).config.telemetry).toBe(false);
-    expect(loadConfig(join(dir, "missing.json")).config.telemetry).toBe(true);
+    expect(loadConfig(join(dir, "missing.json")).config.telemetry).toBe(false);
     const { setTelemetry } = await import("../src/lib/telemetry.mjs");
     expect(setTelemetry(true, join(dir, "c.json")).ok).toBe(true);
-    expect(JSON.parse(readFileSync(join(dir, "c.json"), "utf8"))).toEqual({ telemetry: true, prefer: { review: "standard" } }); // the rest is kept
+    expect(JSON.parse(readFileSync(join(dir, "c.json"), "utf8"))).toEqual({ prefer: { review: "standard" }, telemetry: true }); // the rest is kept
+    expect(loadConfig(join(dir, "c.json")).config.telemetry).toBe(true);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test("telemetry sends only rows it has not sent, and moves on only after the endpoint accepts them", async () => {
