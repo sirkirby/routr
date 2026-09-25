@@ -56,7 +56,8 @@ two; the user can take it. Then run:
 
     routr setup --yes --model claude=<id> --hardest cursor=standard --reserve claude=25% [--metered codex=after|with] ...
 
-At a terminal, `routr setup` asks the person the same questions itself, with the suggestion as the default.
+At a terminal, `routr setup` asks the person the same questions itself, with the suggestion as the default; run
+again, it offers to go through the settings already there, each current value as the default.
 
 It writes `~/.config/routr/config.json` for the harnesses found and sets the Claude statusline (step 4;
 `--no-statusline` leaves it). A subscription with no `--model` gets no default, and the orchestrator picks from the

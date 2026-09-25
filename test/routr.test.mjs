@@ -1762,6 +1762,84 @@ test("routr setup changes a setting on an existing config, fills one that is mis
   rmSync(home, { recursive: true, force: true });
 });
 
+// setup, driven end to end as a person would: scripted answers, a fake machine, nothing written outside a temp folder.
+// Every question asked is recorded, and a question the scenario did not expect fails it.
+async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {} } = {}) {
+  const { setup } = await import("../src/lib/setup.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "routr-setup-run-")), path = join(dir, "config.json");
+  if (config) writeFileSync(path, JSON.stringify(config));
+  const asked = [], shared = [], installs = [], keys = [];
+  const inspect = async () => {
+    const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
+    return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy"].map((n) => [n, { installed: found.includes(n), models: [], usage_class: "included" }])),
+      config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}) }, skill: [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }],
+      claude_usage_statusline: "not needed", key: { works: keyWorks }, next_steps: [] };
+  };
+  const queue = [...answers];
+  const question = async (q) => { asked.push(q.trim()); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); };
+  const r = await setup(["--config", path, "--json", ...args], { inspect, question, interactive: true, env,
+    install: () => installs.push(1), share: (on) => shared.push(on), key: async () => { keys.push(1); return { ok: false, error: "none given" }; }, print: () => {} });
+  const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
+  rmSync(dir, { recursive: true, force: true });
+  return { r, asked, saved, shared, installs, keys, left: queue.length };
+}
+const said = (asked, text) => asked.filter((q) => q.includes(text)).length;
+
+test("setup, new install: asks each subscription's hardest work and reserve, suggestion on Enter, then telemetry", async () => {
+  const x = await runSetup({ answers: ["strong", "25%", "", "", "n"] }); // asked in the harness order: cursor, then agy
+  expect(x.r.ok).toBe(true);
+  expect(said(x.asked, "Go through them now")).toBe(0); // nothing to go through yet
+  expect(said(x.asked, "The hardest work you will send to agy")).toBe(1);
+  expect(said(x.asked, "The hardest work you will send to cursor")).toBe(1);
+  expect(x.saved.subscriptions.agy).toMatchObject({ hardest_work: "standard", reserve: 0.1 });
+  expect(x.saved.subscriptions.cursor).toMatchObject({ hardest_work: "strong", reserve: 0.25 });
+  expect(x.asked.at(-1)).toBe("Share them? [y/N]");
+  expect(x.shared).toEqual([false]);
+  expect(x.left).toBe(0);
+});
+
+test("setup, upgrade from a config written before it asked: offers the settings, current values as defaults", async () => {
+  const config = { subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 }, cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" } } };
+  const x = await runSetup({ config, answers: ["", "", "", "strong", "", "n"] });
+  expect(x.asked[0]).toBe("Go through them now? Enter keeps each one as it is [Y/n]");
+  expect(x.asked[1]).toContain("[Enter = standard]"); // the current value, not a suggestion
+  expect(x.saved.subscriptions.cursor).toEqual({ hardest_work: "strong", reserve: 0.1, default_model: "m" });
+  expect(x.saved.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1 });
+  expect(x.r.did.join(" ")).toContain('cursor.hardest_work "standard" → "strong"');
+  expect(said(x.asked, "Share them?")).toBe(1); // no telemetry entry in that config: asked, default no
+  expect(x.left).toBe(0);
+});
+
+test("setup keeps what is already answered: telemetry on is not asked again, and declining the review changes nothing", async () => {
+  const config = { telemetry: true, subscriptions: { agy: { hardest_work: "strong", reserve: 0.3 } } };
+  const x = await runSetup({ config, found: ["agy"], answers: ["n"] });
+  expect(x.asked).toEqual(["Go through them now? Enter keeps each one as it is [Y/n]"]);
+  expect(x.saved).toEqual(config);
+  expect(x.shared).toEqual([]);
+  // Telemetry off by the person's own choice is not asked again either.
+  const off = await runSetup({ config: { ...config, telemetry: false }, found: ["agy"], answers: ["n"] });
+  expect(said(off.asked, "Share them?")).toBe(0);
+});
+
+test("setup with a setting flag at a terminal changes just that, without the review", async () => {
+  const config = { telemetry: false, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } };
+  const x = await runSetup({ config, found: ["agy"], args: ["--hardest", "agy=basic"] });
+  expect(x.asked).toEqual([]);
+  expect(x.saved.subscriptions.agy).toEqual({ hardest_work: "basic", reserve: 0.1 });
+});
+
+test("setup run by an agent (--yes) asks nothing, takes suggestions, never turns telemetry on, and never asks for the key", async () => {
+  const x = await runSetup({ args: ["--yes"], keyWorks: false });
+  expect(x.asked).toEqual([]);
+  expect(x.saved.subscriptions.agy).toMatchObject({ hardest_work: "standard", reserve: 0.1 });
+  expect(x.shared).toEqual([]);
+  expect(x.keys).toEqual([]);
+  expect(x.r.skipped.join(" ")).toContain("Ask the user whether to share");
+  // A person at a terminal with no key is asked for it, last.
+  const person = await runSetup({ keyWorks: false, found: ["agy"], answers: ["", "", "n"] });
+  expect(person.keys).toEqual([1]);
+});
+
 test("setup searches a long model list instead of printing it", async () => {
   const { narrow, pickModel } = await import("../src/lib/setup.mjs");
   const list = Array.from({ length: 230 }, (_, i) => `vendor-model-${i}`).concat(["cursor-grok-4.6-high", "cursor-grok-4.7-high", "cursor-grok-4.7-low"]);
