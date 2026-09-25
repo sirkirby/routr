@@ -1,6 +1,7 @@
 // `routr update`: replace this binary with the latest release, verified against the release's checksums, then
-// reinstall the skill so the guides match the command. Explicit, never silent: question sets are versioned so ledger
-// rows stay comparable, and a tool that swaps its own binary unasked is a supply-chain risk.
+// reinstall the skill so the guides match the command. It runs when asked, and by itself at most once a day in a
+// detached background job (`maybeAutoUpdate`), which `"auto_update": false` turns off. Every swap is checksum-verified,
+// and a run in progress keeps its binary.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";

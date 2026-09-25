@@ -17,7 +17,7 @@ export const DEFAULTS = {
 // `billing` overrides what the usage reader can tell (`included` or `metered`); it is for seats whose harness reports
 // nothing, such as Claude usage-based Enterprise. `metered_rank` places a metered pool: `after` every pool with a quota
 // that still has room (the default: included usage expires, billed usage does not), or `with` the rest by assumed_headroom.
-const SUB_DEFAULTS = { hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after" };
+export const SUB_DEFAULTS = { hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after" };
 const BILLING = ["included", "metered"], METERED_RANK = ["after", "with"];
 const isLevel = (v) => LEVELS.includes(v);
 

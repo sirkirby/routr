@@ -198,15 +198,16 @@ export function takeLock(file, nowMs = Date.now()) {
 const noRefresh = () => process.env.ROUTR_NO_REFRESH === "1"; // tests: nothing detached, nothing written
 const startRefresh = () => {
   try {
-    const args = standalone() ? ["usage", "cursor"] : [process.argv[1], "usage", "cursor"];
+    const args = [...(standalone() ? [] : [process.argv[1]]), "usage", "cursor", "--background"];
     const c = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true });
     c.on("error", () => {}); c.unref(); return true;
   } catch { return false; }
 };
 
 // `routr usage cursor`: read the screen now and keep the reading. A failed read keeps the last good one, whose age
-// then says how old it is. It releases the refresh lock whoever took it.
-export async function refreshCursor({ read = cursorUsage, file = CURSOR_SNAPSHOT, lock = `${file}.lock`, nowSec = now() } = {}) {
+// then says how old it is. Only the background reading (`--background`) holds the refresh lock, so only it releases
+// it: a reading asked for by hand must not free a lock a background reading still holds.
+export async function refreshCursor({ read = cursorUsage, file = CURSOR_SNAPSHOT, lock = `${file}.lock`, nowSec = now(), background = false } = {}) {
   try {
     const r = await read();
     const last = readJson(file);
@@ -215,7 +216,7 @@ export async function refreshCursor({ read = cursorUsage, file = CURSOR_SNAPSHOT
         : { ts: last?.ts ?? null, tried: nowSec, reading: last?.reading ?? null, error: r.error });
     } catch {}
     return r;
-  } finally { try { rmSync(lock, { force: true }); } catch {} }
+  } finally { if (background) try { rmSync(lock, { force: true }); } catch {} }
 }
 
 // `background: false` reads without starting a refresh: doctor, for a harness installed but not in the config.

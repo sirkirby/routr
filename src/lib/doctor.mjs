@@ -122,7 +122,7 @@ export async function inspect({ configPath, quiet } = {}) {
   const path = configPath ?? CONFIG_PATH;
   const { config, notes } = loadConfig(path);
   // `problems` are settings that are missing or wrong, each with its fix; `notes` are only for information.
-  const problems = [...notes], info = [];
+  const problems = existsSync(path) ? [...notes] : [], info = []; // no config at all is its own line and next step
   r.config = { path, exists: existsSync(path), subscriptions: Object.keys(config.subscriptions), billing: Object.fromEntries(Object.entries(config.subscriptions).filter(([, s]) => s.billing).map(([n, s]) => [n, s.billing])), problems, notes: info };
   // A metered pool's place in the ranking is the user's setting; say which applies where the usage is shown. A class
   // the user set by hand replaces the reader's note, which would otherwise ask for what is already set.

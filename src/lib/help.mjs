@@ -74,7 +74,7 @@ export const COMMANDS = {
   },
   update: {
     name: "update",
-    description: "replace this routr with the latest release (checksum verified) and reinstall the skill; never runs by itself",
+    description: "replace this routr with the latest release now (checksum verified) and reinstall the skill. routr also does this by itself in the background at most once a day; \"auto_update\": false in the config turns that off",
     flags: [
       { name: "--check", description: "only say whether a newer release exists", required: false },
       { name: "--force", description: "reinstall the latest release even if this one is current", required: false },
@@ -133,7 +133,7 @@ export const COMMANDS = {
   },
   check: {
     name: "check",
-    description: "a quick first read of a worker's report (pure); you remain the judge",
+    description: "a quick first read of a worker's report (writes nothing); you remain the judge",
     flags: [
       { name: "--brief", arg: "<file>", description: "path to task brief file", required: true },
       { name: "--report", arg: "<file>", description: "path to worker report file", required: true },

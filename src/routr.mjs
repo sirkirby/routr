@@ -1,18 +1,9 @@
 #!/usr/bin/env bun
-// routr: quick, calibrated advice for an agent that is about to hand out work.
-//   routr subagent "<brief>"   an agent is about to spawn a subagent → what the work demands
-//   routr dispatch "<brief>"   an orchestrator is about to launch a pane → the same, plus subscriptions ranked by usable headroom
-//   routr doctor [--json]      check the setup; changes nothing
-//   routr check --brief <f> --report <f>   a quick first read of a worker's report (pure); you remain the judge
-//   routr record ...           append what you chose and how it turned out to the ledger
-//   routr launch ...           start a worker, handle startup, and submit its task
-//   routr usage [cursor]       what routr sees of each subscription's usage, ranked; `cursor` reads Cursor's own /usage screen
-//   routr assess               what your ledger says about YOUR settings (reserves, preferences, what each subscription can take)
-//   routr update [--check]     replace this binary with the latest verified release and reinstall the skill (never automatic)
-//   routr share                prepare a file of outcomes (nothing identifying) to attach to a GitHub issue; sends nothing
-// The brief may come on stdin. Jev (TypeSafe System One) judges the WORK in ~300 ms; code does the arithmetic;
+// routr: quick, calibrated advice for an agent that is about to hand out work. The commands, their flags, and every
+// help text are in one table, src/lib/help.mjs: `routr --help` prints it.
+// Jev (TypeSafe System One) judges the WORK in ~300 ms; routr adds usage and ranks by arithmetic (docs/ranking.md);
 // the agent that asked makes the decision. Never names a model.
-// Advice is side-effect free and fail-open; launch reports failures as JSON and exits nonzero.
+// Advice writes nothing of the user's and fails open; launch reports failures as JSON and exits nonzero.
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { advise, headline } from "./lib/advise.mjs";

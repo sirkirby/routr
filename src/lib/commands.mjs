@@ -75,9 +75,9 @@ export async function usageCommand(words, config, given = {}, { read = readUsage
   const flags = words.filter((w) => w.startsWith("-")), configured = Object.keys(config.subscriptions);
   const [name, ...extra] = words.filter((w) => !w.startsWith("-"));
   // The output is JSON already, so --json (which doctor and setup take) is accepted and changes nothing.
-  const unknown = flags.filter((f) => f !== "--json");
+  const unknown = flags.filter((f) => f !== "--json" && f !== "--background"); // --background: routr's own refresh job
   if (extra.length || unknown.length) return { ok: false, error: `usage: routr usage [--config <path>] [--headroom <subscription>=<0..1>]... [<subscription>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}` };
-  if (name && sources[name]?.check) return sources[name].check();
+  if (name && sources[name]?.check) return sources[name].check({ background: flags.includes("--background") });
   if (name && !configured.includes(name)) return { ok: false, error: `${name} is not a configured subscription (configured: ${configured.join(", ") || "none, run routr setup"})` };
   try {
     const names = name ? [name] : configured;

@@ -36,7 +36,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - Every call reads each usage source's newest reading and shows its age. Claude's is the statusline's snapshot; Codex
   and Antigravity are read in the call (1 to 9 s, beside Jev). Cursor's own screen takes seconds more and starts
   Cursor, so its reading is a snapshot: when the last try is over 4 hours old, a call starts a detached
-  `routr usage cursor` to refresh it and carries on, as it does for the updater. How usage is ranked:
+  `routr usage cursor` to refresh it and carries on, as it does for the updater (unlike the updater, also from a
+  source checkout: it swaps nothing). How usage is ranked:
   `docs/ranking.md`. A reserve is never offered.
 - Standard mechanisms only: skills, prompts, the harness's own CLI flags. No dependence on a harness's private
   environment variables or config internals beyond what `references/harnesses.md` records as observed.

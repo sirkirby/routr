@@ -70,7 +70,8 @@ For each subscription that can take the work, routr works out a **usable** share
 
 A seat billed per use with no quota has no window to measure. By default it is listed after every subscription that
 still has room, so it takes the overflow: your subscriptions' included usage expires, billed usage does not.
-`metered_rank: "with"` ranks it alongside your subscriptions instead.
+`metered_rank: "with"` ranks it alongside your subscriptions instead, using your `assumed_headroom` as it stands: no
+reserve is taken off, because nothing expires there to keep back.
 
 ## The order
 

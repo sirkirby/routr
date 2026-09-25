@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { isAbsolute } from "node:path";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -384,11 +384,15 @@ const CURSOR_UI = "  Cursor Agent\n  Grok 4.6 High\n  /tmp";
 // A fake herdr for the Cursor read: a private session that starts on the third look, a shell that asks the dotenv
 // question once, then Cursor and its /usage panel. Every pane command must go to the private session, never a split.
 // Stale sessions: one left by a routr that is gone (pid 99) is removed; one whose routr is alive (pid 7) is not.
+const CU_TMP = mkdtempSync(join(tmpdir(), "routr-cu-"));
+afterAll(() => rmSync(CU_TMP, { recursive: true, force: true }));
 function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = true, failCreate = false, spawnFails = false, sessions = null } = {}) {
   let stage = "shell", dotenv = true, ticks = 0, extraEnter = false, up = 0;
-  const calls = [], started = [];
+  const calls = [], started = [], privateDirs = [];
+  const tmp = CU_TMP, cursorConfig = join(tmp, "real-cli-config.json");
+  writeFileSync(cursorConfig, '{"model":"mine"}');
   const deps = {
-    tmp: "/tmp", now: () => ticks, sleep: async (ms) => { ticks += ms; },
+    tmp, cursorConfig, now: () => ticks, sleep: async (ms) => { ticks += ms; },
     terminal: { pid: 4242, alive: (pid) => pid === 7 || pid === 8, age: (dir) => (dir === "/old" ? 11 * 60 * 1000 : 1000),
       start: (name, failed) => { started.push(name); if (spawnFails) failed(Object.assign(new Error("spawn herdr EACCES"), { code: "EACCES" })); } },
     run: async (all) => {
@@ -399,7 +403,7 @@ function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = 
       const a = all.slice(2);
       if (a[0] === "workspace" && a[1] === "list") return ++up < 3 ? herdrError("server_not_running") : herdrOK({ workspaces: [] });
       if (a[0] === "workspace" && a[1] === "create") {
-        expect(a).toEqual(["workspace", "create", "--cwd", "/tmp", "--no-focus"]);
+        expect(a).toEqual(["workspace", "create", "--cwd", tmp, "--no-focus"]);
         return failCreate ? herdrError("boom") : herdrOK({ root_pane: { pane_id: "w1:p1" } });
       }
       if (a[1] === "read") {
@@ -416,12 +420,20 @@ function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = 
         return herdrOK({});
       }
       if (a[1] === "send-text") { expect(a.slice(3)).toEqual(["/usage"]); return herdrOK({}); }
-      if (a[1] === "run") { expect(a.slice(2)).toEqual(["w1:p1", "cursor-agent --trust"]); stage = "starting"; return herdrOK({}); }
+      if (a[1] === "run") {
+        // Cursor runs on a private copy of its config, never the user's own (it writes to it as it runs).
+        const dir = a[3].match(/CURSOR_CONFIG_DIR=(\S+)/)?.[1];
+        expect(a[2]).toBe("w1:p1");
+        expect(a[3]).toContain("cursor-agent");
+        expect(a[3]).toContain("--trust");
+        expect(readFileSync(join(dir, "cli-config.json"), "utf8")).toBe('{"model":"mine"}');
+        privateDirs.push(dir); stage = "starting"; return herdrOK({});
+      }
       throw new Error(`Unexpected command ${all.join(" ")}`);
     },
   };
   const sessionCalls = () => calls.filter((a) => a[0] === "session").map((a) => a.slice(1, 3).join(" "));
-  return { calls, started, deps, sessionCalls };
+  return { calls, started, deps, sessionCalls, privateDirs, tmp };
 }
 
 test("cursorUsage reads /usage in a private herdr session, removes it, and removes one a dead routr left", async () => {
@@ -433,6 +445,8 @@ test("cursorUsage reads /usage in a private herdr session, removes it, and remov
   expect(f.calls.filter((a) => a[3] === "send-keys" && a[5] === "enter")).toHaveLength(1);
   expect(f.calls.some((a) => a.includes("split"))).toBe(false); // never the user's own session
   expect(f.sessionCalls()).toEqual(["list --json", "stop routr-scratch-99-abc123", "delete routr-scratch-99-abc123", `stop ${f.started[0]}`, `delete ${f.started[0]}`]);
+  expect(f.privateDirs).toHaveLength(1);
+  expect(existsSync(f.privateDirs[0])).toBe(false); // the private config is removed with the read
 });
 test("cursorUsage sends a second enter if the panel is slow, and still removes the session", async () => {
   const f = fakeCursorUsage({ delayPanel: true });
@@ -483,6 +497,7 @@ test("usage cursor without herdr prints JSON and exits 0", () => {
 });
 test("Cursor is a snapshot every call reads at once, refreshed in the background about once a session", async () => {
   const dir = mkdtempSync(join(tmpdir(), "routr-cursor-")), file = join(dir, "cursor-usage.json"), T = 1_800_000_000;
+  afterAll(() => rmSync(dir, { recursive: true, force: true })); // even when an expectation fails half way
   const started = [];
   const read = (nowSec) => readCursor({ file, nowSec, refresh: () => started.push(nowSec), off: false });
   // A new install: nothing yet. The call answers at once, assumed, and starts one background reading.
@@ -510,6 +525,13 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
   const kept = read(T + 20001);
   expect(kept.headroom).toBeCloseTo(0.34, 9);
   expect(kept.note).toContain("the last try failed: herdr is not installed");
+  // Only the background reading releases the lock: one asked for by hand must not free a lock it does not hold.
+  const byHand = join(dir, "byhand.json"), held = `${byHand}.lock`;
+  writeFileSync(held, "");
+  await refreshCursor({ file: byHand, nowSec: T, read: async () => screen });
+  expect(existsSync(held)).toBe(true);
+  await refreshCursor({ file: byHand, nowSec: T, read: async () => screen, background: true });
+  expect(existsSync(held)).toBe(false);
   // Never read, and the try failed: assumed, with how to read it by hand.
   const never = join(dir, "never.json");
   await refreshCursor({ file: never, nowSec: T, read: async () => ({ ok: false, error: "no herdr", read_yourself: CURSOR_BY_HAND }) });

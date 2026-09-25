@@ -5,7 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { CONFIG_PATH } from "./config.mjs";
+import { CONFIG_PATH, SUB_DEFAULTS } from "./config.mjs";
 import { LEVELS, MEANING } from "./questions.mjs";
 import { envOff, NOTICE, setTelemetry } from "./telemetry.mjs";
 import { HARNESSES, inspect, paint, render, starterConfig, SUGGESTED, which } from "./doctor.mjs";
@@ -154,7 +154,7 @@ export async function setup(args) {
   const fresh = found.filter((n) => !config?.subscriptions?.[n]);
   // hardest_work and reserve decide where work may go, so they are asked, never slipped in: for each subscription
   // being written, and for one already configured without them. Enter keeps the suggestion; a flag answers instead.
-  const suggest = (n) => SUGGESTED[n] ?? { hardest_work: "standard", reserve: 0.1 };
+  const suggest = (n) => SUGGESTED[n] ?? { hardest_work: SUB_DEFAULTS.hardest_work, reserve: SUB_DEFAULTS.reserve };
   const unset = Object.keys(config?.subscriptions ?? {}).filter((n) => config.subscriptions[n]?.hardest_work === undefined || config.subscriptions[n]?.reserve === undefined);
   const settings = {};
   let explained = false;

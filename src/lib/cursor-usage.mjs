@@ -1,9 +1,12 @@
 // Cursor has no local usage file: it shows usage only in its own /usage screen. This opens that screen in a throwaway
 // terminal (terminal.mjs) and reads Included N% used. routr keeps the reading (usage.mjs: refreshCursor).
 // The footer context meter (e.g. "Grok 4.6 High · 8.7%") is not usage and must never be parsed as it.
-import { tmpdir } from "node:os";
+import { randomBytes } from "node:crypto";
+import { chmodSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { runHerdr } from "./launch.mjs";
+import { runHerdr, SHELLS, shellFamily } from "./launch.mjs";
 import { openTerminal, readScreen, shellAlone, waitForShell } from "./terminal.mjs";
 
 const PCT = String.raw`(\d+(?:\.\d+)?)%\s+used\b`;
@@ -36,9 +39,11 @@ const cursorUiReady = (text) => {
 // What to do when routr cannot open the screen itself: said with every failed read.
 export const CURSOR_BY_HAND = "run `cursor-agent`, type /usage, read \"Included N% used\", and pass --headroom cursor=<1 - N/100>";
 
+// Cursor writes to its config folder as it runs (seen 2026-09-25: it rewrote cli-config.json and added a project
+// folder for the working directory), so it runs on a private copy, as `launch` does, removed when the read ends.
 export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(),
-  tmp = tmpdir(), timeout = 90000, terminal = {} } = {}) {
-  let t = null;
+  tmp = tmpdir(), timeout = 90000, terminal = {}, cursorConfig = join(homedir(), ".cursor", "cli-config.json") } = {}) {
+  let t = null, dir = null;
   try {
     const began = now();
     const remaining = () => {
@@ -48,8 +53,13 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
     };
     const pause = async () => sleep(Math.min(250, remaining()));
     t = await openTerminal({ run, cwd: tmp, remaining, sleep, ...terminal });
-    await waitForShell(t, { sleep, now, remaining });
-    await t.call(["pane", "run", t.pane, "cursor-agent --trust"]);
+    const shell = shellFamily(await waitForShell(t, { sleep, now, remaining }));
+    dir = join(tmp, `routr-cursor-${randomBytes(4).toString("hex")}`);
+    mkdirSync(dir, { mode: 0o700 });
+    try { copyFileSync(cursorConfig, join(dir, "cli-config.json")); chmodSync(join(dir, "cli-config.json"), 0o600); }
+    catch { throw new Error(`Cursor has no config at ${cursorConfig}: sign in with \`cursor-agent\` first`); }
+    if (SHELLS[shell].cursor) await t.call(["pane", "run", t.pane, SHELLS[shell].cursor(dir, "cursor-agent", ["--trust"])]);
+    else { await t.call(["pane", "run", t.pane, SHELLS[shell].cursorEnv(dir)]); await t.call(["pane", "run", t.pane, "cursor-agent --trust"]); }
     const ranAt = now();
     for (;;) {
       if (cursorUiReady(await readScreen(t))) break;
@@ -80,5 +90,6 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
     return { ok: false, error: String(e?.message ?? e).slice(0, 200), read_yourself: CURSOR_BY_HAND };
   } finally {
     await t?.close(); // stopping the session ends Cursor with it
+    if (dir) try { rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 }
