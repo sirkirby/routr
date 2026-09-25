@@ -34,7 +34,9 @@ export function rankSubscriptions(level, usage, c) {
       return { window: w.name, used_pct: Math.round(w.usedPct), resets_in_h: w.resetsAt ? Math.round(Math.max(0, w.resetsAt - nowSec) / 360) / 10 : null, left: r2(left), reserve_now: r2(s.reserve * ahead), usable: r2(Math.max(0, left - s.reserve * ahead)) };
     });
     const usable = windows.length ? Math.min(...windows.map((w) => w.usable)) : r2(Math.max(0, headroom - s.reserve));
-    ranked.push({ ...base, usable, headroom: r2(headroom), ...(windows.length ? { windows } : {}), usage: live ? (u.source === "given by caller" ? "given" : "live") : "assumed", age_sec: live ? u.ageSec : null });
+    ranked.push({ ...base, usable, headroom: r2(headroom), ...(windows.length ? { windows } : {}), usage: live ? (u.source === "given by caller" ? "given" : "live") : "assumed", age_sec: live ? u.ageSec : null,
+      // An assumed number says why, and how to get the real one when routr has a way (`routr usage cursor`).
+      ...(!live && u?.note ? { note: u.note } : {}), ...(!live && u?.read_with ? { read_with: u.read_with } : {}) });
   }
   // Pools with room, most first; then metered pools without a number; then pools at their reserve.
   const key = (r) => (r.usable == null ? -0.5 : r.usable > 0 ? r.usable : -1);

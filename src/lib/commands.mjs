@@ -1,4 +1,4 @@
-// The file-and-ledger commands: `check`, `record`, `assess`, `share`. Each takes its parsed flags and returns what to
+// The file-and-ledger commands, and `usage`: `check`, `record`, `assess`, `share`. Each takes its parsed flags and returns what to
 // print, so a test can drive it without a process. The pure parts stay where they were (check.mjs, ledger.mjs); this is
 // the I/O around them. None of them may fail an agent: an error becomes output, and the caller exits 0.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -9,6 +9,8 @@ import { append, assess, LEDGER_PATH, parseReportSubagents, read, toEntry } from
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
 import { CHECK_VERSION, checkQuestions } from "./questions.mjs";
+import { rankSubscriptions } from "./pick.mjs";
+import { readUsage, SOURCES } from "./usage.mjs";
 
 const short = (e, n = 160) => String(e?.message ?? e).slice(0, n);
 
@@ -65,4 +67,22 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null, { env
     ...(st.on ? [isStandalone() ? "They are sent once a day by routr's background job. To stop: routr telemetry off"
       : "This routr runs from a source checkout, where the daily job does not run: send with routr telemetry send. To stop: routr telemetry off"] : []),
   ].join("\n");
+}
+
+// `routr usage [<subscription>]`: what routr sees of each subscription's usage and how dispatch would rank it, with no
+// brief. Named, a harness that shows usage only in its own screen has it read there (the one form of this that acts:
+// it drives a throwaway terminal). Either way it fails open.
+export async function usageCommand(words, config, given = {}, { read = readUsage, sources = SOURCES } = {}) {
+  const [name, ...extra] = words, configured = Object.keys(config.subscriptions);
+  if (extra.length) return { ok: false, error: "usage: routr usage [<subscription>]" };
+  if (name && sources[name]?.interactive) return sources[name].interactive();
+  if (name && !configured.includes(name)) return { ok: false, error: `${name} is not a configured subscription (configured: ${configured.join(", ") || "none, run routr setup"})` };
+  try {
+    const names = name ? [name] : configured;
+    const subs = Object.fromEntries(names.map((n) => [n, config.subscriptions[n]]));
+    // Ranked for basic work, which every subscription takes: harder work leaves out one whose hardest_work is lower.
+    const r = rankSubscriptions("basic", await read(names, given), { ...config, subscriptions: subs });
+    return { ok: true, most_room: r.most_room, note: r.note, ranked: r.ranked.map((row) => ({ ...row, hardest_work: subs[row.subscription].hardest_work })),
+      how: "usable = what is left in the tightest window minus your reserve, and the reserve shrinks as the window nears its reset. dispatch ranks the same way and leaves out a subscription whose hardest_work is below the level of the work" };
+  } catch (e) { return { ok: false, error: short(e) }; }
 }

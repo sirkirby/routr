@@ -6,7 +6,7 @@
 //   routr check --brief <f> --report <f>   a quick first read of a worker's report (pure); you remain the judge
 //   routr record ...           append what you chose and how it turned out to the ledger
 //   routr launch ...           start a worker, handle startup, and submit its task
-//   routr usage cursor         read Cursor's /usage panel in a throwaway pane and print headroom JSON
+//   routr usage [cursor]       what routr sees of each subscription's usage, ranked; `cursor` reads Cursor's own /usage screen
 //   routr assess               what your ledger says about YOUR settings (reserves, preferences, what each subscription can take)
 //   routr update [--check]     replace this binary with the latest verified release and reinstall the skill (never automatic)
 //   routr share                prepare a file of outcomes (nothing identifying) to attach to a GitHub issue; sends nothing
@@ -16,13 +16,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { advise, headline } from "./lib/advise.mjs";
-import { assessCommand, checkCommand, recordCommand, shareCommand } from "./lib/commands.mjs";
+import { assessCommand, checkCommand, recordCommand, shareCommand, usageCommand } from "./lib/commands.mjs";
 import { loadConfig } from "./lib/config.mjs";
 import { setup } from "./lib/setup.mjs";
 import { uninstall } from "./lib/uninstall.mjs";
 import { doctor } from "./lib/doctor.mjs";
 import { ask } from "./lib/jev.mjs";
-import { cursorUsage } from "./lib/cursor-usage.mjs";
 import { launch } from "./lib/launch.mjs";
 import { rankSubscriptions } from "./lib/pick.mjs";
 import { questions, VERSION } from "./lib/questions.mjs";
@@ -67,11 +66,6 @@ if (argv[0] === "launch") {
   const result = await launch(argv.slice(1));
   console.log(JSON.stringify(result));
   process.exit(result.ok ? 0 : 1);
-}
-if (argv[0] === "usage") {
-  const result = await cursorUsage(argv.slice(1));
-  console.log(JSON.stringify(result));
-  process.exit(0); // never blocks an agent
 }
 if (argv[0] === "statusline" && !argv.includes("--help") && !argv.includes("-h")) { statusline(); process.exit(0); } // before anything else: it runs on every Claude turn
 if (argv.includes("--version")) { console.log(ROUTR_VERSION); process.exit(0); }
@@ -119,6 +113,7 @@ if (mode === "record") {
   const o = Object.fromEntries(["--advice", "--subscription", "--model", "--effort", "--level", "--verdict", "--check", "--seconds", "--attempts", "--note", "--ledger", "--report", "--project"].map((f) => [f.slice(2), flag(f)]));
   console.log(JSON.stringify(recordCommand(o, flag("--subagent", true)))); process.exit(0); // never blocks the agent
 }
+if (mode === "usage") { console.log(JSON.stringify(await usageCommand(rest, loadConfig(configPath).config, given), null, 1)); process.exit(0); } // never blocks an agent
 if (mode === "doctor") { await doctor({ json: rest.includes("--json"), configPath }); process.exit(0); }
 if (mode !== "subagent" && mode !== "dispatch") { console.error(formatUnknownUsage()); process.exit(2); }
 let brief = rest.join(" ").trim();

@@ -71,6 +71,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 |---|---|
 | `subagent "<brief>"` | An agent is about to spawn a subagent: facts, level, worth-a-worker. |
 | `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus subscriptions ranked by usable headroom. `--headroom cursor=0.9` passes usage the caller read itself. |
+| `usage [cursor]` | What routr sees of each subscription's usage, ranked the way `dispatch` ranks it, with no brief. `usage cursor` reads Cursor's own `/usage` screen in a private herdr session (inside herdr or not, nothing opens on screen) and prints the `--headroom` value. |
 | `launch` | Start one worker in its own git worktree, nested under the repo in herdr: flags, model syntax, shell prompts, trust dialog, readiness, prompt. `--dry-run` shows the plan. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
 | `record`, `assess` | Write one ledger line; read the ledger back as advice about your own settings. |
@@ -144,8 +145,8 @@ goes stale when models change.
 - `prefer`: your standing preference per kind of work, for example `"review": "strong"`.
 
 Usage is read live for Claude Code (through `routr statusline`, set up as Claude's statusline command), Codex, and
-Antigravity. Cursor has no local source; the orchestrator reads its `/usage` panel through a pane and passes the
-number in. Usage is re-read on every call and never cached. A seat with no quota reports no windows: measured on a
+Antigravity. Cursor shows usage only in its own `/usage` screen; `routr usage cursor` reads it in a private herdr
+session and the orchestrator passes the number in. Usage is re-read on every call and never cached. A seat with no quota reports no windows: measured on a
 ChatGPT Enterprise seat, which routr detects and calls `metered`; for Claude the class is your `billing` setting,
 because the statusline sends nothing to tell a seat with no quota from a plan routr has not seen. A metered seat gets
 no headroom number and is ranked by your setting rather than by a guess. A cap the vendor enforces is read as one

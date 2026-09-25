@@ -1,0 +1,4 @@
+#!/bin/sh
+# Tests call no harness: a test that reaches for the real herdr gets this refusal instead of the user's session.
+echo '{"error":{"code":"herdr_blocked_in_tests","message":"a test tried to run the real herdr; pass a fake run"}}' >&2
+exit 1

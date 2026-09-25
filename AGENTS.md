@@ -22,10 +22,11 @@ measured questions about a brief or a worker report; code adds live usage; the l
   `VERSION` / `CHECK_VERSION` in `src/lib/questions.mjs`. Public summary: `docs/evidence.md`.
 - Jev is pinned to an exact version (`JEV_MODEL`), and the pin moves to each new official release once the model gate
   shows no question does worse (CONTRIBUTING.md). Never ship an alias.
-- The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`) write nothing (`doctor --fix` is `setup`
+- The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`, `usage` with no name) write nothing (`doctor --fix` is `setup`
   under another name) and fail open: any error
   still prints usable output and exits 0. Only `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`,
-  `feedback`, `launch`, and `usage cursor` act (the last two drive herdr panes), and each says so.
+  `feedback`, `launch`, and `usage cursor` act, and each says so. `launch` drives panes in the user's herdr session;
+  `usage cursor` drives only a private headless herdr session it makes and removes, never the user's own.
 - Updates are automatic but never in the way: at most once a day a command may start a DETACHED updater and carry
   on. The command itself MUST NOT wait for it, make a network call for it, or change its own output because of it.
   The updater verifies the release checksum, swaps the binary in place, and reinstalls the skill; a run in progress
@@ -37,7 +38,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
   (`SKILL.md` and the guides) and no code.
 - The binary is self-contained: the guides under `skills/routr/` are embedded at build time, and it MUST NOT depend on a repository checkout at run time. It reads the user's harness state read-only
   (usage sources, settings, model lists) and writes only under `~/.config/routr`, `~/.cache/routr`,
-  `~/.local/share/routr`, the skill folders on `skill install`, and temporary files it removes. One exception:
+  `~/.local/share/routr`, the skill folders on `skill install`, and temporary files it removes (including the private
+  herdr session `usage cursor` makes). One exception:
   `setup` sets `statusLine` in `~/.claude/settings.json` when there is none, after a backup, and never replaces one; `uninstall` removes that
   entry again, and only that entry.
 - No runtime dependencies. `node:` built-ins only, so the same source runs under Bun and compiles for every target.
