@@ -99,11 +99,13 @@ export const COMMANDS = {
   },
   setup: {
     name: "setup",
-    description: "do what doctor says is missing: write the config for the harnesses found, set Claude's usage statusline, ask for the key. Asks questions at a terminal; an agent passes --yes",
+    description: "do what doctor says is missing: write your settings for the harnesses found, set Claude's usage statusline, ask for the key. Asks questions at a terminal; an agent passes --yes. Run it again with a flag to change one setting",
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
-      { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list; repeatable", required: false },
+      { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list; repeatable. Also changes it on an existing config", required: false },
       { name: "--metered", arg: "<subscription>=after|with", description: "where a seat billed per token with no quota goes in the ranking: after your subscriptions (default) or with them; repeatable", required: false },
+      { name: "--hardest", arg: "<subscription>=basic|standard|strong", description: "the hardest work you will send there; repeatable. Also changes it on an existing config", required: false },
+      { name: "--reserve", arg: "<subscription>=<share>", description: "the share you keep for your own work, never offered to a worker (0.25 or 25%); repeatable. Also changes it on an existing config", required: false },
       { name: "--no-statusline", description: "leave Claude Code's settings alone", required: false },
       { name: "--force", description: "rewrite an existing config (the old one is kept as config.json.bak)", required: false },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },

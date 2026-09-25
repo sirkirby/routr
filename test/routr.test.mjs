@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { isAbsolute } from "node:path";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { advise } from "../src/lib/advise.mjs";
 import { readReport } from "../src/lib/check.mjs";
 import { DEFAULTS, loadConfig } from "../src/lib/config.mjs";
@@ -157,7 +157,7 @@ test("a metered seat gets a position, not a number: after every pool with room, 
   expect(rankSubscriptions("strong", [live("claude", 0.6), { ...metered("codex"), windows: [win(40, 100, null)], headroom: 0.6, class: "capped" }], cfg()).ranked[0]).toMatchObject({ subscription: "codex", class: "capped", usable: 0.4 }); // a cap is a number: ranked by it; unknown length holds the full reserve
 });
 test("billing and metered_rank are validated like the shares", () => {
-  const odd = `${import.meta.dir}/.odd2.json`; writeFileSync(odd, JSON.stringify({ subscriptions: { x: { billing: "free", metered_rank: "first" }, y: { billing: "metered", metered_rank: "with" } } }));
+  const odd = `${import.meta.dir}/.odd2.json`; writeFileSync(odd, JSON.stringify({ subscriptions: { x: { hardest_work: "strong", reserve: 0.1, billing: "free", metered_rank: "first" }, y: { hardest_work: "strong", reserve: 0.1, billing: "metered", metered_rank: "with" } } }));
   const r = loadConfig(odd);
   expect(r.config.subscriptions.x).toMatchObject({ billing: null, metered_rank: "after" }); expect(r.config.subscriptions.y).toMatchObject({ billing: "metered", metered_rank: "with" }); expect(r.notes.length).toBe(2);
 });
@@ -165,7 +165,8 @@ test("broken or missing config falls back to defaults with a note", () => {
   const bad = `${import.meta.dir}/.bad.json`; writeFileSync(bad, "{ not json");
   for (const path of [bad, "/nonexistent/config.json"]) { const r = loadConfig(path); expect(r.config.fallback_level).toBe("standard"); expect(r.notes.length).toBe(1); }
   const odd = `${import.meta.dir}/.odd.json`; writeFileSync(odd, JSON.stringify({ prefer: { debug: "huge" }, subscriptions: { x: { reserve: 0.3 } } }));
-  const r = loadConfig(odd); expect(r.config.prefer.debug).toBeUndefined(); expect(r.config.subscriptions.x.hardest_work).toBe("strong"); expect(r.notes.length).toBe(1);
+  const r = loadConfig(odd); expect(r.config.prefer.debug).toBeUndefined(); expect(r.config.subscriptions.x.hardest_work).toBe("strong"); expect(r.notes.length).toBe(2);
+  expect(r.notes.find((n) => n.includes("hardest_work is not set"))).toContain("routr setup --hardest x=basic|standard|strong"); // the user's to set: the note says how
 });
 
 test("launch plans use each harness's measured permissions and model syntax", () => {
@@ -1700,6 +1701,45 @@ test("routr setup --yes writes the config once, keeps it afterwards, and starts 
   expect(Bun.spawnSync([process.execPath, script, "setup", "--yes", "--metered", "codex=with"], { env }).exitCode).toBe(1); // codex is not found on an empty PATH
 });
 
+test("hardest_work and reserve are asked with a suggestion, read from flags, and a bad answer asks again", async () => {
+  const { parseLevel, parseShare, parseHardest, parseReserve, askSettings } = await import("../src/lib/setup.mjs");
+  expect([parseLevel("Strong"), parseLevel("1"), parseLevel("3"), parseLevel("s"), parseLevel("")]).toEqual(["strong", "basic", "strong", null, null]);
+  expect([parseShare("0.25"), parseShare("25%"), parseShare(".1"), parseShare("0"), parseShare("1.5"), parseShare("-1"), parseShare("x"), parseShare("")]).toEqual([0.25, 0.25, 0.1, 0, null, null, null, null]);
+  expect(parseHardest(["--hardest", "cursor=strong", "--hardest", "agy=2"])).toEqual({ cursor: "strong", agy: "standard" });
+  expect(parseReserve(["--reserve", "claude=30%"])).toEqual({ claude: 0.3 });
+  for (const bad of [["--hardest", "cursor=huge"], ["--hardest", "gpt=strong"], ["--reserve", "claude=2"], ["--reserve", "claude"]])
+    expect(() => (bad[0] === "--hardest" ? parseHardest : parseReserve)(bad)).toThrow();
+  const answers = (list) => { const q = [...list]; return async () => q.shift(); };
+  const said = [];
+  expect(await askSettings("cursor", { hardest_work: "standard", reserve: 0.1 }, answers(["", ""]), (m) => said.push(m))).toEqual({ hardest_work: "standard", reserve: 0.1 });
+  expect(await askSettings("cursor", { hardest_work: "standard", reserve: 0.1 }, answers(["huge", "strong", "lots", "20%"]), (m) => said.push(m))).toEqual({ hardest_work: "strong", reserve: 0.2 });
+  expect(said).toHaveLength(2); // one nudge per bad answer
+});
+
+test("routr setup changes a setting on an existing config, fills one that is missing, and doctor flags it until then", () => {
+  const script = `${import.meta.dir}/../src/routr.mjs`;
+  const home = mkdtempSync(join(tmpdir(), "routr-settings-"));
+  const env = { ...process.env, HOME: home, USERPROFILE: home, PATH: home, TYPESAFE_API_KEY: "", ROUTR_NO_UPDATE: "1" };
+  const file = join(home, ".config/routr/config.json");
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify({ telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" }, claude: { reserve: 0.25 } } }));
+  const doctor = JSON.parse(Bun.spawnSync([process.execPath, script, "doctor", "--json"], { env }).stdout.toString());
+  expect(doctor.config.problems.join(" ")).toContain("subscriptions.claude.hardest_work is not set");
+  expect(doctor.next_steps.join(" ")).toContain("routr setup --hardest claude=");
+  const r = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--json", "--hardest", "cursor=strong", "--reserve", "cursor=20%"], { env });
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.did.join(" ")).toContain('cursor.hardest_work "standard" → "strong"');
+  expect(out.did.join(" ")).toContain('claude.hardest_work set to "strong"');
+  const saved = JSON.parse(readFileSync(file, "utf8"));
+  expect(saved.subscriptions.cursor).toEqual({ hardest_work: "strong", reserve: 0.2, default_model: "m" });
+  expect(saved.subscriptions.claude).toEqual({ reserve: 0.25, hardest_work: "strong" });
+  expect(JSON.parse(Bun.spawnSync([process.execPath, script, "doctor", "--json"], { env }).stdout.toString()).config.problems).toEqual([]);
+  // A subscription neither configured nor found cannot be set.
+  expect(Bun.spawnSync([process.execPath, script, "setup", "--yes", "--hardest", "agy=strong"], { env }).exitCode).toBe(1);
+  rmSync(home, { recursive: true, force: true });
+});
+
 test("setup searches a long model list instead of printing it", async () => {
   const { narrow, pickModel } = await import("../src/lib/setup.mjs");
   const list = Array.from({ length: 230 }, (_, i) => `vendor-model-${i}`).concat(["cursor-grok-4.6-high", "cursor-grok-4.7-high", "cursor-grok-4.7-low"]);
@@ -1778,7 +1818,7 @@ test("an update lock is taken over only when its owner is gone", async () => {
 
 test("a config share outside 0..1 is reported and replaced: a negative reserve must not create capacity", () => {
   const f = join(mkdtempSync(join(tmpdir(), "routr-cfg-")), "config.json");
-  writeFileSync(f, JSON.stringify({ sure_at: 7, subscriptions: { claude: { reserve: -1, assumed_headroom: 2 }, codex: { reserve: 0.2 } } }));
+  writeFileSync(f, JSON.stringify({ sure_at: 7, subscriptions: { claude: { hardest_work: "strong", reserve: -1, assumed_headroom: 2 }, codex: { hardest_work: "strong", reserve: 0.2 } } }));
   const { config, notes } = loadConfig(f);
   expect(config.sure_at).toBe(DEFAULTS.sure_at);
   expect(config.subscriptions.claude.reserve).toBe(0);

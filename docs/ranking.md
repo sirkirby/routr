@@ -22,12 +22,18 @@ nowhere. Every reading shows how old it is. If routr cannot read a subscription,
 
 ## Your settings
 
-You decide where work may go. `routr setup` writes your settings the first time, in `~/.config/routr/config.json`,
-with a starting value for each subscription it finds, and adds any new one when you run it again. After that they are
-yours: edit the file, or ask your agent to change a setting for you. A change applies from the next call, and
-`routr usage` shows the values in effect.
+You decide where work may go, with two settings per subscription. `routr setup` asks you for both, for each
+subscription it finds, and explains them as it goes; press Enter to take the suggestion. It saves them in
+`~/.config/routr/config.json`.
 
-Per subscription:
+To change one later, run setup again with just that setting, for example:
+
+    routr setup --hardest cursor=strong
+    routr setup --reserve claude=30%
+
+An agent setting routr up for you asks you the same questions and passes your answers the same way. A change applies
+from the next call, `routr usage` shows the values in effect, and `routr doctor` tells you if a setting is missing or
+invalid, with the command that fixes it.
 
 - **`hardest_work`**: the most demanding level of work you are willing to send there.
 
@@ -37,11 +43,12 @@ Per subscription:
   | `standard` | The worker has to find something out or choose an approach |
   | `strong` | A wrong or shallow result would be expensive and hard to notice |
 
-  The starting value setup writes is a guess, not a measurement. Raise it for a subscription you trust with your
+  The suggestion setup offers is a starting point, not a measurement. Raise it for a subscription you trust with your
   hardest work; lower it for one you want to keep for your own.
-- **`reserve`**: the share you keep for your own work. routr never offers it to a worker.
-- **`assumed_headroom`**: the share routr assumes is left when it cannot read a subscription's usage.
-- **`metered_rank`**: for a seat billed per use with no quota, where it goes in the order (see below).
+- **`reserve`**: the share you keep for your own work, for example 25%. routr never offers it to a worker.
+
+Two more you rarely need, set in the file: `assumed_headroom`, the share routr assumes is left when it cannot read a
+subscription's usage, and `metered_rank`, where a seat billed per use with no quota goes in the order (see below).
 
 Your default model on each subscription is shown beside it in the ranking but does not change the order.
 

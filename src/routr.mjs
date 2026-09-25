@@ -24,7 +24,7 @@ import { doctor } from "./lib/doctor.mjs";
 import { ask } from "./lib/jev.mjs";
 import { launch } from "./lib/launch.mjs";
 import { rankSubscriptions } from "./lib/pick.mjs";
-import { questions, VERSION } from "./lib/questions.mjs";
+import { MEANING, questions, VERSION } from "./lib/questions.mjs";
 import { readUsage } from "./lib/usage.mjs";
 import { setKey } from "./lib/key.mjs";
 import { installSkill } from "./lib/skill-install.mjs";
@@ -34,11 +34,6 @@ import { sendFeedback, sendRows, telemetryCommand, telemetryStatus } from "./lib
 import { ROUTR_VERSION } from "./lib/version.mjs";
 import { COMMANDS, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "./lib/help.mjs";
 
-const MEANING = {
-  basic: "rote or well-specified work; a small, fast model is enough",
-  standard: "the agent must find something out or choose an approach; a mid-range model, not the top one",
-  strong: "a wrong or shallow result would be expensive and hard to notice; a strong model",
-};
 const RULE = {
   subagent: "You decide how much intelligence and reasoning this work needs, from these facts and what you know of the codebase; pick the model and effort that match, never a model stronger than yourself. Do not default to your own model. If you settle on a different level than advised, say so in your report: ROUTR: <advised> → <chosen> because <reason>.",
   dispatch: "You decide how much intelligence and reasoning this work needs, from these facts and what you know of the codebase. Launch on a subscription with usable headroom, starting from the user's default model there and moving up or down to match. If you go against this advice, record why.",
