@@ -17,7 +17,7 @@ export const DEFAULTS = {
 // `billing` overrides what the usage reader can tell (`included` or `metered`); it is for seats whose harness reports
 // nothing, such as Claude usage-based Enterprise. `metered_rank` places a metered pool: `after` every pool with a quota
 // that still has room (the default: included usage expires, billed usage does not), or `with` the rest by assumed_headroom.
-const SUB_DEFAULTS = { hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after" };
+export const SUB_DEFAULTS = { hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after" };
 const BILLING = ["included", "metered"], METERED_RANK = ["after", "with"];
 const isLevel = (v) => LEVELS.includes(v);
 
@@ -38,11 +38,16 @@ export function loadConfig(path = CONFIG_PATH) {
   const config = { fallback_level: isLevel(raw.fallback_level) ? raw.fallback_level : DEFAULTS.fallback_level, sure_at: num("sure_at"), risk_above: num("risk_above"), auto_update: raw.auto_update !== false, telemetry: raw.telemetry === true, prefer: {}, subscriptions: {} };
   for (const [k, v] of Object.entries(raw.prefer ?? DEFAULTS.prefer)) isLevel(v) ? (config.prefer[k] = v) : notes.push(`prefer.${k}: "${v}" is not a level, ignored`);
   for (const [name, s] of Object.entries(raw.subscriptions ?? {})) {
-    if (s?.hardest_work !== undefined && !isLevel(s.hardest_work)) notes.push(`subscriptions.${name}.hardest_work: "${s.hardest_work}" is not a level, using strong`);
+    // The two settings that decide where work may go are the user's: a missing or invalid one is a problem to fix, and
+    // the note says how. Until then the router still answers, on the stand-in named.
+    const fix = (k, what) => `routr setup --${k === "hardest_work" ? "hardest" : "reserve"} ${name}=${what}`;
+    if (s?.hardest_work === undefined) notes.push(`subscriptions.${name}.hardest_work is not set, so strong is used: ${fix("hardest_work", "basic|standard|strong")}`);
+    else if (!isLevel(s.hardest_work)) notes.push(`subscriptions.${name}.hardest_work: "${s.hardest_work}" is not a level, so strong is used: ${fix("hardest_work", "basic|standard|strong")}`);
+    if (s?.reserve === undefined) notes.push(`subscriptions.${name}.reserve is not set, so none is kept and everything is offered: ${fix("reserve", "<share, e.g. 0.25>")}`);
     const oneOf = (k, allowed, fallback) => { const v = s?.[k]; if (v === undefined || v === null) return fallback; if (allowed.includes(v)) return v; notes.push(`subscriptions.${name}.${k}: ${JSON.stringify(v)} is not one of ${allowed.join(", ")}, using ${fallback ?? "the harness's own reading"}`); return fallback; };
     config.subscriptions[name] = {
       hardest_work: isLevel(s?.hardest_work) ? s.hardest_work : SUB_DEFAULTS.hardest_work,
-      reserve: share(s?.reserve, SUB_DEFAULTS.reserve, `subscriptions.${name}.reserve`),
+      reserve: share(s?.reserve, SUB_DEFAULTS.reserve, `subscriptions.${name}.reserve (${fix("reserve", "<share>")})`),
       assumed_headroom: share(s?.assumed_headroom, SUB_DEFAULTS.assumed_headroom, `subscriptions.${name}.assumed_headroom`),
       // The user's everyday model for this harness: where the orchestrator starts before moving up or down. Passed through, never interpreted.
       default_model: typeof s?.default_model === "string" ? s.default_model : null,

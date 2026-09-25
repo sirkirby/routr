@@ -22,16 +22,23 @@ measured questions about a brief or a worker report; code adds live usage; the l
   `VERSION` / `CHECK_VERSION` in `src/lib/questions.mjs`. Public summary: `docs/evidence.md`.
 - Jev is pinned to an exact version (`JEV_MODEL`), and the pin moves to each new official release once the model gate
   shows no question does worse (CONTRIBUTING.md). Never ship an alias.
-- The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`, `usage` with no name) write nothing (`doctor --fix` is `setup`
-  under another name) and fail open: any error
+- The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`, `usage` with no name) write nothing of the
+  user's (`doctor --fix` is `setup` under another name); the only thing they may start is one of routr's detached
+  background jobs below (the updater, Cursor's usage refresh), which write only under `~/.cache/routr`. They fail open: any error
   still prints usable output and exits 0. Only `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`,
   `feedback`, `launch`, and `usage cursor` act, and each says so. `launch` drives panes in the user's herdr session;
-  `usage cursor` drives only a private headless herdr session it makes and removes, never the user's own.
+  `usage cursor` drives only a private headless herdr session it makes and removes, never the user's own, and keeps
+  the reading in `~/.cache/routr`.
 - Updates are automatic but never in the way: at most once a day a command may start a DETACHED updater and carry
   on. The command itself MUST NOT wait for it, make a network call for it, or change its own output because of it.
   The updater verifies the release checksum, swaps the binary in place, and reinstalls the skill; a run in progress
   keeps its binary. `"auto_update": false` turns it off. Never from a source checkout, never from `statusline`.
-- Usage is re-read on every call and never cached. A reserve is never offered.
+- Every call reads each usage source's newest reading and shows its age. Claude's is the statusline's snapshot; Codex
+  and Antigravity are read in the call (1 to 9 s, beside Jev). Cursor's own screen takes seconds more and starts
+  Cursor, so its reading is a snapshot: when the last try is over 4 hours old, a call starts a detached
+  `routr usage cursor` to refresh it and carries on, as it does for the updater (unlike the updater, also from a
+  source checkout: it swaps nothing). How usage is ranked:
+  `docs/ranking.md`. A reserve is never offered.
 - Standard mechanisms only: skills, prompts, the harness's own CLI flags. No dependence on a harness's private
   environment variables or config internals beyond what `references/harnesses.md` records as observed.
 - The code lives in `src/` and compiles into the binary. `skills/routr/` holds exactly what is installed for agents

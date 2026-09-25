@@ -70,21 +70,20 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null, { env
 }
 
 // `routr usage [<subscription>]`: what routr sees of each subscription's usage and how dispatch would rank it, with no
-// brief. Named, a harness that shows usage only in its own screen has it read there (the one form of this that acts:
-// it drives a throwaway terminal). Either way it fails open.
+// brief. Named, a harness with a `check` (Cursor) prints its raw reading instead, for a person to verify. Fails open.
 export async function usageCommand(words, config, given = {}, { read = readUsage, sources = SOURCES } = {}) {
   const flags = words.filter((w) => w.startsWith("-")), configured = Object.keys(config.subscriptions);
   const [name, ...extra] = words.filter((w) => !w.startsWith("-"));
   // The output is JSON already, so --json (which doctor and setup take) is accepted and changes nothing.
-  const unknown = flags.filter((f) => f !== "--json");
+  const unknown = flags.filter((f) => f !== "--json" && f !== "--background"); // --background: routr's own refresh job
   if (extra.length || unknown.length) return { ok: false, error: `usage: routr usage [--config <path>] [--headroom <subscription>=<0..1>]... [<subscription>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}` };
-  if (name && sources[name]?.interactive) return sources[name].interactive();
+  if (name && sources[name]?.check) return sources[name].check({ background: flags.includes("--background") });
   if (name && !configured.includes(name)) return { ok: false, error: `${name} is not a configured subscription (configured: ${configured.join(", ") || "none, run routr setup"})` };
   try {
     const names = name ? [name] : configured;
     const subs = Object.fromEntries(names.map((n) => [n, config.subscriptions[n]]));
     // Ranked for basic work, which every subscription takes: harder work leaves out one whose hardest_work is lower.
-    const r = rankSubscriptions("basic", await read(names, given), { ...config, subscriptions: subs });
+    const r = rankSubscriptions("basic", await read(names, given, { sources }), { ...config, subscriptions: subs });
     return { ok: true, most_room: r.most_room, note: r.note, ranked: r.ranked.map((row) => ({ ...row, hardest_work: subs[row.subscription].hardest_work })),
       how: "usable = what is left in the tightest window minus your reserve, and the reserve shrinks as the window nears its reset. dispatch ranks the same way and leaves out a subscription whose hardest_work is below the level of the work" };
   } catch (e) { return { ok: false, error: short(e) }; }

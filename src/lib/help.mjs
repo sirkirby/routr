@@ -20,13 +20,13 @@ export const COMMANDS = {
     ],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
-      { name: "--headroom", arg: "<subscription>=<0..1>", description: "caller-reported usage headroom", required: false, repeatable: true },
+      { name: "--headroom", arg: "<subscription>=<0..1>", description: "override a reading with usage you read yourself", required: false, repeatable: true },
     ],
   },
   usage: {
     name: "usage",
-    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing. `routr usage cursor` reads Cursor's own /usage screen in a private herdr session (nothing opens on screen, inside herdr or not) and prints the --headroom value",
-    args: [{ name: "[<subscription>]", description: "only this one; for cursor, open its /usage screen and read it (needs herdr installed)", required: false }],
+    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing of yours. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session (routr otherwise does this in the background about once per working session)",
+    args: [{ name: "[<subscription>]", description: "only this one; for cursor, read its /usage screen now (needs herdr installed)", required: false }],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--headroom", arg: "<subscription>=<0..1>", description: "usage you read yourself, as for dispatch", required: false, repeatable: true },
@@ -74,7 +74,7 @@ export const COMMANDS = {
   },
   update: {
     name: "update",
-    description: "replace this routr with the latest release (checksum verified) and reinstall the skill; never runs by itself",
+    description: "replace this routr with the latest release now (checksum verified) and reinstall the skill. routr also does this by itself in the background at most once a day; \"auto_update\": false in the config turns that off",
     flags: [
       { name: "--check", description: "only say whether a newer release exists", required: false },
       { name: "--force", description: "reinstall the latest release even if this one is current", required: false },
@@ -99,11 +99,13 @@ export const COMMANDS = {
   },
   setup: {
     name: "setup",
-    description: "do what doctor says is missing: write the config for the harnesses found, set Claude's usage statusline, ask for the key. Asks questions at a terminal; an agent passes --yes",
+    description: "do what doctor says is missing: write your settings for the harnesses found, set Claude's usage statusline, ask for the key. Asks questions at a terminal; an agent passes --yes. Run it again with a flag to change one setting",
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
-      { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list; repeatable", required: false },
+      { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list; repeatable. Also changes it on an existing config", required: false },
       { name: "--metered", arg: "<subscription>=after|with", description: "where a seat billed per token with no quota goes in the ranking: after your subscriptions (default) or with them; repeatable", required: false },
+      { name: "--hardest", arg: "<subscription>=basic|standard|strong", description: "the hardest work you will send there; repeatable. Also changes it on an existing config", required: false },
+      { name: "--reserve", arg: "<subscription>=<share>", description: "the share you keep for your own work, never offered to a worker (0.25 or 25%); repeatable. Also changes it on an existing config", required: false },
       { name: "--no-statusline", description: "leave Claude Code's settings alone", required: false },
       { name: "--force", description: "rewrite an existing config (the old one is kept as config.json.bak)", required: false },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
@@ -131,7 +133,7 @@ export const COMMANDS = {
   },
   check: {
     name: "check",
-    description: "a quick first read of a worker's report (pure); you remain the judge",
+    description: "a quick first read of a worker's report (writes nothing); you remain the judge",
     flags: [
       { name: "--brief", arg: "<file>", description: "path to task brief file", required: true },
       { name: "--report", arg: "<file>", description: "path to worker report file", required: true },

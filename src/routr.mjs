@@ -1,18 +1,9 @@
 #!/usr/bin/env bun
-// routr: quick, calibrated advice for an agent that is about to hand out work.
-//   routr subagent "<brief>"   an agent is about to spawn a subagent → what the work demands
-//   routr dispatch "<brief>"   an orchestrator is about to launch a pane → the same, plus subscriptions ranked by usable headroom
-//   routr doctor [--json]      check the setup; changes nothing
-//   routr check --brief <f> --report <f>   a quick first read of a worker's report (pure); you remain the judge
-//   routr record ...           append what you chose and how it turned out to the ledger
-//   routr launch ...           start a worker, handle startup, and submit its task
-//   routr usage [cursor]       what routr sees of each subscription's usage, ranked; `cursor` reads Cursor's own /usage screen
-//   routr assess               what your ledger says about YOUR settings (reserves, preferences, what each subscription can take)
-//   routr update [--check]     replace this binary with the latest verified release and reinstall the skill (never automatic)
-//   routr share                prepare a file of outcomes (nothing identifying) to attach to a GitHub issue; sends nothing
-// The brief may come on stdin. Jev (TypeSafe System One) judges the WORK in ~300 ms; code does the arithmetic;
+// routr: quick, calibrated advice for an agent that is about to hand out work. The commands, their flags, and every
+// help text are in one table, src/lib/help.mjs: `routr --help` prints it.
+// Jev (TypeSafe System One) judges the WORK in ~300 ms; routr adds usage and ranks by arithmetic (docs/ranking.md);
 // the agent that asked makes the decision. Never names a model.
-// Advice is side-effect free and fail-open; launch reports failures as JSON and exits nonzero.
+// Advice writes nothing of the user's and fails open; launch reports failures as JSON and exits nonzero.
 import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { advise, headline } from "./lib/advise.mjs";
@@ -24,7 +15,7 @@ import { doctor } from "./lib/doctor.mjs";
 import { ask } from "./lib/jev.mjs";
 import { launch } from "./lib/launch.mjs";
 import { rankSubscriptions } from "./lib/pick.mjs";
-import { questions, VERSION } from "./lib/questions.mjs";
+import { MEANING, questions, VERSION } from "./lib/questions.mjs";
 import { readUsage } from "./lib/usage.mjs";
 import { setKey } from "./lib/key.mjs";
 import { installSkill } from "./lib/skill-install.mjs";
@@ -34,11 +25,6 @@ import { sendFeedback, sendRows, telemetryCommand, telemetryStatus } from "./lib
 import { ROUTR_VERSION } from "./lib/version.mjs";
 import { COMMANDS, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "./lib/help.mjs";
 
-const MEANING = {
-  basic: "rote or well-specified work; a small, fast model is enough",
-  standard: "the agent must find something out or choose an approach; a mid-range model, not the top one",
-  strong: "a wrong or shallow result would be expensive and hard to notice; a strong model",
-};
 const RULE = {
   subagent: "You decide how much intelligence and reasoning this work needs, from these facts and what you know of the codebase; pick the model and effort that match, never a model stronger than yourself. Do not default to your own model. If you settle on a different level than advised, say so in your report: ROUTR: <advised> → <chosen> because <reason>.",
   dispatch: "You decide how much intelligence and reasoning this work needs, from these facts and what you know of the codebase. Launch on a subscription with usable headroom, starting from the user's default model there and moving up or down to match. If you go against this advice, record why.",
@@ -99,7 +85,7 @@ const flag = (name, repeatable = false) => {
   return i >= 0 ? argv.splice(i, 2)[1] : undefined;
 };
 const configPath = flag("--config");
-// --headroom cursor=0.97 : usage the caller read itself (repeatable), for harnesses with no local source
+// --headroom cursor=0.97 : usage the caller read itself (repeatable); it overrides any reading
 const given = {}; for (let h; (h = flag("--headroom")); ) { const [k, v] = h.split("="); if (k && !Number.isNaN(+v)) given[k] = +v; }
 const [mode, ...rest] = argv;
 // At most once a day this starts a detached background updater; it never delays or changes the command itself.
@@ -123,7 +109,7 @@ if (!brief) { console.error("routr: empty brief"); process.exit(2); }
 const { config, notes: configNotes } = loadConfig(configPath);
 const out = { id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: createHash("sha256").update(brief).digest("hex").slice(0, 12), brief_chars: brief.length };
 let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };
-// Usage is re-read on every call, never cached (P9), and read while Jev answers so it adds no waiting.
+// Each source's newest reading, read while Jev answers; a slow source (Cursor's screen) is a snapshot refreshed in the background.
 const usageP = mode === "dispatch" ? readUsage(Object.keys(config.subscriptions), given).catch(() => []) : null;
 try {
   const r = await ask({ task: { brief } }, questions, undefined, 10000);

@@ -49,29 +49,38 @@ risks being committed. Without a key routr still answers, but only with the fall
 
 ## 3. Config
 
-Do not write the file by hand. Settle the default model for each subscription with the user (doctor prints each
-harness's live list), then run:
+Do not write the file by hand. For each subscription, settle three things with the user: their everyday model there
+(doctor prints each harness's live list), the hardest work they will send it (`basic`, `standard`, or `strong`; say
+what each means, below), and the share they keep for their own work. Offer the suggestion setup prints for the last
+two; the user can take it. Then run:
 
-    routr setup --yes --model claude=<id> --model codex=<id> [--metered codex=after|with] ...
+    routr setup --yes --model claude=<id> --hardest cursor=standard --reserve claude=25% [--metered codex=after|with] ...
 
-It writes `~/.config/routr/config.json` for the harnesses found, with the suggested reserves, and sets the Claude
-statusline (step 4; `--no-statusline` leaves it). A subscription with no `--model` gets no default, and the lead
-picks from the live list. An existing config is kept: setup only adds harnesses found since, and `--force` rewrites
-it (the old file is kept as `config.json.bak`). A subscription that reads as metered when first written (billed per
-token, no quota: a ChatGPT Enterprise seat) gets `metered_rank` written out, `after` unless `--metered <name>=with`
-is passed or the person answers the question at the terminal. Then go through the values with the user and edit the
-file for anything they want different; every one is their preference, and none describes a model.
+At a terminal, `routr setup` asks the person the same questions itself, with the suggestion as the default.
+
+It writes `~/.config/routr/config.json` for the harnesses found and sets the Claude statusline (step 4;
+`--no-statusline` leaves it). A subscription with no `--model` gets no default, and the orchestrator picks from the
+live list; one with no `--hardest` or `--reserve` gets the suggestion. An existing config is kept: setup adds
+harnesses found since, fills a missing `hardest_work` or `reserve`, and applies any flag given, leaving everything
+else alone; `--force` rewrites it (the old file is kept as `config.json.bak`). **To change a setting later**, run
+setup with just that flag, for example `routr setup --yes --hardest cursor=strong`. A subscription that reads as
+metered when first written (billed per token, no quota: a ChatGPT Enterprise seat) gets `metered_rank` written out,
+`after` unless `--metered <name>=with` is passed or the person answers the question at the terminal. Every value is
+the user's preference, and none describes a model. `routr doctor` flags a setting that is missing or invalid, with
+the command that fixes it.
 
 - `subscriptions`: one entry per subscription the orchestrator may launch on, named `claude`, `codex`, `cursor`, `agy`.
   - `reserve`: the share of that subscription routr must never offer (0.25 keeps a quarter for the user's own work).
-  - `hardest_work`: the hardest work the user would hand it: `basic`, `standard`, or `strong`. For Cursor this means
+  - `hardest_work`: the hardest work the user would hand it. `basic`: rote or well-specified work, a small fast model
+    is enough. `standard`: the worker must find something out or choose an approach. `strong`: a wrong or shallow
+    result would be expensive and hard to notice. For Cursor this means
     Cursor's own models; other vendors' models inside Cursor draw on a different pool and are not routed to.
   - `default_model` and `default_effort`: the user's everyday model on that harness, chosen from the live list doctor
     prints (routr keeps no model list of its own). The orchestrator starts from it and moves up or down with the
     work. Doctor warns when the harness no longer offers it; that is the only time it needs attention.
   - `assumed_headroom`: used only when nothing better is known. Claude, Codex, and Antigravity are read live; Cursor's
-    shows only in its own `/usage` screen: `routr usage cursor` reads it and prints the value the orchestrator passes
-    in. The advice marks the rest `assumed`. `routr usage` shows what routr sees of each one.
+    shows only in its own `/usage` screen, which routr reads in the background about once per working session (the
+    first time during setup). The advice marks the rest `assumed`. `routr usage` shows what routr sees of each one.
   - `billing`: `included` or `metered`, only when the harness cannot show which it is. A Codex Enterprise seat on
     flexible pricing is detected (measured: no windows, unlimited credits). Claude is never detected: a plan with no
     quota (usage-based Enterprise, an API key) sends the statusline no windows, and so may a plan routr has not seen
@@ -100,7 +109,7 @@ usage there and saves each snapshot to `~/.cache/routr/claude-usage.json`, which
 in `~/.claude/settings.json`. Use the full path (`~/.local/bin/routr`, written out), because Claude's PATH may not
 include it. If the user already has a statusline, keep theirs and have it call `routr statusline` for the snapshot,
 or ask them which they prefer. The first snapshot appears after the next Claude Code turn. Codex and Antigravity are
-read from the harness directly and need nothing; Cursor's usage is read by `routr usage cursor` from its `/usage` screen, in a private herdr session.
+read from the harness directly and need nothing; Cursor's usage is read from its `/usage` screen in a private herdr session, in the background: herdr must be installed.
 
 ## 5. herdr (only for orchestration)
 

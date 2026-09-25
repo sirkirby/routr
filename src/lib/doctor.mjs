@@ -68,6 +68,7 @@ export function nextSteps(r) {
   if (!r.key.works) steps.push(r.key.found ? `The TypeSafe key was found but the test call failed (${r.key.error}). Create a new one at https://console.typesafe.ai/keys and run: routr key set`
     : "Add your TypeSafe API key. Create one at https://console.typesafe.ai/keys, then run: routr key set");
   if (!r.config.exists) steps.push("Create your config (your defaults for each subscription found): routr setup");
+  else if (r.config.problems?.length) steps.push(`Fix your settings: ${r.config.problems.join("; ")}`);
   else if (Object.entries(r.harnesses).some(([n, h]) => h.installed && !r.config.subscriptions.includes(n))) steps.push(`Add the harnesses found since the config was written (${Object.entries(r.harnesses).filter(([n, h]) => h.installed && !r.config.subscriptions.includes(n)).map(([n]) => n).join(", ")}): routr setup`);
   if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push("Install and log in to at least one harness: Claude Code, Codex, Cursor (cursor-agent), or Antigravity (agy)");
   if (r.claude_usage_statusline === STATUSLINE_MISSING) steps.push("Let routr read Claude Code's usage (sets Claude's statusline command): routr setup");
@@ -99,7 +100,8 @@ export async function inspect({ configPath, quiet } = {}) {
   // The release lookup is one short, non-fatal call. Only doctor and `routr update` make it; the advice commands never call home.
   const [latest, usage, key, ...models] = await Promise.all([
     process.env.ROUTR_NO_UPDATE ? null : latestVersion(3000).catch(() => null),
-    step("usage", readUsage(found)),
+    // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
+    step("usage", readUsage(found, {}, { background: Object.keys(loadConfig(configPath ?? CONFIG_PATH).config.subscriptions ?? {}) })),
     step("the TypeSafe key", keyCheck().then((t) => ({ t }), (e) => ({ e }))),
     ...found.map((n) => step(`${n}'s models`, Promise.resolve(MODEL_LISTS[n]?.()).then((l) => l || null, () => null))),
   ]);
@@ -119,7 +121,9 @@ export async function inspect({ configPath, quiet } = {}) {
   }).filter(Boolean);
   const path = configPath ?? CONFIG_PATH;
   const { config, notes } = loadConfig(path);
-  r.config = { path, exists: existsSync(path), subscriptions: Object.keys(config.subscriptions), billing: Object.fromEntries(Object.entries(config.subscriptions).filter(([, s]) => s.billing).map(([n, s]) => [n, s.billing])), notes };
+  // `problems` are settings that are missing or wrong, each with its fix; `notes` are only for information.
+  const problems = existsSync(path) ? [...notes] : [], info = []; // no config at all is its own line and next step
+  r.config = { path, exists: existsSync(path), subscriptions: Object.keys(config.subscriptions), billing: Object.fromEntries(Object.entries(config.subscriptions).filter(([, s]) => s.billing).map(([n, s]) => [n, s.billing])), problems, notes: info };
   // A metered pool's place in the ranking is the user's setting; say which applies where the usage is shown. A class
   // the user set by hand replaces the reader's note, which would otherwise ask for what is already set.
   for (const [n, sub] of Object.entries(config.subscriptions)) {
@@ -130,8 +134,8 @@ export async function inspect({ configPath, quiet } = {}) {
   }
   // The one moment a default needs the user's attention: the harness no longer offers it.
   for (const [n, sub] of Object.entries(config.subscriptions)) {
-    if (!sub.default_model) notes.push(`subscriptions.${n}: no default_model set; the orchestrator will pick from the harness's live list`);
-    else if (lists[n]?.length && !lists[n].includes(sub.default_model)) notes.push(`subscriptions.${n}.default_model "${sub.default_model}" is not in the harness's current model list: choose a new default`);
+    if (!sub.default_model) info.push(`subscriptions.${n}: no default_model set; the orchestrator will pick from the harness's live list`);
+    else if (lists[n]?.length && !lists[n].includes(sub.default_model)) problems.push(`subscriptions.${n}.default_model "${sub.default_model}" is not in the harness's current model list: routr setup --model ${n}=<id>`);
   }
   // Configured but no snapshot yet is not a failure: Claude writes the first snapshot on its next turn.
   let wired = false;
@@ -160,7 +164,7 @@ export function render(r) {
   const out = [];
   const mark = (state) => (state === true || state === "ok" ? paint(32, "ok ") : state === "need" ? paint("1;31", "!! ") : paint(33, "-- "));
   const line = (state, text) => out.push(mark(state) + (state === "need" ? paint(31, text) : text));
-  const { notes } = r.config;
+  const { notes, problems = [] } = r.config;
   line(!r.update_available, `${r.runtime}${r.update_available ? ` · ${r.update_available} is available: run \`routr update\`` : ""}`);
   line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: orchestration needs it (https://herdr.dev). Sizing subagents works without it"}`);
   if (r.herdr.path) line(r.herdr.skill, `herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
@@ -170,7 +174,7 @@ export function render(r) {
   const any = Object.values(r.harnesses).some((h) => h.installed);
   for (const [n, h] of Object.entries(r.harnesses)) line(h.installed ? "ok" : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${h.installed ? `\`${h.command}\` found · usage ${h.usage}` : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it` : `\`${h.command}\` not found`}${h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${h.models.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${h.command} models\` for the rest)` : ""}` : ""}`);
   line(r.key.works ? "ok" : "need", `TypeSafe key ${r.key.works ? `works (${r.key.model}${jevModel() !== JEV_MODEL ? `, asked as ${jevModel()} by ROUTR_JEV_MODEL` : ""}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
-  line(r.config.exists ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && notes.length ? `\n   ${notes.join("\n   ")}` : ""}`);
+  line(r.config.exists && !problems.length ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && [...problems, ...notes].length ? `\n   ${[...problems, ...notes].join("\n   ")}` : ""}`);
   line(r.claude_usage_statusline !== STATUSLINE_MISSING, `Claude usage statusline: ${r.claude_usage_statusline}`);
   const au = r.auto_update;
   line("ok", `automatic updates ${au.on ? `on · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off}`}`);

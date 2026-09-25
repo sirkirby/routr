@@ -5,7 +5,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { CONFIG_PATH } from "./config.mjs";
+import { CONFIG_PATH, SUB_DEFAULTS } from "./config.mjs";
+import { LEVELS, MEANING } from "./questions.mjs";
 import { envOff, NOTICE, setTelemetry } from "./telemetry.mjs";
 import { HARNESSES, inspect, paint, render, starterConfig, SUGGESTED, which } from "./doctor.mjs";
 import { setKey } from "./key.mjs";
@@ -36,6 +37,33 @@ export function parseMetered(args) {
     ranks[name] = rank;
   }
   return ranks;
+}
+
+// `--hardest cursor=strong`: the most demanding work the user sends to a subscription.
+// `--reserve claude=0.25` (or 25%): the share of it kept for the user's own work, never offered to a worker.
+// Both decide the ranking, so both are the user's to set: asked at a terminal, or passed as flags, at setup or any time.
+export const parseLevel = (a) => { const t = String(a ?? "").trim().toLowerCase(); return LEVELS.find((l, i) => t === l || t === String(i + 1)) ?? null; };
+export const parseShare = (a) => { const t = String(a ?? "").trim(), n = t.endsWith("%") ? Number(t.slice(0, -1)) / 100 : Number(t); return t && Number.isFinite(n) && n >= 0 && n <= 1 ? Math.round(n * 100) / 100 : null; };
+function parsePairs(args, flag, parse, what) {
+  const out = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== flag) continue;
+    const [name, v] = (args[i + 1] ?? "").split("=");
+    const value = parse(v);
+    if (!HARNESSES[name] || value == null) throw new Error(`${flag} takes <subscription>=${what}, with one of: ${Object.keys(HARNESSES).join(", ")}`);
+    out[name] = value;
+  }
+  return out;
+}
+export const parseHardest = (args) => parsePairs(args, "--hardest", parseLevel, "basic|standard|strong");
+export const parseReserve = (args) => parsePairs(args, "--reserve", parseShare, "<0..1, or a percent>");
+
+// A person's answer to the two questions; Enter keeps the suggestion, and an answer that is not one asks again.
+export async function askSettings(n, suggested, question, say) {
+  let hardest = null, reserve = null;
+  while (!hardest) { const a = (await question(`  The hardest work you will send to ${n}: basic, standard, or strong [Enter = ${suggested.hardest_work}] `)).trim(); hardest = a ? parseLevel(a) : suggested.hardest_work; if (!hardest) say("  one of: basic, standard, strong"); }
+  while (reserve == null) { const a = (await question(`  The share of ${n} to keep for your own work, never given to a worker [Enter = ${Math.round(suggested.reserve * 100)}%] `)).trim(); reserve = a ? parseShare(a) : suggested.reserve; if (reserve == null) say("  a share from 0 to 1, or a percent: 0.25 or 25%"); }
+  return { hardest_work: hardest, reserve };
 }
 
 // Where each newly written pool that reads as metered goes in the ranking. `ask(name, note)` is the terminal question
@@ -95,8 +123,8 @@ export async function setup(args) {
   const interactive = Boolean(process.stdin.isTTY) && !args.includes("--yes");
   const say = (s) => { if (!args.includes("--json")) console.log(s); };
   const did = [], skipped = [];
-  let models, ranks;
-  try { models = parseModels(args); ranks = parseMetered(args); } catch (e) { return { ok: false, error: e.message }; }
+  let models, ranks, hardest, reserves;
+  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); } catch (e) { return { ok: false, error: e.message }; }
 
   say("Looking at what is installed…");
   const r = await inspect({ configPath: path, quiet: args.includes("--json") });
@@ -110,6 +138,8 @@ export async function setup(args) {
     const list = r.harnesses[n].models;
     if (list?.length && !list.includes(id)) return { ok: false, error: `--model ${n}=${id}: not in the harness's current list (${list.join(", ")})` };
   }
+  for (const [flagName, set] of [["--hardest", hardest], ["--reserve", reserves]])
+    for (const n of Object.keys(set)) if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `${flagName} ${n}=…: ${n} is not configured and \`${HARNESSES[n]}\` was not found on this machine` };
   const rl = interactive ? createInterface({ input: process.stdin, output: process.stdout }) : null;
   const yes = async (q) => !rl || !/^n/i.test((await rl.question(`${q} [Y/n] `)).trim());
 
@@ -122,12 +152,27 @@ export async function setup(args) {
   let config = null;
   if (r.config.exists && !args.includes("--force")) { try { config = JSON.parse(readFileSync(path, "utf8")); } catch { return { ok: false, error: `${path} is not valid JSON. Fix it, or rewrite it with: routr setup --force` }; } }
   const fresh = found.filter((n) => !config?.subscriptions?.[n]);
-  if (rl) for (const n of fresh) {
-    const list = r.harnesses[n].models;
-    if (models[n] || !list?.length) continue;
-    say(`\n${paint(1, n)}: your everyday model there. Your agents start from it and go higher or lower as the work needs.`);
-    models[n] = await pickModel(list, (q) => rl.question(q), say);
+  // hardest_work and reserve decide where work may go, so they are asked, never slipped in: for each subscription
+  // being written, and for one already configured without them. Enter keeps the suggestion; a flag answers instead.
+  const suggest = (n) => SUGGESTED[n] ?? { hardest_work: SUB_DEFAULTS.hardest_work, reserve: SUB_DEFAULTS.reserve };
+  const unset = Object.keys(config?.subscriptions ?? {}).filter((n) => config.subscriptions[n]?.hardest_work === undefined || config.subscriptions[n]?.reserve === undefined);
+  const settings = {};
+  let explained = false;
+  for (const n of [...fresh, ...unset]) {
+    const list = r.harnesses[n]?.models;
+    if (rl && fresh.includes(n) && !models[n] && list?.length) {
+      say(`\n${paint(1, n)}: your everyday model there. Your agents start from it and go higher or lower as the work needs.`);
+      models[n] = await pickModel(list, (q) => rl.question(q), say);
+    }
+    if (rl && !(hardest[n] && reserves[n] != null)) {
+      if (!explained) { say(`\nTwo settings decide where routr sends work. The hardest work you will send to a subscription:\n${Object.entries(MEANING).map(([l, m]) => `  ${l.padEnd(8)} ${m}`).join("\n")}\nand the share of it you keep for your own work, which routr never offers to a worker.`); explained = true; }
+      if (!fresh.includes(n) || !list?.length) say(`\n${paint(1, n)}:`);
+      settings[n] = await askSettings(n, suggest(n), (q) => rl.question(q), say);
+    } else settings[n] = { hardest_work: suggest(n).hardest_work, reserve: suggest(n).reserve };
   }
+  // A flag always wins, for a new subscription or one already configured: this is also how a setting is changed later.
+  for (const [n, v] of Object.entries(hardest)) settings[n] = { ...settings[n], hardest_work: v };
+  for (const [n, v] of Object.entries(reserves)) settings[n] = { ...settings[n], reserve: v };
   // A seat that reads as metered (measured on a ChatGPT Enterprise seat: no windows, unlimited credits) has no headroom
   // number, so its place in the ranking is the user's call. Asked once, when the pool is first written; `after` is the
   // default because included usage expires and billed usage does not.
@@ -135,11 +180,23 @@ export async function setup(args) {
   let kept; try { kept = JSON.parse(readFileSync(path, "utf8")).telemetry; } catch {} // --force keeps the person's telemetry choice
   if (!config) config = { ...starterConfig(found, models, ranks), ...(typeof kept === "boolean" ? { telemetry: kept } : {}) };
   else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models, ranks).subscriptions[n] };
-  if (!r.config.exists || args.includes("--force") || fresh.length) {
+  // Then every choice onto its subscription, new or old; what changed on an old one is said.
+  const changed = [];
+  const put = (n, k, v) => {
+    const sub = config.subscriptions[n];
+    if (!sub || v === undefined || sub[k] === v) return;
+    if (!fresh.includes(n) && r.config.exists && !args.includes("--force")) changed.push(`${n}.${k} ${sub[k] === undefined ? "set to" : `${JSON.stringify(sub[k])} →`} ${JSON.stringify(v)}`);
+    sub[k] = v;
+  };
+  for (const [n, s] of Object.entries(settings)) { put(n, "hardest_work", s.hardest_work); put(n, "reserve", s.reserve); }
+  for (const [n, id] of Object.entries(models)) put(n, "default_model", id);
+  for (const [n, rank] of Object.entries(ranks)) put(n, "metered_rank", rank);
+  if (changed.length) did.push(`changed ${changed.join(", ")}`);
+  if (!r.config.exists || args.includes("--force") || fresh.length || changed.length) {
     mkdirSync(dirname(path), { recursive: true });
     if (r.config.exists) copyFileSync(path, `${path}.bak`);
     writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
-    did.push(`wrote ${path}${fresh.length ? ` with ${fresh.join(", ")}` : " (no harness found yet: run `routr setup` again after installing one)"}`);
+    did.push(`wrote ${path}${fresh.length ? ` with ${fresh.join(", ")}` : changed.length ? "" : " (no harness found yet: run `routr setup` again after installing one)"}`);
   } else skipped.push(`config ${path} already covers every harness found: kept as it is`);
 
   // 2. Claude Code's usage, which it reports only to its statusline.
@@ -173,6 +230,6 @@ export async function setup(args) {
   const result = { ok: true, did, skipped, config: path, next_steps: after.next_steps };
   if (args.includes("--json")) return result;
   say(`\n${did.map((d) => `${paint(32, "done")} ${d}`).concat(skipped.map((s) => `${paint(33, "note")} ${s}`)).join("\n")}\n\n${render(after)}`);
-  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour config is plain JSON at ${path}. \`reserve\` is the share of each subscription routr never offers to workers (${found.map((n) => `${n} ${SUGGESTED[n].reserve}`).join(", ")}), and \`hardest_work\` is the hardest work you would hand it.${fresh.some((n) => ranks[n]) ? ` \`metered_rank\` places a seat billed per token (${fresh.filter((n) => ranks[n]).map((n) => `${n} ${ranks[n]}`).join(", ")}).` : ""} Change anything there at any time.`);
+  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour settings are plain JSON at ${path}: ${Object.entries(config.subscriptions).map(([n, s]) => `${n} ${s.hardest_work}, reserve ${Math.round(s.reserve * 100)}%`).join("; ")}. Change one any time: routr setup --hardest <name>=basic|standard|strong --reserve <name>=<share>, or edit the file.`);
   return result;
 }

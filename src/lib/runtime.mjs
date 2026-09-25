@@ -9,3 +9,5 @@ export const standalone = () => !/\.m?js$/.test(process.argv[1] ?? "");
 export const CACHE_DIR = () => join(homedir(), ".cache/routr");
 // Written by `routr statusline` on each Claude Code turn, read by the usage reader.
 export const CLAUDE_SNAPSHOT = join(homedir(), ".cache/routr/claude-usage.json");
+// Written by `routr usage cursor` (by hand, or in the background when the reading is old), read by the usage reader.
+export const CURSOR_SNAPSHOT = join(homedir(), ".cache/routr/cursor-usage.json");

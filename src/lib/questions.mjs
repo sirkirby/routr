@@ -5,6 +5,13 @@
 // All questions go in ONE request; Jev answers them in parallel and none can see another's answer. Code combines them.
 export const VERSION = "r4"; // r4 asks the same questions as r3; an unsure level now reads as the lower of the two most likely
 export const LEVELS = ["basic", "standard", "strong"];
+// What each level means, in one place: dispatch prints it with its advice, and setup shows it when asking how hard the
+// work a subscription takes may be.
+export const MEANING = {
+  basic: "rote or well-specified work; a small, fast model is enough",
+  standard: "the agent must find something out or choose an approach; a mid-range model, not the top one",
+  strong: "a wrong or shallow result would be expensive and hard to notice; a strong model",
+};
 // The Jev version every result in docs/evidence.md was measured on. Answers, and the thresholds tuned on them (0.2/0.8,
 // sure_at, the lower-of-two rule), belong to a version, so the pin moves only after the maintainers' model gate has run
 // the saved items on the new version beside this one (CONTRIBUTING.md, "Moving to a new Jev version"). ROUTR_JEV_MODEL

@@ -76,7 +76,7 @@ export async function shellAlone(t) {
   return (info.foreground_processes ?? []).every((p) => p.pid === info.shell_pid);
 }
 
-// Wait until the terminal's shell sits at a settled prompt, answering a dotenv plugin's question with "n" (a login shell
+// Wait until the terminal's shell sits at a settled prompt, and return the shell's process name, answering a dotenv plugin's question with "n" (a login shell
 // in a folder holding a .env asks before sourcing it). Anything else that asks is an error: routr never guesses an answer.
 export async function waitForShell(t, { sleep, now, remaining }) {
   let answers = 0, answered = false, answeredAt = null, previous = null;
@@ -87,6 +87,7 @@ export async function waitForShell(t, { sleep, now, remaining }) {
     const processes = info.foreground_processes ?? [];
     const shell = processes.find((p) => p.pid === info.shell_pid);
     if (processes.some((p) => p.pid !== info.shell_pid) || !shell) { previous = null; await pause(); continue; }
+    const name = shell.name;
     const state = shellPrompt(text);
     if (state === "dotenv") {
       if (!answered) {
@@ -98,7 +99,7 @@ export async function waitForShell(t, { sleep, now, remaining }) {
     } else {
       answered = false;
       if (state === "question") throw new Error("Unrecognized shell question");
-      if (state === "ready" && promptSettled(text, previous)) return;
+      if (state === "ready" && promptSettled(text, previous)) return name;
     }
     previous = text;
     await pause();

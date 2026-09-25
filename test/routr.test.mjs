@@ -1,13 +1,13 @@
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { isAbsolute } from "node:path";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { advise } from "../src/lib/advise.mjs";
 import { readReport } from "../src/lib/check.mjs";
 import { DEFAULTS, loadConfig } from "../src/lib/config.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
-import { claudeSnapshot, codexSnapshot, monthMinutes, readUsage } from "../src/lib/usage.mjs";
+import { claudeSnapshot, codexSnapshot, monthMinutes, readCursor, readUsage, refreshCursor, takeLock } from "../src/lib/usage.mjs";
 import { usageCommand } from "../src/lib/commands.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
 import { plan } from "../src/lib/harness.mjs";
@@ -22,6 +22,7 @@ const withoutHerdr = (path) => process.platform !== "win32" ? path
   : path.split(delimiter).filter((d) => !["herdr.exe", "herdr.cmd", "herdr.bat"].some((f) => existsSync(join(d, f)))).join(delimiter);
 process.env.PATH = join(import.meta.dir, "fixtures", "no-herdr") + delimiter + withoutHerdr(process.env.PATH ?? "");
 delete process.env.HERDR_ENV;
+process.env.ROUTR_NO_REFRESH = "1"; // no detached Cursor refresh, and nothing written to the real cache
 
 const cfg = (over = {}) => ({ ...DEFAULTS, subscriptions: {
   claude: { hardest_work: "strong", reserve: 0.25, assumed_headroom: 0.5 },
@@ -156,7 +157,7 @@ test("a metered seat gets a position, not a number: after every pool with room, 
   expect(rankSubscriptions("strong", [live("claude", 0.6), { ...metered("codex"), windows: [win(40, 100, null)], headroom: 0.6, class: "capped" }], cfg()).ranked[0]).toMatchObject({ subscription: "codex", class: "capped", usable: 0.4 }); // a cap is a number: ranked by it; unknown length holds the full reserve
 });
 test("billing and metered_rank are validated like the shares", () => {
-  const odd = `${import.meta.dir}/.odd2.json`; writeFileSync(odd, JSON.stringify({ subscriptions: { x: { billing: "free", metered_rank: "first" }, y: { billing: "metered", metered_rank: "with" } } }));
+  const odd = `${import.meta.dir}/.odd2.json`; writeFileSync(odd, JSON.stringify({ subscriptions: { x: { hardest_work: "strong", reserve: 0.1, billing: "free", metered_rank: "first" }, y: { hardest_work: "strong", reserve: 0.1, billing: "metered", metered_rank: "with" } } }));
   const r = loadConfig(odd);
   expect(r.config.subscriptions.x).toMatchObject({ billing: null, metered_rank: "after" }); expect(r.config.subscriptions.y).toMatchObject({ billing: "metered", metered_rank: "with" }); expect(r.notes.length).toBe(2);
 });
@@ -164,7 +165,8 @@ test("broken or missing config falls back to defaults with a note", () => {
   const bad = `${import.meta.dir}/.bad.json`; writeFileSync(bad, "{ not json");
   for (const path of [bad, "/nonexistent/config.json"]) { const r = loadConfig(path); expect(r.config.fallback_level).toBe("standard"); expect(r.notes.length).toBe(1); }
   const odd = `${import.meta.dir}/.odd.json`; writeFileSync(odd, JSON.stringify({ prefer: { debug: "huge" }, subscriptions: { x: { reserve: 0.3 } } }));
-  const r = loadConfig(odd); expect(r.config.prefer.debug).toBeUndefined(); expect(r.config.subscriptions.x.hardest_work).toBe("strong"); expect(r.notes.length).toBe(1);
+  const r = loadConfig(odd); expect(r.config.prefer.debug).toBeUndefined(); expect(r.config.subscriptions.x.hardest_work).toBe("strong"); expect(r.notes.length).toBe(2);
+  expect(r.notes.find((n) => n.includes("hardest_work is not set"))).toContain("routr setup --hardest x=basic|standard|strong"); // the user's to set: the note says how
 });
 
 test("launch plans use each harness's measured permissions and model syntax", () => {
@@ -382,11 +384,15 @@ const CURSOR_UI = "  Cursor Agent\n  Grok 4.6 High\n  /tmp";
 // A fake herdr for the Cursor read: a private session that starts on the third look, a shell that asks the dotenv
 // question once, then Cursor and its /usage panel. Every pane command must go to the private session, never a split.
 // Stale sessions: one left by a routr that is gone (pid 99) is removed; one whose routr is alive (pid 7) is not.
+const CU_TMP = mkdtempSync(join(tmpdir(), "routr-cu-"));
+afterAll(() => rmSync(CU_TMP, { recursive: true, force: true }));
 function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = true, failCreate = false, spawnFails = false, sessions = null } = {}) {
   let stage = "shell", dotenv = true, ticks = 0, extraEnter = false, up = 0;
-  const calls = [], started = [];
+  const calls = [], started = [], privateDirs = [];
+  const tmp = CU_TMP, cursorConfig = join(tmp, "real-cli-config.json");
+  writeFileSync(cursorConfig, '{"model":"mine"}');
   const deps = {
-    tmp: "/tmp", now: () => ticks, sleep: async (ms) => { ticks += ms; },
+    tmp, cursorConfig, now: () => ticks, sleep: async (ms) => { ticks += ms; },
     terminal: { pid: 4242, alive: (pid) => pid === 7 || pid === 8, age: (dir) => (dir === "/old" ? 11 * 60 * 1000 : 1000),
       start: (name, failed) => { started.push(name); if (spawnFails) failed(Object.assign(new Error("spawn herdr EACCES"), { code: "EACCES" })); } },
     run: async (all) => {
@@ -397,7 +403,7 @@ function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = 
       const a = all.slice(2);
       if (a[0] === "workspace" && a[1] === "list") return ++up < 3 ? herdrError("server_not_running") : herdrOK({ workspaces: [] });
       if (a[0] === "workspace" && a[1] === "create") {
-        expect(a).toEqual(["workspace", "create", "--cwd", "/tmp", "--no-focus"]);
+        expect(a).toEqual(["workspace", "create", "--cwd", tmp, "--no-focus"]);
         return failCreate ? herdrError("boom") : herdrOK({ root_pane: { pane_id: "w1:p1" } });
       }
       if (a[1] === "read") {
@@ -414,23 +420,33 @@ function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = 
         return herdrOK({});
       }
       if (a[1] === "send-text") { expect(a.slice(3)).toEqual(["/usage"]); return herdrOK({}); }
-      if (a[1] === "run") { expect(a.slice(2)).toEqual(["w1:p1", "cursor-agent --trust"]); stage = "starting"; return herdrOK({}); }
+      if (a[1] === "run") {
+        // Cursor runs on a private copy of its config, never the user's own (it writes to it as it runs).
+        const dir = a[3].match(/CURSOR_CONFIG_DIR=([^'"\s]+)/)?.[1]; // quoted on Windows (a drive letter and backslashes)
+        expect(a[2]).toBe("w1:p1");
+        expect(a[3]).toContain("cursor-agent");
+        expect(a[3]).toContain("--trust");
+        expect(readFileSync(join(dir, "cli-config.json"), "utf8")).toBe('{"model":"mine"}');
+        privateDirs.push(dir); stage = "starting"; return herdrOK({});
+      }
       throw new Error(`Unexpected command ${all.join(" ")}`);
     },
   };
   const sessionCalls = () => calls.filter((a) => a[0] === "session").map((a) => a.slice(1, 3).join(" "));
-  return { calls, started, deps, sessionCalls };
+  return { calls, started, deps, sessionCalls, privateDirs, tmp };
 }
 
 test("cursorUsage reads /usage in a private herdr session, removes it, and removes one a dead routr left", async () => {
   const f = fakeCursorUsage();
   const r = await cursorUsage(f.deps);
-  expect(r).toEqual({ ok: true, subscription: "cursor", plan: "Pro", included_used_pct: 3, auto_used_pct: 3, api_used_pct: 1, headroom: 0.97, pass_as: "--headroom cursor=0.97" });
+  expect(r).toEqual({ ok: true, subscription: "cursor", plan: "Pro", included_used_pct: 3, auto_used_pct: 3, api_used_pct: 1, headroom: 0.97 });
   expect(f.started).toHaveLength(1);
   expect(f.started[0]).toMatch(/^routr-scratch-4242-[0-9a-f]{6}$/);
   expect(f.calls.filter((a) => a[3] === "send-keys" && a[5] === "enter")).toHaveLength(1);
   expect(f.calls.some((a) => a.includes("split"))).toBe(false); // never the user's own session
   expect(f.sessionCalls()).toEqual(["list --json", "stop routr-scratch-99-abc123", "delete routr-scratch-99-abc123", `stop ${f.started[0]}`, `delete ${f.started[0]}`]);
+  expect(f.privateDirs).toHaveLength(1);
+  expect(existsSync(f.privateDirs[0])).toBe(false); // the private config is removed with the read
 });
 test("cursorUsage sends a second enter if the panel is slow, and still removes the session", async () => {
   const f = fakeCursorUsage({ delayPanel: true });
@@ -469,22 +485,92 @@ test("cursorUsage without herdr fails open, says how to read it by hand, and sta
 });
 test("usage cursor without herdr prints JSON and exits 0", () => {
   const script = `${import.meta.dir}/../src/routr.mjs`;
-  const cleanEnv = { ...process.env, PATH: "", ROUTR_NO_UPDATE: "1" };
+  const home = mkdtempSync(join(tmpdir(), "routr-home-")); // it keeps what it read: never in the real cache
+  const cleanEnv = { ...process.env, PATH: "", HOME: home, USERPROFILE: home, ROUTR_NO_UPDATE: "1" };
   delete cleanEnv.HERDR_ENV;
   const res = Bun.spawnSync([process.execPath, script, "usage", "cursor"], { env: cleanEnv });
+  expect(JSON.parse(readFileSync(join(home, ".cache/routr/cursor-usage.json"), "utf8")).error).toContain("herdr");
+  rmSync(home, { recursive: true, force: true });
   expect(res.exitCode).toBe(0);
   const out = JSON.parse(res.stdout.toString());
   expect(out).toMatchObject({ ok: false, read_yourself: CURSOR_BY_HAND });
 });
-test("one table says how each subscription's usage is read, and every surface repeats it", async () => {
-  const [cursor] = await readUsage(["cursor"]);
-  expect(cursor).toMatchObject({ pool: "cursor", headroom: null, read_with: "routr usage cursor" });
-  expect(cursor.note).toContain("routr usage cursor");
-  const c = cfg();
-  const row = rankSubscriptions("basic", [cursor], c).ranked.find((x) => x.subscription === "cursor");
-  expect(row).toMatchObject({ usage: "assumed", read_with: "routr usage cursor" });
-  expect(row.note).toContain("its own screen");
-  expect(rankSubscriptions("basic", [{ pool: "cursor", source: "given by caller", ageSec: 0, windows: [], headroom: 0.9 }], c).ranked[0].read_with).toBeUndefined();
+test("Cursor is a snapshot every call reads at once, refreshed in the background about once a session", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "routr-cursor-")), file = join(dir, "cursor-usage.json"), T = 1_800_000_000;
+  afterAll(() => rmSync(dir, { recursive: true, force: true })); // even when an expectation fails half way
+  const started = [];
+  const read = (nowSec) => readCursor({ file, nowSec, refresh: () => started.push(nowSec), off: false });
+  // A new install: nothing yet. The call answers at once, assumed, and starts one background reading.
+  const first = read(T);
+  expect(first).toMatchObject({ pool: "cursor", headroom: null });
+  expect(first.note).toContain("being taken in the background");
+  expect(read(T + 1).headroom).toBeNull();
+  expect(started).toEqual([T]); // a burst of calls starts one reading, not one each
+  // The background reading lands (what `routr usage cursor` does).
+  const screen = { ok: true, plan: "Team", included_used_pct: 66, auto_used_pct: 61, api_used_pct: 93, headroom: 0.34 };
+  expect(await refreshCursor({ file, nowSec: T + 5, read: async () => screen })).toEqual(screen);
+  const got = read(T + 600);
+  expect(got.headroom).toBeCloseTo(0.34, 9);
+  expect(got).toMatchObject({ ageSec: 595, class: "included", note: "Included 66% used (Auto 61%, API 93%)" });
+  const row = rankSubscriptions("standard", [got], cfg()).ranked.find((x) => x.subscription === "cursor");
+  expect(row).toMatchObject({ usage: "live", usable: 0.24, age_sec: 595 });
+  expect(started).toEqual([T]);
+  // Hours later (a new session): the old reading still answers, and a fresh one is started behind it.
+  const later = read(T + 5 + 4 * 3600 + 1);
+  expect(later.headroom).toBeCloseTo(0.34, 9);
+  expect(later.note).toContain("a fresh reading is being taken");
+  expect(started).toHaveLength(2);
+  // A failed reading keeps the last good one and says why.
+  await refreshCursor({ file, nowSec: T + 20000, read: async () => ({ ok: false, error: "herdr is not installed", read_yourself: CURSOR_BY_HAND }) });
+  const kept = read(T + 20001);
+  expect(kept.headroom).toBeCloseTo(0.34, 9);
+  expect(kept.note).toContain("the last try failed: herdr is not installed");
+  // Only the background reading releases the lock: one asked for by hand must not free a lock it does not hold.
+  const byHand = join(dir, "byhand.json"), held = `${byHand}.lock`;
+  writeFileSync(held, "");
+  await refreshCursor({ file: byHand, nowSec: T, read: async () => screen });
+  expect(existsSync(held)).toBe(true);
+  await refreshCursor({ file: byHand, nowSec: T, read: async () => screen, background: true });
+  expect(existsSync(held)).toBe(false);
+  // Never read, and the try failed: assumed, with how to read it by hand.
+  const never = join(dir, "never.json");
+  await refreshCursor({ file: never, nowSec: T, read: async () => ({ ok: false, error: "no herdr", read_yourself: CURSOR_BY_HAND }) });
+  expect(readCursor({ file: never, nowSec: T + 1, refresh: () => {}, off: false }).note).toContain(CURSOR_BY_HAND);
+  // Turned off (tests), a call neither starts a reading nor writes the stamp.
+  const quiet = join(dir, "quiet.json");
+  expect(readCursor({ file: quiet, nowSec: T, refresh: () => started.push("quiet") }).headroom).toBeNull();
+  expect(existsSync(quiet)).toBe(false);
+  // A day without a good reading: too old to use (the plan may have reset), so assumed, and it says so.
+  const stale = readCursor({ file, nowSec: T + 5 + 25 * 3600, refresh: () => true, off: false });
+  expect(stale.headroom).toBeNull();
+  expect(stale.note).toContain("25 h old, too old to use");
+  // Doctor, for a harness installed but not configured: reads, never starts a refresh.
+  const before = started.length;
+  readCursor({ file, nowSec: T + 40 * 3600, refresh: () => started.push("doctor"), background: false, off: false });
+  expect(started).toHaveLength(before);
+  // A refresh that cannot start gives the lock back and the reading still answers.
+  const lockFile = join(dir, "spawnfail.json.lock");
+  writeFileSync(join(dir, "spawnfail.json"), JSON.stringify({ ts: T, tried: T, reading: { included_used_pct: 50 } }));
+  expect(readCursor({ file: join(dir, "spawnfail.json"), nowSec: T + 5 * 3600, refresh: () => false, off: false }).headroom).toBe(0.5);
+  expect(existsSync(lockFile)).toBe(false);
+  // An unwritable cache starts nothing: no lock, no refresh, not one per call.
+  const blocked = join(dir, "not-a-dir");
+  writeFileSync(blocked, "");
+  const tries = [];
+  for (let k = 0; k < 3; k++) readCursor({ file: join(blocked, "cursor-usage.json"), nowSec: T, refresh: () => tries.push(k), off: false });
+  expect(tries).toEqual([]);
+  rmSync(dir, { recursive: true, force: true });
+  // What the caller passes still wins, and the snapshot is not consulted for it.
+  const [given] = await readUsage(["cursor"], { cursor: 0.9 }, { sources: { cursor: { read: () => { throw new Error("read"); } } } });
+  expect(given).toMatchObject({ source: "given by caller", headroom: 0.9 });
+});
+test("the refresh lock lets one caller in at a time and gives up a lock left by a dead refresh", () => {
+  const dir = mkdtempSync(join(tmpdir(), "routr-lock-")), lock = join(dir, "x.lock");
+  expect(takeLock(lock)).toBe(true);
+  expect(takeLock(lock)).toBe(false); // a second call in the burst
+  expect(takeLock(lock, Date.now() + 121 * 1000)).toBe(true); // older than any reading can take
+  expect(takeLock(join(dir, "missing", "x.lock"))).toBe(false); // cannot write: no lock, so no refresh
+  rmSync(dir, { recursive: true, force: true });
 });
 test("routr usage ranks what it sees without a brief, and a name narrows it or opens the harness's screen", async () => {
   const c = cfg();
@@ -500,7 +586,7 @@ test("routr usage ranks what it sees without a brief, and a name narrows it or o
   expect((await usageCommand(["--json"], c, {}, { read })).ok).toBe(true); // doctor's flag: the output is JSON already
   expect((await usageCommand(["claude", "--json"], c, {}, { read })).ranked.map((x) => x.subscription)).toEqual(["claude"]);
   expect((await usageCommand(["--bogus"], c, {}, { read })).error).toContain("unknown: --bogus");
-  expect(await usageCommand(["cursor"], c, {}, { read, sources: { cursor: { interactive: async () => ({ ok: true, opened: true }) } } })).toEqual({ ok: true, opened: true });
+  expect(await usageCommand(["cursor"], c, {}, { read, sources: { cursor: { check: async () => ({ ok: true, opened: true }) } } })).toEqual({ ok: true, opened: true });
   const broken = await usageCommand([], c, {}, { read: async () => { throw new Error("gone"); } });
   expect(broken).toMatchObject({ ok: false, error: "gone" });
 });
@@ -1637,6 +1723,45 @@ test("routr setup --yes writes the config once, keeps it afterwards, and starts 
   expect(Bun.spawnSync([process.execPath, script, "setup", "--yes", "--metered", "codex=with"], { env }).exitCode).toBe(1); // codex is not found on an empty PATH
 });
 
+test("hardest_work and reserve are asked with a suggestion, read from flags, and a bad answer asks again", async () => {
+  const { parseLevel, parseShare, parseHardest, parseReserve, askSettings } = await import("../src/lib/setup.mjs");
+  expect([parseLevel("Strong"), parseLevel("1"), parseLevel("3"), parseLevel("s"), parseLevel("")]).toEqual(["strong", "basic", "strong", null, null]);
+  expect([parseShare("0.25"), parseShare("25%"), parseShare(".1"), parseShare("0"), parseShare("1.5"), parseShare("-1"), parseShare("x"), parseShare("")]).toEqual([0.25, 0.25, 0.1, 0, null, null, null, null]);
+  expect(parseHardest(["--hardest", "cursor=strong", "--hardest", "agy=2"])).toEqual({ cursor: "strong", agy: "standard" });
+  expect(parseReserve(["--reserve", "claude=30%"])).toEqual({ claude: 0.3 });
+  for (const bad of [["--hardest", "cursor=huge"], ["--hardest", "gpt=strong"], ["--reserve", "claude=2"], ["--reserve", "claude"]])
+    expect(() => (bad[0] === "--hardest" ? parseHardest : parseReserve)(bad)).toThrow();
+  const answers = (list) => { const q = [...list]; return async () => q.shift(); };
+  const said = [];
+  expect(await askSettings("cursor", { hardest_work: "standard", reserve: 0.1 }, answers(["", ""]), (m) => said.push(m))).toEqual({ hardest_work: "standard", reserve: 0.1 });
+  expect(await askSettings("cursor", { hardest_work: "standard", reserve: 0.1 }, answers(["huge", "strong", "lots", "20%"]), (m) => said.push(m))).toEqual({ hardest_work: "strong", reserve: 0.2 });
+  expect(said).toHaveLength(2); // one nudge per bad answer
+});
+
+test("routr setup changes a setting on an existing config, fills one that is missing, and doctor flags it until then", () => {
+  const script = `${import.meta.dir}/../src/routr.mjs`;
+  const home = mkdtempSync(join(tmpdir(), "routr-settings-"));
+  const env = { ...process.env, HOME: home, USERPROFILE: home, PATH: home, TYPESAFE_API_KEY: "", ROUTR_NO_UPDATE: "1" };
+  const file = join(home, ".config/routr/config.json");
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify({ telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" }, claude: { reserve: 0.25 } } }));
+  const doctor = JSON.parse(Bun.spawnSync([process.execPath, script, "doctor", "--json"], { env }).stdout.toString());
+  expect(doctor.config.problems.join(" ")).toContain("subscriptions.claude.hardest_work is not set");
+  expect(doctor.next_steps.join(" ")).toContain("routr setup --hardest claude=");
+  const r = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--json", "--hardest", "cursor=strong", "--reserve", "cursor=20%"], { env });
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.did.join(" ")).toContain('cursor.hardest_work "standard" → "strong"');
+  expect(out.did.join(" ")).toContain('claude.hardest_work set to "strong"');
+  const saved = JSON.parse(readFileSync(file, "utf8"));
+  expect(saved.subscriptions.cursor).toEqual({ hardest_work: "strong", reserve: 0.2, default_model: "m" });
+  expect(saved.subscriptions.claude).toEqual({ reserve: 0.25, hardest_work: "strong" });
+  expect(JSON.parse(Bun.spawnSync([process.execPath, script, "doctor", "--json"], { env }).stdout.toString()).config.problems).toEqual([]);
+  // A subscription neither configured nor found cannot be set.
+  expect(Bun.spawnSync([process.execPath, script, "setup", "--yes", "--hardest", "agy=strong"], { env }).exitCode).toBe(1);
+  rmSync(home, { recursive: true, force: true });
+});
+
 test("setup searches a long model list instead of printing it", async () => {
   const { narrow, pickModel } = await import("../src/lib/setup.mjs");
   const list = Array.from({ length: 230 }, (_, i) => `vendor-model-${i}`).concat(["cursor-grok-4.6-high", "cursor-grok-4.7-high", "cursor-grok-4.7-low"]);
@@ -1715,7 +1840,7 @@ test("an update lock is taken over only when its owner is gone", async () => {
 
 test("a config share outside 0..1 is reported and replaced: a negative reserve must not create capacity", () => {
   const f = join(mkdtempSync(join(tmpdir(), "routr-cfg-")), "config.json");
-  writeFileSync(f, JSON.stringify({ sure_at: 7, subscriptions: { claude: { reserve: -1, assumed_headroom: 2 }, codex: { reserve: 0.2 } } }));
+  writeFileSync(f, JSON.stringify({ sure_at: 7, subscriptions: { claude: { hardest_work: "strong", reserve: -1, assumed_headroom: 2 }, codex: { hardest_work: "strong", reserve: 0.2 } } }));
   const { config, notes } = loadConfig(f);
   expect(config.sure_at).toBe(DEFAULTS.sure_at);
   expect(config.subscriptions.claude.reserve).toBe(0);

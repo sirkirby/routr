@@ -35,8 +35,8 @@ export function rankSubscriptions(level, usage, c) {
     });
     const usable = windows.length ? Math.min(...windows.map((w) => w.usable)) : r2(Math.max(0, headroom - s.reserve));
     ranked.push({ ...base, usable, headroom: r2(headroom), ...(windows.length ? { windows } : {}), usage: live ? (u.source === "given by caller" ? "given" : "live") : "assumed", age_sec: live ? u.ageSec : null,
-      // An assumed number says why, and how to get the real one when routr has a way (`routr usage cursor`).
-      ...(!live && u?.note ? { note: u.note } : {}), ...(!live && u?.read_with ? { read_with: u.read_with } : {}) });
+      // A live number carries what the harness showed beside it (Cursor's pools); an assumed one says why.
+      ...(u?.note ? { note: u.note } : {}) });
   }
   // Pools with room, most first; then metered pools without a number; then pools at their reserve.
   const key = (r) => (r.usable == null ? -0.5 : r.usable > 0 ? r.usable : -1);
