@@ -26,7 +26,8 @@ You decide where work may go, with two settings per subscription. `routr setup` 
 subscription it finds, and explains them as it goes; press Enter to take the suggestion. It saves them in
 `~/.config/routr/config.json`.
 
-To change one later, run setup again with just that setting, for example:
+To change them later, run `routr setup` again: it shows your settings and offers to go through them, with each
+current value as the default. Or change one directly:
 
     routr setup --hardest cursor=strong
     routr setup --reserve claude=30%
