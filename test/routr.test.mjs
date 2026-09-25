@@ -1360,6 +1360,7 @@ test("telemetry rows carry what tuning needs, never text or anything that points
   expect(p.advised.facts).toEqual({ approach_open: 0.9 });
   for (const m of ["gpt-5.6-terra", "claude-opus-5-5[1m]", "cursor-grok-4.6-high", "gemini-3.8-flash-medium", "opus"])
     expect(telemetryRows([row({ chose: { subscription: "codex", model: m, effort: "xhigh", level: "strong" } })], "i")[0].chose).toEqual({ subscription: "codex", model: m, effort: "xhigh", level: "strong" });
+  expect(telemetryRows([row({ chose: { subscription: "agy", model: "x", effort: "default", level: "basic" } })], "i")[0].chose.effort).toBe("default"); // seen in a real row
   expect(r.row_key).toMatch(/^[0-9a-f]{32}$/);
   expect(telemetryRows([row({ jev_model: "jev-1.13.0" })], "install-a")[0].row_key).toBe(r.row_key); // resending is harmless
   expect(telemetryRows([row()], "install-b")[0].row_key).not.toBe(r.row_key);                         // and unlinkable across installs
@@ -1423,6 +1424,10 @@ test("telemetry sends only rows it has not sent, and moves on only after the end
     expect(bodies[1]).toMatchObject({ version: expect.any(String), os: `${process.platform}-${process.arch}` });
     expect(JSON.stringify(bodies)).not.toContain("private note");
     expect(JSON.parse(readFileSync(join(dir, "telemetry.json"), "utf8")).sent_through).toBe("2026-09-22T10:00:00.000Z"); // beside the ledger it read
+    const { pendingCount } = await import("../src/lib/telemetry.mjs");
+    expect(pendingCount(ledger)).toBe(0);
+    writeFileSync(ledger, readFileSync(ledger, "utf8") + JSON.stringify(row({ ts: "2026-09-23T10:00:00.000Z" })) + "\n");
+    expect(pendingCount(ledger)).toBe(1);                                                        // what share reports as waiting
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test("feedback sends what the person wrote, and nothing when there is nothing to send", async () => {

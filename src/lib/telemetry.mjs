@@ -33,6 +33,13 @@ export function telemetryStatus(config, env = process.env, st = state()) {
   return { on: !why, why_off: why };
 }
 
+// How many ledger rows the next send would carry: only rows after the mark (`telemetry on` sets it to that moment).
+export function pendingCount(ledger = LEDGER_PATH) {
+  const mark = state(ledger).sent_through;
+  if (!mark) return 0; // not turned on yet: turning it on starts from that moment
+  return read(ledger).filter((e) => isRow(e) && String(e.ts ?? "") > mark).length;
+}
+
 // The daily job calls this when the config does not say true: a yes given before a hand edit to false is withdrawn, so
 // a later hand edit back to true cannot send the rows recorded in between.
 export function forgetConsentUnlessOn(config, ledger) {
@@ -55,7 +62,7 @@ const LEVELS3 = ["basic", "standard", "strong"];
 const WORK_TYPES = Object.keys(questions.work_type.criteria);
 const SUBSCRIPTIONS = Object.keys(HARNESSES);                            // routr keys a subscription by its harness
 const questionSet = shaped(/^[rc]\d{1,3}$/), jevVersion = shaped(/^jev-\d+(\.\d+){0,3}$/);
-const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "auto"]; // what the harnesses take
+const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "auto", "default"]; // what the harnesses take, and "default" (seen in real rows)
 // A model name is the one field no list can check (routr holds no model knowledge, and reading the harnesses' lists
 // would mean running them in the background). It must LOOK like one; a slug an agent passes as a model is sent as
 // written, and docs/telemetry.md says so.
