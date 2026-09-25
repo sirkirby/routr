@@ -7,7 +7,7 @@ import { advise } from "../src/lib/advise.mjs";
 import { readReport } from "../src/lib/check.mjs";
 import { DEFAULTS, loadConfig } from "../src/lib/config.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
-import { claudeSnapshot, codexSnapshot, monthMinutes, readCursor, readUsage, refreshCursor } from "../src/lib/usage.mjs";
+import { claudeSnapshot, codexSnapshot, monthMinutes, readCursor, readUsage, refreshCursor, takeLock } from "../src/lib/usage.mjs";
 import { usageCommand } from "../src/lib/commands.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
 import { plan } from "../src/lib/harness.mjs";
@@ -517,10 +517,37 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
   const quiet = join(dir, "quiet.json");
   expect(readCursor({ file: quiet, nowSec: T, refresh: () => started.push("quiet") }).headroom).toBeNull();
   expect(existsSync(quiet)).toBe(false);
+  // A day without a good reading: too old to use (the plan may have reset), so assumed, and it says so.
+  const stale = readCursor({ file, nowSec: T + 5 + 25 * 3600, refresh: () => true, off: false });
+  expect(stale.headroom).toBeNull();
+  expect(stale.note).toContain("25 h old, too old to use");
+  // Doctor, for a harness installed but not configured: reads, never starts a refresh.
+  const before = started.length;
+  readCursor({ file, nowSec: T + 40 * 3600, refresh: () => started.push("doctor"), background: false, off: false });
+  expect(started).toHaveLength(before);
+  // A refresh that cannot start gives the lock back and the reading still answers.
+  const lockFile = join(dir, "spawnfail.json.lock");
+  writeFileSync(join(dir, "spawnfail.json"), JSON.stringify({ ts: T, tried: T, reading: { included_used_pct: 50 } }));
+  expect(readCursor({ file: join(dir, "spawnfail.json"), nowSec: T + 5 * 3600, refresh: () => false, off: false }).headroom).toBe(0.5);
+  expect(existsSync(lockFile)).toBe(false);
+  // An unwritable cache starts nothing: no lock, no refresh, not one per call.
+  const blocked = join(dir, "not-a-dir");
+  writeFileSync(blocked, "");
+  const tries = [];
+  for (let k = 0; k < 3; k++) readCursor({ file: join(blocked, "cursor-usage.json"), nowSec: T, refresh: () => tries.push(k), off: false });
+  expect(tries).toEqual([]);
   rmSync(dir, { recursive: true, force: true });
   // What the caller passes still wins, and the snapshot is not consulted for it.
   const [given] = await readUsage(["cursor"], { cursor: 0.9 }, { sources: { cursor: { read: () => { throw new Error("read"); } } } });
   expect(given).toMatchObject({ source: "given by caller", headroom: 0.9 });
+});
+test("the refresh lock lets one caller in at a time and gives up a lock left by a dead refresh", () => {
+  const dir = mkdtempSync(join(tmpdir(), "routr-lock-")), lock = join(dir, "x.lock");
+  expect(takeLock(lock)).toBe(true);
+  expect(takeLock(lock)).toBe(false); // a second call in the burst
+  expect(takeLock(lock, Date.now() + 121 * 1000)).toBe(true); // older than any reading can take
+  expect(takeLock(join(dir, "missing", "x.lock"))).toBe(false); // cannot write: no lock, so no refresh
+  rmSync(dir, { recursive: true, force: true });
 });
 test("routr usage ranks what it sees without a brief, and a name narrows it or opens the harness's screen", async () => {
   const c = cfg();

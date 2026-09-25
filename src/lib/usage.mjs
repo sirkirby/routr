@@ -7,7 +7,7 @@
 import { CURSOR_BY_HAND, cursorUsage } from "./cursor-usage.mjs";
 import { CLAUDE_SNAPSHOT, CURSOR_SNAPSHOT, standalone } from "./runtime.mjs";
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -177,36 +177,63 @@ export async function readAgy() {
 // Only Included counts: it is the whole plan, and Cursor's own models (Composer, Grok) draw on it through Auto. API is
 // other vendors' models inside Cursor, which routr does not route to, so it is shown in the note and never ranked.
 const REFRESH_SEC = 4 * 3600;
-const writeJson = (file, o) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(o) + "\n"); };
+// A reading that has not been refreshed for a day is not used: refreshes are failing, and Cursor's plan may have reset
+// since. Cursor's screen shows no reset time, so age is the only guard. Past it, Cursor is assumed and the note says so.
+const TRUST_SEC = 24 * 3600;
+const LOCK_SEC = 120; // one background reading at a time; a lock older than any reading (90 s at most) is abandoned
+const CURSOR_LOCK = () => `${CURSOR_SNAPSHOT}.lock`;
 const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } };
+// Written whole or not at all (a temp file, then a rename), as the Claude snapshot is: a reader never sees half a file.
+const writeJson = (file, o) => {
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.tmp.${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(o) + "\n");
+  try { renameSync(tmp, file); } catch { try { unlinkSync(file); } catch {} renameSync(tmp, file); }
+};
+// Take the refresh lock, or say someone else holds it. Exclusive create, as the updater's lock: two calls in a burst
+// cannot both win. An unwritable cache means no lock and so no refresh, never a refresh on every call.
+export function takeLock(file, nowMs = Date.now()) {
+  try { closeSync(openSync(file, "wx")); return true; } catch (e) { if (e?.code !== "EEXIST") return false; }
+  try { if (nowMs - statSync(file).mtimeMs < LOCK_SEC * 1000) return false; rmSync(file, { force: true }); closeSync(openSync(file, "wx")); return true; } catch { return false; }
+}
 const noRefresh = () => process.env.ROUTR_NO_REFRESH === "1"; // tests: nothing detached, nothing written
 const startRefresh = () => {
-  const args = standalone() ? ["usage", "cursor"] : [process.argv[1], "usage", "cursor"];
-  const c = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true });
-  c.on("error", () => {}); c.unref();
+  try {
+    const args = standalone() ? ["usage", "cursor"] : [process.argv[1], "usage", "cursor"];
+    const c = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true });
+    c.on("error", () => {}); c.unref(); return true;
+  } catch { return false; }
 };
 
-// `routr usage cursor`: read the screen now and keep the reading. A failed read keeps the last good one.
-export async function refreshCursor({ read = cursorUsage, file = CURSOR_SNAPSHOT, nowSec = now() } = {}) {
-  const r = await read();
-  const last = readJson(file);
+// `routr usage cursor`: read the screen now and keep the reading. A failed read keeps the last good one, whose age
+// then says how old it is. It releases the refresh lock whoever took it.
+export async function refreshCursor({ read = cursorUsage, file = CURSOR_SNAPSHOT, lock = `${file}.lock`, nowSec = now() } = {}) {
   try {
-    writeJson(file, r.ok ? { ts: nowSec, tried: nowSec, reading: { plan: r.plan, included_used_pct: r.included_used_pct, auto_used_pct: r.auto_used_pct, api_used_pct: r.api_used_pct } }
-      : { ts: last?.ts ?? null, tried: nowSec, reading: last?.reading ?? null, error: r.error });
-  } catch {}
-  return r;
+    const r = await read();
+    const last = readJson(file);
+    try {
+      writeJson(file, r.ok ? { ts: nowSec, tried: nowSec, reading: { plan: r.plan, included_used_pct: r.included_used_pct, auto_used_pct: r.auto_used_pct, api_used_pct: r.api_used_pct } }
+        : { ts: last?.ts ?? null, tried: nowSec, reading: last?.reading ?? null, error: r.error });
+    } catch {}
+    return r;
+  } finally { try { rmSync(lock, { force: true }); } catch {} }
 }
 
-export function readCursor({ file = CURSOR_SNAPSHOT, nowSec = now(), refresh = startRefresh, off = noRefresh() } = {}) {
-  const snap = readJson(file);
-  const due = !off && (!snap || !(nowSec - (snap.tried ?? 0) < REFRESH_SEC));
-  if (due) { try { writeJson(file, { ...snap, tried: nowSec }); } catch {} refresh(); } // marked first: calls in a burst start one
-  const r = snap?.reading, pct = (x) => (x == null ? "?" : `${x}%`);
-  const after = [due && "a fresh reading is being taken in the background", snap?.error && `the last try failed: ${snap.error}`].filter(Boolean).join("; ");
-  if (!r) return summarize("cursor", "cursor /usage", null, [], snap?.error ? `no reading: ${after}. Using the assumed headroom. By hand: ${CURSOR_BY_HAND}`
-    : "no reading yet: the first is being taken in the background (about 5 s); using the assumed headroom meanwhile", undefined, nowSec);
-  return summarize("cursor", "cursor /usage", snap.ts, [{ name: "included", usedPct: r.included_used_pct, windowMin: null, resetsAt: null }],
+// `background: false` reads without starting a refresh: doctor, for a harness installed but not in the config.
+export function readCursor({ file = CURSOR_SNAPSHOT, lock = `${file}.lock`, nowSec = now(), refresh = startRefresh, background = true, off = noRefresh() } = {}) {
+  let snap = readJson(file);
+  let started = false;
+  if (background && !off && !(nowSec - (snap?.tried ?? 0) < REFRESH_SEC) && takeLock(lock, nowSec * 1000)) {
+    // Marked before it starts, so the next call waits its turn; if the mark cannot be written, nothing is started.
+    try { writeJson(file, { ...snap, tried: nowSec }); started = refresh(); } catch {}
+    if (!started) try { rmSync(lock, { force: true }); } catch {}
+  }
+  const r = snap?.reading, age = snap?.ts == null ? null : nowSec - snap.ts, pct = (x) => (x == null ? "?" : `${x}%`);
+  const after = [started && "a fresh reading is being taken in the background", snap?.error && `the last try failed: ${snap.error}`].filter(Boolean).join("; ");
+  if (r && age < TRUST_SEC) return summarize("cursor", "cursor /usage", snap.ts, [{ name: "included", usedPct: r.included_used_pct, windowMin: null, resetsAt: null }],
     `Included ${pct(r.included_used_pct)} used (Auto ${pct(r.auto_used_pct)}, API ${pct(r.api_used_pct)})${after ? `; ${after}` : ""}`, undefined, nowSec);
+  const why = r ? `the last reading is ${Math.round(age / 3600)} h old, too old to use` : "no reading yet";
+  return summarize("cursor", "cursor /usage", null, [], `${why}${after ? `; ${after}` : ""}; using the assumed headroom.${snap?.error ? ` By hand: ${CURSOR_BY_HAND}` : ""}`, undefined, nowSec);
 }
 
 // How each subscription's usage is read, in one place, so doctor, dispatch, and `routr usage` say the same. `read` runs
@@ -221,11 +248,12 @@ export const SOURCES = {
 
 // One unreadable source must not take the others (or the routing advice) down with it. Readers run in parallel.
 // `given` holds headroom the caller read itself (0..1); it wins over any reading.
-export async function readUsage(names, given = {}, { sources = SOURCES } = {}) {
+// `background` names the subscriptions whose reader may start a background refresh (default: all asked for).
+export async function readUsage(names, given = {}, { sources = SOURCES, background = names } = {}) {
   return Promise.all(names.map(async (name) => {
     if (typeof given[name] === "number") return { pool: name, source: "given by caller", ageSec: 0, windows: [], headroom: Math.min(1, Math.max(0, given[name])) };
     const src = sources[name];
     if (!src?.read) return summarize(name, "none", null, [], "no usage source: read it yourself and pass --headroom " + name + "=<0..1>");
-    try { return await src.read(); } catch (e) { return summarize(name, "unreadable", null, [], `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}`); }
+    try { return await src.read({ background: background.includes(name) }); } catch (e) { return summarize(name, "unreadable", null, [], `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}`); }
   }));
 }

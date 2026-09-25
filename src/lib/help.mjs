@@ -25,7 +25,7 @@ export const COMMANDS = {
   },
   usage: {
     name: "usage",
-    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session (routr otherwise does this in the background about once per working session)",
+    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing of yours. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session (routr otherwise does this in the background about once per working session)",
     args: [{ name: "[<subscription>]", description: "only this one; for cursor, read its /usage screen now (needs herdr installed)", required: false }],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },

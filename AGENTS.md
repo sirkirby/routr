@@ -22,8 +22,9 @@ measured questions about a brief or a worker report; code adds live usage; the l
   `VERSION` / `CHECK_VERSION` in `src/lib/questions.mjs`. Public summary: `docs/evidence.md`.
 - Jev is pinned to an exact version (`JEV_MODEL`), and the pin moves to each new official release once the model gate
   shows no question does worse (CONTRIBUTING.md). Never ship an alias.
-- The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`, `usage` with no name) write nothing (`doctor --fix` is `setup`
-  under another name) and fail open: any error
+- The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`, `usage` with no name) write nothing of the
+  user's (`doctor --fix` is `setup` under another name); the only thing they may start is one of routr's detached
+  background jobs below (the updater, Cursor's usage refresh), which write only under `~/.cache/routr`. They fail open: any error
   still prints usable output and exits 0. Only `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`,
   `feedback`, `launch`, and `usage cursor` act, and each says so. `launch` drives panes in the user's herdr session;
   `usage cursor` drives only a private headless herdr session it makes and removes, never the user's own, and keeps

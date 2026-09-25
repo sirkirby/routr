@@ -123,7 +123,7 @@ if (!brief) { console.error("routr: empty brief"); process.exit(2); }
 const { config, notes: configNotes } = loadConfig(configPath);
 const out = { id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: createHash("sha256").update(brief).digest("hex").slice(0, 12), brief_chars: brief.length };
 let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };
-// Usage is re-read on every call, never cached (P9), and read while Jev answers so it adds no waiting.
+// Each source's newest reading, read while Jev answers; a slow source (Cursor's screen) is a snapshot refreshed in the background.
 const usageP = mode === "dispatch" ? readUsage(Object.keys(config.subscriptions), given).catch(() => []) : null;
 try {
   const r = await ask({ task: { brief } }, questions, undefined, 10000);

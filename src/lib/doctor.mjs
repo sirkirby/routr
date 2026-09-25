@@ -99,7 +99,8 @@ export async function inspect({ configPath, quiet } = {}) {
   // The release lookup is one short, non-fatal call. Only doctor and `routr update` make it; the advice commands never call home.
   const [latest, usage, key, ...models] = await Promise.all([
     process.env.ROUTR_NO_UPDATE ? null : latestVersion(3000).catch(() => null),
-    step("usage", readUsage(found)),
+    // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
+    step("usage", readUsage(found, {}, { background: Object.keys(loadConfig(configPath ?? CONFIG_PATH).config.subscriptions ?? {}) })),
     step("the TypeSafe key", keyCheck().then((t) => ({ t }), (e) => ({ e }))),
     ...found.map((n) => step(`${n}'s models`, Promise.resolve(MODEL_LISTS[n]?.()).then((l) => l || null, () => null))),
   ]);
