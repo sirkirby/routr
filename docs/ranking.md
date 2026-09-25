@@ -1,89 +1,91 @@
-# How routr ranks subscriptions
+# How routr decides where work can go
 
-`routr dispatch` answers two separate questions and puts the answers side by side:
+When your lead agent is about to hand work to a worker, it asks `routr dispatch`. Three parties take part:
 
-1. **What does the work need?** Jev, a System One model, reads the brief and judges the work: its level (`basic`,
-   `standard`, `strong`), its kind, its risk, and whether the brief is complete. Jev never sees usage.
-2. **Where is there room?** routr reads each subscription's usage and ranks the subscriptions with the arithmetic
-   below. No model is involved: the same numbers always give the same ranking, and every number in it can be checked
-   against the harness's own usage screen.
+- **Jev judges the work.** A small, fast model reads the brief and says how demanding the work is (`basic`,
+  `standard`, or `strong`), what kind of work it is, and whether the brief is ready to send. Jev knows nothing about
+  your subscriptions or their usage.
+- **routr works out where there is room.** It looks at how much of each subscription you have left and ranks them.
+  This is plain arithmetic on your usage and your settings: no model, the same inputs always give the same answer.
+- **Your lead agent decides.** It gets both answers and picks the subscription and model. It may go against the
+  ranking, because it knows things routr does not: what is already running and what comes next.
 
-The two run at the same time and meet only in step 1 of the ranking, where Jev's level decides which subscriptions
-take the work. The orchestrator, the lead agent that asked, gets both and decides. It may go against the ranking: it
-knows what is already running and what comes next.
+You can see the ranking any time, with no brief, by running `routr usage`.
 
-`routr usage` prints the ranking with no brief, for checking.
+## The usage routr sees
 
-## What routr reads
+routr reads each subscription's usage from the harness itself: how much of each usage window is used and when it
+resets. It asks the way the harness shows usage to you, without sending it a prompt, and sends the numbers nowhere.
 
-| Subscription | Source | In a call |
-|---|---|---|
-| Claude Code | The snapshot `routr statusline` writes after each Claude Code turn: its 5-hour and 7-day windows, or a spend cap | a file read |
-| Codex | `codex app-server`, asked for its rate limits (no tokens); the newest session log if that fails | about 1 to 1.5 s, measured 2026-09-25 |
-| Antigravity | `agy -p /usage` (no tokens). Only the Gemini pool counts: routr routes to the harness's own models | about 2 s; up to 9 s when the command hangs, measured 2026-09-25 |
-| Cursor | Its `/usage` screen, read in a private herdr session in the background about once per working session (when the last try is over 4 hours old) and kept as a snapshot. Only **Included** is ranked; Auto and API are shown in the note | a file read |
+Most subscriptions are read the moment you ask. Cursor takes several seconds to read, so routr reads it in the
+background about once per working session and uses that reading until the next one. Every reading shows how old it
+is. If routr cannot read a subscription, it falls back to a number you set (`assumed_headroom`) and says so.
 
-Usage reading runs beside the call to Jev, so a call takes as long as the slower of the two. Details and the shapes
-each harness reports: `skills/routr/references/harnesses.md`.
+## Which subscriptions can take the work
 
-Each reading carries its age (`age_sec`). A window whose reset time has passed since the reading is treated as empty.
-A Cursor reading more than 24 hours old is not used, because refreshes are failing and the plan may have reset since.
-A subscription whose usage cannot be read uses your `assumed_headroom` and is marked `assumed`, with the reason in
-`note`. `--headroom <name>=<0..1>` overrides any reading and is marked `given`.
+Each subscription in your config has a `hardest_work` setting: the most demanding level of work you are willing to
+send there.
 
-## The ranking, step by step
+| Level | What Jev means by it |
+|---|---|
+| `basic` | Rote or well-specified work; a small, fast model is enough |
+| `standard` | The worker has to find something out or choose an approach |
+| `strong` | A wrong or shallow result would be expensive and hard to notice |
 
-The code is `rankSubscriptions` in `src/lib/pick.mjs`.
+A subscription takes work at its `hardest_work` level and below. For `strong` work, a subscription set to `standard`
+is left out of the ranking, and the output says why.
 
-1. **Drop what does not take this work.** A subscription whose `hardest_work` is below the level of the work goes to
-   `excluded`, with the reason. Strong work skips a subscription you give only standard work.
-2. **Class each pool.** From the shape the harness reports, never from a plan name:
-   - `included`: windows that expire (a subscription);
-   - `capped`: a spend cap the vendor enforces, read as one more window;
-   - `metered`: billed usage with no quota (measured on a ChatGPT Enterprise seat);
-   - `unknown`: nothing readable.
+When `routr setup` writes your config it starts every subscription somewhere: `strong` for Claude Code and Codex,
+`standard` for Cursor and Antigravity. These are starting points, not measurements. They are yours to change: set
+Cursor to `strong` if you trust it with your hardest work, or Claude Code to `standard` if you want to keep it for
+your own. Nothing else in routr decides what a subscription is good for.
 
-   Your `billing` setting overrides the class. A `--headroom` value counts as `included`.
-3. **A metered pool gets a position, not a number.** It has no window, so there is nothing to subtract. With
-   `metered_rank: "after"` (the default) it is listed after every pool that still has room, so it takes the overflow:
-   included usage expires and billed usage does not. With `"with"`, it is ranked by your `assumed_headroom`.
-4. **Every other pool, window by window:**
-   - `left` = 1 − the share used;
-   - `reserve_now` = your `reserve` × the share of the window still to run. The reserve shrinks as the reset nears,
-     because capacity not used by then expires. A window whose length is unknown (a spend cap, Cursor's plan) holds
-     the full reserve;
-   - `usable` = `left` − `reserve_now`, never below 0.
+## How much room each subscription has
 
-   The pool's `usable` is its **tightest** window. A pool with no windows (assumed or given) is its headroom minus the
-   full reserve.
-5. **Sort.** Pools with room, most usable first; then metered pools; then pools at their reserve.
-6. **Name the one with most room.** `most_room` is the first pool with room, else the first metered pool. With
-   neither, the note says every pool that takes this work is at its reserve: hold the work or ask the user. A reserve
-   is never offered.
+For each subscription, routr works out a **usable** share between 0 and 1:
 
-## A worked example
+1. **Start with what is left** in each usage window. Claude Code, for example, has a 5-hour window and a weekly one.
+2. **Hold back your reserve.** `reserve` is the share you keep for your own work, and routr never offers it to a
+   worker. The reserve shrinks as a window nears its reset, because whatever is unused at the reset is lost anyway:
+   with half the window still to run, half the reserve is held back.
+3. **Count the tightest window.** A subscription with plenty left this week but little left in the next few hours is
+   only as usable as those few hours.
 
-Claude with a `reserve` of 0.25, read at a moment when:
+Seats billed per use with no quota, such as a ChatGPT Enterprise seat, have no window to measure. By default they are
+listed after every subscription that still has room, so they take the overflow: your subscriptions' included usage
+expires, billed usage does not. `metered_rank: "with"` ranks them alongside your subscriptions instead.
 
-| Window | Used | Left of the window | `left` | `reserve_now` | `usable` |
-|---|---|---|---|---|---|
-| 5-hour | 40% | 1.4 of 5 h (28%) | 0.60 | 0.25 × 0.28 = 0.07 | 0.53 |
-| 7-day | 19% | 120 of 168 h (71%) | 0.81 | 0.25 × 0.71 = 0.18 | 0.63 |
+## The order
 
-Claude's `usable` is 0.53, its tightest window. Beside it on that machine: Antigravity 0.55 (weekly Gemini pool 40%
-used, reserve 0.1), Cursor 0.24 (Included 66% used, reserve 0.1, full reserve since the plan's reset time is not
-shown), and Codex metered, so last. For `standard` work Antigravity comes first. For `strong` work, Antigravity and
-Cursor are excluded by their `hardest_work`, and Claude comes first.
+Subscriptions with room come first, most usable at the top, then billed seats, then subscriptions already at their
+reserve. The first one with room is named `most_room`. If every subscription that can take the work is at its
+reserve, routr says to hold the work or ask you. It never offers a reserve.
 
-## What changes the ranking
+## An example
 
-Only your settings in `~/.config/routr/config.json`, per subscription: `reserve`, `hardest_work`,
-`assumed_headroom`, `billing`, and `metered_rank`. `default_model` and `default_effort` are passed through as
-`your_default` and do not change the order. `prefer` bears on the level of the work, not on the ranking.
+A developer's Claude Code subscription, with a reserve of 0.25:
 
-## What it does not do
+- The 5-hour window is 40% used and resets in 1.4 hours, so little of it is still to run and only 0.07 of the reserve
+  is held back: 0.60 left − 0.07 = **0.53** usable.
+- The weekly window is 19% used with most of the week to go: 0.81 left − 0.18 held back = 0.63 usable.
+- Claude Code counts as **0.53**, its tighter window.
 
-- It never names or compares models, and it knows no prices: nothing in it goes stale when models change.
-- It does not weigh how big the work is against the room left. The level and the `tiny` fact say something about
-  size; the orchestrator weighs the rest.
-- It does not decide. The orchestrator does.
+Beside it: Antigravity at 0.55, Cursor at 0.24, and a Codex Enterprise seat billed per use. For `standard` work,
+Antigravity comes first and Claude Code second. For `strong` work, Antigravity and Cursor are left out (both set to
+`standard`), so Claude Code comes first and Codex takes the overflow.
+
+## Changing it
+
+Everything that changes the ranking is a setting of yours in `~/.config/routr/config.json`, per subscription:
+`hardest_work`, `reserve`, `assumed_headroom`, and, for a billed seat, `metered_rank`. Your default model on each
+subscription is shown beside it but does not change the order.
+
+## What routr leaves to your lead agent
+
+- **Which model.** routr never names or compares models, and knows no prices, so nothing in it goes out of date when
+  models change.
+- **How big the work is.** routr ranks by room left, not by whether a large task fits in it. Jev's level says
+  something about size; the lead agent judges the rest.
+- **The decision.** routr advises; the lead agent chooses.
+
+routr is open source: the ranking is `rankSubscriptions` in `src/lib/pick.mjs`.
