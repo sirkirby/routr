@@ -4,12 +4,12 @@
 // the vendor enforces, read as one more window), `metered` (billed usage with no quota, and a working source says so),
 // or `unknown` (nothing readable). Measured 2026-09-22 on a ChatGPT Enterprise seat: no windows at all, only
 // `credits.unlimited: true`, and a plan name of `business`. So the shape is the key, never the plan name.
-import { cursorUsage } from "./cursor-usage.mjs";
-import { CLAUDE_SNAPSHOT } from "./runtime.mjs";
+import { CURSOR_BY_HAND, cursorUsage } from "./cursor-usage.mjs";
+import { CLAUDE_SNAPSHOT, CURSOR_SNAPSHOT, standalone } from "./runtime.mjs";
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 export { CLAUDE_SNAPSHOT };
 export const CODEX_SESSIONS = join(homedir(), ".codex/sessions");
@@ -168,26 +168,63 @@ export async function readAgy() {
   return summarize("agy", "agy /usage", null, [], "`agy -p /usage` did not answer in two tries; using the assumed headroom");
 }
 
-// How each subscription's usage is read, in one place, so doctor, dispatch, and `routr usage` say the same.
-//   read         passive: a file or a command the harness answers without a turn. Read on every call.
-//   interactive  the harness shows usage only in its own screen: `routr usage <name>` opens it in a throwaway terminal
-//                (terminal.mjs), prints the --headroom value, and on failure says how to read it by hand. Advice never
-//                does this: it drives no terminal. `command` is what doctor and dispatch tell the caller to run.
+// Cursor shows usage only in its own /usage screen, which takes seconds to read (a private herdr session, Cursor, the
+// panel: 4 to 5 s measured), too slow for a call that answers in 300 ms. So it is read like Claude's: a snapshot every
+// call reads in milliseconds, with its age shown, and a fresh reading taken in the BACKGROUND about once per working
+// session: when the last try is over 4 hours old, the call starts a detached `routr usage cursor` and does not wait.
+// Plan usage is a monthly pool and burns slowly, so a reading hours old routes the same (the maintainer's call,
+// 2026-09-25). `setup` and `doctor` read usage too, so a new install has its first reading before its first dispatch.
+// Only Included counts: it is the whole plan, and Cursor's own models (Composer, Grok) draw on it through Auto. API is
+// other vendors' models inside Cursor, which routr does not route to, so it is shown in the note and never ranked.
+const REFRESH_SEC = 4 * 3600;
+const writeJson = (file, o) => { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(o) + "\n"); };
+const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } };
+const noRefresh = () => process.env.ROUTR_NO_REFRESH === "1"; // tests: nothing detached, nothing written
+const startRefresh = () => {
+  const args = standalone() ? ["usage", "cursor"] : [process.argv[1], "usage", "cursor"];
+  const c = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true });
+  c.on("error", () => {}); c.unref();
+};
+
+// `routr usage cursor`: read the screen now and keep the reading. A failed read keeps the last good one.
+export async function refreshCursor({ read = cursorUsage, file = CURSOR_SNAPSHOT, nowSec = now() } = {}) {
+  const r = await read();
+  const last = readJson(file);
+  try {
+    writeJson(file, r.ok ? { ts: nowSec, tried: nowSec, reading: { plan: r.plan, included_used_pct: r.included_used_pct, auto_used_pct: r.auto_used_pct, api_used_pct: r.api_used_pct } }
+      : { ts: last?.ts ?? null, tried: nowSec, reading: last?.reading ?? null, error: r.error });
+  } catch {}
+  return r;
+}
+
+export function readCursor({ file = CURSOR_SNAPSHOT, nowSec = now(), refresh = startRefresh, off = noRefresh() } = {}) {
+  const snap = readJson(file);
+  const due = !off && (!snap || !(nowSec - (snap.tried ?? 0) < REFRESH_SEC));
+  if (due) { try { writeJson(file, { ...snap, tried: nowSec }); } catch {} refresh(); } // marked first: calls in a burst start one
+  const r = snap?.reading, pct = (x) => (x == null ? "?" : `${x}%`);
+  const after = [due && "a fresh reading is being taken in the background", snap?.error && `the last try failed: ${snap.error}`].filter(Boolean).join("; ");
+  if (!r) return summarize("cursor", "cursor /usage", null, [], snap?.error ? `no reading: ${after}. Using the assumed headroom. By hand: ${CURSOR_BY_HAND}`
+    : "no reading yet: the first is being taken in the background (about 5 s); using the assumed headroom meanwhile", undefined, nowSec);
+  return summarize("cursor", "cursor /usage", snap.ts, [{ name: "included", usedPct: r.included_used_pct, windowMin: null, resetsAt: null }],
+    `Included ${pct(r.included_used_pct)} used (Auto ${pct(r.auto_used_pct)}, API ${pct(r.api_used_pct)})${after ? `; ${after}` : ""}`, undefined, nowSec);
+}
+
+// How each subscription's usage is read, in one place, so doctor, dispatch, and `routr usage` say the same. `read` runs
+// on every call and must be fast. `check` takes a fresh reading now and prints it raw (`routr usage cursor`).
 // A harness added later picks its row; nothing else changes.
 export const SOURCES = {
   claude: { read: readClaude },
   codex: { read: readCodexLive },
   agy: { read: readAgy },
-  cursor: { interactive: cursorUsage, command: "routr usage cursor" },
+  cursor: { read: readCursor, check: refreshCursor },
 };
 
 // One unreadable source must not take the others (or the routing advice) down with it. Readers run in parallel.
-// `given` holds headroom the caller read itself (0..1), e.g. Cursor's, from `routr usage cursor`.
-export async function readUsage(names, given = {}) {
+// `given` holds headroom the caller read itself (0..1); it wins over any reading.
+export async function readUsage(names, given = {}, { sources = SOURCES } = {}) {
   return Promise.all(names.map(async (name) => {
     if (typeof given[name] === "number") return { pool: name, source: "given by caller", ageSec: 0, windows: [], headroom: Math.min(1, Math.max(0, given[name])) };
-    const src = SOURCES[name];
-    if (src?.interactive) return { ...summarize(name, "its own screen", null, [], `${name} shows usage only in its own screen, so it is not read here: \`${src.command}\` reads it and prints the --headroom value to pass`), read_with: src.command };
+    const src = sources[name];
     if (!src?.read) return summarize(name, "none", null, [], "no usage source: read it yourself and pass --headroom " + name + "=<0..1>");
     try { return await src.read(); } catch (e) { return summarize(name, "unreadable", null, [], `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}`); }
   }));

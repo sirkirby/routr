@@ -37,9 +37,10 @@ but only with your fallback level.
 Claude Code reports usage only to its statusline. Run `routr setup`, or set `routr statusline` as Claude's statusline command by hand (the setup
 guide does this with you); the first reading appears after the next Claude Code turn.
 
-## Cursor's usage is always "assumed" or "given"
+## Cursor's usage is "assumed"
 
-Cursor shows usage only in its own `/usage` screen. `routr usage cursor` opens that screen in a private herdr session
-(nothing opens on your screen, inside herdr or not; only herdr has to be installed), reads it, removes the session,
-and prints the value to pass as `--headroom cursor=<0..1>`. If it cannot, its `read_yourself` says how to read it by
-hand. `routr usage` shows what routr sees of every subscription, and how it ranks them, without a brief.
+Cursor shows usage only in its own `/usage` screen. routr reads it in a private herdr session in the background (nothing
+opens on your screen; herdr has to be installed), about once per working session, and keeps the reading in
+`~/.cache/routr/cursor-usage.json`. Until the first reading lands, or when reading fails, Cursor is `assumed` and the
+row's `note` says why. Run `routr usage cursor` to read it now and see any error; if it cannot be read at all, pass
+`--headroom cursor=<0..1>` yourself (its `read_yourself` says how to read the screen by hand).

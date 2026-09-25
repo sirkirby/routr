@@ -20,13 +20,13 @@ export const COMMANDS = {
     ],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
-      { name: "--headroom", arg: "<subscription>=<0..1>", description: "caller-reported usage headroom", required: false, repeatable: true },
+      { name: "--headroom", arg: "<subscription>=<0..1>", description: "override a reading with usage you read yourself", required: false, repeatable: true },
     ],
   },
   usage: {
     name: "usage",
-    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing. `routr usage cursor` reads Cursor's own /usage screen in a private herdr session (nothing opens on screen, inside herdr or not) and prints the --headroom value",
-    args: [{ name: "[<subscription>]", description: "only this one; for cursor, open its /usage screen and read it (needs herdr installed)", required: false }],
+    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session (routr otherwise does this in the background about once per working session)",
+    args: [{ name: "[<subscription>]", description: "only this one; for cursor, read its /usage screen now (needs herdr installed)", required: false }],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--headroom", arg: "<subscription>=<0..1>", description: "usage you read yourself, as for dispatch", required: false, repeatable: true },

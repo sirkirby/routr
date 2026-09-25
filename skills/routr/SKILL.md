@@ -62,8 +62,8 @@ fallback.
   five times in six. routr never names a model.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
 - `subscriptions` (dispatch only). `ranked` lists each subscription with its usable headroom, marked `live`, `given`
-  (you passed it in), or `assumed`. An `assumed` row says why in `note`, and `read_with` names the command that gets
-  the real number when there is one (`routr usage cursor`). Under `windows` it shows each usage window as the harness reports it: percent
+  (you passed it in), or `assumed`. `age_sec` is how old the reading is, and `note` says what the harness showed beside
+  the number (Cursor: its Auto and API pools) or why a number is assumed. Under `windows` it shows each usage window as the harness reports it: percent
   used and hours until it resets. The user's reserve shrinks as a window nears its reset, because unused capacity
   expires then. `your_default` is the user's everyday model on that subscription. `excluded` lists subscriptions the
   user does not give work this hard. Never spend a reserve: when everything is at its reserve, hold the work or ask

@@ -70,8 +70,8 @@ file for anything they want different; every one is their preference, and none d
     prints (routr keeps no model list of its own). The orchestrator starts from it and moves up or down with the
     work. Doctor warns when the harness no longer offers it; that is the only time it needs attention.
   - `assumed_headroom`: used only when nothing better is known. Claude, Codex, and Antigravity are read live; Cursor's
-    shows only in its own `/usage` screen: `routr usage cursor` reads it and prints the value the orchestrator passes
-    in. The advice marks the rest `assumed`. `routr usage` shows what routr sees of each one.
+    shows only in its own `/usage` screen, which routr reads in the background about once per working session (the
+    first time during setup). The advice marks the rest `assumed`. `routr usage` shows what routr sees of each one.
   - `billing`: `included` or `metered`, only when the harness cannot show which it is. A Codex Enterprise seat on
     flexible pricing is detected (measured: no windows, unlimited credits). Claude is never detected: a plan with no
     quota (usage-based Enterprise, an API key) sends the statusline no windows, and so may a plan routr has not seen
@@ -100,7 +100,7 @@ usage there and saves each snapshot to `~/.cache/routr/claude-usage.json`, which
 in `~/.claude/settings.json`. Use the full path (`~/.local/bin/routr`, written out), because Claude's PATH may not
 include it. If the user already has a statusline, keep theirs and have it call `routr statusline` for the snapshot,
 or ask them which they prefer. The first snapshot appears after the next Claude Code turn. Codex and Antigravity are
-read from the harness directly and need nothing; Cursor's usage is read by `routr usage cursor` from its `/usage` screen, in a private herdr session.
+read from the harness directly and need nothing; Cursor's usage is read from its `/usage` screen in a private herdr session, in the background: herdr must be installed.
 
 ## 5. herdr (only for orchestration)
 

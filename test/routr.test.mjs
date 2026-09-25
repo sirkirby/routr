@@ -7,7 +7,7 @@ import { advise } from "../src/lib/advise.mjs";
 import { readReport } from "../src/lib/check.mjs";
 import { DEFAULTS, loadConfig } from "../src/lib/config.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
-import { claudeSnapshot, codexSnapshot, monthMinutes, readUsage } from "../src/lib/usage.mjs";
+import { claudeSnapshot, codexSnapshot, monthMinutes, readCursor, readUsage, refreshCursor } from "../src/lib/usage.mjs";
 import { usageCommand } from "../src/lib/commands.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
 import { plan } from "../src/lib/harness.mjs";
@@ -22,6 +22,7 @@ const withoutHerdr = (path) => process.platform !== "win32" ? path
   : path.split(delimiter).filter((d) => !["herdr.exe", "herdr.cmd", "herdr.bat"].some((f) => existsSync(join(d, f)))).join(delimiter);
 process.env.PATH = join(import.meta.dir, "fixtures", "no-herdr") + delimiter + withoutHerdr(process.env.PATH ?? "");
 delete process.env.HERDR_ENV;
+process.env.ROUTR_NO_REFRESH = "1"; // no detached Cursor refresh, and nothing written to the real cache
 
 const cfg = (over = {}) => ({ ...DEFAULTS, subscriptions: {
   claude: { hardest_work: "strong", reserve: 0.25, assumed_headroom: 0.5 },
@@ -425,7 +426,7 @@ function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = 
 test("cursorUsage reads /usage in a private herdr session, removes it, and removes one a dead routr left", async () => {
   const f = fakeCursorUsage();
   const r = await cursorUsage(f.deps);
-  expect(r).toEqual({ ok: true, subscription: "cursor", plan: "Pro", included_used_pct: 3, auto_used_pct: 3, api_used_pct: 1, headroom: 0.97, pass_as: "--headroom cursor=0.97" });
+  expect(r).toEqual({ ok: true, subscription: "cursor", plan: "Pro", included_used_pct: 3, auto_used_pct: 3, api_used_pct: 1, headroom: 0.97 });
   expect(f.started).toHaveLength(1);
   expect(f.started[0]).toMatch(/^routr-scratch-4242-[0-9a-f]{6}$/);
   expect(f.calls.filter((a) => a[3] === "send-keys" && a[5] === "enter")).toHaveLength(1);
@@ -469,22 +470,57 @@ test("cursorUsage without herdr fails open, says how to read it by hand, and sta
 });
 test("usage cursor without herdr prints JSON and exits 0", () => {
   const script = `${import.meta.dir}/../src/routr.mjs`;
-  const cleanEnv = { ...process.env, PATH: "", ROUTR_NO_UPDATE: "1" };
+  const home = mkdtempSync(join(tmpdir(), "routr-home-")); // it keeps what it read: never in the real cache
+  const cleanEnv = { ...process.env, PATH: "", HOME: home, USERPROFILE: home, ROUTR_NO_UPDATE: "1" };
   delete cleanEnv.HERDR_ENV;
   const res = Bun.spawnSync([process.execPath, script, "usage", "cursor"], { env: cleanEnv });
+  expect(JSON.parse(readFileSync(join(home, ".cache/routr/cursor-usage.json"), "utf8")).error).toContain("herdr");
+  rmSync(home, { recursive: true, force: true });
   expect(res.exitCode).toBe(0);
   const out = JSON.parse(res.stdout.toString());
   expect(out).toMatchObject({ ok: false, read_yourself: CURSOR_BY_HAND });
 });
-test("one table says how each subscription's usage is read, and every surface repeats it", async () => {
-  const [cursor] = await readUsage(["cursor"]);
-  expect(cursor).toMatchObject({ pool: "cursor", headroom: null, read_with: "routr usage cursor" });
-  expect(cursor.note).toContain("routr usage cursor");
-  const c = cfg();
-  const row = rankSubscriptions("basic", [cursor], c).ranked.find((x) => x.subscription === "cursor");
-  expect(row).toMatchObject({ usage: "assumed", read_with: "routr usage cursor" });
-  expect(row.note).toContain("its own screen");
-  expect(rankSubscriptions("basic", [{ pool: "cursor", source: "given by caller", ageSec: 0, windows: [], headroom: 0.9 }], c).ranked[0].read_with).toBeUndefined();
+test("Cursor is a snapshot every call reads at once, refreshed in the background about once a session", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "routr-cursor-")), file = join(dir, "cursor-usage.json"), T = 1_800_000_000;
+  const started = [];
+  const read = (nowSec) => readCursor({ file, nowSec, refresh: () => started.push(nowSec), off: false });
+  // A new install: nothing yet. The call answers at once, assumed, and starts one background reading.
+  const first = read(T);
+  expect(first).toMatchObject({ pool: "cursor", headroom: null });
+  expect(first.note).toContain("being taken in the background");
+  expect(read(T + 1).headroom).toBeNull();
+  expect(started).toEqual([T]); // a burst of calls starts one reading, not one each
+  // The background reading lands (what `routr usage cursor` does).
+  const screen = { ok: true, plan: "Team", included_used_pct: 66, auto_used_pct: 61, api_used_pct: 93, headroom: 0.34 };
+  expect(await refreshCursor({ file, nowSec: T + 5, read: async () => screen })).toEqual(screen);
+  const got = read(T + 600);
+  expect(got.headroom).toBeCloseTo(0.34, 9);
+  expect(got).toMatchObject({ ageSec: 595, class: "included", note: "Included 66% used (Auto 61%, API 93%)" });
+  const row = rankSubscriptions("standard", [got], cfg()).ranked.find((x) => x.subscription === "cursor");
+  expect(row).toMatchObject({ usage: "live", usable: 0.24, age_sec: 595 });
+  expect(started).toEqual([T]);
+  // Hours later (a new session): the old reading still answers, and a fresh one is started behind it.
+  const later = read(T + 5 + 4 * 3600 + 1);
+  expect(later.headroom).toBeCloseTo(0.34, 9);
+  expect(later.note).toContain("a fresh reading is being taken");
+  expect(started).toHaveLength(2);
+  // A failed reading keeps the last good one and says why.
+  await refreshCursor({ file, nowSec: T + 20000, read: async () => ({ ok: false, error: "herdr is not installed", read_yourself: CURSOR_BY_HAND }) });
+  const kept = read(T + 20001);
+  expect(kept.headroom).toBeCloseTo(0.34, 9);
+  expect(kept.note).toContain("the last try failed: herdr is not installed");
+  // Never read, and the try failed: assumed, with how to read it by hand.
+  const never = join(dir, "never.json");
+  await refreshCursor({ file: never, nowSec: T, read: async () => ({ ok: false, error: "no herdr", read_yourself: CURSOR_BY_HAND }) });
+  expect(readCursor({ file: never, nowSec: T + 1, refresh: () => {}, off: false }).note).toContain(CURSOR_BY_HAND);
+  // Turned off (tests), a call neither starts a reading nor writes the stamp.
+  const quiet = join(dir, "quiet.json");
+  expect(readCursor({ file: quiet, nowSec: T, refresh: () => started.push("quiet") }).headroom).toBeNull();
+  expect(existsSync(quiet)).toBe(false);
+  rmSync(dir, { recursive: true, force: true });
+  // What the caller passes still wins, and the snapshot is not consulted for it.
+  const [given] = await readUsage(["cursor"], { cursor: 0.9 }, { sources: { cursor: { read: () => { throw new Error("read"); } } } });
+  expect(given).toMatchObject({ source: "given by caller", headroom: 0.9 });
 });
 test("routr usage ranks what it sees without a brief, and a name narrows it or opens the harness's screen", async () => {
   const c = cfg();
@@ -500,7 +536,7 @@ test("routr usage ranks what it sees without a brief, and a name narrows it or o
   expect((await usageCommand(["--json"], c, {}, { read })).ok).toBe(true); // doctor's flag: the output is JSON already
   expect((await usageCommand(["claude", "--json"], c, {}, { read })).ranked.map((x) => x.subscription)).toEqual(["claude"]);
   expect((await usageCommand(["--bogus"], c, {}, { read })).error).toContain("unknown: --bogus");
-  expect(await usageCommand(["cursor"], c, {}, { read, sources: { cursor: { interactive: async () => ({ ok: true, opened: true }) } } })).toEqual({ ok: true, opened: true });
+  expect(await usageCommand(["cursor"], c, {}, { read, sources: { cursor: { check: async () => ({ ok: true, opened: true }) } } })).toEqual({ ok: true, opened: true });
   const broken = await usageCommand([], c, {}, { read: async () => { throw new Error("gone"); } });
   expect(broken).toMatchObject({ ok: false, error: "gone" });
 });

@@ -16,7 +16,7 @@ while you do something else or your own subscription is close to its reserve.
 
 ## 2. Ask for the facts, then decide
 
-    routr dispatch [--headroom cursor=<0..1>] "<the brief you are about to hand over>"
+    routr dispatch "<the brief you are about to hand over>"
 
 First, the brief: if `states_check` or `standalone` reads `no`, fix the brief and ask again. A worker cannot ask you
 questions.
@@ -32,12 +32,10 @@ already running in other panes, what comes next, which harness suits this reposi
 
 Usage moves while you work, so ask again before every launch; never reuse an earlier answer.
 
-**Cursor's usage** shows only in Cursor's own `/usage` screen: run `routr usage cursor` at the start of a run (and
-again every so often, not on every launch) and pass its `pass_as` value to `routr dispatch`. It reads that screen in a
-private herdr session that nothing on screen shows, and removes it; if it fails, its `read_yourself` says how to read
-it by hand. Any `assumed` row in `ranked` with a `read_with` field is the same case. Claude, Codex, and Antigravity
-are read live by routr itself. `routr usage` (no name) shows what routr sees of every subscription, ranked, without a
-brief.
+Usage is read by routr itself for every subscription; you pass nothing. Cursor's comes from a reading routr refreshes
+in the background about once per working session (its `age_sec` says how old); `routr usage cursor` takes a fresh one
+now if you have reason to think it moved. `routr usage` (no name) shows what routr sees of every subscription, ranked,
+without a brief.
 
 ## 3. Launch
 

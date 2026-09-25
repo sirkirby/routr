@@ -1,5 +1,5 @@
 // Cursor has no local usage file: it shows usage only in its own /usage screen. This opens that screen in a throwaway
-// terminal (terminal.mjs), reads Included N% used, and prints headroom for `routr dispatch --headroom cursor=…`.
+// terminal (terminal.mjs) and reads Included N% used. routr keeps the reading (usage.mjs: refreshCursor).
 // The footer context meter (e.g. "Grok 4.6 High · 8.7%") is not usage and must never be parsed as it.
 import { tmpdir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
@@ -75,8 +75,7 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
     const included = parsed.included_used_pct;
     const headroom = Math.round((1 - included / 100) * 100) / 100;
     return { ok: true, subscription: "cursor", plan: parsed.plan, included_used_pct: included,
-      auto_used_pct: parsed.auto_used_pct, api_used_pct: parsed.api_used_pct, headroom,
-      pass_as: `--headroom cursor=${headroom}` };
+      auto_used_pct: parsed.auto_used_pct, api_used_pct: parsed.api_used_pct, headroom };
   } catch (e) {
     return { ok: false, error: String(e?.message ?? e).slice(0, 200), read_yourself: CURSOR_BY_HAND };
   } finally {

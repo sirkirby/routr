@@ -99,7 +99,7 @@ const flag = (name, repeatable = false) => {
   return i >= 0 ? argv.splice(i, 2)[1] : undefined;
 };
 const configPath = flag("--config");
-// --headroom cursor=0.97 : usage the caller read itself (repeatable), for harnesses with no local source
+// --headroom cursor=0.97 : usage the caller read itself (repeatable); it overrides any reading
 const given = {}; for (let h; (h = flag("--headroom")); ) { const [k, v] = h.split("="); if (k && !Number.isNaN(+v)) given[k] = +v; }
 const [mode, ...rest] = argv;
 // At most once a day this starts a detached background updater; it never delays or changes the command itself.
