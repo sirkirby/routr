@@ -422,7 +422,7 @@ function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = 
       if (a[1] === "send-text") { expect(a.slice(3)).toEqual(["/usage"]); return herdrOK({}); }
       if (a[1] === "run") {
         // Cursor runs on a private copy of its config, never the user's own (it writes to it as it runs).
-        const dir = a[3].match(/CURSOR_CONFIG_DIR=(\S+)/)?.[1];
+        const dir = a[3].match(/CURSOR_CONFIG_DIR=([^'"\s]+)/)?.[1]; // quoted on Windows (a drive letter and backslashes)
         expect(a[2]).toBe("w1:p1");
         expect(a[3]).toContain("cursor-agent");
         expect(a[3]).toContain("--trust");
