@@ -120,10 +120,11 @@ shell profile (or the user PATH on Windows), so that agents and herdr panes can 
 
 ## 7. Telemetry
 
-routr sends its maintainers anonymous outcomes once a day: what it read from each brief, what was chosen, and how
-it went; never a brief or any other text. It is on by default. `routr setup --yes` leaves it on without asking, so
-**tell the user** in one line, and that `routr telemetry off` stops it and `routr share` shows exactly what is sent.
-Turn it off only if they say so.
+Telemetry is off unless the user turns it on, and `routr setup --yes` never turns it on. Ask them once, in one or two
+lines: routr can share anonymous outcomes with its maintainers once a day (what it read from each brief, what was
+chosen, how it went; never a brief or any text) to help tune its questions; `routr share` shows exactly what would be
+sent, and https://github.com/sirkirby/routr/blob/main/docs/telemetry.md has the details. Only if they say yes, run
+`routr telemetry on`. Do not ask again.
 
 ## 8. Confirm
 

@@ -75,7 +75,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
 | `record`, `assess` | Write one ledger line; read the ledger back as advice about your own settings. |
 | `share` | Write exactly what telemetry sends to a file you can read. Sends nothing. |
-| `telemetry on\|off\|status\|send` | Anonymous outcomes, once a day (see [Telemetry](#telemetry)). |
+| `telemetry on\|off\|status\|send` | Share anonymous outcomes once a day; off unless you turn it on ([details](docs/telemetry.md)). |
 | `feedback "<text>"` | Send the maintainers a note in your own words. |
 | `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
 | `update` | Update to the latest release now (routr also does this by itself in the background, at most once a day). |
@@ -161,30 +161,14 @@ or manage context; harnesses own that.
 
 ## Telemetry
 
-routr's questions are kept or dropped on real outcomes, so once a day it sends its maintainers the ledger rows written
-since the last send. This is on by default; the installer, `routr setup`, and `routr doctor` say so. The first send on a
-machine starts from that moment: rows recorded before it stay local unless you run `routr telemetry send --all`.
-
-- **Sent:** what routr read from each brief (yes/no probabilities and the level), the Jev version, the subscription,
-  model, effort and level chosen, the outcome, attempts and seconds, the day, routr's version, your OS, a random
-  install id made on your machine, and a key per row that makes a resend harmless.
-- **Never sent:** your briefs or any other free text, notes, project or repository names, the ledger's own ids,
-  hashes of briefs, usage numbers, file paths, or anything from your code. Values an agent types by hand (a model
-  name, a verdict) are cut to a known value, or sent as "other". A model name is the one exception: anything shaped
-  like one (letters, digits, `.`, `-`, `:`, brackets; no paths, URLs, emails, or tokens) is sent as written. The
-  endpoint also refuses any row carrying a long string.
-- **See it:** `routr share` writes exactly what would be sent to a file.
-- **Stop it:** `routr telemetry off`, `"telemetry": false` in the config, `ROUTR_TELEMETRY=0`, or `DO_NOT_TRACK=1`.
-  It is always off in CI.
-- It is sent by the same detached daily job as updates, never during a command, and a failed send is simply retried
-  the next day.
-
-`routr feedback "<text>"` sends the maintainers a note in your own words. It is the only thing routr sends that is text,
-and only when you run it.
+Off unless you turn it on. `routr telemetry on` shares anonymous outcomes with routr's maintainers once a day (what
+routr read from each brief, what was chosen, how it went; never your briefs or any text) to help tune its questions.
+`routr share` shows exactly what would be sent. Everything else, including where it goes and how to have it deleted,
+is in [docs/telemetry.md](docs/telemetry.md).
 
 ## Contributing
 
-The most useful contribution is your outcomes: leaving telemetry on is enough. Notes on what worked and what did
+The most useful contribution is your outcomes: `routr telemetry on` is enough. Notes on what worked and what did
 not are next: `routr feedback`.
 
 Code and wording changes come by pull request. A change to a question's wording is a new question-set version and

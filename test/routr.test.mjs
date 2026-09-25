@@ -1367,23 +1367,37 @@ test("telemetry rows carry what tuning needs, never text or anything that points
   const long = []; JSON.stringify(r, (k, v) => { if (typeof v === "string" && v.length > 80) long.push(k); return v; });
   expect(long).toEqual([]);
 });
-test("telemetry is on by default and off by any of the usual switches, and always in CI", async () => {
-  const { telemetryStatus } = await import("../src/lib/telemetry.mjs");
-  expect(telemetryStatus({}, {}).on).toBe(true);
-  expect(telemetryStatus({ telemetry: false }, {}).on).toBe(false);
-  expect(telemetryStatus({}, { DO_NOT_TRACK: "1" }).why_off).toBe("DO_NOT_TRACK is set");
-  expect(telemetryStatus({}, { DO_NOT_TRACK: "0" }).on).toBe(true);
-  expect(telemetryStatus({}, { ROUTR_TELEMETRY: "off" }).on).toBe(false);
-  expect(telemetryStatus({}, { CI: "true" }).why_off).toBe("running in CI");
+test("telemetry is off unless the person turns it on, and the usual switches keep it off", async () => {
+  const { telemetryStatus, setTelemetry } = await import("../src/lib/telemetry.mjs");
+  const yes = { opted_in_at: "2026-09-24T00:00:00.000Z" };
+  expect(telemetryStatus({}, {}, {}).on).toBe(false);                               // the default: nothing is shared
+  expect(telemetryStatus({ telemetry: "yes" }, {}, yes).on).toBe(false);            // only a real true turns it on
+  expect(telemetryStatus({ telemetry: true }, {}, yes).on).toBe(true);
+  expect(telemetryStatus({ telemetry: true }, {}, {}).why_off).toContain("before sharing became opt-in"); // 0.1.21's default yes is not a yes
+  expect(telemetryStatus({ telemetry: true }, { DO_NOT_TRACK: "1" }, yes).why_off).toBe("DO_NOT_TRACK is set");
+  expect(telemetryStatus({ telemetry: true }, { DO_NOT_TRACK: "0" }, yes).on).toBe(true);
+  expect(telemetryStatus({ telemetry: true }, { ROUTR_TELEMETRY: "off" }, yes).on).toBe(false);
+  expect(telemetryStatus({ telemetry: true }, { CI: "true" }, yes).why_off).toBe("running in CI");
   const { loadConfig } = await import("../src/lib/config.mjs");
-  const dir = mkdtempSync(join(tmpdir(), "routr-tel-"));
+  const dir = mkdtempSync(join(tmpdir(), "routr-tel-")), ledger = join(dir, "ledger.jsonl");
   try {
-    writeFileSync(join(dir, "c.json"), JSON.stringify({ telemetry: false, prefer: { review: "standard" } }));
+    writeFileSync(join(dir, "c.json"), JSON.stringify({ prefer: { review: "standard" } }));
     expect(loadConfig(join(dir, "c.json")).config.telemetry).toBe(false);
-    expect(loadConfig(join(dir, "missing.json")).config.telemetry).toBe(true);
-    const { setTelemetry } = await import("../src/lib/telemetry.mjs");
-    expect(setTelemetry(true, join(dir, "c.json")).ok).toBe(true);
-    expect(JSON.parse(readFileSync(join(dir, "c.json"), "utf8"))).toEqual({ telemetry: true, prefer: { review: "standard" } }); // the rest is kept
+    expect(loadConfig(join(dir, "missing.json")).config.telemetry).toBe(false);
+    // Turning it on records the yes and starts the mark at that moment, so nothing from before (or from a stretch with
+    // it off) is ever sent by the daily job.
+    writeFileSync(join(dir, "telemetry.json"), JSON.stringify({ install_id: "i", started: "2026-01-01T00:00:00.000Z", sent_through: "2026-01-02T00:00:00.000Z" }));
+    expect(setTelemetry(true, join(dir, "c.json"), { ledger, now: "2026-07-01T00:00:00.000Z" }).ok).toBe(true);
+    expect(JSON.parse(readFileSync(join(dir, "c.json"), "utf8"))).toEqual({ prefer: { review: "standard" }, telemetry: true }); // the rest is kept
+    expect(JSON.parse(readFileSync(join(dir, "telemetry.json"), "utf8"))).toEqual({ install_id: "i", opted_in_at: "2026-07-01T00:00:00.000Z", started: "2026-07-01T00:00:00.000Z", sent_through: "2026-07-01T00:00:00.000Z" });
+    expect(loadConfig(join(dir, "c.json")).config.telemetry).toBe(true);
+    setTelemetry(false, join(dir, "c.json"), { ledger });
+    expect(JSON.parse(readFileSync(join(dir, "telemetry.json"), "utf8")).opted_in_at).toBeNull();
+    // A hand edit to false, seen by the daily job, withdraws the yes too.
+    const { forgetConsentUnlessOn } = await import("../src/lib/telemetry.mjs");
+    setTelemetry(true, join(dir, "c.json"), { ledger });
+    forgetConsentUnlessOn({ telemetry: false }, ledger);
+    expect(JSON.parse(readFileSync(join(dir, "telemetry.json"), "utf8")).opted_in_at).toBeNull();
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test("telemetry sends only rows it has not sent, and moves on only after the endpoint accepts them", async () => {

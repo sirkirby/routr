@@ -174,7 +174,8 @@ export function render(r) {
   line(r.claude_usage_statusline !== STATUSLINE_MISSING, `Claude usage statusline: ${r.claude_usage_statusline}`);
   const au = r.auto_update;
   line("ok", `automatic updates ${au.on ? `on · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off}`}`);
-  if (r.telemetry) line("ok", r.telemetry.on ? "telemetry on: anonymous outcomes (never text) once a day · `routr share` shows exactly what · `routr telemetry off` stops it" : `telemetry off: ${r.telemetry.why_off}`);
+  if (r.telemetry) line("ok", r.telemetry.on ? "telemetry on: anonymous outcomes (never text) once a day · `routr share` shows exactly what · `routr telemetry off` stops it"
+    : `telemetry off${r.telemetry.why_off.startsWith("not turned on") ? " (the default)" : `: ${r.telemetry.why_off}`} · \`routr telemetry on\` shares anonymous outcomes that help tune routr (docs/telemetry.md)`);
   out.push("", r.next_steps.length ? paint(1, "Next steps") : paint(32, "Everything routr needs is in place."));
   r.next_steps.forEach((s, i) => out.push(`  ${i + 1}. ${s}`));
   return out.join("\n");

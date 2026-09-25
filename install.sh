@@ -24,7 +24,7 @@ mv "$tmp/$asset" "$dir/routr"
 chmod +x "$dir/routr"
 [ "$os" = darwin ] && xattr -d com.apple.quarantine "$dir/routr" 2>/dev/null || true
 echo "routr: installed $("$dir/routr" --version) to $dir/routr"
-echo "routr: it sends anonymous outcomes once a day to tune its questions, never your briefs or any text. See: routr share; stop: routr telemetry off"
+echo "routr: sharing anonymous outcomes to help tune routr is off unless you turn it on: routr telemetry on (never your briefs or any text)"
 "$dir/routr" skill install >/dev/null && echo "routr: skill installed to ~/.agents/skills/routr"
 case ":$PATH:" in *":$dir:"*) ;; *) echo "routr: add $dir to your PATH so agents can run \`routr\`" ;; esac
 # A person at a terminal goes straight into setup (`curl | sh` leaves stdin on the pipe, so read from the terminal).

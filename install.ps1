@@ -24,7 +24,7 @@ try {
   Move-Item -Force "$tmp\$asset" "$dir\routr.exe"
   $version = & "$dir\routr.exe" --version
   Write-Host "routr: installed $version to $dir\routr.exe"
-Write-Host "routr: it sends anonymous outcomes once a day to tune its questions, never your briefs or any text. See: routr share; stop: routr telemetry off"
+Write-Host "routr: sharing anonymous outcomes to help tune routr is off unless you turn it on: routr telemetry on (never your briefs or any text)"
   & "$dir\routr.exe" skill install | Out-Null
   Write-Host "routr: skill installed to ~\.agents\skills\routr"
   if (($env:PATH -split ";") -notcontains $dir) { Write-Host "routr: add $dir to your PATH so agents can run ``routr``" }

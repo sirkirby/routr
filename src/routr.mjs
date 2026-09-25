@@ -31,7 +31,7 @@ import { setKey } from "./lib/key.mjs";
 import { installSkill } from "./lib/skill-install.mjs";
 import { statusline } from "./lib/statusline.mjs";
 import { backgroundUpdate, maybeAutoUpdate, update } from "./lib/update.mjs";
-import { sendFeedback, sendRows, telemetryCommand } from "./lib/telemetry.mjs";
+import { sendFeedback, sendRows, telemetryCommand, telemetryStatus } from "./lib/telemetry.mjs";
 import { ROUTR_VERSION } from "./lib/version.mjs";
 import { COMMANDS, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "./lib/help.mjs";
 
@@ -83,7 +83,10 @@ if (((argv[0] === "doctor" && argv.includes("--fix")) || argv[0] === "setup") &&
 if (argv[0] === "telemetry" && !argv.includes("--help") && !argv.includes("-h")) {
   const ci = argv.indexOf("--config"), cfg = ci > 0 ? argv[ci + 1] : undefined;
   const words = argv.slice(1).filter((a, i) => !a.startsWith("--") && argv[i] !== "--config"); // flags in any order
-  const r = words[0] === "send" ? await sendRows({ all: argv.includes("--all") }).catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) })) : telemetryCommand(words, loadConfig(cfg).config, cfg);
+  const st = telemetryStatus(loadConfig(cfg).config);
+  const r = words[0] !== "send" ? telemetryCommand(words, loadConfig(cfg).config, cfg)
+    : !st.on ? { ok: false, error: `telemetry is off (${st.why_off}): nothing was sent` }
+    : await sendRows({ all: argv.includes("--all") }).catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) }));
   console.log(JSON.stringify(r, null, 1)); process.exit(r.ok ? 0 : 1);
 }
 if (argv[0] === "feedback" && !argv.includes("--help") && !argv.includes("-h")) {

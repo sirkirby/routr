@@ -43,9 +43,10 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - No runtime dependencies. `node:` built-ins only, so the same source runs under Bun and compiles for every target.
 - Works on macOS, Linux, and Windows: no shelling out to `sh`, no Unix-only paths in product code.
 - Never print, log, or store a secret or the text of a brief. The ledger stores a hash and a length.
-- Telemetry is on by default and disclosed (installer, setup, doctor, README). It sends ledger rows with no text of
-  any kind, only from the detached daily job or `routr telemetry send`, and is off under `routr telemetry off`,
-  `ROUTR_TELEMETRY=0`, `DO_NOT_TRACK=1`, or CI. A new field in a sent row is a README change in the same PR.
+- Telemetry is OFF unless the person turns it on (`routr telemetry on`, or yes to setup's question, default no). An
+  agent never turns it on for them. It sends ledger rows with no text of any kind, only from the detached daily job or
+  `routr telemetry send`, and stays off under `ROUTR_TELEMETRY=0`, `DO_NOT_TRACK=1`, or CI. A new field in a sent row
+  is a `docs/telemetry.md` change in the same PR.
   `routr feedback` is the only text sent, and only what the person typed.
 - Claims in `README.md`, the guides, and `docs/evidence.md` are either measured or say they are not.
 
