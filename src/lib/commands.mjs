@@ -60,6 +60,6 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null) {
     "them) or any other free text, notes, project names, paths, usage numbers.",
     "",
     st.on ? "Telemetry is on: new rows are sent once a day. To stop: routr telemetry off"
-      : `Telemetry is off (${st.why_off}). To send these rows once anyway: routr telemetry send --all. To turn it on: routr telemetry on`,
+      : `Telemetry is off (${st.why_off}). Nothing is shared unless you turn it on: routr telemetry on (docs/telemetry.md)`,
   ].join("\n");
 }

@@ -4,7 +4,8 @@
 // the Jev version, what was chosen (subscription, model, effort, level), and how it turned out. Never the brief or any
 // other text, notes, project names, paths, ids of the ledger, hashes of briefs, or usage numbers. Every field is built
 // below from an exact list or a narrow shape; the endpoint refuses long strings as a backstop (routr-lab/service).
-// On with `routr telemetry on` (setup asks a person once, default no). Kept off by ROUTR_TELEMETRY=0, DO_NOT_TRACK=1, CI.
+// On with `routr telemetry on` (setup asks a person once, default no). Kept off by ROUTR_TELEMETRY=0, DO_NOT_TRACK=1, CI,
+// for every send, `routr telemetry send` included.
 // Sending happens only in the detached daily job (update.mjs) or on an explicit command: never inside advice.
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -20,9 +21,15 @@ const STATE = (ledger = LEDGER_PATH) => join(dirname(ledger), "telemetry.json");
 const OS = `${process.platform}-${process.arch}`;
 const off = (v) => /^(0|false|off|no)$/i.test(String(v ?? "").trim());
 
-export function telemetryStatus(config, env = process.env) {
-  const why = env.CI ? "running in CI" : env.DO_NOT_TRACK && !off(env.DO_NOT_TRACK) ? "DO_NOT_TRACK is set"
-    : off(env.ROUTR_TELEMETRY ?? "1") ? "ROUTR_TELEMETRY is off" : config?.telemetry !== true ? "not turned on (the default): routr telemetry on" : null;
+// What keeps telemetry off whatever the config says.
+export const envOff = (env = process.env) => (env.CI ? "running in CI" : env.DO_NOT_TRACK && !off(env.DO_NOT_TRACK) ? "DO_NOT_TRACK is set"
+  : off(env.ROUTR_TELEMETRY ?? "1") ? "ROUTR_TELEMETRY is off" : null);
+
+// On only when the config says true AND `routr telemetry on` recorded the person's yes (opted_in_at). A `true` left by
+// 0.1.21, whose setup prompt defaulted to yes, is not a yes.
+export function telemetryStatus(config, env = process.env, st = state()) {
+  const why = envOff(env) ?? (config?.telemetry !== true ? "not turned on (the default): routr telemetry on"
+    : !st.opted_in_at ? "turned on before sharing became opt-in: run routr telemetry on to confirm" : null);
   return { on: !why, why_off: why };
 }
 
@@ -43,7 +50,7 @@ const questionSet = shaped(/^[rc]\d{1,3}$/), jevVersion = shaped(/^jev-\d+(\.\d+
 const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "auto"]; // what the harnesses take
 // A model name is the one field no list can check (routr holds no model knowledge, and reading the harnesses' lists
 // would mean running them in the background). It must LOOK like one; a slug an agent passes as a model is sent as
-// written, and the README says so.
+// written, and docs/telemetry.md says so.
 const model = shaped(/^[A-Za-z0-9][A-Za-z0-9.:[\]-]{0,47}$/);            // gpt-5.6-terra, claude-opus-5-5[1m], cursor-grok-4.6-high
 const num = (v) => (Number.isFinite(v) ? v : null);
 
@@ -67,9 +74,9 @@ export function telemetryRows(entries, install) {
   });
 }
 
-// Sends the rows written since the last successful send. The first send on an install starts from NOW: rows recorded
-// before telemetry reached this machine (an auto-update brings it, unseen) stay local unless the person sends them with
-// `routr telemetry send --all`. Batches are cut by size, far below the endpoint's limit, and the mark moves only on success.
+// Sends the rows written since the last successful send; the caller checks telemetryStatus first. `telemetry on` sets
+// the mark to that moment, so only rows recorded after the person's yes go; `--all` (a person's explicit choice) adds
+// the rows before it. A state with no mark starts from now as well. Batches are cut by size, far below the endpoint's limit, and the mark moves only on success.
 const BATCH_BYTES = 200 * 1024;
 export async function sendRows({ ledger = LEDGER_PATH, fetchFn = fetch, timeoutMs = 15000, all = false, now = new Date().toISOString() } = {}) {
   let s = state(ledger);
@@ -109,13 +116,17 @@ export async function sendFeedback(text, { fetchFn = fetch, ledger } = {}) {
   } catch (e) { return { ok: false, error: String(e?.message ?? e).slice(0, 160) }; }
 }
 
-// `routr telemetry on|off`: the one config key this writes; everything else in the file is kept as it is.
-export function setTelemetry(on, path = CONFIG_PATH) {
+// `routr telemetry on|off`: the one config key this writes (everything else in the file is kept as it is), plus the
+// person's yes in the state file. Turning it on starts the send mark NOW: nothing recorded while it was off, or before,
+// is ever sent by the daily job.
+export function setTelemetry(on, path = CONFIG_PATH, { ledger, now = new Date().toISOString() } = {}) {
   let config = {};
   if (existsSync(path)) { try { config = JSON.parse(readFileSync(path, "utf8")); } catch { return { ok: false, error: `${path} is not valid JSON; fix it first` }; } }
   config.telemetry = on;
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+  const s = state(ledger);
+  saveState(on ? { ...s, opted_in_at: now, started: now, sent_through: now } : { ...s, opted_in_at: null }, ledger);
   return { ok: true, telemetry: on ? "on" : "off", config: path };
 }
 
@@ -125,8 +136,8 @@ export function telemetryCommand(args, config, configPath) {
   const sub = args[0] ?? "status";
   if (sub === "on" || sub === "off") {
     const r = setTelemetry(sub === "on", configPath);
-    const st = telemetryStatus({ telemetry: sub === "on" });
-    return r.ok && sub === "on" && !st.on ? { ...r, telemetry: "off", why_off: st.why_off, note: `set to on in the config, but it stays off while ${st.why_off}` } : r;
+    const blocked = envOff();
+    return r.ok && sub === "on" && blocked ? { ...r, telemetry: "off", why_off: blocked, note: `set to on, but it stays off while ${blocked}` } : r;
   }
   const st = telemetryStatus(config), s = state();
   return { ok: true, telemetry: st.on ? "on" : "off", ...(st.why_off ? { why_off: st.why_off } : {}), endpoint: ENDPOINT, install_id: s.install_id ?? null, last_sent_through: s.sent_through ?? null, what: NOTICE };

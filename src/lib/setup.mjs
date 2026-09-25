@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { CONFIG_PATH } from "./config.mjs";
-import { NOTICE, setTelemetry, telemetryStatus } from "./telemetry.mjs";
+import { envOff, NOTICE, setTelemetry } from "./telemetry.mjs";
 import { HARNESSES, inspect, paint, render, starterConfig, SUGGESTED, which } from "./doctor.mjs";
 import { setKey } from "./key.mjs";
 import { standalone } from "./runtime.mjs";
@@ -156,7 +156,7 @@ export async function setup(args) {
   // 3. Telemetry: off unless a person says yes. Asked once, default no; an agent's run never turns it on.
   let asked = false;
   try { asked = "telemetry" in JSON.parse(readFileSync(path, "utf8")); } catch {}
-  if (!asked && telemetryStatus({ telemetry: true }).on) {
+  if (!asked && !envOff()) {
     if (rl) {
       say(`\n${NOTICE}`);
       const share = /^y/i.test((await rl.question("Share them? [y/N] ")).trim());
