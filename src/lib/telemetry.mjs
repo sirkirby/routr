@@ -48,6 +48,8 @@ export function forgetConsentUnlessOn(config, ledger) {
   if (s.opted_in_at) saveState({ ...s, opted_in_at: null }, ledger);
 }
 
+export const telemetryState = (ledger) => state(ledger); // read-only view, for callers that pass their own ledger
+
 function state(ledger) { try { return JSON.parse(readFileSync(STATE(ledger), "utf8")); } catch { return {}; } }
 function saveState(s, ledger) { mkdirSync(dirname(STATE(ledger)), { recursive: true }); writeFileSync(STATE(ledger), JSON.stringify(s) + "\n"); }
 // A random id made on this machine, so rows from one install can be grouped. It is not derived from anything about you.
@@ -62,7 +64,7 @@ const LEVELS3 = ["basic", "standard", "strong"];
 const WORK_TYPES = Object.keys(questions.work_type.criteria);
 const SUBSCRIPTIONS = Object.keys(HARNESSES);                            // routr keys a subscription by its harness
 const questionSet = shaped(/^[rc]\d{1,3}$/), jevVersion = shaped(/^jev-\d+(\.\d+){0,3}$/);
-const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "auto", "default"]; // what the harnesses take, and "default" (seen in real rows)
+export const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "auto", "default"]; // what the harnesses take, and "default" (seen in real rows)
 // A model name is the one field no list can check (routr holds no model knowledge, and reading the harnesses' lists
 // would mean running them in the background). It must LOOK like one; a slug an agent passes as a model is sent as
 // written, and docs/telemetry.md says so.

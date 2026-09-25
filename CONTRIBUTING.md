@@ -45,6 +45,19 @@ improves Jev often, and routr should run on the newest version that does at leas
 preview on real work. Every ledger row records the version that answered (`jev_model`), so real outcomes can be compared
 across versions.
 
+## Changing what telemetry sends
+
+Telemetry is opt-in and its promise is in [docs/telemetry.md](docs/telemetry.md). A change to `src/lib/telemetry.mjs`
+must keep two failure modes out, and the tests check both: text getting OUT (every field is an exact list or a narrow
+shape), and real values getting LOST (a value seen in real rows arriving as "other").
+
+1. A new field changes the table in `docs/telemetry.md` in the same pull request (a test checks every field is listed).
+2. A value seen in real use goes into `test/fixtures/seen-values.json` and the allowlist (a test checks it survives).
+3. Re-read every message that describes sending (`share`, `telemetry status`, setup, doctor, installers) against
+   what the code now does; a test covers `share` in each state.
+4. Before release, on a machine that has opted in: `bun run smoke:telemetry`. It reads the real ledger, sends nothing,
+   and fails on any value that would arrive as "other" or any string the endpoint would refuse.
+
 ## Changing a harness recipe
 
 `skills/routr/references/harnesses.md` and `src/lib/harness.mjs` record flags and failure modes that were observed, not

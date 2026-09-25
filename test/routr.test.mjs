@@ -1750,3 +1750,90 @@ test("routr update reports a real swap as an update and reinstalls the skill (th
   expect(bad.updated).toBe(true); expect(bad.ok).toBe(false); expect(bad.note).toContain("updated to");
   expect(readFileSync(self, "utf8")).toBe("NEW-BINARY");
 });
+
+// ---- Telemetry: data must not be LOST either. Leak tests above check that text cannot get out; these check that real
+// values survive, that what routr says about sending matches what it does, and that the disclosure page lists every field.
+test("every value seen in real rows, and every value routr documents, survives telemetry as itself", async () => {
+  const { telemetryRows } = await import("../src/lib/telemetry.mjs");
+  const seen = JSON.parse(readFileSync(join(import.meta.dir, "fixtures/seen-values.json"), "utf8"));
+  // What `routr record` documents (help table) belongs in the seen lists too.
+  const doc = Object.fromEntries(COMMANDS.record.flags.filter((f) => /^<.*\|.*>$/.test(f.arg ?? "")).map((f) => [f.name.slice(2), f.arg.slice(1, -1).split("|")]));
+  for (const k of ["verdict", "check"]) for (const v of doc[k]) expect(seen[k]).toContain(v);
+  const { HARNESSES } = await import("../src/lib/harness.mjs");
+  expect(seen.subscription.sort()).toEqual(Object.keys(HARNESSES).sort());
+  const lost = [];
+  const at = (field, v) => row({ chose: { subscription: field === "subscription" ? v : "codex", model: field === "model" ? v : "m-1", effort: field === "effort" ? v : "low", level: "basic" },
+    outcome: { verdict: field === "verdict" ? v : "done", check: field === "check" ? v : "pass", attempts: 1 } });
+  for (const field of ["effort", "model", "subscription", "verdict", "check"]) for (const v of seen[field]) {
+    const [r] = telemetryRows([at(field, v)], "i");
+    const got = { effort: r.chose.effort, model: r.chose.model, subscription: r.chose.subscription, verdict: r.outcome.verdict, check: r.outcome.check }[field];
+    if (got !== v) lost.push(`${field}=${v} → ${got}`);
+  }
+  expect(lost).toEqual([]);
+});
+
+test("routr share says what will really happen to the rows, in each state", async () => {
+  const { shareCommand } = await import("../src/lib/commands.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "routr-sharemsg-")), ledger = join(dir, "ledger.jsonl"), out = join(dir, "out.jsonl");
+  try {
+    writeFileSync(ledger, [row({ ts: "2026-09-21T10:00:00.000Z" }), row({ ts: "2026-09-23T10:00:00.000Z" })].map((r) => JSON.stringify(r)).join("\n") + "\n");
+    const say = (config, isStandalone = () => true, env = {}) => shareCommand({ ledger, out }, config, { env, isStandalone });
+    expect(say({ telemetry: false })).toContain("none of these is shared");
+    expect(existsSync(join(dir, "telemetry.json"))).toBe(false);                 // looking creates no install id
+    writeFileSync(join(dir, "telemetry.json"), JSON.stringify({ opted_in_at: "2026-09-22T00:00:00.000Z", sent_through: "2026-09-22T00:00:00.000Z" }));
+    const on = say({ telemetry: true });
+    expect(on).toContain("1 of these is waiting to be sent");                     // only the row after the yes
+    expect(on).toContain("once a day");
+    const source = say({ telemetry: true }, () => false);
+    expect(source).not.toContain("once a day");                                    // the daily job does not run from source
+    expect(source).toContain("routr telemetry send");
+    expect(say({ telemetry: true }, () => true, { DO_NOT_TRACK: "1" })).toContain("none of these is shared");
+    expect(readFileSync(out, "utf8").trim().split("\n")).toHaveLength(2);         // the file shows every row, in sent form
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("docs/telemetry.md lists every field a sent row carries", async () => {
+  const { telemetryRows } = await import("../src/lib/telemetry.mjs");
+  const page = readFileSync(join(import.meta.dir, "../docs/telemetry.md"), "utf8").toLowerCase();
+  const [r] = telemetryRows([row({ jev_model: "jev-1.13.0" })], "i");
+  const missing = [];
+  for (const [k, v] of Object.entries(r)) {
+    if (!page.includes(`\`${k}\``)) missing.push(k);
+    if (v && typeof v === "object" && !Array.isArray(v) && k !== "facts")
+      for (const sub of Object.keys(v)) if (sub !== "facts" && !page.includes(sub.replace(/_/g, " ")) && !page.includes(sub)) missing.push(`${k}.${sub}`);
+  }
+  expect(missing).toEqual([]);
+});
+
+test("end to end: nothing leaves before a yes, then only rows after it, with no text (real CLI, mock endpoint)", async () => {
+  const got = [];
+  const server = Bun.serve({ port: 0, fetch: async (req) => { const b = await req.json(); got.push(b); return Response.json({ accepted: b.rows?.length ?? 0, refused: 0 }); } });
+  const home = mkdtempSync(join(tmpdir(), "routr-e2e-"));
+  try {
+    const env = { ...process.env, HOME: home, USERPROFILE: home, ROUTR_NO_UPDATE: "1", ROUTR_TELEMETRY_URL: `http://127.0.0.1:${server.port}`, TYPESAFE_API_KEY: "" };
+    for (const k of ["CI", "DO_NOT_TRACK", "ROUTR_TELEMETRY", "GITHUB_ACTIONS"]) delete env[k];
+    const cli = (...args) => Bun.spawn(["bun", join(import.meta.dir, "../src/routr.mjs"), ...args], { env, stdout: "pipe", stderr: "pipe" });
+    const run = async (...args) => { const p = cli(...args); const [o] = await Promise.all([new Response(p.stdout).text(), p.exited]); return o; };
+    const advice = join(home, "advice.json");
+    const record = async () => {
+      writeFileSync(advice, JSON.stringify({ id: "a1b2c3d4", ts: new Date().toISOString(), mode: "dispatch", question_set: "r4", jev_model: "jev-1.13.0", brief_sha: "deadbeefcafe", brief_chars: 900,
+        level: "standard", sure: true, work_type: "debug", high_risk: false, facts: { approach_open: { p: 0.9 }, cause_unknown: { p: 0.95 } } }));
+      await run("record", "--advice", advice, "--subscription", "codex", "--model", "gpt-5.6-terra", "--effort", "default", "--verdict", "done: fixed the acme billing bug", "--check", "pass", "--note", "private: acme", "--project", "acme-payments");
+    };
+    await record();                                                              // before any yes
+    expect(await run("telemetry", "send")).toContain("nothing was sent");
+    expect(got).toHaveLength(0);
+    expect(await run("telemetry", "on")).toContain('"telemetry": "on"');
+    await new Promise((r) => setTimeout(r, 20));
+    await record();                                                              // after the yes
+    expect(await run("share")).toContain("1 of these is waiting to be sent");
+    const sent = JSON.parse(await run("telemetry", "send"));
+    expect(sent).toMatchObject({ ok: true, sent: 1 });
+    expect(got).toHaveLength(1);
+    expect(got[0].rows).toHaveLength(1);
+    const [r] = got[0].rows;
+    expect(r).toMatchObject({ chose: { subscription: "codex", model: "gpt-5.6-terra", effort: "default" }, outcome: { verdict: "other", check: "pass" }, advised: { facts: { approach_open: 0.9, cause_unknown: 0.95 } } });
+    expect(JSON.stringify(got)).not.toMatch(/acme|private|deadbeef|a1b2c3d4/);
+    expect(JSON.parse(await run("telemetry", "send")).sent).toBe(0);                // never twice
+  } finally { server.stop(true); rmSync(home, { recursive: true, force: true }); }
+});
