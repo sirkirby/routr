@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { readReport } from "./check.mjs";
 import { ask } from "./jev.mjs";
 import { append, assess, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./ledger.mjs";
-import { installId, pendingCount, telemetryRows, telemetryStatus } from "./telemetry.mjs";
+import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
 import { CHECK_VERSION, checkQuestions } from "./questions.mjs";
 
@@ -42,7 +42,7 @@ export function recordCommand(o, subagentFlags = []) {
 }
 
 // `routr share`: write exactly what telemetry sends to a file the user can read. Sends nothing itself.
-export function shareCommand({ ledger = LEDGER_PATH, out }, config = null) {
+export function shareCommand({ ledger = LEDGER_PATH, out }, config = null, { env = process.env, isStandalone = standalone } = {}) {
   const entries = read(ledger);
   if (!entries.length) return "The ledger is empty: there is nothing to share yet.";
   const rows = telemetryRows(entries, installId(ledger, { create: false }) ?? "not-yet-created"); // looking must not create an id
@@ -50,7 +50,7 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null) {
   const file = out ?? join(dirname(LEDGER_PATH), `routr-ledger-${new Date().toISOString().slice(0, 10)}.jsonl`);
   mkdirSync(dirname(file) || ".", { recursive: true });
   writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
-  const st = telemetryStatus(config), pending = st.on ? pendingCount(ledger) : 0;
+  const st = telemetryStatus(config, env, telemetryState(ledger)), pending = st.on ? pendingCount(ledger) : 0;
   return [
     `Wrote ${rows.length} rows to ${file}: every row in your ledger, in exactly the form telemetry sends. Writing it sent nothing.`,
     "",
@@ -62,7 +62,7 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null) {
     "",
     !st.on ? `Telemetry is off (${st.why_off}), so none of these is shared. To share rows recorded from now on: routr telemetry on (docs/telemetry.md)`
       : `Telemetry is on. ${pending ? `${pending} of these ${pending === 1 ? "is" : "are"} waiting to be sent` : "None of these is waiting to be sent"}: only rows recorded after you turned it on are shared${rows.length > pending ? " (the rest stay on this machine)" : ""}.`,
-    ...(st.on ? [standalone() ? "They are sent once a day by routr's background job. To stop: routr telemetry off"
+    ...(st.on ? [isStandalone() ? "They are sent once a day by routr's background job. To stop: routr telemetry off"
       : "This routr runs from a source checkout, where the daily job does not run: send with routr telemetry send. To stop: routr telemetry off"] : []),
   ].join("\n");
 }

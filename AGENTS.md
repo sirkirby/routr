@@ -57,6 +57,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
   that mentions it; the launch prompt text in `references/orchestrator.md` is checked word for word by a test.
 - Installs are tested from a clean clone into a throwaway `HOME`, never from a working checkout: installers copy
   untracked files, including `.env`.
+- A change to what telemetry sends passes `bun test` (leaks out, values lost, the doc table, share's message in each
+  state, and an end-to-end run against a mock endpoint) and `bun run smoke:telemetry` on an opted-in machine.
 - Before spending subscription usage on an eval or a worker run: one item as a smoke test, then watch the first
   results. Verify outcomes from transcripts and session files, not from an agent's own account.
 
