@@ -17,7 +17,10 @@ import { COMMANDS, DESCRIPTION, formatCommandHelp, formatTopLevelHelp, formatUnk
 
 // Tests call no harness. A stub herdr goes first on PATH, so a test that reaches past its fake is refused instead of
 // driving the maintainer's own herdr (a wrong argument once opened four real Cursor panes there, 2026-09-25).
-process.env.PATH = join(import.meta.dir, "fixtures", "no-herdr") + delimiter + process.env.PATH;
+// Windows looks a command up by PATHEXT and skips the extensionless stub, so there the folders holding herdr leave PATH.
+const withoutHerdr = (path) => process.platform !== "win32" ? path
+  : path.split(delimiter).filter((d) => !["herdr.exe", "herdr.cmd", "herdr.bat"].some((f) => existsSync(join(d, f)))).join(delimiter);
+process.env.PATH = join(import.meta.dir, "fixtures", "no-herdr") + delimiter + withoutHerdr(process.env.PATH ?? "");
 delete process.env.HERDR_ENV;
 
 const cfg = (over = {}) => ({ ...DEFAULTS, subscriptions: {
@@ -379,15 +382,16 @@ const CURSOR_UI = "  Cursor Agent\n  Grok 4.6 High\n  /tmp";
 // A fake herdr for the Cursor read: a private session that starts on the third look, a shell that asks the dotenv
 // question once, then Cursor and its /usage panel. Every pane command must go to the private session, never a split.
 // Stale sessions: one left by a routr that is gone (pid 99) is removed; one whose routr is alive (pid 7) is not.
-function fakeCursorUsage({ delayPanel = false, neverDraws = false, failCreate = false } = {}) {
+function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = true, failCreate = false, spawnFails = false, sessions = null } = {}) {
   let stage = "shell", dotenv = true, ticks = 0, extraEnter = false, up = 0;
   const calls = [], started = [];
   const deps = {
     tmp: "/tmp", now: () => ticks, sleep: async (ms) => { ticks += ms; },
-    terminal: { pid: 4242, alive: (pid) => pid === 7, start: (name) => started.push(name) },
+    terminal: { pid: 4242, alive: (pid) => pid === 7 || pid === 8, age: (dir) => (dir === "/old" ? 11 * 60 * 1000 : 1000),
+      start: (name, failed) => { started.push(name); if (spawnFails) failed(Object.assign(new Error("spawn herdr EACCES"), { code: "EACCES" })); } },
     run: async (all) => {
       calls.push(all);
-      if (all[0] === "session" && all[1] === "list") return { ok: true, data: { sessions: [{ name: "default" }, { name: "routr-scratch-99-abc123" }, { name: "routr-scratch-7-def456" }] } };
+      if (all[0] === "session" && all[1] === "list") return { ok: true, data: { sessions: sessions ?? [{ name: "default" }, { name: "routr-scratch-99-abc123" }, { name: "routr-scratch-7-def456", session_dir: "/new" }] } };
       if (all[0] === "session") return herdrOK({});
       expect(all.slice(0, 2)).toEqual(["--session", started[0]]);
       const a = all.slice(2);
@@ -402,7 +406,7 @@ function fakeCursorUsage({ delayPanel = false, neverDraws = false, failCreate = 
         if (stage === "usage") return herdrOK({ text: delayPanel && !extraEnter ? CURSOR_UI : CURSOR_USAGE_PANEL });
         return herdrOK({ text: CURSOR_UI });
       }
-      if (a[1] === "process-info") return shellInfo();
+      if (a[1] === "process-info") return stage === "starting" && cursorRuns ? shellInfo([{ pid: 1 }, { pid: 2 }]) : shellInfo();
       if (a[1] === "send-keys") {
         if (stage === "shell") { expect(a.slice(3)).toEqual(["n", "enter"]); dotenv = false; }
         else if (a[3] === "enter" && stage === "starting") stage = "usage";
@@ -435,13 +439,26 @@ test("cursorUsage sends a second enter if the panel is slow, and still removes t
   expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
 });
 test("cursorUsage removes the session when Cursor never draws or the session fails half way", async () => {
-  for (const [opts, says] of [[{ neverDraws: true }, "timed out"], [{ failCreate: true }, "boom"]]) {
+  for (const [opts, says] of [[{ neverDraws: true }, "timed out"], [{ failCreate: true }, "boom"], [{ spawnFails: true }, "EACCES"]]) {
     const f = fakeCursorUsage(opts);
     const r = await cursorUsage({ ...f.deps, timeout: 1000 });
     expect(r).toMatchObject({ ok: false, read_yourself: CURSOR_BY_HAND });
     expect(r.error).toContain(says);
     expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
   }
+});
+test("cursor-agent missing is said in seconds, not at the 90 s timeout", async () => {
+  const f = fakeCursorUsage({ neverDraws: true, cursorRuns: false });
+  const r = await cursorUsage(f.deps); // the default 90 s budget
+  expect(r.error).toContain("cursor-agent did not start");
+  expect(f.deps.now()).toBeLessThan(10000);
+  expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
+});
+test("a stale private session is removed even when its pid now belongs to something else", async () => {
+  const f = fakeCursorUsage({ sessions: [{ name: "routr-scratch-8-aaa111", session_dir: "/old" }, { name: "routr-scratch-7-bbb222", session_dir: "/new" }] });
+  expect((await cursorUsage(f.deps)).ok).toBe(true);
+  expect(f.sessionCalls().slice(1, 3)).toEqual(["stop routr-scratch-8-aaa111", "delete routr-scratch-8-aaa111"]);
+  expect(f.sessionCalls().some((c) => c.includes("bbb222"))).toBe(false);
 });
 test("cursorUsage without herdr fails open, says how to read it by hand, and starts nothing", async () => {
   const started = [];
@@ -480,6 +497,9 @@ test("routr usage ranks what it sees without a brief, and a name narrows it or o
   expect((await usageCommand(["claude"], c, {}, { read })).ranked.map((x) => x.subscription)).toEqual(["claude"]);
   expect((await usageCommand(["nope"], c, {}, { read })).error).toContain("not a configured subscription");
   expect((await usageCommand(["claude", "x"], c, {}, { read })).ok).toBe(false);
+  expect((await usageCommand(["--json"], c, {}, { read })).ok).toBe(true); // doctor's flag: the output is JSON already
+  expect((await usageCommand(["claude", "--json"], c, {}, { read })).ranked.map((x) => x.subscription)).toEqual(["claude"]);
+  expect((await usageCommand(["--bogus"], c, {}, { read })).error).toContain("unknown: --bogus");
   expect(await usageCommand(["cursor"], c, {}, { read, sources: { cursor: { interactive: async () => ({ ok: true, opened: true }) } } })).toEqual({ ok: true, opened: true });
   const broken = await usageCommand([], c, {}, { read: async () => { throw new Error("gone"); } });
   expect(broken).toMatchObject({ ok: false, error: "gone" });

@@ -4,7 +4,7 @@
 import { tmpdir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
 import { runHerdr } from "./launch.mjs";
-import { openTerminal, readScreen, waitForShell } from "./terminal.mjs";
+import { openTerminal, readScreen, shellAlone, waitForShell } from "./terminal.mjs";
 
 const PCT = String.raw`(\d+(?:\.\d+)?)%\s+used\b`;
 
@@ -33,7 +33,7 @@ const cursorUiReady = (text) => {
   return /\bCursor Agent\b/.test(t) || /·\s*\d+(?:\.\d+)?%\s*$/m.test(t);
 };
 
-// What to do when routr cannot open the screen itself. Said on every failure, and by doctor and dispatch.
+// What to do when routr cannot open the screen itself: said with every failed read.
 export const CURSOR_BY_HAND = "run `cursor-agent`, type /usage, read \"Included N% used\", and pass --headroom cursor=<1 - N/100>";
 
 export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(),
@@ -50,8 +50,11 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
     t = await openTerminal({ run, cwd: tmp, remaining, sleep, ...terminal });
     await waitForShell(t, { sleep, now, remaining });
     await t.call(["pane", "run", t.pane, "cursor-agent --trust"]);
+    const ranAt = now();
     for (;;) {
       if (cursorUiReady(await readScreen(t))) break;
+      // A cursor-agent that is missing or exits at once leaves the shell alone: say so now, not at the timeout.
+      if (now() - ranAt >= 3000 && await shellAlone(t)) throw new Error("cursor-agent did not start in the login shell (not installed, not on that shell's PATH, or it exited at once)");
       await pause();
     }
     await t.call(["pane", "send-text", t.pane, "/usage"]);

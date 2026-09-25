@@ -9,17 +9,23 @@
 // leave no process and no session folder behind.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { statSync } from "node:fs";
 import { paneText, promptSettled, shellPrompt } from "./launch.mjs";
 
 // A session routr made carries the pid of the routr that made it, so a run that was killed half way is cleaned up by
-// the next one without touching a session another routr is still using.
+// the next one without touching a session another routr is still using. A pid can be reused, so a session older than
+// any read can last is stale whatever its pid says: a read is bounded by its timeout (90 s), so ten minutes is safe.
 const PRIVATE = /^routr-scratch-(\d+)-[0-9a-f]+$/;
+const STALE_MS = 10 * 60 * 1000;
 const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } };
-const startServer = (name) => spawn("herdr", ["--session", name, "server"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
+const ageMs = (dir) => { try { return Date.now() - statSync(dir).mtimeMs; } catch { return 0; } };
+// A spawn can fail after it returns (EACCES, EMFILE, herdr gone since the last call): report it, never let it throw.
+const startServer = (name, failed) => { const c = spawn("herdr", ["--session", name, "server"], { detached: true, stdio: "ignore", windowsHide: true }); c.on("error", failed); c.unref(); };
 
 // `call(args)` runs one herdr command in the private session and throws on failure; `pane` is where to type.
-// `close()` removes the session and never throws. open() cleans up after itself when it fails half way.
-export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAlive, start = startServer, pid = process.pid } = {}) {
+// `close()` removes the session and never throws; if herdr is too slow to stop it, the next run removes it (its pid is
+// gone by then). open() cleans up after itself when it fails half way.
+export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAlive, age = ageMs, start = startServer, pid = process.pid } = {}) {
   const name = `routr-scratch-${pid}-${randomBytes(3).toString("hex")}`;
   const bare = async (args) => {
     let r;
@@ -33,18 +39,24 @@ export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAliv
   let started = false;
   const close = async () => {
     if (!started) return;
-    try { await run(["session", "stop", name, "--json"], 3000); } catch {}
+    try { await run(["session", "stop", name, "--json"], 5000); } catch {}
     try { await run(["session", "delete", name, "--json"], 3000); } catch {}
+  };
+  const remove = async (s) => { // stop, then delete: herdr deletes only a stopped session
+    const ms = () => Math.min(3000, remaining());
+    try { await run(["session", "stop", s, "--json"], ms()); await run(["session", "delete", s, "--json"], ms()); } catch {}
   };
   try {
     const listed = await bare(["session", "list", "--json"]);
-    for (const s of listed.data?.sessions ?? []) {
+    const stale = (listed.data?.sessions ?? []).filter((s) => {
       const m = PRIVATE.exec(s.name ?? "");
-      if (!m || alive(Number(m[1]))) continue;
-      try { await run(["session", "stop", s.name, "--json"], 3000); await run(["session", "delete", s.name, "--json"], 3000); } catch {}
-    }
-    start(name); started = true;
+      return m && (!alive(Number(m[1])) || age(s.session_dir) > STALE_MS);
+    });
+    await Promise.all(stale.map((s) => remove(s.name)));
+    let spawnError = null;
+    start(name, (e) => { spawnError = e; }); started = true;
     for (;;) { // the server answers within a second; `remaining()` ends the wait
+      if (spawnError) throw new Error(`herdr could not start a private session: ${spawnError.code ?? spawnError.message}`);
       const r = await run(on(["workspace", "list"]), remaining());
       if (r.ok) break;
       if (r.data?.error?.code !== "server_not_running") throw new Error(r.data?.error?.message ?? "herdr did not start a private session");
@@ -57,6 +69,12 @@ export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAliv
 }
 
 export const readScreen = async (t) => paneText((await t.call(["pane", "read", t.pane, "--source", "visible"])).data);
+
+// True when the shell is the only thing running in the pane: a command typed into it has exited, or never started.
+export async function shellAlone(t) {
+  const info = (await t.call(["pane", "process-info", "--pane", t.pane])).data.result.process_info;
+  return (info.foreground_processes ?? []).every((p) => p.pid === info.shell_pid);
+}
 
 // Wait until the terminal's shell sits at a settled prompt, answering a dotenv plugin's question with "n" (a login shell
 // in a folder holding a .env asks before sourcing it). Anything else that asks is an error: routr never guesses an answer.
