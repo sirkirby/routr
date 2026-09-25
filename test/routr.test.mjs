@@ -1393,6 +1393,11 @@ test("telemetry is off unless the person turns it on, and the usual switches kee
     expect(loadConfig(join(dir, "c.json")).config.telemetry).toBe(true);
     setTelemetry(false, join(dir, "c.json"), { ledger });
     expect(JSON.parse(readFileSync(join(dir, "telemetry.json"), "utf8")).opted_in_at).toBeNull();
+    // A hand edit to false, seen by the daily job, withdraws the yes too.
+    const { forgetConsentUnlessOn } = await import("../src/lib/telemetry.mjs");
+    setTelemetry(true, join(dir, "c.json"), { ledger });
+    forgetConsentUnlessOn({ telemetry: false }, ledger);
+    expect(JSON.parse(readFileSync(join(dir, "telemetry.json"), "utf8")).opted_in_at).toBeNull();
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test("telemetry sends only rows it has not sent, and moves on only after the endpoint accepts them", async () => {

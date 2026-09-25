@@ -33,6 +33,14 @@ export function telemetryStatus(config, env = process.env, st = state()) {
   return { on: !why, why_off: why };
 }
 
+// The daily job calls this when the config does not say true: a yes given before a hand edit to false is withdrawn, so
+// a later hand edit back to true cannot send the rows recorded in between.
+export function forgetConsentUnlessOn(config, ledger) {
+  if (config?.telemetry === true) return;
+  const s = state(ledger);
+  if (s.opted_in_at) saveState({ ...s, opted_in_at: null }, ledger);
+}
+
 function state(ledger) { try { return JSON.parse(readFileSync(STATE(ledger), "utf8")); } catch { return {}; } }
 function saveState(s, ledger) { mkdirSync(dirname(STATE(ledger)), { recursive: true }); writeFileSync(STATE(ledger), JSON.stringify(s) + "\n"); }
 // A random id made on this machine, so rows from one install can be grouped. It is not derived from anything about you.
@@ -122,11 +130,14 @@ export async function sendFeedback(text, { fetchFn = fetch, ledger } = {}) {
 export function setTelemetry(on, path = CONFIG_PATH, { ledger, now = new Date().toISOString() } = {}) {
   let config = {};
   if (existsSync(path)) { try { config = JSON.parse(readFileSync(path, "utf8")); } catch { return { ok: false, error: `${path} is not valid JSON; fix it first` }; } }
-  config.telemetry = on;
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
-  const s = state(ledger);
-  saveState(on ? { ...s, opted_in_at: now, started: now, sent_through: now } : { ...s, opted_in_at: null }, ledger);
+  try {
+    // The state first: if a write fails half way, what is left reads as off.
+    const s = state(ledger);
+    saveState(on ? { ...s, opted_in_at: now, started: now, sent_through: now } : { ...s, opted_in_at: null }, ledger);
+    config.telemetry = on;
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+  } catch (e) { return { ok: false, error: String(e?.message ?? e).slice(0, 160) }; }
   return { ok: true, telemetry: on ? "on" : "off", config: path };
 }
 

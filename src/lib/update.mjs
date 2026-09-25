@@ -8,7 +8,7 @@ import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, re
 import { join } from "node:path";
 import { loadConfig } from "./config.mjs";
 import { CACHE_DIR, standalone } from "./runtime.mjs";
-import { sendRows, telemetryStatus } from "./telemetry.mjs";
+import { forgetConsentUnlessOn, sendRows, telemetryStatus } from "./telemetry.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 const REPO = "sirkirby/routr";
@@ -132,6 +132,7 @@ export async function backgroundUpdate() {
     writeFileSync(STAMP(), new Date().toISOString() + "\n"); // first, so a failing check is not retried on every command
     const { config } = loadConfig();
     // Telemetry first: it is quick, and an update that swaps the binary should not take it with it.
+    forgetConsentUnlessOn(config);
     if (telemetryStatus(config).on) { const t = await sendRows().catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) })); writeFileSync(TELEMETRY_LOG(), JSON.stringify({ at: new Date().toISOString(), ...t }) + "\n"); }
     if (!updatesOn(config)) return;
     const r = await update({});
