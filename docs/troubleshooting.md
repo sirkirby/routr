@@ -39,5 +39,7 @@ guide does this with you); the first reading appears after the next Claude Code 
 
 ## Cursor's usage is always "assumed" or "given"
 
-Cursor has no local usage source. The orchestrator reads Cursor's `/usage` panel in a pane and passes the number in
-with `--headroom cursor=<0..1>`.
+Cursor shows usage only in its own `/usage` screen. `routr usage cursor` opens that screen in a private herdr session
+(nothing opens on your screen, inside herdr or not; only herdr has to be installed), reads it, removes the session,
+and prints the value to pass as `--headroom cursor=<0..1>`. If it cannot, its `read_yourself` says how to read it by
+hand. `routr usage` shows what routr sees of every subscription, and how it ranks them, without a brief.

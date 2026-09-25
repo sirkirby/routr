@@ -4,6 +4,7 @@
 // the vendor enforces, read as one more window), `metered` (billed usage with no quota, and a working source says so),
 // or `unknown` (nothing readable). Measured 2026-09-22 on a ChatGPT Enterprise seat: no windows at all, only
 // `credits.unlimited: true`, and a plan name of `business`. So the shape is the key, never the plan name.
+import { CURSOR_BY_HAND, cursorUsage } from "./cursor-usage.mjs";
 import { CLAUDE_SNAPSHOT } from "./runtime.mjs";
 import { spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -167,14 +168,27 @@ export async function readAgy() {
   return summarize("agy", "agy /usage", null, [], "`agy -p /usage` did not answer in two tries; using the assumed headroom");
 }
 
-const READERS = { claude: readClaude, codex: readCodexLive, agy: readAgy };
+// How each subscription's usage is read, in one place, so doctor, dispatch, `routr usage`, and every error say the same.
+//   read         passive: a file or a command the harness answers without a turn. Read on every call.
+//   interactive  the harness shows usage only in its own screen: `routr usage <name>` opens it in a throwaway terminal
+//                (terminal.mjs) and prints the --headroom value. Advice never does this: it drives no terminal.
+//   by_hand      what a person or agent does when routr cannot open that screen.
+// A harness added later picks its row; nothing else changes.
+export const SOURCES = {
+  claude: { read: readClaude },
+  codex: { read: readCodexLive },
+  agy: { read: readAgy },
+  cursor: { interactive: cursorUsage, command: "routr usage cursor", by_hand: CURSOR_BY_HAND },
+};
 
 // One unreadable source must not take the others (or the routing advice) down with it. Readers run in parallel.
-// `given` holds headroom the caller read itself (0..1), e.g. Cursor's, which only its interactive /usage panel shows.
+// `given` holds headroom the caller read itself (0..1), e.g. Cursor's, from `routr usage cursor`.
 export async function readUsage(names, given = {}) {
   return Promise.all(names.map(async (name) => {
     if (typeof given[name] === "number") return { pool: name, source: "given by caller", ageSec: 0, windows: [], headroom: Math.min(1, Math.max(0, given[name])) };
-    if (!READERS[name]) return summarize(name, "none", null, [], "no local usage source: read it yourself and pass --headroom " + name + "=<0..1>");
-    try { return await READERS[name](); } catch (e) { return summarize(name, "unreadable", null, [], `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}`); }
+    const src = SOURCES[name];
+    if (src?.interactive) return { ...summarize(name, "its own screen", null, [], `${name} shows usage only in its own screen, so it is not read here: \`${src.command}\` reads it and prints the --headroom value to pass`), read_with: src.command };
+    if (!src?.read) return summarize(name, "none", null, [], "no usage source: read it yourself and pass --headroom " + name + "=<0..1>");
+    try { return await src.read(); } catch (e) { return summarize(name, "unreadable", null, [], `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}`); }
   }));
 }

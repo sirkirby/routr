@@ -32,9 +32,12 @@ already running in other panes, what comes next, which harness suits this reposi
 
 Usage moves while you work, so ask again before every launch; never reuse an earlier answer.
 
-**Cursor's usage** has no local source: run `routr usage cursor` at the start of a run (and again every so often, not
-on every launch) and pass its `pass_as` value to `routr dispatch`. Claude, Codex, and Antigravity are read live by
-routr itself.
+**Cursor's usage** shows only in Cursor's own `/usage` screen: run `routr usage cursor` at the start of a run (and
+again every so often, not on every launch) and pass its `pass_as` value to `routr dispatch`. It reads that screen in a
+private herdr session that nothing on screen shows, and removes it; if it fails, its `read_yourself` says how to read
+it by hand. Any `assumed` row in `ranked` with a `read_with` field is the same case. Claude, Codex, and Antigravity
+are read live by routr itself. `routr usage` (no name) shows what routr sees of every subscription, ranked, without a
+brief.
 
 ## 3. Launch
 

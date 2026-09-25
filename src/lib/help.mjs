@@ -25,9 +25,12 @@ export const COMMANDS = {
   },
   usage: {
     name: "usage",
-    description: "read Cursor's /usage panel in a throwaway pane and print headroom JSON",
-    args: [{ name: "cursor", description: "open cursor-agent, send /usage, print JSON for --headroom", required: true }],
-    flags: [],
+    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing. `routr usage cursor` reads Cursor's own /usage screen in a private herdr session (nothing opens on screen, inside herdr or not) and prints the --headroom value",
+    args: [{ name: "[<subscription>]", description: "only this one; for cursor, open its /usage screen and read it (needs herdr installed)", required: false }],
+    flags: [
+      { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
+      { name: "--headroom", arg: "<subscription>=<0..1>", description: "usage you read yourself, as for dispatch", required: false, repeatable: true },
+    ],
   },
   launch: {
     name: "launch",
