@@ -9,6 +9,7 @@ import { DEFAULTS, loadConfig } from "../src/lib/config.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { claudeSnapshot, codexSnapshot, monthMinutes, readCursor, readUsage, refreshCursor, takeLock } from "../src/lib/usage.mjs";
 import { usageCommand } from "../src/lib/commands.mjs";
+import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
 import { plan } from "../src/lib/harness.mjs";
 import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage } from "../src/lib/cursor-usage.mjs";
@@ -1789,8 +1790,9 @@ test("setup, new install: asks each subscription's hardest work and reserve, sug
   const x = await runSetup({ answers: ["strong", "25%", "", "", "n"] }); // asked in the harness order: cursor, then agy
   expect(x.r.ok).toBe(true);
   expect(said(x.asked, "Go through them now")).toBe(0); // nothing to go through yet
-  expect(said(x.asked, "The hardest work you will send to agy")).toBe(1);
-  expect(said(x.asked, "The hardest work you will send to cursor")).toBe(1);
+  expect(x.asked.filter((q) => q === HARDEST.question("agy", "standard").trim())).toHaveLength(1);
+  expect(x.asked.filter((q) => q === HARDEST.question("cursor", "standard").trim())).toHaveLength(1);
+  expect(x.asked).toContain(RESERVE.question("cursor", "10%").trim());
   expect(x.saved.subscriptions.agy).toMatchObject({ hardest_work: "standard", reserve: 0.1 });
   expect(x.saved.subscriptions.cursor).toMatchObject({ hardest_work: "strong", reserve: 0.25 });
   expect(x.asked.at(-1)).toBe("Share them? [y/N]");
@@ -1802,7 +1804,7 @@ test("setup, upgrade from a config written before it asked: offers the settings,
   const config = { subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 }, cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" } } };
   const x = await runSetup({ config, answers: ["", "", "", "strong", "", "n"] });
   expect(x.asked[0]).toBe("Go through them now? Enter keeps each one as it is [Y/n]");
-  expect(x.asked[1]).toContain("[Enter = standard]"); // the current value, not a suggestion
+  expect(x.asked[1]).toBe(HARDEST.question("agy", "standard").trim()); // in config order; the current value as default
   expect(x.saved.subscriptions.cursor).toEqual({ hardest_work: "strong", reserve: 0.1, default_model: "m" });
   expect(x.saved.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1 });
   expect(x.r.did.join(" ")).toContain('cursor.hardest_work "standard" → "strong"');
@@ -1838,6 +1840,26 @@ test("setup run by an agent (--yes) asks nothing, takes suggestions, never turns
   // A person at a terminal with no key is asked for it, last.
   const person = await runSetup({ keyWorks: false, found: ["agy"], answers: ["", "", "n"] });
   expect(person.keys).toEqual([1]);
+});
+
+test("the settings are worded once: setup, help, doctor and docs/ranking.md say the same", () => {
+  // Every level's meaning, and the reserve's rule and "none", appear word for word in the user docs.
+  const doc = readFileSync(new URL("../docs/ranking.md", import.meta.url), "utf8").replace(/\s+/g, " ");
+  for (const m of Object.values(LEVEL_MEANING)) expect(doc).toContain(m);
+  expect(doc).toContain(RESERVE.none);
+  // The help shows the same definitions the questions use.
+  const help = formatCommandHelp(COMMANDS.setup);
+  expect(help).toContain(HARDEST.flag);
+  expect(help).toContain(RESERVE.flag);
+  // A missing reserve and 0% mean the same thing, and doctor's note names the command that sets it.
+  const dir = mkdtempSync(join(tmpdir(), "routr-words-")), f = join(dir, "c.json");
+  writeFileSync(f, JSON.stringify({ subscriptions: { claude: { hardest_work: "strong" } } }));
+  const { config, notes } = loadConfig(f);
+  expect(config.subscriptions.claude.reserve).toBe(0);
+  expect(notes).toEqual([`${RESERVE.unset("claude")}. ${RESERVE.choose("claude")}`]);
+  writeFileSync(f, JSON.stringify({ subscriptions: { claude: { hardest_work: "strong", reserve: 0 } } }));
+  expect(loadConfig(f).notes).toEqual([]); // 0% is a choice, not a problem
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test("setup searches a long model list instead of printing it", async () => {
