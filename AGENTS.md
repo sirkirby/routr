@@ -33,9 +33,11 @@ measured questions about a brief or a worker report; code adds live usage; the l
   on. The command itself MUST NOT wait for it, make a network call for it, or change its own output because of it.
   The updater verifies the release checksum, swaps the binary in place, and reinstalls the skill; a run in progress
   keeps its binary. `"auto_update": false` turns it off. Never from a source checkout, never from `statusline`.
-- Every call reads each usage source's newest reading and shows its age; a call never waits for a slow one. Cursor's
-  own screen takes seconds, so its reading is a snapshot: when the last try is over 4 hours old, a call starts a
-  detached `routr usage cursor` to refresh it and carries on, as it does for the updater. A reserve is never offered.
+- Every call reads each usage source's newest reading and shows its age. Claude's is the statusline's snapshot; Codex
+  and Antigravity are read in the call (1 to 9 s, beside Jev). Cursor's own screen takes seconds more and starts
+  Cursor, so its reading is a snapshot: when the last try is over 4 hours old, a call starts a detached
+  `routr usage cursor` to refresh it and carries on, as it does for the updater. How usage is ranked:
+  `docs/ranking.md`. A reserve is never offered.
 - Standard mechanisms only: skills, prompts, the harness's own CLI flags. No dependence on a harness's private
   environment variables or config internals beyond what `references/harnesses.md` records as observed.
 - The code lives in `src/` and compiles into the binary. `skills/routr/` holds exactly what is installed for agents
