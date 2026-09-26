@@ -165,16 +165,26 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
       if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) for (const n of c.filter((x) => !current[x])) if (await fields(n, all) === CANCEL) return CANCEL; continue; }
       if (v === "extras") { if (await extras() === CANCEL) return CANCEL; continue; }
       if (v === "all") { const f = await full(); if (f === CANCEL) return CANCEL; if (f === "write") return "write"; continue; }
-      // One subscription, then one field of it, or all four.
-      const n = await ui.select({ message: "Which subscription?", initial: candidates[0], options: candidates.map((x) => ({ value: x, label: HARNESSES[x].label, hint: describe(x, draft[x]) })) });
-      if (n === CANCEL) return CANCEL;
-      if (n === BACK) continue;
-      const f = await ui.select({ message: `${HARNESSES[n].label}: what to change?`, initial: "model", options: [
-        ...Object.entries(FIELDS).filter(([k]) => k !== "effort" || TAKES_EFFORT.includes(n)).map(([k, label]) => ({ value: k, label })),
-        { value: "all", label: "All of these" }] });
-      if (f === CANCEL) return CANCEL;
-      if (f === BACK) continue;
-      if (await fields(n, f === "all" ? all : [f]) === CANCEL) return CANCEL;
+      // Nested like any settings menu: a subscription, then its settings, each with its value now. Changing one comes
+      // back to the same list with the new value; Back (or Esc) goes up one level, to the subscriptions, then the menu.
+      let n = candidates[0];
+      for (;;) {
+        const picked = await ui.select({ message: "Which subscription?", initial: n, options: [
+          ...candidates.map((x) => ({ value: x, label: HARNESSES[x].label, hint: describe(x, draft[x]) })), { value: BACK, label: "Back" }] });
+        if (picked === CANCEL) return CANCEL;
+        if (picked === BACK) break;
+        n = picked;
+        let f = "model";
+        for (;;) {
+          const now = { model: draft[n].default_model || "left to the lead agent", effort: draft[n].default_effort ?? "not set", hardest: draft[n].hardest_work, reserve: pct(draft[n].reserve ?? 0) };
+          f = await ui.select({ message: `${HARNESSES[n].label}: which setting?`, initial: f, options: [
+            ...Object.entries(FIELDS).filter(([k]) => k !== "effort" || TAKES_EFFORT.includes(n)).map(([k, label]) => ({ value: k, label, hint: now[k] })),
+            { value: BACK, label: "Back" }] });
+          if (f === CANCEL) return CANCEL;
+          if (f === BACK) break;
+          if (await ask[f](n) === CANCEL) return CANCEL; // Esc inside a setting keeps its value and comes back here
+        }
+      }
     }
   };
 

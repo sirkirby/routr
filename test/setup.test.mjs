@@ -159,8 +159,9 @@ test("setup, new install: a harness left unticked is added turned off, with its 
 
 test("setup, run again: a menu to change one thing, then save and exit, and only that is written", async () => {
   const config = { subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 }, cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" } } };
-  // Change one subscription → Cursor → hardest work → strong; back at the menu: Save and exit (5th), with no second question.
-  const x = await runSetup({ config, answers: ["", "", "2", "3", "5"] });
+  // Change one subscription → Cursor → Hardest work → strong; Back to the subscriptions (4th), Back to the menu (3rd);
+  // then Save and exit (5th), with no second question.
+  const x = await runSetup({ config, answers: ["", "", "2", "3", "4", "3", "5"] });
   expect(x.asked[0]).toMatch(/^What would you like to do\?/);
   expect(x.saved.subscriptions.cursor).toEqual({ hardest_work: "strong", reserve: 0.1, default_model: "m" });
   expect(x.saved.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1 });
@@ -174,7 +175,7 @@ test("setup, run again: Exit changes nothing, and exiting without saving after a
   const done = await runSetup({ config, found: ["agy"], answers: ["4"] }); // one, choose, all, Exit
   expect(done.saved).toEqual(config);
   expect(done.r.skipped).toContain("nothing changed");
-  const quit = await runSetup({ config, found: ["agy"], answers: ["", "", "2", "1", "5"] }); // agy → hardest → basic, then Exit without saving (5th)
+  const quit = await runSetup({ config, found: ["agy"], answers: ["", "", "2", "1", "b", "b", "5"] }); // agy → hardest → basic, Esc twice, Exit without saving (5th)
   expect(quit.r).toMatchObject({ ok: false, cancelled: true });
   expect(quit.saved).toEqual(config);
 });
@@ -182,8 +183,8 @@ test("setup, run again: Exit changes nothing, and exiting without saving after a
 test("setup: the everyday model is picked from the harness's live list by typing part of its name", async () => {
   const list = [...Array.from({ length: 230 }, (_, i) => `vendor-model-${i}`), "cursor-grok-4.6-high", "grok-4.7-high", "grok-4.7-low"];
   const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, default_model: "cursor-grok-4.6-high" } } };
-  // Change one → Cursor (only one) → Everyday model → "4.7 high" (one match) → Save and exit (4th: telemetry is answered).
-  const x = await runSetup({ config, found: ["cursor"], models: { cursor: list }, answers: ["", "", "", "4.7 high", "4"] });
+  // Change one → Cursor (only one) → Everyday model → "4.7 high" (one match) → Esc twice → Save and exit (4th: telemetry is answered).
+  const x = await runSetup({ config, found: ["cursor"], models: { cursor: list }, answers: ["", "", "", "4.7 high", "b", "b", "4"] });
   expect(x.saved.subscriptions.cursor.default_model).toBe("grok-4.7-high");
   expect(x.asked.find((a) => a.startsWith("Cursor: everyday model"))).toContain("234 to choose from"); // searched, never printed whole
 });
@@ -305,7 +306,7 @@ test("setup, guided: offers to set Claude's usage statusline, and sets it only o
 
 test("setup, run again: Esc at the menu with changes not saved offers the same way out, so nothing is lost by accident", async () => {
   const config = { telemetry: false, subscriptions: { agy: { hardest_work: "strong", reserve: 0.3 } } };
-  const x = await runSetup({ config, found: ["agy"], answers: ["", "", "2", "1", "b", ""] }); // agy → hardest → basic, Esc (b), Save and exit
+  const x = await runSetup({ config, found: ["agy"], answers: ["", "", "2", "1", "b", "b", "b", ""] }); // agy → hardest → basic, Esc up to the menu and once more, Save and exit
   expect(q(x.asked, "Save your changes?")).toBe(1);
   expect(x.saved.subscriptions.agy.hardest_work).toBe("basic");
 });
@@ -323,4 +324,16 @@ test("an agent changing a setting through the real CLI: --show prints the settin
   expect(show().subscriptions.cursor).toMatchObject({ hardest_work: "strong", reserve: 0.2 });
   expect(Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--disable", "cursor"], { env }).exitCode).toBe(0);
   expect(show().subscriptions.cursor.enabled).toBe(false);
+});
+
+test("setup, run again: a subscription's settings are a list you come back to after each change, never 'All of these'", async () => {
+  const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" } } };
+  // Cursor → Hardest work → strong → (back on Cursor's list) Reserve → 20% → Back → Back → Save and exit.
+  const x = await runSetup({ config, found: ["cursor"], answers: ["", "", "2", "3", "3", "3", "4", "2", "4"] });
+  const lists = x.asked.filter((a) => a.startsWith("Cursor: which setting?"));
+  expect(lists).toHaveLength(3); // before the first change, after it, and after the second
+  expect(lists[1]).toContain("Hardest work (strong)"); // the new value, shown on the list you come back to
+  expect(lists.join("\n")).not.toContain("All of these");
+  expect(lists[0]).toMatch(/\d\. Back/);
+  expect(x.saved.subscriptions.cursor).toMatchObject({ hardest_work: "strong", reserve: 0.2 });
 });
