@@ -1,9 +1,8 @@
 // `routr statusline`: Claude Code's statusline command. Claude reports subscription usage ONLY to its statusline, so
 // this prints the model and usage there and saves each snapshot to ~/.cache/routr/claude-usage.json, which the usage
 // reader picks up. It must never fail or print an error: a broken statusline is visible in every Claude session.
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-import { CLAUDE_SNAPSHOT } from "./runtime.mjs";
+import { readFileSync } from "node:fs";
+import { CLAUDE_SNAPSHOT, writeJsonAtomic } from "./runtime.mjs";
 
 export function statusline() { try { run(); } catch {} }
 
@@ -40,13 +39,7 @@ function run() {
   let previous = null;
   try { previous = JSON.parse(readFileSync(out, "utf8")); } catch {}
   const snap = snapshotFrom(data, previous, Math.floor(Date.now() / 1000));
-  try {
-    mkdirSync(dirname(out), { recursive: true });
-    const tmp = `${out}.tmp.${process.pid}`;
-    writeFileSync(tmp, JSON.stringify(snap) + "\n");
-    try { renameSync(tmp, out); }
-    catch { try { unlinkSync(out); } catch {} renameSync(tmp, out); }
-  } catch {}
+  try { writeJsonAtomic(out, snap); } catch {}
 
   const parts = [];
   const name = data.model?.display_name;

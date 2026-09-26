@@ -2,13 +2,12 @@
 // reinstall the skill so the guides match the command. It runs when asked, and by itself at most once a day in a
 // detached background job (`maybeAutoUpdate`), which `"auto_update": false` turns off. Every swap is checksum-verified,
 // and a run in progress keeps its binary.
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
-
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "./config.mjs";
-import { CACHE_DIR, standalone } from "./runtime.mjs";
+import { CACHE_DIR, spawnSelf, standalone, takeLock } from "./runtime.mjs";
 import { forgetConsentUnlessOn, sendRows, telemetryStatus } from "./telemetry.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
@@ -118,17 +117,13 @@ export function maybeAutoUpdate(config) {
     if (!updatesOn(config) && !telemetryStatus(config).on) return false;
     let last = NaN; try { last = statSync(STAMP()).mtimeMs; } catch {}
     if (!dueForCheck(last)) return false;
-    spawn(process.execPath, ["update", "--background"], { detached: true, stdio: "ignore", windowsHide: true }).unref();
-    return true;
+    return spawnSelf(["update", "--background"]);
   } catch { return false; } // updating must never get in the way of the command that was asked for
 }
 
 export async function backgroundUpdate() {
   mkdirSync(CACHE(), { recursive: true });
-  let fd;
-  try { fd = openSync(LOCK(), "wx"); } // one updater at a time
-  catch { try { if (!lockIsStale(LOCK())) return; rmSync(LOCK(), { force: true }); fd = openSync(LOCK(), "wx"); } catch { return; } }
-  try { writeSync(fd, String(process.pid)); } catch {}
+  if (!takeLock(LOCK(), (f) => lockIsStale(f))) return; // one updater at a time
   try {
     writeFileSync(STAMP(), new Date().toISOString() + "\n"); // first, so a failing check is not retried on every command
     const { config } = loadConfig();
@@ -138,7 +133,7 @@ export async function backgroundUpdate() {
     if (!updatesOn(config)) return;
     const r = await update({});
     writeFileSync(UPDATE_LOG(), JSON.stringify({ at: new Date().toISOString(), ok: r.ok, updated: r.updated, note: r.note, error: r.error ?? null }) + "\n");
-  } finally { try { closeSync(fd); } catch {} rmSync(LOCK(), { force: true }); }
+  } finally { rmSync(LOCK(), { force: true }); }
 }
 
 export function autoUpdateStatus(config) {

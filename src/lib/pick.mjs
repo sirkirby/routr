@@ -17,7 +17,7 @@ export function rankSubscriptions(level, usage, c) {
     const live = u?.headroom != null;
     // The class is the shape the harness reported (usage.mjs), or the user's `billing` when the harness cannot show it.
     // A number the caller read itself (`--headroom`) is a window and outranks both.
-    const cls = u?.source === "given by caller" ? "included" : s.billing ?? u?.class ?? (live ? "included" : "unknown");
+    const cls = u?.given ? "included" : s.billing ?? u?.class ?? (live ? "included" : "unknown");
     const r2 = (x) => Math.round(x * 100) / 100, nowSec = (c.now ?? Date.now()) / 1000;
     const base = { subscription: name, class: cls, reserve: s.reserve, ...(s.default_model ? { your_default: s.default_model + (s.default_effort ? ` @ ${s.default_effort}` : "") } : {}) };
     if (cls === "metered") {
@@ -35,7 +35,7 @@ export function rankSubscriptions(level, usage, c) {
       return { window: w.name, used_pct: Math.round(w.usedPct), resets_in_h: w.resetsAt ? Math.round(Math.max(0, w.resetsAt - nowSec) / 360) / 10 : null, left: r2(left), reserve_now: r2(s.reserve * ahead), usable: r2(Math.max(0, left - s.reserve * ahead)) };
     });
     const usable = windows.length ? Math.min(...windows.map((w) => w.usable)) : r2(Math.max(0, headroom - s.reserve));
-    ranked.push({ ...base, usable, headroom: r2(headroom), ...(windows.length ? { windows } : {}), usage: live ? (u.source === "given by caller" ? "given" : "live") : "assumed", age_sec: live ? u.ageSec : null,
+    ranked.push({ ...base, usable, headroom: r2(headroom), ...(windows.length ? { windows } : {}), usage: live ? (u.given ? "given" : "live") : "assumed", age_sec: live ? u.ageSec : null,
       // A live number carries what the harness showed beside it (Cursor's pools); an assumed one says why.
       ...(u?.note ? { note: u.note } : {}) });
   }

@@ -1,11 +1,10 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { stripVTControlCharacters } from "node:util";
-import { HARNESSES, kindError, plan } from "./harness.mjs";
+import { HARNESSES, kindError, plan } from "./harnesses.mjs";
+import { clean, deadline, paneText, paneView, quote, runHerdr, SHELLS, shellFamily, shellPrompt, waitForShell } from "./herdr.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
 // around it, so it points at the installed skill (written by the installer or `routr skill install`).
@@ -15,7 +14,6 @@ export function composePrompt(task, guide = WORKER_GUIDE) {
   return `You are a routr worker. Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
 }
 
-export const quote = (s) => /^[a-zA-Z0-9_./:=@+-]+$/.test(s) ? s : `'${String(s).replaceAll("'", "'\\''")}'`;
 const command = (args) => ["herdr", ...args].map(quote).join(" ");
 // The command log is printed and may be stored by whoever called launch: it carries the prompt's length, never its
 // text (the brief must not be printed, logged, or stored).
@@ -29,108 +27,31 @@ export function logCommand(log, text) {
   if (m && m[1] === text) { log[log.length - 1] = `${m[1]}  (x${Number(m[2]) + 1})`; return log; }
   log.push(text); return log;
 }
-const clean = (text) => stripVTControlCharacters(text).replaceAll("\r\n", "\n").split("\n")
-  .map((line) => {
-    const chars = []; let cursor = 0;
-    for (const char of line) {
-      if (char === "\r") cursor = 0;
-      else if (char === "\b") cursor = Math.max(0, cursor - 1);
-      else chars[cursor++] = char;
-    }
-    return chars.join("");
-  }).join("\n").trimEnd();
 
-// Reads are JSON in the API; some CLI releases print the text directly.
-export function paneText(value) {
-  if (typeof value === "string") return value;
-  if (!value || typeof value !== "object") throw new Error("Herdr returned no pane text");
-  if (value.error || value.ok === false) throw new Error("Herdr pane read failed");
-  if (Array.isArray(value) && value.every((v) => typeof v === "string")) return value.join("\n");
-  if (Object.hasOwn(value, "result")) return paneText(value.result);
-  for (const key of ["text", "content", "output", "lines", "screen", "snapshot", "read", "pane"]) {
-    if (value[key] == null) continue;
-    if (Array.isArray(value[key]) && value[key].every((v) => typeof v === "string")) return value[key].join("\n");
-    try { return paneText(value[key]); } catch {}
-  }
-  throw new Error("Unrecognized Herdr pane-read response");
-}
-
-// The shell at the pane's prompt, from the process name herdr reports: what gets typed into it depends on this.
-export function shellFamily(name) {
-  const n = String(name ?? "").toLowerCase();
-  if (/^(pwsh|powershell)(\.exe)?$/.test(n)) return "powershell";
-  if (/^cmd(\.exe)?$/.test(n)) return "cmd";
-  return "posix";
-}
-
-// What launch types into a shell, in that shell's own syntax. Cursor gets a private config folder for the life of the
-// process. On a POSIX shell one command starts Cursor and removes the folder when it exits, however it exits (`cursor`).
-// On Windows, herdr sees only the shell in a pane's foreground, so a Cursor started that way is never tracked and its
-// readiness cannot be waited on (seen on Windows 11: `agent get` said not found while Cursor sat at its prompt). There
-// the shell is given the variable first (`cursorEnv`) and herdr starts and tracks Cursor itself, as for every other
-// kind; on PowerShell a watcher removes the folder when that shell is gone, cmd leaves it (one small file in %TEMP%).
-const psq = (s) => `'${String(s).replaceAll("'", "''")}'`;
-const cmdq = (s) => `"${String(s).replaceAll('"', '""')}"`;
-export const SHELLS = {
-  posix: {
-    cd: (dir) => `cd -- ${quote(dir)}`,
-    cursor: (dir, exe, argv) => ["env", `CURSOR_CONFIG_DIR=${dir}`, "sh", "-c",
-      `trap 'rm -rf -- "$CURSOR_CONFIG_DIR"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; ${[exe, ...argv].map(quote).join(" ")}`].map(quote).join(" "),
-  },
-  powershell: {
-    cd: (dir) => `Set-Location -LiteralPath ${psq(dir)}`,
-    // A watcher removes the folder once the pane's shell is gone, however it went: an exit hook in the shell itself did
-    // not fire when herdr closed the pane, and a watcher started as the shell's child made herdr call the pane busy
-    // (both seen on Windows 11). Created through WMI, the watcher is nobody's child. The command line is built by
-    // concatenation: a hashtable literal holding it failed to parse at the prompt (also seen).
-    cursorEnv: (dir) => `$env:CURSOR_CONFIG_DIR=${psq(dir)}; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ${psq(dir).replaceAll("'", "''")} -Recurse -Force -ErrorAction SilentlyContinue"'; ([wmiclass]'Win32_Process').Create($w) | Out-Null`,
-  },
-  cmd: {
-    cd: (dir) => `cd /d ${cmdq(dir)}`,
-    cursorEnv: (dir) => `set ${cmdq(`CURSOR_CONFIG_DIR=${dir}`)}`,
-  },
-};
-
-export function shellPrompt(text) {
-  const lines = clean(text).split("\n");
-  const last = lines.at(-1)?.trim() ?? "";
-  // Only the current line counts: answered questions remain in scrollback.
-  if (/source it\?/i.test(lines.slice(-3).join("\n")) && /\[y\].*\[n\]/i.test(last)) return "dotenv";
-  if (/[?？]\s*(?:\([^\n]*\)|\[[^\n]*\])?\s*$/.test(last)
-    || /(?:\[[yn](?:es)?\/[yn](?:o)?\]|\([yn](?:es)?\/[yn](?:o)?\)|:)\s*$/i.test(last)
-    || /^(?:>|quote>|dquote>|heredoc>)$/.test(last)) return "question";
-  // Windows: PowerShell shows `PS C:\path>` and cmd shows `C:\path>`. Both end in ">", which on Unix means a
-  // continuation line, so they are matched by their whole shape (a drive path), never by the ">" alone.
-  if (/^(?:PS )?[A-Za-z]:\\[^<>|?*\n]*>$/.test(last)) return "ready";
-  if (/\d(?:\.\d+)?%$/.test(last)) return "unrecognized"; // A stalled progress meter is not a zsh prompt.
-  if (/^(?:.*\s)?[❯❱➜λ\uE0B0\uE0B1]$/.test(last) || /(?:^|\S.*)[\s]*[$%#]$/.test(last)) return "ready";
-  return last ? "unrecognized" : "waiting";
-}
-
-// Settling is additional evidence, not permission to type into arbitrary stable output.
-export const promptSettled = (text, previous) => {
-  const screen = clean(text).trim();
-  return !!screen && typeof previous === "string" && screen === clean(previous).trim();
-};
-
-export function trustDialog(text) {
+// The menu below the last line on screen that `isQuestion` accepts: numbered options ("› 1. Yes, continue"), or else
+// the lines that START with Yes or No, numbered by order, so a tip or a status line can never be taken for one. Null
+// when there is no such question, or when a later input prompt (or `answered`) shows it has already scrolled past.
+function menuAfter(text, isQuestion, answered) {
   const t = clean(text).replace(/^[│┃][ \t]?|[ \t]*[│┃]$/gm, "");
-  // Use the last question, never an affirmative option or a historical status message.
-  const questions = [...t.matchAll(/^\s*(?:(?:Do you trust|Trust (?:this|the))\b[^\n]*|[^\n]*\b(?:folder|directory|project|workspace)\b[^\n]*\btrust\s*\?)[ \t]*$/gmi)];
-  const question = questions.at(-1);
+  const question = [...t.matchAll(/^[^\n]*$/gm)].filter((m) => isQuestion(m[0])).at(-1);
   if (!question) return null;
   const below = t.slice(question.index + question[0].length);
-  // A later input prompt means the question has already scrolled past.
-  if (shellPrompt(below) === "ready") return null;
+  if (shellPrompt(below) === "ready" || answered?.test(below)) return null;
   let matches = [...below.matchAll(/^[ \t]*([❯›>→▶]?)[ \t]*(\d+)[.)][ \t]+(.+)$/gm)];
-  let options = matches
-    .map((m) => ({ number: m[2], text: m[3].trim(), selected: !!m[1] }));
+  let options = matches.map((m) => ({ number: m[2], text: m[3].trim(), selected: !!m[1] }));
   if (!options.length) {
-    // Unnumbered menus (Claude Code, Antigravity): "> Yes, I trust this folder" / "  No, exit". Only lines that START
-    // with Yes or No count as options, so a tip or a status line can never be taken for one; they are numbered by order.
     matches = [...below.matchAll(/^[ \t]*([❯›>→▶]?)[ \t]*((?:Yes|No)\b[^\n]*)$/gmi)];
     options = matches.map((m, i) => ({ number: String(i + 1), text: m[2].trim(), selected: !!m[1] }));
   }
+  return { options, matches, below };
+}
+
+// A folder-trust question: the last one on screen, never an affirmative option or a historical status message.
+const TRUST_QUESTION = /^\s*(?:(?:Do you trust|Trust (?:this|the))\b[^\n]*|[^\n]*\b(?:folder|directory|project|workspace)\b[^\n]*\btrust\s*\?)[ \t]*$/i;
+export function trustDialog(text) {
+  const menu = menuAfter(text, (line) => TRUST_QUESTION.test(line));
+  if (!menu) return null;
+  const { options, matches, below } = menu;
   const affirmative = options.filter((o) => /^(?:yes(?:$|,?\s+(?:I trust\b|continue\b|trust\b))|trust (?:this|the)\b)/i.test(o.text)
     && !/\b(?:don't|do not|no)\b/i.test(o.text));
   const yes = affirmative.length === 1 ? options.indexOf(affirmative[0]) : -1;
@@ -149,12 +70,9 @@ export function trustDialog(text) {
 // the answer is selected: Kiro dropped an arrow sent in the same burst as enter and took "No, exit" (measured).
 export function permissiveConfirm(text, confirm) {
   if (!confirm) return null;
-  const t = clean(text).replace(/^[│┃][ \t]?|[ \t]*[│┃]$/gm, "");
-  const question = [...t.matchAll(/^[^\n]*$/gm)].filter((m) => confirm.question.test(m[0])).at(-1);
-  if (!question) return null;
-  const below = t.slice(question.index + question[0].length);
-  if (shellPrompt(below) === "ready" || confirm.answered?.test(below)) return null; // answered, and scrolled past
-  const options = [...below.matchAll(/^[ \t]*([❯›>→▶]?)[ \t]*((?:Yes|No)\b[^\n]*)$/gmi)].map((m) => ({ text: m[2].trim(), selected: !!m[1] }));
+  const menu = menuAfter(text, (line) => confirm.question.test(line), confirm.answered);
+  if (!menu) return null;
+  const options = menu.options.map(({ text, selected }) => ({ text, selected }));
   const answer = options.findIndex((o) => confirm.answer.test(o.text)), selected = options.findIndex((o) => o.selected);
   if (answer < 0 || selected < 0 || options.filter((o) => o.selected).length !== 1 || options.filter((o) => confirm.answer.test(o.text)).length !== 1) return { options, keys: null };
   return { options, answer: options[answer].text, keys: answer === selected ? ["enter"] : Array(Math.abs(answer - selected)).fill(answer < selected ? "up" : "down") };
@@ -190,25 +108,6 @@ export function parseLaunchArgs(args) {
   o.timeout = Number(o.timeout);
   if (!Number.isSafeInteger(o.timeout) || o.timeout <= 0) throw new Error("--timeout must be a positive integer in milliseconds");
   return o;
-}
-
-export function runHerdr(args, timeout) {
-  return new Promise((done, reject) => {
-    const child = spawn("herdr", args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "", stderr = "", timedOut = false;
-    child.stdout.on("data", (s) => { stdout += s; });
-    child.stderr.on("data", (s) => { stderr += s; });
-    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, Math.max(1, Math.min(timeout, 2147483647)));
-    child.on("error", (e) => { clearTimeout(timer); reject(e); });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      let data;
-      if (timedOut) return done({ ok: false, data: { error: { code: "timeout", message: "Herdr command timed out" } } });
-      try { data = JSON.parse(code === 0 ? stdout : stderr || stdout); }
-      catch { data = code === 0 ? stdout : { error: { code: "herdr_failed", message: (stderr || stdout || "Herdr timed out").trim() } }; }
-      done({ ok: code === 0 && !data?.error, data });
-    });
-  });
 }
 
 // Inject transport and time for tests; no test needs a live pane.
@@ -261,12 +160,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       return { ...out, ok: true, state: "planned" };
     }
     if (env.HERDR_ENV !== "1") throw new Error("Launch requires HERDR_ENV=1 inside a Herdr pane");
-    const began = now();
-    const remaining = () => {
-      const ms = Math.floor(o.timeout - (now() - began));
-      if (!Number.isFinite(ms) || ms <= 0) throw new Error("Launch readiness timeout");
-      return ms;
-    };
+    const remaining = deadline(o.timeout, now, "Launch readiness timeout");
     const call = async (a, tolerate = false) => {
       const ms = remaining();
       logCommand(out.command, command(a));
@@ -274,48 +168,15 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       if (!r.ok && !tolerate) throw new Error(r.data?.error?.message ?? JSON.stringify(r.data));
       return r;
     };
-    const readPane = async () => {
-      touchedPane = true;
-      return paneText((await call(["pane", "read", out.pane, "--source", "visible"])).data);
-    };
+    const pane = () => paneView(call, out.pane); // the pane id is known only once it is split or adopted
+    const readPane = async () => { touchedPane = true; return pane().read(); };
     const pause = async () => sleep(Math.min(250, remaining()));
     const shellReady = async (expectedCwd) => {
-      let answers = 0, answered = false, answeredAt = null, previous = null;
-      for (;;) {
-        const text = await readPane();
-        const info = (await call(["pane", "process-info", "--pane", out.pane])).data.result.process_info;
-        const processes = info.foreground_processes ?? [];
-        const shellProc = processes.find((p) => p.pid === info.shell_pid);
-        if (shellProc) shell = shellFamily(shellProc.name);
-        if (processes.some((p) => p.pid !== info.shell_pid)) {
-          if (o.pane && !expectedCwd) return human("Pane has a foreground process; refusing to type shell input", text);
-          previous = null;
-          await pause(); continue; // New shells and directory hooks can run short foreground commands.
-        }
-        if (!shellProc) { previous = null; await pause(); continue; }
-        const state = shellPrompt(text);
-        if (state === "dotenv") {
-          if (!answered) {
-            if (++answers > 3) return human("Shell repeated the dotenv question", text);
-            await call(["pane", "send-keys", out.pane, "n", "enter"]);
-            out.warnings.push("Answered no to the shell's dotenv Source it? question.");
-            step("shell_answer", true, "dotenv: sent n, enter"); answered = true;
-            answeredAt = now();
-          }
-          if (now() - answeredAt >= 5000) return human("Shell did not clear the dotenv question after answering", text);
-        } else {
-          answered = false;
-          if (state === "question") return human("Unrecognized shell question", text);
-          // Even a recognized prompt must settle while the shell remains in the foreground.
-          const atPrompt = state === "ready" && promptSettled(text, previous);
-          if (atPrompt) {
-            if (expectedCwd && realpathSync(shellProc.cwd) !== realpathSync(expectedCwd)) return human("Shell is at a prompt in the wrong directory", text);
-            step("shell_ready", true, `Interactive ${shell} shell in ${shellProc.cwd}`); return null;
-          }
-        }
-        previous = text;
-        await pause();
-      }
+      const r = await waitForShell({ ...pane(), read: readPane }, { sleep, now, remaining, cwd: expectedCwd, refuseBusy: Boolean(o.pane && !expectedCwd),
+        onShell: (name) => { shell = shellFamily(name); },
+        onAnswer: () => { out.warnings.push("Answered no to the shell's dotenv Source it? question."); step("shell_answer", true, "dotenv: sent n, enter"); } });
+      if (!r.ok) return human(r.why, r.text);
+      step("shell_ready", true, `Interactive ${shell} shell in ${r.cwd}`); return null;
     };
     // Check Cursor's copy before creating a pane; never fall back to its account config.
     if (o.kind === "cursor") {

@@ -1,18 +1,48 @@
-// The file-and-ledger commands, and `usage`: `check`, `record`, `assess`, `share`. Each takes its parsed flags and returns what to
+// The advice commands (`subagent`, `dispatch`), the file-and-ledger commands, and `usage`: `check`, `record`, `assess`, `share`. Each takes its parsed flags and returns what to
 // print, so a test can drive it without a process. The pure parts stay where they were (check.mjs, ledger.mjs); this is
 // the I/O around them. None of them may fail an agent: an error becomes output, and the caller exits 0.
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { advise, headline } from "./advise.mjs";
 import { readReport } from "./check.mjs";
 import { ask } from "./jev.mjs";
 import { append, assess, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
-import { CHECK_VERSION, checkQuestions } from "./questions.mjs";
+import { CHECK_VERSION, checkQuestions, MEANING, questions, VERSION } from "./questions.mjs";
+import { ADVICE_RULE } from "./wording.mjs";
 import { rankSubscriptions } from "./pick.mjs";
-import { readUsage, SOURCES } from "./usage.mjs";
+import { readUsage, SOURCES } from "./harnesses.mjs";
 
 const short = (e, n = 160) => String(e?.message ?? e).slice(0, n);
+
+// `routr subagent|dispatch "<brief>"`: Jev's reading of the brief with the user's preferences, and for dispatch the
+// subscriptions ranked by usage, read while Jev answers. An unreachable Jev still gets an answer: the user's fallback.
+export async function adviseCommand(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read = readUsage } = {}) {
+  const out = { id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: createHash("sha256").update(brief).digest("hex").slice(0, 12), brief_chars: brief.length };
+  let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };
+  // Each source's newest reading, read while Jev answers; a slow source (Cursor's screen) is a snapshot refreshed in the background.
+  const usageP = mode === "dispatch" ? read(Object.keys(config.subscriptions), given).catch(() => []) : null;
+  try {
+    const r = await askFn({ task: { brief } }, questions, undefined, 10000);
+    advice = advise(r.answers, config);
+    // Raw judgments travel with the advice, so preferences can be re-evaluated later without asking again.
+    const a = r.answers;
+    Object.assign(out, { jev_model: r.model, ms: Math.round(r.latencyMs), answers: { level: { score: a.level.score, confidence: a.level.confidence, probabilities: a.level.probabilities }, work_type: { choice: a.work_type.choice, confidence: a.work_type.confidence }, high_blast_radius: a.high_blast_radius.noul } }); // fact probabilities are in `facts`
+  } catch (e) {
+    advice.notes.push(`Router unavailable (${short(e, 120)}). "${config.fallback_level}" is only the user's fallback: judge the level yourself.`);
+    out.fallback = true;
+  }
+  Object.assign(out, { headline: headline(advice), ...advice, meaning: MEANING[advice.level] });
+  if (mode === "dispatch") {
+    try { out.subscriptions = rankSubscriptions(advice.level, await usageP, config); }
+    catch (e) { out.subscriptions = { most_room: null, ranked: [], excluded: [], note: `could not read usage: ${short(e, 120)}` }; }
+    // An unconfigured routr ranks nothing; say why, so the lead tells the user instead of guessing (seen in a real session).
+    if (!Object.keys(config.subscriptions).length) out.subscriptions.note = "no subscriptions are configured, so none is ranked: the user has not run `routr setup` yet. Tell them, and ask which subscription to use meanwhile";
+  }
+  return { ...out, rule: ADVICE_RULE[mode], ...(configNotes.length ? { config_notes: configNotes } : {}) };
+}
 
 // A quick first read of a worker's report; the orchestrator remains the judge.
 export async function checkCommand({ brief: briefFile, report: reportFile }, { askFn = ask } = {}) {
