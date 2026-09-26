@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 import { COMMANDS } from "../src/lib/help.mjs";
-import { row, scratch } from "./helpers.mjs";
+import { cliEnv, row, scratch } from "./helpers.mjs";
 test("shared rows carry what tuning needs and nothing that identifies the user or the work", async () => {
   const { shareRows } = await import("../src/lib/ledger.mjs");
   const text = JSON.stringify(shareRows([row()]));
@@ -129,7 +129,6 @@ test("feedback sends what the person wrote, and nothing when there is nothing to
   expect((await sendFeedback("the cursor usage read failed twice", { fetchFn, ledger })).ok).toBe(true);
   expect(sent).toHaveLength(1);
   expect(sent[0].text).toBe("the cursor usage read failed twice");
-  rmSync(dir, { recursive: true, force: true });
 });
 
 test("Jev is asked for the pinned version unless ROUTR_JEV_MODEL names another", async () => {
@@ -213,7 +212,7 @@ test("end to end: nothing leaves before a yes, then only rows after it, with no 
   const server = Bun.serve({ port: 0, fetch: async (req) => { const b = await req.json(); got.push(b); return Response.json({ accepted: b.rows?.length ?? 0, refused: 0 }); } });
   const home = scratch("e2e");
   try {
-    const env = { ...process.env, HOME: home, USERPROFILE: home, ROUTR_NO_UPDATE: "1", ROUTR_TELEMETRY_URL: `http://127.0.0.1:${server.port}`, TYPESAFE_API_KEY: "" };
+    const env = cliEnv(home, { ROUTR_TELEMETRY_URL: `http://127.0.0.1:${server.port}` });
     for (const k of ["CI", "DO_NOT_TRACK", "ROUTR_TELEMETRY", "GITHUB_ACTIONS"]) delete env[k];
     const cli = (...args) => Bun.spawn(["bun", join(import.meta.dir, "../src/routr.mjs"), ...args], { env, stdout: "pipe", stderr: "pipe" });
     const run = async (...args) => { const p = cli(...args); const [o] = await Promise.all([new Response(p.stdout).text(), p.exited]); return o; };

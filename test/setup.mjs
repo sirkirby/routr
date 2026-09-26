@@ -10,7 +10,8 @@ const withoutHerdr = (path) => process.platform !== "win32" ? path
   : path.split(delimiter).filter((d) => !["herdr.exe", "herdr.cmd", "herdr.bat"].some((f) => existsSync(join(d, f)))).join(delimiter);
 process.env.PATH = join(import.meta.dir, "fixtures", "no-herdr") + delimiter + withoutHerdr(process.env.PATH ?? "");
 delete process.env.HERDR_ENV;
-process.env.ROUTR_NO_REFRESH = "1"; // no detached Cursor refresh, and nothing written to the real cache
+process.env.ROUTR_NO_REFRESH = "1"; // no detached usage refresh, and nothing written to the real cache
+process.env.ROUTR_NO_UPDATE = "1";  // no release lookup, and no detached updater
 
 // Every folder a test makes is inside one scratch folder, removed when the run ends however a test ended, and nothing
 // is written into test/. Every CLI a test spawns sees a scratch home, never the maintainer's own (its config, ledger,

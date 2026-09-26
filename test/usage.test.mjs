@@ -1,7 +1,7 @@
 // usage readers: Claude's statusline, Codex, Cursor's screen, Kiro's /usage, the background snapshots, and `routr usage`
-import { afterAll, expect, test } from "bun:test";
+import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { claudeSnapshot, codexSnapshot, monthMinutes } from "../src/lib/usage.mjs";
 import { KIRO_BY_HAND, kiroUsage, parseKiroUsage, readKiro, refreshKiro } from "../src/lib/kiro-usage.mjs";
@@ -10,7 +10,7 @@ import { olderThan, takeLock } from "../src/lib/runtime.mjs";
 import { usageCommand } from "../src/lib/commands.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
 import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage, readCursor, refreshCursor } from "../src/lib/cursor-usage.mjs";
-import { NOW, cfg, herdrError, herdrOK, live, metered, none, scratch, shellInfo, win } from "./helpers.mjs";
+import { cfg, cliEnv, herdrError, herdrOK, live, metered, none, NOW, scratch, SCRIPT, shellInfo, win } from "./helpers.mjs";
 // Recorded 2026-09-22 from `codex app-server` (`account/rateLimits/read`, CLI 0.155.1), identifiers removed: a ChatGPT
 // Enterprise seat on flexible pricing, and a Pro login. The capped shape follows the protocol's `SpendControlLimitSnapshot`
 // (openai/codex, codex-rs/protocol/src/protocol.rs); it is claimed until a cap is set on a seat and read.
@@ -121,7 +121,6 @@ const CURSOR_UI = "  Cursor Agent\n  Grok 4.6 High\n  /tmp";
 // Stale sessions: one left by a routr that is gone (pid 99) is removed; one whose routr is alive (pid 7) is not.
 const CU_TMP = scratch("cu");
 
-afterAll(() => rmSync(CU_TMP, { recursive: true, force: true }));
 
 function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = true, failCreate = false, spawnFails = false, sessions = null } = {}) {
   let stage = "shell", dotenv = true, ticks = 0, extraEnter = false, up = 0;
@@ -227,13 +226,11 @@ test("cursorUsage without herdr fails open, says how to read it by hand, and sta
 });
 
 test("usage cursor without herdr prints JSON and exits 0", () => {
-  const script = `${import.meta.dir}/../src/routr.mjs`;
   const home = scratch("home"); // it keeps what it read: never in the real cache
-  const cleanEnv = { ...process.env, PATH: "", HOME: home, USERPROFILE: home, ROUTR_NO_UPDATE: "1" };
+  const cleanEnv = cliEnv(home, { PATH: "" });
   delete cleanEnv.HERDR_ENV;
-  const res = Bun.spawnSync([process.execPath, script, "usage", "cursor"], { env: cleanEnv });
+  const res = Bun.spawnSync([process.execPath, SCRIPT, "usage", "cursor"], { env: cleanEnv });
   expect(JSON.parse(readFileSync(join(home, ".cache/routr/cursor-usage.json"), "utf8")).error).toContain("herdr");
-  rmSync(home, { recursive: true, force: true });
   expect(res.exitCode).toBe(0);
   const out = JSON.parse(res.stdout.toString());
   expect(out).toMatchObject({ ok: false, read_yourself: CURSOR_BY_HAND });
@@ -264,7 +261,6 @@ test("kiroUsage runs /usage outside the user's project and deletes the session i
 
 test("Kiro is a snapshot like Cursor's, a monthly window that tapers the reserve toward its reset", async () => {
   const dir = scratch("kiro"), file = join(dir, "kiro-usage.json"), T = Date.UTC(2026, 8, 26) / 1000;
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
   const started = [];
   expect(readKiro({ file, nowSec: T, refresh: () => started.push(T), off: false })).toMatchObject({ pool: "kiro", headroom: null });
   expect(started).toHaveLength(1);
@@ -278,12 +274,10 @@ test("Kiro is a snapshot like Cursor's, a monthly window that tapers the reserve
   expect(readKiro({ file, nowSec: T + 7200 }).headroom).toBe(1); // past the reset: a new month, whatever the reading said
   await refreshKiro({ file, nowSec: T + 100, read: async () => ({ ok: false, error: "kiro-cli did not answer", read_yourself: KIRO_BY_HAND }) });
   expect(readKiro({ file, nowSec: T + 101 }).note).toContain("the last try failed: kiro-cli did not answer");
-  rmSync(dir, { recursive: true, force: true });
 });
 
 test("Cursor is a snapshot every call reads at once, refreshed in the background about once a session", async () => {
   const dir = scratch("cursor"), file = join(dir, "cursor-usage.json"), T = 1_800_000_000;
-  afterAll(() => rmSync(dir, { recursive: true, force: true })); // even when an expectation fails half way
   const started = [];
   const read = (nowSec) => readCursor({ file, nowSec, refresh: () => started.push(nowSec), off: false });
   // A new install: nothing yet. The call answers at once, assumed, and starts one background reading.
@@ -345,7 +339,6 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
   const tries = [];
   for (let k = 0; k < 3; k++) readCursor({ file: join(blocked, "cursor-usage.json"), nowSec: T, refresh: () => tries.push(k), off: false });
   expect(tries).toEqual([]);
-  rmSync(dir, { recursive: true, force: true });
   // What the caller passes still wins, and the snapshot is not consulted for it.
   const [given] = await readUsage(["cursor"], { cursor: 0.9 }, { sources: { cursor: { read: () => { throw new Error("read"); } } } });
   expect(given).toMatchObject({ source: "given by caller", headroom: 0.9 });
@@ -359,7 +352,6 @@ test("the refresh lock lets one caller in at a time and gives up a lock left by 
   expect(takeLock(lock, stale(Date.now() + 121 * 1000))).toBe(true); // older than any reading can take
   expect(readFileSync(lock, "utf8")).toBe(String(process.pid));
   expect(takeLock(join(dir, "missing", "x.lock"), stale())).toBe(false); // cannot write: no lock, so no refresh
-  rmSync(dir, { recursive: true, force: true });
 });
 
 test("routr usage ranks what it sees without a brief, and a name narrows it or opens the harness's screen", async () => {

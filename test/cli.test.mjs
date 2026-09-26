@@ -1,28 +1,11 @@
 // the CLI: help, dispatch, versions, skill install, key set
 import { expect, test } from "bun:test";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 
 
 import { COMMANDS, DESCRIPTION, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "../src/lib/help.mjs";
-import { ans, cfg, fact, live, scratch } from "./helpers.mjs";
-test("dispatch and subagent answer from a function: Jev's reading, the ranking, and the user's fallback when Jev is down", async () => {
-  const { adviseCommand } = await import("../src/lib/commands.mjs");
-  const jev = async () => ({ model: "jev-test", latencyMs: 12.4, answers: fact(ans(1.1, 0.9), {}) });
-  const read = async (names) => names.map((n) => live(n, n === "cursor" ? 0.9 : 0.3));
-  const d = await adviseCommand("dispatch", "Fix the parser", { config: cfg(), notes: [] }, {}, { askFn: jev, read });
-  expect(d).toMatchObject({ mode: "dispatch", level: "standard", jev_model: "jev-test", ms: 12, brief_chars: 14 });
-  expect(d.subscriptions.most_room).toBe("cursor");
-  expect(d.rule).toContain("Launch on a subscription");
-  expect(JSON.stringify(d)).not.toContain("Fix the parser"); // the brief itself is never in the output
-  const down = await adviseCommand("subagent", "Fix it", { config: cfg(), notes: ["a note"] }, {}, { askFn: async () => { throw new Error("offline"); } });
-  expect(down).toMatchObject({ fallback: true, level: "standard", config_notes: ["a note"] });
-  expect(down.subscriptions).toBeUndefined();
-  expect(down.notes[0]).toContain("Router unavailable (offline)");
-  const none = await adviseCommand("dispatch", "x", { config: { ...cfg(), subscriptions: {} }, notes: [] }, {}, { askFn: jev, read });
-  expect(none.subscriptions.note).toContain("has not run `routr setup`");
-});
-
+import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 test("help table covers every command the CLI dispatches", () => {
   const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "setup", "uninstall", "check", "record", "assess", "share", "update", "statusline", "skill", "key", "telemetry", "feedback"];
   expect(Object.keys(COMMANDS).sort()).toEqual(dispatched.sort());
@@ -68,9 +51,8 @@ test("help table covers every command the CLI dispatches", () => {
 });
 
 test("top-level help flags and help command print usage and exit 0", () => {
-  const script = `${import.meta.dir}/../src/routr.mjs`;
   for (const flag of ["--help", "-h", "help"]) {
-    const res = Bun.spawnSync(["bun", script, flag]);
+    const res = Bun.spawnSync(["bun", SCRIPT, flag]);
     expect(res.exitCode).toBe(0);
     expect(res.stderr.toString()).toBe("");
     const stdout = res.stdout.toString();
@@ -83,11 +65,10 @@ test("top-level help flags and help command print usage and exit 0", () => {
 });
 
 test("command help prints usage for each command and exits 0", () => {
-  const script = `${import.meta.dir}/../src/routr.mjs`;
   const commands = ["subagent", "dispatch", "launch", "usage", "doctor", "check", "record", "assess"];
   for (const cmd of commands) {
     for (const flag of ["--help", "-h"]) {
-      const res = Bun.spawnSync(["bun", script, cmd, flag]);
+      const res = Bun.spawnSync(["bun", SCRIPT, cmd, flag]);
       expect(res.exitCode).toBe(0);
       expect(res.stderr.toString()).toBe("");
       const stdout = res.stdout.toString();
@@ -100,7 +81,7 @@ test("command help prints usage for each command and exits 0", () => {
   // routr launch --help works without HERDR_ENV, does not touch herdr, and exits 0
   const cleanEnv = { ...process.env };
   delete cleanEnv.HERDR_ENV;
-  const launchRes = Bun.spawnSync(["bun", script, "launch", "--help"], { env: cleanEnv });
+  const launchRes = Bun.spawnSync(["bun", SCRIPT, "launch", "--help"], { env: cleanEnv });
   expect(launchRes.exitCode).toBe(0);
   expect(launchRes.stderr.toString()).toBe("");
   expect(launchRes.stdout.toString()).toContain("routr launch: start a worker");
@@ -109,7 +90,7 @@ test("command help prints usage for each command and exits 0", () => {
   expect(launchRes.stdout.toString()).toContain("required unless --dry-run");
 
   // routr record --help exits 0 without reading stdin
-  const recordRes = Bun.spawnSync(["bun", script, "record", "--help"], { stdin: "ignore" });
+  const recordRes = Bun.spawnSync(["bun", SCRIPT, "record", "--help"], { stdin: "ignore" });
   expect(recordRes.exitCode).toBe(0);
   expect(recordRes.stderr.toString()).toBe("");
   expect(recordRes.stdout.toString()).toContain("routr record: append what you chose");
@@ -117,13 +98,11 @@ test("command help prints usage for each command and exits 0", () => {
 });
 
 test("a brief containing --help as a separate word is routed as a brief, not as help", () => {
-  const script = `${import.meta.dir}/../src/routr.mjs`;
   for (const cmd of ["subagent", "dispatch"]) {
     // A throwaway HOME with no key and no config: the command falls back at once instead of calling the network,
     // so this test is about argument handling only and cannot time out on a slow connection.
     const home = scratch("nokey");
-    const res = Bun.spawnSync(["bun", script, cmd, "add", "--help", "to", "the", "CLI"], { env: { ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "" } });
-    rmSync(home, { recursive: true, force: true });
+    const res = Bun.spawnSync(["bun", SCRIPT, cmd, "add", "--help", "to", "the", "CLI"], { env: cliEnv(home) });
     expect(res.exitCode).toBe(0);
     expect(res.stderr.toString()).toBe("");
     const data = JSON.parse(res.stdout.toString());
@@ -133,9 +112,8 @@ test("a brief containing --help as a separate word is routed as a brief, not as 
 });
 
 test("unrecognized mode prints usage from table to stderr and exits 2", () => {
-  const script = `${import.meta.dir}/../src/routr.mjs`;
   for (const args of [["unknown-mode"], []]) {
-    const res = Bun.spawnSync(["bun", script, ...args]);
+    const res = Bun.spawnSync(["bun", SCRIPT, ...args]);
     expect(res.exitCode).toBe(2);
     expect(res.stdout.toString()).toBe("");
     const stderr = res.stderr.toString();
@@ -195,28 +173,17 @@ test("routr skill install writes the guides and links them for Claude Code and K
 });
 
 test("routr key set stores a piped key owner-only, never prints it, and refuses junk", () => {
-  const script = `${import.meta.dir}/../src/routr.mjs`;
   const home = scratch("key");
-  const env = { ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "" };
-  const good = Bun.spawnSync(["bun", script, "key", "set", "--no-verify"], { env, stdin: Buffer.from("ts_test_0123456789abcdef\n") });
+  const env = cliEnv(home);
+  const good = Bun.spawnSync(["bun", SCRIPT, "key", "set", "--no-verify"], { env, stdin: Buffer.from("ts_test_0123456789abcdef\n") });
   expect(good.exitCode).toBe(0);
   expect(good.stdout.toString()).not.toContain("0123456789abcdef");
   const file = join(home, ".config/routr/env");
   expect(readFileSync(file, "utf8")).toBe("TYPESAFE_API_KEY=ts_test_0123456789abcdef\n");
   if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600);
-  const bad = Bun.spawnSync(["bun", script, "key", "set", "--no-verify"], { env, stdin: Buffer.from("nope\n") });
+  const bad = Bun.spawnSync(["bun", SCRIPT, "key", "set", "--no-verify"], { env, stdin: Buffer.from("nope\n") });
   expect(bad.exitCode).toBe(1);
   expect(readFileSync(file, "utf8")).toContain("0123456789abcdef");    // the earlier key is untouched
-  rmSync(home, { recursive: true, force: true });
-});
-
-test("the headline reads the same as before it moved out of the entrypoint", async () => {
-  const { headline } = await import("../src/lib/advise.mjs");
-  const facts = { approach_open: { reading: "yes" }, standalone: { reading: "yes" }, cross_cutting: { reading: "no" } };
-  expect(headline({ level: "standard", sure: true, work_type: "debug", facts })).toBe("routr: standard, debug work; approach_open");
-  expect(headline({ level: "standard", sure: false, between: ["standard", "strong"], work_type: "review", facts: {}, high_risk: true, worker: { suggestion: "split it across workers" }, notes: ["Fix the brief: it names no check"] }))
-    .toBe("routr: SPLIT IT ACROSS WORKERS · standard (torn between standard and strong), review work; HIGH RISK; FIX THE BRIEF FIRST");
-  expect(headline({ level: "basic", sure: false })).toBe("routr: basic (unsure), unknown work");
 });
 
 test("the file-and-ledger commands answer instead of failing", async () => {
@@ -231,4 +198,21 @@ test("the file-and-ledger commands answer instead of failing", async () => {
   expect(out.warning).toContain("very short");
   expect(seen[0].report.text).toBe("VERDICT: done");
   expect(out.ms).toBe(12);
+});
+
+test("help, --version and statusline load none of the harness drivers: those load only when a command reads usage", () => {
+  // Static imports only: `await import()` is how the drivers are reached on demand, and is exactly what stays out.
+  const root = join(import.meta.dir, "../src");
+  const reach = (file, seen = new Set()) => {
+    if (seen.has(file)) return seen;
+    seen.add(file);
+    for (const [, rel] of readFileSync(file, "utf8").matchAll(/^import [^;]*? from "(\.{1,2}\/[^"]+\.mjs)";/gm)) reach(join(dirname(file), rel), seen);
+    return seen;
+  };
+  const heavy = ["cursor-usage.mjs", "kiro-usage.mjs", "terminal.mjs", "herdr.mjs", "launch.mjs", "snapshot.mjs"];
+  for (const start of ["lib/help.mjs", "lib/statusline.mjs", "lib/harnesses.mjs"]) {
+    const loaded = [...reach(join(root, start))].map((f) => f.split(/[\\/]/).at(-1));
+    expect(loaded.filter((f) => heavy.includes(f))).toEqual([]);
+  }
+  expect(readFileSync(join(root, "routr.mjs"), "utf8")).not.toMatch(/^import /m); // the entry point imports nothing up front
 });

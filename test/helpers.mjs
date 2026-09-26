@@ -2,8 +2,14 @@
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULTS } from "../src/lib/config.mjs";
+// Made by test/setup.mjs, which bunfig.toml preloads for every test file.
 export const SCRATCH = process.env.ROUTR_TEST_SCRATCH;
+if (!SCRATCH) throw new Error("test/setup.mjs did not run: run the tests from the repository root with `bun test`, so bunfig.toml preloads it");
 export const scratch = (name) => mkdtempSync(join(SCRATCH, `${name}-`));
+// The CLI as a test spawns it, and the environment it gets: a scratch home, no TypeSafe key, and whatever `over` adds
+// (PATH: home, for a spawn that could otherwise start a harness).
+export const SCRIPT = join(import.meta.dir, "../src/routr.mjs");
+export const cliEnv = (home, over = {}) => ({ ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "", ...over });
 
 export const cfg = (over = {}) => ({ ...DEFAULTS, subscriptions: {
   claude: { hardest_work: "strong", reserve: 0.25, assumed_headroom: 0.5 },

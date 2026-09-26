@@ -100,3 +100,29 @@ test("an unsure level reads as the lower of the two most likely levels", () => {
   expect(advise(torn({ 0: 0.48, 1: 0.52, 2: 0 }, 0.52), cfg()).level).toBe("basic");
   expect(advise(ans(1.6, 0.9), cfg()).between).toBeUndefined();             // sure: plain rounding, no range
 });
+
+test("dispatch and subagent answer from a function: Jev's reading, the ranking, and the user's fallback when Jev is down", async () => {
+  const { adviseCommand } = await import("../src/lib/commands.mjs");
+  const jev = async () => ({ model: "jev-test", latencyMs: 12.4, answers: fact(ans(1.1, 0.9), {}) });
+  const read = async (names) => names.map((n) => live(n, n === "cursor" ? 0.9 : 0.3));
+  const d = await adviseCommand("dispatch", "Fix the parser", { config: cfg(), notes: [] }, {}, { askFn: jev, read });
+  expect(d).toMatchObject({ mode: "dispatch", level: "standard", jev_model: "jev-test", ms: 12, brief_chars: 14 });
+  expect(d.subscriptions.most_room).toBe("cursor");
+  expect(d.rule).toContain("Launch on a subscription");
+  expect(JSON.stringify(d)).not.toContain("Fix the parser"); // the brief itself is never in the output
+  const down = await adviseCommand("subagent", "Fix it", { config: cfg(), notes: ["a note"] }, {}, { askFn: async () => { throw new Error("offline"); } });
+  expect(down).toMatchObject({ fallback: true, level: "standard", config_notes: ["a note"] });
+  expect(down.subscriptions).toBeUndefined();
+  expect(down.notes[0]).toContain("Router unavailable (offline)");
+  const none = await adviseCommand("dispatch", "x", { config: { ...cfg(), subscriptions: {} }, notes: [] }, {}, { askFn: jev, read });
+  expect(none.subscriptions.note).toContain("has not run `routr setup`");
+});
+
+test("the headline gives the level, the kind of work, what the brief leaves open, and any warning in capitals", async () => {
+  const { headline } = await import("../src/lib/advise.mjs");
+  const facts = { approach_open: { reading: "yes" }, standalone: { reading: "yes" }, cross_cutting: { reading: "no" } };
+  expect(headline({ level: "standard", sure: true, work_type: "debug", facts })).toBe("routr: standard, debug work; approach_open");
+  expect(headline({ level: "standard", sure: false, between: ["standard", "strong"], work_type: "review", facts: {}, high_risk: true, worker: { suggestion: "split it across workers" }, notes: ["Fix the brief: it names no check"] }))
+    .toBe("routr: SPLIT IT ACROSS WORKERS · standard (torn between standard and strong), review work; HIGH RISK; FIX THE BRIEF FIRST");
+  expect(headline({ level: "basic", sure: false })).toBe("routr: basic (unsure), unknown work");
+});

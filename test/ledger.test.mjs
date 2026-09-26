@@ -1,8 +1,8 @@
 // ledger.mjs: record, assess, subagent rows, projects
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { row, scratch } from "./helpers.mjs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cliEnv, row, scratch, SCRIPT } from "./helpers.mjs";
 test("parsing of →, ->, none, and malformed lines for subagents", async () => {
   const { parseSubagent, parseReportSubagents } = await import("../src/lib/ledger.mjs");
 
@@ -196,7 +196,6 @@ test("old ledger rows without a subagents field assess without error", async () 
 });
 
 test("CLI round trip for record with repeatable --subagent and --report flags", () => {
-  const script = `${import.meta.dir}/../src/routr.mjs`;
   const tempDir = scratch("record-test");
   const adviceFile = join(tempDir, "advice.json");
   const reportFile = join(tempDir, "report.txt");
@@ -235,7 +234,7 @@ test("CLI round trip for record with repeatable --subagent and --report flags", 
   // Run record with both --report and repeatable --subagent
   const rec = Bun.spawnSync([
     "bun",
-    script,
+    SCRIPT,
     "record",
     "--advice", adviceFile,
     "--report", reportFile,
@@ -262,7 +261,7 @@ test("CLI round trip for record with repeatable --subagent and --report flags", 
   ]);
 
   // Run assess
-  const ass = Bun.spawnSync(["bun", script, "assess", "--ledger", ledgerFile]);
+  const ass = Bun.spawnSync(["bun", SCRIPT, "assess", "--ledger", ledgerFile]);
   expect(ass.exitCode).toBe(0);
   const assOut = ass.stdout.toString();
   expect(assOut).toContain("subagents: 4 recorded");
@@ -270,8 +269,7 @@ test("CLI round trip for record with repeatable --subagent and --report flags", 
   expect(assOut).toContain("standard: sonnet 1");
   expect(assOut).toContain("strong: opus 1");
 
-  rmSync(tempDir, { recursive: true, force: true });
-});
+}, 20000); // several CLI spawns: over 5 s when the machine is busy (seen with four test runs at once)
 
 test("assess turns the ledger into suggestions about the user's own settings, and only with enough runs", async () => {
   const { assess } = await import("../src/lib/ledger.mjs");
@@ -300,21 +298,19 @@ test("ledger rows are labelled with their project, a worktree counts as its repo
   const other = { ...e, project: "site" };
   expect(assess([e, other])).toContain("by project");
   expect(assess([e])).not.toContain("by project");                        // one project: no breakdown to show
-  rmSync(root, { recursive: true, force: true });
 });
 
 test("record --project labels the row, assess answers on an unreadable ledger, and share never writes into the current folder", () => {
-  const script = `${import.meta.dir}/../src/routr.mjs`;
   const home = scratch("cli"), work = join(home, "work"); mkdirSync(work);
-  const env = { ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "", ROUTR_NO_UPDATE: "1" };
+  const env = cliEnv(home);
   const advice = JSON.stringify({ id: "a1", mode: "dispatch", level: "basic", sure: true, facts: {} });
-  const rec = Bun.spawnSync([process.execPath, script, "record", "--subscription", "codex", "--model", "m", "--effort", "low", "--verdict", "done", "--check", "pass", "--project", "other"], { env, cwd: work, stdin: Buffer.from(advice) });
+  const rec = Bun.spawnSync([process.execPath, SCRIPT, "record", "--subscription", "codex", "--model", "m", "--effort", "low", "--verdict", "done", "--check", "pass", "--project", "other"], { env, cwd: work, stdin: Buffer.from(advice) });
   expect(rec.exitCode).toBe(0);
   expect(JSON.parse(readFileSync(join(home, ".local/share/routr/ledger.jsonl"), "utf8").trim()).project).toBe("other");
-  expect(Bun.spawnSync([process.execPath, script, "share"], { env, cwd: work }).exitCode).toBe(0);
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "share"], { env, cwd: work }).exitCode).toBe(0);
   expect(readdirSync(work)).toEqual([]);
   expect(readdirSync(join(home, ".local/share/routr")).some((f) => f.startsWith("routr-ledger-"))).toBe(true);
-  const bad = Bun.spawnSync([process.execPath, script, "assess", "--ledger", home], { env, cwd: work }); // a folder, not a file
+  const bad = Bun.spawnSync([process.execPath, SCRIPT, "assess", "--ledger", home], { env, cwd: work }); // a folder, not a file
   expect(bad.exitCode).toBe(0);
   expect(bad.stdout.toString()).toContain("could not read the ledger");
-});
+}, 20000); // several CLI spawns: over 5 s when the machine is busy (seen with four test runs at once)

@@ -5,7 +5,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, st
 import { HARNESSES, plan } from "../src/lib/harnesses.mjs";
 import { composePrompt, launch, parseLaunchArgs, permissiveConfirm, trustDialog, WORKER_GUIDE } from "../src/lib/launch.mjs";
 import { paneText, promptSettled, quote, shellPrompt } from "../src/lib/herdr.mjs";
-import { herdrError, herdrOK, scratch, shellInfo } from "./helpers.mjs";
+import { herdrError, herdrOK, SCRATCH, scratch, SCRIPT, shellInfo } from "./helpers.mjs";
 test("launch plans use each harness's measured permissions and model syntax", () => {
   expect(plan({ kind: "claude", model: "sonnet", effort: "medium" }).argv)
     .toEqual(["--dangerously-skip-permissions", "--model", "sonnet", "--effort", "medium"]);
@@ -205,12 +205,11 @@ test("task files are read and wrapped before any launch operation", async () => 
 });
 
 test("launch CLI emits one JSON object for invalid input and preserves --version", () => {
-  const script = `${import.meta.dir}/../src/routr.mjs`;
-  const result = Bun.spawnSync(["bun", script, "launch", ...launchArgs, "--timeout", "bad"]);
+  const result = Bun.spawnSync(["bun", SCRIPT, "launch", ...launchArgs, "--timeout", "bad"]);
   expect(result.exitCode).toBe(1);
   expect(result.stderr.toString()).toBe("");
   expect(JSON.parse(result.stdout.toString()).state).toBe("failed");
-  const version = Bun.spawnSync(["bun", script, "--version"]);
+  const version = Bun.spawnSync(["bun", SCRIPT, "--version"]);
   expect(version.exitCode).toBe(0);
   expect(version.stdout.toString().trim()).toBe(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
 });
@@ -244,9 +243,8 @@ test("preflight failures never read an adopted pane, even for dry runs or outsid
 });
 
 test("launch dispatch cannot be intercepted by a --version option or task value", () => {
-  const script = `${import.meta.dir}/../src/routr.mjs`;
   for (const suffix of [["--version"], ["--task", "--version"]]) {
-    const r = Bun.spawnSync(["bun", script, "launch", ...launchArgs, ...suffix]);
+    const r = Bun.spawnSync(["bun", SCRIPT, "launch", ...launchArgs, ...suffix]);
     expect(r.exitCode).toBe(1);
     expect(r.stderr.toString()).toBe("");
     expect(JSON.parse(r.stdout.toString())).toMatchObject({ ok: false, state: "failed", command: [] });
@@ -668,4 +666,24 @@ test("launch types each shell's own syntax: Cursor's private config is set and r
   expect(SHELLS.cmd.cd("C:\\a b")).toBe('cd /d "C:\\a b"');
   expect(SHELLS.posix.cursor("/tmp/x", "cursor-agent", ["--trust"])).toMatch(/^env CURSOR_CONFIG_DIR=\/tmp\/x sh -c 'trap .*cursor-agent --trust'$/);
   expect(SHELLS.posix.cd("/a b")).toBe("cd -- '/a b'");
+});
+
+test("waitForShell: ready at a settled prompt, answers dotenv once, and stops at a question, a busy adopted pane, or the wrong folder", async () => {
+  const { waitForShell } = await import("../src/lib/herdr.mjs");
+  const here = process.cwd();
+  const pane = (screens, { busy = false } = {}) => {
+    const keys = [];
+    return { keys, read: async () => screens.length > 1 ? screens.shift() : screens[0], keys: async (...k) => { keys.push(k); },
+      info: async () => ({ shell_pid: 1, foreground_processes: busy ? [{ pid: 1, name: "zsh", cwd: here }, { pid: 2 }] : [{ pid: 1, name: "zsh", cwd: here }] }) };
+  };
+  let t = 0;
+  const time = { sleep: async (ms) => { t += ms; }, now: () => t, remaining: () => 60000 };
+  expect(await waitForShell(pane(["chris % "]), time)).toEqual({ ok: true, name: "zsh", cwd: here }); // settles on the second read
+  const dotenv = pane(["found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)", "chris % "]);
+  const answered = [];
+  expect((await waitForShell(dotenv, { ...time, onAnswer: () => answered.push(1) })).ok).toBe(true);
+  expect(answered).toEqual([1]);
+  expect(await waitForShell(pane(["Overwrite? [y/N]"]), time)).toMatchObject({ ok: false, why: "Unrecognized shell question" });
+  expect(await waitForShell(pane(["chris % "], { busy: true }), { ...time, refuseBusy: true })).toMatchObject({ ok: false, why: expect.stringContaining("foreground process") });
+  expect(await waitForShell(pane(["chris % "]), { ...time, cwd: SCRATCH })).toMatchObject({ ok: false, why: "Shell is at a prompt in the wrong directory" });
 });

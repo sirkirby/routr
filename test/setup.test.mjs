@@ -1,12 +1,12 @@
 // setup.mjs, doctor.mjs, uninstall.mjs: what the user sees when setting routr up and taking it down
 import { expect, test } from "bun:test";
 import { dirname, join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { claudeSnapshot } from "../src/lib/usage.mjs";
 import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
 import { COMMANDS, formatCommandHelp } from "../src/lib/help.mjs";
-import { NOW, said, scratch } from "./helpers.mjs";
+import { cliEnv, NOW, said, scratch, SCRIPT } from "./helpers.mjs";
 test("doctor's next steps name the command for each thing missing, most important first", async () => {
   const { nextSteps, starterConfig, STATUSLINE_MISSING } = await import("../src/lib/doctor.mjs");
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
@@ -56,23 +56,22 @@ test("setup never replaces a statusline the user already has", async () => {
 });
 
 test("routr setup --yes writes the config once, keeps it afterwards, and starts no harness", () => {
-  const script = `${import.meta.dir}/../src/routr.mjs`;
   const home = scratch("setup");
   // An empty PATH: no harness is found, so none is started (a logged-out harness opens a browser to sign in).
-  const env = { ...process.env, HOME: home, USERPROFILE: home, PATH: home, TYPESAFE_API_KEY: "", ROUTR_NO_UPDATE: "1" };
-  const first = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--json"], { env });
+  const env = cliEnv(home, { PATH: home });
+  const first = Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--json"], { env });
   expect(first.exitCode).toBe(0);
   const file = join(home, ".config/routr/config.json");
   expect(JSON.parse(first.stdout.toString()).did.join("\n")).toContain("wrote");
   expect(existsSync(join(home, ".agents/skills/routr/SKILL.md"))).toBe(true);              // a missing skill is repaired too
   expect(JSON.parse(readFileSync(file, "utf8")).subscriptions).toEqual({});
   writeFileSync(file, JSON.stringify({ subscriptions: {}, sure_at: 0.9 }));
-  const again = Bun.spawnSync([process.execPath, script, "doctor", "--fix", "--yes", "--json"], { env }); // the same command under its familiar name
+  const again = Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--fix", "--yes", "--json"], { env }); // the same command under its familiar name
   expect(JSON.parse(again.stdout.toString()).did).toEqual([]);
   expect(JSON.parse(readFileSync(file, "utf8")).sure_at).toBe(0.9);
-  const bad = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--model", "codex=m"], { env });
+  const bad = Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--model", "codex=m"], { env });
   expect(bad.exitCode).toBe(1);
-  expect(Bun.spawnSync([process.execPath, script, "setup", "--yes", "--metered", "codex=with"], { env }).exitCode).toBe(1); // codex is not found on an empty PATH
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--metered", "codex=with"], { env }).exitCode).toBe(1); // codex is not found on an empty PATH
 });
 
 test("hardest_work and reserve are asked with a suggestion, read from flags, and a bad answer asks again", async () => {
@@ -91,16 +90,15 @@ test("hardest_work and reserve are asked with a suggestion, read from flags, and
 });
 
 test("routr setup changes a setting on an existing config, fills one that is missing, and doctor flags it until then", () => {
-  const script = `${import.meta.dir}/../src/routr.mjs`;
   const home = scratch("settings");
-  const env = { ...process.env, HOME: home, USERPROFILE: home, PATH: home, TYPESAFE_API_KEY: "", ROUTR_NO_UPDATE: "1" };
+  const env = cliEnv(home, { PATH: home });
   const file = join(home, ".config/routr/config.json");
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify({ telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" }, claude: { reserve: 0.25 } } }));
-  const doctor = JSON.parse(Bun.spawnSync([process.execPath, script, "doctor", "--json"], { env }).stdout.toString());
+  const doctor = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString());
   expect(doctor.config.problems.join(" ")).toContain("subscriptions.claude.hardest_work is not set");
   expect(doctor.next_steps.join(" ")).toContain("routr setup --hardest claude=");
-  const r = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--json", "--hardest", "cursor=strong", "--reserve", "cursor=20%"], { env });
+  const r = Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--json", "--hardest", "cursor=strong", "--reserve", "cursor=20%"], { env });
   expect(r.exitCode).toBe(0);
   const out = JSON.parse(r.stdout.toString());
   expect(out.did.join(" ")).toContain('cursor.hardest_work "standard" → "strong"');
@@ -108,10 +106,9 @@ test("routr setup changes a setting on an existing config, fills one that is mis
   const saved = JSON.parse(readFileSync(file, "utf8"));
   expect(saved.subscriptions.cursor).toEqual({ hardest_work: "strong", reserve: 0.2, default_model: "m" });
   expect(saved.subscriptions.claude).toEqual({ reserve: 0.25, hardest_work: "strong" });
-  expect(JSON.parse(Bun.spawnSync([process.execPath, script, "doctor", "--json"], { env }).stdout.toString()).config.problems).toEqual([]);
+  expect(JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString()).config.problems).toEqual([]);
   // A subscription neither configured nor found cannot be set.
-  expect(Bun.spawnSync([process.execPath, script, "setup", "--yes", "--hardest", "agy=strong"], { env }).exitCode).toBe(1);
-  rmSync(home, { recursive: true, force: true });
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--hardest", "agy=strong"], { env }).exitCode).toBe(1);
 });
 
 // setup, driven end to end as a person would: scripted answers, a fake machine, nothing written outside a temp folder.
@@ -132,7 +129,6 @@ async function runSetup({ config, args = [], answers = [], found = ["agy", "curs
   const r = await setup(["--config", path, "--json", ...args], { inspect, question, interactive: true, env,
     install: () => installs.push(1), share: (on) => shared.push(on), key: async () => { keys.push(1); return { ok: false, error: "none given" }; }, print: () => {} });
   const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
-  rmSync(dir, { recursive: true, force: true });
   return { r, asked, saved, shared, installs, keys, left: queue.length };
 }
 
@@ -209,7 +205,6 @@ test("the settings are worded once: setup, help, doctor and docs/ranking.md say 
   expect(notes).toEqual([`${RESERVE.unset("claude")}. ${RESERVE.choose("claude")}`]);
   writeFileSync(f, JSON.stringify({ subscriptions: { claude: { hardest_work: "strong", reserve: 0 } } }));
   expect(loadConfig(f).notes).toEqual([]); // 0% is a choice, not a problem
-  rmSync(dir, { recursive: true, force: true });
 });
 
 test("setup searches a long model list instead of printing it", async () => {
@@ -230,7 +225,6 @@ test("setup searches a long model list instead of printing it", async () => {
 
 test("routr uninstall keeps the user's data unless purged, unlinks a linked skill, and removes only its own statusline", async () => {
   const { uninstallPlan } = await import("../src/lib/uninstall.mjs");
-  const script = `${import.meta.dir}/../src/routr.mjs`;
   const home = scratch("un");
   const checkout = join(home, "checkout"); mkdirSync(checkout); writeFileSync(join(checkout, "SKILL.md"), "mine");
   for (const d of [".config/routr", ".local/share/routr", ".cache/routr", ".agents/skills/routr", ".claude/skills", ".kiro/skills/routr"]) mkdirSync(join(home, d), { recursive: true });
@@ -240,18 +234,18 @@ test("routr uninstall keeps the user's data unless purged, unlinks a linked skil
   if (linked) (await import("node:fs")).symlinkSync(checkout, join(home, ".claude/skills/routr"), "dir");
   expect(uninstallPlan({ home }).keep.length).toBe(2);
   expect(uninstallPlan({ home, purge: true }).keep.length).toBe(0);
-  const env = { ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "" };
-  expect(Bun.spawnSync([process.execPath, script, "uninstall"], { env, stdin: Buffer.from("") }).exitCode).toBe(1); // no terminal and no --yes: refuses
-  expect(Bun.spawnSync([process.execPath, script, "uninstall", "--dry-run"], { env }).exitCode).toBe(0);
+  const env = cliEnv(home);
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "uninstall"], { env, stdin: Buffer.from("") }).exitCode).toBe(1); // no terminal and no --yes: refuses
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--dry-run"], { env }).exitCode).toBe(0);
   expect(existsSync(join(home, ".cache/routr"))).toBe(true);
-  expect(Bun.spawnSync([process.execPath, script, "uninstall", "--yes"], { env }).exitCode).toBe(0);
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes"], { env }).exitCode).toBe(0);
   expect(existsSync(join(home, ".agents/skills/routr"))).toBe(false);
   expect(existsSync(join(home, ".kiro/skills/routr"))).toBe(false);
   expect(existsSync(join(home, ".cache/routr"))).toBe(false);
   expect(existsSync(join(home, ".config/routr/config.json"))).toBe(true);
   if (linked) expect(readFileSync(join(checkout, "SKILL.md"), "utf8")).toBe("mine");    // the link went, its target did not
   expect(JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8"))).toEqual({ model: "opus" });
-  expect(Bun.spawnSync([process.execPath, script, "uninstall", "--yes", "--purge"], { env }).exitCode).toBe(0);
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes", "--purge"], { env }).exitCode).toBe(0);
   expect(existsSync(join(home, ".config/routr"))).toBe(false);
   // Someone else's statusline is not ours to remove.
   writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ statusLine: { command: "~/mine.sh" } }));
