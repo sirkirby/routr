@@ -390,6 +390,7 @@ test("every harness says whether it is signed in, read from its own status text,
   for (const [n, { yes, no }] of Object.entries(STATUS)) {
     expect([n, HARNESSES[n].auth.signedIn(...yes)]).toEqual([n, true]);
     expect([n, HARNESSES[n].auth.signedIn(...no)]).toEqual([n, false]);
+    expect([n, HARNESSES[n].auth.signedIn(no[0], 0)]).toEqual([n, false]); // the text alone says signed out, whatever the exit code
   }
 });
 test("the sign-in answer is kept: signed in for hours, signed out for minutes, and no answer is not signed in", async () => {
@@ -424,4 +425,13 @@ test("a background reading of a harness that is not signed in never starts it, k
   expect(r).toEqual({ ok: false, error: "not signed in: kiro-cli login" });
   expect(JSON.parse(readFileSync(file, "utf8")).error).toBe("not signed in: kiro-cli login");
   expect(existsSync(lock)).toBe(false);
+});
+
+test("routr usage leaves a turned-off subscription out, says how to turn it on, and never reads it", async () => {
+  const read = [];
+  const config = cfg({ subscriptions: { codex: { enabled: true, hardest_work: "strong", reserve: 0.2, assumed_headroom: 0.5 }, cursor: { enabled: false, hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 } } });
+  const r = await usageCommand([], config, {}, { read: async (names) => { read.push(...names); return names.map((n) => live(n, 0.9)); } });
+  expect(read).toEqual(["codex"]);
+  expect(r.ranked.map((x) => x.subscription)).toEqual(["codex"]);
+  expect(r.excluded).toEqual([{ subscription: "cursor", reason: "turned off in your settings: routr setup --enable cursor" }]);
 });

@@ -371,3 +371,11 @@ test("setup, guided: a seat billed per token with no quota is asked where it goe
   expect(x.saved.subscriptions.codex.metered_rank).toBe("with");
   expect(x.r.skipped.join(" ")).not.toContain("Ask the user"); // a person's wording, not an agent's
 });
+
+test("--no-statusline leaves Claude Code's settings alone, even when routr's statusline is missing", async () => {
+  const settings = join(process.env.HOME, ".claude/settings.json");
+  rmSync(settings, { force: true });
+  const x = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", args: ["--yes", "--no-statusline"] });
+  expect(x.r.ok).toBe(true);
+  expect(existsSync(settings)).toBe(false);
+});

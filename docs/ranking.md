@@ -53,8 +53,9 @@ invalid, with the command that fixes it.
   (which usually runs on one of your subscriptions) and anything you run outside routr still have room. routr stops
   sending workers to a subscription when less than its reserve is left; 0% holds nothing back.
 
-Two more you rarely need, set in the file: `assumed_headroom`, the share routr assumes is left when it cannot read a
-subscription's usage, and `metered_rank`, where a seat billed per use with no quota goes in the order (see below).
+Two more you rarely need: `metered_rank`, where a seat billed per use with no quota goes in the order (see below;
+`routr setup --yes --metered codex=after|with`, or on the setup screen), and `assumed_headroom`, the share routr
+assumes is left when it cannot read a subscription's usage (set in the file).
 
 Your default model on each subscription is shown beside it in the ranking but does not change the order.
 

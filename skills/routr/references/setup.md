@@ -75,7 +75,7 @@ harnesses found since, fills a missing `hardest_work` or `reserve`, and applies 
 else alone; `--force` rewrites it (the old file is kept as `config.json.bak`). **To change a setting later**, run
 setup with just that flag, for example `routr setup --yes --hardest cursor=strong`. A subscription that reads as
 metered when first written (billed per token, no quota: a ChatGPT Enterprise seat) gets `metered_rank` written out,
-`after` unless `--metered <name>=with` is passed or the person answers the question at the terminal. Every value is
+`after` unless `--metered <name>=with` is passed or the person chooses it on the setup screen. Every value is
 the user's preference, and none describes a model. `routr doctor` flags a setting that is missing or invalid, with
 the command that fixes it.
 
