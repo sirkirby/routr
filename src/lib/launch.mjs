@@ -15,9 +15,14 @@ const besideSource = fileURLToPath(new URL("../../skills/routr/references/worker
 export const WORKER_GUIDE = existsSync(besideSource) ? besideSource : join(home(), ".agents/skills/routr/references/worker.md");
 // The first words of every launch prompt.
 export const PROMPT_OPENING = "You are a routr worker.";
-// Any of these on the pane means the prompt, or part of it, may have arrived: its opening (even half pasted), its
-// middle, and its closing line (a long task scrolls the opening away, the closing stays near the bottom).
-export const PROMPT_TRACES = ["You are a routr", "routr worker guide", "report block from the worker guide", "VERDICT: done | partial | blocked"];
+// Any of these on the pane means the prompt, or part of it, may have arrived: its opening (even a short part of it),
+// its middle, its closing line (a long task scrolls the opening away; the closing stays near the bottom), and the
+// placeholder a harness shows for a paste it has folded away ("[Pasted text #1 +18 lines]", seen on Cursor
+// 2026-09-26, with the text itself nowhere on screen). Matched with all whitespace and box-drawing removed, so no
+// wrap, soft or hard, can split one. A false match only hands the pane to a person; a miss would send the task twice.
+export const PROMPT_TRACES = ["You are a", "routr worker guide", "report block from the worker guide", "VERDICT: done | partial | blocked", "[Pasted text"];
+const squeeze = (t) => String(t).replace(/[\s│┃─━╭╮╰╯┌┐└┘├┤▏▕|]+/g, "");
+export const promptTrace = (screen) => PROMPT_TRACES.some((t) => squeeze(screen).includes(squeeze(t)));
 export function composePrompt(task, guide = WORKER_GUIDE) {
   return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
 }
@@ -332,7 +337,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         // and the send. Resent only with no trace of the prompt anywhere and no dialog on screen.
         const idle = (await call(["agent", "get", out.pane], true)).data?.result?.agent?.agent_status === "idle";
         const seen = idle ? clean(paneText((await call(["pane", "read", out.pane, "--source", "recent-unwrapped", "--lines", "1000"])).data)) : "";
-        if (idle && !PROMPT_TRACES.some((t) => seen.includes(t)) && !trustDialog(seen) && !permissiveConfirm(seen, HARNESSES[o.kind].confirm)) {
+        if (idle && !promptTrace(seen) && !trustDialog(seen) && !permissiveConfirm(seen, HARNESSES[o.kind].confirm)) {
           step("prompt_retry", true, "herdr said the prompt stalled and the pane never showed it: sent once more");
           logCommand(out.command, promptForLog(a));
           r = await run(a, wait());

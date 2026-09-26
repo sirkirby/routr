@@ -732,6 +732,9 @@ test("a prompt herdr says stalled is sent once more only when the pane shows no 
     ["a half-pasted opening", "❯ You are a routr wor", "idle"],
     ["only the closing line of a long task (the opening scrolled away)", "…line 400 of the task\n\nFinish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.", "idle"],
     ["a folder-trust dialog", claudeTrust, "idle"],
+    ["a paste the harness folded into a placeholder", "  → [Pasted text #1 +18 lines]", "idle"],
+    ["a short part of the opening", "❯ You are a", "idle"],
+    ["the closing line hard-wrapped at 40 columns", "Finish with the report block from the\nworker guide, starting with the line `VERD\nICT: done | partial | blocked`.", "idle"],
     ["an agent that is not idle", "Welcome\n❯", "working"],
   ]) {
     const x = await drive(shown, status);
@@ -739,4 +742,12 @@ test("a prompt herdr says stalled is sent once more only when the pane shows no 
     expect(x.r.state).not.toBe("prompted");
     expect(x.r.warnings).toContain("Prompt may have been submitted; inspect the pane before retrying.");
   }
+});
+
+test("prompt traces survive any wrap and box drawing, and ordinary screens have none", async () => {
+  const { promptTrace, composePrompt } = await import("../src/lib/launch.mjs");
+  const full = composePrompt("Do the thing.\n".repeat(1200));
+  const wrapped = (w) => full.split("\n").flatMap((l) => l.match(new RegExp(`.{1,${w}}`, "g")) ?? [""]).map((l) => `│ ${l} │`);
+  for (const w of [20, 40, 80]) expect(promptTrace(wrapped(w).slice(-1000).join("\n"))).toBe(true); // the closing survives, however it wraps
+  for (const screen of ["Welcome\n❯", "kiro_default · auto · ◔ 1%", "  ~/.herdr/worktrees/routr/review5-verify · review5-verify", "chris % "]) expect(promptTrace(screen)).toBe(false);
 });
