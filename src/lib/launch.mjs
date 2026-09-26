@@ -13,8 +13,11 @@ import { home } from "./runtime.mjs";
 // around it, so it points at the installed skill (written by the installer or `routr skill install`).
 const besideSource = fileURLToPath(new URL("../../skills/routr/references/worker.md", import.meta.url));
 export const WORKER_GUIDE = existsSync(besideSource) ? besideSource : join(home(), ".agents/skills/routr/references/worker.md");
-// The first words of every launch prompt: how launch tells, from the pane, whether a prompt ever arrived.
+// The first words of every launch prompt.
 export const PROMPT_OPENING = "You are a routr worker.";
+// Any of these on the pane means the prompt, or part of it, may have arrived: its opening (even half pasted), its
+// middle, and its closing line (a long task scrolls the opening away, the closing stays near the bottom).
+export const PROMPT_TRACES = ["You are a routr", "routr worker guide", "report block from the worker guide", "VERDICT: done | partial | blocked"];
 export function composePrompt(task, guide = WORKER_GUIDE) {
   return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
 }
@@ -325,9 +328,11 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       let r = await run(a, wait());
       if (!r.ok && r.data?.error?.code === "agent_prompt_stalled") {
         await pause();
-        const seen = clean(paneText((await call(["pane", "read", out.pane, "--source", "recent-unwrapped", "--lines", "300"])).data));
-        const now2 = (await call(["agent", "get", out.pane], true)).data?.result?.agent?.agent_status;
-        if (now2 === "idle" && !seen.includes(PROMPT_OPENING)) {
+        // The agent's state first, then a fresh read of the pane, then at once the resend: nothing between the look
+        // and the send. Resent only with no trace of the prompt anywhere and no dialog on screen.
+        const idle = (await call(["agent", "get", out.pane], true)).data?.result?.agent?.agent_status === "idle";
+        const seen = idle ? clean(paneText((await call(["pane", "read", out.pane, "--source", "recent-unwrapped", "--lines", "1000"])).data)) : "";
+        if (idle && !PROMPT_TRACES.some((t) => seen.includes(t)) && !trustDialog(seen) && !permissiveConfirm(seen, HARNESSES[o.kind].confirm)) {
           step("prompt_retry", true, "herdr said the prompt stalled and the pane never showed it: sent once more");
           logCommand(out.command, promptForLog(a));
           r = await run(a, wait());

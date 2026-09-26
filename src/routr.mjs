@@ -11,11 +11,12 @@ if (argv[0] === "statusline" && !asksHelp(argv)) { (await import("./lib/statusli
 
 const { COMMANDS, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } = await import("./lib/help.mjs");
 // `routr help <command>`, `routr --help <command>` and `routr -h <command>` all show that command's help.
-if (["help", "--help", "-h"].includes(argv[0]) && !(argv[1] && COMMANDS[argv[1]])) {
+const isCommand = (name) => typeof name === "string" && Object.hasOwn(COMMANDS, name); // never an inherited key ("constructor")
+if (["help", "--help", "-h"].includes(argv[0]) && !isCommand(argv[1])) {
   console.log(formatTopLevelHelp());
   process.exit(0);
 }
-if ((argv[0] === "help" || argv[0] === "--help" || argv[0] === "-h") && argv[1] && COMMANDS[argv[1]]) {
+if (["help", "--help", "-h"].includes(argv[0]) && isCommand(argv[1])) {
   console.log(formatCommandHelp(COMMANDS[argv[1]]));
   process.exit(0);
 }
@@ -79,12 +80,7 @@ const configPath = take("--config");
 // --headroom cursor=0.97 : usage the caller read itself (repeatable); it overrides any reading
 // Every --headroom is taken off the line, even an empty one, so none can end up in the brief. A share (0.97) or a
 // percent (97%) is read; anything else is said in the answer, never dropped without a word.
-const given = {}, inputNotes = [];
-for (const h of takeAll("--headroom")) {
-  const [k, v = ""] = String(h ?? "").split("="), t = v.trim(), x = t.endsWith("%") ? Number(t.slice(0, -1)) / 100 : Number(t);
-  if (k && t && Number.isFinite(x) && x >= 0 && x <= 1) given[k] = x;
-  else inputNotes.push(`--headroom ${h ?? ""} is not <subscription>=<a share from 0 to 1, or a percent>: ignored`);
-}
+const { given, notes: inputNotes } = (await import("./lib/commands.mjs")).parseHeadroom(takeAll("--headroom"));
 const withNotes = (r) => (inputNotes.length && r && typeof r === "object" ? { ...r, input_notes: inputNotes } : r);
 const [mode, ...rest] = argv;
 const loaded = () => loadConfig(configPath);

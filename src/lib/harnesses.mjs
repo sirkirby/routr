@@ -138,7 +138,7 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
     if (not) return { ...summarize({ pool: name, source: "sign-in check", note: not }), signedIn: false };
     if (typeof given[name] === "number") return { pool: name, source: "given by caller", given: true, ageSec: 0, windows: [], headroom: Math.min(1, Math.max(0, given[name])) };
     const src = sources[name];
-    if (!src?.read) return summarize({ pool: name, source: "none", note: "no usage source: read it yourself and pass --headroom " + name + "=<0..1>" });
+    if (!src?.read) return summarize({ pool: name, source: "none", note: "no usage source: read it yourself and pass --headroom " + name + "=<share left, 0.9 or 90%>" });
     try { return await src.read({ background: background.includes(name) }); } catch (e) { return summarize({ pool: name, source: "unreadable", note: `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}` }); }
   }));
 }

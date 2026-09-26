@@ -62,6 +62,8 @@ fallback.
   was torn between the two levels in `between`; it then reports the lower one, which testing showed is right about
   five times in six. routr never names a model.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
+- `input_notes` (only when present): something you passed that routr ignored, such as a `--headroom` it could not read.
+  Fix it and ask again, or tell the user.
 - `subscriptions` (dispatch only). `ranked` lists each subscription with its usable headroom, marked `live`, `given`
   (you passed it in), or `assumed`. `age_sec` is how old the reading is, and `note` says what the harness showed beside
   the number (Cursor: its Auto and API pools; Kiro: its plan and credits) or why a number is assumed. Under `windows` it shows each usage window as the harness reports it: percent

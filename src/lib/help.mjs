@@ -58,7 +58,7 @@ export const COMMANDS = {
     name: "share",
     description: "write exactly what telemetry sends (no briefs or any text, nothing identifying) to a file you can read; sends nothing",
     flags: [
-      { name: "--out", arg: "<file>", description: "where to write it", required: false, default: "~/.local/share/routr/routr-ledger-<date>.jsonl" },
+      { name: "--out", arg: "<file>", description: "where to write it", required: false, default: "routr-ledger-<date>.jsonl beside the ledger it reads" },
       { name: "--ledger", arg: "<path>", description: "ledger to read", required: false, default: "~/.local/share/routr/ledger.jsonl" },
     ],
   },

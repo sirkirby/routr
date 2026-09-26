@@ -710,22 +710,33 @@ test("a pane whose folder is gone is a person's call, not a crash; no process in
   const pane = { read: async () => "chris % ", keys: async () => {}, info: async () => (++infos < 3 ? undefined : { shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh", cwd: "/no/such/folder-routr" }] }) };
   expect(await waitForShell(pane, { ...time, cwd: SCRATCH })).toMatchObject({ ok: false, why: expect.stringContaining("folder is gone") });
   expect(infos).toBeGreaterThan(2); // the empty answers were waited out, not a TypeError
+  const noCwd = { read: async () => "chris % ", keys: async () => {}, info: async () => ({ shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh" }] }) };
+  expect(await waitForShell(noCwd, { ...time, cwd: SCRATCH })).toMatchObject({ ok: false, why: "The pane's shell did not say which folder it is in" });
 });
-test("a prompt herdr says stalled is sent once more only when the pane shows it never arrived", async () => {
-  const drive = async (shown) => {
+test("a prompt herdr says stalled is sent once more only when the pane shows no trace of it, no dialog, and the agent idle", async () => {
+  const drive = async (shown, status = "idle") => {
     let prompts = 0;
     const f = fakeHerdr({ reply: (a) => {
       if (a[1] === "prompt") return ++prompts === 1 ? herdrError("agent_prompt_stalled") : undefined;
       if (a[1] === "read" && a.includes("recent-unwrapped")) return herdrOK({ text: shown });
+      if (a[1] === "get" && prompts === 1) return herdrOK({ agent: { agent: "claude", agent_status: status, interactive_ready: true } });
     } });
     const r = await launch([...launchArgs, "--task", "Task"], f.deps);
-    return { r, prompts };
+    return { r, prompts, retried: r.steps.some((s) => s.step === "prompt_retry") };
   };
   const never = await drive("Welcome\n❯");
-  expect(never.prompts).toBe(2);
-  expect(never.r).toMatchObject({ ok: true, state: "prompted" });
-  expect(never.r.steps.find((s) => s.step === "prompt_retry")).toBeTruthy();
-  const arrived = await drive("❯ You are a routr worker. Your first action…"); // on the pane: never sent twice
-  expect(arrived.prompts).toBe(1);
-  expect(arrived.r.state).not.toBe("prompted");
+  expect(never).toMatchObject({ prompts: 2, retried: true, r: { ok: true, state: "prompted" } });
+  // Any trace of the prompt, a dialog, or an agent that is not idle: never sent twice, and the person is warned.
+  for (const [why, shown, status] of [
+    ["the opening", "❯ You are a routr worker. Your first action…", "idle"],
+    ["a half-pasted opening", "❯ You are a routr wor", "idle"],
+    ["only the closing line of a long task (the opening scrolled away)", "…line 400 of the task\n\nFinish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.", "idle"],
+    ["a folder-trust dialog", claudeTrust, "idle"],
+    ["an agent that is not idle", "Welcome\n❯", "working"],
+  ]) {
+    const x = await drive(shown, status);
+    expect([why, x.prompts, x.retried]).toEqual([why, 1, false]);
+    expect(x.r.state).not.toBe("prompted");
+    expect(x.r.warnings).toContain("Prompt may have been submitted; inspect the pane before retrying.");
+  }
 });

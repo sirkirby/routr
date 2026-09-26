@@ -231,6 +231,7 @@ test("small CLI fixes: help for a command however it is asked, --headroom never 
   // `routr --help launch` and `-h dispatch` show that command's help, as `routr help launch` does.
   for (const [how, cmd] of [["--help", "launch"], ["-h", "dispatch"], ["help", "usage"]]) expect(run(how, cmd).stdout.toString()).toStartWith(`routr ${cmd}: `);
   expect(run("--help").stdout.toString()).toContain("commands:"); // alone: the list of commands
+  for (const inherited of ["constructor", "toString", "__proto__"]) expect(run("--help", inherited).stdout.toString()).toContain("commands:"); // not a command
   // An empty --headroom is taken off the line with the rest; a percent is read; what cannot be read is said.
   const d = JSON.parse(run("dispatch", "--headroom", "cursor=", "--headroom", "claude=40%", "--headroom", "codex=lots", "Fix the parser").stdout.toString());
   expect(d.brief_chars).toBe("Fix the parser".length);
@@ -243,4 +244,11 @@ test("small CLI fixes: help for a command however it is asked, --headroom never 
   writeFileSync(ledger, JSON.stringify({ ts: "2026-09-26T10:00:00.000Z", id: "a1", mode: "dispatch", question_set: "r4", level: "basic", chose: { subscription: "codex", model: "m", effort: "low", level: "basic" }, outcome: { verdict: "done", check: "pass", attempts: 1 } }) + "\n");
   expect(run("share", "--ledger", ledger).stdout.toString()).toContain(dir);
   expect(readdirSync(dir).some((f) => /^routr-ledger-.*\.jsonl$/.test(f))).toBe(true);
+});
+
+test("--headroom: a share or a percent is read; empty, % alone, out of range, or no name is a note, never a 0", async () => {
+  const { parseHeadroom } = await import("../src/lib/commands.mjs");
+  const r = parseHeadroom(["claude=40%", "codex=0.9", "cursor=%", "agy=% ", "kiro=150%", "x=1.5", "claude2 =0.5", "=0.5", "lots", "y="]);
+  expect(r.given).toEqual({ claude: 0.4, codex: 0.9, claude2: 0.5 });
+  expect(r.notes.map((n) => n.split(" is not")[0])).toEqual(["--headroom cursor=%", "--headroom agy=% ", "--headroom kiro=150%", "--headroom x=1.5", "--headroom =0.5", "--headroom lots", "--headroom y="]);
 });

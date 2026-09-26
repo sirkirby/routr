@@ -171,7 +171,9 @@ export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBus
       if (state === "ready" && promptSettled(text, previous)) {
         // A folder that is gone (removed while the launch waited) is a person's call, not a crash.
         let here, there;
-        try { here = cwd && realpathSync(shell.cwd); there = cwd && realpathSync(cwd); } catch { return fail(`The pane's folder is gone (${shell.cwd}), or the one asked for (${cwd})`); }
+        if (cwd && typeof shell.cwd !== "string") return fail("The pane's shell did not say which folder it is in");
+        try { here = cwd && realpathSync(shell.cwd); there = cwd && realpathSync(cwd); }
+        catch (e) { return fail(e?.code === "ENOENT" ? `The pane's folder is gone (${shell.cwd}), or the one asked for (${cwd})` : `The pane's folder cannot be read (${e?.code ?? e})`); }
         if (cwd && here !== there) return fail("Shell is at a prompt in the wrong directory");
         return { ok: true, name: shell.name, cwd: shell.cwd };
       }
