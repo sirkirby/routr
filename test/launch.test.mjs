@@ -702,3 +702,30 @@ test("launch refuses a subscription the user turned off, before any herdr call",
   expect(r.steps.at(-1).detail).toBe("Codex is turned off in your settings: turn it on with routr setup --enable codex");
   expect(f.calls).toEqual([]);
 });
+
+test("a pane whose folder is gone is a person's call, not a crash; no process information is waited out", async () => {
+  const { waitForShell } = await import("../src/lib/herdr.mjs");
+  let t = 0, infos = 0;
+  const time = { sleep: async (ms) => { t += ms; }, now: () => t, remaining: () => 60000 };
+  const pane = { read: async () => "chris % ", keys: async () => {}, info: async () => (++infos < 3 ? undefined : { shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh", cwd: "/no/such/folder-routr" }] }) };
+  expect(await waitForShell(pane, { ...time, cwd: SCRATCH })).toMatchObject({ ok: false, why: expect.stringContaining("folder is gone") });
+  expect(infos).toBeGreaterThan(2); // the empty answers were waited out, not a TypeError
+});
+test("a prompt herdr says stalled is sent once more only when the pane shows it never arrived", async () => {
+  const drive = async (shown) => {
+    let prompts = 0;
+    const f = fakeHerdr({ reply: (a) => {
+      if (a[1] === "prompt") return ++prompts === 1 ? herdrError("agent_prompt_stalled") : undefined;
+      if (a[1] === "read" && a.includes("recent-unwrapped")) return herdrOK({ text: shown });
+    } });
+    const r = await launch([...launchArgs, "--task", "Task"], f.deps);
+    return { r, prompts };
+  };
+  const never = await drive("Welcome\n❯");
+  expect(never.prompts).toBe(2);
+  expect(never.r).toMatchObject({ ok: true, state: "prompted" });
+  expect(never.r.steps.find((s) => s.step === "prompt_retry")).toBeTruthy();
+  const arrived = await drive("❯ You are a routr worker. Your first action…"); // on the pane: never sent twice
+  expect(arrived.prompts).toBe(1);
+  expect(arrived.r.state).not.toBe("prompted");
+});

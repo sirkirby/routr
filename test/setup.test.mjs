@@ -390,3 +390,26 @@ test("from the verification pass: a model change on the screen shows the effort 
   expect(x.asked.find((a) => a.startsWith("What would you like to do?") && a.includes("Save and exit"))).toContain("Save and exit (2 changes)");
   expect((await runSetup({ args: ["--show", "--force"] })).r.error).toContain("--show only reads");
 });
+
+test("doctor's text says each harness's state in words: signed in, signed out, turned off, off PATH, missing", async () => {
+  const { render } = await import("../src/lib/doctor.mjs");
+  const many = Array.from({ length: 30 }, (_, i) => `m${i}`);
+  const r = {
+    runtime: "routr 0.0.0-dev (from source)", from_source: true, herdr: { path: "/bin/herdr", inside_session: true, skill: true }, skill: [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }],
+    harnesses: {
+      claude: { command: "claude", installed: true, signed_in: true, usage: "live: 60% left (statusline, 5s old)", models: ["haiku", "sonnet"] },
+      codex: { command: "codex", installed: true, signed_in: false, sign_in: "not signed in: run `codex login`" },
+      cursor: { command: "cursor-agent", installed: true, signed_in: true, usage: "live: 90% left", models: many },
+      agy: { command: "agy", installed: false, off_path: "/Users/x/.local/bin/agy" },
+      kiro: { command: "kiro-cli", installed: true, signed_in: true, usage: "live: 100% left" },
+    },
+    key: { works: true, model: "jev", ms: 300 }, config: { path: "/c.json", exists: true, subscriptions: ["claude", "codex", "cursor", "kiro"], off: ["kiro"], problems: [], notes: [] },
+    claude_usage_statusline: "installed", auto_update: { on: false, why_off: "running from source" }, telemetry: { on: false, why_off: "not turned on" }, next_steps: [],
+  };
+  const text = render(r);
+  expect(text).toContain("claude  `claude` found · usage live: 60% left");
+  expect(text).toContain("codex   `codex` found, but not signed in: run `codex login`. routr leaves it out until then");
+  expect(text).toContain("… (30 in all; run `cursor-agent models` for the rest)");
+  expect(text).toContain("agy     `agy` is installed at /Users/x/.local/bin/agy but not on PATH");
+  expect(text).toContain("kiro    `kiro-cli` found · turned off in your settings (routr setup --enable kiro)");
+});
