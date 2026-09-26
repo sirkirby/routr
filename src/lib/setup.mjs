@@ -118,7 +118,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   let models, ranks, hardest, reserves, efforts, switches;
   try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); } catch (e) { return { ok: false, error: e.message }; }
   // --show only reads: with a change flag beside it, an agent could take the settings printed for the change made.
-  if (args.includes("--show")) return Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length
+  if (args.includes("--show")) return Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length || args.includes("--force")
     ? { ok: false, error: "--show only reads your settings: run the change without it, then --show again to see it" } : showSettings(path);
 
   const guidedRun = interactive && !Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length;

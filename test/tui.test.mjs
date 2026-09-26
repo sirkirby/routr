@@ -184,3 +184,10 @@ test("a required choice cannot be met by an initial value that is not an option,
   expect(await ui.search({ message: "Model", options: [{ value: "m", label: "model" }], initial: null })).toBe("m");
   expect(said).toContain('nothing matches "zzz"');
 });
+
+test("from the verification pass: in ASCII mode too the spinner line fits the width", () => {
+  const t = terminal({ columns: 40, env: { TERM: "linux" }, platform: "linux" });
+  const spin = t.ui.spinner("Checking your harnesses, their sign-in, and your TypeSafe key");
+  spin.stop();
+  expect(t.output().split(/[\r\n]/).every((l) => l.length <= 40)).toBe(true);
+});

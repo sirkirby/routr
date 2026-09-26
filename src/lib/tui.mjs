@@ -122,7 +122,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
     spinner: (message) => {
       if (accessible) { write(`${message}\n`); return { stop: (summary) => { if (summary) write(`${summary}\n`); } }; }
       // One line, cut to the width: a wrapped line would leave its first rows behind on every tick.
-      const fit = (t) => (t.length > width() - 4 ? `${t.slice(0, Math.max(1, width() - 5))}${g.more}` : t);
+      const fit = (t) => (t.length > width() - 4 ? `${t.slice(0, Math.max(1, width() - 4 - g.more.length))}${g.more}` : t); // glyph, two spaces, text
       let i = 0; write("\x1b[?25l");
       const tick = () => write(`\r\x1b[2K${c.cyan(g.spin[i++ % g.spin.length])}  ${fit(message)}`);
       tick(); timer = setInterval(tick, 80); timer.unref?.();

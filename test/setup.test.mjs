@@ -113,7 +113,7 @@ test("routr setup changes a setting on an existing config, fills one that is mis
 
 // setup, driven end to end as a person would: scripted answers, a fake machine, nothing written outside a temp folder.
 // Every question asked is recorded, and a question the scenario did not expect fails it.
-async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {}, efforts = async () => null, models = {}, statusline = "not needed", skill = [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }], usage = {} } = {}) {
+async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {}, efforts = async () => null, models = {}, statusline = "not needed", skill = [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }], usage = {}, print = () => {} } = {}) {
   const { setup } = await import("../src/lib/setup.mjs");
   const dir = scratch("setup-run"), path = join(dir, "config.json");
   if (config) writeFileSync(path, JSON.stringify(config));
@@ -127,7 +127,7 @@ async function runSetup({ config, args = [], answers = [], found = ["agy", "curs
   const queue = [...answers];
   const question = async (q) => { asked.push(q.trim()); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); };
   const r = await setup(["--config", path, "--json", ...args], { inspect, question, interactive: true, env,
-    install: () => installs.push(1), share: (on) => shared.push(on), key: async () => { keys.push(1); return { ok: false, error: "none given" }; }, print: () => {}, efforts });
+    install: () => installs.push(1), share: (on) => shared.push(on), key: async () => { keys.push(1); return { ok: false, error: "none given" }; }, print, efforts });
   const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
   return { r, asked, saved, shared, installs, keys, left: queue.length };
 }
@@ -378,4 +378,15 @@ test("--no-statusline leaves Claude Code's settings alone, even when routr's sta
   const x = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", args: ["--yes", "--no-statusline"] });
   expect(x.r.ok).toBe(true);
   expect(existsSync(settings)).toBe(false);
+});
+
+test("from the verification pass: a model change on the screen shows the effort reset before saving, and --show refuses --force", async () => {
+  const efforts = async (n, m) => (m === "m2" ? ["low", "medium"] : ["low", "medium", "high", "xhigh"]);
+  const config = { telemetry: false, subscriptions: { codex: { hardest_work: "strong", reserve: 0.2, default_model: "m1", default_effort: "xhigh" } } };
+  // Codex → Everyday model → m2 (listed 3rd after "leave it" and m1), Back, Back, Save and exit (4th).
+  const said = [];
+  const x = await runSetup({ config, found: ["codex"], models: { codex: ["m1", "m2"] }, efforts, answers: ["", "", "", "3", "b", "b", "4"], print: (t) => said.push(t) });
+  expect(x.saved.subscriptions.codex).toMatchObject({ default_model: "m2", default_effort: "medium" });
+  expect(x.asked.find((a) => a.startsWith("What would you like to do?") && a.includes("Save and exit"))).toContain("Save and exit (2 changes)");
+  expect((await runSetup({ args: ["--show", "--force"] })).r.error).toContain("--show only reads");
 });
