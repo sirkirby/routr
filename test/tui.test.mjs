@@ -67,6 +67,25 @@ test("search: typing filters a long list, Backspace widens it, and nothing match
   expect(t.output()).toContain("nothing matches");
 });
 
+test("search with typed: an id not listed is offered as typed, and never chosen by accident", async () => {
+  const t = terminal();
+  const options = ["fable", "opus", "sonnet"].map((v) => ({ value: v, label: v }));
+  t.press(..."claude-fable-5".split(""), "return");
+  expect(await t.ui.search({ message: "Model", options, typed: true })).toBe("claude-fable-5");
+  expect(t.output()).toContain("as typed");
+  t.press(..."opus".split(""), "return"); // a listed id comes first
+  expect(await t.ui.search({ message: "Model", options, typed: true })).toBe("opus");
+  t.press(..."claude-x".split(""), "return", ..."zz".split(""), "escape");
+  const without = t.ui.search({ message: "Model", options }); // no typed: nothing matches, Enter says so
+  expect(await without).toBe(BACK);
+  expect(t.output()).toContain("nothing matches: change the search");
+  const said = [], lines = ["claude-fable-5", "1", "sonn"];
+  const ui = createUI({ accessible: true, ask: async (q) => { said.push(q); return lines.shift(); }, output: { write: () => {} } });
+  expect(await ui.search({ message: "Model", options, typed: true })).toBe("claude-fable-5");
+  expect(said[1]).toContain("1. claude-fable-5 (as typed)");
+  expect(await ui.search({ message: "Model", options, typed: true })).toBe("sonnet"); // one listed match is chosen at once
+});
+
 test("confirm and text: y/n answer at once, and a bad value is shown in yellow until it is fixed", async () => {
   const t = terminal();
   t.press("y");

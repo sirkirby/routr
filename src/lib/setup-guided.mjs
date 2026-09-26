@@ -40,7 +40,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
       const now = draft[n].default_model ?? LEAVE;
       if (now && !list.includes(now)) options.unshift({ value: now, label: now, hint: "current, not in the harness's list now" });
       const v = await ui.search({ message: `${HARNESSES[n].label}: everyday model ${ui.style.dim("(your agents start here and go up or down with the work)")}`,
-        options, initial: now, pinned: [{ value: LEAVE, label: "leave it to the lead agent", hint: "no default" }] });
+        options, initial: now, pinned: [{ value: LEAVE, label: "leave it to the lead agent", hint: "no default" }], typed: Boolean(HARNESSES[n].openList) });
       if (typeof v === "string") {
         draft[n].default_model = v || null;
         // A model that does not take the effort set gets one it does (medium where it can), before the list of changes is

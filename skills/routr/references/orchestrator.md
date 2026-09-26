@@ -83,7 +83,7 @@ object describing what it did.
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
   `--effort` where the harness takes it separately. On Antigravity the model id already carries it, and routr says so
-  instead of passing a flag that silently runs the high variant. On Kiro, `--effort auto` (its suggested default,
+  instead of passing a flag Antigravity refuses when it disagrees with the id. On Kiro, `--effort auto` (its suggested default,
   with `--model auto`) passes no flag and leaves effort to the model; a level is passed, but Kiro remembers it as
   the user's default for that model, and a model without effort ignores it. Kiro also runs its default on a model id
   it does not know, without a word: launch checks that the screen shows the model you named and fails otherwise,
