@@ -60,8 +60,15 @@ shape), and real values getting LOST (a value seen in real rows arriving as "oth
 
 ## Changing a harness recipe
 
-`skills/routr/references/harnesses.md` and `src/lib/harness.mjs` record flags and failure modes that were observed, not
-read from documentation. Say which version of the harness you ran and what you saw.
+`skills/routr/references/harnesses.md` and `src/lib/harnesses.mjs` record flags and failure modes that were observed.
+Say which version of the harness you ran and what you saw. Read the harness's own documentation too: one account shows
+only what its plan offers (Kiro's effort levels exist only on its newer models), and what comes from the docs alone is
+marked as claimed.
+
+Adding a harness is one entry in `src/lib/harnesses.mjs` (its command, launch flags, model list, suggested settings,
+usage reader, skills folder), its row in `references/harnesses.md`, and its name in `test/fixtures/seen-values.json`.
+Doctor, setup, launch, help, skill install and uninstall all build from the registry. When you try it in a throwaway
+home, empty `PATH` too: a harness that is not logged in there opens a browser to sign in.
 
 ## Testing an install
 
