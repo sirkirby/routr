@@ -2,7 +2,6 @@
 // the TypeSafe key, and the config, and ends with the commands that fix what is missing. It writes nothing:
 // `routr setup` (lib/setup.mjs) does, from the same inspection.
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { CONFIG_PATH, DEFAULTS, loadConfig } from "./config.mjs";
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, TAKES_EFFORT } from "./harnesses.mjs";
@@ -10,7 +9,7 @@ import { signInHint } from "./signin.mjs";
 import { jevModel, KEY_FILES, loadKey, ping } from "./jev.mjs";
 import { JEV_MODEL } from "./questions.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
-import { CLAUDE_SNAPSHOT, standalone } from "./runtime.mjs";
+import { CLAUDE_SNAPSHOT, home, standalone } from "./runtime.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
 import { telemetryStatus } from "./telemetry.mjs";
 import { isOurStatusline } from "./statusline.mjs";
@@ -28,9 +27,9 @@ export function which(cmd) {
 
 // Installed but not on this process's PATH (seen on a fresh Mac: ~/.local/bin is only added by the interactive shell).
 function offPath(cmd) {
-  const home = homedir(), win = process.platform === "win32";
+  const dirHome = home(), win = process.platform === "win32";
   const exts = win ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
-  for (const dir of [join(home, ".local/bin"), join(home, ".bun/bin"), join(home, "bin"), ...(win ? [] : ["/opt/homebrew/bin", "/usr/local/bin"])]) for (const ext of exts) {
+  for (const dir of [join(dirHome, ".local/bin"), join(dirHome, ".bun/bin"), join(dirHome, "bin"), ...(win ? [] : ["/opt/homebrew/bin", "/usr/local/bin"])]) for (const ext of exts) {
     const p = join(dir, cmd + ext);
     if (existsSync(p)) return p;
   }
@@ -77,7 +76,7 @@ export function nextSteps(r) {
 export async function inspect({ configPath, quiet } = {}) {
   const r = { from_source: !standalone(), runtime: `routr ${ROUTR_VERSION} (${standalone() ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, herdr: { path: which("herdr") ?? offPath("herdr"), inside_session: process.env.HERDR_ENV === "1",
     // The orchestrator guide leans on herdr's own skill for pane and agent commands; routr does not bundle it.
-    skill: [".agents/skills/herdr", ".claude/skills/herdr"].some((d) => existsSync(join(homedir(), d, "SKILL.md"))) }, harnesses: {}, key: {}, config: {}, starter_config: null };
+    skill: [".agents/skills/herdr", ".claude/skills/herdr"].some((d) => existsSync(join(home(), d, "SKILL.md"))) }, harnesses: {}, key: {}, config: {}, starter_config: null };
   // Every check that waits on something else (the release lookup, each harness, the key's test call) runs at once:
   // one after another, a logged-out harness that is slow to answer made doctor sit silent for most of a minute.
   // A person at a terminal sees each one finish, on stderr so the report and `--json` stay clean.
@@ -120,7 +119,7 @@ export async function inspect({ configPath, quiet } = {}) {
   // The installer writes the skill and the binary together, but a skill copied by hand or left behind by an older
   // install can drift: it may name commands this binary lacks, or miss ones it has.
   r.skill = SKILL_FOLDERS.map((f) => `${f}/routr`).map((d) => {
-    try { return { where: `~/${d}`, version: readFileSync(join(homedir(), d, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\n]+)"?/m)?.[1] ?? "unknown" }; } catch { return null; }
+    try { return { where: `~/${d}`, version: readFileSync(join(home(), d, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\n]+)"?/m)?.[1] ?? "unknown" }; } catch { return null; }
   }).filter(Boolean);
   // `problems` are settings that are missing or wrong, each with its fix; `notes` are only for information.
   const problems = existsSync(path) ? [...notes] : [], info = []; // no config at all is its own line and next step
@@ -140,7 +139,7 @@ export async function inspect({ configPath, quiet } = {}) {
   }
   // Configured but no snapshot yet is not a failure: Claude writes the first snapshot on its next turn.
   let wired = false;
-  try { wired = isOurStatusline(JSON.parse(readFileSync(join(homedir(), ".claude/settings.json"), "utf8")).statusLine?.command); } catch {}
+  try { wired = isOurStatusline(JSON.parse(readFileSync(join(home(), ".claude/settings.json"), "utf8")).statusLine?.command); } catch {}
   r.claude_usage_statusline = existsSync(CLAUDE_SNAPSHOT) ? "installed" : !found.includes("claude") ? "not needed"
     : wired ? "configured: the first snapshot appears after the next Claude Code turn" : STATUSLINE_MISSING;
   if (!r.config.exists) r.starter_config = starterConfig(found);

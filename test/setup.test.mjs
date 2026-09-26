@@ -1,7 +1,7 @@
 // setup.mjs, doctor.mjs, uninstall.mjs: what the user sees when setting routr up and taking it down
 import { expect, test } from "bun:test";
 import { dirname, join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { claudeSnapshot } from "../src/lib/usage.mjs";
 import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
@@ -113,7 +113,7 @@ test("routr setup changes a setting on an existing config, fills one that is mis
 
 // setup, driven end to end as a person would: scripted answers, a fake machine, nothing written outside a temp folder.
 // Every question asked is recorded, and a question the scenario did not expect fails it.
-async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {}, efforts = async () => null, models = {} } = {}) {
+async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {}, efforts = async () => null, models = {}, statusline = "not needed" } = {}) {
   const { setup } = await import("../src/lib/setup.mjs");
   const dir = scratch("setup-run"), path = join(dir, "config.json");
   if (config) writeFileSync(path, JSON.stringify(config));
@@ -122,7 +122,7 @@ async function runSetup({ config, args = [], answers = [], found = ["agy", "curs
     const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
     return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy", "kiro"].map((n) => [n, { installed: found.includes(n), signed_in: found.includes(n), models: models[n] ?? [], usage_class: "included" }])),
       config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}) }, skill: [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }],
-      claude_usage_statusline: "not needed", key: { works: keyWorks }, next_steps: [] };
+      claude_usage_statusline: statusline, key: { works: keyWorks }, next_steps: [] };
   };
   const queue = [...answers];
   const question = async (q) => { asked.push(q.trim()); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); };
@@ -288,4 +288,17 @@ test("every setting can be changed by flag, so an agent can do it for the user: 
   expect((await run(["--enable", "agy"], off.saved)).saved.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1, enabled: true });
   expect((await run(["--disable", "kiro"])).r.error).toBe("--disable kiro: kiro is not set up in routr, so there is nothing to turn off");
   expect((await run(["--enable", "nope"])).r.error).toContain("--enable takes a subscription name");
+});
+
+test("setup, guided: offers to set Claude's usage statusline, and sets it only on yes", async () => {
+  const settings = join(process.env.HOME, ".claude/settings.json");
+  rmSync(settings, { force: true });
+  // Claude only: model (leave), effort (none listed), hardest, reserve; then the statusline (Enter: yes), telemetry, Write.
+  const yes = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", answers: ["", "", "", "", "", "n", ""] });
+  expect(yes.asked.some((a) => a.startsWith("Claude Code reports usage only to its statusline"))).toBe(true);
+  expect(JSON.parse(readFileSync(settings, "utf8")).statusLine.command).toMatch(/routr statusline$/);
+  rmSync(settings, { force: true });
+  const no = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", answers: ["", "", "", "", "n", "n", ""] });
+  expect(existsSync(settings)).toBe(false);
+  expect(no.r.skipped.join(" ")).toContain("Claude statusline left alone");
 });

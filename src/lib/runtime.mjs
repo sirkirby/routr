@@ -6,16 +6,21 @@ import { closeSync, mkdirSync, openSync, renameSync, rmSync, statSync, unlinkSyn
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
+// The user's home, read when asked: HOME (USERPROFILE on Windows), as Node's os.homedir() reads it. Bun's os.homedir()
+// ignores a HOME changed while it runs (measured 2026-09-26, Bun 1.3.13), so a test's scratch home reached only the CLIs
+// it spawned, not routr's own code in the test process.
+export const home = () => (process.platform === "win32" ? process.env.USERPROFILE : process.env.HOME) || homedir();
+
 // A compiled release binary has no script path of its own; a source checkout runs `bun src/routr.mjs`.
 export const standalone = () => !/\.m?js$/.test(process.argv[1] ?? "");
 
-export const CACHE_DIR = () => join(homedir(), ".cache/routr");
+export const CACHE_DIR = () => join(home(), ".cache/routr");
 // Written by `routr statusline` on each Claude Code turn, read by the usage reader.
-export const CLAUDE_SNAPSHOT = join(homedir(), ".cache/routr/claude-usage.json");
+export const CLAUDE_SNAPSHOT = join(home(), ".cache/routr/claude-usage.json");
 // Written by `routr usage cursor` (by hand, or in the background when the reading is old), read by the usage reader.
-export const CURSOR_SNAPSHOT = join(homedir(), ".cache/routr/cursor-usage.json");
+export const CURSOR_SNAPSHOT = join(home(), ".cache/routr/cursor-usage.json");
 // Written by `routr usage kiro` the same way, read by the usage reader.
-export const KIRO_SNAPSHOT = join(homedir(), ".cache/routr/kiro-usage.json");
+export const KIRO_SNAPSHOT = join(home(), ".cache/routr/kiro-usage.json");
 
 // Written whole or not at all (a temp file, then a rename): a reader never sees half a file. Windows will not rename
 // over an existing file, so it is removed first there.

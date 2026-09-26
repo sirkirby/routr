@@ -1,11 +1,11 @@
 // Minimal Jev client: raw HTTP, no dependencies. Bun is the supported runtime; only node: built-ins are used. Exposes exact payloads, latency, and tokens.
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { JEV_MODEL } from "./questions.mjs";
+import { home } from "./runtime.mjs";
 
 // The key lives outside any project, so workers in worktrees and other folders find it too.
-export const KEY_FILES = [join(homedir(), ".config/routr/env")];
+export const KEY_FILES = [join(home(), ".config/routr/env")];
 
 export function loadKey() {
   if (process.env.TYPESAFE_API_KEY) return process.env.TYPESAFE_API_KEY; // the name TypeSafe's own SDKs read

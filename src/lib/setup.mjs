@@ -2,7 +2,6 @@
 // Code's statusline at `routr statusline`, and (only for a person at a terminal) asks for the TypeSafe key.
 // A person gets questions; an agent passes `--yes` and the choices it settled with the user as flags. Same code, same file.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { CONFIG_PATH, loadConfig, SUB_DEFAULTS } from "./config.mjs";
 import { LEVELS } from "./questions.mjs";
@@ -11,7 +10,7 @@ import { envOff, setTelemetry } from "./telemetry.mjs";
 import { inspect, paint, render, starterConfig, which } from "./doctor.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { setKey } from "./key.mjs";
-import { standalone } from "./runtime.mjs";
+import { home, standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { installSkill } from "./skill-install.mjs";
 import { guided } from "./setup-guided.mjs";
@@ -164,7 +163,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length > 0;
   let config = null;
   if (r.config.exists && !args.includes("--force")) { try { config = JSON.parse(readFileSync(path, "utf8")); } catch { return { ok: false, error: `${path} is not valid JSON. Fix it, or rewrite it with: routr setup --force` }; } }
-  const claudeFile = join(homedir(), ".claude/settings.json");
+  const claudeFile = join(home(), ".claude/settings.json");
   const statuslineOffer = found.includes("claude") && !args.includes("--no-statusline") && r.claude_usage_statusline.startsWith("missing")
     ? statuslinePlan(existsSync(claudeFile) ? readFileSync(claudeFile, "utf8") : null, statuslineCommand()) : null;
   let telemetryAsked = false;

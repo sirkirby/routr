@@ -216,3 +216,11 @@ test("help, --version and statusline load none of the harness drivers: those loa
   }
   expect(readFileSync(join(root, "routr.mjs"), "utf8")).not.toMatch(/^import /m); // the entry point imports nothing up front
 });
+
+test("routr's own code in the test process sees the scratch home, not the maintainer's (Bun's os.homedir ignores a changed HOME)", async () => {
+  const { home, CACHE_DIR } = await import("../src/lib/runtime.mjs");
+  const { CONFIG_PATH } = await import("../src/lib/config.mjs");
+  expect(home()).toBe(process.env.HOME);
+  expect(CONFIG_PATH.startsWith(process.env.HOME)).toBe(true);
+  expect(CACHE_DIR().startsWith(process.env.HOME)).toBe(true);
+});

@@ -4,13 +4,12 @@
 // the vendor enforces, read as one more window), `metered` (billed usage with no quota, and a working source says so),
 // or `unknown` (nothing readable). Measured 2026-09-22 on a ChatGPT Enterprise seat: no windows at all, only
 // `credits.unlimited: true`, and a plan name of `business`. So the shape is the key, never the plan name.
-import { CLAUDE_SNAPSHOT, run } from "./runtime.mjs";
+import { CLAUDE_SNAPSHOT, home, run } from "./runtime.mjs";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 export { CLAUDE_SNAPSHOT };
-export const CODEX_SESSIONS = join(homedir(), ".codex/sessions");
+export const CODEX_SESSIONS = join(home(), ".codex/sessions");
 const now = () => Date.now() / 1000;
 
 // One subscription's usage as every reader returns it. `ts` is when the harness reported it (null: nothing read);

@@ -2,9 +2,9 @@
 // out. It is how routr's questions get judged against real work instead of dedicated experiments.
 // `routr record` is the only command that writes the ledger; the advice commands stay side-effect free.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { LEVELS } from "./questions.mjs";
+import { home } from "./runtime.mjs";
 
 // The ledger is one file per user, shared by every project on the machine. Each row is labelled with its project so
 // `assess` can tell them apart: the folder name of the git repository the work happened in. A worktree counts as its
@@ -23,7 +23,7 @@ export function projectName(cwd = process.cwd()) {
   }
 }
 
-export const LEDGER_PATH = join(homedir(), ".local/share/routr/ledger.jsonl");
+export const LEDGER_PATH = join(home(), ".local/share/routr/ledger.jsonl");
 
 // advice = the JSON that `routr dispatch|subagent` printed. chose/outcome = what the agent did and what it verified.
 export function parseSubagent(s) {

@@ -1,11 +1,11 @@
 // User config: plain preferences only. Nothing here describes a model, so nothing goes stale when models change.
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { LEVELS } from "./questions.mjs";
 import { HARDEST, NO_CONFIG, RESERVE } from "./wording.mjs";
+import { home } from "./runtime.mjs";
 
-export const CONFIG_PATH = join(homedir(), ".config/routr/config.json");
+export const CONFIG_PATH = join(home(), ".config/routr/config.json");
 export const DEFAULTS = {
   fallback_level: "standard",  // advised when Jev cannot be reached
   sure_at: 0.8,                // Jev confidence from which its level is presented as settled. P23: 89% correct at or above 0.8, 56% below 0.5

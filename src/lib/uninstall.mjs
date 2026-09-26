@@ -3,16 +3,15 @@
 // plan and asked; an agent or a script must pass `--yes`. Worktrees and herdr panes belong to the user's repos, not to routr.
 import { spawn } from "node:child_process";
 import { copyFileSync, lstatSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { SKILL_FOLDERS } from "./harnesses.mjs";
-import { standalone } from "./runtime.mjs";
+import { home as userHome, standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 
 
 // What would be removed, as data: a test can check the plan without touching a disk.
-export function uninstallPlan({ home = homedir(), purge = false, binary = null } = {}) {
+export function uninstallPlan({ home = userHome(), purge = false, binary = null } = {}) {
   const remove = [], keep = [];
   if (binary) remove.push({ path: binary, what: "the routr binary" });
   // Each harness's link first, then the folder the links point at.
@@ -29,7 +28,7 @@ export function uninstallPlan({ home = homedir(), purge = false, binary = null }
 // A link is unlinked, never followed: a developer's skill folder is a link into their checkout.
 function removePath(p) { if (lstatSync(p).isSymbolicLink()) unlinkSync(p); else rmSync(p, { recursive: true, force: true }); }
 
-export async function uninstall(args, { home = homedir() } = {}) {
+export async function uninstall(args, { home = userHome() } = {}) {
   const json = args.includes("--json"), dry = args.includes("--dry-run");
   const say = (s) => { if (!json) console.log(s); };
   const interactive = Boolean(process.stdin.isTTY) && !args.includes("--yes");
