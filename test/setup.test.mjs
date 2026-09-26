@@ -309,3 +309,18 @@ test("setup, run again: Esc at the menu with changes not saved offers the same w
   expect(q(x.asked, "Save your changes?")).toBe(1);
   expect(x.saved.subscriptions.agy.hardest_work).toBe("basic");
 });
+
+test("an agent changing a setting through the real CLI: --show prints the settings, a flag changes one, --show sees it", () => {
+  const home = scratch("agent"), env = cliEnv(home, { PATH: home }); // no harness to find: only flags on an existing config
+  const file = join(home, ".config/routr/config.json");
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify({ telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, default_model: "cursor-grok-4.6-high" } } }));
+  const show = () => { const r = Bun.spawnSync([process.execPath, SCRIPT, "setup", "--show"], { env }); expect(r.exitCode).toBe(0); return JSON.parse(r.stdout.toString()); };
+  expect(show().subscriptions.cursor).toMatchObject({ enabled: true, hardest_work: "standard", reserve: 0.1 });
+  const set = Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--hardest", "cursor=strong", "--reserve", "cursor=20%"], { env });
+  expect(set.exitCode).toBe(0);
+  expect(set.stdout.toString()).toContain('cursor.hardest_work "standard" → "strong"');
+  expect(show().subscriptions.cursor).toMatchObject({ hardest_work: "strong", reserve: 0.2 });
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--disable", "cursor"], { env }).exitCode).toBe(0);
+  expect(show().subscriptions.cursor.enabled).toBe(false);
+});
