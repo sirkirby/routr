@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { advise } from "../src/lib/advise.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
-import { NOW, ans, cfg, fact, live, none, win } from "./helpers.mjs";
+import { NOW, ans, cfg, fact, live, none, scratch, win } from "./helpers.mjs";
 
 test("rounds to the nearest level and never adjusts it", () => {
   expect(advise(ans(0.4, 0.9), cfg()).level).toBe("basic");
@@ -125,4 +125,22 @@ test("the headline gives the level, the kind of work, what the brief leaves open
   expect(headline({ level: "standard", sure: false, between: ["standard", "strong"], work_type: "review", facts: {}, high_risk: true, worker: { suggestion: "split it across workers" }, notes: ["Fix the brief: it names no check"] }))
     .toBe("routr: SPLIT IT ACROSS WORKERS · standard (torn between standard and strong), review work; HIGH RISK; FIX THE BRIEF FIRST");
   expect(headline({ level: "basic", sure: false })).toBe("routr: basic (unsure), unknown work");
+});
+
+test("a subscription turned off keeps its settings, is left out of dispatch with how to turn it on, and is not read", async () => {
+  const { loadConfig, enabledSubscriptions } = await import("../src/lib/config.mjs");
+  const { adviseCommand } = await import("../src/lib/commands.mjs");
+  const { writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const file = join(scratch("off"), "config.json");
+  writeFileSync(file, JSON.stringify({ subscriptions: { agy: { enabled: false, hardest_work: "standard", reserve: 0.1, default_model: "g" }, codex: { hardest_work: "strong", reserve: 0.2 }, kiro: { enabled: "no", hardest_work: "basic", reserve: 0 } } }));
+  const { config, notes } = loadConfig(file);
+  expect(config.subscriptions.agy).toMatchObject({ enabled: false, default_model: "g", reserve: 0.1 });
+  expect(config.subscriptions.kiro.enabled).toBe(true);
+  expect(notes).toContain('subscriptions.kiro.enabled: "no" is not true or false, so it stays on');
+  expect(enabledSubscriptions(config)).toEqual(["codex", "kiro"]);
+  const read = [];
+  const d = await adviseCommand("dispatch", "x", { config, notes: [] }, {}, { askFn: async () => { throw new Error("offline"); }, read: async (names) => { read.push(...names); return names.map((n) => live(n, 0.9)); } });
+  expect(read).toEqual(["codex", "kiro"]);
+  expect(d.subscriptions.excluded).toContainEqual({ subscription: "agy", reason: "turned off in your settings: routr setup --enable agy" });
 });

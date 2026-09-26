@@ -3,11 +3,11 @@
 // The footer context meter (e.g. "Grok 4.6 High · 8.7%") is not usage and must never be parsed as it.
 import { randomBytes } from "node:crypto";
 import { chmodSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { deadline, runHerdr, SHELLS, shellAlone, shellFamily, waitForShell } from "./herdr.mjs";
-import { CURSOR_SNAPSHOT } from "./runtime.mjs";
+import { CURSOR_SNAPSHOT, home } from "./runtime.mjs";
 import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
 import { openTerminal } from "./terminal.mjs";
 
@@ -44,7 +44,7 @@ export const CURSOR_BY_HAND = "run `cursor-agent`, type /usage, read \"Included 
 // Cursor writes to its config folder as it runs (seen 2026-09-25: it rewrote cli-config.json and added a project
 // folder for the working directory), so it runs on a private copy, as `launch` does, removed when the read ends.
 export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(),
-  tmp = tmpdir(), timeout = 90000, terminal = {}, cursorConfig = join(homedir(), ".cursor", "cli-config.json") } = {}) {
+  tmp = tmpdir(), timeout = 90000, terminal = {}, cursorConfig = join(home(), ".cursor", "cli-config.json") } = {}) {
   let t = null, dir = null;
   try {
     const remaining = deadline(timeout, now, "Cursor usage timed out");

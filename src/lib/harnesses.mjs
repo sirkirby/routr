@@ -12,6 +12,8 @@
 //     trust), answered with the one option that holds for this session only. showsModel: how to tell from the
 //     screen that it took `--model`, for a harness that silently runs its default on an id it does not know.
 //   list: its own command that lists model ids; models(): that list, read now (routr keeps no model list of its own).
+//     efforts(model): the effort levels it accepts for that model, read from the harness too, or null when it does
+//     not say (a harness without `effort` has none: its model ids carry it).
 //   auth: how to tell it is signed in (signin.mjs): `check` is its own status command, which never starts a sign-in,
 //     `signedIn(out, code)` reads the answer (stdout and stderr together), `signIn` says how the user signs in.
 //     Measured signed in and signed out, 2026-09-26; each parser matches the text both ways, not the exit code alone.
@@ -23,6 +25,11 @@ import { run } from "./runtime.mjs";
 import { signInHint, signInState } from "./signin.mjs";
 import { readAgy, readClaude, readCodexLive, summarize } from "./usage.mjs";
 
+// The levels a help text lists after its --effort flag: "(low, medium, high, xhigh, max)", as Claude Code and Kiro print them.
+export const effortsInHelp = (help) => { const m = String(help ?? "").match(/--effort\b[^(]*\((?:e\.g\.\s*)?([a-z]+(?:,\s*[a-z]+)+)\)/i); return m ? m[1].split(/,\s*/) : null; };
+// `codex debug models`, read once per run: the model list and each model's own effort levels come from the same answer.
+let codexModels = null;
+const readCodexModels = () => (codexModels ??= run("codex", ["debug", "models"], { timeoutMs: 15000 }).then((out) => { try { const o = JSON.parse(out); return o.models ?? o; } catch { return null; } }));
 const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 20000 })) ?? "").split("\n").map((l) => l.match(pattern)?.[1]).filter(Boolean);
 
 export const HARNESSES = {
@@ -31,13 +38,16 @@ export const HARNESSES = {
     // `"loggedIn": false` and exit 1 when signed out.
     auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`" },
     models: async () => ["haiku", "sonnet", "opus"], // aliases Claude Code resolves itself; `--model` also takes full ids
+    efforts: async () => effortsInHelp(await run("claude", ["--help"], { timeoutMs: 10000 })),
     suggested: { hardest_work: "strong", reserve: 0.25 },
     usage: { read: readClaude } },
   codex: { label: "Codex", executable: "codex", installAs: "Codex",
     permissions: ["--yolo"], model: "-m", effort: "-c", effortValue: (level) => `model_reasoning_effort=${level}`, list: "codex debug models",
     // "Logged in using ChatGPT" / "Not logged in" (exit 1), both on stderr.
     auth: { check: ["login", "status"], signedIn: (out, code) => code === 0 && /^\s*Logged in\b/m.test(out), signIn: "run `codex login`" },
-    models: async () => { try { const o = JSON.parse(await run("codex", ["debug", "models"], { timeoutMs: 15000 })); return (o.models ?? o).map((m) => m.slug ?? m.id).filter(Boolean); } catch { return null; } },
+    // Only the models Codex lists (visibility "list"); each carries its own levels (gpt-5.5 stops at xhigh, measured).
+    models: async () => (await readCodexModels())?.filter((m) => m.visibility !== "hide").map((m) => m.slug ?? m.id).filter(Boolean) ?? null,
+    efforts: async (model) => (await readCodexModels())?.find((m) => (m.slug ?? m.id) === model)?.supported_reasoning_levels?.map((e) => e.effort ?? e) ?? null,
     suggested: { hardest_work: "strong", reserve: 0.2 },
     usage: { read: readCodexLive } },
   cursor: { label: "Cursor", executable: "cursor-agent", installAs: "Cursor (cursor-agent)",
@@ -75,6 +85,8 @@ export const HARNESSES = {
       ...(effort ? [`Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently: check the model's /effort panel.`] : [])],
     // `{"accountType":"SocialGitHub","email":…}` / `{"account":null}` (exit 1). Any `chat` command opens a sign-in.
     auth: { check: ["whoami", "--format", "json"], signedIn: (out, code) => code === 0 && /"email"\s*:\s*"[^"]/.test(out), signIn: "run `kiro-cli login`" },
+    // Its help lists the levels; `auto` (no flag) leaves effort to the model, and is the only choice a model without levels has.
+    efforts: async () => { const l = effortsInHelp(await run("kiro-cli", ["chat", "--help"], { timeoutMs: 10000 })); return l ? ["auto", ...l] : null; },
     models: async () => { try { return JSON.parse(await run("kiro-cli", ["chat", "--list-models", "--format", "json"], { timeoutMs: 20000 })).models.map((m) => m.model_id).filter(Boolean); } catch { return null; } },
     // Kiro's own router, which its docs recommend and which picks the model per task, and effort left to the model:
     // `auto` passes no --effort, which Kiro would otherwise remember as the user's default for that model.

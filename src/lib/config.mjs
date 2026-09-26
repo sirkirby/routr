@@ -1,11 +1,11 @@
 // User config: plain preferences only. Nothing here describes a model, so nothing goes stale when models change.
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { LEVELS } from "./questions.mjs";
 import { HARDEST, NO_CONFIG, RESERVE } from "./wording.mjs";
+import { home } from "./runtime.mjs";
 
-export const CONFIG_PATH = join(homedir(), ".config/routr/config.json");
+export const CONFIG_PATH = join(home(), ".config/routr/config.json");
 export const DEFAULTS = {
   fallback_level: "standard",  // advised when Jev cannot be reached
   sure_at: 0.8,                // Jev confidence from which its level is presented as settled. P23: 89% correct at or above 0.8, 56% below 0.5
@@ -18,7 +18,8 @@ export const DEFAULTS = {
 // `billing` overrides what the usage reader can tell (`included` or `metered`); it is for seats whose harness reports
 // nothing, such as Claude usage-based Enterprise. `metered_rank` places a metered pool: `after` every pool with a quota
 // that still has room (the default: included usage expires, billed usage does not), or `with` the rest by assumed_headroom.
-export const SUB_DEFAULTS = { hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after" };
+// `enabled: false` turns a subscription off without forgetting its settings: routr gives it no work until it is on again.
+export const SUB_DEFAULTS = { enabled: true, hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after" };
 const BILLING = ["included", "metered"], METERED_RANK = ["after", "with"];
 const isLevel = (v) => LEVELS.includes(v);
 
@@ -47,7 +48,9 @@ export function loadConfig(path = CONFIG_PATH) {
     if (s?.reserve === undefined) notes.push(`${RESERVE.unset(name)}. ${RESERVE.choose(name)}`);
     else if (!validReserve) notes.push(`${RESERVE.invalid(name, s.reserve)}. ${RESERVE.choose(name)}`);
     const oneOf = (k, allowed, fallback) => { const v = s?.[k]; if (v === undefined || v === null) return fallback; if (allowed.includes(v)) return v; notes.push(`subscriptions.${name}.${k}: ${JSON.stringify(v)} is not one of ${allowed.join(", ")}, using ${fallback ?? "the harness's own reading"}`); return fallback; };
+    if (s?.enabled !== undefined && typeof s.enabled !== "boolean") notes.push(`subscriptions.${name}.enabled: ${JSON.stringify(s.enabled)} is not true or false, so it stays on`);
     config.subscriptions[name] = {
+      enabled: s?.enabled !== false,
       hardest_work: isLevel(s?.hardest_work) ? s.hardest_work : SUB_DEFAULTS.hardest_work,
       reserve: validReserve ? s.reserve : SUB_DEFAULTS.reserve, // noted above when missing or invalid
       assumed_headroom: share(s?.assumed_headroom, SUB_DEFAULTS.assumed_headroom, `subscriptions.${name}.assumed_headroom`),
@@ -60,3 +63,6 @@ export function loadConfig(path = CONFIG_PATH) {
   }
   return { config, notes };
 }
+
+// The subscriptions routr may hand work to: every configured one the user has not turned off.
+export const enabledSubscriptions = (config) => Object.keys(config.subscriptions).filter((n) => config.subscriptions[n].enabled !== false);

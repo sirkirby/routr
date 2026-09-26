@@ -101,13 +101,17 @@ export const COMMANDS = {
   },
   setup: {
     name: "setup",
-    description: "do what doctor says is missing: write your settings for the harnesses found, set Claude's usage statusline, ask for the key. Asks questions at a terminal; an agent passes --yes. Run it again with a flag to change one setting",
+    description: "do what doctor says is missing: write your settings for the harnesses found, set Claude's usage statusline, ask for the key. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting",
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
       { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list; repeatable. Also changes it on an existing config", required: false },
       { name: "--metered", arg: "<subscription>=after|with", description: "where a seat billed per token with no quota goes in the ranking: after your subscriptions (default) or with them; repeatable", required: false },
       { name: "--hardest", arg: "<subscription>=basic|standard|strong", description: `${HARDEST.flag}: basic, standard, or strong; repeatable. Also changes it on an existing config`, required: false },
       { name: "--reserve", arg: "<subscription>=<share>", description: `${RESERVE.flag}; repeatable. Also changes it on an existing config`, required: false },
+      { name: "--effort", arg: "<subscription>=<level>", description: "your everyday effort there, one of the levels the harness takes for that model (Kiro: auto leaves it to the model); repeatable", required: false },
+      { name: "--enable", arg: "<subscription>", description: "let routr hand work to this subscription again (it kept its settings while off); repeatable", required: false, repeatable: true },
+      { name: "--disable", arg: "<subscription>", description: "turn a subscription off: routr gives it no work, and it keeps its settings; repeatable", required: false, repeatable: true },
+      { name: "--show", arg: null, description: "print your settings as routr reads them, and change nothing (asks no harness)", required: false },
       { name: "--no-statusline", description: "leave Claude Code's settings alone", required: false },
       { name: "--force", description: "rewrite an existing config (the old one is kept as config.json.bak)", required: false },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },

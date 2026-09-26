@@ -8,10 +8,12 @@
 // `metered_rank: "with"` ranks it by the user's assumed_headroom like the rest. Neither names a price.
 // The orchestrator chooses; it may know things this cannot (what is already running, what comes next).
 import { LEVELS } from "./questions.mjs";
+import { OFF } from "./wording.mjs";
 
 export function rankSubscriptions(level, usage, c) {
   const ranked = [], excluded = [];
   for (const [name, s] of Object.entries(c.subscriptions)) {
+    if (s.enabled === false) { excluded.push({ subscription: name, reason: OFF.reason(name) }); continue; }
     // A harness that is not signed in cannot take the work; the reading says what to run.
     const signedOut = usage.find((p) => p.pool === name && p.signedIn === false);
     if (signedOut) { excluded.push({ subscription: name, reason: signedOut.note }); continue; }

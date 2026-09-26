@@ -41,4 +41,3 @@ export const row = (over = {}) => ({ ts: "2026-09-21T10:11:12.000Z", id: "abc123
   headroom: { codex: { usable: 0.3, usage: "live" } }, chose: { subscription: "codex", model: "big-model", effort: "medium", level: "standard" },
   outcome: { verdict: "done", check: "pass", seconds: 60, attempts: 1, note: "private note about the client's billing bug" }, subagents: [{ subtask: "count files in the acme repo", advised: "basic", model: "small-model" }], ...over });
 
-export const said = (asked, text) => asked.filter((q) => q.includes(text)).length;

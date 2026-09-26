@@ -1,7 +1,6 @@
 // `routr skill install`: write the routr skill (the guides agents read) into the shared skills folder, so a machine
 // with no Node and no Bun needs nothing but the routr binary. The guides are embedded at build time.
 import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { HARNESSES, KINDS } from "./harnesses.mjs";
 import skillMd from "../../skills/routr/SKILL.md" with { type: "text" };
@@ -9,13 +8,14 @@ import worker from "../../skills/routr/references/worker.md" with { type: "text"
 import orchestrator from "../../skills/routr/references/orchestrator.md" with { type: "text" };
 import harnesses from "../../skills/routr/references/harnesses.md" with { type: "text" };
 import setup from "../../skills/routr/references/setup.md" with { type: "text" };
+import { home as userHome } from "./runtime.mjs";
 
 const FILES = { "SKILL.md": skillMd, "references/worker.md": worker, "references/orchestrator.md": orchestrator, "references/harnesses.md": harnesses, "references/setup.md": setup };
 // Harnesses that read their own skills folder rather than the shared one (`skills` in the registry). Codex and Cursor
 // read ~/.agents/skills.
 const LINKED = Object.fromEntries(KINDS.filter((n) => HARNESSES[n].skills).map((n) => [HARNESSES[n].label, HARNESSES[n].skills]));
 
-export function installSkill({ home = homedir(), dryRun = false } = {}) {
+export function installSkill({ home = userHome(), dryRun = false } = {}) {
   const dest = join(home, ".agents/skills/routr"), done = [];
   if (!dryRun) for (const [rel, text] of Object.entries(FILES)) { const f = join(dest, rel); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, text); }
   done.push({ where: dest, how: "written" });

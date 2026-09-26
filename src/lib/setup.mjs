@@ -2,19 +2,19 @@
 // Code's statusline at `routr statusline`, and (only for a person at a terminal) asks for the TypeSafe key.
 // A person gets questions; an agent passes `--yes` and the choices it settled with the user as flags. Same code, same file.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { createInterface } from "node:readline/promises";
-import { CONFIG_PATH, SUB_DEFAULTS } from "./config.mjs";
+import { CONFIG_PATH, loadConfig, SUB_DEFAULTS } from "./config.mjs";
 import { LEVELS } from "./questions.mjs";
-import { HARDEST, RESERVE, SETTINGS_INTRO, settingSummary } from "./wording.mjs";
-import { envOff, NOTICE, setTelemetry } from "./telemetry.mjs";
+import { settingSummary } from "./wording.mjs";
+import { envOff, setTelemetry } from "./telemetry.mjs";
 import { inspect, paint, render, starterConfig, which } from "./doctor.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { setKey } from "./key.mjs";
-import { standalone } from "./runtime.mjs";
+import { home, standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { installSkill } from "./skill-install.mjs";
+import { guided } from "./setup-guided.mjs";
+import { CANCEL, createUI } from "./tui.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 
 // `--model claude=sonnet --model codex=<id>`: repeatable name=id pairs.
@@ -58,15 +58,25 @@ function parsePairs(args, flag, parse, what) {
   return out;
 }
 export const parseHardest = (args) => parsePairs(args, "--hardest", parseLevel, "basic|standard|strong");
-export const parseReserve = (args) => parsePairs(args, "--reserve", parseShare, "<0..1, or a percent>");
-
-// A person's answer to the two questions; Enter keeps the suggestion, and an answer that is not one asks again.
-export async function askSettings(n, suggested, question, say) {
-  let hardest = null, reserve = null;
-  while (!hardest) { const a = (await question(HARDEST.question(n, suggested.hardest_work))).trim(); hardest = a ? parseLevel(a) : suggested.hardest_work; if (!hardest) say(HARDEST.retry); }
-  while (reserve == null) { const a = (await question(RESERVE.question(n, `${Math.round(suggested.reserve * 100)}%`))).trim(); reserve = a ? parseShare(a) : suggested.reserve; if (reserve == null) say(RESERVE.retry); }
-  return { hardest_work: hardest, reserve };
+// `--effort codex=high`: the everyday effort there, checked against the harness's own levels once it is found.
+export const parseEffort = (args) => parsePairs(args, "--effort", (v) => (/^[a-z]+$/i.test(v ?? "") ? v.toLowerCase() : null), "<level>");
+// `--enable agy` / `--disable agy`: which subscriptions routr may hand work to. Turning one off keeps its settings.
+export function parseSwitches(args) {
+  const out = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== "--enable" && args[i] !== "--disable") continue;
+    const name = args[i + 1];
+    if (!HARNESSES[name]) throw new Error(`${args[i]} takes a subscription name: one of ${Object.keys(HARNESSES).join(", ")}`);
+    out[name] = args[i] === "--enable";
+  }
+  return out;
 }
+// `routr setup --show`: the settings as routr reads them, for an agent to see before it changes one. Asks no harness.
+export function showSettings(path) {
+  const { config, notes } = loadConfig(path);
+  return { ok: true, config: path, exists: existsSync(path), ...config, ...(notes.length ? { notes } : {}) };
+}
+export const parseReserve = (args) => parsePairs(args, "--reserve", parseShare, "<0..1, or a percent>");
 
 // Where each newly written pool that reads as metered goes in the ranking. `ask(name, note)` is the terminal question
 // (absent under --yes, where the default stands); an answer starting with "w" means with, anything else after.
@@ -76,33 +86,6 @@ export async function meteredRanks(fresh, harnesses, ranks, ask) {
     ranks[n] = ask ? (/^w/i.test((await ask(n, harnesses[n].usage_note)).trim()) ? "with" : "after") : "after";
   }
   return ranks;
-}
-
-// A list longer than this is searched, not printed: Cursor offers over 200 models (231 seen), and routr keeps no
-// idea of which ones matter, so the user narrows it by typing part of a name.
-const LIST_IN_FULL = 20;
-
-// Every word typed must appear in the id: "grok high" finds `cursor-grok-4.6-high`.
-export const narrow = (list, query) => { const words = query.toLowerCase().split(/\s+/).filter(Boolean); return list.filter((m) => words.every((w) => m.toLowerCase().includes(w))); };
-
-// Returns the chosen id, or undefined when the user leaves it to the lead agent. `question` and `say` are passed in so a test can drive it.
-// `suggested`: the harness's own recommended choice (Kiro's `auto`), kept on Enter; otherwise Enter leaves it to the lead.
-export async function pickModel(list, question, say, suggested) {
-  let shown = list.length <= LIST_IN_FULL ? list : [];
-  if (!shown.length) say(`  ${list.length} models. Type part of a name to search (for example a family or a size).`);
-  for (;;) {
-    shown.forEach((m, i) => say(`  ${String(i + 1).padStart(2)}. ${m}`));
-    const enter = suggested ? `Enter = ${suggested}` : "Enter to leave it to the lead agent";
-    const a = (await question(shown.length ? `Number, model id, or text to search (${enter}): ` : `Search, or a full model id (${enter}): `)).trim();
-    if (!a) return suggested;
-    if (/^\d+$/.test(a) && shown[Number(a) - 1]) return shown[Number(a) - 1];
-    if (list.includes(a)) return a;
-    const hits = narrow(list, a);
-    if (hits.length === 1) return hits[0];
-    if (!hits.length) say(`  nothing matches "${a}"`);
-    else if (hits.length > LIST_IN_FULL * 2) { say(`  ${hits.length} match "${a}": add a word to narrow it`); shown = []; continue; }
-    shown = hits;
-  }
 }
 
 // What to do with Claude Code's settings. Someone else's statusline is never replaced.
@@ -122,20 +105,34 @@ function statuslineCommand() {
 }
 
 // `deps` are seams so a test can drive a whole run, questions and all, without a terminal, the machine's harnesses, the
-// network, or the user's own files: what is installed (`inspect`), the person's answers (`question`), and each step
-// that writes outside the config (the skill, the telemetry state, the key).
+// network, or the user's own files: what is installed (`inspect`), the person's answers (`question`, read line by line
+// in the tui's accessible mode, or `ui`, a ready-made tui), each harness's effort levels (`efforts`), and each step that
+// writes outside the config (the skill, the telemetry state, the key).
 export async function setup(args, { inspect: look = inspect, question, interactive: tty = Boolean(process.stdin.isTTY), env = process.env,
-  install = installSkill, share: shareOn = setTelemetry, key = setKey, print = console.log } = {}) {
+  install = installSkill, share: shareOn = setTelemetry, key = setKey, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI } = {}) {
   const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   const path = flag("--config") ?? CONFIG_PATH;
   const interactive = tty && !args.includes("--yes");
   const say = (s) => { if (!args.includes("--json")) print(s); };
   const did = [], skipped = [];
-  let models, ranks, hardest, reserves;
-  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); } catch (e) { return { ok: false, error: e.message }; }
+  if (args.includes("--show")) return showSettings(path);
+  let models, ranks, hardest, reserves, efforts, switches;
+  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); } catch (e) { return { ok: false, error: e.message }; }
 
-  say("Looking at what is installed…");
-  const r = await look({ configPath: path, quiet: args.includes("--json") });
+  const guidedRun = interactive && !Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length;
+  // Scripted answers (a test, or a caller with its own line reader) drive the tui's accessible mode: numbered questions.
+  const ui = !guidedRun ? null : makeUI ? makeUI() : question ? createUI({ ask: question, accessible: true, output: { write: (t) => print(t.replace(/\n$/, "")) } }) : createUI();
+  let r;
+  if (ui) {
+    ui.intro("routr setup");
+    const spin = ui.spinner("Checking your harnesses, their sign-in, and your TypeSafe key");
+    r = await look({ configPath: path, quiet: true });
+    const ready = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && r.harnesses[n].signed_in);
+    spin.stop(`${ready.length} signed in (${ready.join(", ") || "none"}) · key ${r.key.works ? "works" : "missing"}`);
+  } else {
+    say("Looking at what is installed…");
+    r = await look({ configPath: path, quiet: args.includes("--json") });
+  }
   // Only a harness that is installed AND signed in can be set up: one signed out gets no work until the user signs in.
   const found = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && r.harnesses[n].signed_in);
   for (const n of Object.keys(ranks)) {
@@ -149,55 +146,62 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   }
   for (const [flagName, set] of [["--hardest", hardest], ["--reserve", reserves]])
     for (const n of Object.keys(set)) if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `${flagName} ${n}=…: ${n} is not configured and ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
-  const rl = interactive && !question ? createInterface({ input: process.stdin, output: process.stdout }) : null;
-  const ask = interactive ? (question ?? ((q) => rl.question(q))) : null; // null: nobody to ask (--yes, or no terminal)
-  const yes = async (q) => !ask || !/^n/i.test((await ask(`${q} [Y/n] `)).trim());
+  for (const [n, on] of Object.entries(switches)) {
+    if (r.config.subscriptions.includes(n)) continue; // on or off, it keeps its settings
+    if (!on) return { ok: false, error: `--disable ${n}: ${n} is not set up in routr, so there is nothing to turn off` };
+    if (!found.includes(n)) return { ok: false, error: `--enable ${n}: ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
+  }
+  // An effort must be one the harness takes for the model it will run: the one given now, or the one already set.
+  let current = {}; try { current = JSON.parse(readFileSync(path, "utf8")).subscriptions ?? {}; } catch {}
+  for (const [n, level] of Object.entries(efforts)) {
+    if (!HARNESSES[n].effort) return { ok: false, error: `--effort ${n}=…: ${HARNESSES[n].noEffort}` };
+    if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `--effort ${n}=…: ${n} is not configured and ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
+    const levels = found.includes(n) ? await levelsOf(n, models[n] ?? current[n]?.default_model) : null;
+    if (levels?.length && !levels.includes(level)) return { ok: false, error: `--effort ${n}=${level}: ${HARNESSES[n].label} takes ${levels.join(", ")}${models[n] ?? current[n]?.default_model ? ` for ${models[n] ?? current[n]?.default_model}` : ""}` };
+  }
+  // A person at a terminal gets the guided flow; flags and --yes (an agent) never ask anything.
+  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length > 0;
+  let config = null;
+  if (r.config.exists && !args.includes("--force")) { try { config = JSON.parse(readFileSync(path, "utf8")); } catch { return { ok: false, error: `${path} is not valid JSON. Fix it, or rewrite it with: routr setup --force` }; } }
+  const claudeFile = join(home(), ".claude/settings.json");
+  const statuslineOffer = found.includes("claude") && !args.includes("--no-statusline") && r.claude_usage_statusline.startsWith("missing")
+    ? statuslinePlan(existsSync(claudeFile) ? readFileSync(claudeFile, "utf8") : null, statuslineCommand()) : null;
+  let telemetryAsked = false;
+  try { telemetryAsked = "telemetry" in JSON.parse(readFileSync(path, "utf8")); } catch {}
+  let choices = null;
+  if (ui && !flagged) {
+    // The key first: nothing routr advises works without it, and it is typed by the person, never passed by an agent.
+    if (!r.key.works) {
+      ui.note("TypeSafe key", ["routr asks TypeSafe's Jev about each piece of work: it needs your key.", "Create one at https://console.typesafe.ai/keys, then paste it here (it is not shown)."]);
+      const k = await key();
+      (k.ok ? did : skipped).push(k.ok ? `saved the TypeSafe key to ${k.file}${k.works ? " and it works" : `: ${k.error}`}` : `TypeSafe key not saved: ${k.error}. Run \`routr key set\` when you have it`);
+    }
+    choices = await guided({ ui, r, config, efforts: levelsOf, statusline: statuslineOffer?.action === "write", telemetry: !telemetryAsked && !envOff(env) });
+    if (choices === CANCEL) { ui.cancel("Setup stopped: nothing was written."); ui.close(); return { ok: false, cancelled: true, error: "setup stopped: nothing was written", did, skipped }; }
+    if (!choices.write) { ui.outro("Nothing changed."); ui.close(); return { ok: true, did, skipped: [...skipped, "nothing changed"], config: path, next_steps: r.next_steps }; }
+    Object.assign(models, choices.models); Object.assign(efforts, choices.efforts); Object.assign(hardest, choices.hardest);
+    Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches);
+  }
 
   // 0. The skill agents read: missing, or left behind by an older routr. Writing it again is always safe.
   const base = baseVersion(ROUTR_VERSION);
   // From a source checkout (0.0.0-dev) a release's skill never matches, and rewriting it would fight the installed binary.
   if (!r.skill.length || (standalone() && r.skill.some((k) => baseVersion(k.version) !== base))) { install(); did.push(`installed the routr skill ${base} for your agents`); }
 
-  // 1. The config. An existing file is kept; harnesses found since then are added, nothing else is touched.
-  let config = null;
-  if (r.config.exists && !args.includes("--force")) { try { config = JSON.parse(readFileSync(path, "utf8")); } catch { return { ok: false, error: `${path} is not valid JSON. Fix it, or rewrite it with: routr setup --force` }; } }
+  // 1. The config. An existing file is kept; harnesses found since then are added (turned off when the person left
+  // them unticked), and each choice or flag is applied; nothing else is touched.
   const fresh = found.filter((n) => !config?.subscriptions?.[n]);
-  // hardest_work and reserve decide where work may go, so they are asked, never slipped in: for each subscription
-  // being written, and for one already configured without them. Enter keeps the suggestion; a flag answers instead.
   const suggest = (n) => HARNESSES[n]?.suggested ?? { hardest_work: SUB_DEFAULTS.hardest_work, reserve: SUB_DEFAULTS.reserve };
+  // A subscription written before setup asked (no hardest_work or reserve) gets the suggestion, as a new one does.
   const unset = Object.keys(config?.subscriptions ?? {}).filter((n) => config.subscriptions[n]?.hardest_work === undefined || config.subscriptions[n]?.reserve === undefined);
-  // A person running setup again is offered their settings to go through, each current value the default, so a config
-  // written before setup asked (or by an agent) gets a person's answers too; nobody has to know the flags. Not under
-  // --yes, and not when a flag already says what to change.
-  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves }).length > 0;
-  const configured = Object.keys(config?.subscriptions ?? {}).filter((n) => !unset.includes(n));
-  let review = [];
-  if (ask && configured.length && !flagged) {
-    say(`\nYour settings: ${configured.map((n) => settingSummary(n, config.subscriptions[n])).join("; ")}.`);
-    if (await yes("Go through them now? Enter keeps each one as it is")) review = configured;
-  }
-  const settings = {};
-  let explained = false;
-  for (const n of [...fresh, ...unset, ...review]) {
-    const list = r.harnesses[n]?.models;
-    if (ask && fresh.includes(n) && !models[n] && list?.length) {
-      say(`\n${paint(1, n)}: your everyday model there. Your agents start from it and go higher or lower as the work needs.`);
-      models[n] = await pickModel(list, ask, say, list.includes(suggest(n).default_model) ? suggest(n).default_model : undefined);
-    }
-    if (ask && !(hardest[n] && reserves[n] != null)) {
-      if (!explained) { say(`\n${SETTINGS_INTRO}`); explained = true; }
-      if (!fresh.includes(n) || !list?.length) say(`\n${paint(1, n)}:`);
-      const now = review.includes(n) ? { hardest_work: config.subscriptions[n].hardest_work, reserve: config.subscriptions[n].reserve } : suggest(n);
-      settings[n] = await askSettings(n, now, ask, say);
-    } else settings[n] = { hardest_work: suggest(n).hardest_work, reserve: suggest(n).reserve };
-  }
-  // A flag always wins, for a new subscription or one already configured: this is also how a setting is changed later.
+  const settings = Object.fromEntries([...fresh, ...unset].map((n) => [n, { hardest_work: suggest(n).hardest_work, reserve: suggest(n).reserve }]));
+  // A choice or a flag always wins, for a new subscription or one already configured.
   for (const [n, v] of Object.entries(hardest)) settings[n] = { ...settings[n], hardest_work: v };
   for (const [n, v] of Object.entries(reserves)) settings[n] = { ...settings[n], reserve: v };
   // A seat that reads as metered (measured on a ChatGPT Enterprise seat: no windows, unlimited credits) has no headroom
-  // number, so its place in the ranking is the user's call. Asked once, when the pool is first written; `after` is the
-  // default because included usage expires and billed usage does not.
-  await meteredRanks(fresh, r.harnesses, ranks, ask && ((n, note) => { say(`\n${paint(1, n)} reports billed usage with no quota (${note}).`); return ask("Your subscriptions' included usage expires; this seat's usage is billed. Rank it after them, so it takes the overflow, or with them by an assumed headroom? [after/with, Enter = after] "); }));
+  // number: it goes after the subscriptions with a quota unless --metered says otherwise (included usage expires, billed
+  // usage does not).
+  await meteredRanks(fresh, r.harnesses, ranks, null);
   let kept; try { kept = JSON.parse(readFileSync(path, "utf8")).telemetry; } catch {} // --force keeps the person's telemetry choice
   if (!config) config = { ...starterConfig(found, models, ranks), ...(typeof kept === "boolean" ? { telemetry: kept } : {}) };
   else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models, ranks).subscriptions[n] };
@@ -207,10 +211,12 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     const sub = config.subscriptions[n];
     if (!sub || v === undefined || sub[k] === v) return;
     if (!fresh.includes(n) && r.config.exists && !args.includes("--force")) changed.push(`${n}.${k} ${sub[k] === undefined ? "set to" : `${JSON.stringify(sub[k])} →`} ${JSON.stringify(v)}`);
-    sub[k] = v;
+    if (v === null) delete sub[k]; else sub[k] = v;
   };
   for (const [n, s] of Object.entries(settings)) { put(n, "hardest_work", s.hardest_work); put(n, "reserve", s.reserve); }
   for (const [n, id] of Object.entries(models)) put(n, "default_model", id);
+  for (const [n, level] of Object.entries(efforts)) put(n, "default_effort", level);
+  for (const [n, on] of Object.entries(switches)) put(n, "enabled", on);
   for (const [n, rank] of Object.entries(ranks)) put(n, "metered_rank", rank);
   if (changed.length) did.push(`changed ${changed.join(", ")}`);
   if (!r.config.exists || args.includes("--force") || fresh.length || changed.length) {
@@ -220,39 +226,38 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     did.push(`wrote ${path}${fresh.length ? ` with ${fresh.join(", ")}` : changed.length ? "" : " (no harness found yet: run `routr setup` again after installing one)"}`);
   } else skipped.push(`config ${path} already covers every harness found: kept as it is`);
 
-  // 2. Claude Code's usage, which it reports only to its statusline.
-  if (found.includes("claude") && !args.includes("--no-statusline") && r.claude_usage_statusline.startsWith("missing")) {
-    const file = join(homedir(), ".claude/settings.json");
-    const plan = statuslinePlan(existsSync(file) ? readFileSync(file, "utf8") : null, statuslineCommand());
-    if (plan.action === "write" && (await yes("\nClaude Code reports usage only to its statusline. Set `routr statusline` as Claude's statusline command?"))) {
-      mkdirSync(dirname(file), { recursive: true });
-      if (existsSync(file)) copyFileSync(file, `${file}.bak-before-routr`);
-      writeFileSync(file, JSON.stringify(plan.settings, null, 2) + "\n");
+  // 2. Claude Code's usage, which it reports only to its statusline. Someone else's statusline is never replaced.
+  if (statuslineOffer && (choices ? choices.statusline === true : true)) {
+    if (statuslineOffer.action === "write") {
+      mkdirSync(dirname(claudeFile), { recursive: true });
+      if (existsSync(claudeFile)) copyFileSync(claudeFile, `${claudeFile}.bak-before-routr`);
+      writeFileSync(claudeFile, JSON.stringify(statuslineOffer.settings, null, 2) + "\n");
       did.push("set Claude Code's statusline to `routr statusline`: usage is read after your next Claude Code turn");
-    } else if (plan.action !== "none") skipped.push(`Claude statusline: ${plan.why ?? "left alone"}`);
-  }
+    } else if (statuslineOffer.action !== "none") skipped.push(`Claude statusline: ${statuslineOffer.why ?? "left alone"}`);
+  } else if (statuslineOffer && choices?.statusline === false) skipped.push("Claude statusline left alone: Claude's usage is assumed, not read, until it is set");
   // 3. Telemetry: off unless a person says yes. Asked once, default no; an agent's run never turns it on.
-  let asked = false;
-  try { asked = "telemetry" in JSON.parse(readFileSync(path, "utf8")); } catch {}
-  if (!asked && !envOff(env)) {
-    if (ask) {
-      say(`\n${NOTICE}`);
-      const share = /^y/i.test((await ask("Share them? [y/N] ")).trim());
-      shareOn(share, path);
-      (share ? did : skipped).push(share ? "telemetry on: anonymous outcomes, once a day (routr telemetry off to stop)" : "telemetry off (routr telemetry on, any time, to help tune routr)");
+  if (!telemetryAsked && !envOff(env)) {
+    if (choices?.telemetry !== undefined) {
+      shareOn(choices.telemetry, path);
+      (choices.telemetry ? did : skipped).push(choices.telemetry ? "telemetry on: anonymous outcomes, once a day (routr telemetry off to stop)" : "telemetry off (routr telemetry on, any time, to help tune routr)");
     } else skipped.push("telemetry is off. Ask the user whether to share anonymous outcomes (docs/telemetry.md); if they say yes: routr telemetry on");
   }
-  rl?.close();
-
-  // 4. The key, last, and only from a person: it must never pass through an agent.
-  if (!r.key.works && interactive) { say(""); const k = await key(); (k.ok ? did : skipped).push(k.ok ? `saved the TypeSafe key to ${k.file}${k.works ? " and it works" : `: ${k.error}`}` : `TypeSafe key not saved: ${k.error}. Run \`routr key set\` when you have it`); }
 
   // Looked at again, not reused: this second look is what starts the first background usage reading (Cursor, Kiro)
   // for a subscription setup just configured, so a new install has a reading before its first dispatch.
   const after = await look({ configPath: path, quiet: true });
   const result = { ok: true, did, skipped, config: path, next_steps: after.next_steps };
+  if (ui) {
+    ui.note("Done", did.length ? did : ["nothing needed writing"]);
+    if (skipped.length) ui.note("Notes", skipped, { dim: true });
+    if (after.next_steps.length) ui.note("Still to do", after.next_steps.map((x, i) => `${i + 1}. ${x}`));
+    ui.outro(`Change any setting later with routr setup, or ask your agent: every setting has a flag (routr setup --help).`);
+    ui.close();
+    return result;
+  }
   if (args.includes("--json")) return result;
-  say(`\n${did.map((d) => `${paint(32, "done")} ${d}`).concat(skipped.map((s) => `${paint(33, "note")} ${s}`)).join("\n")}\n\n${render(after)}`);
-  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour settings are plain JSON at ${path}: ${Object.entries(config.subscriptions).map(([n, s]) => settingSummary(n, s)).join("; ")}. Change one any time: routr setup --hardest <name>=basic|standard|strong --reserve <name>=<share>, or edit the file.`);
+  say(`\n${did.map((d) => `${paint(32, "done")} ${d}`).concat(skipped.map((x) => `${paint(33, "note")} ${x}`)).join("\n")}\n\n${render(after)}`);
+  if (!interactive && !args.includes("--yes") && !flagged) say("\nNot a terminal, so nothing was asked: suggestions were used. An agent changes a setting with a flag: routr setup --help lists them.");
+  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour settings are plain JSON at ${path}: ${Object.entries(config.subscriptions).map(([n, x]) => settingSummary(n, x)).join("; ")}. Change one any time: routr setup --yes --model <name>=<id> (or --effort, --hardest, --reserve, --disable), or ask your agent.`);
   return result;
 }
