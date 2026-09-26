@@ -93,9 +93,14 @@ export async function inspect({ configPath, quiet } = {}) {
     ...found.map((n) => step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))),
   ]);
   if (latest && standalone() && newer(latest, ROUTR_VERSION)) r.update_available = latest; // a source checkout is not updated
+  // How a reading reads in one line: a number, a billed seat's note, or why there is none.
+  const said = (u) => (u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)`
+    : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note}`);
   for (const n of KINDS) {
+    const command = HARNESSES[n].executable;
+    if (!found.includes(n)) { r.harnesses[n] = { command, installed: false, off_path: offPath(command), usage: null }; continue; }
     const u = usage.find((x) => x.pool === n);
-    r.harnesses[n] = { command: HARNESSES[n].executable, installed: found.includes(n), off_path: found.includes(n) ? null : offPath(HARNESSES[n].executable), usage: !found.includes(n) ? null : u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)` : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note}`, ...(found.includes(n) ? { usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) } : {}) };
+    r.harnesses[n] = { command, installed: true, off_path: null, usage: said(u), usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) };
   }
   if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; }
   else { r.key.found ??= false; r.key.works = false; r.key.error = String(key.e?.message ?? key.e).slice(0, 160); r.key.where = `set TYPESAFE_API_KEY, or put TYPESAFE_API_KEY=... in ${KEY_FILES[0]}`; }
@@ -159,7 +164,14 @@ export function render(r) {
   if (!r.skill.length) line("need", "routr skill not installed for your agents: run `routr skill install`");
   for (const k of r.skill) line(r.from_source || baseVersion(k.version) === base ? "ok" : "need", `routr skill ${k.where} is ${k.version}${r.from_source || baseVersion(k.version) === base ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
   const any = Object.values(r.harnesses).some((h) => h.installed);
-  for (const [n, h] of Object.entries(r.harnesses)) line(h.installed ? "ok" : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${h.installed ? `\`${h.command}\` found · usage ${h.usage}` : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it` : `\`${h.command}\` not found`}${h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${h.models.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${HARNESSES[n].list ?? `${h.command} models`}\` for the rest)` : ""}` : ""}`);
+  for (const [n, h] of Object.entries(r.harnesses)) {
+    const where = h.installed ? `\`${h.command}\` found · usage ${h.usage}`
+      : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it`
+      : `\`${h.command}\` not found`;
+    const more = h.models?.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${HARNESSES[n].list ?? `${h.command} models`}\` for the rest)` : "";
+    const models = h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${more}` : "";
+    line(h.installed ? "ok" : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${where}${models}`);
+  }
   line(r.key.works ? "ok" : "need", `TypeSafe key ${r.key.works ? `works (${r.key.model}${jevModel() !== JEV_MODEL ? `, asked as ${jevModel()} by ROUTR_JEV_MODEL` : ""}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
   line(r.config.exists && !problems.length ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && [...problems, ...notes].length ? `\n   ${[...problems, ...notes].join("\n   ")}` : ""}`);
   line(r.claude_usage_statusline !== STATUSLINE_MISSING, `Claude usage statusline: ${r.claude_usage_statusline}`);
