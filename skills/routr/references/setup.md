@@ -59,8 +59,13 @@ two; the user can take it. Then run:
 
     routr setup --yes --model claude=<id> --hardest cursor=standard --reserve claude=25% [--metered codex=after|with] ...
 
-At a terminal, `routr setup` asks the person the same questions itself, with the suggestion as the default; run
-again, it offers to go through the settings already there, each current value as the default.
+A person can instead run `routr setup` alone in a terminal: it is a guided screen. The first time it asks which
+subscriptions routr may use, then each one's model (from the harness's live list, typed to filter), effort, hardest
+work, and reserve, and shows every change for review before it writes anything. Run again, it shows what is set and a
+menu to change one thing, turn a subscription on or off, or walk through everything. Arrow keys choose, Esc goes back,
+Ctrl+C stops without writing. `ACCESSIBLE=1` asks the same questions as numbered lines, for a screen reader. Suggest it
+to a user who would rather click through than tell you each setting; you cannot drive it yourself, because it needs a
+terminal.
 
 It writes `~/.config/routr/config.json` for the harnesses found and sets the Claude statusline (step 4;
 `--no-statusline` leaves it). A subscription with no `--model` gets no default, and the orchestrator picks from the

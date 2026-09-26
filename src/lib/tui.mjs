@@ -28,6 +28,19 @@ const GLYPHS = {
 };
 const SGR = { cyan: 36, green: 32, yellow: 33, red: 31, gray: 90, dim: 2, bold: 1, strike: 9 };
 
+// Plain text broken into lines that fit beside the gutter, at word boundaries (a word longer than a line stays whole).
+export function wrap(text, width) {
+  const out = [];
+  for (const para of String(text).split("\n")) {
+    let line = "";
+    for (const word of para.split(" ")) {
+      if (line && line.length + 1 + word.length > width) { out.push(line); line = word; } else line = line ? `${line} ${word}` : word;
+    }
+    out.push(line);
+  }
+  return out;
+}
+
 // The number of screen rows a frame takes at this width (wide characters are counted as one column: a known limit).
 const rows = (text, width) => text.split("\n").reduce((n, line) => n + Math.max(1, Math.ceil(stripVTControlCharacters(line).length / Math.max(1, width))), 0);
 
@@ -88,8 +101,9 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
     outro: (text) => write(`${c.gray(g.bar)}\n${c.gray(g.end)}  ${text}\n`),
     cancel: (text) => write(`${c.gray(g.bar)}\n${c.red(g.end)}  ${text}\n`),
     // A boxed block of lines under a title, for the settings summary and the review.
-    note: (title, lines) => write(`${c.gray(g.bar)}\n${c.green(g.done)}  ${title}\n${lines.map((l) => `${c.gray(g.bar)}  ${l}`).join("\n")}\n`),
-    line: (text) => write(`${c.gray(g.bar)}  ${text}\n`),
+    // Lines are plain text, wrapped inside the gutter; `{ dim: true }` greys them.
+    note: (title, lines, { dim = false } = {}) => write(`${c.gray(g.bar)}\n${c.green(g.done)}  ${title}\n${lines.flatMap((l) => wrap(l, width() - 4)).map((l) => `${c.gray(g.bar)}  ${dim ? c.dim(l) : l}`).join("\n")}\n`),
+    line: (text, { dim = false } = {}) => write(`${wrap(text, width() - 4).map((l) => `${c.gray(g.bar)}  ${dim ? c.dim(l) : l}`).join("\n")}\n`),
     // A step that takes a while; `stop(summary)` replaces it with its result.
     spinner: (message) => {
       if (accessible) { write(`${message}\n`); return { stop: (summary) => { if (summary) write(`${summary}\n`); } }; }

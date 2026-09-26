@@ -81,7 +81,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
 
   // Which subscriptions routr may hand work to. Unchecked, a new harness is kept, turned off, so it can be turned on later.
   const choose = async () => {
-    for (const n of Object.keys(HARNESSES)) if (r.harnesses[n]?.installed && !r.harnesses[n]?.signed_in) ui.line(ui.style.dim(`${HARNESSES[n].label}: ${r.harnesses[n].sign_in}`));
+    for (const n of Object.keys(HARNESSES)) if (r.harnesses[n]?.installed && !r.harnesses[n]?.signed_in) ui.line(`${HARNESSES[n].label}: ${r.harnesses[n].sign_in}`, { dim: true });
     if (!candidates.length) { ui.line("No harness is installed and signed in yet: sign in to one, then run routr setup again."); return "none"; }
     const v = await ui.multiselect({ message: "Which subscriptions may routr hand work to?", min: 1,
       options: candidates.map((n) => ({ value: n, label: HARNESSES[n].label, hint: current[n] ? describe(n, draft[n]) : "new" })),
@@ -92,7 +92,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
   const extras = async () => {
     if (statusline) { const v = await ui.confirm({ message: "Claude Code reports usage only to its statusline. Set `routr statusline` as Claude's statusline command?", initial: true }); if (v === CANCEL || v === BACK) return v; answers.statusline = v; }
     if (telemetry) {
-      for (const l of NOTICE.split("\n")) ui.line(ui.style.dim(l));
+      ui.line(NOTICE, { dim: true });
       const v = await ui.confirm({ message: "Share anonymous outcomes once a day?", initial: false });
       if (v === CANCEL || v === BACK) return v;
       answers.telemetry = v;

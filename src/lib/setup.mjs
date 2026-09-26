@@ -249,7 +249,8 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const after = await look({ configPath: path, quiet: true });
   const result = { ok: true, did, skipped, config: path, next_steps: after.next_steps };
   if (ui) {
-    ui.note("Done", [...did, ...skipped.map((x) => ui.style.dim(x))]);
+    ui.note("Done", did.length ? did : ["nothing needed writing"]);
+    if (skipped.length) ui.note("Notes", skipped, { dim: true });
     if (after.next_steps.length) ui.note("Still to do", after.next_steps.map((x, i) => `${i + 1}. ${x}`));
     ui.outro(`Change any setting later with routr setup, or ask your agent: every setting has a flag (routr setup --help).`);
     ui.close();

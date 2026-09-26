@@ -5,13 +5,13 @@ import { expect, test } from "bun:test";
 import { accessibleOk, BACK, CANCEL, colourOk, createUI, unicodeOk } from "../src/lib/tui.mjs";
 
 // A terminal routr can draw on and type into: `keys(...)` sends key presses after the prompt is drawn.
-function terminal({ env = { TERM: "xterm-256color" }, platform = "darwin", colour = true } = {}) {
+function terminal({ env = { TERM: "xterm-256color" }, platform = "darwin", colour = true, columns = 80 } = {}) {
   const input = new EventEmitter();
   const raw = [];
   input.setRawMode = (on) => raw.push(on);
   input.resume = () => {}; input.pause = () => {};
   let out = "";
-  const output = { isTTY: colour, columns: 80, rows: 24, write: (s) => { out += s; } };
+  const output = { isTTY: colour, columns, rows: 24, write: (s) => { out += s; } };
   const ui = createUI({ input, output, env, platform, accessible: false });
   const press = (...keys) => setTimeout(() => { for (const k of keys) input.emit("keypress", typeof k === "string" && k.length === 1 ? k : undefined, typeof k === "string" ? (k.length === 1 ? { name: k === " " ? "space" : k } : { name: k }) : k); }, 0);
   return { ui, press, raw, output: () => stripVTControlCharacters(out), rawOutput: () => out };
@@ -101,4 +101,15 @@ test("accessible mode asks numbered questions line by line, and b goes back", as
   expect(await ui.select({ message: "Pick", options })).toBe(BACK);
   expect(await ui.confirm({ message: "Sure?", initial: true })).toBe(true); // Enter keeps the default
   expect(await ui.confirm({ message: "Sure?", initial: true })).toBe(false);
+});
+
+test("long lines wrap inside the gutter, at word boundaries", async () => {
+  const { wrap } = await import("../src/lib/tui.mjs");
+  expect(wrap("one two three four", 9)).toEqual(["one two", "three", "four"]);
+  expect(wrap("a https://example.com/a/very/long/url b", 10)).toEqual(["a", "https://example.com/a/very/long/url", "b"]);
+  const t = terminal({ columns: 30 });
+  t.ui.line("routr can share anonymous outcomes with its maintainers once a day");
+  const lines = t.output().split("\n").filter(Boolean);
+  expect(lines.length).toBeGreaterThan(2);
+  expect(lines.every((l) => l.startsWith("│  ") && l.length <= 30)).toBe(true);
 });

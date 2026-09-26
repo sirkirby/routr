@@ -101,7 +101,7 @@ export const COMMANDS = {
   },
   setup: {
     name: "setup",
-    description: "do what doctor says is missing: write your settings for the harnesses found, set Claude's usage statusline, ask for the key. Asks questions at a terminal; an agent passes --yes. Run it again with a flag to change one setting",
+    description: "do what doctor says is missing: write your settings for the harnesses found, set Claude's usage statusline, ask for the key. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting",
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
       { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list; repeatable. Also changes it on an existing config", required: false },
