@@ -19,7 +19,7 @@ const short = (e, n = 160) => String(e?.message ?? e).slice(0, n);
 
 // `routr subagent|dispatch "<brief>"`: Jev's reading of the brief with the user's preferences, and for dispatch the
 // subscriptions ranked by usage, read while Jev answers. An unreachable Jev still gets an answer: the user's fallback.
-export async function adviseCommand(mode, brief, { config, notes: configNotes }, given = {}, { askFn = ask, read = readUsage } = {}) {
+export async function adviseCommand(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read = readUsage } = {}) {
   const out = { id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: createHash("sha256").update(brief).digest("hex").slice(0, 12), brief_chars: brief.length };
   let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };
   // Each source's newest reading, read while Jev answers; a slow source (Cursor's screen) is a snapshot refreshed in the background.

@@ -58,13 +58,15 @@ const ACT = {
   feedback: async (args) => { const r = await (await import("./lib/telemetry.mjs")).sendFeedback(args.join(" ")); print(r); return r.ok ? 0 : 1; },
   skill: async (args) => { print((await import("./lib/skill-install.mjs")).installSkill({ dryRun: args.includes("--dry-run") }), 1); return 0; },
 };
-// Which of those a command line reaches: `key set` and `skill install` only with their word; `doctor --fix` is setup.
-const acting = (a) => (a[0] === "key" ? a[1] === "set" : a[0] === "skill" ? a[1] === "install" : a[0] === "doctor" ? a.includes("--fix") : a[0] !== "update" && Object.hasOwn(ACT, a[0]));
+// Which of those a command line reaches (launch and update are dispatched first, below): `key set` and `skill install`
+// only with their word, and `doctor --fix` is setup.
+const WITH_WORD = { key: "set", skill: "install" };
+const acting = (a) => (Object.hasOwn(WITH_WORD, a[0]) ? a[1] === WITH_WORD[a[0]] : a[0] === "doctor" ? a.includes("--fix") : Object.hasOwn(ACT, a[0]));
 
 if (argv[0] === "launch") process.exit(await ACT.launch(argv.slice(1)));
 if (argv.includes("--version")) { console.log((await import("./lib/version.mjs")).ROUTR_VERSION); process.exit(0); }
 if (argv[0] === "update") process.exit(await ACT.update(argv.slice(1)));
-if (acting(argv)) process.exit(await ACT[argv[0] === "doctor" ? "setup" : argv[0]](argv.slice(argv[0] === "key" || argv[0] === "skill" ? 2 : 1)));
+if (acting(argv)) process.exit(await ACT[argv[0] === "doctor" ? "setup" : argv[0]](argv.slice(Object.hasOwn(WITH_WORD, argv[0]) ? 2 : 1)));
 
 // The advice and file commands. `--config` and `--headroom` may stand anywhere on the line, as they always could.
 // `take` removes the first `name <value>` from `argv` and returns the value; `takeAll` every one.

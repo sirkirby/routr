@@ -1,15 +1,15 @@
 // Cursor has no local usage file: it shows usage only in its own /usage screen. This opens that screen in a throwaway
-// terminal (terminal.mjs) and reads Included N% used. routr keeps the reading (usage.mjs: refreshCursor).
+// terminal (terminal.mjs) and reads Included N% used. routr keeps the reading (refreshCursor, below).
 // The footer context meter (e.g. "Grok 4.6 High · 8.7%") is not usage and must never be parsed as it.
 import { randomBytes } from "node:crypto";
 import { chmodSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { deadline, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
+import { deadline, runHerdr, SHELLS, shellAlone, shellFamily, waitForShell } from "./herdr.mjs";
 import { CURSOR_SNAPSHOT } from "./runtime.mjs";
 import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
-import { openTerminal, shellAlone } from "./terminal.mjs";
+import { openTerminal } from "./terminal.mjs";
 
 const PCT = String.raw`(\d+(?:\.\d+)?)%\s+used\b`;
 

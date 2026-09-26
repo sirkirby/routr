@@ -10,7 +10,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
-import { paneText } from "./herdr.mjs";
+import { paneView } from "./herdr.mjs";
 
 // A session routr made carries the pid of the routr that made it, so a run that was killed half way is cleaned up by
 // the next one without touching a session another routr is still using. A pid can be reused, so a session older than
@@ -23,7 +23,7 @@ const ageMs = (dir) => { try { return Date.now() - statSync(dir).mtimeMs; } catc
 const startServer = (name, failed) => { const c = spawn("herdr", ["--session", name, "server"], { detached: true, stdio: "ignore", windowsHide: true }); c.on("error", failed); c.unref(); };
 
 // `call(args)` runs one herdr command in the private session and throws on failure; `pane` is where to type; `read`,
-// `info` and `keys` are that pane as herdr.mjs's waitForShell takes it.
+// `info` and `keys` are that pane as herdr.mjs's paneView gives it.
 // `close()` removes the session and never throws; if herdr is too slow to stop it, the next run removes it (its pid is
 // gone by then). open() cleans up after itself when it fails half way.
 export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAlive, age = ageMs, start = startServer, pid = process.pid } = {}) {
@@ -65,17 +65,6 @@ export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAliv
     }
     const pane = (await call(["workspace", "create", "--cwd", cwd, "--no-focus"])).data?.result?.root_pane?.pane_id;
     if (typeof pane !== "string" || !pane) throw new Error("herdr returned no pane id");
-    return {
-      pane, call, close,
-      read: async () => paneText((await call(["pane", "read", pane, "--source", "visible"])).data),
-      info: async () => (await call(["pane", "process-info", "--pane", pane])).data.result.process_info,
-      keys: (...keys) => call(["pane", "send-keys", pane, ...keys]),
-    };
+    return { pane, call, close, ...paneView(call, pane) };
   } catch (e) { await close(); throw e; }
-}
-
-// True when the shell is the only thing running in the pane: a command typed into it has exited, or never started.
-export async function shellAlone(t) {
-  const info = await t.info();
-  return (info.foreground_processes ?? []).every((p) => p.pid === info.shell_pid);
 }

@@ -42,7 +42,7 @@ export function shellFamily(name) {
   return "posix";
 }
 
-// What launch types into a shell, in that shell's own syntax. Cursor gets a private config folder for the life of the
+// What gets typed into a pane's shell, in that shell's own syntax (launch, and Cursor's usage read). Cursor gets a private config folder for the life of the
 // process. On a POSIX shell one command starts Cursor and removes the folder when it exits, however it exits (`cursor`).
 // On Windows, herdr sees only the shell in a pane's foreground, so a Cursor started that way is never tracked and its
 // readiness cannot be waited on (seen on Windows 11: `agent get` said not found while Cursor sat at its prompt). There
@@ -109,6 +109,20 @@ export function runHerdr(args, timeout) {
       done({ ok: code === 0 && !data?.error, data });
     });
   });
+}
+
+// A pane as routr reads and types into it, through `call` (one herdr command, which throws on failure): its screen,
+// its processes, and keys. launch drives the user's panes with it, terminal.mjs its private session's.
+export const paneView = (call, pane) => ({
+  read: async () => paneText((await call(["pane", "read", pane, "--source", "visible"])).data),
+  info: async () => (await call(["pane", "process-info", "--pane", pane])).data.result.process_info,
+  keys: (...keys) => call(["pane", "send-keys", pane, ...keys]),
+});
+
+// True when the shell is the only thing running in the pane: a command typed into it has exited, or never started.
+export async function shellAlone(pane) {
+  const info = await pane.info();
+  return (info.foreground_processes ?? []).every((p) => p.pid === info.shell_pid);
 }
 
 // A time budget for a sequence of herdr calls: `remaining()` is what is left, and throws `message` once it is spent.

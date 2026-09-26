@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HARNESSES, kindError, plan } from "./harnesses.mjs";
-import { clean, deadline, paneText, quote, runHerdr, SHELLS, shellFamily, shellPrompt, waitForShell } from "./herdr.mjs";
+import { clean, deadline, paneText, paneView, quote, runHerdr, SHELLS, shellFamily, shellPrompt, waitForShell } from "./herdr.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
 // around it, so it points at the installed skill (written by the installer or `routr skill install`).
@@ -28,24 +28,30 @@ export function logCommand(log, text) {
   log.push(text); return log;
 }
 
-export function trustDialog(text) {
+// The menu below the last line on screen that `isQuestion` accepts: numbered options ("› 1. Yes, continue"), or else
+// the lines that START with Yes or No, numbered by order, so a tip or a status line can never be taken for one. Null
+// when there is no such question, or when a later input prompt (or `answered`) shows it has already scrolled past.
+function menuAfter(text, isQuestion, answered) {
   const t = clean(text).replace(/^[│┃][ \t]?|[ \t]*[│┃]$/gm, "");
-  // Use the last question, never an affirmative option or a historical status message.
-  const questions = [...t.matchAll(/^\s*(?:(?:Do you trust|Trust (?:this|the))\b[^\n]*|[^\n]*\b(?:folder|directory|project|workspace)\b[^\n]*\btrust\s*\?)[ \t]*$/gmi)];
-  const question = questions.at(-1);
+  const question = [...t.matchAll(/^[^\n]*$/gm)].filter((m) => isQuestion(m[0])).at(-1);
   if (!question) return null;
   const below = t.slice(question.index + question[0].length);
-  // A later input prompt means the question has already scrolled past.
-  if (shellPrompt(below) === "ready") return null;
+  if (shellPrompt(below) === "ready" || answered?.test(below)) return null;
   let matches = [...below.matchAll(/^[ \t]*([❯›>→▶]?)[ \t]*(\d+)[.)][ \t]+(.+)$/gm)];
-  let options = matches
-    .map((m) => ({ number: m[2], text: m[3].trim(), selected: !!m[1] }));
+  let options = matches.map((m) => ({ number: m[2], text: m[3].trim(), selected: !!m[1] }));
   if (!options.length) {
-    // Unnumbered menus (Claude Code, Antigravity): "> Yes, I trust this folder" / "  No, exit". Only lines that START
-    // with Yes or No count as options, so a tip or a status line can never be taken for one; they are numbered by order.
     matches = [...below.matchAll(/^[ \t]*([❯›>→▶]?)[ \t]*((?:Yes|No)\b[^\n]*)$/gmi)];
     options = matches.map((m, i) => ({ number: String(i + 1), text: m[2].trim(), selected: !!m[1] }));
   }
+  return { options, matches, below };
+}
+
+// A folder-trust question: the last one on screen, never an affirmative option or a historical status message.
+const TRUST_QUESTION = /^\s*(?:(?:Do you trust|Trust (?:this|the))\b[^\n]*|[^\n]*\b(?:folder|directory|project|workspace)\b[^\n]*\btrust\s*\?)[ \t]*$/i;
+export function trustDialog(text) {
+  const menu = menuAfter(text, (line) => TRUST_QUESTION.test(line));
+  if (!menu) return null;
+  const { options, matches, below } = menu;
   const affirmative = options.filter((o) => /^(?:yes(?:$|,?\s+(?:I trust\b|continue\b|trust\b))|trust (?:this|the)\b)/i.test(o.text)
     && !/\b(?:don't|do not|no)\b/i.test(o.text));
   const yes = affirmative.length === 1 ? options.indexOf(affirmative[0]) : -1;
@@ -64,12 +70,9 @@ export function trustDialog(text) {
 // the answer is selected: Kiro dropped an arrow sent in the same burst as enter and took "No, exit" (measured).
 export function permissiveConfirm(text, confirm) {
   if (!confirm) return null;
-  const t = clean(text).replace(/^[│┃][ \t]?|[ \t]*[│┃]$/gm, "");
-  const question = [...t.matchAll(/^[^\n]*$/gm)].filter((m) => confirm.question.test(m[0])).at(-1);
-  if (!question) return null;
-  const below = t.slice(question.index + question[0].length);
-  if (shellPrompt(below) === "ready" || confirm.answered?.test(below)) return null; // answered, and scrolled past
-  const options = [...below.matchAll(/^[ \t]*([❯›>→▶]?)[ \t]*((?:Yes|No)\b[^\n]*)$/gmi)].map((m) => ({ text: m[2].trim(), selected: !!m[1] }));
+  const menu = menuAfter(text, (line) => confirm.question.test(line), confirm.answered);
+  if (!menu) return null;
+  const options = menu.options.map(({ text, selected }) => ({ text, selected }));
   const answer = options.findIndex((o) => confirm.answer.test(o.text)), selected = options.findIndex((o) => o.selected);
   if (answer < 0 || selected < 0 || options.filter((o) => o.selected).length !== 1 || options.filter((o) => confirm.answer.test(o.text)).length !== 1) return { options, keys: null };
   return { options, answer: options[answer].text, keys: answer === selected ? ["enter"] : Array(Math.abs(answer - selected)).fill(answer < selected ? "up" : "down") };
@@ -165,17 +168,11 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       if (!r.ok && !tolerate) throw new Error(r.data?.error?.message ?? JSON.stringify(r.data));
       return r;
     };
-    const readPane = async () => {
-      touchedPane = true;
-      return paneText((await call(["pane", "read", out.pane, "--source", "visible"])).data);
-    };
+    const pane = () => paneView(call, out.pane); // the pane id is known only once it is split or adopted
+    const readPane = async () => { touchedPane = true; return pane().read(); };
     const pause = async () => sleep(Math.min(250, remaining()));
     const shellReady = async (expectedCwd) => {
-      const r = await waitForShell({
-        read: readPane,
-        info: async () => (await call(["pane", "process-info", "--pane", out.pane])).data.result.process_info,
-        keys: (...keys) => call(["pane", "send-keys", out.pane, ...keys]),
-      }, { sleep, now, remaining, cwd: expectedCwd, refuseBusy: Boolean(o.pane && !expectedCwd),
+      const r = await waitForShell({ ...pane(), read: readPane }, { sleep, now, remaining, cwd: expectedCwd, refuseBusy: Boolean(o.pane && !expectedCwd),
         onShell: (name) => { shell = shellFamily(name); },
         onAnswer: () => { out.warnings.push("Answered no to the shell's dotenv Source it? question."); step("shell_answer", true, "dotenv: sent n, enter"); } });
       if (!r.ok) return human(r.why, r.text);

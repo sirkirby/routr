@@ -5,13 +5,13 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { CONFIG_PATH, DEFAULTS, loadConfig } from "./config.mjs";
-import { HARNESSES, KINDS, named, readUsage, SKILL_FOLDERS, TAKES_EFFORT } from "./harnesses.mjs";
+import { HARNESSES, KINDS, readUsage, SKILL_FOLDERS, TAKES_EFFORT } from "./harnesses.mjs";
 import { jevModel, KEY_FILES, loadKey, ping } from "./jev.mjs";
 import { JEV_MODEL } from "./questions.mjs";
-import { CLAUDE_SNAPSHOT, NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
+import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
+import { CLAUDE_SNAPSHOT, standalone } from "./runtime.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
 import { telemetryStatus } from "./telemetry.mjs";
-import { standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 
@@ -38,7 +38,6 @@ function offPath(cmd) {
 
 const MODELS_SHOWN = 12;
 
-export { TAKES_EFFORT }; // setup asks the same questions of the same harnesses
 
 // The config `routr setup` writes: the user's defaults for the harnesses found. A model is set only when the user chose one.
 // `ranks` holds `metered_rank` per pool that reads as metered at setup, written out so the key is there to change.
@@ -57,7 +56,7 @@ export function nextSteps(r) {
   if (!r.config.exists) steps.push("Create your config (your defaults for each subscription found): routr setup");
   else if (r.config.problems?.length) steps.push(`Fix your settings: ${r.config.problems.join("; ")}`);
   else if (Object.entries(r.harnesses).some(([n, h]) => h.installed && !r.config.subscriptions.includes(n))) steps.push(`Add the harnesses found since the config was written (${Object.entries(r.harnesses).filter(([n, h]) => h.installed && !r.config.subscriptions.includes(n)).map(([n]) => n).join(", ")}): routr setup`);
-  if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push(`Install and log in to at least one harness: ${KINDS.slice(0, -1).map(named).join(", ")}, or ${named(KINDS.at(-1))}`);
+  if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push(`Install and log in to at least one harness: ${KINDS.slice(0, -1).map((n) => HARNESSES[n].installAs).join(", ")}, or ${HARNESSES[KINDS.at(-1)].installAs}`);
   if (r.claude_usage_statusline === STATUSLINE_MISSING) steps.push("Let routr read Claude Code's usage (sets Claude's statusline command): routr setup");
   // Claude answered a prompt and still sent no windows: a seat with no quota, or a plan routr has not seen send them.
   // routr does not guess which; the user says, either way, and the step clears.
@@ -84,11 +83,13 @@ export async function inspect({ configPath, quiet } = {}) {
   const step = async (label, p) => { try { return await p; } finally { if (tty) process.stderr.write(`  checked ${label}\n`); } };
   if (tty) process.stderr.write(`Checking ${["the TypeSafe key", ...found.map((n) => `\`${HARNESSES[n].executable}\``)].join(", ")} (a harness can take up to 20 s to answer)…\n`);
   const keyCheck = async () => { loadKey(); r.key.found = true; return ping(); };
+  const path = configPath ?? CONFIG_PATH;
+  const { config, notes } = loadConfig(path); // read once: the usage step and the config report use the same reading
   // The release lookup is one short, non-fatal call. Only doctor and `routr update` make it; the advice commands never call home.
   const [latest, usage, key, ...models] = await Promise.all([
     process.env.ROUTR_NO_UPDATE ? null : latestVersion(3000).catch(() => null),
     // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
-    step("usage", readUsage(found, {}, { background: Object.keys(loadConfig(configPath ?? CONFIG_PATH).config.subscriptions ?? {}) })),
+    step("usage", readUsage(found, {}, { background: Object.keys(config.subscriptions ?? {}) })),
     step("the TypeSafe key", keyCheck().then((t) => ({ t }), (e) => ({ e }))),
     ...found.map((n) => step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))),
   ]);
@@ -111,8 +112,6 @@ export async function inspect({ configPath, quiet } = {}) {
   r.skill = SKILL_FOLDERS.map((f) => `${f}/routr`).map((d) => {
     try { return { where: `~/${d}`, version: readFileSync(join(homedir(), d, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\n]+)"?/m)?.[1] ?? "unknown" }; } catch { return null; }
   }).filter(Boolean);
-  const path = configPath ?? CONFIG_PATH;
-  const { config, notes } = loadConfig(path);
   // `problems` are settings that are missing or wrong, each with its fix; `notes` are only for information.
   const problems = existsSync(path) ? [...notes] : [], info = []; // no config at all is its own line and next step
   r.config = { path, exists: existsSync(path), subscriptions: Object.keys(config.subscriptions), billing: Object.fromEntries(Object.entries(config.subscriptions).filter(([, s]) => s.billing).map(([n, s]) => [n, s.billing])), problems, notes: info };

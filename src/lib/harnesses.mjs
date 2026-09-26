@@ -1,6 +1,7 @@
 // Everything routr knows about each harness, in one place: adding a harness is one entry here (and its row in
 // references/harnesses.md). Launch flags are measured; see references/harnesses.md.
-//   label, executable: how it is named to a person, and the command that starts it.
+//   label, executable: how it is named to a person, and the command that starts it. installAs: how the install hint
+//     names it ("Cursor (cursor-agent)": the command, where the name does not already say it).
 //   skills: the skills folder it reads, when not the shared ~/.agents/skills (the skill is linked there on install).
 //   permissions, model, effort: its permissive flags and model/effort syntax. effortValue(level): the value passed
 //     after `effort`, when not the level itself. autoEffort: the effort that means "the model's own default", passed
@@ -12,34 +13,34 @@
 //     screen that it took `--model`, for a harness that silently runs its default on an id it does not know.
 //   list: its own command that lists model ids; models(): that list, read now (routr keeps no model list of its own).
 //   suggested: the settings setup offers for it. usage: `read` runs on every call and must be fast; `check` takes a
-//     fresh reading now and prints it raw (`routr usage <name>`).
-import { readCursor, refreshCursor } from "./cursor-usage.mjs";
-import { readKiro, refreshKiro } from "./kiro-usage.mjs";
+//     fresh reading now and prints it raw (`routr usage <name>`). Cursor's and Kiro's readers bring herdr's terminal and
+//     their snapshot rules with them, so they load when first read: help, --version, and every command that reads no
+//     usage stay light. (Literal import paths, so the compiled binary still bundles them.)
 import { run } from "./runtime.mjs";
 import { readAgy, readClaude, readCodexLive, summarize } from "./usage.mjs";
 
 const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 20000 })) ?? "").split("\n").map((l) => l.match(pattern)?.[1]).filter(Boolean);
 
 export const HARNESSES = {
-  claude: { label: "Claude Code", executable: "claude", skills: ".claude/skills",
+  claude: { label: "Claude Code", executable: "claude", installAs: "Claude Code", skills: ".claude/skills",
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
     models: async () => ["haiku", "sonnet", "opus"], // aliases Claude Code resolves itself; `--model` also takes full ids
     suggested: { hardest_work: "strong", reserve: 0.25 },
     usage: { read: readClaude } },
-  codex: { label: "Codex", executable: "codex",
+  codex: { label: "Codex", executable: "codex", installAs: "Codex",
     permissions: ["--yolo"], model: "-m", effort: "-c", effortValue: (level) => `model_reasoning_effort=${level}`, list: "codex debug models",
     models: async () => { try { const o = JSON.parse(await run("codex", ["debug", "models"], { timeoutMs: 15000 })); return (o.models ?? o).map((m) => m.slug ?? m.id).filter(Boolean); } catch { return null; } },
     suggested: { hardest_work: "strong", reserve: 0.2 },
     usage: { read: readCodexLive } },
-  cursor: { label: "Cursor", executable: "cursor-agent",
+  cursor: { label: "Cursor", executable: "cursor-agent", installAs: "Cursor (cursor-agent)",
     permissions: ["--yolo", "--trust"], model: "--model", list: "cursor-agent models",
     noEffort: "cursor has no separate --effort flag; choose a model id with the desired effort",
     env: (dir) => ({ CURSOR_CONFIG_DIR: dir ?? "<private-cursor-config-dir>" }),
     notes: () => ["Cursor changes its configured default model; launch uses a private copy of ~/.cursor/cli-config.json."],
     models: () => lines("cursor-agent", ["models"], /^\s*([a-z0-9][\w.-]+) - /i),
     suggested: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 },
-    usage: { read: readCursor, check: refreshCursor } },
-  agy: { label: "Antigravity", executable: "agy",
+    usage: { read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor(o) } },
+  agy: { label: "Antigravity", executable: "agy", installAs: "Antigravity (agy)",
     permissions: ["--dangerously-skip-permissions"], model: "--model", list: "agy models", dirFlag: "--add-dir",
     noEffort: "agy encodes effort in --model; omit --effort (passing both silently selects HIGH)",
     models: () => lines("agy", ["models"], /^([a-z0-9][\w.-]+)\t/i),
@@ -50,7 +51,7 @@ export const HARNESSES = {
   // `--effort` is per model (kiro.dev/docs/models/effort: the newer Claude and GPT models); a model without it, `auto`
   // included, shows effort "n/a" and ignores the flag silently (measured). Kiro remembers an explicit level as the
   // user's default for that model (its docs), so `auto`, the default, passes none and the model decides.
-  kiro: { label: "Kiro", executable: "kiro-cli", skills: ".kiro/skills", // Kiro reads only ~/.kiro/skills (measured)
+  kiro: { label: "Kiro", executable: "kiro-cli", installAs: "Kiro (kiro-cli)", skills: ".kiro/skills", // Kiro reads only ~/.kiro/skills (measured)
     permissions: ["chat", "--trust-all-tools"], model: "--model", effort: "--effort", autoEffort: "auto", list: "kiro-cli chat --list-models",
     confirm: { question: /\brunning in trust all tools mode\b/i, answer: /^Yes, I accept$/i, answered: /\bTrust All Tools active\b/i },
     // The footer reads `kiro_default · claude-sonnet-4.5 · ◔ 5%`; with an unknown id it reads `kiro_default · ◔ 5%`.
@@ -63,7 +64,7 @@ export const HARNESSES = {
     // Kiro's own router, which its docs recommend and which picks the model per task, and effort left to the model:
     // `auto` passes no --effort, which Kiro would otherwise remember as the user's default for that model.
     suggested: { hardest_work: "standard", reserve: 0.1, default_model: "auto", default_effort: "auto" },
-    usage: { read: readKiro, check: refreshKiro } },
+    usage: { read: async (o) => (await import("./kiro-usage.mjs")).readKiro(o), check: async (o) => (await import("./kiro-usage.mjs")).refreshKiro(o) } },
 };
 export const KINDS = Object.keys(HARNESSES);
 const KIND_ERROR = `--kind must be ${KINDS.slice(0, -1).join(", ")}, or ${KINDS.at(-1)}`;
@@ -72,8 +73,7 @@ export const kindError = () => new Error(KIND_ERROR);
 export const TAKES_EFFORT = KINDS.filter((n) => HARNESSES[n].effort);
 // Where the routr skill is installed: the shared folder, then each harness's own.
 export const SKILL_FOLDERS = [".agents/skills", ...KINDS.map((n) => HARNESSES[n].skills).filter(Boolean)];
-// "Claude Code, Codex, Cursor (cursor-agent), …": the command is named where the name does not already say it.
-export const named = (n) => (HARNESSES[n].label.toLowerCase().startsWith(HARNESSES[n].executable) ? HARNESSES[n].label : `${HARNESSES[n].label} (${HARNESSES[n].executable})`);
+
 
 export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir }) {
   const h = Object.hasOwn(HARNESSES, kind) && HARNESSES[kind];
