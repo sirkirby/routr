@@ -10,7 +10,7 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
-import { paneText, promptSettled, shellPrompt } from "./launch.mjs";
+import { paneText } from "./herdr.mjs";
 
 // A session routr made carries the pid of the routr that made it, so a run that was killed half way is cleaned up by
 // the next one without touching a session another routr is still using. A pid can be reused, so a session older than
@@ -22,7 +22,8 @@ const ageMs = (dir) => { try { return Date.now() - statSync(dir).mtimeMs; } catc
 // A spawn can fail after it returns (EACCES, EMFILE, herdr gone since the last call): report it, never let it throw.
 const startServer = (name, failed) => { const c = spawn("herdr", ["--session", name, "server"], { detached: true, stdio: "ignore", windowsHide: true }); c.on("error", failed); c.unref(); };
 
-// `call(args)` runs one herdr command in the private session and throws on failure; `pane` is where to type.
+// `call(args)` runs one herdr command in the private session and throws on failure; `pane` is where to type; `read`,
+// `info` and `keys` are that pane as herdr.mjs's waitForShell takes it.
 // `close()` removes the session and never throws; if herdr is too slow to stop it, the next run removes it (its pid is
 // gone by then). open() cleans up after itself when it fails half way.
 export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAlive, age = ageMs, start = startServer, pid = process.pid } = {}) {
@@ -64,44 +65,17 @@ export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAliv
     }
     const pane = (await call(["workspace", "create", "--cwd", cwd, "--no-focus"])).data?.result?.root_pane?.pane_id;
     if (typeof pane !== "string" || !pane) throw new Error("herdr returned no pane id");
-    return { pane, call, close };
+    return {
+      pane, call, close,
+      read: async () => paneText((await call(["pane", "read", pane, "--source", "visible"])).data),
+      info: async () => (await call(["pane", "process-info", "--pane", pane])).data.result.process_info,
+      keys: (...keys) => call(["pane", "send-keys", pane, ...keys]),
+    };
   } catch (e) { await close(); throw e; }
 }
 
-export const readScreen = async (t) => paneText((await t.call(["pane", "read", t.pane, "--source", "visible"])).data);
-
 // True when the shell is the only thing running in the pane: a command typed into it has exited, or never started.
 export async function shellAlone(t) {
-  const info = (await t.call(["pane", "process-info", "--pane", t.pane])).data.result.process_info;
+  const info = await t.info();
   return (info.foreground_processes ?? []).every((p) => p.pid === info.shell_pid);
-}
-
-// Wait until the terminal's shell sits at a settled prompt, and return the shell's process name, answering a dotenv plugin's question with "n" (a login shell
-// in a folder holding a .env asks before sourcing it). Anything else that asks is an error: routr never guesses an answer.
-export async function waitForShell(t, { sleep, now, remaining }) {
-  let answers = 0, answered = false, answeredAt = null, previous = null;
-  const pause = () => sleep(Math.min(250, remaining()));
-  for (;;) {
-    const text = await readScreen(t);
-    const info = (await t.call(["pane", "process-info", "--pane", t.pane])).data.result.process_info;
-    const processes = info.foreground_processes ?? [];
-    const shell = processes.find((p) => p.pid === info.shell_pid);
-    if (processes.some((p) => p.pid !== info.shell_pid) || !shell) { previous = null; await pause(); continue; }
-    const name = shell.name;
-    const state = shellPrompt(text);
-    if (state === "dotenv") {
-      if (!answered) {
-        if (++answers > 3) throw new Error("Shell repeated the dotenv question");
-        await t.call(["pane", "send-keys", t.pane, "n", "enter"]);
-        answered = true; answeredAt = now();
-      }
-      if (now() - answeredAt >= 5000) throw new Error("Shell did not clear the dotenv question after answering");
-    } else {
-      answered = false;
-      if (state === "question") throw new Error("Unrecognized shell question");
-      if (state === "ready" && promptSettled(text, previous)) return name;
-    }
-    previous = text;
-    await pause();
-  }
 }

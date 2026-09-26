@@ -13,7 +13,8 @@ import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
 import { HARNESSES, plan } from "../src/lib/harness.mjs";
 import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage } from "../src/lib/cursor-usage.mjs";
-import { composePrompt, promptSettled, launch, paneText, parseLaunchArgs, permissiveConfirm, quote, shellPrompt, trustDialog, WORKER_GUIDE } from "../src/lib/launch.mjs";
+import { composePrompt, launch, parseLaunchArgs, permissiveConfirm, trustDialog, WORKER_GUIDE } from "../src/lib/launch.mjs";
+import { paneText, promptSettled, quote, shellPrompt } from "../src/lib/herdr.mjs";
 import { COMMANDS, DESCRIPTION, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "../src/lib/help.mjs";
 
 // Tests call no harness. A stub herdr goes first on PATH, so a test that reaches past its fake is refused instead of
@@ -1029,7 +1030,7 @@ unixOnly("transport timeouts return a timeout code, even if the subprocess print
   try {
     const executable = join(root, "herdr");
     writeFileSync(executable, '#!/bin/sh\nprintf \'{"result":{}}\'\nexec sleep 30\n'); chmodSync(executable, 0o755);
-    const modulePath = new URL("../src/lib/launch.mjs", import.meta.url).href;
+    const modulePath = new URL("../src/lib/herdr.mjs", import.meta.url).href;
     const result = Bun.spawnSync(["bun", "-e", `import { runHerdr } from ${JSON.stringify(modulePath)}; console.log(JSON.stringify(await runHerdr([], 50)));`],
       { env: { ...process.env, PATH: `${root}:${process.env.PATH}` } });
     expect(result.exitCode).toBe(0);
@@ -2105,7 +2106,7 @@ test("the file-and-ledger commands answer instead of failing", async () => {
 });
 
 test("launch types each shell's own syntax: Cursor's private config is set and removed in PowerShell and cmd too", async () => {
-  const { SHELLS, shellFamily } = await import("../src/lib/launch.mjs");
+  const { SHELLS, shellFamily } = await import("../src/lib/herdr.mjs");
   expect(["zsh", "bash", "fish", undefined].map(shellFamily)).toEqual(["posix", "posix", "posix", "posix"]);
   expect(["powershell.exe", "pwsh", "cmd.exe", "CMD"].map(shellFamily)).toEqual(["powershell", "powershell", "cmd", "cmd"]);
   const dir = "C:\\Users\\u\\AppData\\Local\\Temp\\routr-cursor-1";

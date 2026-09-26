@@ -6,8 +6,8 @@ import { chmodSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { runHerdr, SHELLS, shellFamily } from "./launch.mjs";
-import { openTerminal, readScreen, shellAlone, waitForShell } from "./terminal.mjs";
+import { deadline, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
+import { openTerminal, shellAlone } from "./terminal.mjs";
 
 const PCT = String.raw`(\d+(?:\.\d+)?)%\s+used\b`;
 
@@ -45,15 +45,12 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
   tmp = tmpdir(), timeout = 90000, terminal = {}, cursorConfig = join(homedir(), ".cursor", "cli-config.json") } = {}) {
   let t = null, dir = null;
   try {
-    const began = now();
-    const remaining = () => {
-      const ms = Math.floor(timeout - (now() - began));
-      if (!Number.isFinite(ms) || ms <= 0) throw new Error("Cursor usage timed out");
-      return ms;
-    };
+    const remaining = deadline(timeout, now, "Cursor usage timed out");
     const pause = async () => sleep(Math.min(250, remaining()));
     t = await openTerminal({ run, cwd: tmp, remaining, sleep, ...terminal });
-    const shell = shellFamily(await waitForShell(t, { sleep, now, remaining }));
+    const ready = await waitForShell(t, { sleep, now, remaining });
+    if (!ready.ok) throw new Error(ready.why);
+    const shell = shellFamily(ready.name);
     dir = join(tmp, `routr-cursor-${randomBytes(4).toString("hex")}`);
     mkdirSync(dir, { mode: 0o700 });
     try { copyFileSync(cursorConfig, join(dir, "cli-config.json")); chmodSync(join(dir, "cli-config.json"), 0o600); }
@@ -62,7 +59,7 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
     else { await t.call(["pane", "run", t.pane, SHELLS[shell].cursorEnv(dir)]); await t.call(["pane", "run", t.pane, "cursor-agent --trust"]); }
     const ranAt = now();
     for (;;) {
-      if (cursorUiReady(await readScreen(t))) break;
+      if (cursorUiReady(await t.read())) break;
       // A cursor-agent that is missing or exits at once leaves the shell alone: say so now, not at the timeout.
       if (now() - ranAt >= 3000 && await shellAlone(t)) throw new Error("cursor-agent did not start in the login shell (not installed, not on that shell's PATH, or it exited at once)");
       await pause();
@@ -72,7 +69,7 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
     const panelAt = now();
     let extraEnter = false, parsed = null;
     for (;;) {
-      parsed = parseCursorUsage(await readScreen(t));
+      parsed = parseCursorUsage(await t.read());
       if (parsed?.included_used_pct != null) break;
       if (!extraEnter && now() - panelAt >= 6000) {
         await t.call(["pane", "send-keys", t.pane, "enter"]);
