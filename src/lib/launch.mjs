@@ -5,7 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
-import { HARNESSES, plan } from "./harness.mjs";
+import { HARNESSES, kindError, plan } from "./harness.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
 // around it, so it points at the installed skill (written by the installer or `routr skill install`).
@@ -144,6 +144,22 @@ export function trustDialog(text) {
   return { options, affirmative: yes < 0 ? null : options[yes], keys };
 }
 
+// A harness's confirmation of the permissive mode routr asked for (Kiro's trust-all-tools warning). Answered whatever
+// `--trust` says: it is about the flags routr passed, not the folder. `keys` MOVES to the answer, or is ["enter"] once
+// the answer is selected: Kiro dropped an arrow sent in the same burst as enter and took "No, exit" (measured).
+export function permissiveConfirm(text, confirm) {
+  if (!confirm) return null;
+  const t = clean(text).replace(/^[│┃][ \t]?|[ \t]*[│┃]$/gm, "");
+  const question = [...t.matchAll(/^[^\n]*$/gm)].filter((m) => confirm.question.test(m[0])).at(-1);
+  if (!question) return null;
+  const below = t.slice(question.index + question[0].length);
+  if (shellPrompt(below) === "ready" || confirm.answered?.test(below)) return null; // answered, and scrolled past
+  const options = [...below.matchAll(/^[ \t]*([❯›>→▶]?)[ \t]*((?:Yes|No)\b[^\n]*)$/gmi)].map((m) => ({ text: m[2].trim(), selected: !!m[1] }));
+  const answer = options.findIndex((o) => confirm.answer.test(o.text)), selected = options.findIndex((o) => o.selected);
+  if (answer < 0 || selected < 0 || options.filter((o) => o.selected).length !== 1 || options.filter((o) => confirm.answer.test(o.text)).length !== 1) return { options, keys: null };
+  return { options, answer: options[answer].text, keys: answer === selected ? ["enter"] : Array(Math.abs(answer - selected)).fill(answer < selected ? "up" : "down") };
+}
+
 export function parseLaunchArgs(args) {
   const o = { trust: "ask", timeout: 120000, dryRun: false };
   const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "direction", "task", "task-file", "trust", "timeout"];
@@ -162,7 +178,7 @@ export function parseLaunchArgs(args) {
     if (args[i + 1].includes("\0")) throw new Error(`--${key} must not contain NUL`);
     o[key] = args[++i];
   }
-  if (!Object.hasOwn(HARNESSES, o.kind)) throw new Error("--kind must be claude, codex, cursor, or agy");
+  if (!Object.hasOwn(HARNESSES, o.kind)) throw kindError();
   if (o.worktree && o.pane) throw new Error("--worktree creates its own pane; do not pass --pane with it");
   if (o.copy && !o.worktree) throw new Error("--copy only makes sense with --worktree");
   for (const c of o.copy ?? []) if (isAbsolute(c) || c.split(/[\\/]/).includes("..")) throw new Error("--copy takes paths inside the repository, relative to --cwd");
@@ -368,8 +384,25 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     if (!started.ok && !["agent_not_ready", "timeout"].includes(startError)) {
       throw new Error(started.data?.error?.message ?? "Agent start failed");
     }
-    let answeredTrust = null, trustAnsweredAt = null;
+    let answeredTrust = null, trustAnsweredAt = null, moves = 0, confirmedAt = null;
+    const h = HARNESSES[o.kind];
     for (;;) {
+      // Kiro shows it idle and ready while it asks (measured), so the screen is the only sign.
+      const ask = permissiveConfirm(text, h.confirm);
+      if (ask) {
+        if (!ask.keys) return human("Cannot identify the options of the harness's permissive-mode confirmation", text);
+        if (ask.keys[0] !== "enter") {
+          // Moved, then read again: the answer is pressed only once the screen shows it selected.
+          if (++moves > 3) return human("The selection in the permissive-mode confirmation did not move", text);
+          await call(["pane", "send-keys", out.pane, ...ask.keys]);
+        } else if (confirmedAt == null) {
+          await call(["pane", "send-keys", out.pane, "enter"]);
+          step("confirm", true, `Selected "${ask.answer}" (this session only; never "don't ask again")`);
+          out.warnings.push(`Accepted ${o.kind}'s permissive-mode confirmation for this session: ${ask.answer}`);
+          confirmedAt = now();
+        } else if (now() - confirmedAt >= 5000) return human("The permissive-mode confirmation did not clear after answering", text);
+        await pause(); text = await readPane(); continue;
+      }
       const trust = trustDialog(text);
       if (trust) {
         if (o.trust === "ask") return human("Folder trust requires a human decision (--trust ask)", text);
@@ -389,7 +422,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       const waited = await call(["agent", "wait", out.pane, "--timeout", String(Math.min(1000, remaining()))], true);
       if (!waited.ok && !["timeout", "agent_not_found", "agent_not_ready"].includes(waited.data?.error?.code)) throw new Error(waited.data?.error?.message ?? "Agent wait failed");
       text = await readPane();
-      if (trustDialog(text)) continue;
+      if (trustDialog(text) || permissiveConfirm(text, h.confirm)) continue;
       const got = await call(["agent", "get", out.pane], true);
       if (!got.ok && got.data?.error?.code !== "agent_not_found") throw new Error(got.data?.error?.message ?? "Agent inspection failed");
       const agent = got.data?.result?.agent;
@@ -400,6 +433,15 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       await pause();
     }
     if (o.kind === "cursor" && SHELLS[shell].cursor) await call(["agent", "rename", out.pane, o.name]); // pane-run: herdr did not get the name
+    if (h.showsModel) {
+      // Kiro runs its default on a model id it does not know, and says so only by leaving the id out of its footer.
+      const shownBy = now() + 3000;
+      while (!h.showsModel(clean(text), o.model)) {
+        if (now() >= shownBy) throw new Error(`${h.executable} did not take --model ${o.model}: the screen does not show it, and ${o.kind} runs its default model on an id it does not know. Close this pane; list the ids with \`${h.list}\``);
+        await pause(); text = await readPane();
+      }
+      step("model", true, `The screen shows ${o.model}`);
+    }
     step("ready", true, "Herdr wait settled and the pane has no folder-trust dialog");
     out.state = "ready"; out.ok = true;
     if (prompt) {

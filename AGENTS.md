@@ -1,7 +1,7 @@
 # routr — project rules
 
 routr is a skill plus one standalone CLI that helps a lead coding agent hand work to workers on the user's own AI
-subscriptions (Claude Code, Codex, Cursor, Antigravity), inside herdr panes. A System One model answers fixed,
+subscriptions (Claude Code, Codex, Cursor, Antigravity, Kiro), inside herdr panes. A System One model answers fixed,
 measured questions about a brief or a worker report; code adds live usage; the lead agent decides. Plain JavaScript
 (`.mjs`), developed with Bun, shipped as compiled binaries.
 
@@ -24,19 +24,20 @@ measured questions about a brief or a worker report; code adds live usage; the l
   shows no question does worse (CONTRIBUTING.md). Never ship an alias.
 - The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`, `usage` with no name) write nothing of the
   user's (`doctor --fix` is `setup` under another name); the only thing they may start is one of routr's detached
-  background jobs below (the updater, Cursor's usage refresh), which write only under `~/.cache/routr`. They fail open: any error
+  background jobs below (the updater, Cursor's and Kiro's usage refresh), which write only under `~/.cache/routr`. They fail open: any error
   still prints usable output and exits 0. Only `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`,
-  `feedback`, `launch`, and `usage cursor` act, and each says so. `launch` drives panes in the user's herdr session;
+  `feedback`, `launch`, `usage cursor`, and `usage kiro` act, and each says so. `launch` drives panes in the user's herdr session;
   `usage cursor` drives only a private headless herdr session it makes and removes, never the user's own, and keeps
-  the reading in `~/.cache/routr`.
+  the reading in `~/.cache/routr`. `usage kiro` runs Kiro's own `/usage` in the system temp folder and deletes the
+  empty session that leaves with Kiro's own `--delete-session`, and keeps the reading in `~/.cache/routr`.
 - Updates are automatic but never in the way: at most once a day a command may start a DETACHED updater and carry
   on. The command itself MUST NOT wait for it, make a network call for it, or change its own output because of it.
   The updater verifies the release checksum, swaps the binary in place, and reinstalls the skill; a run in progress
   keeps its binary. `"auto_update": false` turns it off. Never from a source checkout, never from `statusline`.
 - Every call reads each usage source's newest reading and shows its age. Claude's is the statusline's snapshot; Codex
   and Antigravity are read in the call (1 to 9 s, beside Jev). Cursor's own screen takes seconds more and starts
-  Cursor, so its reading is a snapshot: when the last try is over 4 hours old, a call starts a detached
-  `routr usage cursor` to refresh it and carries on, as it does for the updater (unlike the updater, also from a
+  Cursor, and Kiro's `/usage` takes ~10 s plus its cleanup, so their readings are snapshots: when the last try is over
+  4 hours old, a call starts a detached `routr usage cursor` (or `kiro`) to refresh it and carries on, as it does for the updater (unlike the updater, also from a
   source checkout: it swaps nothing). How usage is ranked:
   `docs/ranking.md`. A reserve is never offered.
 - Standard mechanisms only: skills, prompts, the harness's own CLI flags. No dependence on a harness's private
@@ -46,7 +47,7 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - The binary is self-contained: the guides under `skills/routr/` are embedded at build time, and it MUST NOT depend on a repository checkout at run time. It reads the user's harness state read-only
   (usage sources, settings, model lists) and writes only under `~/.config/routr`, `~/.cache/routr`,
   `~/.local/share/routr`, the skill folders on `skill install`, and temporary files it removes (including the private
-  herdr session `usage cursor` makes). One exception:
+  herdr session `usage cursor` makes, and the empty Kiro session `usage kiro` deletes again). One exception:
   `setup` sets `statusLine` in `~/.claude/settings.json` when there is none, after a backup, and never replaces one; `uninstall` removes that
   entry again, and only that entry.
 - No runtime dependencies. `node:` built-ins only, so the same source runs under Bun and compiles for every target.

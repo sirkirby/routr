@@ -10,8 +10,9 @@ import harnesses from "../../skills/routr/references/harnesses.md" with { type: 
 import setup from "../../skills/routr/references/setup.md" with { type: "text" };
 
 const FILES = { "SKILL.md": skillMd, "references/worker.md": worker, "references/orchestrator.md": orchestrator, "references/harnesses.md": harnesses, "references/setup.md": setup };
-// Harnesses that read their own skills folder rather than the shared one. Codex and Cursor read ~/.agents/skills.
-const LINKED = { "Claude Code": ".claude/skills" };
+// Harnesses that read their own skills folder rather than the shared one. Codex and Cursor read ~/.agents/skills; Kiro
+// lists only ~/.kiro/skills (measured 2026-09-26: a skill in ~/.agents/skills alone was not offered).
+const LINKED = { "Claude Code": ".claude/skills", Kiro: ".kiro/skills" };
 
 export function installSkill({ home = homedir(), dryRun = false } = {}) {
   const dest = join(home, ".agents/skills/routr"), done = [];

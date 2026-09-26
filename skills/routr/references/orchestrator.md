@@ -32,9 +32,9 @@ already running in other panes, what comes next, which harness suits this reposi
 
 Usage moves while you work, so ask again before every launch; never reuse an earlier answer.
 
-Usage is read by routr itself for every subscription; you pass nothing. Cursor's comes from a reading routr refreshes
-in the background about once per working session (its `age_sec` says how old); `routr usage cursor` takes a fresh one
-now if you have reason to think it moved. `routr usage` (no name) shows what routr sees of every subscription, ranked,
+Usage is read by routr itself for every subscription; you pass nothing. Cursor's and Kiro's come from a reading routr
+refreshes in the background about once per working session (its `age_sec` says how old); `routr usage cursor` or
+`routr usage kiro` takes a fresh one now if you have reason to think it moved. `routr usage` (no name) shows what routr sees of every subscription, ranked,
 without a brief.
 
 ## 3. Launch
@@ -78,17 +78,21 @@ asks first, applies that harness's permissive flags and its model and effort syn
 dialog, waits until the agent is ready, wraps your task in the opening and closing lines, and prints one JSON
 object describing what it did.
 
-    routr launch --kind <claude|codex|cursor|agy> --name <agent-name> \
+    routr launch --kind <claude|codex|cursor|agy|kiro> --name <agent-name> \
         --cwd <repo> --worktree <branch> --model <id> [--effort <level>] [--task-file <path>] [--trust ask|auto] [--dry-run]
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
   `--effort` where the harness takes it separately. On Antigravity the model id already carries it, and routr says so
-  instead of passing a flag that silently runs the high variant.
+  instead of passing a flag that silently runs the high variant. Kiro ignores `--effort` on every model measured, so
+  routr refuses it there. Kiro also runs its default on a model id it does not know, without a word: launch checks
+  that the screen shows the model you named and fails otherwise, before any prompt.
 - `--task-file` holds your task alone (parts 2 and 3). Without it the pane is left ready and unprompted, for you to
   prompt yourself.
 - `--trust` defaults to `ask`: at a folder-trust dialog routr stops, leaves the pane alive, and reports
   `needs_human` with what the dialog says. Pass `--trust auto` only for a directory you created or a worktree of the
   repository the user already has you working in. With `auto` you are vouching for the folder; routr is not judging it.
+  Kiro's "running in trust all tools mode" question is not a folder trust: it is about the permissive flag routr
+  passed, so launch answers "Yes, I accept" (that session only) whatever `--trust` says, and says so in `warnings`.
 - `--dry-run` prints the plan and changes nothing. Use it to see the flags before spending anything.
 - Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_human`, or `failed`.
   `warnings` holds anything it answered on your behalf and anything it wants you to look at. `steps` says what it

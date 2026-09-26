@@ -26,8 +26,8 @@ export const COMMANDS = {
   },
   usage: {
     name: "usage",
-    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing of yours. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session (routr otherwise does this in the background about once per working session)",
-    args: [{ name: "[<subscription>]", description: "only this one; for cursor, read its /usage screen now (needs herdr installed)", required: false }],
+    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing of yours. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session, and `routr usage kiro` runs Kiro's /usage now and deletes the empty session it leaves (routr otherwise does both in the background about once per working session)",
+    args: [{ name: "[<subscription>]", description: "only this one; for cursor or kiro, read its /usage now (cursor needs herdr installed)", required: false }],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--headroom", arg: "<subscription>=<0..1>", description: "usage you read yourself, as for dispatch", required: false, repeatable: true },
@@ -37,7 +37,7 @@ export const COMMANDS = {
     name: "launch",
     description: "start a worker, handle startup, and submit its task",
     flags: [
-      { name: "--kind", arg: "<kind>", description: "harness kind (claude, codex, cursor, agy)", required: true },
+      { name: "--kind", arg: "<kind>", description: "harness kind (claude, codex, cursor, agy, kiro)", required: true },
       { name: "--name", arg: "<name>", description: "worker agent name ([a-z][a-z0-9_-]{0,31})", required: true },
       { name: "--model", arg: "<id>", description: "model id", required: "required unless --dry-run" },
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
@@ -144,7 +144,7 @@ export const COMMANDS = {
     name: "record",
     description: "append what you chose and how it turned out to the ledger",
     flags: [
-      { name: "--subscription", arg: "<name>", description: "subscription used (claude, codex, cursor, agy)", required: true },
+      { name: "--subscription", arg: "<name>", description: "subscription used (claude, codex, cursor, agy, kiro)", required: true },
       { name: "--model", arg: "<name>", description: "model chosen", required: true },
       { name: "--effort", arg: "<level>", description: "reasoning effort chosen", required: true },
       { name: "--verdict", arg: "<done|partial|blocked>", description: "worker outcome verdict", required: true },

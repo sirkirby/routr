@@ -44,3 +44,11 @@ opens on your screen; herdr has to be installed), about once per working session
 `~/.cache/routr/cursor-usage.json`. Until the first reading lands, or when reading fails, Cursor is `assumed` and the
 row's `note` says why. Run `routr usage cursor` to read it now and see any error; if it cannot be read at all, pass
 `--headroom cursor=<0..1>` yourself (its `read_yourself` says how to read the screen by hand).
+
+## Kiro's usage is "assumed"
+
+Kiro's `/usage` command takes about 10 seconds, so routr runs it in the background about once per working session, in
+the system temp folder, and keeps the reading in `~/.cache/routr/kiro-usage.json`. Each run leaves an empty saved
+session in Kiro, which routr deletes with `kiro-cli chat --delete-session`; if that fails, the reading's `note` gives
+the command. Until the first reading lands, or when reading fails, Kiro is `assumed` and the row's `note` says why.
+Run `routr usage kiro` to read it now; if it cannot be read, pass `--headroom kiro=<0..1>` yourself.

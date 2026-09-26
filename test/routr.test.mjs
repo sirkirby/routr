@@ -7,13 +7,13 @@ import { advise } from "../src/lib/advise.mjs";
 import { readReport } from "../src/lib/check.mjs";
 import { DEFAULTS, loadConfig } from "../src/lib/config.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
-import { claudeSnapshot, codexSnapshot, monthMinutes, readCursor, readUsage, refreshCursor, takeLock } from "../src/lib/usage.mjs";
+import { claudeSnapshot, codexSnapshot, KIRO_BY_HAND, kiroUsage, monthMinutes, parseKiroUsage, readCursor, readKiro, readUsage, refreshCursor, refreshKiro, takeLock } from "../src/lib/usage.mjs";
 import { usageCommand } from "../src/lib/commands.mjs";
 import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
-import { plan } from "../src/lib/harness.mjs";
+import { HARNESSES, plan } from "../src/lib/harness.mjs";
 import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage } from "../src/lib/cursor-usage.mjs";
-import { composePrompt, promptSettled, launch, paneText, parseLaunchArgs, quote, shellPrompt, trustDialog, WORKER_GUIDE } from "../src/lib/launch.mjs";
+import { composePrompt, promptSettled, launch, paneText, parseLaunchArgs, permissiveConfirm, quote, shellPrompt, trustDialog, WORKER_GUIDE } from "../src/lib/launch.mjs";
 import { COMMANDS, DESCRIPTION, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "../src/lib/help.mjs";
 
 // Tests call no harness. A stub herdr goes first on PATH, so a test that reaches past its fake is refused instead of
@@ -179,16 +179,18 @@ test("launch plans use each harness's measured permissions and model syntax", ()
     .toMatchObject({ executable: "cursor-agent", argv: ["--yolo", "--trust", "--model", "composer-2.5"], env: { CURSOR_CONFIG_DIR: "/private/config" } });
   expect(plan({ kind: "agy", model: "gemini-3.8-flash-low", cwd: "/work" }).argv)
     .toEqual(["--dangerously-skip-permissions", "--add-dir", "/work", "--model", "gemini-3.8-flash-low"]);
+  expect(plan({ kind: "kiro", model: "claude-haiku-4.5" })).toMatchObject({ executable: "kiro-cli", argv: ["chat", "--trust-all-tools", "--model", "claude-haiku-4.5"], env: {} });
 });
 test("agy rejects separate effort, even when it agrees with the model suffix", () => {
   for (const effort of ["low", "high"]) expect(() => plan({ kind: "agy", model: "gemini-3.8-flash-low", effort, cwd: "/work" })).toThrow("omit --effort");
   expect(() => plan({ kind: "agy", model: "gemini-3.8-flash-low" })).toThrow("--add-dir");
   expect(() => plan({ kind: "cursor", model: "composer-2.5", effort: "low" })).toThrow("no separate --effort");
+  expect(() => plan({ kind: "kiro", model: "claude-sonnet-4.5", effort: "high" })).toThrow("omit --effort"); // measured: ignored silently
 });
 test("a model is required except when only planning; unknown kinds are rejected", () => {
   expect(() => plan({ kind: "claude" })).toThrow("--model is required");
   expect(plan({ kind: "claude", dryRun: true }).warnings).toHaveLength(1);
-  expect(() => plan({ kind: "toString", model: "x" })).toThrow("--kind");
+  expect(() => plan({ kind: "toString", model: "x" })).toThrow("--kind must be claude, codex, cursor, agy, or kiro");
 });
 test("launch prompt preserves the required opening, task with verification, and closing verbatim", () => {
   const task = "TASK\nFix the parser. Work only in /work.\n\nHOW TO VERIFY\nbun test";
@@ -496,6 +498,44 @@ test("usage cursor without herdr prints JSON and exits 0", () => {
   const out = JSON.parse(res.stdout.toString());
   expect(out).toMatchObject({ ok: false, read_yourself: CURSOR_BY_HAND });
 });
+const KIRO_USAGE = "Estimated Usage | resets on 2026-10-01 | KIRO FREE\nCredits (0.00 of 50 covered in plan), 0.0%\nManage your plan at https://app.kiro.dev/account/usage\n";
+test("Kiro's /usage text: monthly plan credits and the reset day; unknown lines are kept, never guessed at", () => {
+  expect(parseKiroUsage(KIRO_USAGE)).toEqual({ plan: "KIRO FREE", credits_used: 0, credits_limit: 50, used_pct: 0, resets_at: Date.UTC(2026, 9, 1) / 1000 });
+  expect(parseKiroUsage(KIRO_USAGE.replace("0.00 of 50", "1,234.5 of 2,000"))).toMatchObject({ credits_used: 1234.5, credits_limit: 2000, used_pct: 61.7 });
+  expect(parseKiroUsage(`${KIRO_USAGE}Overage: 12.00 credits\n`).other).toBe("Overage: 12.00 credits");
+  for (const junk of [null, "", "Credits (5 of 0 covered in plan)", "You are out of credits"]) expect(parseKiroUsage(junk)).toBeNull();
+});
+test("kiroUsage runs /usage outside the user's project and deletes the session it leaves", async () => {
+  const calls = [];
+  const stream = [{ type: "runStarted", data: {} }, { type: "metadata", data: { sessionId: "s-1" } }, { type: "runFinished", data: { sessionId: "s-1", finalText: KIRO_USAGE } }].map((o) => JSON.stringify(o)).join("\n");
+  const exec = (deleteCode = 0, out = stream) => async (cmd, args, o) => { calls.push({ cmd, args, o }); return args.includes("--delete-session") ? deleteCode : out; };
+  const r = await kiroUsage({ exec: exec(), cwd: "/tmp/scratch" });
+  expect(r).toMatchObject({ ok: true, subscription: "kiro", plan: "KIRO FREE", headroom: 1 });
+  expect(r.note).toBeUndefined();
+  expect(calls.map((c) => [c.cmd, ...c.args])).toEqual([["kiro-cli", "chat", "--output-format", "stream-json", "/usage"], ["kiro-cli", "chat", "--delete-session", "s-1"]]);
+  expect(calls.every((c) => c.o.cwd === "/tmp/scratch")).toBe(true);
+  expect((await kiroUsage({ exec: exec(1) })).note).toContain("kiro-cli chat --delete-session s-1"); // left behind: says how to remove it
+  expect(await kiroUsage({ exec: exec(0, null) })).toMatchObject({ ok: false, read_yourself: KIRO_BY_HAND });
+  expect(await kiroUsage({ exec: exec(0, stream.replace("covered in plan", "left")) })).toMatchObject({ ok: false, read_yourself: KIRO_BY_HAND });
+});
+test("Kiro is a snapshot like Cursor's, a monthly window that tapers the reserve toward its reset", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "routr-kiro-")), file = join(dir, "kiro-usage.json"), T = Date.UTC(2026, 8, 26) / 1000;
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const started = [];
+  expect(readKiro({ file, nowSec: T, refresh: () => started.push(T), off: false })).toMatchObject({ pool: "kiro", headroom: null });
+  expect(started).toHaveLength(1);
+  const reading = { ok: true, subscription: "kiro", ...parseKiroUsage(KIRO_USAGE.replace("0.00 of 50", "40.00 of 50")), headroom: 0.2 };
+  await refreshKiro({ file, nowSec: T + 20, read: async () => reading });
+  const got = readKiro({ file, nowSec: T + 60, refresh: () => started.push("again"), off: false });
+  expect(got.headroom).toBeCloseTo(0.2, 9);
+  expect(got).toMatchObject({ class: "included", note: "KIRO FREE: 40 of 50 credits used", windows: [{ name: "monthly_credits", windowMin: 30 * 24 * 60 }] });
+  expect(started).toHaveLength(1);
+  await refreshKiro({ file, nowSec: T + 80, read: async () => ({ ...reading, resets_at: T + 3600 }) });
+  expect(readKiro({ file, nowSec: T + 7200 }).headroom).toBe(1); // past the reset: a new month, whatever the reading said
+  await refreshKiro({ file, nowSec: T + 100, read: async () => ({ ok: false, error: "kiro-cli did not answer", read_yourself: KIRO_BY_HAND }) });
+  expect(readKiro({ file, nowSec: T + 101 }).note).toContain("the last try failed: kiro-cli did not answer");
+  rmSync(dir, { recursive: true, force: true });
+});
 test("Cursor is a snapshot every call reads at once, refreshed in the background about once a session", async () => {
   const dir = mkdtempSync(join(tmpdir(), "routr-cursor-")), file = join(dir, "cursor-usage.json"), T = 1_800_000_000;
   afterAll(() => rmSync(dir, { recursive: true, force: true })); // even when an expectation fails half way
@@ -744,6 +784,58 @@ test("a different trust menu after one acceptance stops without sending more key
   expect(r.state).toBe("needs_human");
   expect(r.needs_human.why).toContain("different");
   expect(f.calls.filter((a) => a[1] === "send-keys" && a[3] !== "n")).toHaveLength(1);
+});
+
+// Kiro CLI 2.24.1's screens, as read from a herdr pane (2026-09-26).
+const kiroConfirm = (sel) => ` Warning: Kiro is running in trust all tools mode\n ────────\n In this mode, Kiro will execute all tool calls — including shell commands, file operations, and MCP tools — without asking for your approval.\n By proceeding, you confirm that you understand the risks and accept responsibility for all actions taken during this session.\n${["No, exit", "Yes, I accept", "Yes, and don't ask again"].map((o, i) => ` ${i === sel ? "❯" : " "} ${o}`).join("\n")}\n ────────\n  esc to cancel · ↑↓ to navigate · ↵ to select`;
+const kiroReady = (model) => ` Trust All Tools active, confirmations are off · /quit to exit\n────────\nkiro_default · ${model ? `${model} · ` : ""}◔ 5%        /private/tmp/work\n›  ask a question or describe a task ↵`;
+test("Kiro's trust-all-tools confirmation: move to \"Yes, I accept\", see it selected, then enter; never \"don't ask again\"", () => {
+  const { confirm } = HARNESSES.kiro;
+  expect(permissiveConfirm(kiroConfirm(0), confirm)).toMatchObject({ answer: "Yes, I accept", keys: ["down"] });
+  expect(permissiveConfirm(kiroConfirm(1), confirm)).toMatchObject({ keys: ["enter"] });
+  expect(permissiveConfirm(kiroConfirm(2), confirm).keys).toEqual(["up"]);
+  expect(permissiveConfirm(kiroConfirm(0).replace("❯", " "), confirm).keys).toBeNull(); // nothing selected: no guess
+  expect(permissiveConfirm(kiroConfirm(0).replace("Yes, I accept", "Yes, continue"), confirm).keys).toBeNull();
+  expect(permissiveConfirm(`${kiroConfirm(0)}\n${kiroReady("glm-5")}`, confirm)).toBeNull(); // answered: scrolled past
+  expect(permissiveConfirm(kiroReady("glm-5"), confirm)).toBeNull();
+  expect(permissiveConfirm(claudeTrust, confirm)).toBeNull();
+  expect(permissiveConfirm(kiroConfirm(0), undefined)).toBeNull(); // only a harness that asks
+  expect(trustDialog(kiroConfirm(0))).toBeNull(); // not a folder trust: --trust does not govern it
+  expect(HARNESSES.kiro.showsModel(kiroReady("claude-sonnet-4.5"), "claude-sonnet-4.5")).toBe(true);
+  expect(HARNESSES.kiro.showsModel(kiroReady(null), "not-a-model")).toBe(false);
+  expect(HARNESSES.kiro.showsModel(kiroReady("claude-sonnet-4.5"), "claude-sonnet-4")).toBe(false);
+});
+function fakeKiro({ model = "glm-5", shown = model } = {}) {
+  let sel = 0, accepted = false;
+  const keys = [];
+  const f = fakeHerdr({ kind: "kiro", reply: (a) => {
+    const started = f.calls.some((c) => c[1] === "start");
+    if (a[1] === "read" && started) return herdrOK({ text: accepted ? kiroReady(shown) : kiroConfirm(sel) });
+    if (a[1] === "send-keys" && started) {
+      keys.push(a.slice(3));
+      if (a[3] === "down") sel++; else if (a[3] === "up") sel--; else if (a[3] === "enter") accepted = sel === 1;
+      return herdrOK();
+    }
+  } });
+  return { ...f, keys };
+}
+test("launch answers Kiro's confirmation under the default --trust ask, one key at a time, and checks the model took", async () => {
+  const f = fakeKiro();
+  const r = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], f.deps);
+  expect(r).toMatchObject({ ok: true, state: "prompted" });
+  expect(f.keys).toEqual([["down"], ["enter"]]); // an arrow and enter in one burst chose "No, exit" (measured)
+  expect(f.calls.find((a) => a[1] === "start")).toEqual(expect.arrayContaining(["--kind", "kiro", "--", "chat", "--trust-all-tools", "--model", "glm-5"]));
+  expect(r.steps.find((s) => s.step === "confirm").detail).toContain("Yes, I accept");
+  expect(r.steps.find((s) => s.step === "model").ok).toBe(true);
+  expect(r.warnings.join(" ")).toContain("this session");
+});
+test("a Kiro that silently dropped the model id is never prompted", async () => {
+  const f = fakeKiro({ model: "not-a-model", shown: null });
+  const r = await launch(["--kind", "kiro", "--name", "worker", "--model", "not-a-model", "--task", "Task"], f.deps);
+  expect(r).toMatchObject({ ok: false, state: "failed" });
+  expect(r.steps.at(-1).detail).toContain("did not take --model not-a-model");
+  expect(r.steps.at(-1).detail).toContain("kiro-cli chat --list-models");
+  expect(f.calls.some((a) => a[1] === "prompt")).toBe(false);
 });
 
 test("fatal start, wait, and inspection errors cannot be masked by UI or polled forever", async () => {
@@ -1125,7 +1217,7 @@ test("a pre-release or source build and its skill count as the same release", as
   expect(baseVersion(undefined)).toBe("");
 });
 
-test("routr skill install writes the guides and links them for Claude Code", async () => {
+test("routr skill install writes the guides and links them for Claude Code and Kiro", async () => {
   const { installSkill } = await import("../src/lib/skill-install.mjs");
   const { mkdtempSync, mkdirSync, readFileSync, existsSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -1134,7 +1226,10 @@ test("routr skill install writes the guides and links them for Claude Code", asy
   expect(readFileSync(`${home}/.agents/skills/routr/SKILL.md`, "utf8")).toContain("name: routr");
   expect(existsSync(`${home}/.agents/skills/routr/references/worker.md`)).toBe(true);
   expect(readFileSync(`${home}/.claude/skills/routr/SKILL.md`, "utf8")).toContain("name: routr");
-  expect(r.installed.length).toBe(2);
+  expect(r.installed.length).toBe(2); // no ~/.kiro: Kiro is not set up here
+  mkdirSync(`${home}/.kiro`);                              // Kiro reads only ~/.kiro/skills (measured)
+  expect(installSkill({ home }).installed.map((x) => x.how)).toEqual(["written", expect.stringContaining("Claude Code"), expect.stringContaining("Kiro")]);
+  expect(readFileSync(`${home}/.kiro/skills/routr/SKILL.md`, "utf8")).toContain("name: routr");
   installSkill({ home });                                  // installing again replaces, never fails
 });
 
@@ -1880,7 +1975,7 @@ test("routr uninstall keeps the user's data unless purged, unlinks a linked skil
   const script = `${import.meta.dir}/../src/routr.mjs`;
   const home = mkdtempSync(join(tmpdir(), "routr-un-"));
   const checkout = join(home, "checkout"); mkdirSync(checkout); writeFileSync(join(checkout, "SKILL.md"), "mine");
-  for (const d of [".config/routr", ".local/share/routr", ".cache/routr", ".agents/skills/routr", ".claude/skills"]) mkdirSync(join(home, d), { recursive: true });
+  for (const d of [".config/routr", ".local/share/routr", ".cache/routr", ".agents/skills/routr", ".claude/skills", ".kiro/skills/routr"]) mkdirSync(join(home, d), { recursive: true });
   writeFileSync(join(home, ".config/routr/config.json"), "{}");
   writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ model: "opus", statusLine: { type: "command", command: "/x/routr statusline" } }));
   const linked = process.platform !== "win32";
@@ -1893,6 +1988,7 @@ test("routr uninstall keeps the user's data unless purged, unlinks a linked skil
   expect(existsSync(join(home, ".cache/routr"))).toBe(true);
   expect(Bun.spawnSync([process.execPath, script, "uninstall", "--yes"], { env }).exitCode).toBe(0);
   expect(existsSync(join(home, ".agents/skills/routr"))).toBe(false);
+  expect(existsSync(join(home, ".kiro/skills/routr"))).toBe(false);
   expect(existsSync(join(home, ".cache/routr"))).toBe(false);
   expect(existsSync(join(home, ".config/routr/config.json"))).toBe(true);
   if (linked) expect(readFileSync(join(checkout, "SKILL.md"), "utf8")).toBe("mine");    // the link went, its target did not
