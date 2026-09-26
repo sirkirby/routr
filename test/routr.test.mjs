@@ -27,6 +27,13 @@ const withoutHerdr = (path) => process.platform !== "win32" ? path
 process.env.PATH = join(import.meta.dir, "fixtures", "no-herdr") + delimiter + withoutHerdr(process.env.PATH ?? "");
 delete process.env.HERDR_ENV;
 process.env.ROUTR_NO_REFRESH = "1"; // no detached Cursor refresh, and nothing written to the real cache
+// Every folder a test makes is inside one scratch folder, removed when the run ends however a test ended, and nothing
+// is written into test/. Every CLI a test spawns sees a scratch home, never the maintainer's own (its config, ledger,
+// cache). A spawn that could start a harness also empties PATH: a logged-out harness opens a browser to sign in.
+const SCRATCH = mkdtempSync(join(tmpdir(), "routr-test-"));
+afterAll(() => rmSync(SCRATCH, { recursive: true, force: true }));
+const scratch = (name) => mkdtempSync(join(SCRATCH, `${name}-`));
+process.env.HOME = process.env.USERPROFILE = scratch("home");
 
 const cfg = (over = {}) => ({ ...DEFAULTS, subscriptions: {
   claude: { hardest_work: "strong", reserve: 0.25, assumed_headroom: 0.5 },
@@ -161,14 +168,14 @@ test("a metered seat gets a position, not a number: after every pool with room, 
   expect(rankSubscriptions("strong", [live("claude", 0.6), { ...metered("codex"), windows: [win(40, 100, null)], headroom: 0.6, class: "capped" }], cfg()).ranked[0]).toMatchObject({ subscription: "codex", class: "capped", usable: 0.4 }); // a cap is a number: ranked by it; unknown length holds the full reserve
 });
 test("billing and metered_rank are validated like the shares", () => {
-  const odd = `${import.meta.dir}/.odd2.json`; writeFileSync(odd, JSON.stringify({ subscriptions: { x: { hardest_work: "strong", reserve: 0.1, billing: "free", metered_rank: "first" }, y: { hardest_work: "strong", reserve: 0.1, billing: "metered", metered_rank: "with" } } }));
+  const odd = join(SCRATCH, "odd2.json"); writeFileSync(odd, JSON.stringify({ subscriptions: { x: { hardest_work: "strong", reserve: 0.1, billing: "free", metered_rank: "first" }, y: { hardest_work: "strong", reserve: 0.1, billing: "metered", metered_rank: "with" } } }));
   const r = loadConfig(odd);
   expect(r.config.subscriptions.x).toMatchObject({ billing: null, metered_rank: "after" }); expect(r.config.subscriptions.y).toMatchObject({ billing: "metered", metered_rank: "with" }); expect(r.notes.length).toBe(2);
 });
 test("broken or missing config falls back to defaults with a note", () => {
-  const bad = `${import.meta.dir}/.bad.json`; writeFileSync(bad, "{ not json");
+  const bad = join(SCRATCH, "bad.json"); writeFileSync(bad, "{ not json");
   for (const path of [bad, "/nonexistent/config.json"]) { const r = loadConfig(path); expect(r.config.fallback_level).toBe("standard"); expect(r.notes.length).toBe(1); }
-  const odd = `${import.meta.dir}/.odd.json`; writeFileSync(odd, JSON.stringify({ prefer: { debug: "huge" }, subscriptions: { x: { reserve: 0.3 } } }));
+  const odd = join(SCRATCH, "odd.json"); writeFileSync(odd, JSON.stringify({ prefer: { debug: "huge" }, subscriptions: { x: { reserve: 0.3 } } }));
   const r = loadConfig(odd); expect(r.config.prefer.debug).toBeUndefined(); expect(r.config.subscriptions.x.hardest_work).toBe("strong"); expect(r.notes.length).toBe(2);
   expect(r.notes.find((n) => n.includes("hardest_work is not set"))).toContain("routr setup --hardest x=basic|standard|strong"); // the user's to set: the note says how
 });
@@ -398,7 +405,7 @@ const CURSOR_UI = "  Cursor Agent\n  Grok 4.6 High\n  /tmp";
 // A fake herdr for the Cursor read: a private session that starts on the third look, a shell that asks the dotenv
 // question once, then Cursor and its /usage panel. Every pane command must go to the private session, never a split.
 // Stale sessions: one left by a routr that is gone (pid 99) is removed; one whose routr is alive (pid 7) is not.
-const CU_TMP = mkdtempSync(join(tmpdir(), "routr-cu-"));
+const CU_TMP = scratch("cu");
 afterAll(() => rmSync(CU_TMP, { recursive: true, force: true }));
 function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = true, failCreate = false, spawnFails = false, sessions = null } = {}) {
   let stage = "shell", dotenv = true, ticks = 0, extraEnter = false, up = 0;
@@ -499,7 +506,7 @@ test("cursorUsage without herdr fails open, says how to read it by hand, and sta
 });
 test("usage cursor without herdr prints JSON and exits 0", () => {
   const script = `${import.meta.dir}/../src/routr.mjs`;
-  const home = mkdtempSync(join(tmpdir(), "routr-home-")); // it keeps what it read: never in the real cache
+  const home = scratch("home"); // it keeps what it read: never in the real cache
   const cleanEnv = { ...process.env, PATH: "", HOME: home, USERPROFILE: home, ROUTR_NO_UPDATE: "1" };
   delete cleanEnv.HERDR_ENV;
   const res = Bun.spawnSync([process.execPath, script, "usage", "cursor"], { env: cleanEnv });
@@ -530,7 +537,7 @@ test("kiroUsage runs /usage outside the user's project and deletes the session i
   expect(await kiroUsage({ exec: exec(0, stream.replace("covered in plan", "left")) })).toMatchObject({ ok: false, read_yourself: KIRO_BY_HAND });
 });
 test("Kiro is a snapshot like Cursor's, a monthly window that tapers the reserve toward its reset", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "routr-kiro-")), file = join(dir, "kiro-usage.json"), T = Date.UTC(2026, 8, 26) / 1000;
+  const dir = scratch("kiro"), file = join(dir, "kiro-usage.json"), T = Date.UTC(2026, 8, 26) / 1000;
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
   const started = [];
   expect(readKiro({ file, nowSec: T, refresh: () => started.push(T), off: false })).toMatchObject({ pool: "kiro", headroom: null });
@@ -548,7 +555,7 @@ test("Kiro is a snapshot like Cursor's, a monthly window that tapers the reserve
   rmSync(dir, { recursive: true, force: true });
 });
 test("Cursor is a snapshot every call reads at once, refreshed in the background about once a session", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "routr-cursor-")), file = join(dir, "cursor-usage.json"), T = 1_800_000_000;
+  const dir = scratch("cursor"), file = join(dir, "cursor-usage.json"), T = 1_800_000_000;
   afterAll(() => rmSync(dir, { recursive: true, force: true })); // even when an expectation fails half way
   const started = [];
   const read = (nowSec) => readCursor({ file, nowSec, refresh: () => started.push(nowSec), off: false });
@@ -617,7 +624,7 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
   expect(given).toMatchObject({ source: "given by caller", headroom: 0.9 });
 });
 test("the refresh lock lets one caller in at a time and gives up a lock left by a dead refresh", () => {
-  const dir = mkdtempSync(join(tmpdir(), "routr-lock-")), lock = join(dir, "x.lock");
+  const dir = scratch("lock"), lock = join(dir, "x.lock");
   const stale = (nowMs = Date.now()) => olderThan(120 * 1000, nowMs);
   expect(takeLock(lock, stale())).toBe(true);
   expect(takeLock(lock, stale())).toBe(false); // a second call in the burst
@@ -889,7 +896,7 @@ test("explicitly false interactive readiness cannot authorize prompt submission"
 });
 
 for (const readiness of [undefined, null, false]) test(`Cursor idle readiness ${readiness} is handled after pane run`, async () => {
-  const root = mkdtempSync(join(import.meta.dir, ".cursor-readiness-"));
+  const root = scratch("cursor-readiness");
   const source = join(root, "source.json");
   writeFileSync(source, '{"model":"original"}');
   try {
@@ -999,7 +1006,7 @@ test("failure before start closes only newly created panes and reports cleanup f
 // `routr launch` has not been run against herdr on Windows at all (docs/evidence.md).
 const unixOnly = test.skipIf(process.platform === "win32");
 unixOnly("Cursor removes configs on pre-start failure and on worker exit without changing the source", async () => {
-  const root = mkdtempSync(join(import.meta.dir, ".cursor-launch-"));
+  const root = scratch("cursor-launch");
   const source = join(root, "source.json");
   writeFileSync(source, '{"model":"original"}');
   const args = ["--kind", "cursor", "--name", "worker", "--model", "composer-2.5"];
@@ -1046,7 +1053,7 @@ test("dry-run plans include geometry and shell checks, and skip geometry for exp
 });
 
 unixOnly("transport timeouts return a timeout code, even if the subprocess printed JSON", async () => {
-  const root = mkdtempSync(join(import.meta.dir, ".herdr-stub-"));
+  const root = scratch("herdr-stub");
   try {
     const executable = join(root, "herdr");
     writeFileSync(executable, '#!/bin/sh\nprintf \'{"result":{}}\'\nexec sleep 30\n'); chmodSync(executable, 0o755);
@@ -1170,7 +1177,7 @@ test("a brief containing --help as a separate word is routed as a brief, not as 
   for (const cmd of ["subagent", "dispatch"]) {
     // A throwaway HOME with no key and no config: the command falls back at once instead of calling the network,
     // so this test is about argument handling only and cannot time out on a slow connection.
-    const home = mkdtempSync(join(tmpdir(), "routr-nokey-"));
+    const home = scratch("nokey");
     const res = Bun.spawnSync(["bun", script, cmd, "add", "--help", "to", "the", "CLI"], { env: { ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "" } });
     rmSync(home, { recursive: true, force: true });
     expect(res.exitCode).toBe(0);
@@ -1224,7 +1231,7 @@ test("the repository carries no version: the three version fields read 0.0.0-dev
   expect(readFileSync(`${root}/skills/routr/SKILL.md`, "utf8")).toContain('version: "0.0.0-dev"');
 });
 test("a release build stamps the tag's version into all three files, and refuses anything that is not a release version", () => {
-  const root = mkdtempSync(join(tmpdir(), "routr-stamp-"));
+  const root = scratch("stamp");
   try {
     for (const f of ["src/lib/version.mjs", "package.json", "skills/routr/SKILL.md"]) {
       mkdirSync(join(root, f, ".."), { recursive: true });
@@ -1250,7 +1257,7 @@ test("routr skill install writes the guides and links them for Claude Code and K
   const { installSkill } = await import("../src/lib/skill-install.mjs");
   const { mkdtempSync, mkdirSync, readFileSync, existsSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
-  const home = mkdtempSync(`${tmpdir()}/routr-skill-`); mkdirSync(`${home}/.claude`);
+  const home = scratch("skill"); mkdirSync(`${home}/.claude`);
   const r = installSkill({ home });
   expect(readFileSync(`${home}/.agents/skills/routr/SKILL.md`, "utf8")).toContain("name: routr");
   expect(existsSync(`${home}/.agents/skills/routr/references/worker.md`)).toBe(true);
@@ -1264,7 +1271,7 @@ test("routr skill install writes the guides and links them for Claude Code and K
 
 test("routr key set stores a piped key owner-only, never prints it, and refuses junk", () => {
   const script = `${import.meta.dir}/../src/routr.mjs`;
-  const home = mkdtempSync(join(tmpdir(), "routr-key-"));
+  const home = scratch("key");
   const env = { ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "" };
   const good = Bun.spawnSync(["bun", script, "key", "set", "--no-verify"], { env, stdin: Buffer.from("ts_test_0123456789abcdef\n") });
   expect(good.exitCode).toBe(0);
@@ -1498,7 +1505,7 @@ test("old ledger rows without a subagents field assess without error", async () 
 
 test("CLI round trip for record with repeatable --subagent and --report flags", () => {
   const script = `${import.meta.dir}/../src/routr.mjs`;
-  const tempDir = mkdtempSync(join(tmpdir(), "routr-record-test-"));
+  const tempDir = scratch("record-test");
   const adviceFile = join(tempDir, "advice.json");
   const reportFile = join(tempDir, "report.txt");
   const ledgerFile = join(tempDir, "ledger.jsonl");
@@ -1646,7 +1653,7 @@ test("telemetry is off unless the person turns it on, and the usual switches kee
   expect(telemetryStatus({ telemetry: true }, { ROUTR_TELEMETRY: "off" }, yes).on).toBe(false);
   expect(telemetryStatus({ telemetry: true }, { CI: "true" }, yes).why_off).toBe("running in CI");
   const { loadConfig } = await import("../src/lib/config.mjs");
-  const dir = mkdtempSync(join(tmpdir(), "routr-tel-")), ledger = join(dir, "ledger.jsonl");
+  const dir = scratch("tel"), ledger = join(dir, "ledger.jsonl");
   try {
     writeFileSync(join(dir, "c.json"), JSON.stringify({ prefer: { review: "standard" } }));
     expect(loadConfig(join(dir, "c.json")).config.telemetry).toBe(false);
@@ -1668,7 +1675,7 @@ test("telemetry is off unless the person turns it on, and the usual switches kee
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 test("telemetry sends only rows it has not sent, and moves on only after the endpoint accepts them", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "routr-send-"));
+  const dir = scratch("send");
   try {
     const ledger = join(dir, "ledger.jsonl");
     writeFileSync(ledger, [row({ ts: "2026-09-21T10:00:00.000Z" }), row({ ts: "2026-09-22T10:00:00.000Z" })].map((r) => JSON.stringify(r)).join("\n") + "\n");
@@ -1698,7 +1705,7 @@ test("telemetry sends only rows it has not sent, and moves on only after the end
 });
 test("feedback sends what the person wrote, and nothing when there is nothing to send", async () => {
   const { sendFeedback } = await import("../src/lib/telemetry.mjs");
-  const dir = mkdtempSync(join(tmpdir(), "routr-fb-")), ledger = join(dir, "ledger.jsonl");
+  const dir = scratch("fb"), ledger = join(dir, "ledger.jsonl");
   const sent = [];
   const fetchFn = async (_u, init) => { sent.push(JSON.parse(init.body)); return new Response("{}", { status: 200 }); };
   expect((await sendFeedback("  ", { fetchFn, ledger })).ok).toBe(false);
@@ -1744,7 +1751,7 @@ test("assess turns the ledger into suggestions about the user's own settings, an
 
 test("ledger rows are labelled with their project, a worktree counts as its repository, and the label is never shared", async () => {
   const { projectName, toEntry, shareRows, assess } = await import("../src/lib/ledger.mjs");
-  const root = mkdtempSync(join(tmpdir(), "routr-proj-"));
+  const root = scratch("proj");
   mkdirSync(join(root, "acme-api", ".git"), { recursive: true }); mkdirSync(join(root, "acme-api", "src", "deep"), { recursive: true });
   expect(projectName(join(root, "acme-api", "src", "deep"))).toBe("acme-api");
   mkdirSync(join(root, "wt", "fix-branch"), { recursive: true });
@@ -1778,7 +1785,7 @@ test("the background update check is due at most once a day, and the config can 
   expect(dueForCheck(NaN, now)).toBe(true);                               // never checked
   expect(dueForCheck(now - 2 * 3600 * 1000, now)).toBe(false);            // two hours ago
   expect(dueForCheck(now - 25 * 3600 * 1000, now)).toBe(true);
-  const off = `${import.meta.dir}/.noupdate.json`; writeFileSync(off, JSON.stringify({ auto_update: false }));
+  const off = join(SCRATCH, "noupdate.json"); writeFileSync(off, JSON.stringify({ auto_update: false }));
   expect(loadConfig(off).config.auto_update).toBe(false);
   expect(loadConfig("/nonexistent/config.json").config.auto_update).toBe(true);
 });
@@ -1833,7 +1840,7 @@ test("setup never replaces a statusline the user already has", async () => {
 
 test("routr setup --yes writes the config once, keeps it afterwards, and starts no harness", () => {
   const script = `${import.meta.dir}/../src/routr.mjs`;
-  const home = mkdtempSync(join(tmpdir(), "routr-setup-"));
+  const home = scratch("setup");
   // An empty PATH: no harness is found, so none is started (a logged-out harness opens a browser to sign in).
   const env = { ...process.env, HOME: home, USERPROFILE: home, PATH: home, TYPESAFE_API_KEY: "", ROUTR_NO_UPDATE: "1" };
   const first = Bun.spawnSync([process.execPath, script, "setup", "--yes", "--json"], { env });
@@ -1868,7 +1875,7 @@ test("hardest_work and reserve are asked with a suggestion, read from flags, and
 
 test("routr setup changes a setting on an existing config, fills one that is missing, and doctor flags it until then", () => {
   const script = `${import.meta.dir}/../src/routr.mjs`;
-  const home = mkdtempSync(join(tmpdir(), "routr-settings-"));
+  const home = scratch("settings");
   const env = { ...process.env, HOME: home, USERPROFILE: home, PATH: home, TYPESAFE_API_KEY: "", ROUTR_NO_UPDATE: "1" };
   const file = join(home, ".config/routr/config.json");
   mkdirSync(dirname(file), { recursive: true });
@@ -1894,7 +1901,7 @@ test("routr setup changes a setting on an existing config, fills one that is mis
 // Every question asked is recorded, and a question the scenario did not expect fails it.
 async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {} } = {}) {
   const { setup } = await import("../src/lib/setup.mjs");
-  const dir = mkdtempSync(join(tmpdir(), "routr-setup-run-")), path = join(dir, "config.json");
+  const dir = scratch("setup-run"), path = join(dir, "config.json");
   if (config) writeFileSync(path, JSON.stringify(config));
   const asked = [], shared = [], installs = [], keys = [];
   const inspect = async () => {
@@ -1979,7 +1986,7 @@ test("the settings are worded once: setup, help, doctor and docs/ranking.md say 
   expect(help).toContain(HARDEST.flag);
   expect(help).toContain(RESERVE.flag);
   // A missing reserve and 0% mean the same thing, and doctor's note names the command that sets it.
-  const dir = mkdtempSync(join(tmpdir(), "routr-words-")), f = join(dir, "c.json");
+  const dir = scratch("words"), f = join(dir, "c.json");
   writeFileSync(f, JSON.stringify({ subscriptions: { claude: { hardest_work: "strong" } } }));
   const { config, notes } = loadConfig(f);
   expect(config.subscriptions.claude.reserve).toBe(0);
@@ -2008,7 +2015,7 @@ test("setup searches a long model list instead of printing it", async () => {
 test("routr uninstall keeps the user's data unless purged, unlinks a linked skill, and removes only its own statusline", async () => {
   const { uninstallPlan } = await import("../src/lib/uninstall.mjs");
   const script = `${import.meta.dir}/../src/routr.mjs`;
-  const home = mkdtempSync(join(tmpdir(), "routr-un-"));
+  const home = scratch("un");
   const checkout = join(home, "checkout"); mkdirSync(checkout); writeFileSync(join(checkout, "SKILL.md"), "mine");
   for (const d of [".config/routr", ".local/share/routr", ".cache/routr", ".agents/skills/routr", ".claude/skills", ".kiro/skills/routr"]) mkdirSync(join(home, d), { recursive: true });
   writeFileSync(join(home, ".config/routr/config.json"), "{}");
@@ -2048,7 +2055,7 @@ test("launch never puts the brief in its result: not in the command log, not in 
 
 test("a failed binary swap puts the old binary back", async () => {
   const { swapBinary } = await import("../src/lib/update.mjs");
-  const dir = mkdtempSync(join(tmpdir(), "routr-swap-")), self = join(dir, "routr");
+  const dir = scratch("swap"), self = join(dir, "routr");
   writeFileSync(self, "old");
   let calls = 0;
   const failSecond = (a, b) => { if (++calls === 2) throw new Error("locked"); (require("node:fs")).renameSync(a, b); };
@@ -2061,7 +2068,7 @@ test("a failed binary swap puts the old binary back", async () => {
 
 test("an update lock is taken over only when its owner is gone", async () => {
   const { lockIsStale } = await import("../src/lib/update.mjs");
-  const f = join(mkdtempSync(join(tmpdir(), "routr-lock-")), "update.lock");
+  const f = join(scratch("lock"), "update.lock");
   writeFileSync(f, String(process.pid));
   expect(lockIsStale(f)).toBe(false);                                    // we are alive
   expect(lockIsStale(f, { alive: () => false })).toBe(true);
@@ -2070,7 +2077,7 @@ test("an update lock is taken over only when its owner is gone", async () => {
 });
 
 test("a config share outside 0..1 is reported and replaced: a negative reserve must not create capacity", () => {
-  const f = join(mkdtempSync(join(tmpdir(), "routr-cfg-")), "config.json");
+  const f = join(scratch("cfg"), "config.json");
   writeFileSync(f, JSON.stringify({ sure_at: 7, subscriptions: { claude: { hardest_work: "strong", reserve: -1, assumed_headroom: 2 }, codex: { hardest_work: "strong", reserve: 0.2 } } }));
   const { config, notes } = loadConfig(f);
   expect(config.sure_at).toBe(DEFAULTS.sure_at);
@@ -2088,7 +2095,7 @@ test("only routr's own statusline counts as ours", async () => {
 
 test("record --project labels the row, assess answers on an unreadable ledger, and share never writes into the current folder", () => {
   const script = `${import.meta.dir}/../src/routr.mjs`;
-  const home = mkdtempSync(join(tmpdir(), "routr-cli-")), work = join(home, "work"); mkdirSync(work);
+  const home = scratch("cli"), work = join(home, "work"); mkdirSync(work);
   const env = { ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "", ROUTR_NO_UPDATE: "1" };
   const advice = JSON.stringify({ id: "a1", mode: "dispatch", level: "basic", sure: true, facts: {} });
   const rec = Bun.spawnSync([process.execPath, script, "record", "--subscription", "codex", "--model", "m", "--effort", "low", "--verdict", "done", "--check", "pass", "--project", "other"], { env, cwd: work, stdin: Buffer.from(advice) });
@@ -2116,7 +2123,7 @@ test("the file-and-ledger commands answer instead of failing", async () => {
   const missing = await checkCommand({ brief: "/nonexistent/brief", report: "/nonexistent/report" });
   expect(missing.fallback).toBe(true);
   expect(recordCommand({ advice: "/nonexistent/advice.json" }).recorded).toBeNull();
-  const dir = mkdtempSync(join(tmpdir(), "routr-check-"));
+  const dir = scratch("check");
   writeFileSync(join(dir, "b"), "Fix the typo in README.md and run bun test."); writeFileSync(join(dir, "r"), "VERDICT: done");
   const seen = [];
   const out = await checkCommand({ brief: join(dir, "b"), report: join(dir, "r") }, { askFn: async (input) => { seen.push(input); return { answers: {}, latencyMs: 12 }; } });
@@ -2143,7 +2150,7 @@ test("launch types each shell's own syntax: Cursor's private config is set and r
 
 test("routr update reports a real swap as an update and reinstalls the skill (the 0.1.14 regression)", async () => {
   const { update } = await import("../src/lib/update.mjs");
-  const dir = mkdtempSync(join(tmpdir(), "routr-upd-")), self = join(dir, "routr");
+  const dir = scratch("upd"), self = join(dir, "routr");
   writeFileSync(self, "OLD");
   const fresh = Buffer.from("NEW-BINARY");
   const sum = (await import("node:crypto")).createHash("sha256").update(fresh).digest("hex");
@@ -2185,7 +2192,7 @@ test("every value seen in real rows, and every value routr documents, survives t
 
 test("routr share says what will really happen to the rows, in each state", async () => {
   const { shareCommand } = await import("../src/lib/commands.mjs");
-  const dir = mkdtempSync(join(tmpdir(), "routr-sharemsg-")), ledger = join(dir, "ledger.jsonl"), out = join(dir, "out.jsonl");
+  const dir = scratch("sharemsg"), ledger = join(dir, "ledger.jsonl"), out = join(dir, "out.jsonl");
   try {
     writeFileSync(ledger, [row({ ts: "2026-09-21T10:00:00.000Z" }), row({ ts: "2026-09-23T10:00:00.000Z" })].map((r) => JSON.stringify(r)).join("\n") + "\n");
     const say = (config, isStandalone = () => true, env = {}) => shareCommand({ ledger, out }, config, { env, isStandalone });
@@ -2219,7 +2226,7 @@ test("docs/telemetry.md lists every field a sent row carries", async () => {
 test("end to end: nothing leaves before a yes, then only rows after it, with no text (real CLI, mock endpoint)", async () => {
   const got = [];
   const server = Bun.serve({ port: 0, fetch: async (req) => { const b = await req.json(); got.push(b); return Response.json({ accepted: b.rows?.length ?? 0, refused: 0 }); } });
-  const home = mkdtempSync(join(tmpdir(), "routr-e2e-"));
+  const home = scratch("e2e");
   try {
     const env = { ...process.env, HOME: home, USERPROFILE: home, ROUTR_NO_UPDATE: "1", ROUTR_TELEMETRY_URL: `http://127.0.0.1:${server.port}`, TYPESAFE_API_KEY: "" };
     for (const k of ["CI", "DO_NOT_TRACK", "ROUTR_TELEMETRY", "GITHUB_ACTIONS"]) delete env[k];
