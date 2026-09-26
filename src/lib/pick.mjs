@@ -12,6 +12,9 @@ import { LEVELS } from "./questions.mjs";
 export function rankSubscriptions(level, usage, c) {
   const ranked = [], excluded = [];
   for (const [name, s] of Object.entries(c.subscriptions)) {
+    // A harness that is not signed in cannot take the work; the reading says what to run.
+    const signedOut = usage.find((p) => p.pool === name && p.signedIn === false);
+    if (signedOut) { excluded.push({ subscription: name, reason: signedOut.note }); continue; }
     if (LEVELS.indexOf(s.hardest_work) < LEVELS.indexOf(level)) { excluded.push({ subscription: name, reason: `the user does not give it ${level} work` }); continue; }
     const u = usage.find((p) => p.pool === name);
     const live = u?.headroom != null;

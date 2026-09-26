@@ -58,7 +58,8 @@ Your default model on each subscription is shown beside it in the ranking but do
 ## Which subscriptions can take the work
 
 A subscription takes work at its `hardest_work` level and below. For `strong` work, a subscription you set to
-`standard` is left out of the ranking, and the output says why.
+`standard` is left out of the ranking, and the output says why. A subscription whose harness is not signed in is left
+out of every ranking, with the command that signs it in.
 
 ## How much room each subscription has
 

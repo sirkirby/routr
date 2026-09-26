@@ -18,6 +18,23 @@ work-arounds below for the harness you name, so an ordinary launch needs none of
 choosing a model, when a launch does something you did not expect, or when you are launching by hand. `routr launch
 --kind <k> --model <m> --dry-run` prints the exact flags it would use, and costs nothing.
 
+## Is it signed in? (measured 2026-09-26, signed in and signed out)
+
+routr asks each harness before anything else, and leaves one that is not signed in out of setup, dispatch, and launch.
+These commands never start a sign-in. The ones they replace can: Antigravity's `-p /usage` starts Google's sign-in and
+waits for a code, and any Kiro `chat` command opens Kiro's.
+
+| Harness | Check | Signed out | To sign in |
+|---|---|---|---|
+| Claude Code | `claude auth status` | `"loggedIn": false`, exit 1 | `claude auth login` |
+| Codex | `codex login status` | `Not logged in` on stderr, exit 1 | `codex login` |
+| Cursor | `cursor-agent status` | `Not logged in`, **exit 0**: read the text | `cursor-agent login` |
+| Antigravity | `agy models` (it has no status command) | `Please sign in to view available models`, exit 1 | run `agy` and sign in |
+| Kiro | `kiro-cli whoami --format json` | `{"account":null}`, exit 1 | `kiro-cli login` |
+
+Each takes 0.3 to 3.4 s. The answer is kept in `~/.cache/routr/signed-in.json` (signed in: 6 hours; not: 10 minutes),
+so a dispatch rarely pays for it; doctor and setup always ask again.
+
 ## Rules that hold for every harness
 
 0. **Read a new pane before typing into it.** The user's shell may ask its own question first (measured: a dotenv

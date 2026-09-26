@@ -3,7 +3,7 @@ import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, r
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HARNESSES, kindError, plan } from "./harnesses.mjs";
+import { HARNESSES, kindError, notReady, plan } from "./harnesses.mjs";
 import { clean, deadline, paneText, paneView, quote, runHerdr, SHELLS, shellFamily, shellPrompt, waitForShell } from "./herdr.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
@@ -111,7 +111,8 @@ export function parseLaunchArgs(args) {
 }
 
 // Inject transport and time for tests; no test needs a live pane.
-export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(), env = process.env,
+// `ready(kind)`: null when the harness is signed in, or why not (harnesses.mjs).
+export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(), env = process.env, ready = notReady,
   cursorConfigSource = join(homedir(), ".cursor", "cli-config.json"), tempRoot = tmpdir() } = {}) {
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
     command: [], argv: [], env: {}, steps: [], warnings: [], needs_human: null, prompt_chars: null };
@@ -160,6 +161,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       return { ...out, ok: true, state: "planned" };
     }
     if (env.HERDR_ENV !== "1") throw new Error("Launch requires HERDR_ENV=1 inside a Herdr pane");
+    // A harness that is not signed in would wait at its own sign-in in a pane nobody watches: refuse before any pane.
+    const signedOut = await ready(o.kind);
+    if (signedOut) throw new Error(`${HARNESSES[o.kind].label} cannot take work: ${signedOut}`);
     const remaining = deadline(o.timeout, now, "Launch readiness timeout");
     const call = async (a, tolerate = false) => {
       const ms = remaining();

@@ -12,11 +12,15 @@
 //     trust), answered with the one option that holds for this session only. showsModel: how to tell from the
 //     screen that it took `--model`, for a harness that silently runs its default on an id it does not know.
 //   list: its own command that lists model ids; models(): that list, read now (routr keeps no model list of its own).
+//   auth: how to tell it is signed in (signin.mjs): `check` is its own status command, which never starts a sign-in,
+//     `signedIn(out, code)` reads the answer (stdout and stderr together), `signIn` says how the user signs in.
+//     Measured signed in and signed out, 2026-09-26; each parser matches the text both ways, not the exit code alone.
 //   suggested: the settings setup offers for it. usage: `read` runs on every call and must be fast; `check` takes a
 //     fresh reading now and prints it raw (`routr usage <name>`). Cursor's and Kiro's readers bring herdr's terminal and
 //     their snapshot rules with them, so they load when first read: help, --version, and every command that reads no
 //     usage stay light. (Literal import paths, so the compiled binary still bundles them.)
 import { run } from "./runtime.mjs";
+import { signInHint, signInState } from "./signin.mjs";
 import { readAgy, readClaude, readCodexLive, summarize } from "./usage.mjs";
 
 const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 20000 })) ?? "").split("\n").map((l) => l.match(pattern)?.[1]).filter(Boolean);
@@ -24,11 +28,15 @@ const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 
 export const HARNESSES = {
   claude: { label: "Claude Code", executable: "claude", installAs: "Claude Code", skills: ".claude/skills",
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
+    // `"loggedIn": false` and exit 1 when signed out.
+    auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`" },
     models: async () => ["haiku", "sonnet", "opus"], // aliases Claude Code resolves itself; `--model` also takes full ids
     suggested: { hardest_work: "strong", reserve: 0.25 },
     usage: { read: readClaude } },
   codex: { label: "Codex", executable: "codex", installAs: "Codex",
     permissions: ["--yolo"], model: "-m", effort: "-c", effortValue: (level) => `model_reasoning_effort=${level}`, list: "codex debug models",
+    // "Logged in using ChatGPT" / "Not logged in" (exit 1), both on stderr.
+    auth: { check: ["login", "status"], signedIn: (out, code) => code === 0 && /^\s*Logged in\b/m.test(out), signIn: "run `codex login`" },
     models: async () => { try { const o = JSON.parse(await run("codex", ["debug", "models"], { timeoutMs: 15000 })); return (o.models ?? o).map((m) => m.slug ?? m.id).filter(Boolean); } catch { return null; } },
     suggested: { hardest_work: "strong", reserve: 0.2 },
     usage: { read: readCodexLive } },
@@ -37,12 +45,17 @@ export const HARNESSES = {
     noEffort: "cursor has no separate --effort flag; choose a model id with the desired effort",
     env: (dir) => ({ CURSOR_CONFIG_DIR: dir ?? "<private-cursor-config-dir>" }),
     notes: () => ["Cursor changes its configured default model; launch uses a private copy of ~/.cursor/cli-config.json."],
+    // "✓ Logged in as <email>" / "Not logged in", and exit 0 BOTH ways: only the text tells.
+    auth: { check: ["status"], signedIn: (out) => /\bLogged in as\b/.test(out) && !/\bNot logged in\b/.test(out), signIn: "run `cursor-agent login`" },
     models: () => lines("cursor-agent", ["models"], /^\s*([a-z0-9][\w.-]+) - /i),
     suggested: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 },
-    usage: { read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor(o) } },
+    usage: { read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor({ ...o, ready: ready("cursor") }) } },
   agy: { label: "Antigravity", executable: "agy", installAs: "Antigravity (agy)",
     permissions: ["--dangerously-skip-permissions"], model: "--model", list: "agy models", dirFlag: "--add-dir",
     noEffort: "agy encodes effort in --model; omit --effort (passing both silently selects HIGH)",
+    // No status command. `agy models` says "Please sign in to view available models" (exit 1) when signed out, and never
+    // starts a sign-in; its `-p /usage` DOES (Google's sign-in, waiting for a code), so it is only read once signed in.
+    auth: { check: ["models"], signedIn: (out, code) => code === 0 && !/\bsign in\b/i.test(out), signIn: "run `agy` and sign in" },
     models: () => lines("agy", ["models"], /^([a-z0-9][\w.-]+)\t/i),
     suggested: { hardest_work: "standard", reserve: 0.1 },
     usage: { read: readAgy } },
@@ -60,13 +73,21 @@ export const HARNESSES = {
     // measured account took effort.
     notes: (model, effort) => ["Kiro asks to confirm trust-all-tools mode at every start; launch answers \"Yes, I accept\" (this session only).",
       ...(effort ? [`Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently: check the model's /effort panel.`] : [])],
+    // `{"accountType":"SocialGitHub","email":…}` / `{"account":null}` (exit 1). Any `chat` command opens a sign-in.
+    auth: { check: ["whoami", "--format", "json"], signedIn: (out, code) => code === 0 && /"email"\s*:\s*"[^"]/.test(out), signIn: "run `kiro-cli login`" },
     models: async () => { try { return JSON.parse(await run("kiro-cli", ["chat", "--list-models", "--format", "json"], { timeoutMs: 20000 })).models.map((m) => m.model_id).filter(Boolean); } catch { return null; } },
     // Kiro's own router, which its docs recommend and which picks the model per task, and effort left to the model:
     // `auto` passes no --effort, which Kiro would otherwise remember as the user's default for that model.
     suggested: { hardest_work: "standard", reserve: 0.1, default_model: "auto", default_effort: "auto" },
-    usage: { read: async (o) => (await import("./kiro-usage.mjs")).readKiro(o), check: async (o) => (await import("./kiro-usage.mjs")).refreshKiro(o) } },
+    usage: { read: async (o) => (await import("./kiro-usage.mjs")).readKiro(o), check: async (o) => (await import("./kiro-usage.mjs")).refreshKiro({ ...o, ready: ready("kiro") }) } },
 };
 export const KINDS = Object.keys(HARNESSES);
+// Is this harness signed in: "yes", "no", or "no answer"? Kept in the cache between calls (signin.mjs); `fresh` checks
+// again now. `notReady` says why a harness gets no work, or null when it is signed in.
+export const signIn = (name, o) => signInState(name, HARNESSES[name], o);
+export const notReady = async (name, o) => { const state = await signIn(name, o); return state === "yes" ? null : signInHint(HARNESSES[name], state); };
+// A refresh's gate: a harness's own reading must never start its sign-in.
+const ready = (name) => () => notReady(name);
 const KIND_ERROR = `--kind must be ${KINDS.slice(0, -1).join(", ")}, or ${KINDS.at(-1)}`;
 export const kindError = () => new Error(KIND_ERROR);
 // The harnesses that take a reasoning effort of their own; Cursor and Antigravity model ids carry it.
@@ -96,9 +117,13 @@ export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usag
 // One unreadable source must not take the others (or the routing advice) down with it. Readers run in parallel.
 // `given` holds headroom the caller read itself (0..1); it wins over any reading.
 // `background` names the subscriptions whose reader may start a background refresh (default: all asked for).
-export async function readUsage(names, given = {}, { sources = SOURCES, background = names } = {}) {
+// `why(name)`: null when it is signed in, or why not. One that is not is never read (its reading could open a sign-in),
+// and dispatch leaves it out (pick.mjs).
+export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null) } = {}) {
   return Promise.all(names.map(async (name) => {
     if (typeof given[name] === "number") return { pool: name, source: "given by caller", given: true, ageSec: 0, windows: [], headroom: Math.min(1, Math.max(0, given[name])) };
+    const not = await why(name);
+    if (not) return { ...summarize({ pool: name, source: "sign-in check", note: not }), signedIn: false };
     const src = sources[name];
     if (!src?.read) return summarize({ pool: name, source: "none", note: "no usage source: read it yourself and pass --headroom " + name + "=<0..1>" });
     try { return await src.read({ background: background.includes(name) }); } catch (e) { return summarize({ pool: name, source: "unreadable", note: `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}` }); }

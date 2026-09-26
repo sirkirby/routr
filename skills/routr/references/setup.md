@@ -20,8 +20,10 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
 
     routr doctor
 
-It changes nothing. It reports which harnesses are installed, which have a live usage source, whether the TypeSafe
-key works, and whether a config exists. Lines marked `!!` need fixing, and it ends with a numbered list of what to
+It changes nothing. It reports which harnesses are installed and signed in, which have a live usage source, whether
+the TypeSafe key works, and whether a config exists. A harness that is installed but not signed in is left out of
+everything (setup, dispatch, launch) until the user signs in; doctor names the command, and routr never starts a
+sign-in itself. Lines marked `!!` need fixing, and it ends with a numbered list of what to
 do next. `routr setup` does the writing (steps 3 and 4). A person can run it alone in a terminal and answer its
 questions; you run it with `--yes` and the choices you settled with the user. `routr doctor --fix` is the same
 command. It is safe to run again: it fills in what is missing (a skill left behind by an older routr, a harness

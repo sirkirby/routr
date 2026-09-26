@@ -136,18 +136,19 @@ export async function setup(args, { inspect: look = inspect, question, interacti
 
   say("Looking at what is installed…");
   const r = await look({ configPath: path, quiet: args.includes("--json") });
-  const found = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed);
+  // Only a harness that is installed AND signed in can be set up: one signed out gets no work until the user signs in.
+  const found = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && r.harnesses[n].signed_in);
   for (const n of Object.keys(ranks)) {
-    if (!found.includes(n)) return { ok: false, error: `--metered ${n}=…: \`${HARNESSES[n].executable}\` was not found on this machine` };
+    if (!found.includes(n)) return { ok: false, error: `--metered ${n}=…: ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
     if (r.harnesses[n].usage_class !== "metered") return { ok: false, error: `--metered ${n}=…: ${n} does not report as metered (${r.harnesses[n].usage_note ?? r.harnesses[n].usage}). For a seat routr cannot read, set "billing": "metered" in the config instead` };
   }
   for (const [n, id] of Object.entries(models)) {
-    if (!found.includes(n)) return { ok: false, error: `--model ${n}=…: \`${HARNESSES[n].executable}\` was not found on this machine` };
+    if (!found.includes(n)) return { ok: false, error: `--model ${n}=…: ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
     const list = r.harnesses[n].models;
     if (list?.length && !list.includes(id)) return { ok: false, error: `--model ${n}=${id}: not in the harness's current list (${list.join(", ")})` };
   }
   for (const [flagName, set] of [["--hardest", hardest], ["--reserve", reserves]])
-    for (const n of Object.keys(set)) if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `${flagName} ${n}=…: ${n} is not configured and \`${HARNESSES[n].executable}\` was not found on this machine` };
+    for (const n of Object.keys(set)) if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `${flagName} ${n}=…: ${n} is not configured and ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
   const rl = interactive && !question ? createInterface({ input: process.stdin, output: process.stdout }) : null;
   const ask = interactive ? (question ?? ((q) => rl.question(q))) : null; // null: nobody to ask (--yes, or no terminal)
   const yes = async (q) => !ask || !/^n/i.test((await ask(`${q} [Y/n] `)).trim());

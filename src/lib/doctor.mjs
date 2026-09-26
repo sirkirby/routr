@@ -5,7 +5,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { CONFIG_PATH, DEFAULTS, loadConfig } from "./config.mjs";
-import { HARNESSES, KINDS, readUsage, SKILL_FOLDERS, TAKES_EFFORT } from "./harnesses.mjs";
+import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, TAKES_EFFORT } from "./harnesses.mjs";
+import { signInHint } from "./signin.mjs";
 import { jevModel, KEY_FILES, loadKey, ping } from "./jev.mjs";
 import { JEV_MODEL } from "./questions.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
@@ -55,7 +56,9 @@ export function nextSteps(r) {
     : "Add your TypeSafe API key. Create one at https://console.typesafe.ai/keys, then run: routr key set");
   if (!r.config.exists) steps.push("Create your config (your defaults for each subscription found): routr setup");
   else if (r.config.problems?.length) steps.push(`Fix your settings: ${r.config.problems.join("; ")}`);
-  else if (Object.entries(r.harnesses).some(([n, h]) => h.installed && !r.config.subscriptions.includes(n))) steps.push(`Add the harnesses found since the config was written (${Object.entries(r.harnesses).filter(([n, h]) => h.installed && !r.config.subscriptions.includes(n)).map(([n]) => n).join(", ")}): routr setup`);
+  else if (Object.entries(r.harnesses).some(([n, h]) => h.signed_in && !r.config.subscriptions.includes(n))) steps.push(`Add the harnesses found since the config was written (${Object.entries(r.harnesses).filter(([n, h]) => h.signed_in && !r.config.subscriptions.includes(n)).map(([n]) => n).join(", ")}): routr setup`);
+  // A subscription the user set up whose harness is signed out gets no work until they sign in again.
+  for (const n of r.config.subscriptions ?? []) if (r.harnesses[n]?.installed && !r.harnesses[n].signed_in) steps.push(`${HARNESSES[n].label} is set up in routr but gets no work: ${r.harnesses[n].sign_in}`);
   if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push(`Install and log in to at least one harness: ${KINDS.slice(0, -1).map((n) => HARNESSES[n].installAs).join(", ")}, or ${HARNESSES[KINDS.at(-1)].installAs}`);
   if (r.claude_usage_statusline === STATUSLINE_MISSING) steps.push("Let routr read Claude Code's usage (sets Claude's statusline command): routr setup");
   // Claude answered a prompt and still sent no windows: a seat with no quota, or a plan routr has not seen send them.
@@ -85,13 +88,18 @@ export async function inspect({ configPath, quiet } = {}) {
   const keyCheck = async () => { loadKey(); r.key.found = true; return ping(); };
   const path = configPath ?? CONFIG_PATH;
   const { config, notes } = loadConfig(path); // read once: the usage step and the config report use the same reading
+  // Installed is not enough: each harness is asked whether it is signed in, afresh, before anything else is asked of it.
+  // One that is not gets no model list and no usage read, since either could open its sign-in in the browser.
+  const statesP = Promise.all(found.map((n) => step(`${n}'s sign-in`, signIn(n, { fresh: true })))).then((s) => Object.fromEntries(found.map((n, i) => [n, s[i]])));
+  const whyNot = (states) => (n) => (states[n] === "yes" ? null : signInHint(HARNESSES[n], states[n]));
   // The release lookup is one short, non-fatal call. Only doctor and `routr update` make it; the advice commands never call home.
-  const [latest, usage, key, ...models] = await Promise.all([
+  const [latest, usage, key, states, ...models] = await Promise.all([
     process.env.ROUTR_NO_UPDATE ? null : latestVersion(3000).catch(() => null),
     // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
-    step("usage", readUsage(found, {}, { background: Object.keys(config.subscriptions ?? {}) })),
+    step("usage", statesP.then((st) => readUsage(found, {}, { background: Object.keys(config.subscriptions ?? {}), why: whyNot(st) }))),
     step("the TypeSafe key", keyCheck().then((t) => ({ t }), (e) => ({ e }))),
-    ...found.map((n) => step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))),
+    statesP,
+    ...found.map((n) => statesP.then((st) => (st[n] !== "yes" ? null : step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))))),
   ]);
   if (latest && standalone() && newer(latest, ROUTR_VERSION)) r.update_available = latest; // a source checkout is not updated
   // How a reading reads in one line: a number, a billed seat's note, or why there is none.
@@ -101,7 +109,9 @@ export async function inspect({ configPath, quiet } = {}) {
     const command = HARNESSES[n].executable;
     if (!found.includes(n)) { r.harnesses[n] = { command, installed: false, off_path: offPath(command), usage: null }; continue; }
     const u = usage.find((x) => x.pool === n);
-    r.harnesses[n] = { command, installed: true, off_path: null, usage: said(u), usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) };
+    const signed = states[n] === "yes";
+    r.harnesses[n] = { command, installed: true, off_path: null, signed_in: signed, ...(signed ? {} : { sign_in: signInHint(HARNESSES[n], states[n]) }),
+      usage: said(u), usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) };
   }
   if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; }
   else { r.key.found ??= false; r.key.works = false; r.key.error = String(key.e?.message ?? key.e).slice(0, 160); r.key.where = `set TYPESAFE_API_KEY, or put TYPESAFE_API_KEY=... in ${KEY_FILES[0]}`; }
@@ -164,12 +174,13 @@ export function render(r) {
   for (const k of r.skill) line(r.from_source || baseVersion(k.version) === base ? "ok" : "need", `routr skill ${k.where} is ${k.version}${r.from_source || baseVersion(k.version) === base ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
   const any = Object.values(r.harnesses).some((h) => h.installed);
   for (const [n, h] of Object.entries(r.harnesses)) {
-    const where = h.installed ? `\`${h.command}\` found · usage ${h.usage}`
+    const where = h.installed && !h.signed_in ? `\`${h.command}\` found, but ${h.sign_in.replace(/^`[^`]+` /, "it ")}. routr leaves it out until then`
+      : h.installed ? `\`${h.command}\` found · usage ${h.usage}`
       : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it`
       : `\`${h.command}\` not found`;
     const more = h.models?.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${HARNESSES[n].list ?? `${h.command} models`}\` for the rest)` : "";
     const models = h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${more}` : "";
-    line(h.installed ? "ok" : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${where}${models}`);
+    line(h.installed ? (h.signed_in ? "ok" : r.config.subscriptions.includes(n) ? "need" : "absent") : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${where}${models}`);
   }
   line(r.key.works ? "ok" : "need", `TypeSafe key ${r.key.works ? `works (${r.key.model}${jevModel() !== JEV_MODEL ? `, asked as ${jevModel()} by ROUTR_JEV_MODEL` : ""}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
   line(r.config.exists && !problems.length ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && [...problems, ...notes].length ? `\n   ${[...problems, ...notes].join("\n   ")}` : ""}`);
