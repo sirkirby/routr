@@ -14,7 +14,7 @@ export const HARDEST = {
   what: "the hardest work routr may send to a subscription",
   flag: "the hardest work routr may send there",
   unset: (name) => `subscriptions.${name}.hardest_work is not set, so strong is used`,
-  invalid: (name, value) => `subscriptions.${name}.hardest_work: "${value}" is not a level, so strong is used`,
+  invalid: (name, value) => `subscriptions.${name}.hardest_work: ${JSON.stringify(value)} is not a level, so strong is used`,
   choose: (name) => `Choose one: routr setup --hardest ${name}=basic|standard|strong`,
 };
 const ROOM = "so the orchestrator and anything you run outside routr still have room";

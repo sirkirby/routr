@@ -28,3 +28,11 @@ test("a config share outside 0..1 is reported and replaced: a negative reserve m
   expect(config.subscriptions.codex.reserve).toBe(0.2);
   expect(notes.length).toBe(3);
 });
+
+test("a hardest_work that is not a level is quoted the way a bad reserve is, whatever its type", async () => {
+  const { HARDEST, RESERVE } = await import("../src/lib/wording.mjs");
+  expect(HARDEST.invalid("x", 3)).toBe("subscriptions.x.hardest_work: 3 is not a level, so strong is used");
+  expect(HARDEST.invalid("x", "huge")).toBe('subscriptions.x.hardest_work: "huge" is not a level, so strong is used');
+  expect(HARDEST.invalid("x", { a: 1 })).not.toContain("[object Object]");
+  expect(RESERVE.invalid("x", "lots")).toContain('"lots"');
+});

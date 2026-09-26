@@ -71,7 +71,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | Command | What it does |
 |---|---|
 | `subagent "<brief>"` | An agent is about to spawn a subagent: facts, level, worth-a-worker. |
-| `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus subscriptions ranked by usable headroom. `--headroom <name>=0.9` overrides a reading. |
+| `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus subscriptions ranked by usable headroom. `--headroom <name>=0.9` (or `90%`) overrides a reading. |
 | `usage [cursor\|kiro]` | Each subscription's usage, ranked as `dispatch` ranks it, with no brief. `usage cursor` or `usage kiro` reads that one now. |
 | `launch` | Start one worker in its own git worktree, nested under the repo in herdr: flags, model syntax, shell prompts, trust dialog, readiness, prompt. `--dry-run` shows the plan. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |

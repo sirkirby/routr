@@ -13,8 +13,18 @@ import { home } from "./runtime.mjs";
 // around it, so it points at the installed skill (written by the installer or `routr skill install`).
 const besideSource = fileURLToPath(new URL("../../skills/routr/references/worker.md", import.meta.url));
 export const WORKER_GUIDE = existsSync(besideSource) ? besideSource : join(home(), ".agents/skills/routr/references/worker.md");
+// The first words of every launch prompt.
+export const PROMPT_OPENING = "You are a routr worker.";
+// Any of these on the pane means the prompt, or part of it, may have arrived: its opening (even a short part of it),
+// its middle, its closing line (a long task scrolls the opening away; the closing stays near the bottom), and the
+// placeholder a harness shows for a paste it has folded away ("[Pasted text #1 +18 lines]", seen on Cursor
+// 2026-09-26, with the text itself nowhere on screen). Matched with all whitespace and box-drawing removed, so no
+// wrap, soft or hard, can split one. A false match only hands the pane to a person; a miss would send the task twice.
+export const PROMPT_TRACES = ["You are a", "routr worker guide", "report block from the worker guide", "VERDICT: done | partial | blocked", "[Pasted text"];
+const squeeze = (t) => String(t).replace(/[\s│┃─━╭╮╰╯┌┐└┘├┤▏▕|]+/g, "");
+export const promptTrace = (screen) => PROMPT_TRACES.some((t) => squeeze(screen).includes(squeeze(t)));
 export function composePrompt(task, guide = WORKER_GUIDE) {
-  return `You are a routr worker. Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
+  return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
 }
 
 const command = (args) => ["herdr", ...args].map(quote).join(" ");
@@ -245,84 +255,94 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       stop = await shellReady(out.cwd); if (stop) return stop;
       step("cursor_env", true, `Set CURSOR_CONFIG_DIR in the pane's ${shell} shell`);
     }
-    const startCommand = startArgs(out.pane, Math.min(30000, remaining()));
-    startAttempted = true;
-    const started = await call(startCommand, true);
-    step("start", started.ok, started.ok ? "Herdr accepted the launch" : JSON.stringify(started.data));
-    let text = await readPane(); // Codex's trust dialog can be reported as idle.
-    const startError = started.data?.error?.code;
-    if (!started.ok && !["agent_not_ready", "timeout"].includes(startError)) {
-      throw new Error(started.data?.error?.message ?? "Agent start failed");
-    }
-    let answeredTrust = null, trustAnsweredAt = null, moves = 0, confirmedAt = null;
-    const h = HARNESSES[o.kind];
-    for (;;) {
-      // Kiro shows it idle and ready while it asks (measured), so the screen is the only sign.
-      const ask = permissiveConfirm(text, h.confirm);
-      if (ask) {
-        if (!ask.keys) return human("Cannot identify the options of the harness's permissive-mode confirmation", text);
-        if (ask.keys[0] !== "enter") {
-          // Moved, then read again: the answer is pressed only once the screen shows it selected.
-          if (++moves > 3) return human("The selection in the permissive-mode confirmation did not move", text);
-          await call(["pane", "send-keys", out.pane, ...ask.keys]);
-        } else if (confirmedAt == null) {
-          await call(["pane", "send-keys", out.pane, "enter"]);
-          step("confirm", true, `Selected "${ask.answer}" (this session only; never "don't ask again")`);
-          out.warnings.push(`Accepted ${o.kind}'s permissive-mode confirmation for this session: ${ask.answer}`);
-          confirmedAt = now();
-        } else if (now() - confirmedAt >= 5000) return human("The permissive-mode confirmation did not clear after answering", text);
-        await pause(); text = await readPane(); continue;
-      }
-      const trust = trustDialog(text);
-      if (trust) {
-        if (o.trust === "ask") return human("Folder trust requires a human decision (--trust ask)", text);
-        if (!trust.keys) return human("Cannot identify the selected and affirmative folder-trust options", text);
-        const signature = JSON.stringify(trust.options.map(({ number, text }) => ({ number, text })));
-        if (answeredTrust && answeredTrust !== signature) return human("A different folder-trust menu appeared after answering; inspect before sending more keys", text);
-        if (!answeredTrust) {
-          await call(["pane", "send-keys", out.pane, ...trust.keys]);
-          step("trust", true, `Selected ${trust.affirmative.number}. ${trust.affirmative.text}; sent ${trust.keys.join(", ")}`);
-          out.warnings.push(`Accepted folder trust: ${trust.affirmative.text}`);
-          answeredTrust = signature; trustAnsweredAt = now();
+    // After the start: answer the harness's own permissive-mode confirmation, the folder trust (as --trust says), wait
+    // until the agent is ready, and check it took the model. Returns null when ready, or what needs a person.
+    const awaitReady = async (text) => {
+      let answeredTrust = null, trustAnsweredAt = null, moves = 0, confirmedAt = null;
+      const h = HARNESSES[o.kind];
+      for (;;) {
+        // Kiro shows it idle and ready while it asks (measured), so the screen is the only sign.
+        const ask = permissiveConfirm(text, h.confirm);
+        if (ask) {
+          if (!ask.keys) return human("Cannot identify the options of the harness's permissive-mode confirmation", text);
+          if (ask.keys[0] !== "enter") {
+            // Moved, then read again: the answer is pressed only once the screen shows it selected.
+            if (++moves > 3) return human("The selection in the permissive-mode confirmation did not move", text);
+            await call(["pane", "send-keys", out.pane, ...ask.keys]);
+          } else if (confirmedAt == null) {
+            await call(["pane", "send-keys", out.pane, "enter"]);
+            step("confirm", true, `Selected "${ask.answer}" (this session only; never "don't ask again")`);
+            out.warnings.push(`Accepted ${o.kind}'s permissive-mode confirmation for this session: ${ask.answer}`);
+            confirmedAt = now();
+          } else if (now() - confirmedAt >= 5000) return human("The permissive-mode confirmation did not clear after answering", text);
+          await pause(); text = await readPane(); continue;
         }
-        if (now() - trustAnsweredAt >= 5000) return human("Folder trust did not clear after answering", text);
-        await pause(); text = await readPane(); continue;
+        const trust = trustDialog(text);
+        if (trust) {
+          if (o.trust === "ask") return human("Folder trust requires a human decision (--trust ask)", text);
+          if (!trust.keys) return human("Cannot identify the selected and affirmative folder-trust options", text);
+          const signature = JSON.stringify(trust.options.map(({ number, text }) => ({ number, text })));
+          if (answeredTrust && answeredTrust !== signature) return human("A different folder-trust menu appeared after answering; inspect before sending more keys", text);
+          if (!answeredTrust) {
+            await call(["pane", "send-keys", out.pane, ...trust.keys]);
+            step("trust", true, `Selected ${trust.affirmative.number}. ${trust.affirmative.text}; sent ${trust.keys.join(", ")}`);
+            out.warnings.push(`Accepted folder trust: ${trust.affirmative.text}`);
+            answeredTrust = signature; trustAnsweredAt = now();
+          }
+          if (now() - trustAnsweredAt >= 5000) return human("Folder trust did not clear after answering", text);
+          await pause(); text = await readPane(); continue;
+        }
+        // Even after start succeeds, wait and then inspect the actual UI before prompting.
+        const waited = await call(["agent", "wait", out.pane, "--timeout", String(Math.min(1000, remaining()))], true);
+        if (!waited.ok && !["timeout", "agent_not_found", "agent_not_ready"].includes(waited.data?.error?.code)) throw new Error(waited.data?.error?.message ?? "Agent wait failed");
+        text = await readPane();
+        if (trustDialog(text) || permissiveConfirm(text, h.confirm)) continue;
+        const got = await call(["agent", "get", out.pane], true);
+        if (!got.ok && got.data?.error?.code !== "agent_not_found") throw new Error(got.data?.error?.message ?? "Agent inspection failed");
+        const agent = got.data?.result?.agent;
+        if (agent && agent.agent !== o.kind) return human("The pane contains a different agent kind", text);
+        if (agent?.agent_status === "blocked") return human("Agent is waiting at an unrecognized question or approval", text);
+        // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
+        if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) break;
+        await pause();
       }
-      // Even after start succeeds, wait and then inspect the actual UI before prompting.
-      const waited = await call(["agent", "wait", out.pane, "--timeout", String(Math.min(1000, remaining()))], true);
-      if (!waited.ok && !["timeout", "agent_not_found", "agent_not_ready"].includes(waited.data?.error?.code)) throw new Error(waited.data?.error?.message ?? "Agent wait failed");
-      text = await readPane();
-      if (trustDialog(text) || permissiveConfirm(text, h.confirm)) continue;
-      const got = await call(["agent", "get", out.pane], true);
-      if (!got.ok && got.data?.error?.code !== "agent_not_found") throw new Error(got.data?.error?.message ?? "Agent inspection failed");
-      const agent = got.data?.result?.agent;
-      if (agent && agent.agent !== o.kind) return human("The pane contains a different agent kind", text);
-      if (agent?.agent_status === "blocked") return human("Agent is waiting at an unrecognized question or approval", text);
-      // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
-      if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) break;
-      await pause();
-    }
-    if (o.kind === "cursor" && SHELLS[shell].cursor) await call(["agent", "rename", out.pane, o.name]); // pane-run: herdr did not get the name
-    if (h.showsModel) {
-      // Kiro runs its default on a model id it does not know, and says so only by leaving the id out of its footer.
-      const shownBy = now() + 3000;
-      while (!h.showsModel(clean(text), o.model)) {
-        if (now() >= shownBy) throw new Error(`${h.executable} did not take --model ${o.model}: the screen does not show it, and ${o.kind} runs its default model on an id it does not know. Close this pane; list the ids with \`${h.list}\``);
-        await pause(); text = await readPane();
+      if (o.kind === "cursor" && SHELLS[shell].cursor) await call(["agent", "rename", out.pane, o.name]); // pane-run: herdr did not get the name
+      if (h.showsModel) {
+        // Kiro runs its default on a model id it does not know, and says so only by leaving the id out of its footer.
+        const shownBy = now() + 3000;
+        while (!h.showsModel(clean(text), o.model)) {
+          if (now() >= shownBy) throw new Error(`${h.executable} did not take --model ${o.model}: the screen does not show it, and ${o.kind} runs its default model on an id it does not know. Close this pane; list the ids with \`${h.list}\``);
+          await pause(); text = await readPane();
+        }
+        step("model", true, `The screen shows ${o.model}`);
       }
-      step("model", true, `The screen shows ${o.model}`);
-    }
-    step("ready", true, "Herdr wait settled and the pane has no folder-trust dialog");
-    out.state = "ready"; out.ok = true;
-    if (prompt) {
-      // Reserve time to inspect the result. A prompt is never retried after uncertain submission.
+      return null;
+    };
+    // Submit the task and confirm the worker took it. A prompt is resent only when herdr says it stalled AND the pane
+    // shows it never arrived (the agent idle, the worker opening nowhere in its scrollback): seen 2026-09-26 on Claude,
+    // idle with an empty input line after "agent_prompt_stalled". Anything less certain goes to a person, never twice.
+    const submitPrompt = async () => {
+      // Reserve time to inspect the result.
       const budget = remaining();
       if (budget < 2) throw new Error("No time left to submit and verify the prompt");
       const submitMs = Math.min(30000, Math.floor(budget / 2));
       const a = promptArgs(out.pane, submitMs);
       logCommand(out.command, promptForLog(a));
       promptAttempted = true;
-      const r = await run(a, Math.min(budget, submitMs + Math.min(1000, Math.floor((budget - submitMs) / 2))));
+      const wait = () => Math.min(remaining(), submitMs + Math.min(1000, Math.floor((budget - submitMs) / 2)));
+      let r = await run(a, wait());
+      if (!r.ok && r.data?.error?.code === "agent_prompt_stalled") {
+        await pause();
+        // The agent's state first, then a fresh read of the pane, then at once the resend: nothing between the look
+        // and the send. Resent only with no trace of the prompt anywhere and no dialog on screen.
+        const idle = (await call(["agent", "get", out.pane], true)).data?.result?.agent?.agent_status === "idle";
+        const seen = idle ? clean(paneText((await call(["pane", "read", out.pane, "--source", "recent-unwrapped", "--lines", "1000"])).data)) : "";
+        if (idle && !promptTrace(seen) && !trustDialog(seen) && !permissiveConfirm(seen, HARNESSES[o.kind].confirm)) {
+          step("prompt_retry", true, "herdr said the prompt stalled and the pane never showed it: sent once more");
+          logCommand(out.command, promptForLog(a));
+          r = await run(a, wait());
+        }
+      }
       const got = await call(["agent", "get", out.pane]);
       const agent = got.data?.result?.agent;
       const status = agent?.agent_status ?? "unknown";
@@ -338,7 +358,21 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         step("prompt", false, `Could not confirm the worker started (${status}): ${JSON.stringify(r.data)}`);
         out.ok = false; out.state = "failed";
       }
+      return null;
+    };
+    const startCommand = startArgs(out.pane, Math.min(30000, remaining()));
+    startAttempted = true;
+    const started = await call(startCommand, true);
+    step("start", started.ok, started.ok ? "Herdr accepted the launch" : JSON.stringify(started.data));
+    let text = await readPane(); // Codex's trust dialog can be reported as idle.
+    const startError = started.data?.error?.code;
+    if (!started.ok && !["agent_not_ready", "timeout"].includes(startError)) {
+      throw new Error(started.data?.error?.message ?? "Agent start failed");
     }
+    stop = await awaitReady(text); if (stop) return stop;
+    step("ready", true, "Herdr wait settled and the pane has no folder-trust dialog");
+    out.state = "ready"; out.ok = true;
+    if (prompt) { stop = await submitPrompt(); if (stop) return stop; }
   } catch (e) {
     out.ok = false; out.state = "failed"; step("failed", false, String(e?.message ?? e));
     // The harness may have exited with its own complaint (a model id it does not accept, a login it wants). That

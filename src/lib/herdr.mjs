@@ -145,7 +145,7 @@ export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBus
   const pause = () => sleep(Math.min(250, remaining()));
   for (;;) {
     const text = await pane.read();
-    const info = await pane.info();
+    const info = (await pane.info()) ?? {}; // no process information: the shell is waited for, like a busy one
     const fail = (why) => ({ ok: false, why, text });
     const processes = info.foreground_processes ?? [];
     const shell = processes.find((p) => p.pid === info.shell_pid);
@@ -169,7 +169,12 @@ export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBus
       if (state === "question") return fail("Unrecognized shell question");
       // Even a recognized prompt must settle while the shell remains in the foreground.
       if (state === "ready" && promptSettled(text, previous)) {
-        if (cwd && realpathSync(shell.cwd) !== realpathSync(cwd)) return fail("Shell is at a prompt in the wrong directory");
+        // A folder that is gone (removed while the launch waited) is a person's call, not a crash.
+        let here, there;
+        if (cwd && typeof shell.cwd !== "string") return fail("The pane's shell did not say which folder it is in");
+        try { here = cwd && realpathSync(shell.cwd); there = cwd && realpathSync(cwd); }
+        catch (e) { return fail(e?.code === "ENOENT" ? `The pane's folder is gone (${shell.cwd}), or the one asked for (${cwd})` : `The pane's folder cannot be read (${e?.code ?? e})`); }
+        if (cwd && here !== there) return fail("Shell is at a prompt in the wrong directory");
         return { ok: true, name: shell.name, cwd: shell.cwd };
       }
     }

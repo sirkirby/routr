@@ -702,3 +702,52 @@ test("launch refuses a subscription the user turned off, before any herdr call",
   expect(r.steps.at(-1).detail).toBe("Codex is turned off in your settings: turn it on with routr setup --enable codex");
   expect(f.calls).toEqual([]);
 });
+
+test("a pane whose folder is gone is a person's call, not a crash; no process information is waited out", async () => {
+  const { waitForShell } = await import("../src/lib/herdr.mjs");
+  let t = 0, infos = 0;
+  const time = { sleep: async (ms) => { t += ms; }, now: () => t, remaining: () => 60000 };
+  const pane = { read: async () => "chris % ", keys: async () => {}, info: async () => (++infos < 3 ? undefined : { shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh", cwd: "/no/such/folder-routr" }] }) };
+  expect(await waitForShell(pane, { ...time, cwd: SCRATCH })).toMatchObject({ ok: false, why: expect.stringContaining("folder is gone") });
+  expect(infos).toBeGreaterThan(2); // the empty answers were waited out, not a TypeError
+  const noCwd = { read: async () => "chris % ", keys: async () => {}, info: async () => ({ shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh" }] }) };
+  expect(await waitForShell(noCwd, { ...time, cwd: SCRATCH })).toMatchObject({ ok: false, why: "The pane's shell did not say which folder it is in" });
+});
+test("a prompt herdr says stalled is sent once more only when the pane shows no trace of it, no dialog, and the agent idle", async () => {
+  const drive = async (shown, status = "idle") => {
+    let prompts = 0;
+    const f = fakeHerdr({ reply: (a) => {
+      if (a[1] === "prompt") return ++prompts === 1 ? herdrError("agent_prompt_stalled") : undefined;
+      if (a[1] === "read" && a.includes("recent-unwrapped")) return herdrOK({ text: shown });
+      if (a[1] === "get" && prompts === 1) return herdrOK({ agent: { agent: "claude", agent_status: status, interactive_ready: true } });
+    } });
+    const r = await launch([...launchArgs, "--task", "Task"], f.deps);
+    return { r, prompts, retried: r.steps.some((s) => s.step === "prompt_retry") };
+  };
+  const never = await drive("Welcome\n❯");
+  expect(never).toMatchObject({ prompts: 2, retried: true, r: { ok: true, state: "prompted" } });
+  // Any trace of the prompt, a dialog, or an agent that is not idle: never sent twice, and the person is warned.
+  for (const [why, shown, status] of [
+    ["the opening", "❯ You are a routr worker. Your first action…", "idle"],
+    ["a half-pasted opening", "❯ You are a routr wor", "idle"],
+    ["only the closing line of a long task (the opening scrolled away)", "…line 400 of the task\n\nFinish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.", "idle"],
+    ["a folder-trust dialog", claudeTrust, "idle"],
+    ["a paste the harness folded into a placeholder", "  → [Pasted text #1 +18 lines]", "idle"],
+    ["a short part of the opening", "❯ You are a", "idle"],
+    ["the closing line hard-wrapped at 40 columns", "Finish with the report block from the\nworker guide, starting with the line `VERD\nICT: done | partial | blocked`.", "idle"],
+    ["an agent that is not idle", "Welcome\n❯", "working"],
+  ]) {
+    const x = await drive(shown, status);
+    expect([why, x.prompts, x.retried]).toEqual([why, 1, false]);
+    expect(x.r.state).not.toBe("prompted");
+    expect(x.r.warnings).toContain("Prompt may have been submitted; inspect the pane before retrying.");
+  }
+});
+
+test("prompt traces survive any wrap and box drawing, and ordinary screens have none", async () => {
+  const { promptTrace, composePrompt } = await import("../src/lib/launch.mjs");
+  const full = composePrompt("Do the thing.\n".repeat(1200));
+  const wrapped = (w) => full.split("\n").flatMap((l) => l.match(new RegExp(`.{1,${w}}`, "g")) ?? [""]).map((l) => `│ ${l} │`);
+  for (const w of [20, 40, 80]) expect(promptTrace(wrapped(w).slice(-1000).join("\n"))).toBe(true); // the closing survives, however it wraps
+  for (const screen of ["Welcome\n❯", "kiro_default · auto · ◔ 1%", "  ~/.herdr/worktrees/routr/review5-verify · review5-verify", "chris % "]) expect(promptTrace(screen)).toBe(false);
+});

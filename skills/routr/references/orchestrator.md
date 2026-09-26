@@ -100,6 +100,10 @@ object describing what it did.
   `warnings` holds anything it answered on your behalf and anything it wants you to look at. `steps` says what it
   did, in order. A `needs_human` result is yours to resolve (`herdr notification show`), not to retry.
 - `prompted` means the worker took the prompt and started, not that it finished. Waiting for the work is step 4.
+- When herdr says the prompt stalled, launch resends it once, and only if the pane shows it never arrived (the agent
+  idle, the worker opening nowhere on it; `steps` then holds `prompt_retry`). If the prompt may be on the pane,
+  launch never sends it twice: the state is not `prompted` and `warnings` holds "Prompt may have been submitted".
+  Read the pane before you do anything, and send the task by hand only if it is not there.
 
 `references/harnesses.md` records what each harness does and what goes wrong with it. Read it when a launch surprises
 you, when you are choosing a model, or when you launch by hand. The by-hand sequence is what `routr launch` performs:

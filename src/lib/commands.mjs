@@ -18,6 +18,19 @@ import { readUsage, SOURCES } from "./harnesses.mjs";
 
 const short = (e, n = 160) => String(e?.message ?? e).slice(0, n);
 
+// `--headroom claude=0.4` or `=40%`: usage the caller read itself. A value that cannot be read (empty, "%" alone, out
+// of 0..1, no name) is a note in the answer, never dropped without a word, and never read as 0.
+export function parseHeadroom(values) {
+  const given = {}, notes = [];
+  for (const h of values) {
+    const [k0 = "", v = ""] = String(h ?? "").split("="), k = k0.trim(), t = v.trim(), num = t.endsWith("%") ? t.slice(0, -1).trim() : t;
+    const x = num && /^[0-9.]+$/.test(num) ? Number(num) / (t.endsWith("%") ? 100 : 1) : NaN;
+    if (k && Number.isFinite(x) && x >= 0 && x <= 1) given[k] = x;
+    else notes.push(`--headroom ${h ?? ""} is not <subscription>=<a share from 0 to 1, or a percent>: ignored`);
+  }
+  return { given, notes };
+}
+
 // `routr subagent|dispatch "<brief>"`: Jev's reading of the brief with the user's preferences, and for dispatch the
 // subscriptions ranked by usage, read while Jev answers. An unreachable Jev still gets an answer: the user's fallback.
 export async function adviseCommand(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read = readUsage } = {}) {
@@ -79,8 +92,9 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null, { env
   const entries = read(ledger);
   if (!entries.length) return "The ledger is empty: there is nothing to share yet.";
   const rows = telemetryRows(entries, installId(ledger, { create: false }) ?? "not-yet-created"); // looking must not create an id
-  // Beside the ledger by default, never in the current folder: that is usually a repository, and the file could be committed.
-  const file = out ?? join(dirname(LEDGER_PATH), `routr-ledger-${new Date().toISOString().slice(0, 10)}.jsonl`);
+  // Beside the ledger read by default (the one --ledger names), never in the current folder: that is usually a
+  // repository, and the file could be committed.
+  const file = out ?? join(dirname(ledger), `routr-ledger-${new Date().toISOString().slice(0, 10)}.jsonl`);
   mkdirSync(dirname(file) || ".", { recursive: true });
   writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
   const st = telemetryStatus(config, env, telemetryState(ledger)), pending = st.on ? pendingCount(ledger) : 0;
@@ -107,7 +121,7 @@ export async function usageCommand(words, config, given = {}, { read = readUsage
   const [name, ...extra] = words.filter((w) => !w.startsWith("-"));
   // The output is JSON already, so --json (which doctor and setup take) is accepted and changes nothing.
   const unknown = flags.filter((f) => f !== "--json" && f !== "--background"); // --background: routr's own refresh job
-  if (extra.length || unknown.length) return { ok: false, error: `usage: routr usage [--config <path>] [--headroom <subscription>=<0..1>]... [<subscription>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}` };
+  if (extra.length || unknown.length) return { ok: false, error: `usage: routr usage [--config <path>] [--headroom <subscription>=<share, 0.9 or 90%>]... [<subscription>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}` };
   if (name && sources[name]?.check) return sources[name].check({ background: flags.includes("--background") });
   if (name && !configured.includes(name)) return { ok: false, error: `${name} is not a configured subscription (configured: ${configured.join(", ") || "none, run routr setup"})` };
   try {
