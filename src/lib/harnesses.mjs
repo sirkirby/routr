@@ -98,9 +98,9 @@ export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usag
 // `background` names the subscriptions whose reader may start a background refresh (default: all asked for).
 export async function readUsage(names, given = {}, { sources = SOURCES, background = names } = {}) {
   return Promise.all(names.map(async (name) => {
-    if (typeof given[name] === "number") return { pool: name, source: "given by caller", ageSec: 0, windows: [], headroom: Math.min(1, Math.max(0, given[name])) };
+    if (typeof given[name] === "number") return { pool: name, source: "given by caller", given: true, ageSec: 0, windows: [], headroom: Math.min(1, Math.max(0, given[name])) };
     const src = sources[name];
-    if (!src?.read) return summarize(name, "none", null, [], "no usage source: read it yourself and pass --headroom " + name + "=<0..1>");
-    try { return await src.read({ background: background.includes(name) }); } catch (e) { return summarize(name, "unreadable", null, [], `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}`); }
+    if (!src?.read) return summarize({ pool: name, source: "none", note: "no usage source: read it yourself and pass --headroom " + name + "=<0..1>" });
+    try { return await src.read({ background: background.includes(name) }); } catch (e) { return summarize({ pool: name, source: "unreadable", note: `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}` }); }
   }));
 }

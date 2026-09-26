@@ -49,7 +49,7 @@ export function readSnapshot({ name, source, windows, describe, byHand, file, lo
   }
   const r = snap?.reading, age = snap?.ts == null ? null : nowSec - snap.ts;
   const after = [started && "a fresh reading is being taken in the background", snap?.error && `the last try failed: ${snap.error}`].filter(Boolean).join("; ");
-  if (r && age < TRUST_SEC) return summarize(name, source, snap.ts, windows(r), `${describe(r)}${after ? `; ${after}` : ""}`, undefined, nowSec);
+  if (r && age < TRUST_SEC) return summarize({ pool: name, source, ts: snap.ts, windows: windows(r), note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec });
   const why = r ? `the last reading is ${Math.round(age / 3600)} h old, too old to use` : "no reading yet";
-  return summarize(name, source, null, [], `${why}${after ? `; ${after}` : ""}; using the assumed headroom.${snap?.error ? ` By hand: ${byHand}` : ""}`, undefined, nowSec);
+  return summarize({ pool: name, source, note: `${why}${after ? `; ${after}` : ""}; using the assumed headroom.${snap?.error ? ` By hand: ${byHand}` : ""}`, nowSec });
 }

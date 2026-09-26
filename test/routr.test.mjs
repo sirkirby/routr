@@ -72,7 +72,7 @@ test("gaps in the brief are flagged for fixing before it is sent", () => {
 });
 test("the user's default model is passed through, and caller-read headroom is used", () => {
   const c = cfg(); c.subscriptions.cursor = { ...c.subscriptions.cursor, default_model: "some-model", default_effort: "low" };
-  const r = rankSubscriptions("basic", [live("claude", 0.3), { pool: "cursor", source: "given by caller", ageSec: 0, windows: [], headroom: 0.97 }], c);
+  const r = rankSubscriptions("basic", [live("claude", 0.3), { pool: "cursor", source: "given by caller", given: true, ageSec: 0, windows: [], headroom: 0.97 }], c);
   expect(r.ranked[0]).toMatchObject({ subscription: "cursor", usable: 0.87, usage: "given", your_default: "some-model @ low" });
 });
 test("high risk is called out", () => {
@@ -155,7 +155,7 @@ test("a metered seat gets a position, not a number: after every pool with room, 
   expect(w.ranked.map((x) => [x.subscription, x.usable, x.usage])).toEqual([["codex", 0.5, "assumed"], ["claude", 0.35, "live"]]);
   expect(rankSubscriptions("strong", [metered("codex")], cfg({ subscriptions: { codex: cfg().subscriptions.codex } })).note).toBe("codex is metered: every token there is billed");
   const g = cfg(); g.subscriptions.cursor.billing = "metered";                                  // a number the caller read wins over the class
-  expect(rankSubscriptions("basic", [{ pool: "cursor", source: "given by caller", ageSec: 0, windows: [], headroom: 0.9 }], g).ranked[0]).toMatchObject({ class: "included", usable: 0.8, usage: "given" });
+  expect(rankSubscriptions("basic", [{ pool: "cursor", source: "given by caller", given: true, ageSec: 0, windows: [], headroom: 0.9 }], g).ranked[0]).toMatchObject({ class: "included", usable: 0.8, usage: "given" });
   const b = cfg(); b.subscriptions.claude.billing = "metered";                                   // the reader sees nothing; the user knows
   expect(rankSubscriptions("strong", [none("claude"), live("codex", 0.5)], b).ranked.map((x) => [x.subscription, x.class])).toEqual([["codex", "included"], ["claude", "metered"]]);
   expect(rankSubscriptions("strong", [live("claude", 0.6), { ...metered("codex"), windows: [win(40, 100, null)], headroom: 0.6, class: "capped" }], cfg()).ranked[0]).toMatchObject({ subscription: "codex", class: "capped", usable: 0.4 }); // a cap is a number: ranked by it; unknown length holds the full reserve
@@ -644,7 +644,7 @@ test("dispatch and subagent answer from a function: Jev's reading, the ranking, 
 });
 test("routr usage ranks what it sees without a brief, and a name narrows it or opens the harness's screen", async () => {
   const c = cfg();
-  const read = async (names, given) => names.map((n) => (n === "cursor" && given.cursor != null ? { pool: n, source: "given by caller", ageSec: 0, windows: [], headroom: given.cursor } : n === "claude" ? live("claude", 0.6) : none(n)));
+  const read = async (names, given) => names.map((n) => (n === "cursor" && given.cursor != null ? { pool: n, source: "given by caller", given: true, ageSec: 0, windows: [], headroom: given.cursor } : n === "claude" ? live("claude", 0.6) : none(n)));
   const all = await usageCommand([], c, {}, { read });
   expect(all.ok).toBe(true);
   expect(all.ranked.map((x) => x.subscription).sort()).toEqual(Object.keys(c.subscriptions).sort());

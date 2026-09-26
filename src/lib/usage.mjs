@@ -13,8 +13,10 @@ export { CLAUDE_SNAPSHOT };
 export const CODEX_SESSIONS = join(homedir(), ".codex/sessions");
 const now = () => Date.now() / 1000;
 
-// `nowSec` is injectable so the recorded shapes are tests that do not age.
-export function summarize(pool, source, ts, windows, note, cls, nowSec = now(), reason) {
+// One subscription's usage as every reader returns it. `ts` is when the harness reported it (null: nothing read);
+// `cls` the class, from the windows when not given; `reason` a stable key for a note doctor acts on. `nowSec` is
+// injectable so the recorded shapes are tests that do not age.
+export function summarize({ pool, source, ts = null, windows = [], note, cls, nowSec = now(), reason }) {
   windows = windows.filter((w) => Number.isFinite(w.usedPct)); // a window without a number must not turn headroom into NaN
   cls ??= windows.length ? "included" : "unknown";
   const ageSec = ts ? Math.round(nowSec - ts) : null;
@@ -56,7 +58,7 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
   const metered = !cap && !ws.length && (credits?.unlimited || hasCredits);
   if (metered) notes.push(credits.unlimited ? "metered: unlimited credits, usage is billed, no quota reported" : `metered: workspace credits${credits.balance ? ` (balance ${credits.balance})` : ""}, usage is billed, no window reported`);
   else if (ws.length && (credits?.unlimited || hasCredits)) notes.push("workspace credits are on: the harness keeps working past 100% on billed usage");
-  return summarize("codex", source, ts, ws, notes.join("; ") || undefined, cap ? "capped" : metered ? "metered" : undefined, nowSec);
+  return summarize({ pool: "codex", source, ts, windows: ws, note: notes.join("; ") || undefined, cls: cap ? "capped" : metered ? "metered" : undefined, nowSec });
 }
 
 // The Claude snapshot `routr statusline` writes. Windows come from `rate_limits`; `spend_limit` (behind a Claude apps
@@ -71,10 +73,10 @@ export function claudeSnapshot(s, nowSec = now()) {
   const toWs = (rl) => Object.entries(rl ?? {}).filter(([k, v]) => k in mins && v?.used_percentage != null).map(([k, v]) => ({ name: k, usedPct: Math.min(100, v.used_percentage), windowMin: mins[k], resetsAt: v.resets_at }));
   let ws = toWs(s.rate_limits), ts = s.ts;
   if (!ws.length && s.seen) { ws = toWs(s.seen.rate_limits); ts = s.seen.ts; }
-  if (ws.length) return summarize("claude", "statusline", ts, ws, undefined, ws.some((w) => w.name === "spend_limit") ? "capped" : "included", nowSec);
-  return summarize("claude", "statusline", s.ts, [], s.answered
+  if (ws.length) return summarize({ pool: "claude", source: "statusline", ts, windows: ws, cls: ws.some((w) => w.name === "spend_limit") ? "capped" : "included", nowSec });
+  return summarize({ pool: "claude", source: "statusline", ts: s.ts, note: s.answered
     ? "Claude reports no usage windows for this seat. A plan with no quota (usage-based Enterprise, an API key) sends none: if that is this seat, set `billing: \"metered\"` for claude in the config"
-    : "no windows yet: Claude reports usage after its first response of a session", undefined, nowSec, s.answered ? NO_WINDOWS_AFTER_ANSWER : undefined);
+    : "no windows yet: Claude reports usage after its first response of a session", nowSec, reason: s.answered ? NO_WINDOWS_AFTER_ANSWER : undefined });
 }
 
 function newestFile(dir) {
@@ -91,7 +93,7 @@ function newestFile(dir) {
 
 export function readCodex() {
   const f = newestFile(CODEX_SESSIONS);
-  if (!f) return summarize("codex", "session log", null, []);
+  if (!f) return summarize({ pool: "codex", source: "session log" });
   const lines = readFileSync(f, "utf8").split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
     if (!lines[i].includes('"rate_limits"')) continue;
@@ -102,11 +104,11 @@ export function readCodex() {
       return codexSnapshot(rl, "session log", Date.parse(o.timestamp) / 1000);
     } catch {}
   }
-  return summarize("codex", "session log", null, []);
+  return summarize({ pool: "codex", source: "session log" });
 }
 
 export function readClaude() {
-  if (!existsSync(CLAUDE_SNAPSHOT)) return summarize("claude", "statusline", null, [], "no snapshot: the usage statusline is not installed, or no Claude Code session has run since");
+  if (!existsSync(CLAUDE_SNAPSHOT)) return summarize({ pool: "claude", source: "statusline", note: "no snapshot: the usage statusline is not installed, or no Claude Code session has run since" });
   return claudeSnapshot(JSON.parse(readFileSync(CLAUDE_SNAPSHOT, "utf8")));
 }
 
@@ -142,11 +144,11 @@ export async function readAgy() {
       // Only the Gemini pool is the subscription's own. With none named, the usage is unknown: another pool's numbers
       // presented as live headroom would steer work on a guess.
       const own = groups.find((g) => /gemini/i.test(g.name));
-      if (!own) return summarize("agy", "agy /usage", null, [], "`agy /usage` lists no Gemini pool; using the assumed headroom");
+      if (!own) return summarize({ pool: "agy", source: "agy /usage", note: "`agy /usage` lists no Gemini pool; using the assumed headroom" });
       const mins = { weekly: 10080, "5h": 300 };
       const ws = own.buckets.map((b) => ({ name: b.id, usedPct: (1 - b.remaining_fraction) * 100, windowMin: mins[b.window] ?? 0, resetsAt: Date.parse(b.reset_time) / 1000 }));
-      return summarize("agy", "agy /usage", now(), ws, `pool: ${own.name}`);
+      return summarize({ pool: "agy", source: "agy /usage", ts: now(), windows: ws, note: `pool: ${own.name}` });
     } catch {}
   }
-  return summarize("agy", "agy /usage", null, [], "`agy -p /usage` did not answer in two tries; using the assumed headroom");
+  return summarize({ pool: "agy", source: "agy /usage", note: "`agy -p /usage` did not answer in two tries; using the assumed headroom" });
 }
