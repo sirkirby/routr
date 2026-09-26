@@ -10,7 +10,8 @@ const asksHelp = (args) => args.includes("--help") || args.includes("-h");
 if (argv[0] === "statusline" && !asksHelp(argv)) { (await import("./lib/statusline.mjs")).statusline(); process.exit(0); }
 
 const { COMMANDS, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } = await import("./lib/help.mjs");
-if (argv[0] === "--help" || argv[0] === "-h" || (argv[0] === "help" && (!argv[1] || !COMMANDS[argv[1]]))) {
+// `routr help <command>`, `routr --help <command>` and `routr -h <command>` all show that command's help.
+if (["help", "--help", "-h"].includes(argv[0]) && !(argv[1] && COMMANDS[argv[1]])) {
   console.log(formatTopLevelHelp());
   process.exit(0);
 }
@@ -76,7 +77,15 @@ const take = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv.spli
 const takeAll = (name) => { const r = []; while (argv.includes(name)) r.push(take(name)); return r; };
 const configPath = take("--config");
 // --headroom cursor=0.97 : usage the caller read itself (repeatable); it overrides any reading
-const given = {}; for (let h; (h = take("--headroom")); ) { const [k, v] = h.split("="); if (k && !Number.isNaN(+v)) given[k] = +v; }
+// Every --headroom is taken off the line, even an empty one, so none can end up in the brief. A share (0.97) or a
+// percent (97%) is read; anything else is said in the answer, never dropped without a word.
+const given = {}, inputNotes = [];
+for (const h of takeAll("--headroom")) {
+  const [k, v = ""] = String(h ?? "").split("="), t = v.trim(), x = t.endsWith("%") ? Number(t.slice(0, -1)) / 100 : Number(t);
+  if (k && t && Number.isFinite(x) && x >= 0 && x <= 1) given[k] = x;
+  else inputNotes.push(`--headroom ${h ?? ""} is not <subscription>=<a share from 0 to 1, or a percent>: ignored`);
+}
+const withNotes = (r) => (inputNotes.length && r && typeof r === "object" ? { ...r, input_notes: inputNotes } : r);
 const [mode, ...rest] = argv;
 const loaded = () => loadConfig(configPath);
 // At most once a day this starts a detached background updater; it never delays or changes the command itself.
@@ -92,7 +101,7 @@ const ADVISE = {
     const o = Object.fromEntries(["advice", "subscription", "model", "effort", "level", "verdict", "check", "seconds", "attempts", "note", "ledger", "report", "project"].map((f) => [f, take(`--${f}`)]));
     print((await commands()).recordCommand(o, takeAll("--subagent"))); // never blocks the agent
   },
-  usage: async () => print(await (await commands()).usageCommand(rest, loaded().config, given), 1), // never blocks an agent
+  usage: async () => print(withNotes(await (await commands()).usageCommand(rest, loaded().config, given)), 1), // never blocks an agent
   doctor: async () => (await import("./lib/doctor.mjs")).doctor({ json: rest.includes("--json"), configPath }),
 };
 if (ADVISE[mode]) { await ADVISE[mode](); process.exit(0); }
@@ -101,4 +110,4 @@ if (mode !== "subagent" && mode !== "dispatch") { console.error(formatUnknownUsa
 let brief = rest.join(" ").trim();
 if (!brief && !process.stdin.isTTY) { try { brief = (await import("node:fs")).readFileSync(0, "utf8").trim(); } catch {} }
 if (!brief) { console.error("routr: empty brief"); process.exit(2); }
-print(await (await commands()).adviseCommand(mode, brief, loaded(), given));
+print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given)));

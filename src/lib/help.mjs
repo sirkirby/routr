@@ -22,7 +22,7 @@ export const COMMANDS = {
     ],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
-      { name: "--headroom", arg: "<subscription>=<0..1>", description: "override a reading with usage you read yourself", required: false, repeatable: true },
+      { name: "--headroom", arg: "<subscription>=<share>", description: "override a reading with usage you read yourself: the share left, 0.9 or 90% (not for a harness that is not signed in)", required: false, repeatable: true },
     ],
   },
   usage: {
@@ -31,7 +31,7 @@ export const COMMANDS = {
     args: [{ name: "[<subscription>]", description: "only this one; for cursor or kiro, read its /usage now (cursor needs herdr installed)", required: false }],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
-      { name: "--headroom", arg: "<subscription>=<0..1>", description: "usage you read yourself, as for dispatch", required: false, repeatable: true },
+      { name: "--headroom", arg: "<subscription>=<share>", description: "usage you read yourself, as for dispatch (0.9 or 90%)", required: false, repeatable: true },
     ],
   },
   launch: {

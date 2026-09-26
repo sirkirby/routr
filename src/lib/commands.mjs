@@ -79,8 +79,9 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null, { env
   const entries = read(ledger);
   if (!entries.length) return "The ledger is empty: there is nothing to share yet.";
   const rows = telemetryRows(entries, installId(ledger, { create: false }) ?? "not-yet-created"); // looking must not create an id
-  // Beside the ledger by default, never in the current folder: that is usually a repository, and the file could be committed.
-  const file = out ?? join(dirname(LEDGER_PATH), `routr-ledger-${new Date().toISOString().slice(0, 10)}.jsonl`);
+  // Beside the ledger read by default (the one --ledger names), never in the current folder: that is usually a
+  // repository, and the file could be committed.
+  const file = out ?? join(dirname(ledger), `routr-ledger-${new Date().toISOString().slice(0, 10)}.jsonl`);
   mkdirSync(dirname(file) || ".", { recursive: true });
   writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
   const st = telemetryStatus(config, env, telemetryState(ledger)), pending = st.on ? pendingCount(ledger) : 0;
