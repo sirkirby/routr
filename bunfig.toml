@@ -1,0 +1,3 @@
+[test]
+# Environment every test file runs in: see test/setup.mjs.
+preload = ["./test/setup.mjs"]
