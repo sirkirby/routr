@@ -5,11 +5,10 @@
 // or `unknown` (nothing readable). Measured 2026-09-22 on a ChatGPT Enterprise seat: no windows at all, only
 // `credits.unlimited: true`, and a plan name of `business`. So the shape is the key, never the plan name.
 import { CURSOR_BY_HAND, cursorUsage } from "./cursor-usage.mjs";
-import { CLAUDE_SNAPSHOT, CURSOR_SNAPSHOT, KIRO_SNAPSHOT, standalone } from "./runtime.mjs";
-import { spawn } from "node:child_process";
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { CLAUDE_SNAPSHOT, CURSOR_SNAPSHOT, KIRO_SNAPSHOT, olderThan, run, spawnSelf, takeLock, writeJsonAtomic } from "./runtime.mjs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 export { CLAUDE_SNAPSHOT };
 export const CODEX_SESSIONS = join(homedir(), ".codex/sessions");
@@ -112,22 +111,6 @@ export function readClaude() {
   return claudeSnapshot(JSON.parse(readFileSync(CLAUDE_SNAPSHOT, "utf8")));
 }
 
-// Run a harness command read-only and collect stdout; resolve null on any failure or timeout, never throw.
-// `status: true` resolves the exit code instead, for a command whose only answer is on stderr.
-export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, status = false } = {}) {
-  return new Promise((resolve) => {
-    let out = "", done = false;
-    const finish = (v) => { if (done) return; done = true; clearTimeout(timer); try { child.kill(); } catch {} resolve(v); };
-    let child;
-    try { child = spawn(cmd, args, { stdio: ["pipe", "pipe", "ignore"], ...(cwd ? { cwd } : {}) }); } catch { return resolve(null); }
-    const timer = setTimeout(() => finish(null), timeoutMs);
-    child.on("error", () => finish(null));
-    child.stdout.on("data", (d) => { out += d; if (until?.(out)) finish(out); });
-    child.on("close", (code) => finish(status ? code : out || null));
-    if (input) child.stdin.write(input); else child.stdin.end();
-  });
-}
-
 // Codex: the CLI's own app server answers account/rateLimits/read live (~0.4 s, no tokens). It is marked experimental,
 // so the session-log reader stays as the fallback.
 export async function readCodexLive() {
@@ -182,27 +165,8 @@ const REFRESH_SEC = 4 * 3600;
 const TRUST_SEC = 24 * 3600;
 const LOCK_SEC = 120; // one background reading at a time; a lock older than any reading (90 s at most) is abandoned
 const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } };
-// Written whole or not at all (a temp file, then a rename), as the Claude snapshot is: a reader never sees half a file.
-const writeJson = (file, o) => {
-  mkdirSync(dirname(file), { recursive: true });
-  const tmp = `${file}.tmp.${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(o) + "\n");
-  try { renameSync(tmp, file); } catch { try { unlinkSync(file); } catch {} renameSync(tmp, file); }
-};
-// Take the refresh lock, or say someone else holds it. Exclusive create, as the updater's lock: two calls in a burst
-// cannot both win. An unwritable cache means no lock and so no refresh, never a refresh on every call.
-export function takeLock(file, nowMs = Date.now()) {
-  try { closeSync(openSync(file, "wx")); return true; } catch (e) { if (e?.code !== "EEXIST") return false; }
-  try { if (nowMs - statSync(file).mtimeMs < LOCK_SEC * 1000) return false; rmSync(file, { force: true }); closeSync(openSync(file, "wx")); return true; } catch { return false; }
-}
 const noRefresh = () => process.env.ROUTR_NO_REFRESH === "1"; // tests: nothing detached, nothing written
-const startRefresh = (name) => {
-  try {
-    const args = [...(standalone() ? [] : [process.argv[1]]), "usage", name, "--background"];
-    const c = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true });
-    c.on("error", () => {}); c.unref(); return true;
-  } catch { return false; }
-};
+const startRefresh = (name) => spawnSelf(["usage", name, "--background"]);
 
 // `routr usage <name>`: read now and keep the reading. A failed read keeps the last good one, whose age then says how
 // old it is. Only the background reading (`--background`) holds the refresh lock, so only it releases it: a reading
@@ -212,7 +176,7 @@ async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`, nowSec
     const r = await read();
     const last = readJson(file);
     try {
-      writeJson(file, r.ok ? { ts: nowSec, tried: nowSec, reading: keep(r) }
+      writeJsonAtomic(file, r.ok ? { ts: nowSec, tried: nowSec, reading: keep(r) }
         : { ts: last?.ts ?? null, tried: nowSec, reading: last?.reading ?? null, error: r.error });
     } catch {}
     return r;
@@ -224,9 +188,9 @@ async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`, nowSec
 function readSnapshot({ name, source, windows, describe, byHand, file, lock = `${file}.lock`, nowSec = now(), refresh = () => startRefresh(name), background = true, off = noRefresh() }) {
   let snap = readJson(file);
   let started = false;
-  if (background && !off && !(nowSec - (snap?.tried ?? 0) < REFRESH_SEC) && takeLock(lock, nowSec * 1000)) {
+  if (background && !off && !(nowSec - (snap?.tried ?? 0) < REFRESH_SEC) && takeLock(lock, olderThan(LOCK_SEC * 1000, nowSec * 1000))) {
     // Marked before it starts, so the next call waits its turn; if the mark cannot be written, nothing is started.
-    try { writeJson(file, { ...snap, tried: nowSec }); started = refresh(); } catch {}
+    try { writeJsonAtomic(file, { ...snap, tried: nowSec }); started = refresh(); } catch {}
     if (!started) try { rmSync(lock, { force: true }); } catch {}
   }
   const r = snap?.reading, age = snap?.ts == null ? null : nowSec - snap.ts;

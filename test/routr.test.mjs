@@ -7,7 +7,8 @@ import { advise } from "../src/lib/advise.mjs";
 import { readReport } from "../src/lib/check.mjs";
 import { DEFAULTS, loadConfig } from "../src/lib/config.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
-import { claudeSnapshot, codexSnapshot, KIRO_BY_HAND, kiroUsage, monthMinutes, parseKiroUsage, readCursor, readKiro, readUsage, refreshCursor, refreshKiro, takeLock } from "../src/lib/usage.mjs";
+import { claudeSnapshot, codexSnapshot, KIRO_BY_HAND, kiroUsage, monthMinutes, parseKiroUsage, readCursor, readKiro, readUsage, refreshCursor, refreshKiro } from "../src/lib/usage.mjs";
+import { olderThan, takeLock } from "../src/lib/runtime.mjs";
 import { usageCommand } from "../src/lib/commands.mjs";
 import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
@@ -616,10 +617,12 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
 });
 test("the refresh lock lets one caller in at a time and gives up a lock left by a dead refresh", () => {
   const dir = mkdtempSync(join(tmpdir(), "routr-lock-")), lock = join(dir, "x.lock");
-  expect(takeLock(lock)).toBe(true);
-  expect(takeLock(lock)).toBe(false); // a second call in the burst
-  expect(takeLock(lock, Date.now() + 121 * 1000)).toBe(true); // older than any reading can take
-  expect(takeLock(join(dir, "missing", "x.lock"))).toBe(false); // cannot write: no lock, so no refresh
+  const stale = (nowMs = Date.now()) => olderThan(120 * 1000, nowMs);
+  expect(takeLock(lock, stale())).toBe(true);
+  expect(takeLock(lock, stale())).toBe(false); // a second call in the burst
+  expect(takeLock(lock, stale(Date.now() + 121 * 1000))).toBe(true); // older than any reading can take
+  expect(readFileSync(lock, "utf8")).toBe(String(process.pid));
+  expect(takeLock(join(dir, "missing", "x.lock"), stale())).toBe(false); // cannot write: no lock, so no refresh
   rmSync(dir, { recursive: true, force: true });
 });
 test("routr usage ranks what it sees without a brief, and a name narrows it or opens the harness's screen", async () => {
