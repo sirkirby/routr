@@ -115,9 +115,11 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const interactive = tty && !args.includes("--yes");
   const say = (s) => { if (!args.includes("--json")) print(s); };
   const did = [], skipped = [];
-  if (args.includes("--show")) return showSettings(path);
   let models, ranks, hardest, reserves, efforts, switches;
   try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); } catch (e) { return { ok: false, error: e.message }; }
+  // --show only reads: with a change flag beside it, an agent could take the settings printed for the change made.
+  if (args.includes("--show")) return Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length || args.includes("--force")
+    ? { ok: false, error: "--show only reads your settings: run the change without it, then --show again to see it" } : showSettings(path);
 
   const guidedRun = interactive && !Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length;
   // Scripted answers (a test, or a caller with its own line reader) drive the tui's accessible mode: numbered questions.
@@ -148,7 +150,8 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     for (const n of Object.keys(set)) if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `${flagName} ${n}=…: ${n} is not configured and ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
   for (const [n, on] of Object.entries(switches)) {
     if (r.config.subscriptions.includes(n)) continue; // on or off, it keeps its settings
-    if (!on) return { ok: false, error: `--disable ${n}: ${n} is not set up in routr, so there is nothing to turn off` };
+    // A harness found now is added in this run, so it can be added turned off ("set up, but keep agy off").
+    if (!on && !found.includes(n)) return { ok: false, error: `--disable ${n}: ${n} is not set up in routr, so there is nothing to turn off` };
     if (!found.includes(n)) return { ok: false, error: `--enable ${n}: ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
   }
   // An effort must be one the harness takes for the model it will run: the one given now, or the one already set.
@@ -159,6 +162,14 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     const levels = found.includes(n) ? await levelsOf(n, models[n] ?? current[n]?.default_model) : null;
     if (levels?.length && !levels.includes(level)) return { ok: false, error: `--effort ${n}=${level}: ${HARNESSES[n].label} takes ${levels.join(", ")}${models[n] ?? current[n]?.default_model ? ` for ${models[n] ?? current[n]?.default_model}` : ""}` };
   }
+  // The skill agents read: missing, or left behind by an older routr. Writing it again is always safe, and it is done
+  // whatever the person chose, since it is not a setting. From a source checkout (0.0.0-dev) a release's skill never
+  // matches, and rewriting it would fight the installed binary.
+  const skillStep = () => {
+    const base = baseVersion(ROUTR_VERSION);
+    if (r.skill.length && !(standalone() && r.skill.some((k) => baseVersion(k.version) !== base))) return false;
+    install(); did.push(`installed the routr skill ${base} for your agents`); return true;
+  };
   // A person at a terminal gets the guided flow; flags and --yes (an agent) never ask anything.
   const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length > 0;
   let config = null;
@@ -178,15 +189,16 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     }
     choices = await guided({ ui, r, config, efforts: levelsOf, statusline: statuslineOffer?.action === "write", telemetry: !telemetryAsked && !envOff(env) });
     if (choices === CANCEL) { ui.cancel("Setup stopped: nothing was written."); ui.close(); return { ok: false, cancelled: true, error: "setup stopped: nothing was written", did, skipped }; }
-    if (!choices.write) { ui.outro("Nothing changed."); ui.close(); return { ok: true, did, skipped: [...skipped, "nothing changed"], config: path, next_steps: r.next_steps }; }
+    if (!choices.write) {
+      if (skillStep()) ui.note("Done", did);
+      ui.outro("Your settings did not change."); ui.close();
+      return { ok: true, did, skipped: [...skipped, "nothing changed"], config: path, next_steps: r.next_steps };
+    }
     Object.assign(models, choices.models); Object.assign(efforts, choices.efforts); Object.assign(hardest, choices.hardest);
-    Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches);
+    Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches); Object.assign(ranks, choices.ranks);
   }
 
-  // 0. The skill agents read: missing, or left behind by an older routr. Writing it again is always safe.
-  const base = baseVersion(ROUTR_VERSION);
-  // From a source checkout (0.0.0-dev) a release's skill never matches, and rewriting it would fight the installed binary.
-  if (!r.skill.length || (standalone() && r.skill.some((k) => baseVersion(k.version) !== base))) { install(); did.push(`installed the routr skill ${base} for your agents`); }
+  skillStep();
 
   // 1. The config. An existing file is kept; harnesses found since then are added (turned off when the person left
   // them unticked), and each choice or flag is applied; nothing else is touched.
@@ -202,8 +214,13 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // number: it goes after the subscriptions with a quota unless --metered says otherwise (included usage expires, billed
   // usage does not).
   await meteredRanks(fresh, r.harnesses, ranks, null);
-  let kept; try { kept = JSON.parse(readFileSync(path, "utf8")).telemetry; } catch {} // --force keeps the person's telemetry choice
-  if (!config) config = { ...starterConfig(found, models, ranks), ...(typeof kept === "boolean" ? { telemetry: kept } : {}) };
+  // --force rewrites the file from the suggestions, but keeps the person's own choices: telemetry, automatic updates,
+  // and which subscriptions are turned off.
+  let old = null; try { old = JSON.parse(readFileSync(path, "utf8")); } catch {}
+  if (!config) {
+    config = { ...starterConfig(found, models, ranks), ...(typeof old?.telemetry === "boolean" ? { telemetry: old.telemetry } : {}), ...(typeof old?.auto_update === "boolean" ? { auto_update: old.auto_update } : {}) };
+    for (const [n, s] of Object.entries(old?.subscriptions ?? {})) if (s?.enabled === false && config.subscriptions[n]) config.subscriptions[n].enabled = false;
+  }
   else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models, ranks).subscriptions[n] };
   // Then every choice onto its subscription, new or old; what changed on an old one is said.
   const changed = [];
@@ -216,6 +233,16 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   for (const [n, s] of Object.entries(settings)) { put(n, "hardest_work", s.hardest_work); put(n, "reserve", s.reserve); }
   for (const [n, id] of Object.entries(models)) put(n, "default_model", id);
   for (const [n, level] of Object.entries(efforts)) put(n, "default_effort", level);
+  // A new model may not take the effort already set: it is reset to one it takes (medium where it can), and said.
+  for (const [n, id] of Object.entries(models)) {
+    const sub = config.subscriptions[n];
+    if (!id || efforts[n] || !sub?.default_effort || !HARNESSES[n].effort) continue;
+    const levels = await levelsOf(n, id);
+    if (!levels?.length || levels.includes(sub.default_effort)) continue;
+    const to = levels.includes("medium") ? "medium" : levels[0];
+    changed.push(`${n}.default_effort ${JSON.stringify(sub.default_effort)} → ${JSON.stringify(to)} (${id} does not take ${sub.default_effort})`);
+    sub.default_effort = to;
+  }
   for (const [n, on] of Object.entries(switches)) put(n, "enabled", on);
   for (const [n, rank] of Object.entries(ranks)) put(n, "metered_rank", rank);
   if (changed.length) did.push(`changed ${changed.join(", ")}`);
@@ -234,13 +261,13 @@ export async function setup(args, { inspect: look = inspect, question, interacti
       writeFileSync(claudeFile, JSON.stringify(statuslineOffer.settings, null, 2) + "\n");
       did.push("set Claude Code's statusline to `routr statusline`: usage is read after your next Claude Code turn");
     } else if (statuslineOffer.action !== "none") skipped.push(`Claude statusline: ${statuslineOffer.why ?? "left alone"}`);
-  } else if (statuslineOffer && choices?.statusline === false) skipped.push("Claude statusline left alone: Claude's usage is assumed, not read, until it is set");
+  } else if (statuslineOffer?.action === "write" && choices) skipped.push("Claude statusline left alone: Claude's usage is assumed, not read, until it is set (routr setup, menu: Claude Code's usage statusline)");
   // 3. Telemetry: off unless a person says yes. Asked once, default no; an agent's run never turns it on.
   if (!telemetryAsked && !envOff(env)) {
     if (choices?.telemetry !== undefined) {
       shareOn(choices.telemetry, path);
       (choices.telemetry ? did : skipped).push(choices.telemetry ? "telemetry on: anonymous outcomes, once a day (routr telemetry off to stop)" : "telemetry off (routr telemetry on, any time, to help tune routr)");
-    } else skipped.push("telemetry is off. Ask the user whether to share anonymous outcomes (docs/telemetry.md); if they say yes: routr telemetry on");
+    } else skipped.push(choices ? "telemetry is off: routr telemetry on shares anonymous outcomes (docs/telemetry.md)" : "telemetry is off. Ask the user whether to share anonymous outcomes (docs/telemetry.md); if they say yes: routr telemetry on");
   }
 
   // Looked at again, not reused: this second look is what starts the first background usage reading (Cursor, Kiro)

@@ -113,21 +113,21 @@ test("routr setup changes a setting on an existing config, fills one that is mis
 
 // setup, driven end to end as a person would: scripted answers, a fake machine, nothing written outside a temp folder.
 // Every question asked is recorded, and a question the scenario did not expect fails it.
-async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {}, efforts = async () => null, models = {}, statusline = "not needed" } = {}) {
+async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {}, efforts = async () => null, models = {}, statusline = "not needed", skill = [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }], usage = {}, print = () => {} } = {}) {
   const { setup } = await import("../src/lib/setup.mjs");
   const dir = scratch("setup-run"), path = join(dir, "config.json");
   if (config) writeFileSync(path, JSON.stringify(config));
   const asked = [], shared = [], installs = [], keys = [];
   const inspect = async () => {
     const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
-    return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy", "kiro"].map((n) => [n, { installed: found.includes(n), signed_in: found.includes(n), models: models[n] ?? [], usage_class: "included" }])),
-      config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}) }, skill: [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }],
+    return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy", "kiro"].map((n) => [n, { installed: found.includes(n), signed_in: found.includes(n), models: models[n] ?? [], usage_class: usage[n] ?? "included", usage_note: usage[n] === "metered" ? "metered: unlimited credits" : undefined }])),
+      config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}) }, skill,
       claude_usage_statusline: statusline, key: { works: keyWorks }, next_steps: [] };
   };
   const queue = [...answers];
   const question = async (q) => { asked.push(q.trim()); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); };
   const r = await setup(["--config", path, "--json", ...args], { inspect, question, interactive: true, env,
-    install: () => installs.push(1), share: (on) => shared.push(on), key: async () => { keys.push(1); return { ok: false, error: "none given" }; }, print: () => {}, efforts });
+    install: () => installs.push(1), share: (on) => shared.push(on), key: async () => { keys.push(1); return { ok: false, error: "none given" }; }, print, efforts });
   const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
   return { r, asked, saved, shared, installs, keys, left: queue.length };
 }
@@ -159,8 +159,9 @@ test("setup, new install: a harness left unticked is added turned off, with its 
 
 test("setup, run again: a menu to change one thing, then save and exit, and only that is written", async () => {
   const config = { subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 }, cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" } } };
-  // Change one subscription → Cursor → hardest work → strong; back at the menu: Save and exit (5th), with no second question.
-  const x = await runSetup({ config, answers: ["", "", "2", "3", "5"] });
+  // Change one subscription → Cursor → Hardest work → strong; Back to the subscriptions (4th), Back to the menu (3rd);
+  // then Save and exit (5th), with no second question.
+  const x = await runSetup({ config, answers: ["", "", "2", "3", "4", "3", "5"] });
   expect(x.asked[0]).toMatch(/^What would you like to do\?/);
   expect(x.saved.subscriptions.cursor).toEqual({ hardest_work: "strong", reserve: 0.1, default_model: "m" });
   expect(x.saved.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1 });
@@ -174,7 +175,7 @@ test("setup, run again: Exit changes nothing, and exiting without saving after a
   const done = await runSetup({ config, found: ["agy"], answers: ["4"] }); // one, choose, all, Exit
   expect(done.saved).toEqual(config);
   expect(done.r.skipped).toContain("nothing changed");
-  const quit = await runSetup({ config, found: ["agy"], answers: ["", "", "2", "1", "5"] }); // agy → hardest → basic, then Exit without saving (5th)
+  const quit = await runSetup({ config, found: ["agy"], answers: ["", "", "2", "1", "b", "b", "5"] }); // agy → hardest → basic, Esc twice, Exit without saving (5th)
   expect(quit.r).toMatchObject({ ok: false, cancelled: true });
   expect(quit.saved).toEqual(config);
 });
@@ -182,8 +183,8 @@ test("setup, run again: Exit changes nothing, and exiting without saving after a
 test("setup: the everyday model is picked from the harness's live list by typing part of its name", async () => {
   const list = [...Array.from({ length: 230 }, (_, i) => `vendor-model-${i}`), "cursor-grok-4.6-high", "grok-4.7-high", "grok-4.7-low"];
   const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, default_model: "cursor-grok-4.6-high" } } };
-  // Change one → Cursor (only one) → Everyday model → "4.7 high" (one match) → Save and exit (4th: telemetry is answered).
-  const x = await runSetup({ config, found: ["cursor"], models: { cursor: list }, answers: ["", "", "", "4.7 high", "4"] });
+  // Change one → Cursor (only one) → Everyday model → "4.7 high" (one match) → Esc twice → Save and exit (4th: telemetry is answered).
+  const x = await runSetup({ config, found: ["cursor"], models: { cursor: list }, answers: ["", "", "", "4.7 high", "b", "b", "4"] });
   expect(x.saved.subscriptions.cursor.default_model).toBe("grok-4.7-high");
   expect(x.asked.find((a) => a.startsWith("Cursor: everyday model"))).toContain("234 to choose from"); // searched, never printed whole
 });
@@ -305,7 +306,87 @@ test("setup, guided: offers to set Claude's usage statusline, and sets it only o
 
 test("setup, run again: Esc at the menu with changes not saved offers the same way out, so nothing is lost by accident", async () => {
   const config = { telemetry: false, subscriptions: { agy: { hardest_work: "strong", reserve: 0.3 } } };
-  const x = await runSetup({ config, found: ["agy"], answers: ["", "", "2", "1", "b", ""] }); // agy → hardest → basic, Esc (b), Save and exit
+  const x = await runSetup({ config, found: ["agy"], answers: ["", "", "2", "1", "b", "b", "b", ""] }); // agy → hardest → basic, Esc up to the menu and once more, Save and exit
   expect(q(x.asked, "Save your changes?")).toBe(1);
   expect(x.saved.subscriptions.agy.hardest_work).toBe("basic");
+});
+
+test("an agent changing a setting through the real CLI: --show prints the settings, a flag changes one, --show sees it", () => {
+  const home = scratch("agent"), env = cliEnv(home, { PATH: home }); // no harness to find: only flags on an existing config
+  const file = join(home, ".config/routr/config.json");
+  mkdirSync(dirname(file), { recursive: true });
+  writeFileSync(file, JSON.stringify({ telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, default_model: "cursor-grok-4.6-high" } } }));
+  const show = () => { const r = Bun.spawnSync([process.execPath, SCRIPT, "setup", "--show"], { env }); expect(r.exitCode).toBe(0); return JSON.parse(r.stdout.toString()); };
+  expect(show().subscriptions.cursor).toMatchObject({ enabled: true, hardest_work: "standard", reserve: 0.1 });
+  const set = Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--hardest", "cursor=strong", "--reserve", "cursor=20%"], { env });
+  expect(set.exitCode).toBe(0);
+  expect(set.stdout.toString()).toContain('cursor.hardest_work "standard" → "strong"');
+  expect(show().subscriptions.cursor).toMatchObject({ hardest_work: "strong", reserve: 0.2 });
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--disable", "cursor"], { env }).exitCode).toBe(0);
+  expect(show().subscriptions.cursor.enabled).toBe(false);
+});
+
+test("setup, run again: a subscription's settings are a list you come back to after each change, never 'All of these'", async () => {
+  const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" } } };
+  // Cursor → Hardest work → strong → (back on Cursor's list) Reserve → 20% → Back → Back → Save and exit.
+  const x = await runSetup({ config, found: ["cursor"], answers: ["", "", "2", "3", "3", "3", "4", "2", "4"] });
+  const lists = x.asked.filter((a) => a.startsWith("Cursor: which setting?"));
+  expect(lists).toHaveLength(3); // before the first change, after it, and after the second
+  expect(lists[1]).toContain("Hardest work (strong)"); // the new value, shown on the list you come back to
+  expect(lists.join("\n")).not.toContain("All of these");
+  expect(lists[0]).toMatch(/\d\. Back/);
+  expect(x.saved.subscriptions.cursor).toMatchObject({ hardest_work: "strong", reserve: 0.2 });
+});
+
+test("setup fixes from the independent review: each finding stays fixed", async () => {
+  // --disable on a first run: the harness found now is added, turned off ("set up, but keep agy off").
+  const first = await runSetup({ args: ["--yes", "--disable", "agy"] });
+  expect(first.saved.subscriptions.agy.enabled).toBe(false);
+  expect(first.saved.subscriptions.cursor.enabled ?? true).toBe(true);
+  // --show only reads: with a change beside it, nothing is done and it says so.
+  expect((await runSetup({ args: ["--show", "--disable", "agy"] })).r).toMatchObject({ ok: false, error: expect.stringContaining("--show only reads") });
+  // A new model that does not take the effort set: reset to one it takes, and said.
+  const efforts = async (n, m) => (m === "m2" ? ["low", "medium"] : ["low", "medium", "high", "xhigh"]);
+  const cfg = { telemetry: false, subscriptions: { codex: { hardest_work: "strong", reserve: 0.2, default_model: "m1", default_effort: "xhigh" } } };
+  const moved = await runSetup({ config: cfg, found: ["codex"], efforts, args: ["--yes", "--model", "codex=m2"] });
+  expect(moved.saved.subscriptions.codex).toMatchObject({ default_model: "m2", default_effort: "medium" });
+  expect(moved.r.did.join(" ")).toContain("m2 does not take xhigh");
+  // --force rewrites from the suggestions but keeps what the person chose: off stays off, and automatic updates.
+  const forced = await runSetup({ config: { auto_update: false, telemetry: true, subscriptions: { agy: { enabled: false, hardest_work: "basic", reserve: 0 } } }, found: ["agy"], args: ["--yes", "--force"] });
+  expect(forced.saved).toMatchObject({ auto_update: false, telemetry: true, subscriptions: { agy: { enabled: false } } });
+  // Leaving the screen with nothing changed still installs a skill that is missing (it is not a setting).
+  const kept = await runSetup({ config: { telemetry: false, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } }, found: ["agy"], skill: [], answers: ["4"] });
+  expect(kept.installs).toEqual([1]);
+  expect(kept.r.skipped).toContain("nothing changed");
+  // An existing subscription with no effort set is not given one behind the person's back.
+  const plain = await runSetup({ config: { telemetry: false, subscriptions: { codex: { hardest_work: "strong", reserve: 0.2 } } }, found: ["codex"], answers: ["4"] });
+  expect(plain.asked[0]).toContain("Exit"); // nothing pending: no "Save and exit (1 change)"
+  expect(plain.saved.subscriptions.codex.default_effort).toBeUndefined();
+});
+
+test("setup, guided: a seat billed per token with no quota is asked where it goes in the ranking", async () => {
+  // Codex reads as metered: model (leave), effort (none listed), hardest, reserve, then where its billed usage goes (2: with), telemetry, Save.
+  const x = await runSetup({ found: ["codex"], usage: { codex: "metered" }, answers: ["", "", "", "", "2", "n", ""] });
+  expect(x.asked.some((a) => a.startsWith("Codex: where does its billed usage go?"))).toBe(true);
+  expect(x.saved.subscriptions.codex.metered_rank).toBe("with");
+  expect(x.r.skipped.join(" ")).not.toContain("Ask the user"); // a person's wording, not an agent's
+});
+
+test("--no-statusline leaves Claude Code's settings alone, even when routr's statusline is missing", async () => {
+  const settings = join(process.env.HOME, ".claude/settings.json");
+  rmSync(settings, { force: true });
+  const x = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", args: ["--yes", "--no-statusline"] });
+  expect(x.r.ok).toBe(true);
+  expect(existsSync(settings)).toBe(false);
+});
+
+test("from the verification pass: a model change on the screen shows the effort reset before saving, and --show refuses --force", async () => {
+  const efforts = async (n, m) => (m === "m2" ? ["low", "medium"] : ["low", "medium", "high", "xhigh"]);
+  const config = { telemetry: false, subscriptions: { codex: { hardest_work: "strong", reserve: 0.2, default_model: "m1", default_effort: "xhigh" } } };
+  // Codex → Everyday model → m2 (listed 3rd after "leave it" and m1), Back, Back, Save and exit (4th).
+  const said = [];
+  const x = await runSetup({ config, found: ["codex"], models: { codex: ["m1", "m2"] }, efforts, answers: ["", "", "", "3", "b", "b", "4"], print: (t) => said.push(t) });
+  expect(x.saved.subscriptions.codex).toMatchObject({ default_model: "m2", default_effort: "medium" });
+  expect(x.asked.find((a) => a.startsWith("What would you like to do?") && a.includes("Save and exit"))).toContain("Save and exit (2 changes)");
+  expect((await runSetup({ args: ["--show", "--force"] })).r.error).toContain("--show only reads");
 });

@@ -3,7 +3,7 @@
 // answer collapsed to one dim line) and Charm's huh (an accessible mode of numbered questions for screen readers).
 // Research notes: routr-lab, 2026-09-26. Every prompt returns its value, BACK (Esc: one step back), or CANCEL (Ctrl+C).
 // Drawn on stderr, so stdout stays free for --json; the terminal is always restored (cursor shown, raw mode off).
-import { emitKeypressEvents } from "node:readline";
+import { createInterface, emitKeypressEvents } from "node:readline";
 import { stripVTControlCharacters } from "node:util";
 
 export const BACK = Symbol("back"), CANCEL = Symbol("cancel");
@@ -23,8 +23,8 @@ export function colourOk(stream, env = process.env) {
 export const accessibleOk = (env = process.env) => (env.ACCESSIBLE && !/^(0|false)$/i.test(env.ACCESSIBLE)) || env.TERM === "dumb";
 
 const GLYPHS = {
-  unicode: { bar: "│", start: "┌", end: "└", active: "◆", done: "◇", error: "▲", cancel: "■", on: "●", off: "○", checked: "◼", unchecked: "◻", more: "…", arrow: "→", spin: ["◒", "◐", "◓", "◑"] },
-  ascii: { bar: "|", start: "T", end: "-", active: "*", done: "o", error: "x", cancel: "x", on: ">", off: " ", checked: "[+]", unchecked: "[ ]", more: "...", arrow: "->", spin: ["-", "\\", "|", "/"] },
+  unicode: { updown: "↑/↓", leftright: "←/→", sep: " · ", caret: "▏", bar: "│", start: "┌", end: "└", active: "◆", done: "◇", error: "▲", cancel: "■", on: "●", off: "○", checked: "◼", unchecked: "◻", more: "…", arrow: "→", spin: ["◒", "◐", "◓", "◑"] },
+  ascii: { updown: "up/down", leftright: "left/right", sep: " - ", caret: "_", bar: "|", start: "T", end: "-", active: "*", done: "o", error: "x", cancel: "x", on: ">", off: " ", checked: "[+]", unchecked: "[ ]", more: "...", arrow: "->", spin: ["-", "\\", "|", "/"] },
 };
 const SGR = { cyan: 36, green: 32, yellow: 33, red: 31, gray: 90, dim: 2, bold: 1, strike: 9 };
 
@@ -52,19 +52,31 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
   const c = Object.fromEntries(Object.entries(SGR).map(([k, n]) => [k, (s) => (colour ? `\x1b[${n}m${s}\x1b[${n === 1 || n === 2 ? 22 : n === 9 ? 29 : 39}m` : String(s))]));
   const write = (s) => output.write(s);
   const width = () => output.columns || 80, height = () => output.rows || 24;
-  let rawOn = false, shown = 0;
-  const restore = () => { if (!accessible) write("\x1b[?25h"); if (rawOn) { try { input.setRawMode(false); } catch {} rawOn = false; } };
+  let rawOn = false, prev = null, timer = null, lines = null;
+  // Accessible mode reads a line at a time: from the caller, or from the terminal itself.
+  let reader = null;
+  if (accessible && !ask) { reader = createInterface({ input, output, terminal: false }); ask = (q) => new Promise((done) => reader.question(q, done)); }
+  // Raw mode off first: a terminal left in raw mode is the worst way to leave, so nothing that can throw comes before it.
+  const restore = () => {
+    if (rawOn) { try { input.setRawMode(false); } catch {} rawOn = false; }
+    if (timer) { clearInterval(timer); timer = null; }
+    if (!accessible) try { write("\x1b[?25h"); } catch {}
+  };
   process.once?.("exit", restore);
   if (!accessible && typeof input.read === "function") emitKeypressEvents(input);
 
-  // Redraw in place: back to the start of what was drawn, erase below, write the new frame in one write.
-  const draw = (lines) => {
-    const frame = lines.join("\n");
+  // Redraw in place: back to the start of what was drawn, erase below, write the new frame in one write. The last frame
+  // is measured at the width the terminal has NOW: after a resize the terminal has already re-wrapped it.
+  const draw = (next) => {
+    lines = next;
+    const frame = next.join("\n"), shown = prev == null ? 0 : rows(prev, width());
     const up = shown > 1 ? `\x1b[${shown - 1}A` : "";
-    write(`\x1b[?2026h${shown ? `\r${up}\x1b[J` : "\x1b[?25l"}${frame}\x1b[?2026l`);
-    shown = rows(frame, width());
+    write(`\x1b[?2026h${prev != null ? `\r${up}\x1b[J` : "\x1b[?25l"}${frame}\x1b[?2026l`);
+    prev = frame;
   };
-  const settle = (lines) => { draw(lines); write("\n"); shown = 0; };
+  const settle = (next) => { draw(next); write("\n"); prev = null; lines = null; };
+  const onResize = () => { if (lines) draw(lines); };
+  output.on?.("resize", onResize);
 
   // One prompt: `view(state, error)` gives its lines, `key(state, str, k)` gives the next state, or { submit }, BACK, CANCEL.
   const run = ({ message, view, key, init, answer }) => new Promise((resolve) => {
@@ -73,6 +85,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
     const onKey = (str, k = {}) => {
       if (k.ctrl && k.name === "c") return finish(CANCEL);
       if (k.name === "escape") return finish(BACK);
+      if (k.name === "enter") k = { ...k, name: "return" }; // Node names a line feed "enter": the same key to a person
       const next = key(state, str, k);
       if (next && typeof next === "object" && "error" in next) { error = next.error; return draw(frame(c.yellow(g.error))); }
       error = null;
@@ -91,7 +104,8 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
     draw(frame(c.cyan(g.active)));
   });
 
-  const help = (s) => c.dim(s);
+  // Help lines are written with ↑/↓ and · and shown with the glyph table's words, so ASCII terminals get plain ones.
+  const help = (s) => c.dim(s.replaceAll("↑/↓", g.updown).replaceAll("←/→", g.leftright).replaceAll(" · ", g.sep));
   const plain = async (question) => (await ask(question)).trim();
   const listed = (opts, current) => opts.map((o, i) => `  ${String(i + 1).padStart(2)}. ${o.label}${o.hint ? ` (${o.hint})` : ""}${o.value === current ? " [current]" : ""}`).join("\n");
 
@@ -107,10 +121,12 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
     // A step that takes a while; `stop(summary)` replaces it with its result.
     spinner: (message) => {
       if (accessible) { write(`${message}\n`); return { stop: (summary) => { if (summary) write(`${summary}\n`); } }; }
+      // One line, cut to the width: a wrapped line would leave its first rows behind on every tick.
+      const fit = (t) => (t.length > width() - 4 ? `${t.slice(0, Math.max(1, width() - 4 - g.more.length))}${g.more}` : t); // glyph, two spaces, text
       let i = 0; write("\x1b[?25l");
-      const tick = () => write(`\r\x1b[2K${c.cyan(g.spin[i++ % g.spin.length])}  ${message}`);
-      tick(); const timer = setInterval(tick, 80); timer.unref?.();
-      return { stop: (summary) => { clearInterval(timer); write(`\r\x1b[2K${c.green(g.done)}  ${summary ?? message}\n`); } };
+      const tick = () => write(`\r\x1b[2K${c.cyan(g.spin[i++ % g.spin.length])}  ${fit(message)}`);
+      tick(); timer = setInterval(tick, 80); timer.unref?.();
+      return { stop: (summary) => { clearInterval(timer); timer = null; write(`\r\x1b[2K${c.green(g.done)}  ${fit(summary ?? message)}\n`); } };
     },
 
     // One of `options` ({ value, label, hint }). ↑/↓ (or j/k) move, a number jumps, Enter chooses.
@@ -122,6 +138,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
           if (!a && cur >= 0) return options[cur].value;
           if (/^b(ack)?$/i.test(a)) return BACK;
           if (/^\d+$/.test(a) && options[Number(a) - 1]) return options[Number(a) - 1].value;
+          write(`  a number from 1 to ${options.length}${cur >= 0 ? ", or Enter" : ""}\n`);
         }
       }
       return run({ message, init: Math.max(0, options.findIndex((o) => o.value === initial)),
@@ -134,14 +151,15 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
     },
 
     // Any of `options`. Space toggles, `a` toggles all, Enter confirms; `min` is how many must be chosen.
-    multiselect: async ({ message, options, initial = [], min = 0 }) => {
+    multiselect: async ({ message, options, initial: given = [], min = 0 }) => {
       const need = `choose at least ${min}`;
+      const initial = given.filter((v) => options.some((o) => o.value === v)); // a value that is not an option counts for nothing
       if (accessible) {
         const chosen = new Set(initial);
         for (;;) {
           const a = await plain(`${message}\n${options.map((o, i) => `  ${String(i + 1).padStart(2)}. [${chosen.has(o.value) ? "x" : " "}] ${o.label}${o.hint ? ` (${o.hint})` : ""}`).join("\n")}\nNumbers to switch on or off, Enter when done (b = back): `);
           if (/^b(ack)?$/i.test(a)) return BACK;
-          if (!a) { if (chosen.size >= min) return options.filter((o) => chosen.has(o.value)).map((o) => o.value); continue; }
+          if (!a) { if (chosen.size >= min) return options.filter((o) => chosen.has(o.value)).map((o) => o.value); write(`  ${need}\n`); continue; }
           for (const n of a.split(/[\s,]+/)) { const o = options[Number(n) - 1]; if (o) chosen.has(o.value) ? chosen.delete(o.value) : chosen.add(o.value); }
         }
       }
@@ -172,10 +190,13 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
           if (/^\d+$/.test(a) && shown[Number(a) - 1]) return shown[Number(a) - 1].value;
           const hits = match(a);
           if (hits.length === 1) return hits[0].value;
+          if (!hits.length) { write(`  nothing matches "${a}"\n`); continue; } // the list shown before stays, numbers and all
           shown = hits.slice(0, 40);
         }
       }
-      const size = () => Math.max(5, Math.min(10, height() - 8));
+      // The list window fits the terminal: the rest of the frame (gutter, question, search line, "…" marks, help, end)
+      // takes about 8 rows, and a frame taller than the screen cannot be redrawn in place.
+      const size = () => Math.max(1, Math.min(10, height() - 9));
       return run({ message, init: { q: "", i: Math.max(0, all.findIndex((o) => o.value === initial)) },
         view: ({ q, i }) => {
           const hits = match(q), n = size(), top = Math.min(Math.max(0, i - Math.floor(n / 2)), Math.max(0, hits.length - n));
@@ -226,7 +247,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
         }
       }
       return run({ message, init: initial,
-        view: (t) => [t ? `${t}${c.cyan("▏")}` : c.dim(placeholder || " "), help("enter confirm · esc back")],
+        view: (t) => [t ? `${t}${c.cyan(g.caret)}` : c.dim(placeholder || " "), help("enter confirm · esc back")],
         key: (t, s, k) => {
           if (k.name === "return") { try { return { submit: parse(t) }; } catch (e) { return { error: e.message }; } }
           if (k.name === "backspace") return t.slice(0, -1);
@@ -236,7 +257,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
         answer: (v) => String(v) });
     },
 
-    close: () => { restore(); input.pause?.(); process.removeListener?.("exit", restore); },
+    close: () => { restore(); reader?.close(); output.removeListener?.("resize", onResize); input.pause?.(); process.removeListener?.("exit", restore); },
   };
   return ui;
 }

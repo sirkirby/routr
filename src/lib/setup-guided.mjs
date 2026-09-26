@@ -12,7 +12,7 @@ import { LEVEL_MEANING, RESERVE } from "./wording.mjs";
 const LEAVE = ""; // "leave the model to the lead agent": no default_model
 const PRESETS = [0, 0.1, 0.2, 0.25, 0.3, 0.5];
 const pct = (x) => `${Math.round(x * 100)}%`;
-const FIELDS = { model: "Everyday model", effort: "Everyday effort", hardest: "Hardest work", reserve: "Reserve" };
+const FIELDS = { model: "Everyday model", effort: "Everyday effort", hardest: "Hardest work", reserve: "Reserve", billed: "Billed usage" };
 
 // One line per subscription: what it runs and what it takes.
 export const describe = (n, s) => (s.enabled === false ? "off (settings kept)"
@@ -25,8 +25,11 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
   const signedIn = (n) => r.harnesses[n]?.installed && r.harnesses[n]?.signed_in;
   const candidates = Object.keys(HARNESSES).filter((n) => signedIn(n) || current[n]);
   // The working copy: what is set now, or the suggestions for a harness routr has not set up yet.
-  const draft = Object.fromEntries(candidates.map((n) => [n, { enabled: current[n] ? current[n].enabled !== false : true,
-    ...HARNESSES[n].suggested, ...(TAKES_EFFORT.includes(n) ? { default_effort: HARNESSES[n].suggested.default_effort ?? "medium" } : {}), ...current[n] }]));
+  // An existing subscription is drafted as it is (no effort suggested where none is set: that would be a change the
+  // person did not make); `enabled` is computed last, the way loadConfig reads it.
+  const draft = Object.fromEntries(candidates.map((n) => [n, { ...(current[n] ? { hardest_work: HARNESSES[n].suggested.hardest_work, reserve: HARNESSES[n].suggested.reserve, ...current[n] }
+    : { ...HARNESSES[n].suggested, ...(TAKES_EFFORT.includes(n) ? { default_effort: HARNESSES[n].suggested.default_effort ?? "medium" } : {}) }),
+    enabled: current[n] ? current[n].enabled !== false : true }]));
   const answers = {};
 
   // Each field is its own question; each returns BACK or CANCEL as the tui does.
@@ -38,7 +41,13 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
       if (now && !list.includes(now)) options.unshift({ value: now, label: now, hint: "current, not in the harness's list now" });
       const v = await ui.search({ message: `${HARNESSES[n].label}: everyday model ${ui.style.dim("(your agents start here and go up or down with the work)")}`,
         options, initial: now, pinned: [{ value: LEAVE, label: "leave it to the lead agent", hint: "no default" }] });
-      if (typeof v === "string") draft[n].default_model = v || null;
+      if (typeof v === "string") {
+        draft[n].default_model = v || null;
+        // A model that does not take the effort set gets one it does (medium where it can), before the list of changes is
+        // shown: the same rule setup applies to --model, so what is shown is what is saved.
+        const levels = v && TAKES_EFFORT.includes(n) && draft[n].default_effort ? await efforts(n, v) : null;
+        if (levels?.length && !levels.includes(draft[n].default_effort)) draft[n].default_effort = levels.includes("medium") ? "medium" : levels[0];
+      }
       return v;
     },
     effort: async (n) => {
@@ -67,6 +76,19 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
       return v;
     },
   };
+  // A seat billed per token with no quota (measured on a ChatGPT Enterprise seat) has no headroom number: where it goes
+  // in the ranking is the person's call. Asked only of such a seat.
+  const billedSeat = (n) => r.harnesses[n]?.usage_class === "metered";
+  ask.billed = async (n) => {
+    if (!billedSeat(n)) return "skip";
+    ui.line(`${HARNESSES[n].label} reports billed usage with no quota (${r.harnesses[n].usage_note ?? "no window"}).`, { dim: true });
+    const v = await ui.select({ message: `${HARNESSES[n].label}: where does its billed usage go?`, initial: draft[n].metered_rank ?? "after", options: [
+      { value: "after", label: "after your subscriptions", hint: "it takes the overflow: included usage expires, billed usage does not" },
+      { value: "with", label: "with them", hint: "ranked by its assumed headroom" }] });
+    if (typeof v === "string") draft[n].metered_rank = v;
+    return v;
+  };
+  const fieldsOf = (n) => Object.keys(FIELDS).filter((k) => (k !== "effort" || TAKES_EFFORT.includes(n)) && (k !== "billed" || billedSeat(n)));
   // Several fields in order; Esc goes back one field, and back past the first returns BACK.
   const fields = async (n, list) => {
     for (let i = 0; i < list.length;) {
@@ -77,7 +99,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
     }
     return "done";
   };
-  const all = Object.keys(FIELDS);
+
 
   // Which subscriptions routr may hand work to. Unchecked, a new harness is kept, turned off, so it can be turned on later.
   const choose = async () => {
@@ -107,7 +129,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
       const was = current[n], now = draft[n];
       if (!was) { out.push(`${HARNESSES[n].label}: ${now.enabled ? `added · ${describe(n, now)}` : "added, turned off"}`); continue; }
       if ((was.enabled !== false) !== now.enabled) out.push(`${HARNESSES[n].label}: ${now.enabled ? "turned on" : "turned off (settings kept)"}`);
-      for (const [k, label] of [["default_model", "model"], ["default_effort", "effort"], ["hardest_work", "hardest work"], ["reserve", "reserve"]]) {
+      for (const [k, label] of [["default_model", "model"], ["default_effort", "effort"], ["hardest_work", "hardest work"], ["reserve", "reserve"], ["metered_rank", "billed usage"]]) {
         const a = was[k] ?? null, b = now[k] ?? null;
         if (a !== b) out.push(`${HARNESSES[n].label}: ${label} ${k === "reserve" ? pct(a ?? 0) : a ?? "none"} ${ui.glyphs.arrow} ${k === "reserve" ? pct(b ?? 0) : b ?? "none"}`);
       }
@@ -134,7 +156,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
       if (steps[s] === "choose") v = await choose();
       else if (steps[s] === "settings") {
         v = "done";
-        for (const n of candidates.filter((x) => draft[x].enabled)) { v = await fields(n, all); if (v !== "done") break; }
+        for (const n of candidates.filter((x) => draft[x].enabled)) { v = await fields(n, fieldsOf(n)); if (v !== "done") break; }
       } else if (steps[s] === "extras") v = await extras();
       else { v = await finish(); if (v === "back") { s = 0; continue; } if (v === "quit") return CANCEL; if (v === "write" || v === "nothing") return v; }
       if (v === CANCEL) return CANCEL;
@@ -162,26 +184,36 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
       if (v === "save") { ui.note("Saving", changes()); return "write"; }
       // Esc with changes not saved: the same way out as at the end of a first run, so nothing is lost by accident.
       if (v === BACK) { const w = await finish(); if (w === "write") return "write"; if (w === "quit" || w === CANCEL) return CANCEL; continue; }
-      if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) for (const n of c.filter((x) => !current[x])) if (await fields(n, all) === CANCEL) return CANCEL; continue; }
+      if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) for (const n of c.filter((x) => !current[x])) if (await fields(n, fieldsOf(n)) === CANCEL) return CANCEL; continue; }
       if (v === "extras") { if (await extras() === CANCEL) return CANCEL; continue; }
       if (v === "all") { const f = await full(); if (f === CANCEL) return CANCEL; if (f === "write") return "write"; continue; }
-      // One subscription, then one field of it, or all four.
-      const n = await ui.select({ message: "Which subscription?", initial: candidates[0], options: candidates.map((x) => ({ value: x, label: HARNESSES[x].label, hint: describe(x, draft[x]) })) });
-      if (n === CANCEL) return CANCEL;
-      if (n === BACK) continue;
-      const f = await ui.select({ message: `${HARNESSES[n].label}: what to change?`, initial: "model", options: [
-        ...Object.entries(FIELDS).filter(([k]) => k !== "effort" || TAKES_EFFORT.includes(n)).map(([k, label]) => ({ value: k, label })),
-        { value: "all", label: "All of these" }] });
-      if (f === CANCEL) return CANCEL;
-      if (f === BACK) continue;
-      if (await fields(n, f === "all" ? all : [f]) === CANCEL) return CANCEL;
+      // Nested like any settings menu: a subscription, then its settings, each with its value now. Changing one comes
+      // back to the same list with the new value; Back (or Esc) goes up one level, to the subscriptions, then the menu.
+      let n = candidates[0];
+      for (;;) {
+        const picked = await ui.select({ message: "Which subscription?", initial: n, options: [
+          ...candidates.map((x) => ({ value: x, label: HARNESSES[x].label, hint: describe(x, draft[x]) })), { value: BACK, label: "Back" }] });
+        if (picked === CANCEL) return CANCEL;
+        if (picked === BACK) break;
+        n = picked;
+        let f = "model";
+        for (;;) {
+          const now = { model: draft[n].default_model || "left to the lead agent", effort: draft[n].default_effort ?? "not set", hardest: draft[n].hardest_work, reserve: pct(draft[n].reserve ?? 0), billed: draft[n].metered_rank === "with" ? "with your subscriptions" : "after your subscriptions" };
+          f = await ui.select({ message: `${HARNESSES[n].label}: which setting?`, initial: f, options: [
+            ...fieldsOf(n).map((k) => ({ value: k, label: FIELDS[k], hint: now[k] })),
+            { value: BACK, label: "Back" }] });
+          if (f === CANCEL) return CANCEL;
+          if (f === BACK) break;
+          if (await ask[f](n) === CANCEL) return CANCEL; // Esc inside a setting keeps its value and comes back here
+        }
+      }
     }
   };
 
   const outcome = config ? await menu() : await full();
   if (outcome === CANCEL) return CANCEL;
   // In the flags' shape, so setup applies them as it applies --model, --effort, --hardest, --reserve, --enable/--disable.
-  const out = { models: {}, efforts: {}, hardest: {}, reserves: {}, switches: {}, ...answers, write: outcome === "write" };
+  const out = { models: {}, efforts: {}, hardest: {}, reserves: {}, switches: {}, ranks: {}, ...answers, write: outcome === "write" };
   for (const n of candidates) {
     const was = current[n] ?? {}, d = draft[n];
     if (d.default_model !== (was.default_model ?? undefined) && d.default_model) out.models[n] = d.default_model;
@@ -190,6 +222,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
     if (d.hardest_work !== was.hardest_work) out.hardest[n] = d.hardest_work;
     if (d.reserve !== was.reserve) out.reserves[n] = d.reserve;
     if (!current[n] || (was.enabled !== false) !== d.enabled) out.switches[n] = d.enabled;
+    if (d.metered_rank && d.metered_rank !== was.metered_rank) out.ranks[n] = d.metered_rank;
   }
   return out;
 }

@@ -43,7 +43,8 @@ const ACT = {
     return r.ok ? 0 : 1;
   },
   // A person who stops the guided setup (Ctrl+C) has already been told nothing was written; 130 is the usual exit for it.
-  setup: async (args) => { const r = await (await import("./lib/setup.mjs")).setup(args); if (args.includes("--json")) print(r, 1); else if (!r.ok && !r.cancelled) console.error(r.error); return r.ok ? 0 : r.cancelled ? 130 : 1; },
+  // `--show` is JSON whatever else is passed: it is what an agent reads before it changes a setting.
+  setup: async (args) => { const r = await (await import("./lib/setup.mjs")).setup(args); if (args.includes("--json") || args.includes("--show")) print(r, 1); else if (!r.ok && !r.cancelled) console.error(r.error); return r.ok ? 0 : r.cancelled ? 130 : 1; },
   telemetry: async (args) => {
     const { sendRows, telemetryCommand, telemetryStatus } = await import("./lib/telemetry.mjs");
     const ci = args.indexOf("--config"), cfg = ci >= 0 ? args[ci + 1] : undefined;
