@@ -61,3 +61,19 @@ export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, status = f
     if (input) child.stdin.write(input); else child.stdin.end();
   });
 }
+
+// Run a command and collect everything it says, stdout and stderr together, with its exit code: for a harness's
+// status check, which answers on either stream (measured 2026-09-26: Codex on stderr, Kiro on stdout, Antigravity and
+// Cursor on both). Resolves null when it does not answer in time or cannot start; never throws.
+export function probe(cmd, args, { timeoutMs = 15000, cwd } = {}) {
+  return new Promise((resolve) => {
+    let out = "", done = false, child;
+    const finish = (v) => { if (done) return; done = true; clearTimeout(timer); try { child.kill(); } catch {} resolve(v); };
+    try { child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, ...(cwd ? { cwd } : {}) }); } catch { return resolve(null); }
+    const timer = setTimeout(() => finish(null), timeoutMs);
+    child.on("error", () => finish(null));
+    child.stdout.on("data", (d) => { out += d; });
+    child.stderr.on("data", (d) => { out += d; });
+    child.on("close", (code) => finish({ out, code }));
+  });
+}

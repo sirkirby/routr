@@ -5,7 +5,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { claudeSnapshot, codexSnapshot, monthMinutes } from "../src/lib/usage.mjs";
 import { KIRO_BY_HAND, kiroUsage, parseKiroUsage, readKiro, refreshKiro } from "../src/lib/kiro-usage.mjs";
-import { readUsage } from "../src/lib/harnesses.mjs";
+import { HARNESSES, readUsage } from "../src/lib/harnesses.mjs";
 import { olderThan, takeLock } from "../src/lib/runtime.mjs";
 import { usageCommand } from "../src/lib/commands.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
@@ -225,15 +225,16 @@ test("cursorUsage without herdr fails open, says how to read it by hand, and sta
   expect(started).toEqual([]);
 });
 
-test("usage cursor without herdr prints JSON and exits 0", () => {
+test("usage cursor with no Cursor to ask says so, starts nothing, prints JSON and exits 0", () => {
   const home = scratch("home"); // it keeps what it read: never in the real cache
-  const cleanEnv = cliEnv(home, { PATH: "" });
+  const cleanEnv = cliEnv(home, { PATH: "" }); // no cursor-agent and no herdr
   delete cleanEnv.HERDR_ENV;
   const res = Bun.spawnSync([process.execPath, SCRIPT, "usage", "cursor"], { env: cleanEnv });
-  expect(JSON.parse(readFileSync(join(home, ".cache/routr/cursor-usage.json"), "utf8")).error).toContain("herdr");
   expect(res.exitCode).toBe(0);
   const out = JSON.parse(res.stdout.toString());
-  expect(out).toMatchObject({ ok: false, read_yourself: CURSOR_BY_HAND });
+  expect(out).toMatchObject({ ok: false, error: "`cursor-agent` did not answer its sign-in check (not installed, or it hung)" });
+  expect(JSON.parse(readFileSync(join(home, ".cache/routr/cursor-usage.json"), "utf8")).error).toBe(out.error);
+  expect(JSON.parse(readFileSync(join(home, ".cache/routr/signed-in.json"), "utf8")).cursor.state).toBe("no answer");
 });
 
 const KIRO_USAGE = "Estimated Usage | resets on 2026-10-01 | KIRO FREE\nCredits (0.00 of 50 covered in plan), 0.0%\nManage your plan at https://app.kiro.dev/account/usage\n";
@@ -371,4 +372,53 @@ test("routr usage ranks what it sees without a brief, and a name narrows it or o
   expect(await usageCommand(["cursor"], c, {}, { read, sources: { cursor: { check: async () => ({ ok: true, opened: true }) } } })).toEqual({ ok: true, opened: true });
   const broken = await usageCommand([], c, {}, { read: async () => { throw new Error("gone"); } });
   expect(broken).toMatchObject({ ok: false, error: "gone" });
+});
+
+// Each harness's own status output, signed in and signed out, as measured on 2026-09-26 (stdout and stderr together).
+const STATUS = {
+  claude: { yes: ['{\n  "loggedIn": true,\n  "authMethod": "claude.ai"\n}', 0], no: ['{\n  "loggedIn": false,\n  "authMethod": "none"\n}', 1] },
+  codex: { yes: ["Logged in using ChatGPT\n", 0], no: ["Not logged in\n", 1] },
+  cursor: { yes: ["✓ Logged in as someone@example.com\n", 0], no: ["Not logged in\n", 0] }, // exit 0 both ways
+  agy: { yes: ["Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\n", 0], no: ["Fetching available models...\nError: Please sign in to view available models. Launch the CLI without arguments to sign in.\n", 1] },
+  kiro: { yes: ['{"accountType":"SocialGitHub","email":"someone@example.com"}\n', 0], no: ['{"account":null}\n', 1] },
+};
+test("every harness says whether it is signed in, read from its own status text, not its exit code alone", () => {
+  expect(Object.keys(STATUS).sort()).toEqual(Object.keys(HARNESSES).sort()); // a harness added later brings its outputs
+  for (const [n, { yes, no }] of Object.entries(STATUS)) {
+    expect([n, HARNESSES[n].auth.signedIn(...yes)]).toEqual([n, true]);
+    expect([n, HARNESSES[n].auth.signedIn(...no)]).toEqual([n, false]);
+  }
+});
+test("the sign-in answer is kept: signed in for hours, signed out for minutes, and no answer is not signed in", async () => {
+  const { signInState } = await import("../src/lib/signin.mjs");
+  const file = join(scratch("signin"), "signed-in.json"), T = 1_800_000_000;
+  const asked = [];
+  const ask = (answer) => async (cmd, args) => { asked.push([cmd, ...args]); return answer; };
+  const kiro = HARNESSES.kiro, o = (answer, nowSec, extra = {}) => ({ file, nowSec, ask: ask(answer), ...extra });
+  expect(await signInState("kiro", kiro, o({ out: STATUS.kiro.yes[0], code: 0 }, T))).toBe("yes");
+  expect(asked).toEqual([["kiro-cli", "whoami", "--format", "json"]]);
+  expect(await signInState("kiro", kiro, o(null, T + 5 * 3600))).toBe("yes"); // kept: not asked again
+  expect(asked).toHaveLength(1);
+  expect(await signInState("kiro", kiro, o({ out: STATUS.kiro.no[0], code: 1 }, T + 7 * 3600))).toBe("no"); // past 6 h: asked
+  expect(await signInState("kiro", kiro, o({ out: STATUS.kiro.yes[0], code: 0 }, T + 7 * 3600 + 11 * 60))).toBe("yes"); // "no" lasts 10 min
+  expect(await signInState("kiro", kiro, o(null, T + 7 * 3600 + 12 * 60, { fresh: true }))).toBe("no answer"); // fresh always asks
+  expect(asked).toHaveLength(4);
+});
+test("a harness that is not signed in is never read, and dispatch leaves it out and says how to sign in", async () => {
+  const reads = [];
+  const sources = { codex: { read: async () => { reads.push("codex"); return live("codex", 0.8); } }, cursor: { read: async () => { reads.push("cursor"); return live("cursor", 0.9); } } };
+  const usage = await readUsage(["codex", "cursor"], {}, { sources, why: (n) => (n === "cursor" ? "not signed in: cursor-agent login" : null) });
+  expect(reads).toEqual(["codex"]);
+  expect(usage.find((u) => u.pool === "cursor")).toMatchObject({ signedIn: false, headroom: null, note: "not signed in: cursor-agent login" });
+  const r = rankSubscriptions("basic", usage, cfg());
+  expect(r.ranked.map((x) => x.subscription)).not.toContain("cursor");
+  expect(r.excluded).toContainEqual({ subscription: "cursor", reason: "not signed in: cursor-agent login" });
+});
+test("a background reading of a harness that is not signed in never starts it, keeps why, and gives the lock back", async () => {
+  const dir = scratch("gate"), file = join(dir, "kiro-usage.json"), lock = `${file}.lock`;
+  writeFileSync(lock, "");
+  const r = await refreshKiro({ file, background: true, ready: async () => "not signed in: kiro-cli login", read: async () => { throw new Error("must not read"); } });
+  expect(r).toEqual({ ok: false, error: "not signed in: kiro-cli login" });
+  expect(JSON.parse(readFileSync(file, "utf8")).error).toBe("not signed in: kiro-cli login");
+  expect(existsSync(lock)).toBe(false);
 });

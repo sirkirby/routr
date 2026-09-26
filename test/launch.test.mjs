@@ -115,7 +115,7 @@ function fakeHerdr({ kind = "claude", trust = null, notReady = false, foreground
   const calls = [];
   const ok = (result) => ({ ok: true, data: { result } });
   const deps = {
-    env: { HERDR_ENV: "1" }, now: () => ticks, sleep: async (ms) => { ticks += ms; },
+    env: { HERDR_ENV: "1" }, now: () => ticks, sleep: async (ms) => { ticks += ms; }, ready: async () => null,
     run: async (a, ms) => {
       calls.push(a);
       const override = await reply(a, ms);
@@ -686,4 +686,12 @@ test("waitForShell: ready at a settled prompt, answers dotenv once, and stops at
   expect(await waitForShell(pane(["Overwrite? [y/N]"]), time)).toMatchObject({ ok: false, why: "Unrecognized shell question" });
   expect(await waitForShell(pane(["chris % "], { busy: true }), { ...time, refuseBusy: true })).toMatchObject({ ok: false, why: expect.stringContaining("foreground process") });
   expect(await waitForShell(pane(["chris % "]), { ...time, cwd: SCRATCH })).toMatchObject({ ok: false, why: "Shell is at a prompt in the wrong directory" });
+});
+
+test("launch refuses a harness that is not signed in, before any herdr call", async () => {
+  const f = fakeHerdr({ kind: "kiro" });
+  const r = await launch(["--kind", "kiro", "--name", "worker", "--model", "auto", "--task", "Task"], { ...f.deps, ready: async () => "not signed in: kiro-cli login" });
+  expect(r).toMatchObject({ ok: false, state: "failed" });
+  expect(r.steps.at(-1).detail).toBe("Kiro cannot take work: not signed in: kiro-cli login");
+  expect(f.calls).toEqual([]);
 });

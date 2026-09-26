@@ -40,6 +40,9 @@ measured questions about a brief or a worker report; code adds live usage; the l
   4 hours old, a call starts a detached `routr usage cursor` (or `kiro`) to refresh it and carries on, as it does for the updater (unlike the updater, also from a
   source checkout: it swaps nothing). How usage is ranked:
   `docs/ranking.md`. A reserve is never offered.
+- Installed is not enough: a harness is used only once its own status command (the registry's `auth`) says it is
+  signed in. One that is not gets no model list, no usage read, no refresh, and no launch, because asking it anything
+  else can open its sign-in in the user's browser. routr never starts a harness's sign-in; it says what to run.
 - Standard mechanisms only: skills, prompts, the harness's own CLI flags. No dependence on a harness's private
   environment variables or config internals beyond what `references/harnesses.md` records as observed.
 - The code lives in `src/` and compiles into the binary. `skills/routr/` holds exactly what is installed for agents

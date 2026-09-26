@@ -25,9 +25,11 @@ const startRefresh = (name) => spawnSelf(["usage", name, "--background"]);
 // `routr usage <name>`: read now and keep the reading. A failed read keeps the last good one, whose age then says how
 // old it is. Only the background reading (`--background`) holds the refresh lock, so only it releases it: a reading
 // asked for by hand must not free a lock a background reading still holds.
-export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`, nowSec = now(), background = false }) {
+// `ready()` gates the read: null to go ahead, or why not (a harness not signed in), kept as the try's error.
+export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`, nowSec = now(), background = false, ready }) {
   try {
-    const r = await read();
+    const why = ready ? await ready() : null;
+    const r = why ? { ok: false, error: why } : await read();
     const last = readJson(file);
     try {
       writeJsonAtomic(file, r.ok ? { ts: nowSec, tried: nowSec, reading: keep(r) }

@@ -10,15 +10,18 @@ import { cliEnv, NOW, said, scratch, SCRIPT } from "./helpers.mjs";
 test("doctor's next steps name the command for each thing missing, most important first", async () => {
   const { nextSteps, starterConfig, STATUSLINE_MISSING } = await import("../src/lib/doctor.mjs");
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
-  const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true } }, claude_usage_statusline: "installed", skill: [{ version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
+  const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true } }, claude_usage_statusline: "installed", skill: [{ version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
   expect(nextSteps(base)).toEqual([]);
   const fresh = nextSteps({ ...base, key: { works: false, found: false }, config: { exists: false, subscriptions: [] }, claude_usage_statusline: STATUSLINE_MISSING });
   expect(fresh[0]).toContain("routr key set");
   expect(fresh[1]).toContain("routr setup");
   expect(fresh.length).toBe(3);
-  expect(nextSteps({ ...base, harnesses: { claude: { installed: true }, codex: { installed: true } } })[0]).toContain("codex");
+  expect(nextSteps({ ...base, harnesses: { claude: { installed: true, signed_in: true }, codex: { installed: true, signed_in: true } } })[0]).toContain("codex");
+  // Signed out: not offered to set up, and a configured one says how to sign in again.
+  expect(nextSteps({ ...base, harnesses: { claude: { installed: true, signed_in: true }, codex: { installed: true, signed_in: false, sign_in: "not signed in: run `codex login`" } } })).toEqual([]);
+  expect(nextSteps({ ...base, harnesses: { claude: { installed: true, signed_in: false, sign_in: "not signed in: run `claude auth login`" } } })).toEqual(["Claude Code is set up in routr but gets no work: not signed in: run `claude auth login`"]);
   // Claude answered and sent no windows: the user says whether the seat has a quota; once `billing` is set, nothing to do.
-  const reading = (snap) => { const u = claudeSnapshot(snap, NOW / 1000); return { installed: true, usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) }; };
+  const reading = (snap) => { const u = claudeSnapshot(snap, NOW / 1000); return { installed: true, signed_in: true, usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) }; };
   const noWindows = { ...base, harnesses: { claude: reading({ ts: NOW / 1000, rate_limits: null, answered: true, seen: null }) } };
   expect(nextSteps(noWindows)[0]).toContain('"billing": "metered"'); expect(nextSteps(noWindows)[0]).toContain('"billing": "included"');
   expect(nextSteps({ ...noWindows, config: { ...base.config, billing: { claude: "metered" } } })).toEqual([]);
@@ -120,7 +123,7 @@ async function runSetup({ config, args = [], answers = [], found = ["agy", "curs
   const asked = [], shared = [], installs = [], keys = [];
   const inspect = async () => {
     const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
-    return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy"].map((n) => [n, { installed: found.includes(n), models: [], usage_class: "included" }])),
+    return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy"].map((n) => [n, { installed: found.includes(n), signed_in: found.includes(n), models: [], usage_class: "included" }])),
       config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}) }, skill: [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }],
       claude_usage_statusline: "not needed", key: { works: keyWorks }, next_steps: [] };
   };
