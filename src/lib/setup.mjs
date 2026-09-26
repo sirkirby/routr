@@ -85,13 +85,15 @@ const LIST_IN_FULL = 20;
 export const narrow = (list, query) => { const words = query.toLowerCase().split(/\s+/).filter(Boolean); return list.filter((m) => words.every((w) => m.toLowerCase().includes(w))); };
 
 // Returns the chosen id, or undefined when the user leaves it to the lead agent. `question` and `say` are passed in so a test can drive it.
-export async function pickModel(list, question, say) {
+// `suggested`: the harness's own recommended choice (Kiro's `auto`), kept on Enter; otherwise Enter leaves it to the lead.
+export async function pickModel(list, question, say, suggested) {
   let shown = list.length <= LIST_IN_FULL ? list : [];
   if (!shown.length) say(`  ${list.length} models. Type part of a name to search (for example a family or a size).`);
   for (;;) {
     shown.forEach((m, i) => say(`  ${String(i + 1).padStart(2)}. ${m}`));
-    const a = (await question(shown.length ? "Number, model id, or text to search (Enter to leave it to the lead agent): " : "Search, or a full model id (Enter to leave it to the lead agent): ")).trim();
-    if (!a) return undefined;
+    const enter = suggested ? `Enter = ${suggested}` : "Enter to leave it to the lead agent";
+    const a = (await question(shown.length ? `Number, model id, or text to search (${enter}): ` : `Search, or a full model id (${enter}): `)).trim();
+    if (!a) return suggested;
     if (/^\d+$/.test(a) && shown[Number(a) - 1]) return shown[Number(a) - 1];
     if (list.includes(a)) return a;
     const hits = narrow(list, a);
@@ -178,7 +180,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     const list = r.harnesses[n]?.models;
     if (ask && fresh.includes(n) && !models[n] && list?.length) {
       say(`\n${paint(1, n)}: your everyday model there. Your agents start from it and go higher or lower as the work needs.`);
-      models[n] = await pickModel(list, ask, say);
+      models[n] = await pickModel(list, ask, say, list.includes(suggest(n).default_model) ? suggest(n).default_model : undefined);
     }
     if (ask && !(hardest[n] && reserves[n] != null)) {
       if (!explained) { say(`\n${SETTINGS_INTRO}`); explained = true; }

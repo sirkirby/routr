@@ -14,8 +14,8 @@ import { isOurStatusline } from "./statusline.mjs";
 export function uninstallPlan({ home = homedir(), purge = false, binary = null } = {}) {
   const remove = [], keep = [];
   if (binary) remove.push({ path: binary, what: "the routr binary" });
-  for (const rel of [".claude/skills/routr", ".agents/skills/routr"]) remove.push({ path: join(home, rel), what: "the routr skill" });
-  remove.push({ path: join(home, ".cache/routr"), what: "cache: the Claude usage snapshot and the update log" });
+  for (const rel of [".claude/skills/routr", ".kiro/skills/routr", ".agents/skills/routr"]) remove.push({ path: join(home, rel), what: "the routr skill" });
+  remove.push({ path: join(home, ".cache/routr"), what: "cache: the usage snapshots and the update log" });
   const data = [{ path: join(home, ".config/routr"), what: "your config and TypeSafe key" }, { path: join(home, ".local/share/routr"), what: "your ledger" }];
   (purge ? remove : keep).push(...data);
   const present = (l) => l.filter((x) => { try { lstatSync(x.path); return true; } catch { return false; } });

@@ -5,10 +5,10 @@
 // or `unknown` (nothing readable). Measured 2026-09-22 on a ChatGPT Enterprise seat: no windows at all, only
 // `credits.unlimited: true`, and a plan name of `business`. So the shape is the key, never the plan name.
 import { CURSOR_BY_HAND, cursorUsage } from "./cursor-usage.mjs";
-import { CLAUDE_SNAPSHOT, CURSOR_SNAPSHOT, standalone } from "./runtime.mjs";
+import { CLAUDE_SNAPSHOT, CURSOR_SNAPSHOT, KIRO_SNAPSHOT, standalone } from "./runtime.mjs";
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 export { CLAUDE_SNAPSHOT };
@@ -113,16 +113,17 @@ export function readClaude() {
 }
 
 // Run a harness command read-only and collect stdout; resolve null on any failure or timeout, never throw.
-export function run(cmd, args, { input, timeoutMs = 8000, until } = {}) {
+// `status: true` resolves the exit code instead, for a command whose only answer is on stderr.
+export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, status = false } = {}) {
   return new Promise((resolve) => {
     let out = "", done = false;
     const finish = (v) => { if (done) return; done = true; clearTimeout(timer); try { child.kill(); } catch {} resolve(v); };
     let child;
-    try { child = spawn(cmd, args, { stdio: ["pipe", "pipe", "ignore"] }); } catch { return resolve(null); }
+    try { child = spawn(cmd, args, { stdio: ["pipe", "pipe", "ignore"], ...(cwd ? { cwd } : {}) }); } catch { return resolve(null); }
     const timer = setTimeout(() => finish(null), timeoutMs);
     child.on("error", () => finish(null));
     child.stdout.on("data", (d) => { out += d; if (until?.(out)) finish(out); });
-    child.on("close", () => finish(out || null));
+    child.on("close", (code) => finish(status ? code : out || null));
     if (input) child.stdin.write(input); else child.stdin.end();
   });
 }
@@ -169,16 +170,15 @@ export async function readAgy() {
 }
 
 // Cursor shows usage only in its own /usage screen, which takes seconds to read (a private herdr session, Cursor, the
-// panel: 4 to 5 s measured), too slow for a call that answers in 300 ms. So it is read like Claude's: a snapshot every
+// panel: 4 to 5 s measured), too slow for a call that answers in 300 ms. Kiro's /usage answers in ~10 s and leaves a
+// session behind that takes ~8 s more to delete (measured 2026-09-26). So both are read like Claude's: a snapshot every
 // call reads in milliseconds, with its age shown, and a fresh reading taken in the BACKGROUND about once per working
-// session: when the last try is over 4 hours old, the call starts a detached `routr usage cursor` and does not wait.
-// Plan usage is a monthly pool and burns slowly, so a reading hours old routes the same (the maintainer's call,
-// 2026-09-25). `setup` and `doctor` read usage too, so a new install has its first reading before its first dispatch.
-// Only Included counts: it is the whole plan, and Cursor's own models (Composer, Grok) draw on it through Auto. API is
-// other vendors' models inside Cursor, which routr does not route to, so it is shown in the note and never ranked.
+// session: when the last try is over 4 hours old, the call starts a detached `routr usage <name>` and does not wait.
+// Both are monthly pools and burn slowly, so a reading hours old routes the same (the maintainer's call, 2026-09-25).
+// `setup` and `doctor` read usage too, so a new install has its first reading before its first dispatch.
 const REFRESH_SEC = 4 * 3600;
-// A reading that has not been refreshed for a day is not used: refreshes are failing, and Cursor's plan may have reset
-// since. Cursor's screen shows no reset time, so age is the only guard. Past it, Cursor is assumed and the note says so.
+// A reading that has not been refreshed for a day is not used: refreshes are failing, and the plan may have reset
+// since (Cursor's screen shows no reset time). Past it, the subscription is assumed and the note says so.
 const TRUST_SEC = 24 * 3600;
 const LOCK_SEC = 120; // one background reading at a time; a lock older than any reading (90 s at most) is abandoned
 const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } };
@@ -196,23 +196,23 @@ export function takeLock(file, nowMs = Date.now()) {
   try { if (nowMs - statSync(file).mtimeMs < LOCK_SEC * 1000) return false; rmSync(file, { force: true }); closeSync(openSync(file, "wx")); return true; } catch { return false; }
 }
 const noRefresh = () => process.env.ROUTR_NO_REFRESH === "1"; // tests: nothing detached, nothing written
-const startRefresh = () => {
+const startRefresh = (name) => {
   try {
-    const args = [...(standalone() ? [] : [process.argv[1]]), "usage", "cursor", "--background"];
+    const args = [...(standalone() ? [] : [process.argv[1]]), "usage", name, "--background"];
     const c = spawn(process.execPath, args, { detached: true, stdio: "ignore", windowsHide: true });
     c.on("error", () => {}); c.unref(); return true;
   } catch { return false; }
 };
 
-// `routr usage cursor`: read the screen now and keep the reading. A failed read keeps the last good one, whose age
-// then says how old it is. Only the background reading (`--background`) holds the refresh lock, so only it releases
-// it: a reading asked for by hand must not free a lock a background reading still holds.
-export async function refreshCursor({ read = cursorUsage, file = CURSOR_SNAPSHOT, lock = `${file}.lock`, nowSec = now(), background = false } = {}) {
+// `routr usage <name>`: read now and keep the reading. A failed read keeps the last good one, whose age then says how
+// old it is. Only the background reading (`--background`) holds the refresh lock, so only it releases it: a reading
+// asked for by hand must not free a lock a background reading still holds.
+async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`, nowSec = now(), background = false }) {
   try {
     const r = await read();
     const last = readJson(file);
     try {
-      writeJson(file, r.ok ? { ts: nowSec, tried: nowSec, reading: { plan: r.plan, included_used_pct: r.included_used_pct, auto_used_pct: r.auto_used_pct, api_used_pct: r.api_used_pct } }
+      writeJson(file, r.ok ? { ts: nowSec, tried: nowSec, reading: keep(r) }
         : { ts: last?.ts ?? null, tried: nowSec, reading: last?.reading ?? null, error: r.error });
     } catch {}
     return r;
@@ -220,7 +220,8 @@ export async function refreshCursor({ read = cursorUsage, file = CURSOR_SNAPSHOT
 }
 
 // `background: false` reads without starting a refresh: doctor, for a harness installed but not in the config.
-export function readCursor({ file = CURSOR_SNAPSHOT, lock = `${file}.lock`, nowSec = now(), refresh = startRefresh, background = true, off = noRefresh() } = {}) {
+// `windows(reading)` and `describe(reading)` turn the kept reading into the usage row; `byHand` is said when reading fails.
+function readSnapshot({ name, source, windows, describe, byHand, file, lock = `${file}.lock`, nowSec = now(), refresh = () => startRefresh(name), background = true, off = noRefresh() }) {
   let snap = readJson(file);
   let started = false;
   if (background && !off && !(nowSec - (snap?.tried ?? 0) < REFRESH_SEC) && takeLock(lock, nowSec * 1000)) {
@@ -228,13 +229,61 @@ export function readCursor({ file = CURSOR_SNAPSHOT, lock = `${file}.lock`, nowS
     try { writeJson(file, { ...snap, tried: nowSec }); started = refresh(); } catch {}
     if (!started) try { rmSync(lock, { force: true }); } catch {}
   }
-  const r = snap?.reading, age = snap?.ts == null ? null : nowSec - snap.ts, pct = (x) => (x == null ? "?" : `${x}%`);
+  const r = snap?.reading, age = snap?.ts == null ? null : nowSec - snap.ts;
   const after = [started && "a fresh reading is being taken in the background", snap?.error && `the last try failed: ${snap.error}`].filter(Boolean).join("; ");
-  if (r && age < TRUST_SEC) return summarize("cursor", "cursor /usage", snap.ts, [{ name: "included", usedPct: r.included_used_pct, windowMin: null, resetsAt: null }],
-    `Included ${pct(r.included_used_pct)} used (Auto ${pct(r.auto_used_pct)}, API ${pct(r.api_used_pct)})${after ? `; ${after}` : ""}`, undefined, nowSec);
+  if (r && age < TRUST_SEC) return summarize(name, source, snap.ts, windows(r), `${describe(r)}${after ? `; ${after}` : ""}`, undefined, nowSec);
   const why = r ? `the last reading is ${Math.round(age / 3600)} h old, too old to use` : "no reading yet";
-  return summarize("cursor", "cursor /usage", null, [], `${why}${after ? `; ${after}` : ""}; using the assumed headroom.${snap?.error ? ` By hand: ${CURSOR_BY_HAND}` : ""}`, undefined, nowSec);
+  return summarize(name, source, null, [], `${why}${after ? `; ${after}` : ""}; using the assumed headroom.${snap?.error ? ` By hand: ${byHand}` : ""}`, undefined, nowSec);
 }
+
+// Cursor: only Included counts: it is the whole plan, and Cursor's own models (Composer, Grok) draw on it through Auto.
+// API is other vendors' models inside Cursor, which routr does not route to, so it is shown in the note and never ranked.
+const pct = (x) => (x == null ? "?" : `${x}%`);
+export const refreshCursor = ({ read = cursorUsage, file = CURSOR_SNAPSHOT, ...o } = {}) => refreshSnapshot({ read, file, ...o,
+  keep: (r) => ({ plan: r.plan, included_used_pct: r.included_used_pct, auto_used_pct: r.auto_used_pct, api_used_pct: r.api_used_pct }) });
+export const readCursor = ({ file = CURSOR_SNAPSHOT, ...o } = {}) => readSnapshot({ name: "cursor", source: "cursor /usage", byHand: CURSOR_BY_HAND, file, ...o,
+  windows: (r) => [{ name: "included", usedPct: r.included_used_pct, windowMin: null, resetsAt: null }],
+  describe: (r) => `Included ${pct(r.included_used_pct)} used (Auto ${pct(r.auto_used_pct)}, API ${pct(r.api_used_pct)})` });
+
+// Kiro: `kiro-cli chat --no-interactive /usage` answers without an agent turn (0 credits) with the plan's monthly
+// credits: "Estimated Usage | resets on 2026-10-01 | KIRO FREE" / "Credits (0.00 of 50 covered in plan), 0.0%"
+// (measured on a Free plan, 2026-09-26). Every model draws on those credits, so there is one pool. Any other line
+// (a paid plan's overage or bonus credits, not yet observed) is kept in the note, never guessed at.
+export const KIRO_BY_HAND = "run `kiro-cli chat --no-interactive /usage`, read \"Credits (X of Y covered in plan)\", and pass --headroom kiro=<1 - X/Y>";
+export function parseKiroUsage(text) {
+  const t = String(text ?? "");
+  const m = t.match(/Credits\s*\(\s*([\d.,]+)\s+of\s+([\d.,]+)\s+covered in plan\s*\)/i);
+  if (!m) return null;
+  const n = (s) => Number(s.replaceAll(",", "")), used = n(m[1]), limit = n(m[2]);
+  if (!Number.isFinite(used) || !(limit > 0)) return null;
+  const head = t.match(/^[^\n]*Estimated Usage[^\n]*$/im)?.[0] ?? "";
+  const reset = head.match(/resets on (\d{4}-\d{2}-\d{2})/i)?.[1];
+  const other = t.split("\n").map((l) => l.trim()).filter((l) => l && l !== head.trim() && !l.includes(m[0]) && !/^Manage your plan\b/i.test(l));
+  return { plan: head.split("|").at(-1)?.trim() || null, credits_used: used, credits_limit: limit, used_pct: Math.round(used / limit * 1000) / 10,
+    resets_at: reset ? Date.parse(`${reset}T00:00:00Z`) / 1000 : null, ...(other.length ? { other: other.join(" · ").slice(0, 160) } : {}) };
+}
+// Kiro keeps each /usage as an empty saved session, listed under the folder it ran in. So it runs in the system temp
+// folder, never the user's project, and the session is removed with Kiro's own `--delete-session` (measured: ~8 s).
+export async function kiroUsage({ exec = run, cwd = tmpdir() } = {}) {
+  const out = await exec("kiro-cli", ["chat", "--output-format", "stream-json", "/usage"], { cwd, timeoutMs: 45000 });
+  if (out == null) return { ok: false, error: "kiro-cli did not answer /usage in 45 s (not installed, not logged in, or hung)", read_yourself: KIRO_BY_HAND };
+  let session = null, text = null;
+  for (const line of out.split("\n")) {
+    try { const o = JSON.parse(line); session ??= o.data?.sessionId ?? null; if (o.type === "runFinished") text = o.data?.finalText ?? null; } catch {}
+  }
+  // Kiro prints "Deleted" and exits 0 even for an id it never had (measured), so exit 0 is the best sign there is.
+  const deleted = !session || (await exec("kiro-cli", ["chat", "--delete-session", session], { cwd, timeoutMs: 30000, status: true })) === 0;
+  const cleanup = deleted ? {} : { note: `Kiro kept an empty session from this reading; remove it with: kiro-cli chat --delete-session ${session}` };
+  const p = parseKiroUsage(text);
+  if (!p) return { ok: false, error: "Kiro's /usage did not show \"Credits (X of Y covered in plan)\"", read_yourself: KIRO_BY_HAND, ...cleanup };
+  return { ok: true, subscription: "kiro", ...p, headroom: Math.round((1 - p.used_pct / 100) * 1000) / 1000, ...cleanup };
+}
+export const refreshKiro = ({ read = kiroUsage, file = KIRO_SNAPSHOT, ...o } = {}) => refreshSnapshot({ read, file, ...o,
+  keep: (r) => ({ plan: r.plan, credits_used: r.credits_used, credits_limit: r.credits_limit, used_pct: r.used_pct, resets_at: r.resets_at, ...(r.other ? { other: r.other } : {}) }) });
+// A reset on a UTC month boundary makes the window that month, so the reserve tapers toward it as for Codex's cap.
+export const readKiro = ({ file = KIRO_SNAPSHOT, ...o } = {}) => readSnapshot({ name: "kiro", source: "kiro /usage", byHand: KIRO_BY_HAND, file, ...o,
+  windows: (r) => [{ name: "monthly_credits", usedPct: r.used_pct, windowMin: monthMinutes(r.resets_at), resetsAt: r.resets_at }],
+  describe: (r) => `${r.plan ? `${r.plan}: ` : ""}${r.credits_used} of ${r.credits_limit} credits used${r.other ? ` (${r.other})` : ""}` });
 
 // How each subscription's usage is read, in one place, so doctor, dispatch, and `routr usage` say the same. `read` runs
 // on every call and must be fast. `check` takes a fresh reading now and prints it raw (`routr usage cursor`).
@@ -244,6 +293,7 @@ export const SOURCES = {
   codex: { read: readCodexLive },
   agy: { read: readAgy },
   cursor: { read: readCursor, check: refreshCursor },
+  kiro: { read: readKiro, check: refreshKiro },
 };
 
 // One unreadable source must not take the others (or the routing advice) down with it. Readers run in parallel.

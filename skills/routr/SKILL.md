@@ -1,6 +1,6 @@
 ---
 name: routr
-description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity) from one orchestrating agent in herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before spawning subagents in a routr-managed session; or when asked to set up, configure, or check routr.
+description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity, Kiro) from one orchestrating agent in herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before spawning subagents in a routr-managed session; or when asked to set up, configure, or check routr.
 metadata:
   version: "0.0.0-dev"
 ---
@@ -63,7 +63,7 @@ fallback.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
 - `subscriptions` (dispatch only). `ranked` lists each subscription with its usable headroom, marked `live`, `given`
   (you passed it in), or `assumed`. `age_sec` is how old the reading is, and `note` says what the harness showed beside
-  the number (Cursor: its Auto and API pools) or why a number is assumed. Under `windows` it shows each usage window as the harness reports it: percent
+  the number (Cursor: its Auto and API pools; Kiro: its plan and credits) or why a number is assumed. Under `windows` it shows each usage window as the harness reports it: percent
   used and hours until it resets. The user's reserve shrinks as a window nears its reset, because unused capacity
   expires then. `your_default` is the user's everyday model on that subscription. `excluded` lists subscriptions the
   user does not give work this hard. Never spend a reserve: when everything is at its reserve, hold the work or ask
