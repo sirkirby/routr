@@ -12,7 +12,7 @@
 //     trust), answered with the one option that holds for this session only. showsModel: how to tell from the
 //     screen that it took `--model`, for a harness that silently runs its default on an id it does not know.
 //   list: its own command that lists model ids; models(): that list, read now (routr keeps no model list of its own).
-//     openList: the list is a sample, not every id it takes (Claude Code names its aliases; any full model name works),
+//     openList: the list is a sample, not every id it takes (Claude Code names its aliases; its help says it also takes a model's full name),
 //     so an id not on it is not refused.
 //     efforts(model): the effort levels it accepts for that model, read from the harness too, or null when it does
 //     not say (a harness without `effort` has none: its model ids carry it).
@@ -51,7 +51,7 @@ export const HARNESSES = {
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
     // `"loggedIn": false` and exit 1 when signed out.
     auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`" },
-    // Its help names the latest aliases (fable, opus, sonnet on 2.1.283); `--model` also takes any full model name.
+    // Its help names the latest aliases (fable, opus, sonnet on 2.1.283); its help says `--model` also takes a model's full name.
     models: async () => modelsInHelp(await readClaudeHelp()), openList: true,
     efforts: async () => effortsInHelp(await readClaudeHelp()),
     suggested: { hardest_work: "strong", reserve: 0.25 },
