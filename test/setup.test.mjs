@@ -195,6 +195,11 @@ test("setup: a harness whose list is a sample (Claude Code's aliases) takes an i
   const x = await runSetup({ config, found: ["claude"], models: { claude: ["fable", "opus", "sonnet"] }, answers: ["", "", "", "claude-fable-5", "1", "b", "b", "4"] });
   expect(x.asked.some((a) => a.includes("claude-fable-5 (as typed)"))).toBe(true);
   expect(x.saved.subscriptions.claude.default_model).toBe("claude-fable-5");
+  // Opened again, the saved id is just current: off a sample list is not gone (from the review).
+  const again = await runSetup({ config: x.saved, found: ["claude"], models: { claude: ["fable", "opus", "sonnet"] }, answers: ["", "", "", "b", "b", "b", "4"] });
+  const shown = again.asked.find((a) => a.startsWith("Claude Code: everyday model"));
+  expect(shown).toContain("claude-fable-5 (current)");
+  expect(shown).not.toContain("not in the harness's list now");
   const flag = await runSetup({ config, found: ["claude", "codex"], models: { claude: ["fable", "opus", "sonnet"], codex: ["gpt-5.5"] }, args: ["--yes", "--model", "claude=claude-fable-5"] });
   expect(flag.saved.subscriptions.claude.default_model).toBe("claude-fable-5");
   // A harness whose list is every id it takes still refuses one it does not list.

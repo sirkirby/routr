@@ -83,7 +83,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `update` | Update to the latest release now (routr also does this by itself in the background, at most once a day). |
 | `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work and reserve; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--enable`, `--disable`) and reads them first with `--show`. |
 | `uninstall` | Remove routr: the binary, the skill, the cache, its Claude statusline entry. Keeps your config, key, and ledger; `--purge` removes those too. |
-| `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list, and what to do next. Changes nothing. |
+| `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
 The advice commands write nothing and never block an agent: with no network or no key they still answer, marked as
 a fallback.
@@ -143,7 +143,7 @@ goes stale when models change.
 
 - Per subscription, asked by `routr setup` and changed with `routr setup --hardest <name>=<level>` or
   `--reserve <name>=<share>`: `reserve` (the share routr must never offer), `hardest_work` (the hardest work you would hand
-  it), `default_model` and `default_effort` (your everyday choice there, picked from the harness's live list), and
+  it), `default_model` and `default_effort` (your everyday choice there, picked from the harness's live list; Claude Code also takes a full model name it does not list), and
   `assumed_headroom` for a subscription whose usage cannot be read. For a seat billed per token with no quota (an
   Enterprise seat), `metered_rank` says whether it takes the overflow after your subscriptions (`after`, the default)
   or ranks with them (`with`); `billing` names the kind when the harness cannot show it.

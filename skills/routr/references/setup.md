@@ -52,7 +52,7 @@ risks being committed. Without a key routr still answers, but only with the fall
 ## 3. Config
 
 Do not write the file by hand. For each subscription, settle three things with the user: their everyday model there
-(doctor prints each harness's live list), the hardest work they will send it (`basic`, `standard`, or `strong`; say
+(doctor prints each harness's live list; Claude Code's is its aliases, and a full model name also works), the hardest work they will send it (`basic`, `standard`, or `strong`; say
 what each means, below), and the reserve: the share routr holds back from workers, so the orchestrator and anything they run outside routr
 still have room (0% holds nothing back). Offer the suggestion setup prints for the last
 two; the user can take it. Then run:
@@ -60,7 +60,8 @@ two; the user can take it. Then run:
     routr setup --yes --model claude=<id> --hardest cursor=standard --reserve claude=25% [--metered codex=after|with] ...
 
 A person can instead run `routr setup` alone in a terminal: it is a guided screen. The first time it asks which
-subscriptions routr may use, then each one's model (from the harness's live list, typed to filter), effort, hardest
+subscriptions routr may use, then each one's model (from the harness's live list, typed to filter; for Claude Code a full model name that is not
+listed is offered "as typed", chosen by its number in accessible mode), effort, hardest
 work, and reserve, then lists the changes with Save and exit as the default (nothing is written before it). Run again,
 it shows what is set and a menu to change one thing, turn a subscription on or off, or walk through everything, then
 Save and exit or Exit without saving. Arrow keys choose, Esc goes back,
@@ -89,7 +90,8 @@ the command that fixes it.
   - `default_model` and `default_effort`: the user's everyday model on that harness, chosen from the live list doctor
     prints (routr keeps no model list of its own). Claude Code lists only its aliases and takes any full model name,
     so for Claude an id off the list is kept as typed. The orchestrator starts from it and moves up or down with the
-    work. Doctor warns when the harness no longer offers it; that is the only time it needs attention. Kiro's are
+    work. Doctor warns when the harness no longer offers it (never for Claude Code, whose list is only its aliases); that is
+    the only time it needs attention. Kiro's are
     suggested as `auto` and `auto`: Kiro's own router, with effort left to the model (no `--effort` is passed, so
     nothing is saved to the user's Kiro settings).
   - `assumed_headroom`: used only when nothing better is known. Claude, Codex, and Antigravity are read live; Cursor's

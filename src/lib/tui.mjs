@@ -181,7 +181,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
     // the harness takes but does not list); it is one word, as ids are.
     search: async ({ message, options, initial, pinned = [], typed = false }) => {
       const all = [...pinned, ...options];
-      const own = (q) => { const t = q.trim(); return typed && /^\S+$/.test(t) && !all.some((o) => o.value === t) ? [{ value: t, label: t, hint: "as typed", typed: true }] : []; };
+      const own = (q) => { const t = q.trim(); return typed && /^[^\s\p{Cc}]+$/u.test(t) && !all.some((o) => o.value === t) ? [{ value: t, label: t, hint: "as typed", typed: true }] : []; };
       const match = (q) => { const words = q.toLowerCase().split(/\s+/).filter(Boolean); return [...all.filter((o) => words.every((w) => `${o.label} ${o.value}`.toLowerCase().includes(w))), ...own(q)]; };
       if (accessible) {
         let shown = all.length <= 20 ? all : [];

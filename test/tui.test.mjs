@@ -84,6 +84,9 @@ test("search with typed: an id not listed is offered as typed, and never chosen 
   expect(await ui.search({ message: "Model", options, typed: true })).toBe("claude-fable-5");
   expect(said[1]).toContain("1. claude-fable-5 (as typed)");
   expect(await ui.search({ message: "Model", options, typed: true })).toBe("sonnet"); // one listed match is chosen at once
+  // From the docs audit: Esc typed in accessible mode is a control character, never an id.
+  const esc = ["\u001b", "b"], back = createUI({ accessible: true, ask: async () => esc.shift(), output: { write: () => {} } });
+  expect(await back.search({ message: "Model", options, typed: true })).toBe(BACK);
 });
 
 test("confirm and text: y/n answer at once, and a bad value is shown in yellow until it is fixed", async () => {
