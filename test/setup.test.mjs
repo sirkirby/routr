@@ -20,6 +20,8 @@ test("doctor's next steps name the command for each thing missing, most importan
   // Signed out: not offered to set up, and a configured one says how to sign in again.
   expect(nextSteps({ ...base, harnesses: { claude: { installed: true, signed_in: true }, codex: { installed: true, signed_in: false, sign_in: "not signed in: run `codex login`" } } })).toEqual([]);
   expect(nextSteps({ ...base, harnesses: { claude: { installed: true, signed_in: false, sign_in: "not signed in: run `claude auth login`" } } })).toEqual(["Claude Code is set up in routr but gets no work: not signed in: run `claude auth login`"]);
+  // Turned off by the user: no nagging to sign in.
+  expect(nextSteps({ ...base, config: { ...base.config, off: ["claude"] }, harnesses: { claude: { installed: true, signed_in: false, sign_in: "not signed in: run `claude auth login`" } } })).toEqual([]);
   // Claude answered and sent no windows: the user says whether the seat has a quota; once `billing` is set, nothing to do.
   const reading = (snap) => { const u = claudeSnapshot(snap, NOW / 1000); return { installed: true, signed_in: true, usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) }; };
   const noWindows = { ...base, harnesses: { claude: reading({ ts: NOW / 1000, rate_limits: null, answered: true, seen: null }) } };

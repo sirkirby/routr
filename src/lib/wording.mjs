@@ -36,6 +36,12 @@ export const RESERVE = {
   choose: (name) => `Choose one: routr setup --reserve ${name}=<share, 0% for none>`,
 };
 
+// A subscription the user turned off keeps its settings; routr just gives it no work until it is turned on again.
+export const OFF = {
+  reason: (name) => `turned off in your settings: routr setup --enable ${name}`,
+  launch: (label, name) => `${label} is turned off in your settings: turn it on with routr setup --enable ${name}`,
+};
+
 // Setup, before the questions, and the one-line summary of what is set.
 export const SETTINGS_INTRO = `Two settings decide where routr sends work. The hardest work each subscription takes:\n${levelList}\nAnd a reserve: ${RESERVE.what}.`;
 export const settingSummary = (name, s) => `${name} takes ${s.hardest_work} work, reserve ${Math.round(s.reserve * 100)}%`;

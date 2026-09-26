@@ -13,6 +13,7 @@ import { standalone } from "./runtime.mjs";
 import { CHECK_VERSION, checkQuestions, MEANING, questions, VERSION } from "./questions.mjs";
 import { ADVICE_RULE } from "./wording.mjs";
 import { rankSubscriptions } from "./pick.mjs";
+import { enabledSubscriptions } from "./config.mjs";
 import { readUsage, SOURCES } from "./harnesses.mjs";
 
 const short = (e, n = 160) => String(e?.message ?? e).slice(0, n);
@@ -23,7 +24,7 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
   const out = { id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: createHash("sha256").update(brief).digest("hex").slice(0, 12), brief_chars: brief.length };
   let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };
   // Each source's newest reading, read while Jev answers; a slow source (Cursor's screen) is a snapshot refreshed in the background.
-  const usageP = mode === "dispatch" ? read(Object.keys(config.subscriptions), given).catch(() => []) : null;
+  const usageP = mode === "dispatch" ? read(enabledSubscriptions(config), given).catch(() => []) : null; // a turned-off one is not read
   try {
     const r = await askFn({ task: { brief } }, questions, undefined, 10000);
     advice = advise(r.answers, config);
@@ -113,8 +114,8 @@ export async function usageCommand(words, config, given = {}, { read = readUsage
     const names = name ? [name] : configured;
     const subs = Object.fromEntries(names.map((n) => [n, config.subscriptions[n]]));
     // Ranked for basic work, which every subscription takes: harder work leaves out one whose hardest_work is lower.
-    const r = rankSubscriptions("basic", await read(names, given, { sources }), { ...config, subscriptions: subs });
-    return { ok: true, most_room: r.most_room, note: r.note, ranked: r.ranked.map((row) => ({ ...row, hardest_work: subs[row.subscription].hardest_work })),
+    const r = rankSubscriptions("basic", await read(names.filter((n) => subs[n].enabled !== false), given, { sources }), { ...config, subscriptions: subs });
+    return { ok: true, most_room: r.most_room, note: r.note, ...(r.excluded.length ? { excluded: r.excluded } : {}), ranked: r.ranked.map((row) => ({ ...row, hardest_work: subs[row.subscription].hardest_work })),
       how: "usable = what is left in the tightest window minus your reserve, and the reserve shrinks as the window nears its reset. dispatch ranks the same way and leaves out a subscription whose hardest_work is below the level of the work" };
   } catch (e) { return { ok: false, error: short(e) }; }
 }

@@ -695,3 +695,10 @@ test("launch refuses a harness that is not signed in, before any herdr call", as
   expect(r.steps.at(-1).detail).toBe("Kiro cannot take work: not signed in: kiro-cli login");
   expect(f.calls).toEqual([]);
 });
+
+test("launch refuses a subscription the user turned off, before any herdr call", async () => {
+  const f = fakeHerdr({ kind: "codex" });
+  const r = await launch(["--kind", "codex", "--name", "worker", "--model", "m"], { ...f.deps, settings: () => ({ subscriptions: { codex: { enabled: false } } }) });
+  expect(r.steps.at(-1).detail).toBe("Codex is turned off in your settings: turn it on with routr setup --enable codex");
+  expect(f.calls).toEqual([]);
+});

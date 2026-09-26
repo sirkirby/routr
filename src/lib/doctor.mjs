@@ -58,7 +58,7 @@ export function nextSteps(r) {
   else if (r.config.problems?.length) steps.push(`Fix your settings: ${r.config.problems.join("; ")}`);
   else if (Object.entries(r.harnesses).some(([n, h]) => h.signed_in && !r.config.subscriptions.includes(n))) steps.push(`Add the harnesses found since the config was written (${Object.entries(r.harnesses).filter(([n, h]) => h.signed_in && !r.config.subscriptions.includes(n)).map(([n]) => n).join(", ")}): routr setup`);
   // A subscription the user set up whose harness is signed out gets no work until they sign in again.
-  for (const n of r.config.subscriptions ?? []) if (r.harnesses[n]?.installed && !r.harnesses[n].signed_in) steps.push(`${HARNESSES[n].label} is set up in routr but gets no work: ${r.harnesses[n].sign_in}`);
+  for (const n of r.config.subscriptions ?? []) if (!r.config.off?.includes(n) && r.harnesses[n]?.installed && !r.harnesses[n].signed_in) steps.push(`${HARNESSES[n].label} is set up in routr but gets no work: ${r.harnesses[n].sign_in}`);
   if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push(`Install and log in to at least one harness: ${KINDS.slice(0, -1).map((n) => HARNESSES[n].installAs).join(", ")}, or ${HARNESSES[KINDS.at(-1)].installAs}`);
   if (r.claude_usage_statusline === STATUSLINE_MISSING) steps.push("Let routr read Claude Code's usage (sets Claude's statusline command): routr setup");
   // Claude answered a prompt and still sent no windows: a seat with no quota, or a plan routr has not seen send them.
@@ -124,7 +124,7 @@ export async function inspect({ configPath, quiet } = {}) {
   }).filter(Boolean);
   // `problems` are settings that are missing or wrong, each with its fix; `notes` are only for information.
   const problems = existsSync(path) ? [...notes] : [], info = []; // no config at all is its own line and next step
-  r.config = { path, exists: existsSync(path), subscriptions: Object.keys(config.subscriptions), billing: Object.fromEntries(Object.entries(config.subscriptions).filter(([, s]) => s.billing).map(([n, s]) => [n, s.billing])), problems, notes: info };
+  r.config = { path, exists: existsSync(path), subscriptions: Object.keys(config.subscriptions), off: Object.keys(config.subscriptions).filter((n) => config.subscriptions[n].enabled === false), billing: Object.fromEntries(Object.entries(config.subscriptions).filter(([, s]) => s.billing).map(([n, s]) => [n, s.billing])), problems, notes: info };
   // A metered pool's place in the ranking is the user's setting; say which applies where the usage is shown. A class
   // the user set by hand replaces the reader's note, which would otherwise ask for what is already set.
   for (const [n, sub] of Object.entries(config.subscriptions)) {
@@ -174,13 +174,15 @@ export function render(r) {
   for (const k of r.skill) line(r.from_source || baseVersion(k.version) === base ? "ok" : "need", `routr skill ${k.where} is ${k.version}${r.from_source || baseVersion(k.version) === base ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
   const any = Object.values(r.harnesses).some((h) => h.installed);
   for (const [n, h] of Object.entries(r.harnesses)) {
-    const where = h.installed && !h.signed_in ? `\`${h.command}\` found, but ${h.sign_in.replace(/^`[^`]+` /, "it ")}. routr leaves it out until then`
+    const off = r.config.off?.includes(n);
+    const where = off ? `\`${h.command}\`${h.installed ? " found" : " not found"} · turned off in your settings (routr setup --enable ${n})`
+      : h.installed && !h.signed_in ? `\`${h.command}\` found, but ${h.sign_in.replace(/^`[^`]+` /, "it ")}. routr leaves it out until then`
       : h.installed ? `\`${h.command}\` found · usage ${h.usage}`
       : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it`
       : `\`${h.command}\` not found`;
     const more = h.models?.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${HARNESSES[n].list ?? `${h.command} models`}\` for the rest)` : "";
     const models = h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${more}` : "";
-    line(h.installed ? (h.signed_in ? "ok" : r.config.subscriptions.includes(n) ? "need" : "absent") : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${where}${models}`);
+    line(off ? "absent" : h.installed ? (h.signed_in ? "ok" : r.config.subscriptions.includes(n) ? "need" : "absent") : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${where}${models}`);
   }
   line(r.key.works ? "ok" : "need", `TypeSafe key ${r.key.works ? `works (${r.key.model}${jevModel() !== JEV_MODEL ? `, asked as ${jevModel()} by ROUTR_JEV_MODEL` : ""}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
   line(r.config.exists && !problems.length ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && [...problems, ...notes].length ? `\n   ${[...problems, ...notes].join("\n   ")}` : ""}`);
