@@ -5,16 +5,18 @@ import { expect, test } from "bun:test";
 import { accessibleOk, BACK, CANCEL, colourOk, createUI, unicodeOk } from "../src/lib/tui.mjs";
 
 // A terminal routr can draw on and type into: `keys(...)` sends key presses after the prompt is drawn.
-function terminal({ env = { TERM: "xterm-256color" }, platform = "darwin", colour = true, columns = 80 } = {}) {
+function terminal({ env = { TERM: "xterm-256color" }, platform = "darwin", colour = true, columns = 80, rows = 24 } = {}) {
   const input = new EventEmitter();
   const raw = [];
   input.setRawMode = (on) => raw.push(on);
   input.resume = () => {}; input.pause = () => {};
   let out = "";
-  const output = { isTTY: colour, columns, rows: 24, write: (s) => { out += s; } };
+  const output = Object.assign(new EventEmitter(), { isTTY: colour, columns, rows, write: (s) => { out += s; } });
   const ui = createUI({ input, output, env, platform, accessible: false });
   const press = (...keys) => setTimeout(() => { for (const k of keys) input.emit("keypress", typeof k === "string" && k.length === 1 ? k : undefined, typeof k === "string" ? (k.length === 1 ? { name: k === " " ? "space" : k } : { name: k }) : k); }, 0);
-  return { ui, press, raw, output: () => stripVTControlCharacters(out), rawOutput: () => out };
+  // `narrow(n)`: the terminal is resized to n columns, as a person dragging the window does.
+  const narrow = (n) => { output.columns = n; output.emit("resize"); };
+  return { ui, press, raw, narrow, output: () => stripVTControlCharacters(out), rawOutput: () => out };
 }
 
 test("select: arrows and j/k move, a number jumps, Enter chooses; the answer collapses to one line", async () => {
@@ -96,7 +98,7 @@ test("accessible mode asks numbered questions line by line, and b goes back", as
   const lines = ["9", "2", "b", "", "n"], asked = [];
   const ui = createUI({ accessible: true, ask: async (q) => { asked.push(q); return lines.shift(); }, output: { write: () => {} } });
   const options = [{ value: "a", label: "A" }, { value: "b", label: "B" }];
-  expect(await ui.select({ message: "Pick", options, initial: "a" })).toBe("b"); // 9 is not an option: asked again
+  expect(await ui.select({ message: "Pick", options, initial: "a" })).toBe("b"); // 9 is not an option: asked again, saying why
   expect(asked[0]).toContain("  1. A [current]");
   expect(await ui.select({ message: "Pick", options })).toBe(BACK);
   expect(await ui.confirm({ message: "Sure?", initial: true })).toBe(true); // Enter keeps the default
@@ -112,4 +114,73 @@ test("long lines wrap inside the gutter, at word boundaries", async () => {
   const lines = t.output().split("\n").filter(Boolean);
   expect(lines.length).toBeGreaterThan(2);
   expect(lines.every((l) => l.startsWith("│  ") && l.length <= 30)).toBe(true);
+});
+
+// ---- Findings from the independent review (Cursor on grok-4.7-high, 2026-09-26): each one stays fixed.
+test("ACCESSIBLE=1 without a line reader given (as routr setup runs it) reads the terminal itself instead of crashing", async () => {
+  const { PassThrough } = await import("node:stream");
+  const input = new PassThrough();
+  const ui = createUI({ env: { ACCESSIBLE: "1" }, input, output: { write: () => {}, isTTY: true, columns: 80, rows: 24 } });
+  setTimeout(() => input.write("2\n"), 0);
+  expect(await ui.select({ message: "Pick", options: [{ value: "a", label: "A" }, { value: "b", label: "B" }] })).toBe("b");
+  ui.close();
+});
+test("raw mode is switched off even when writing to the terminal throws", () => {
+  const input = new EventEmitter(), raw = [];
+  input.setRawMode = (on) => raw.push(on); input.resume = () => {}; input.pause = () => {};
+  let broken = false;
+  const ui = createUI({ input, output: { isTTY: true, columns: 80, rows: 24, write: () => { if (broken) throw new Error("EPIPE"); } }, env: {}, accessible: false });
+  ui.select({ message: "m", options: [{ value: 1, label: "one" }] });
+  broken = true;
+  ui.close();
+  expect(raw).toEqual([true, false]);
+});
+test("after the terminal narrows, the redraw moves up over the re-wrapped frame, and a resize redraws", () => {
+  const t = terminal({ columns: 80 });
+  t.ui.select({ message: "A question long enough to wrap once the terminal is only thirty columns wide", options: [{ value: 1, label: "one" }, { value: 2, label: "two" }] });
+  t.narrow(30);
+  t.press("down");
+  return new Promise((done) => setTimeout(() => {
+    const ups = [...t.rawOutput().matchAll(/\x1b\[(\d+)A/g)].map((m) => Number(m[1]));
+    expect(ups.at(-1)).toBeGreaterThan(6); // six rows at 80 columns; more once the long question wraps at 30
+    t.press({ name: "c", ctrl: true }); done();
+  }, 20));
+});
+test("a search on a short terminal draws a frame that fits it", async () => {
+  const t = terminal({ rows: 10 });
+  const options = Array.from({ length: 40 }, (_, i) => ({ value: i, label: `model-${i}` }));
+  t.press("return");
+  await t.ui.search({ message: "Model", options });
+  const frames = t.output().split("\x1b[?2026h").filter(Boolean);
+  const first = stripVTControlCharacters(frames[0] ?? t.output()).split("\n").filter(Boolean);
+  expect(first.length).toBeLessThanOrEqual(10);
+});
+test("the spinner stays on one line however long its message, and close() stops it", async () => {
+  const t = terminal({ columns: 40 });
+  const spin = t.ui.spinner("Checking your harnesses, their sign-in, and your TypeSafe key");
+  expect(t.output().split("\r").every((l) => stripVTControlCharacters(l).replace(/\x1b\[2K/g, "").length <= 40)).toBe(true);
+  t.ui.close();
+  const after = t.output().length;
+  await new Promise((r) => setTimeout(r, 250));
+  expect(t.output().length).toBe(after); // no ticks once closed
+  spin.stop();
+});
+test("ASCII mode uses plain words in the help line and the caret, and Enter named 'enter' submits", async () => {
+  const t = terminal({ env: { TERM: "linux" }, platform: "linux" });
+  t.press({ name: "enter" });
+  expect(await t.ui.select({ message: "m", options: [{ value: 1, label: "one" }] })).toBe(1);
+  expect(t.output()).toContain("up/down move - enter choose - esc back");
+  expect(t.output()).not.toContain("↑/↓");
+});
+test("a required choice cannot be met by an initial value that is not an option, and accessible mode says why it asks again", async () => {
+  const t = terminal();
+  t.press("return", " ", "return");
+  expect(await t.ui.multiselect({ message: "Which?", options: [{ value: "a", label: "A" }], initial: ["nope"], min: 1 })).toEqual(["a"]);
+  let said = "";
+  const lines = ["", "1", "", "zzz", "1"];
+  const ui = createUI({ accessible: true, ask: async () => lines.shift(), output: { write: (s) => { said += s; } } });
+  expect(await ui.multiselect({ message: "Which?", options: [{ value: "a", label: "A" }], min: 1 })).toEqual(["a"]);
+  expect(said).toContain("choose at least 1");
+  expect(await ui.search({ message: "Model", options: [{ value: "m", label: "model" }], initial: null })).toBe("m");
+  expect(said).toContain('nothing matches "zzz"');
 });
