@@ -61,8 +61,9 @@ two; the user can take it. Then run:
 
 A person can instead run `routr setup` alone in a terminal: it is a guided screen. The first time it asks which
 subscriptions routr may use, then each one's model (from the harness's live list, typed to filter), effort, hardest
-work, and reserve, and shows every change for review before it writes anything. Run again, it shows what is set and a
-menu to change one thing, turn a subscription on or off, or walk through everything. Arrow keys choose, Esc goes back,
+work, and reserve, then lists the changes with Save and exit as the default (nothing is written before it). Run again,
+it shows what is set and a menu to change one thing, turn a subscription on or off, or walk through everything, then
+Save and exit or Exit without saving. Arrow keys choose, Esc goes back,
 Ctrl+C stops without writing. `ACCESSIBLE=1` asks the same questions as numbered lines, for a screen reader. Suggest it
 to a user who would rather click through than tell you each setting; you cannot drive it yourself, because it needs a
 terminal.

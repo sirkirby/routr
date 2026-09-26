@@ -135,15 +135,15 @@ async function runSetup({ config, args = [], answers = [], found = ["agy", "curs
 // The guided flow, answered line by line (the tui's accessible mode takes the same answers a screen reader user types).
 const q = (asked, start) => asked.filter((x) => x.startsWith(start)).length;
 
-test("setup, new install: which subscriptions, then each one's settings, telemetry off by default, and a review before writing", async () => {
-  // cursor then agy (the registry's order): model (Enter: leave it to the lead), hardest work, reserve; then telemetry; then Write.
+test("setup, new install: which subscriptions, then each one's settings, telemetry off by default, then save and exit", async () => {
+  // cursor then agy (the registry's order): model (Enter: leave it to the lead), hardest work, reserve; then telemetry; then Save and exit.
   const x = await runSetup({ answers: ["", "", "3", "4", "", "", "", "n", ""] });
   expect(x.r.ok).toBe(true);
   expect(x.asked[0]).toMatch(/^Which subscriptions may routr hand work to\?/);
   expect(q(x.asked, "Cursor: the hardest work routr may send there")).toBe(1);
   expect(q(x.asked, "Antigravity: reserve")).toBe(1);
   expect(q(x.asked, "Share anonymous outcomes once a day? [y/N]")).toBe(1);
-  expect(q(x.asked, "Write these changes?")).toBe(1);
+  expect(q(x.asked, "Save your changes?")).toBe(1);
   expect(x.saved.subscriptions.cursor).toMatchObject({ hardest_work: "strong", reserve: 0.25, enabled: true });
   expect(x.saved.subscriptions.agy).toMatchObject({ hardest_work: "standard", reserve: 0.1, enabled: true });
   expect(x.shared).toEqual([false]);
@@ -151,16 +151,16 @@ test("setup, new install: which subscriptions, then each one's settings, telemet
 });
 
 test("setup, new install: a harness left unticked is added turned off, with its settings, to turn on later", async () => {
-  const x = await runSetup({ answers: ["2", "", "", "", "", "n", ""] }); // untick Antigravity, then Cursor's three, telemetry, Write
+  const x = await runSetup({ answers: ["2", "", "", "", "", "n", ""] }); // untick Antigravity, then Cursor's three, telemetry, Save
   expect(x.saved.subscriptions.agy).toMatchObject({ enabled: false, hardest_work: "standard", reserve: 0.1 });
   expect(x.saved.subscriptions.cursor).toMatchObject({ enabled: true });
   expect(q(x.asked, "Antigravity:")).toBe(0); // nothing asked about one that is off
 });
 
-test("setup, run again: a menu to change one thing, a review, and only that is written", async () => {
+test("setup, run again: a menu to change one thing, then save and exit, and only that is written", async () => {
   const config = { subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 }, cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" } } };
-  // Change one subscription → Cursor → hardest work → strong; back at the menu: Review and write (5th) → Write.
-  const x = await runSetup({ config, answers: ["", "", "2", "3", "5", ""] });
+  // Change one subscription → Cursor → hardest work → strong; back at the menu: Save and exit (5th), with no second question.
+  const x = await runSetup({ config, answers: ["", "", "2", "3", "5"] });
   expect(x.asked[0]).toMatch(/^What would you like to do\?/);
   expect(x.saved.subscriptions.cursor).toEqual({ hardest_work: "strong", reserve: 0.1, default_model: "m" });
   expect(x.saved.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1 });
@@ -169,12 +169,12 @@ test("setup, run again: a menu to change one thing, a review, and only that is w
   expect(x.left).toBe(0);
 });
 
-test("setup, run again: Done changes nothing, and quitting after a change writes nothing", async () => {
+test("setup, run again: Exit changes nothing, and exiting without saving after a change writes nothing", async () => {
   const config = { telemetry: true, subscriptions: { agy: { hardest_work: "strong", reserve: 0.3 } } };
-  const done = await runSetup({ config, found: ["agy"], answers: ["4"] }); // one, choose, all, Done
+  const done = await runSetup({ config, found: ["agy"], answers: ["4"] }); // one, choose, all, Exit
   expect(done.saved).toEqual(config);
   expect(done.r.skipped).toContain("nothing changed");
-  const quit = await runSetup({ config, found: ["agy"], answers: ["", "", "2", "1", "5"] }); // agy → hardest → basic, then Quit (5th)
+  const quit = await runSetup({ config, found: ["agy"], answers: ["", "", "2", "1", "5"] }); // agy → hardest → basic, then Exit without saving (5th)
   expect(quit.r).toMatchObject({ ok: false, cancelled: true });
   expect(quit.saved).toEqual(config);
 });
@@ -182,8 +182,8 @@ test("setup, run again: Done changes nothing, and quitting after a change writes
 test("setup: the everyday model is picked from the harness's live list by typing part of its name", async () => {
   const list = [...Array.from({ length: 230 }, (_, i) => `vendor-model-${i}`), "cursor-grok-4.6-high", "grok-4.7-high", "grok-4.7-low"];
   const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, default_model: "cursor-grok-4.6-high" } } };
-  // Change one → Cursor (only one) → Everyday model → "4.7 high" (one match) → Review (4th: telemetry is answered) → Write.
-  const x = await runSetup({ config, found: ["cursor"], models: { cursor: list }, answers: ["", "", "", "4.7 high", "4", ""] });
+  // Change one → Cursor (only one) → Everyday model → "4.7 high" (one match) → Save and exit (4th: telemetry is answered).
+  const x = await runSetup({ config, found: ["cursor"], models: { cursor: list }, answers: ["", "", "", "4.7 high", "4"] });
   expect(x.saved.subscriptions.cursor.default_model).toBe("grok-4.7-high");
   expect(x.asked.find((a) => a.startsWith("Cursor: everyday model"))).toContain("234 to choose from"); // searched, never printed whole
 });
@@ -293,7 +293,7 @@ test("every setting can be changed by flag, so an agent can do it for the user: 
 test("setup, guided: offers to set Claude's usage statusline, and sets it only on yes", async () => {
   const settings = join(process.env.HOME, ".claude/settings.json");
   rmSync(settings, { force: true });
-  // Claude only: model (leave), effort (none listed), hardest, reserve; then the statusline (Enter: yes), telemetry, Write.
+  // Claude only: model (leave), effort (none listed), hardest, reserve; then the statusline (Enter: yes), telemetry, Save.
   const yes = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", answers: ["", "", "", "", "", "n", ""] });
   expect(yes.asked.some((a) => a.startsWith("Claude Code reports usage only to its statusline"))).toBe(true);
   expect(JSON.parse(readFileSync(settings, "utf8")).statusLine.command).toMatch(/routr statusline$/);
@@ -301,4 +301,11 @@ test("setup, guided: offers to set Claude's usage statusline, and sets it only o
   const no = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", answers: ["", "", "", "", "n", "n", ""] });
   expect(existsSync(settings)).toBe(false);
   expect(no.r.skipped.join(" ")).toContain("Claude statusline left alone");
+});
+
+test("setup, run again: Esc at the menu with changes not saved offers the same way out, so nothing is lost by accident", async () => {
+  const config = { telemetry: false, subscriptions: { agy: { hardest_work: "strong", reserve: 0.3 } } };
+  const x = await runSetup({ config, found: ["agy"], answers: ["", "", "2", "1", "b", ""] }); // agy → hardest → basic, Esc (b), Save and exit
+  expect(q(x.asked, "Save your changes?")).toBe(1);
+  expect(x.saved.subscriptions.agy.hardest_work).toBe("basic");
 });

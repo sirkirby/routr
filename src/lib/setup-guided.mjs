@@ -116,19 +116,19 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
     if (answers.telemetry !== undefined) out.push(`telemetry: ${answers.telemetry ? "on" : "off"}`);
     return out;
   };
-  // Write, go back, or quit: nothing has been written until "Write".
-  const review = async () => {
+  // The end of the run: what changed, then the usual way out. Save is the default; nothing is written before it.
+  const finish = async () => {
     const list = changes();
-    ui.note(list.length ? "Review" : "Nothing to change", list.length ? list : ["your settings stay as they are"]);
-    if (!list.length) return "write";
-    return ui.select({ message: "Write these changes?", initial: "write", options: [
-      { value: "write", label: "Write them", hint: config ? "the old file is kept as config.json.bak" : undefined },
-      { value: "back", label: "Go back and change something" }, { value: "quit", label: "Quit without writing" }] });
+    if (!list.length) return "nothing";
+    ui.note("Your changes", list);
+    return ui.select({ message: "Save your changes?", initial: "write", options: [
+      { value: "write", label: "Save and exit", hint: config ? "the old file is kept as config.json.bak" : undefined },
+      { value: "back", label: "Go back" }, { value: "quit", label: "Exit without saving" }] });
   };
 
   // First run: every step in order; Esc steps back.
   const full = async () => {
-    const steps = ["choose", "settings", "extras", "review"];
+    const steps = ["choose", "settings", "extras", "finish"];
     for (let s = 0; s < steps.length;) {
       let v;
       if (steps[s] === "choose") v = await choose();
@@ -136,7 +136,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
         v = "done";
         for (const n of candidates.filter((x) => draft[x].enabled)) { v = await fields(n, all); if (v !== "done") break; }
       } else if (steps[s] === "extras") v = await extras();
-      else { v = await review(); if (v === "back") { s = 0; continue; } if (v === "quit") return CANCEL; if (v === "write") break; }
+      else { v = await finish(); if (v === "back") { s = 0; continue; } if (v === "quit") return CANCEL; if (v === "write" || v === "nothing") return v; }
       if (v === CANCEL) return CANCEL;
       if (v === "none") return "none";
       if (v === BACK) { s = Math.max(0, s - 1); continue; }
@@ -155,11 +155,13 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
         { value: "choose", label: "Choose which subscriptions routr uses", hint: "turn one on or off" },
         ...(statusline || telemetry ? [{ value: "extras", label: statusline ? "Claude Code's usage statusline" : "Anonymous outcomes (telemetry)" }] : []),
         { value: "all", label: "Walk through everything" },
-        pending ? { value: "review", label: `Review and write (${pending} change${pending === 1 ? "" : "s"})` } : { value: "done", label: "Done: nothing to change" },
-        ...(pending ? [{ value: "quit", label: "Quit without writing" }] : [])] });
+        pending ? { value: "save", label: `Save and exit (${pending} change${pending === 1 ? "" : "s"})` } : { value: "done", label: "Exit" },
+        ...(pending ? [{ value: "quit", label: "Exit without saving" }] : [])] });
       if (v === CANCEL || v === "quit") return CANCEL;
       if (v === "done" || (v === BACK && !pending)) return "nothing";
-      if (v === "review" || v === BACK) { const w = await review(); if (w === "write") return "write"; if (w === "quit" || w === CANCEL) return CANCEL; continue; }
+      if (v === "save") { ui.note("Saving", changes()); return "write"; }
+      // Esc with changes not saved: the same way out as at the end of a first run, so nothing is lost by accident.
+      if (v === BACK) { const w = await finish(); if (w === "write") return "write"; if (w === "quit" || w === CANCEL) return CANCEL; continue; }
       if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) for (const n of c.filter((x) => !current[x])) if (await fields(n, all) === CANCEL) return CANCEL; continue; }
       if (v === "extras") { if (await extras() === CANCEL) return CANCEL; continue; }
       if (v === "all") { const f = await full(); if (f === CANCEL) return CANCEL; if (f === "write") return "write"; continue; }
