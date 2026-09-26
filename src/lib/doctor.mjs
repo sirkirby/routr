@@ -135,7 +135,7 @@ export async function inspect({ configPath, quiet } = {}) {
   // The one moment a default needs the user's attention: the harness no longer offers it.
   for (const [n, sub] of Object.entries(config.subscriptions)) {
     if (!sub.default_model) info.push(`subscriptions.${n}: no default_model set; the orchestrator will pick from the harness's live list`);
-    else if (lists[n]?.length && !lists[n].includes(sub.default_model)) problems.push(`subscriptions.${n}.default_model "${sub.default_model}" is not in the harness's current model list: routr setup --model ${n}=<id>`);
+    else if (lists[n]?.length && !lists[n].includes(sub.default_model) && !HARNESSES[n]?.openList) problems.push(`subscriptions.${n}.default_model "${sub.default_model}" is not in the harness's current model list: routr setup --model ${n}=<id>`);
   }
   // Configured but no snapshot yet is not a failure: Claude writes the first snapshot on its next turn.
   let wired = false;

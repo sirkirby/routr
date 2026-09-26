@@ -177,9 +177,12 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
     },
 
     // One of a long list: typing filters it (every word must appear), ↑/↓ move within what matches, Enter chooses.
-    search: async ({ message, options, initial, pinned = [] }) => {
+    // `typed: true` adds what was typed as the last choice, for a list that is not every value there is (a model id
+    // the harness takes but does not list); it is one word, as ids are.
+    search: async ({ message, options, initial, pinned = [], typed = false }) => {
       const all = [...pinned, ...options];
-      const match = (q) => { const words = q.toLowerCase().split(/\s+/).filter(Boolean); return all.filter((o) => words.every((w) => `${o.label} ${o.value}`.toLowerCase().includes(w))); };
+      const own = (q) => { const t = q.trim(); return typed && /^[^\s\p{Cc}]+$/u.test(t) && !all.some((o) => o.value === t) ? [{ value: t, label: t, hint: "as typed", typed: true }] : []; };
+      const match = (q) => { const words = q.toLowerCase().split(/\s+/).filter(Boolean); return [...all.filter((o) => words.every((w) => `${o.label} ${o.value}`.toLowerCase().includes(w))), ...own(q)]; };
       if (accessible) {
         let shown = all.length <= 20 ? all : [];
         for (;;) {
@@ -188,8 +191,9 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
           if (!a && initial != null) return initial;
           if (/^b(ack)?$/i.test(a)) return BACK;
           if (/^\d+$/.test(a) && shown[Number(a) - 1]) return shown[Number(a) - 1].value;
-          const hits = match(a);
-          if (hits.length === 1) return hits[0].value;
+          const hits = match(a), listedHits = hits.filter((o) => !o.typed);
+          if (listedHits.length === 1) return listedHits[0].value; // as in the screen, where a listed match comes first
+          if (hits.length === 1) { shown = hits; continue; } // an unlisted id is chosen by its number, never by a typo's accident
           if (!hits.length) { write(`  nothing matches "${a}"\n`); continue; } // the list shown before stays, numbers and all
           shown = hits.slice(0, 40);
         }
@@ -200,7 +204,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
       return run({ message, init: { q: "", i: Math.max(0, all.findIndex((o) => o.value === initial)) },
         view: ({ q, i }) => {
           const hits = match(q), n = size(), top = Math.min(Math.max(0, i - Math.floor(n / 2)), Math.max(0, hits.length - n));
-          const lines = [`${c.dim("search:")} ${q}${c.dim(q ? ` (${hits.length} match${hits.length === 1 ? "" : "es"})` : ` (${all.length}, type to filter)`)}`];
+          const lines = [`${c.dim("search:")} ${q}${c.dim(q ? ` (${hits.length} match${hits.length === 1 ? "" : "es"})` : ` (${all.length}, type to filter${typed ? " or to use an id not listed" : ""})`)}`];
           if (!hits.length) lines.push(c.yellow("nothing matches"));
           if (top > 0) lines.push(c.dim(g.more));
           hits.slice(top, top + n).forEach((o, j) => lines.push(top + j === i ? `${c.green(g.on)} ${o.label}${o.hint ? ` ${c.dim(`(${o.hint})`)}` : ""}` : c.dim(`${g.off} ${o.label}`)));

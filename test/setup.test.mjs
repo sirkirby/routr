@@ -189,6 +189,24 @@ test("setup: the everyday model is picked from the harness's live list by typing
   expect(x.asked.find((a) => a.startsWith("Cursor: everyday model"))).toContain("234 to choose from"); // searched, never printed whole
 });
 
+test("setup: a harness whose list is a sample (Claude Code's aliases) takes an id it does not list, typed or by flag", async () => {
+  const config = { telemetry: false, subscriptions: { claude: { hardest_work: "strong", reserve: 0.25, default_model: "opus" } } };
+  // Change one → Claude (only one) → Everyday model → a full name → offered "as typed", chosen by its number → Esc twice → Save and exit.
+  const x = await runSetup({ config, found: ["claude"], models: { claude: ["fable", "opus", "sonnet"] }, answers: ["", "", "", "claude-fable-5", "1", "b", "b", "4"] });
+  expect(x.asked.some((a) => a.includes("claude-fable-5 (as typed)"))).toBe(true);
+  expect(x.saved.subscriptions.claude.default_model).toBe("claude-fable-5");
+  // Opened again, the saved id is just current: off a sample list is not gone (from the review).
+  const again = await runSetup({ config: x.saved, found: ["claude"], models: { claude: ["fable", "opus", "sonnet"] }, answers: ["", "", "", "b", "b", "b", "4"] });
+  const shown = again.asked.find((a) => a.startsWith("Claude Code: everyday model"));
+  expect(shown).toContain("claude-fable-5 (current)");
+  expect(shown).not.toContain("not in the harness's list now");
+  const flag = await runSetup({ config, found: ["claude", "codex"], models: { claude: ["fable", "opus", "sonnet"], codex: ["gpt-5.5"] }, args: ["--yes", "--model", "claude=claude-fable-5"] });
+  expect(flag.saved.subscriptions.claude.default_model).toBe("claude-fable-5");
+  // A harness whose list is every id it takes still refuses one it does not list.
+  const codex = await runSetup({ config, found: ["claude", "codex"], models: { codex: ["gpt-5.5"] }, args: ["--yes", "--model", "codex=gpt-9"] });
+  expect(codex.r.error).toBe("--model codex=gpt-9: not in the harness's current list (gpt-5.5)");
+});
+
 test("setup: effort is chosen from the levels the harness takes for that model", async () => {
   const efforts = async (n, model) => (n === "codex" ? (model === "gpt-5.5" ? ["low", "medium", "high", "xhigh"] : null) : null);
   const x = await runSetup({ found: ["codex"], models: { codex: ["gpt-5.5", "gpt-5.6-terra"] }, efforts, answers: ["", "2", "3", "", "", "n", ""] }); // 1 is "leave it to the lead agent"

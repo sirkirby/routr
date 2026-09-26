@@ -52,7 +52,7 @@ risks being committed. Without a key routr still answers, but only with the fall
 ## 3. Config
 
 Do not write the file by hand. For each subscription, settle three things with the user: their everyday model there
-(doctor prints each harness's live list), the hardest work they will send it (`basic`, `standard`, or `strong`; say
+(doctor prints each harness's live list; Claude Code's is its aliases, and its help says it also takes a model's full name), the hardest work they will send it (`basic`, `standard`, or `strong`; say
 what each means, below), and the reserve: the share routr holds back from workers, so the orchestrator and anything they run outside routr
 still have room (0% holds nothing back). Offer the suggestion setup prints for the last
 two; the user can take it. Then run:
@@ -60,7 +60,8 @@ two; the user can take it. Then run:
     routr setup --yes --model claude=<id> --hardest cursor=standard --reserve claude=25% [--metered codex=after|with] ...
 
 A person can instead run `routr setup` alone in a terminal: it is a guided screen. The first time it asks which
-subscriptions routr may use, then each one's model (from the harness's live list, typed to filter), effort, hardest
+subscriptions routr may use, then each one's model (from the harness's live list, typed to filter; for Claude Code a full model name that is not
+listed is offered "as typed", chosen by its number in accessible mode), effort, hardest
 work, and reserve, then lists the changes with Save and exit as the default (nothing is written before it). Run again,
 it shows what is set and a menu to change one thing, turn a subscription on or off, or walk through everything, then
 Save and exit or Exit without saving. Arrow keys choose, Esc goes back,
@@ -87,8 +88,10 @@ the command that fixes it.
     result would be expensive and hard to notice. For Cursor this means
     Cursor's own models; other vendors' models inside Cursor draw on a different pool and are not routed to.
   - `default_model` and `default_effort`: the user's everyday model on that harness, chosen from the live list doctor
-    prints (routr keeps no model list of its own). The orchestrator starts from it and moves up or down with the
-    work. Doctor warns when the harness no longer offers it; that is the only time it needs attention. Kiro's are
+    prints (routr keeps no model list of its own). Claude Code lists only its aliases, and its help says it also takes a
+    model's full name, so for Claude an id off the list is kept as typed. The orchestrator starts from it and moves up or down with the
+    work. Doctor warns when the harness no longer offers it. It cannot check a Claude id off the alias list: if Claude
+    Code stops taking one, the worker's pane says so. Kiro's are
     suggested as `auto` and `auto`: Kiro's own router, with effort left to the model (no `--effort` is passed, so
     nothing is saved to the user's Kiro settings).
   - `assumed_headroom`: used only when nothing better is known. Claude, Codex, and Antigravity are read live; Cursor's
@@ -123,7 +126,7 @@ can be combined with the others in one run.
 
 | The user wants to… | Run |
 |---|---|
-| change the everyday model on a subscription | `routr setup --yes --model cursor=<id>` (from the harness's live list: `routr doctor` prints it) |
+| change the everyday model on a subscription | `routr setup --yes --model cursor=<id>` (from the harness's live list: `routr doctor` prints it; for Claude Code the list is its aliases, and its help says a model's full name also works) |
 | change the everyday effort | `routr setup --yes --effort codex=high` (one of the levels that harness takes for that model; Kiro's `auto` leaves it to the model) |
 | change the hardest work a subscription may take | `routr setup --yes --hardest cursor=strong` (`basic`, `standard`, or `strong`) |
 | change how much routr holds back | `routr setup --yes --reserve claude=25%` (a share: 0.25 or 25%; 0% holds nothing back) |
@@ -134,7 +137,7 @@ can be combined with the others in one run.
 | share anonymous outcomes, or stop | `routr telemetry on` / `routr telemetry off`: only when the user says so |
 | let Claude Code's usage be read | `routr setup --yes` sets the statusline when there is none (`--no-statusline` leaves it) |
 
-A flag that routr cannot apply fails with the reason and changes nothing: a model the harness does not list, an effort
+A flag that routr cannot apply fails with the reason and changes nothing: a model the harness does not list (Claude Code excepted), an effort
 it does not take for that model, a harness that is not signed in (the error says what to run). A subscription turned
 off keeps every setting and gets no work, in dispatch or launch, until it is on again.
 

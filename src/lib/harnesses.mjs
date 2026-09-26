@@ -12,6 +12,8 @@
 //     trust), answered with the one option that holds for this session only. showsModel: how to tell from the
 //     screen that it took `--model`, for a harness that silently runs its default on an id it does not know.
 //   list: its own command that lists model ids; models(): that list, read now (routr keeps no model list of its own).
+//     openList: the list is a sample, not every id it takes (Claude Code names its aliases; its help says it also takes a model's full name),
+//     so an id not on it is not refused.
 //     efforts(model): the effort levels it accepts for that model, read from the harness too, or null when it does
 //     not say (a harness without `effort` has none: its model ids carry it).
 //   auth: how to tell it is signed in (signin.mjs): `check` is its own status command, which never starts a sign-in,
@@ -27,6 +29,18 @@ import { readAgy, readClaude, readCodexLive, summarize } from "./usage.mjs";
 
 // The levels a help text lists after its --effort flag: "(low, medium, high, xhigh, max)", as Claude Code and Kiro print them.
 export const effortsInHelp = (help) => { const m = String(help ?? "").match(/--effort\b[^(]*\((?:e\.g\.\s*)?([a-z]+(?:,\s*[a-z]+)+)\)/i); return m ? m[1].split(/,\s*/) : null; };
+// The aliases a help text names for --model: "an alias for the latest model (e.g. 'fable', 'opus', or 'sonnet')", as
+// Claude Code prints it (2.1.283, 2026-09-26). The flag's description runs until the next flag.
+export const modelsInHelp = (help) => {
+  const at = String(help ?? "").indexOf("--model <");
+  if (at < 0) return null;
+  const desc = String(help).slice(at).split(/\n\s*--?[a-z]/i)[0].replace(/\s+/g, " ");
+  const aliases = desc.match(/alias[^(]*\(([^)]*)\)/i)?.[1].match(/'([a-z0-9.-]+)'/gi)?.map((q) => q.slice(1, -1));
+  return aliases?.length ? aliases : null;
+};
+// `claude --help`, read once per run: its model aliases and its effort levels come from the same text.
+let claudeHelp = null;
+const readClaudeHelp = () => (claudeHelp ??= run("claude", ["--help"], { timeoutMs: 10000 }));
 // `codex debug models`, read once per run: the model list and each model's own effort levels come from the same answer.
 let codexModels = null;
 const readCodexModels = () => (codexModels ??= run("codex", ["debug", "models"], { timeoutMs: 15000 }).then((out) => { try { const o = JSON.parse(out); return o.models ?? o; } catch { return null; } }));
@@ -37,8 +51,9 @@ export const HARNESSES = {
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
     // `"loggedIn": false` and exit 1 when signed out.
     auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`" },
-    models: async () => ["haiku", "sonnet", "opus"], // aliases Claude Code resolves itself; `--model` also takes full ids
-    efforts: async () => effortsInHelp(await run("claude", ["--help"], { timeoutMs: 10000 })),
+    // Its help names the latest aliases (fable, opus, sonnet on 2.1.283); its help says `--model` also takes a model's full name.
+    models: async () => modelsInHelp(await readClaudeHelp()), openList: true,
+    efforts: async () => effortsInHelp(await readClaudeHelp()),
     suggested: { hardest_work: "strong", reserve: 0.25 },
     usage: { read: readClaude } },
   codex: { label: "Codex", executable: "codex", installAs: "Codex",
@@ -62,7 +77,7 @@ export const HARNESSES = {
     usage: { read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor({ ...o, ready: ready("cursor") }) } },
   agy: { label: "Antigravity", executable: "agy", installAs: "Antigravity (agy)",
     permissions: ["--dangerously-skip-permissions"], model: "--model", list: "agy models", dirFlag: "--add-dir",
-    noEffort: "agy encodes effort in --model; omit --effort (passing both silently selects HIGH)",
+    noEffort: "agy encodes effort in --model; omit --effort (agy 1.2.11 refuses one that disagrees with the id)",
     // No status command. `agy models` says "Please sign in to view available models" (exit 1) when signed out, and never
     // starts a sign-in; its `-p /usage` DOES (Google's sign-in, waiting for a code), so it is only read once signed in.
     auth: { check: ["models"], signedIn: (out, code) => code === 0 && !/\bsign in\b/i.test(out), signIn: "run `agy` and sign in" },
