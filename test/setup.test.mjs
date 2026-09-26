@@ -8,11 +8,11 @@ import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
 import { COMMANDS, formatCommandHelp } from "../src/lib/help.mjs";
 import { NOW, said, scratch } from "./helpers.mjs";
 test("doctor's next steps name the command for each thing missing, most important first", async () => {
-  const { nextSteps, starterConfig } = await import("../src/lib/doctor.mjs");
+  const { nextSteps, starterConfig, STATUSLINE_MISSING } = await import("../src/lib/doctor.mjs");
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
   const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true } }, claude_usage_statusline: "installed", skill: [{ version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
   expect(nextSteps(base)).toEqual([]);
-  const fresh = nextSteps({ ...base, key: { works: false, found: false }, config: { exists: false, subscriptions: [] }, claude_usage_statusline: "missing: without it Claude usage is assumed, not read" });
+  const fresh = nextSteps({ ...base, key: { works: false, found: false }, config: { exists: false, subscriptions: [] }, claude_usage_statusline: STATUSLINE_MISSING });
   expect(fresh[0]).toContain("routr key set");
   expect(fresh[1]).toContain("routr setup");
   expect(fresh.length).toBe(3);

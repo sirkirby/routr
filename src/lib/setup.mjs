@@ -246,6 +246,8 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // 4. The key, last, and only from a person: it must never pass through an agent.
   if (!r.key.works && interactive) { say(""); const k = await key(); (k.ok ? did : skipped).push(k.ok ? `saved the TypeSafe key to ${k.file}${k.works ? " and it works" : `: ${k.error}`}` : `TypeSafe key not saved: ${k.error}. Run \`routr key set\` when you have it`); }
 
+  // Looked at again, not reused: this second look is what starts the first background usage reading (Cursor, Kiro)
+  // for a subscription setup just configured, so a new install has a reading before its first dispatch.
   const after = await look({ configPath: path, quiet: true });
   const result = { ok: true, did, skipped, config: path, next_steps: after.next_steps };
   if (args.includes("--json")) return result;

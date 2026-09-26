@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { LEVELS } from "./questions.mjs";
-import { HARDEST, RESERVE } from "./wording.mjs";
+import { HARDEST, NO_CONFIG, RESERVE } from "./wording.mjs";
 
 export const CONFIG_PATH = join(homedir(), ".config/routr/config.json");
 export const DEFAULTS = {
@@ -28,7 +28,7 @@ export function loadConfig(path = CONFIG_PATH) {
   let raw = {};
   try {
     if (existsSync(path)) raw = JSON.parse(readFileSync(path, "utf8"));
-    else notes.push(`no config at ${path}: using defaults (run \`routr setup\`)`);
+    else notes.push(NO_CONFIG(path));
   } catch (e) {
     notes.push(`config unreadable (${String(e?.message ?? e).slice(0, 80)}): using defaults`);
   }

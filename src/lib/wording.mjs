@@ -40,6 +40,9 @@ export const RESERVE = {
 export const SETTINGS_INTRO = `Two settings decide where routr sends work. The hardest work each subscription takes:\n${levelList}\nAnd a reserve: ${RESERVE.what}.`;
 export const settingSummary = (name, s) => `${name} takes ${s.hardest_work} work, reserve ${Math.round(s.reserve * 100)}%`;
 
+// A missing config is not an error: routr answers on its defaults, and says how to write one.
+export const NO_CONFIG = (path) => `no config at ${path}: using defaults (run \`routr setup\`)`;
+
 // The last line of every `subagent` and `dispatch` answer: whose decision it is, and what to report.
 export const ADVICE_RULE = {
   subagent: "You decide how much intelligence and reasoning this work needs, from these facts and what you know of the codebase; pick the model and effort that match, never a model stronger than yourself. Do not default to your own model. If you settle on a different level than advised, say so in your report: ROUTR: <advised> → <chosen> because <reason>.",

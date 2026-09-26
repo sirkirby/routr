@@ -47,7 +47,7 @@ export function starterConfig(found, models = {}, ranks = {}) {
     subscriptions: Object.fromEntries(found.map((n) => [n, { ...(TAKES_EFFORT.includes(n) ? { default_effort: "medium" } : {}), ...HARNESSES[n].suggested, ...(models[n] ? { default_model: models[n] } : {}), ...(ranks[n] ? { metered_rank: ranks[n] } : {}) }])) };
 }
 
-const STATUSLINE_MISSING = "missing: without it Claude usage is assumed, not read";
+export const STATUSLINE_MISSING = "missing: without it Claude usage is assumed, not read";
 
 // What is left to do, most important first, each with the command that does it.
 export function nextSteps(r) {
