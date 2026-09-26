@@ -5,7 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { CONFIG_PATH, SUB_DEFAULTS } from "./config.mjs";
+import { CONFIG_PATH, loadConfig, SUB_DEFAULTS } from "./config.mjs";
 import { LEVELS } from "./questions.mjs";
 import { HARDEST, RESERVE, SETTINGS_INTRO, settingSummary } from "./wording.mjs";
 import { envOff, NOTICE, setTelemetry } from "./telemetry.mjs";
@@ -58,6 +58,24 @@ function parsePairs(args, flag, parse, what) {
   return out;
 }
 export const parseHardest = (args) => parsePairs(args, "--hardest", parseLevel, "basic|standard|strong");
+// `--effort codex=high`: the everyday effort there, checked against the harness's own levels once it is found.
+export const parseEffort = (args) => parsePairs(args, "--effort", (v) => (/^[a-z]+$/i.test(v ?? "") ? v.toLowerCase() : null), "<level>");
+// `--enable agy` / `--disable agy`: which subscriptions routr may hand work to. Turning one off keeps its settings.
+export function parseSwitches(args) {
+  const out = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== "--enable" && args[i] !== "--disable") continue;
+    const name = args[i + 1];
+    if (!HARNESSES[name]) throw new Error(`${args[i]} takes a subscription name: one of ${Object.keys(HARNESSES).join(", ")}`);
+    out[name] = args[i] === "--enable";
+  }
+  return out;
+}
+// `routr setup --show`: the settings as routr reads them, for an agent to see before it changes one. Asks no harness.
+export function showSettings(path) {
+  const { config, notes } = loadConfig(path);
+  return { ok: true, config: path, exists: existsSync(path), ...config, ...(notes.length ? { notes } : {}) };
+}
 export const parseReserve = (args) => parsePairs(args, "--reserve", parseShare, "<0..1, or a percent>");
 
 // A person's answer to the two questions; Enter keeps the suggestion, and an answer that is not one asks again.
@@ -122,17 +140,18 @@ function statuslineCommand() {
 }
 
 // `deps` are seams so a test can drive a whole run, questions and all, without a terminal, the machine's harnesses, the
-// network, or the user's own files: what is installed (`inspect`), the person's answers (`question`), and each step
-// that writes outside the config (the skill, the telemetry state, the key).
+// network, or the user's own files: what is installed (`inspect`), the person's answers (`question`), each harness's
+// effort levels (`efforts`), and each step that writes outside the config (the skill, the telemetry state, the key).
 export async function setup(args, { inspect: look = inspect, question, interactive: tty = Boolean(process.stdin.isTTY), env = process.env,
-  install = installSkill, share: shareOn = setTelemetry, key = setKey, print = console.log } = {}) {
+  install = installSkill, share: shareOn = setTelemetry, key = setKey, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model) } = {}) {
   const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   const path = flag("--config") ?? CONFIG_PATH;
   const interactive = tty && !args.includes("--yes");
   const say = (s) => { if (!args.includes("--json")) print(s); };
   const did = [], skipped = [];
-  let models, ranks, hardest, reserves;
-  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); } catch (e) { return { ok: false, error: e.message }; }
+  if (args.includes("--show")) return showSettings(path);
+  let models, ranks, hardest, reserves, efforts, switches;
+  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); } catch (e) { return { ok: false, error: e.message }; }
 
   say("Looking at what is installed…");
   const r = await look({ configPath: path, quiet: args.includes("--json") });
@@ -149,6 +168,19 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   }
   for (const [flagName, set] of [["--hardest", hardest], ["--reserve", reserves]])
     for (const n of Object.keys(set)) if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `${flagName} ${n}=…: ${n} is not configured and ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
+  for (const [n, on] of Object.entries(switches)) {
+    if (r.config.subscriptions.includes(n)) continue; // on or off, it keeps its settings
+    if (!on) return { ok: false, error: `--disable ${n}: ${n} is not set up in routr, so there is nothing to turn off` };
+    if (!found.includes(n)) return { ok: false, error: `--enable ${n}: ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
+  }
+  // An effort must be one the harness takes for the model it will run: the one given now, or the one already set.
+  let current = {}; try { current = JSON.parse(readFileSync(path, "utf8")).subscriptions ?? {}; } catch {}
+  for (const [n, level] of Object.entries(efforts)) {
+    if (!HARNESSES[n].effort) return { ok: false, error: `--effort ${n}=…: ${HARNESSES[n].noEffort}` };
+    if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `--effort ${n}=…: ${n} is not configured and ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
+    const levels = found.includes(n) ? await levelsOf(n, models[n] ?? current[n]?.default_model) : null;
+    if (levels?.length && !levels.includes(level)) return { ok: false, error: `--effort ${n}=${level}: ${HARNESSES[n].label} takes ${levels.join(", ")}${models[n] ?? current[n]?.default_model ? ` for ${models[n] ?? current[n]?.default_model}` : ""}` };
+  }
   const rl = interactive && !question ? createInterface({ input: process.stdin, output: process.stdout }) : null;
   const ask = interactive ? (question ?? ((q) => rl.question(q))) : null; // null: nobody to ask (--yes, or no terminal)
   const yes = async (q) => !ask || !/^n/i.test((await ask(`${q} [Y/n] `)).trim());
@@ -169,7 +201,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // A person running setup again is offered their settings to go through, each current value the default, so a config
   // written before setup asked (or by an agent) gets a person's answers too; nobody has to know the flags. Not under
   // --yes, and not when a flag already says what to change.
-  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves }).length > 0;
+  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length > 0;
   const configured = Object.keys(config?.subscriptions ?? {}).filter((n) => !unset.includes(n));
   let review = [];
   if (ask && configured.length && !flagged) {
@@ -211,6 +243,8 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   };
   for (const [n, s] of Object.entries(settings)) { put(n, "hardest_work", s.hardest_work); put(n, "reserve", s.reserve); }
   for (const [n, id] of Object.entries(models)) put(n, "default_model", id);
+  for (const [n, level] of Object.entries(efforts)) put(n, "default_effort", level);
+  for (const [n, on] of Object.entries(switches)) put(n, "enabled", on);
   for (const [n, rank] of Object.entries(ranks)) put(n, "metered_rank", rank);
   if (changed.length) did.push(`changed ${changed.join(", ")}`);
   if (!r.config.exists || args.includes("--force") || fresh.length || changed.length) {

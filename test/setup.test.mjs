@@ -118,21 +118,21 @@ test("routr setup changes a setting on an existing config, fills one that is mis
 
 // setup, driven end to end as a person would: scripted answers, a fake machine, nothing written outside a temp folder.
 // Every question asked is recorded, and a question the scenario did not expect fails it.
-async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {} } = {}) {
+async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {}, efforts = async () => null } = {}) {
   const { setup } = await import("../src/lib/setup.mjs");
   const dir = scratch("setup-run"), path = join(dir, "config.json");
   if (config) writeFileSync(path, JSON.stringify(config));
   const asked = [], shared = [], installs = [], keys = [];
   const inspect = async () => {
     const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
-    return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy"].map((n) => [n, { installed: found.includes(n), signed_in: found.includes(n), models: [], usage_class: "included" }])),
+    return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy", "kiro"].map((n) => [n, { installed: found.includes(n), signed_in: found.includes(n), models: [], usage_class: "included" }])),
       config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}) }, skill: [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }],
       claude_usage_statusline: "not needed", key: { works: keyWorks }, next_steps: [] };
   };
   const queue = [...answers];
   const question = async (q) => { asked.push(q.trim()); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); };
   const r = await setup(["--config", path, "--json", ...args], { inspect, question, interactive: true, env,
-    install: () => installs.push(1), share: (on) => shared.push(on), key: async () => { keys.push(1); return { ok: false, error: "none given" }; }, print: () => {} });
+    install: () => installs.push(1), share: (on) => shared.push(on), key: async () => { keys.push(1); return { ok: false, error: "none given" }; }, print: () => {}, efforts });
   const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
   return { r, asked, saved, shared, installs, keys, left: queue.length };
 }
@@ -263,4 +263,24 @@ test("only routr's own statusline counts as ours", async () => {
   const { isOurStatusline } = await import("../src/lib/statusline.mjs");
   for (const c of ["/home/u/.local/bin/routr statusline", '"C:\\Users\\u\\.local\\bin\\routr.exe" statusline', "routr statusline", "~/.claude/claude-statusline-usage.sh"]) expect(isOurStatusline(c)).toBe(true);
   for (const c of ["myroutr statusline", "~/mine.sh", "routr-statusline-fork", "", undefined]) expect(isOurStatusline(c)).toBe(false);
+});
+
+test("every setting can be changed by flag, so an agent can do it for the user: effort, on and off, and a look first", async () => {
+  const base = { telemetry: false, subscriptions: { codex: { hardest_work: "strong", reserve: 0.2, default_model: "gpt-5.5", default_effort: "medium" }, agy: { hardest_work: "standard", reserve: 0.1 } } };
+  const efforts = async (n, model) => (n === "codex" ? (model === "gpt-5.5" ? ["low", "medium", "high", "xhigh"] : ["low", "medium", "high", "xhigh", "max"]) : null);
+  const run = (args, config = base) => runSetup({ config, args: ["--yes", ...args], found: ["codex", "agy"], efforts });
+  // --show: the settings as routr reads them; nothing asked of any harness, nothing written.
+  const shown = await run(["--show"]);
+  expect(shown.r).toMatchObject({ ok: true, exists: true, subscriptions: { codex: { enabled: true, default_effort: "medium", reserve: 0.2 } } });
+  // Effort, checked against the levels the harness takes for the model it will run.
+  expect((await run(["--effort", "codex=high"])).saved.subscriptions.codex.default_effort).toBe("high");
+  expect((await run(["--effort", "codex=max"])).r).toMatchObject({ ok: false, error: "--effort codex=max: Codex takes low, medium, high, xhigh for gpt-5.5" });
+  expect((await run(["--model", "codex=gpt-5.6-terra", "--effort", "codex=max"])).saved.subscriptions.codex).toMatchObject({ default_model: "gpt-5.6-terra", default_effort: "max" });
+  expect((await run(["--effort", "agy=low"])).r.error).toContain("agy encodes effort in --model");
+  // Off keeps every setting; on brings it back as it was.
+  const off = await run(["--disable", "agy"]);
+  expect(off.saved.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1, enabled: false });
+  expect((await run(["--enable", "agy"], off.saved)).saved.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1, enabled: true });
+  expect((await run(["--disable", "kiro"])).r.error).toBe("--disable kiro: kiro is not set up in routr, so there is nothing to turn off");
+  expect((await run(["--enable", "nope"])).r.error).toContain("--enable takes a subscription name");
 });
