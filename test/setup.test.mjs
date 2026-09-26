@@ -6,7 +6,7 @@ import { loadConfig } from "../src/lib/config.mjs";
 import { claudeSnapshot } from "../src/lib/usage.mjs";
 import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
 import { COMMANDS, formatCommandHelp } from "../src/lib/help.mjs";
-import { cliEnv, NOW, said, scratch, SCRIPT } from "./helpers.mjs";
+import { cliEnv, NOW, scratch, SCRIPT } from "./helpers.mjs";
 test("doctor's next steps name the command for each thing missing, most important first", async () => {
   const { nextSteps, starterConfig, STATUSLINE_MISSING } = await import("../src/lib/doctor.mjs");
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
@@ -79,19 +79,14 @@ test("routr setup --yes writes the config once, keeps it afterwards, and starts 
   expect(Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--metered", "codex=with"], { env }).exitCode).toBe(1); // codex is not found on an empty PATH
 });
 
-test("hardest_work and reserve are asked with a suggestion, read from flags, and a bad answer asks again", async () => {
-  const { parseLevel, parseShare, parseHardest, parseReserve, askSettings } = await import("../src/lib/setup.mjs");
+test("hardest_work and reserve are read from flags, and a bad value is refused", async () => {
+  const { parseLevel, parseShare, parseHardest, parseReserve } = await import("../src/lib/setup.mjs");
   expect([parseLevel("Strong"), parseLevel("1"), parseLevel("3"), parseLevel("s"), parseLevel("")]).toEqual(["strong", "basic", "strong", null, null]);
   expect([parseShare("0.25"), parseShare("25%"), parseShare(".1"), parseShare("0"), parseShare("1.5"), parseShare("-1"), parseShare("x"), parseShare("")]).toEqual([0.25, 0.25, 0.1, 0, null, null, null, null]);
   expect(parseHardest(["--hardest", "cursor=strong", "--hardest", "agy=2"])).toEqual({ cursor: "strong", agy: "standard" });
   expect(parseReserve(["--reserve", "claude=30%"])).toEqual({ claude: 0.3 });
   for (const bad of [["--hardest", "cursor=huge"], ["--hardest", "gpt=strong"], ["--reserve", "claude=2"], ["--reserve", "claude"]])
     expect(() => (bad[0] === "--hardest" ? parseHardest : parseReserve)(bad)).toThrow();
-  const answers = (list) => { const q = [...list]; return async () => q.shift(); };
-  const said = [];
-  expect(await askSettings("cursor", { hardest_work: "standard", reserve: 0.1 }, answers(["", ""]), (m) => said.push(m))).toEqual({ hardest_work: "standard", reserve: 0.1 });
-  expect(await askSettings("cursor", { hardest_work: "standard", reserve: 0.1 }, answers(["huge", "strong", "lots", "20%"]), (m) => said.push(m))).toEqual({ hardest_work: "strong", reserve: 0.2 });
-  expect(said).toHaveLength(2); // one nudge per bad answer
 });
 
 test("routr setup changes a setting on an existing config, fills one that is missing, and doctor flags it until then", () => {
@@ -118,14 +113,14 @@ test("routr setup changes a setting on an existing config, fills one that is mis
 
 // setup, driven end to end as a person would: scripted answers, a fake machine, nothing written outside a temp folder.
 // Every question asked is recorded, and a question the scenario did not expect fails it.
-async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {}, efforts = async () => null } = {}) {
+async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {}, efforts = async () => null, models = {} } = {}) {
   const { setup } = await import("../src/lib/setup.mjs");
   const dir = scratch("setup-run"), path = join(dir, "config.json");
   if (config) writeFileSync(path, JSON.stringify(config));
   const asked = [], shared = [], installs = [], keys = [];
   const inspect = async () => {
     const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
-    return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy", "kiro"].map((n) => [n, { installed: found.includes(n), signed_in: found.includes(n), models: [], usage_class: "included" }])),
+    return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy", "kiro"].map((n) => [n, { installed: found.includes(n), signed_in: found.includes(n), models: models[n] ?? [], usage_class: "included" }])),
       config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}) }, skill: [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }],
       claude_usage_statusline: "not needed", key: { works: keyWorks }, next_steps: [] };
   };
@@ -137,44 +132,70 @@ async function runSetup({ config, args = [], answers = [], found = ["agy", "curs
   return { r, asked, saved, shared, installs, keys, left: queue.length };
 }
 
-test("setup, new install: asks each subscription's hardest work and reserve, suggestion on Enter, then telemetry", async () => {
-  const x = await runSetup({ answers: ["strong", "25%", "", "", "n"] }); // asked in the harness order: cursor, then agy
+// The guided flow, answered line by line (the tui's accessible mode takes the same answers a screen reader user types).
+const q = (asked, start) => asked.filter((x) => x.startsWith(start)).length;
+
+test("setup, new install: which subscriptions, then each one's settings, telemetry off by default, and a review before writing", async () => {
+  // cursor then agy (the registry's order): model (Enter: leave it to the lead), hardest work, reserve; then telemetry; then Write.
+  const x = await runSetup({ answers: ["", "", "3", "4", "", "", "", "n", ""] });
   expect(x.r.ok).toBe(true);
-  expect(said(x.asked, "Go through them now")).toBe(0); // nothing to go through yet
-  expect(x.asked.filter((q) => q === HARDEST.question("agy", "standard").trim())).toHaveLength(1);
-  expect(x.asked.filter((q) => q === HARDEST.question("cursor", "standard").trim())).toHaveLength(1);
-  expect(x.asked).toContain(RESERVE.question("cursor", "10%").trim());
-  expect(x.saved.subscriptions.agy).toMatchObject({ hardest_work: "standard", reserve: 0.1 });
-  expect(x.saved.subscriptions.cursor).toMatchObject({ hardest_work: "strong", reserve: 0.25 });
-  expect(x.asked.at(-1)).toBe("Share them? [y/N]");
+  expect(x.asked[0]).toMatch(/^Which subscriptions may routr hand work to\?/);
+  expect(q(x.asked, "Cursor: the hardest work routr may send there")).toBe(1);
+  expect(q(x.asked, "Antigravity: reserve")).toBe(1);
+  expect(q(x.asked, "Share anonymous outcomes once a day? [y/N]")).toBe(1);
+  expect(q(x.asked, "Write these changes?")).toBe(1);
+  expect(x.saved.subscriptions.cursor).toMatchObject({ hardest_work: "strong", reserve: 0.25, enabled: true });
+  expect(x.saved.subscriptions.agy).toMatchObject({ hardest_work: "standard", reserve: 0.1, enabled: true });
   expect(x.shared).toEqual([false]);
   expect(x.left).toBe(0);
 });
 
-test("setup, upgrade from a config written before it asked: offers the settings, current values as defaults", async () => {
+test("setup, new install: a harness left unticked is added turned off, with its settings, to turn on later", async () => {
+  const x = await runSetup({ answers: ["2", "", "", "", "", "n", ""] }); // untick Antigravity, then Cursor's three, telemetry, Write
+  expect(x.saved.subscriptions.agy).toMatchObject({ enabled: false, hardest_work: "standard", reserve: 0.1 });
+  expect(x.saved.subscriptions.cursor).toMatchObject({ enabled: true });
+  expect(q(x.asked, "Antigravity:")).toBe(0); // nothing asked about one that is off
+});
+
+test("setup, run again: a menu to change one thing, a review, and only that is written", async () => {
   const config = { subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 }, cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" } } };
-  const x = await runSetup({ config, answers: ["", "", "", "strong", "", "n"] });
-  expect(x.asked[0]).toBe("Go through them now? Enter keeps each one as it is [Y/n]");
-  expect(x.asked[1]).toBe(HARDEST.question("agy", "standard").trim()); // in config order; the current value as default
+  // Change one subscription → Cursor → hardest work → strong; back at the menu: Review and write (5th) → Write.
+  const x = await runSetup({ config, answers: ["", "", "2", "3", "5", ""] });
+  expect(x.asked[0]).toMatch(/^What would you like to do\?/);
   expect(x.saved.subscriptions.cursor).toEqual({ hardest_work: "strong", reserve: 0.1, default_model: "m" });
   expect(x.saved.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1 });
   expect(x.r.did.join(" ")).toContain('cursor.hardest_work "standard" → "strong"');
-  expect(said(x.asked, "Share them?")).toBe(1); // no telemetry entry in that config: asked, default no
+  expect(x.shared).toEqual([]); // telemetry was on the menu, and not chosen: left as it was
   expect(x.left).toBe(0);
 });
 
-test("setup keeps what is already answered: telemetry on is not asked again, and declining the review changes nothing", async () => {
+test("setup, run again: Done changes nothing, and quitting after a change writes nothing", async () => {
   const config = { telemetry: true, subscriptions: { agy: { hardest_work: "strong", reserve: 0.3 } } };
-  const x = await runSetup({ config, found: ["agy"], answers: ["n"] });
-  expect(x.asked).toEqual(["Go through them now? Enter keeps each one as it is [Y/n]"]);
-  expect(x.saved).toEqual(config);
-  expect(x.shared).toEqual([]);
-  // Telemetry off by the person's own choice is not asked again either.
-  const off = await runSetup({ config: { ...config, telemetry: false }, found: ["agy"], answers: ["n"] });
-  expect(said(off.asked, "Share them?")).toBe(0);
+  const done = await runSetup({ config, found: ["agy"], answers: ["4"] }); // one, choose, all, Done
+  expect(done.saved).toEqual(config);
+  expect(done.r.skipped).toContain("nothing changed");
+  const quit = await runSetup({ config, found: ["agy"], answers: ["", "", "2", "1", "5"] }); // agy → hardest → basic, then Quit (5th)
+  expect(quit.r).toMatchObject({ ok: false, cancelled: true });
+  expect(quit.saved).toEqual(config);
 });
 
-test("setup with a setting flag at a terminal changes just that, without the review", async () => {
+test("setup: the everyday model is picked from the harness's live list by typing part of its name", async () => {
+  const list = [...Array.from({ length: 230 }, (_, i) => `vendor-model-${i}`), "cursor-grok-4.6-high", "grok-4.7-high", "grok-4.7-low"];
+  const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, default_model: "cursor-grok-4.6-high" } } };
+  // Change one → Cursor (only one) → Everyday model → "4.7 high" (one match) → Review (4th: telemetry is answered) → Write.
+  const x = await runSetup({ config, found: ["cursor"], models: { cursor: list }, answers: ["", "", "", "4.7 high", "4", ""] });
+  expect(x.saved.subscriptions.cursor.default_model).toBe("grok-4.7-high");
+  expect(x.asked.find((a) => a.startsWith("Cursor: everyday model"))).toContain("234 to choose from"); // searched, never printed whole
+});
+
+test("setup: effort is chosen from the levels the harness takes for that model", async () => {
+  const efforts = async (n, model) => (n === "codex" ? (model === "gpt-5.5" ? ["low", "medium", "high", "xhigh"] : null) : null);
+  const x = await runSetup({ found: ["codex"], models: { codex: ["gpt-5.5", "gpt-5.6-terra"] }, efforts, answers: ["", "2", "3", "", "", "n", ""] }); // 1 is "leave it to the lead agent"
+  expect(x.asked.find((a) => a.startsWith("Codex: everyday effort"))).toContain("xhigh");
+  expect(x.saved.subscriptions.codex).toMatchObject({ default_model: "gpt-5.5", default_effort: "high" });
+});
+
+test("setup with a setting flag at a terminal changes just that, and asks nothing", async () => {
   const config = { telemetry: false, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } };
   const x = await runSetup({ config, found: ["agy"], args: ["--hardest", "agy=basic"] });
   expect(x.asked).toEqual([]);
@@ -188,8 +209,8 @@ test("setup run by an agent (--yes) asks nothing, takes suggestions, never turns
   expect(x.shared).toEqual([]);
   expect(x.keys).toEqual([]);
   expect(x.r.skipped.join(" ")).toContain("Ask the user whether to share");
-  // A person at a terminal with no key is asked for it, last.
-  const person = await runSetup({ keyWorks: false, found: ["agy"], answers: ["", "", "n"] });
+  // A person at a terminal with no key is asked for it first: nothing routr advises works without it.
+  const person = await runSetup({ keyWorks: false, found: ["agy"], answers: ["", "", "", "", "n", ""] });
   expect(person.keys).toEqual([1]);
 });
 
@@ -210,22 +231,6 @@ test("the settings are worded once: setup, help, doctor and docs/ranking.md say 
   expect(notes).toEqual([`${RESERVE.unset("claude")}. ${RESERVE.choose("claude")}`]);
   writeFileSync(f, JSON.stringify({ subscriptions: { claude: { hardest_work: "strong", reserve: 0 } } }));
   expect(loadConfig(f).notes).toEqual([]); // 0% is a choice, not a problem
-});
-
-test("setup searches a long model list instead of printing it", async () => {
-  const { narrow, pickModel } = await import("../src/lib/setup.mjs");
-  const list = Array.from({ length: 230 }, (_, i) => `vendor-model-${i}`).concat(["cursor-grok-4.6-high", "cursor-grok-4.7-high", "cursor-grok-4.7-low"]);
-  expect(narrow(list, "grok high")).toEqual(["cursor-grok-4.6-high", "cursor-grok-4.7-high"]);
-  const drive = async (answers, l = list) => { const said = []; const got = await pickModel(l, async () => answers.shift(), (s) => said.push(s)); return { got, said }; };
-  const r = await drive(["grok", "2"]);
-  expect(r.got).toBe("cursor-grok-4.7-high");
-  expect(r.said.length).toBeLessThan(8);                                 // the count and three matches, never 233 lines
-  expect((await drive(["grok 4.7 low"])).got).toBe("cursor-grok-4.7-low"); // a single match is taken
-  expect((await drive(["vendor", "zzz", ""])).got).toBeUndefined();        // too many, then none, then Enter: left to the lead
-  expect((await drive(["2"], ["a", "b"])).got).toBe("b");                  // a short list is printed and picked by number
-  const said = [], asked = [];                                              // Kiro: Enter keeps its own router
-  expect(await pickModel(["auto", "glm-5"], async (q) => { asked.push(q); return ""; }, (s) => said.push(s), "auto")).toBe("auto");
-  expect(asked[0]).toContain("Enter = auto");
 });
 
 test("routr uninstall keeps the user's data unless purged, unlinks a linked skill, and removes only its own statusline", async () => {
