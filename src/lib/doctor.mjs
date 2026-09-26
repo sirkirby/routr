@@ -3,7 +3,7 @@
 // `routr setup` (lib/setup.mjs) does, from the same inspection.
 import { existsSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { CONFIG_PATH, DEFAULTS, loadConfig } from "./config.mjs";
+import { CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, TAKES_EFFORT } from "./harnesses.mjs";
 import { signInHint } from "./signin.mjs";
 import { jevModel, KEY_FILES, loadKey, ping } from "./jev.mjs";
@@ -95,7 +95,7 @@ export async function inspect({ configPath, quiet } = {}) {
   const [latest, usage, key, states, ...models] = await Promise.all([
     process.env.ROUTR_NO_UPDATE ? null : latestVersion(3000).catch(() => null),
     // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
-    step("usage", statesP.then((st) => readUsage(found, {}, { background: Object.keys(config.subscriptions ?? {}), why: whyNot(st) }))),
+    step("usage", statesP.then((st) => readUsage(found, {}, { background: enabledSubscriptions(config), why: whyNot(st) }))), // a turned-off one is never refreshed
     step("the TypeSafe key", keyCheck().then((t) => ({ t }), (e) => ({ e }))),
     statesP,
     ...found.map((n) => statesP.then((st) => (st[n] !== "yes" ? null : step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))))),

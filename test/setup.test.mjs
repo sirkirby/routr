@@ -113,15 +113,15 @@ test("routr setup changes a setting on an existing config, fills one that is mis
 
 // setup, driven end to end as a person would: scripted answers, a fake machine, nothing written outside a temp folder.
 // Every question asked is recorded, and a question the scenario did not expect fails it.
-async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {}, efforts = async () => null, models = {}, statusline = "not needed" } = {}) {
+async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], keyWorks = true, env = {}, efforts = async () => null, models = {}, statusline = "not needed", skill = [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }], usage = {} } = {}) {
   const { setup } = await import("../src/lib/setup.mjs");
   const dir = scratch("setup-run"), path = join(dir, "config.json");
   if (config) writeFileSync(path, JSON.stringify(config));
   const asked = [], shared = [], installs = [], keys = [];
   const inspect = async () => {
     const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
-    return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy", "kiro"].map((n) => [n, { installed: found.includes(n), signed_in: found.includes(n), models: models[n] ?? [], usage_class: "included" }])),
-      config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}) }, skill: [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }],
+    return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy", "kiro"].map((n) => [n, { installed: found.includes(n), signed_in: found.includes(n), models: models[n] ?? [], usage_class: usage[n] ?? "included", usage_note: usage[n] === "metered" ? "metered: unlimited credits" : undefined }])),
+      config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}) }, skill,
       claude_usage_statusline: statusline, key: { works: keyWorks }, next_steps: [] };
   };
   const queue = [...answers];
@@ -336,4 +336,38 @@ test("setup, run again: a subscription's settings are a list you come back to af
   expect(lists.join("\n")).not.toContain("All of these");
   expect(lists[0]).toMatch(/\d\. Back/);
   expect(x.saved.subscriptions.cursor).toMatchObject({ hardest_work: "strong", reserve: 0.2 });
+});
+
+test("setup fixes from the independent review: each finding stays fixed", async () => {
+  // --disable on a first run: the harness found now is added, turned off ("set up, but keep agy off").
+  const first = await runSetup({ args: ["--yes", "--disable", "agy"] });
+  expect(first.saved.subscriptions.agy.enabled).toBe(false);
+  expect(first.saved.subscriptions.cursor.enabled ?? true).toBe(true);
+  // --show only reads: with a change beside it, nothing is done and it says so.
+  expect((await runSetup({ args: ["--show", "--disable", "agy"] })).r).toMatchObject({ ok: false, error: expect.stringContaining("--show only reads") });
+  // A new model that does not take the effort set: reset to one it takes, and said.
+  const efforts = async (n, m) => (m === "m2" ? ["low", "medium"] : ["low", "medium", "high", "xhigh"]);
+  const cfg = { telemetry: false, subscriptions: { codex: { hardest_work: "strong", reserve: 0.2, default_model: "m1", default_effort: "xhigh" } } };
+  const moved = await runSetup({ config: cfg, found: ["codex"], efforts, args: ["--yes", "--model", "codex=m2"] });
+  expect(moved.saved.subscriptions.codex).toMatchObject({ default_model: "m2", default_effort: "medium" });
+  expect(moved.r.did.join(" ")).toContain("m2 does not take xhigh");
+  // --force rewrites from the suggestions but keeps what the person chose: off stays off, and automatic updates.
+  const forced = await runSetup({ config: { auto_update: false, telemetry: true, subscriptions: { agy: { enabled: false, hardest_work: "basic", reserve: 0 } } }, found: ["agy"], args: ["--yes", "--force"] });
+  expect(forced.saved).toMatchObject({ auto_update: false, telemetry: true, subscriptions: { agy: { enabled: false } } });
+  // Leaving the screen with nothing changed still installs a skill that is missing (it is not a setting).
+  const kept = await runSetup({ config: { telemetry: false, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } }, found: ["agy"], skill: [], answers: ["4"] });
+  expect(kept.installs).toEqual([1]);
+  expect(kept.r.skipped).toContain("nothing changed");
+  // An existing subscription with no effort set is not given one behind the person's back.
+  const plain = await runSetup({ config: { telemetry: false, subscriptions: { codex: { hardest_work: "strong", reserve: 0.2 } } }, found: ["codex"], answers: ["4"] });
+  expect(plain.asked[0]).toContain("Exit"); // nothing pending: no "Save and exit (1 change)"
+  expect(plain.saved.subscriptions.codex.default_effort).toBeUndefined();
+});
+
+test("setup, guided: a seat billed per token with no quota is asked where it goes in the ranking", async () => {
+  // Codex reads as metered: model (leave), effort (none listed), hardest, reserve, then where its billed usage goes (2: with), telemetry, Save.
+  const x = await runSetup({ found: ["codex"], usage: { codex: "metered" }, answers: ["", "", "", "", "2", "n", ""] });
+  expect(x.asked.some((a) => a.startsWith("Codex: where does its billed usage go?"))).toBe(true);
+  expect(x.saved.subscriptions.codex.metered_rank).toBe("with");
+  expect(x.r.skipped.join(" ")).not.toContain("Ask the user"); // a person's wording, not an agent's
 });

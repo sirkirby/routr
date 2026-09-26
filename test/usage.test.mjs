@@ -341,8 +341,11 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
   for (let k = 0; k < 3; k++) readCursor({ file: join(blocked, "cursor-usage.json"), nowSec: T, refresh: () => tries.push(k), off: false });
   expect(tries).toEqual([]);
   // What the caller passes still wins, and the snapshot is not consulted for it.
-  const [given] = await readUsage(["cursor"], { cursor: 0.9 }, { sources: { cursor: { read: () => { throw new Error("read"); } } } });
+  const [given] = await readUsage(["cursor"], { cursor: 0.9 }, { sources: { cursor: { read: () => { throw new Error("read"); } } }, why: async () => null });
   expect(given).toMatchObject({ source: "given by caller", headroom: 0.9 });
+  // …but not for a harness that is not signed in: launch would refuse it, so dispatch must not rank it.
+  const [signedOut] = await readUsage(["cursor"], { cursor: 0.9 }, { sources: {}, why: async () => "not signed in: run `cursor-agent login`" });
+  expect(signedOut).toMatchObject({ signedIn: false, headroom: null });
 });
 
 test("the refresh lock lets one caller in at a time and gives up a lock left by a dead refresh", () => {
