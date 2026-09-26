@@ -83,9 +83,11 @@ object describing what it did.
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
   `--effort` where the harness takes it separately. On Antigravity the model id already carries it, and routr says so
-  instead of passing a flag that silently runs the high variant. Kiro ignores `--effort` on every model measured, so
-  routr refuses it there. Kiro also runs its default on a model id it does not know, without a word: launch checks
-  that the screen shows the model you named and fails otherwise, before any prompt.
+  instead of passing a flag that silently runs the high variant. On Kiro, `--effort auto` (its suggested default,
+  with `--model auto`) passes no flag and leaves effort to the model; a level is passed, but Kiro remembers it as
+  the user's default for that model, and a model without effort ignores it. Kiro also runs its default on a model id
+  it does not know, without a word: launch checks that the screen shows the model you named and fails otherwise,
+  before any prompt.
 - `--task-file` holds your task alone (parts 2 and 3). Without it the pane is left ready and unprompted, for you to
   prompt yourself.
 - `--trust` defaults to `ask`: at a folder-trust dialog routr stops, leaves the pane alive, and reports

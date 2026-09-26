@@ -181,11 +181,19 @@ test("launch plans use each harness's measured permissions and model syntax", ()
     .toEqual(["--dangerously-skip-permissions", "--add-dir", "/work", "--model", "gemini-3.8-flash-low"]);
   expect(plan({ kind: "kiro", model: "claude-haiku-4.5" })).toMatchObject({ executable: "kiro-cli", argv: ["chat", "--trust-all-tools", "--model", "claude-haiku-4.5"], env: {} });
 });
+test("Kiro's effort: auto passes no flag (the model decides, nothing remembered); a level is passed and its side effect said", () => {
+  const auto = plan({ kind: "kiro", model: "auto", effort: "auto" });
+  expect(auto.argv).toEqual(["chat", "--trust-all-tools", "--model", "auto"]);
+  expect(auto.warnings.join(" ")).not.toContain("remembers");
+  const high = plan({ kind: "kiro", model: "claude-opus-4.8", effort: "high" });
+  expect(high.argv).toEqual(["chat", "--trust-all-tools", "--model", "claude-opus-4.8", "--effort", "high"]);
+  expect(high.warnings.join(" ")).toContain("remembers --effort as the user's default for claude-opus-4.8");
+  expect(plan({ kind: "claude", model: "sonnet", effort: "auto" }).argv).toContain("auto"); // only Kiro reads auto as "no flag"
+});
 test("agy rejects separate effort, even when it agrees with the model suffix", () => {
   for (const effort of ["low", "high"]) expect(() => plan({ kind: "agy", model: "gemini-3.8-flash-low", effort, cwd: "/work" })).toThrow("omit --effort");
   expect(() => plan({ kind: "agy", model: "gemini-3.8-flash-low" })).toThrow("--add-dir");
   expect(() => plan({ kind: "cursor", model: "composer-2.5", effort: "low" })).toThrow("no separate --effort");
-  expect(() => plan({ kind: "kiro", model: "claude-sonnet-4.5", effort: "high" })).toThrow("omit --effort"); // measured: ignored silently
 });
 test("a model is required except when only planning; unknown kinds are rejected", () => {
   expect(() => plan({ kind: "claude" })).toThrow("--model is required");
@@ -1775,6 +1783,9 @@ test("doctor's next steps name the command for each thing missing, most importan
   const c = starterConfig(["claude", "agy"], { claude: "sonnet" });
   expect(c.subscriptions.claude).toEqual({ hardest_work: "strong", reserve: 0.25, default_model: "sonnet", default_effort: "medium" });
   expect(c.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1 });
+  // Kiro starts on its own router with effort left to the model; a model the user picks replaces auto.
+  expect(starterConfig(["kiro"]).subscriptions.kiro).toEqual({ hardest_work: "standard", reserve: 0.1, default_model: "auto", default_effort: "auto" });
+  expect(starterConfig(["kiro"], { kiro: "glm-5" }).subscriptions.kiro.default_model).toBe("glm-5");
   expect(starterConfig(["codex"], {}, { codex: "with" }).subscriptions.codex).toMatchObject({ metered_rank: "with" });
   const { parseMetered, meteredRanks } = await import("../src/lib/setup.mjs");
   expect(parseMetered(["--metered", "codex=with", "--metered", "agy=after"])).toEqual({ codex: "with", agy: "after" });
@@ -1968,6 +1979,9 @@ test("setup searches a long model list instead of printing it", async () => {
   expect((await drive(["grok 4.7 low"])).got).toBe("cursor-grok-4.7-low"); // a single match is taken
   expect((await drive(["vendor", "zzz", ""])).got).toBeUndefined();        // too many, then none, then Enter: left to the lead
   expect((await drive(["2"], ["a", "b"])).got).toBe("b");                  // a short list is printed and picked by number
+  const said = [], asked = [];                                              // Kiro: Enter keeps its own router
+  expect(await pickModel(["auto", "glm-5"], async (q) => { asked.push(q); return ""; }, (s) => said.push(s), "auto")).toBe("auto");
+  expect(asked[0]).toContain("Enter = auto");
 });
 
 test("routr uninstall keeps the user's data unless purged, unlinks a linked skill, and removes only its own statusline", async () => {

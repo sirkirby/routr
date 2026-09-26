@@ -17,7 +17,10 @@ import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 
 // Subscription name → the command its harness is launched with, from the one table launch uses.
 export const HARNESSES = Object.fromEntries(Object.entries(HARNESS_TABLE).map(([name, h]) => [name, h.executable]));
-export const SUGGESTED = { claude: { hardest_work: "strong", reserve: 0.25 }, codex: { hardest_work: "strong", reserve: 0.2 }, cursor: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 }, agy: { hardest_work: "standard", reserve: 0.1 }, kiro: { hardest_work: "standard", reserve: 0.1 } };
+export const SUGGESTED = { claude: { hardest_work: "strong", reserve: 0.25 }, codex: { hardest_work: "strong", reserve: 0.2 }, cursor: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 }, agy: { hardest_work: "standard", reserve: 0.1 },
+  // Kiro's own router, which its docs recommend and which picks the model per task, and effort left to the model:
+  // `auto` passes no --effort, which Kiro would otherwise remember as the user's default for that model.
+  kiro: { hardest_work: "standard", reserve: 0.1, default_model: "auto", default_effort: "auto" } };
 
 // Each harness's LIVE model list, asked of the harness itself: routr keeps no model list of its own.
 const MODEL_LISTS = {
@@ -51,14 +54,14 @@ function offPath(cmd) {
 
 const MODELS_SHOWN = 12;
 
-// Only Claude Code and Codex take a reasoning effort of their own; Cursor and Antigravity model ids carry it, and Kiro ignores it.
+// Claude Code, Codex, and Kiro take a reasoning effort of their own; Cursor and Antigravity model ids carry it.
 export const TAKES_EFFORT = Object.keys(HARNESS_TABLE).filter((n) => HARNESS_TABLE[n].effort);
 
 // The config `routr setup` writes: the user's defaults for the harnesses found. A model is set only when the user chose one.
 // `ranks` holds `metered_rank` per pool that reads as metered at setup, written out so the key is there to change.
 export function starterConfig(found, models = {}, ranks = {}) {
   return { fallback_level: "standard", sure_at: 0.8, risk_above: 0.75, prefer: { research: "strong", review: "strong" },
-    subscriptions: Object.fromEntries(found.map((n) => [n, { ...SUGGESTED[n], ...(models[n] ? { default_model: models[n] } : {}), ...(TAKES_EFFORT.includes(n) ? { default_effort: "medium" } : {}), ...(ranks[n] ? { metered_rank: ranks[n] } : {}) }])) };
+    subscriptions: Object.fromEntries(found.map((n) => [n, { ...(TAKES_EFFORT.includes(n) ? { default_effort: "medium" } : {}), ...SUGGESTED[n], ...(models[n] ? { default_model: models[n] } : {}), ...(ranks[n] ? { metered_rank: ranks[n] } : {}) }])) };
 }
 
 const STATUSLINE_MISSING = "missing: without it Claude usage is assumed, not read";

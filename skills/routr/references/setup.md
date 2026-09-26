@@ -80,7 +80,9 @@ the command that fixes it.
     Cursor's own models; other vendors' models inside Cursor draw on a different pool and are not routed to.
   - `default_model` and `default_effort`: the user's everyday model on that harness, chosen from the live list doctor
     prints (routr keeps no model list of its own). The orchestrator starts from it and moves up or down with the
-    work. Doctor warns when the harness no longer offers it; that is the only time it needs attention.
+    work. Doctor warns when the harness no longer offers it; that is the only time it needs attention. Kiro's are
+    suggested as `auto` and `auto`: Kiro's own router, with effort left to the model (no `--effort` is passed, so
+    nothing is saved to the user's Kiro settings).
   - `assumed_headroom`: used only when nothing better is known. Claude, Codex, and Antigravity are read live; Cursor's
     shows only in its own `/usage` screen and Kiro's `/usage` takes about 10 s, so routr reads those two in the
     background about once per working session (the first time during setup). The advice marks the rest `assumed`. `routr usage` shows what routr sees of each one.
