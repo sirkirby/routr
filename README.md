@@ -81,7 +81,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `feedback "<text>"` | Send the maintainers a note in your own words. |
 | `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
 | `update` | Update to the latest release now (routr also does this by itself in the background, at most once a day). |
-| `setup` | Write your config for the harnesses found, set Claude Code's usage statusline, ask for the key. Asks at a terminal; agents pass `--yes`. |
+| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work and reserve; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--enable`, `--disable`) and reads them first with `--show`. |
 | `uninstall` | Remove routr: the binary, the skill, the cache, its Claude statusline entry. Keeps your config, key, and ledger; `--purge` removes those too. |
 | `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list, and what to do next. Changes nothing. |
 
@@ -112,11 +112,14 @@ anything):
 routr setup
 ```
 
-It finds your harnesses, asks for your everyday model on each, writes `~/.config/routr/config.json`, sets up Claude
-Code's usage reading, and asks for your [TypeSafe API key](https://console.typesafe.ai/keys) (typed without echo,
-never shown). `routr doctor` then shows what is in place and lists anything left to do, and `routr doctor --fix` is
+It asks for your [TypeSafe API key](https://console.typesafe.ai/keys) if it has none (typed without echo, never
+shown), finds the harnesses that are installed and signed in, and lets you choose which ones routr may use and each
+one's everyday model, effort, hardest work and reserve. Arrow keys choose, Esc goes back, and nothing is written
+until you pick Save and exit. It also sets up Claude Code's usage reading. `routr doctor` then shows what is in place and lists anything left to do, and `routr doctor --fix` is
 the same command as `routr setup`: safe to run again, it only fills in what is missing. Or ask your agent to "set up
 routr", or paste [INSTALL.md](INSTALL.md) into it: it uses the same command and talks the choices through with you.
+Later, ask your agent to change a setting ("switch Cursor to Grok 4.7", "stop using Antigravity"): every setting has
+a command, and the skill tells it which.
 
 routr keeps itself current. At most once a day a command starts a background check; a new release is downloaded,
 verified against its checksums, and swapped in, and your next `routr` run uses it. Nothing you are running is

@@ -23,14 +23,17 @@ nowhere. Every reading shows how old it is. If routr cannot read a subscription,
 ## Your settings
 
 You decide where work may go, with two settings per subscription. `routr setup` asks you for both, for each
-subscription it finds, and explains them as it goes; press Enter to take the suggestion. It saves them in
-`~/.config/routr/config.json`.
+subscription you let routr use, with each level's meaning beside it and the suggestion already chosen. It saves them
+in `~/.config/routr/config.json` when you pick Save and exit.
 
-To change them later, run `routr setup` again: it shows your settings and offers to go through them, with each
-current value as the default. Or change one directly:
+To change them later, run `routr setup` again: it shows your settings and a menu to change one thing. Or change one
+directly:
 
-    routr setup --hardest cursor=strong
-    routr setup --reserve claude=30%
+    routr setup --yes --hardest cursor=strong
+    routr setup --yes --reserve claude=30%
+
+A subscription you turn off (`routr setup --yes --disable agy`) keeps both settings and gets no work until it is on
+again.
 
 An agent setting routr up for you asks you the same questions and passes your answers the same way. A change applies
 from the next call, `routr usage` shows the values in effect, and `routr doctor` tells you if a setting is missing or
