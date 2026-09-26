@@ -16,7 +16,7 @@ import { ask } from "./lib/jev.mjs";
 import { launch } from "./lib/launch.mjs";
 import { rankSubscriptions } from "./lib/pick.mjs";
 import { MEANING, questions, VERSION } from "./lib/questions.mjs";
-import { readUsage } from "./lib/usage.mjs";
+import { readUsage } from "./lib/harnesses.mjs";
 import { setKey } from "./lib/key.mjs";
 import { installSkill } from "./lib/skill-install.mjs";
 import { statusline } from "./lib/statusline.mjs";

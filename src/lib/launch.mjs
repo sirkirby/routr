@@ -3,7 +3,7 @@ import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, r
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { HARNESSES, kindError, plan } from "./harness.mjs";
+import { HARNESSES, kindError, plan } from "./harnesses.mjs";
 import { clean, deadline, paneText, quote, runHerdr, SHELLS, shellFamily, shellPrompt, waitForShell } from "./herdr.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files

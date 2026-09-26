@@ -11,7 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONFIG_PATH } from "./config.mjs";
-import { HARNESSES } from "./harness.mjs";
+import { HARNESSES } from "./harnesses.mjs";
 import { LEDGER_PATH, read } from "./ledger.mjs";
 import { FACTS, questions } from "./questions.mjs";
 import { ROUTR_VERSION } from "./version.mjs";

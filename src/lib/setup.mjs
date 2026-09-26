@@ -9,7 +9,8 @@ import { CONFIG_PATH, SUB_DEFAULTS } from "./config.mjs";
 import { LEVELS } from "./questions.mjs";
 import { HARDEST, RESERVE, SETTINGS_INTRO, settingSummary } from "./wording.mjs";
 import { envOff, NOTICE, setTelemetry } from "./telemetry.mjs";
-import { HARNESSES, inspect, paint, render, starterConfig, SUGGESTED, which } from "./doctor.mjs";
+import { inspect, paint, render, starterConfig, which } from "./doctor.mjs";
+import { HARNESSES } from "./harnesses.mjs";
 import { setKey } from "./key.mjs";
 import { standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
@@ -137,16 +138,16 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const r = await look({ configPath: path, quiet: args.includes("--json") });
   const found = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed);
   for (const n of Object.keys(ranks)) {
-    if (!found.includes(n)) return { ok: false, error: `--metered ${n}=…: \`${HARNESSES[n]}\` was not found on this machine` };
+    if (!found.includes(n)) return { ok: false, error: `--metered ${n}=…: \`${HARNESSES[n].executable}\` was not found on this machine` };
     if (r.harnesses[n].usage_class !== "metered") return { ok: false, error: `--metered ${n}=…: ${n} does not report as metered (${r.harnesses[n].usage_note ?? r.harnesses[n].usage}). For a seat routr cannot read, set "billing": "metered" in the config instead` };
   }
   for (const [n, id] of Object.entries(models)) {
-    if (!found.includes(n)) return { ok: false, error: `--model ${n}=…: \`${HARNESSES[n]}\` was not found on this machine` };
+    if (!found.includes(n)) return { ok: false, error: `--model ${n}=…: \`${HARNESSES[n].executable}\` was not found on this machine` };
     const list = r.harnesses[n].models;
     if (list?.length && !list.includes(id)) return { ok: false, error: `--model ${n}=${id}: not in the harness's current list (${list.join(", ")})` };
   }
   for (const [flagName, set] of [["--hardest", hardest], ["--reserve", reserves]])
-    for (const n of Object.keys(set)) if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `${flagName} ${n}=…: ${n} is not configured and \`${HARNESSES[n]}\` was not found on this machine` };
+    for (const n of Object.keys(set)) if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `${flagName} ${n}=…: ${n} is not configured and \`${HARNESSES[n].executable}\` was not found on this machine` };
   const rl = interactive && !question ? createInterface({ input: process.stdin, output: process.stdout }) : null;
   const ask = interactive ? (question ?? ((q) => rl.question(q))) : null; // null: nobody to ask (--yes, or no terminal)
   const yes = async (q) => !ask || !/^n/i.test((await ask(`${q} [Y/n] `)).trim());
@@ -162,7 +163,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const fresh = found.filter((n) => !config?.subscriptions?.[n]);
   // hardest_work and reserve decide where work may go, so they are asked, never slipped in: for each subscription
   // being written, and for one already configured without them. Enter keeps the suggestion; a flag answers instead.
-  const suggest = (n) => SUGGESTED[n] ?? { hardest_work: SUB_DEFAULTS.hardest_work, reserve: SUB_DEFAULTS.reserve };
+  const suggest = (n) => HARNESSES[n]?.suggested ?? { hardest_work: SUB_DEFAULTS.hardest_work, reserve: SUB_DEFAULTS.reserve };
   const unset = Object.keys(config?.subscriptions ?? {}).filter((n) => config.subscriptions[n]?.hardest_work === undefined || config.subscriptions[n]?.reserve === undefined);
   // A person running setup again is offered their settings to go through, each current value the default, so a config
   // written before setup asked (or by an agent) gets a person's answers too; nobody has to know the flags. Not under

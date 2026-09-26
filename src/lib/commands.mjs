@@ -10,7 +10,7 @@ import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus
 import { standalone } from "./runtime.mjs";
 import { CHECK_VERSION, checkQuestions } from "./questions.mjs";
 import { rankSubscriptions } from "./pick.mjs";
-import { readUsage, SOURCES } from "./usage.mjs";
+import { readUsage, SOURCES } from "./harnesses.mjs";
 
 const short = (e, n = 160) => String(e?.message ?? e).slice(0, n);
 

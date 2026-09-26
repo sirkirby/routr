@@ -1,5 +1,6 @@
 // Single source of truth for routr CLI commands, flags, descriptions, and help formatting.
 import { HARDEST, RESERVE } from "./wording.mjs";
+import { KINDS } from "./harnesses.mjs";
 export const DESCRIPTION = "routr: quick, calibrated advice for an agent that is about to hand out work.";
 
 export const COMMANDS = {
@@ -37,7 +38,7 @@ export const COMMANDS = {
     name: "launch",
     description: "start a worker, handle startup, and submit its task",
     flags: [
-      { name: "--kind", arg: "<kind>", description: "harness kind (claude, codex, cursor, agy, kiro)", required: true },
+      { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
       { name: "--name", arg: "<name>", description: "worker agent name ([a-z][a-z0-9_-]{0,31})", required: true },
       { name: "--model", arg: "<id>", description: "model id", required: "required unless --dry-run" },
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
@@ -144,7 +145,7 @@ export const COMMANDS = {
     name: "record",
     description: "append what you chose and how it turned out to the ledger",
     flags: [
-      { name: "--subscription", arg: "<name>", description: "subscription used (claude, codex, cursor, agy, kiro)", required: true },
+      { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")})`, required: true },
       { name: "--model", arg: "<name>", description: "model chosen", required: true },
       { name: "--effort", arg: "<level>", description: "reasoning effort chosen", required: true },
       { name: "--verdict", arg: "<done|partial|blocked>", description: "worker outcome verdict", required: true },

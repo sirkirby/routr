@@ -7,6 +7,8 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { deadline, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
+import { CURSOR_SNAPSHOT } from "./runtime.mjs";
+import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
 import { openTerminal, shellAlone } from "./terminal.mjs";
 
 const PCT = String.raw`(\d+(?:\.\d+)?)%\s+used\b`;
@@ -90,3 +92,12 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
     if (dir) try { rmSync(dir, { recursive: true, force: true }); } catch {}
   }
 }
+
+// Cursor: only Included counts: it is the whole plan, and Cursor's own models (Composer, Grok) draw on it through Auto.
+// API is other vendors' models inside Cursor, which routr does not route to, so it is shown in the note and never ranked.
+const pct = (x) => (x == null ? "?" : `${x}%`);
+export const refreshCursor = ({ read = cursorUsage, file = CURSOR_SNAPSHOT, ...o } = {}) => refreshSnapshot({ read, file, ...o,
+  keep: (r) => ({ plan: r.plan, included_used_pct: r.included_used_pct, auto_used_pct: r.auto_used_pct, api_used_pct: r.api_used_pct }) });
+export const readCursor = ({ file = CURSOR_SNAPSHOT, ...o } = {}) => readSnapshot({ name: "cursor", source: "cursor /usage", byHand: CURSOR_BY_HAND, file, ...o,
+  windows: (r) => [{ name: "included", usedPct: r.included_used_pct, windowMin: null, resetsAt: null }],
+  describe: (r) => `Included ${pct(r.included_used_pct)} used (Auto ${pct(r.auto_used_pct)}, API ${pct(r.api_used_pct)})` });

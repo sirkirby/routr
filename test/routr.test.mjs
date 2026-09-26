@@ -7,13 +7,14 @@ import { advise } from "../src/lib/advise.mjs";
 import { readReport } from "../src/lib/check.mjs";
 import { DEFAULTS, loadConfig } from "../src/lib/config.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
-import { claudeSnapshot, codexSnapshot, KIRO_BY_HAND, kiroUsage, monthMinutes, parseKiroUsage, readCursor, readKiro, readUsage, refreshCursor, refreshKiro } from "../src/lib/usage.mjs";
+import { claudeSnapshot, codexSnapshot, monthMinutes } from "../src/lib/usage.mjs";
+import { KIRO_BY_HAND, kiroUsage, parseKiroUsage, readKiro, refreshKiro } from "../src/lib/kiro-usage.mjs";
+import { HARNESSES, plan, readUsage } from "../src/lib/harnesses.mjs";
 import { olderThan, takeLock } from "../src/lib/runtime.mjs";
 import { usageCommand } from "../src/lib/commands.mjs";
 import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
-import { HARNESSES, plan } from "../src/lib/harness.mjs";
-import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage } from "../src/lib/cursor-usage.mjs";
+import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage, readCursor, refreshCursor } from "../src/lib/cursor-usage.mjs";
 import { composePrompt, launch, parseLaunchArgs, permissiveConfirm, trustDialog, WORKER_GUIDE } from "../src/lib/launch.mjs";
 import { paneText, promptSettled, quote, shellPrompt } from "../src/lib/herdr.mjs";
 import { COMMANDS, DESCRIPTION, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "../src/lib/help.mjs";
@@ -2153,7 +2154,7 @@ test("every value seen in real rows, and every value routr documents, survives t
   // What `routr record` documents (help table) belongs in the seen lists too.
   const doc = Object.fromEntries(COMMANDS.record.flags.filter((f) => /^<.*\|.*>$/.test(f.arg ?? "")).map((f) => [f.name.slice(2), f.arg.slice(1, -1).split("|")]));
   for (const k of ["verdict", "check"]) for (const v of doc[k]) expect(seen[k]).toContain(v);
-  const { HARNESSES } = await import("../src/lib/harness.mjs");
+  const { HARNESSES } = await import("../src/lib/harnesses.mjs");
   expect(seen.subscription.sort()).toEqual(Object.keys(HARNESSES).sort());
   const lost = [];
   const at = (field, v) => row({ chose: { subscription: field === "subscription" ? v : "codex", model: field === "model" ? v : "m-1", effort: field === "effort" ? v : "low", level: "basic" },

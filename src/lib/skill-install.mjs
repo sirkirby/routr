@@ -3,6 +3,7 @@
 import { cpSync, existsSync, lstatSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { HARNESSES, KINDS } from "./harnesses.mjs";
 import skillMd from "../../skills/routr/SKILL.md" with { type: "text" };
 import worker from "../../skills/routr/references/worker.md" with { type: "text" };
 import orchestrator from "../../skills/routr/references/orchestrator.md" with { type: "text" };
@@ -10,9 +11,9 @@ import harnesses from "../../skills/routr/references/harnesses.md" with { type: 
 import setup from "../../skills/routr/references/setup.md" with { type: "text" };
 
 const FILES = { "SKILL.md": skillMd, "references/worker.md": worker, "references/orchestrator.md": orchestrator, "references/harnesses.md": harnesses, "references/setup.md": setup };
-// Harnesses that read their own skills folder rather than the shared one. Codex and Cursor read ~/.agents/skills; Kiro
-// lists only ~/.kiro/skills (measured 2026-09-26: a skill in ~/.agents/skills alone was not offered).
-const LINKED = { "Claude Code": ".claude/skills", Kiro: ".kiro/skills" };
+// Harnesses that read their own skills folder rather than the shared one (`skills` in the registry). Codex and Cursor
+// read ~/.agents/skills.
+const LINKED = Object.fromEntries(KINDS.filter((n) => HARNESSES[n].skills).map((n) => [HARNESSES[n].label, HARNESSES[n].skills]));
 
 export function installSkill({ home = homedir(), dryRun = false } = {}) {
   const dest = join(home, ".agents/skills/routr"), done = [];

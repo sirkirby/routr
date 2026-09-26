@@ -4,33 +4,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
-import { CONFIG_PATH, loadConfig } from "./config.mjs";
-import { HARNESSES as HARNESS_TABLE } from "./harness.mjs";
+import { CONFIG_PATH, DEFAULTS, loadConfig } from "./config.mjs";
+import { HARNESSES, KINDS, named, readUsage, SKILL_FOLDERS, TAKES_EFFORT } from "./harnesses.mjs";
 import { jevModel, KEY_FILES, loadKey, ping } from "./jev.mjs";
 import { JEV_MODEL } from "./questions.mjs";
-import { CLAUDE_SNAPSHOT, NO_WINDOWS_AFTER_ANSWER, readUsage } from "./usage.mjs";
-import { run } from "./runtime.mjs";
+import { CLAUDE_SNAPSHOT, NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
 import { telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
-
-// Subscription name → the command its harness is launched with, from the one table launch uses.
-export const HARNESSES = Object.fromEntries(Object.entries(HARNESS_TABLE).map(([name, h]) => [name, h.executable]));
-export const SUGGESTED = { claude: { hardest_work: "strong", reserve: 0.25 }, codex: { hardest_work: "strong", reserve: 0.2 }, cursor: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 }, agy: { hardest_work: "standard", reserve: 0.1 },
-  // Kiro's own router, which its docs recommend and which picks the model per task, and effort left to the model:
-  // `auto` passes no --effort, which Kiro would otherwise remember as the user's default for that model.
-  kiro: { hardest_work: "standard", reserve: 0.1, default_model: "auto", default_effort: "auto" } };
-
-// Each harness's LIVE model list, asked of the harness itself: routr keeps no model list of its own.
-const MODEL_LISTS = {
-  claude: async () => ["haiku", "sonnet", "opus"], // aliases Claude Code resolves itself; `--model` also takes full ids
-  codex: async () => { try { const o = JSON.parse(await run("codex", ["debug", "models"], { timeoutMs: 15000 })); return (o.models ?? o).map((m) => m.slug ?? m.id).filter(Boolean); } catch { return null; } },
-  cursor: async () => ((await run("cursor-agent", ["models"], { timeoutMs: 20000 })) ?? "").split("\n").map((l) => l.match(/^\s*([a-z0-9][\w.-]+) - /i)?.[1]).filter(Boolean),
-  agy: async () => ((await run("agy", ["models"], { timeoutMs: 20000 })) ?? "").split("\n").map((l) => l.match(/^([a-z0-9][\w.-]+)\t/i)?.[1]).filter(Boolean),
-  kiro: async () => { try { return JSON.parse(await run("kiro-cli", ["chat", "--list-models", "--format", "json"], { timeoutMs: 20000 })).models.map((m) => m.model_id).filter(Boolean); } catch { return null; } },
-};
 
 // Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows.
 export function which(cmd) {
@@ -55,14 +38,13 @@ function offPath(cmd) {
 
 const MODELS_SHOWN = 12;
 
-// Claude Code, Codex, and Kiro take a reasoning effort of their own; Cursor and Antigravity model ids carry it.
-export const TAKES_EFFORT = Object.keys(HARNESS_TABLE).filter((n) => HARNESS_TABLE[n].effort);
+export { TAKES_EFFORT }; // setup asks the same questions of the same harnesses
 
 // The config `routr setup` writes: the user's defaults for the harnesses found. A model is set only when the user chose one.
 // `ranks` holds `metered_rank` per pool that reads as metered at setup, written out so the key is there to change.
 export function starterConfig(found, models = {}, ranks = {}) {
-  return { fallback_level: "standard", sure_at: 0.8, risk_above: 0.75, prefer: { research: "strong", review: "strong" },
-    subscriptions: Object.fromEntries(found.map((n) => [n, { ...(TAKES_EFFORT.includes(n) ? { default_effort: "medium" } : {}), ...SUGGESTED[n], ...(models[n] ? { default_model: models[n] } : {}), ...(ranks[n] ? { metered_rank: ranks[n] } : {}) }])) };
+  return { fallback_level: DEFAULTS.fallback_level, sure_at: DEFAULTS.sure_at, risk_above: DEFAULTS.risk_above, prefer: { ...DEFAULTS.prefer },
+    subscriptions: Object.fromEntries(found.map((n) => [n, { ...(TAKES_EFFORT.includes(n) ? { default_effort: "medium" } : {}), ...HARNESSES[n].suggested, ...(models[n] ? { default_model: models[n] } : {}), ...(ranks[n] ? { metered_rank: ranks[n] } : {}) }])) };
 }
 
 const STATUSLINE_MISSING = "missing: without it Claude usage is assumed, not read";
@@ -75,7 +57,7 @@ export function nextSteps(r) {
   if (!r.config.exists) steps.push("Create your config (your defaults for each subscription found): routr setup");
   else if (r.config.problems?.length) steps.push(`Fix your settings: ${r.config.problems.join("; ")}`);
   else if (Object.entries(r.harnesses).some(([n, h]) => h.installed && !r.config.subscriptions.includes(n))) steps.push(`Add the harnesses found since the config was written (${Object.entries(r.harnesses).filter(([n, h]) => h.installed && !r.config.subscriptions.includes(n)).map(([n]) => n).join(", ")}): routr setup`);
-  if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push("Install and log in to at least one harness: Claude Code, Codex, Cursor (cursor-agent), Antigravity (agy), or Kiro (kiro-cli)");
+  if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push(`Install and log in to at least one harness: ${KINDS.slice(0, -1).map(named).join(", ")}, or ${named(KINDS.at(-1))}`);
   if (r.claude_usage_statusline === STATUSLINE_MISSING) steps.push("Let routr read Claude Code's usage (sets Claude's statusline command): routr setup");
   // Claude answered a prompt and still sent no windows: a seat with no quota, or a plan routr has not seen send them.
   // routr does not guess which; the user says, either way, and the step clears.
@@ -97,10 +79,10 @@ export async function inspect({ configPath, quiet } = {}) {
   // Every check that waits on something else (the release lookup, each harness, the key's test call) runs at once:
   // one after another, a logged-out harness that is slow to answer made doctor sit silent for most of a minute.
   // A person at a terminal sees each one finish, on stderr so the report and `--json` stay clean.
-  const found = Object.keys(HARNESSES).filter((n) => which(HARNESSES[n]));
+  const found = KINDS.filter((n) => which(HARNESSES[n].executable));
   const tty = Boolean(process.stderr.isTTY) && !quiet;
   const step = async (label, p) => { try { return await p; } finally { if (tty) process.stderr.write(`  checked ${label}\n`); } };
-  if (tty) process.stderr.write(`Checking ${["the TypeSafe key", ...found.map((n) => `\`${HARNESSES[n]}\``)].join(", ")} (a harness can take up to 20 s to answer)…\n`);
+  if (tty) process.stderr.write(`Checking ${["the TypeSafe key", ...found.map((n) => `\`${HARNESSES[n].executable}\``)].join(", ")} (a harness can take up to 20 s to answer)…\n`);
   const keyCheck = async () => { loadKey(); r.key.found = true; return ping(); };
   // The release lookup is one short, non-fatal call. Only doctor and `routr update` make it; the advice commands never call home.
   const [latest, usage, key, ...models] = await Promise.all([
@@ -108,12 +90,12 @@ export async function inspect({ configPath, quiet } = {}) {
     // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
     step("usage", readUsage(found, {}, { background: Object.keys(loadConfig(configPath ?? CONFIG_PATH).config.subscriptions ?? {}) })),
     step("the TypeSafe key", keyCheck().then((t) => ({ t }), (e) => ({ e }))),
-    ...found.map((n) => step(`${n}'s models`, Promise.resolve(MODEL_LISTS[n]?.()).then((l) => l || null, () => null))),
+    ...found.map((n) => step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))),
   ]);
   if (latest && standalone() && newer(latest, ROUTR_VERSION)) r.update_available = latest; // a source checkout is not updated
-  for (const n of Object.keys(HARNESSES)) {
+  for (const n of KINDS) {
     const u = usage.find((x) => x.pool === n);
-    r.harnesses[n] = { command: HARNESSES[n], installed: found.includes(n), off_path: found.includes(n) ? null : offPath(HARNESSES[n]), usage: !found.includes(n) ? null : u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)` : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note}`, ...(found.includes(n) ? { usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) } : {}) };
+    r.harnesses[n] = { command: HARNESSES[n].executable, installed: found.includes(n), off_path: found.includes(n) ? null : offPath(HARNESSES[n].executable), usage: !found.includes(n) ? null : u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)` : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note}`, ...(found.includes(n) ? { usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) } : {}) };
   }
   if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; }
   else { r.key.found ??= false; r.key.works = false; r.key.error = String(key.e?.message ?? key.e).slice(0, 160); r.key.where = `set TYPESAFE_API_KEY, or put TYPESAFE_API_KEY=... in ${KEY_FILES[0]}`; }
@@ -121,7 +103,7 @@ export async function inspect({ configPath, quiet } = {}) {
   for (const n of found) r.harnesses[n].models = lists[n];
   // The installer writes the skill and the binary together, but a skill copied by hand or left behind by an older
   // install can drift: it may name commands this binary lacks, or miss ones it has.
-  r.skill = [".agents/skills/routr", ".claude/skills/routr", ".kiro/skills/routr"].map((d) => {
+  r.skill = SKILL_FOLDERS.map((f) => `${f}/routr`).map((d) => {
     try { return { where: `~/${d}`, version: readFileSync(join(homedir(), d, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\n]+)"?/m)?.[1] ?? "unknown" }; } catch { return null; }
   }).filter(Boolean);
   const path = configPath ?? CONFIG_PATH;
@@ -177,7 +159,7 @@ export function render(r) {
   if (!r.skill.length) line("need", "routr skill not installed for your agents: run `routr skill install`");
   for (const k of r.skill) line(r.from_source || baseVersion(k.version) === base ? "ok" : "need", `routr skill ${k.where} is ${k.version}${r.from_source || baseVersion(k.version) === base ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
   const any = Object.values(r.harnesses).some((h) => h.installed);
-  for (const [n, h] of Object.entries(r.harnesses)) line(h.installed ? "ok" : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${h.installed ? `\`${h.command}\` found · usage ${h.usage}` : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it` : `\`${h.command}\` not found`}${h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${h.models.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${HARNESS_TABLE[n].list ?? `${h.command} models`}\` for the rest)` : ""}` : ""}`);
+  for (const [n, h] of Object.entries(r.harnesses)) line(h.installed ? "ok" : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${h.installed ? `\`${h.command}\` found · usage ${h.usage}` : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it` : `\`${h.command}\` not found`}${h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${h.models.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${HARNESSES[n].list ?? `${h.command} models`}\` for the rest)` : ""}` : ""}`);
   line(r.key.works ? "ok" : "need", `TypeSafe key ${r.key.works ? `works (${r.key.model}${jevModel() !== JEV_MODEL ? `, asked as ${jevModel()} by ROUTR_JEV_MODEL` : ""}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
   line(r.config.exists && !problems.length ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && [...problems, ...notes].length ? `\n   ${[...problems, ...notes].join("\n   ")}` : ""}`);
   line(r.claude_usage_statusline !== STATUSLINE_MISSING, `Claude usage statusline: ${r.claude_usage_statusline}`);

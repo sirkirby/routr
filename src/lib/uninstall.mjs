@@ -6,6 +6,7 @@ import { copyFileSync, lstatSync, readFileSync, renameSync, rmSync, unlinkSync, 
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
+import { SKILL_FOLDERS } from "./harnesses.mjs";
 import { standalone } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 
@@ -14,7 +15,8 @@ import { isOurStatusline } from "./statusline.mjs";
 export function uninstallPlan({ home = homedir(), purge = false, binary = null } = {}) {
   const remove = [], keep = [];
   if (binary) remove.push({ path: binary, what: "the routr binary" });
-  for (const rel of [".claude/skills/routr", ".kiro/skills/routr", ".agents/skills/routr"]) remove.push({ path: join(home, rel), what: "the routr skill" });
+  // Each harness's link first, then the folder the links point at.
+  for (const rel of [...SKILL_FOLDERS.slice(1), SKILL_FOLDERS[0]].map((f) => `${f}/routr`)) remove.push({ path: join(home, rel), what: "the routr skill" });
   remove.push({ path: join(home, ".cache/routr"), what: "cache: the usage snapshots and the update log" });
   const data = [{ path: join(home, ".config/routr"), what: "your config and TypeSafe key" }, { path: join(home, ".local/share/routr"), what: "your ledger" }];
   (purge ? remove : keep).push(...data);
