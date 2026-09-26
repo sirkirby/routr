@@ -11,3 +11,5 @@ export const CACHE_DIR = () => join(homedir(), ".cache/routr");
 export const CLAUDE_SNAPSHOT = join(homedir(), ".cache/routr/claude-usage.json");
 // Written by `routr usage cursor` (by hand, or in the background when the reading is old), read by the usage reader.
 export const CURSOR_SNAPSHOT = join(homedir(), ".cache/routr/cursor-usage.json");
+// Written by `routr usage kiro` the same way, read by the usage reader.
+export const KIRO_SNAPSHOT = join(homedir(), ".cache/routr/kiro-usage.json");

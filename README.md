@@ -3,7 +3,7 @@
 ![routr: one lead agent plans and decides, then hands work to Claude Code, Codex, Cursor, and Antigravity workers](assets/routr-banner.png)
 
 routr lets one coding agent run a team of others across the AI subscriptions you already pay for: Claude Code,
-Codex, Cursor, and Antigravity.
+Codex, Cursor, Antigravity, and Kiro.
 
 **It uses what is already on your machine.** The workers are the harness CLIs you have installed and logged in to,
 started in [herdr](https://github.com/herdrdev/herdr) panes (routr is named after it). There are no provider API
@@ -72,7 +72,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 |---|---|
 | `subagent "<brief>"` | An agent is about to spawn a subagent: facts, level, worth-a-worker. |
 | `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus subscriptions ranked by usable headroom. `--headroom <name>=0.9` overrides a reading. |
-| `usage [cursor]` | Each subscription's usage, ranked as `dispatch` ranks it, with no brief. `usage cursor` reads Cursor's now. |
+| `usage [cursor\|kiro]` | Each subscription's usage, ranked as `dispatch` ranks it, with no brief. `usage cursor` or `usage kiro` reads that one now. |
 | `launch` | Start one worker in its own git worktree, nested under the repo in herdr: flags, model syntax, shell prompts, trust dialog, readiness, prompt. `--dry-run` shows the plan. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
 | `record`, `assess` | Write one ledger line; read the ledger back as advice about your own settings. |
@@ -147,7 +147,7 @@ goes stale when models change.
 - `prefer`: your standing preference per kind of work, for example `"review": "strong"`.
 
 Usage is read live for Claude Code (through `routr statusline`, set up as Claude's statusline command), Codex, and
-Antigravity. Cursor's is read in the background about once per working session, since it takes seconds. A seat with no quota reports no windows: measured on a
+Antigravity. Cursor's and Kiro's are read in the background about once per working session, since they take seconds. A seat with no quota reports no windows: measured on a
 ChatGPT Enterprise seat, which routr detects and calls `metered`; for Claude the class is your `billing` setting,
 because the statusline sends nothing to tell a seat with no quota from a plan routr has not seen. A metered seat gets
 no headroom number and is ranked by your setting rather than by a guess. A cap the vendor enforces is read as one

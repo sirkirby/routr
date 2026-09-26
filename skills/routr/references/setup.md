@@ -71,7 +71,7 @@ metered when first written (billed per token, no quota: a ChatGPT Enterprise sea
 the user's preference, and none describes a model. `routr doctor` flags a setting that is missing or invalid, with
 the command that fixes it.
 
-- `subscriptions`: one entry per subscription the orchestrator may launch on, named `claude`, `codex`, `cursor`, `agy`.
+- `subscriptions`: one entry per subscription the orchestrator may launch on, named `claude`, `codex`, `cursor`, `agy`, `kiro`.
   - `reserve`: the share of that subscription routr never hands to workers, so the orchestrator and anything the user
     runs outside routr still have room (0.25 holds back a quarter; 0 holds nothing back).
   - `hardest_work`: the hardest work routr may send to it. `basic`: rote or well-specified work; a small, fast model
@@ -82,8 +82,8 @@ the command that fixes it.
     prints (routr keeps no model list of its own). The orchestrator starts from it and moves up or down with the
     work. Doctor warns when the harness no longer offers it; that is the only time it needs attention.
   - `assumed_headroom`: used only when nothing better is known. Claude, Codex, and Antigravity are read live; Cursor's
-    shows only in its own `/usage` screen, which routr reads in the background about once per working session (the
-    first time during setup). The advice marks the rest `assumed`. `routr usage` shows what routr sees of each one.
+    shows only in its own `/usage` screen and Kiro's `/usage` takes about 10 s, so routr reads those two in the
+    background about once per working session (the first time during setup). The advice marks the rest `assumed`. `routr usage` shows what routr sees of each one.
   - `billing`: `included` or `metered`, only when the harness cannot show which it is. A Codex Enterprise seat on
     flexible pricing is detected (measured: no windows, unlimited credits). Claude is never detected: a plan with no
     quota (usage-based Enterprise, an API key) sends the statusline no windows, and so may a plan routr has not seen
@@ -113,6 +113,8 @@ in `~/.claude/settings.json`. Use the full path (`~/.local/bin/routr`, written o
 include it. If the user already has a statusline, keep theirs and have it call `routr statusline` for the snapshot,
 or ask them which they prefer. The first snapshot appears after the next Claude Code turn. Codex and Antigravity are
 read from the harness directly and need nothing; Cursor's usage is read from its `/usage` screen in a private herdr session, in the background: herdr must be installed.
+Kiro's is read from its own `/usage` command in the background and needs nothing either; routr deletes the empty Kiro
+session each reading leaves. `routr skill install` links the skill into `~/.kiro/skills`, the only folder Kiro reads.
 
 ## 5. herdr (only for orchestration)
 

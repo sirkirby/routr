@@ -17,7 +17,7 @@ import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 
 // Subscription name → the command its harness is launched with, from the one table launch uses.
 export const HARNESSES = Object.fromEntries(Object.entries(HARNESS_TABLE).map(([name, h]) => [name, h.executable]));
-export const SUGGESTED = { claude: { hardest_work: "strong", reserve: 0.25 }, codex: { hardest_work: "strong", reserve: 0.2 }, cursor: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 }, agy: { hardest_work: "standard", reserve: 0.1 } };
+export const SUGGESTED = { claude: { hardest_work: "strong", reserve: 0.25 }, codex: { hardest_work: "strong", reserve: 0.2 }, cursor: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 }, agy: { hardest_work: "standard", reserve: 0.1 }, kiro: { hardest_work: "standard", reserve: 0.1 } };
 
 // Each harness's LIVE model list, asked of the harness itself: routr keeps no model list of its own.
 const MODEL_LISTS = {
@@ -25,6 +25,7 @@ const MODEL_LISTS = {
   codex: async () => { try { const o = JSON.parse(await run("codex", ["debug", "models"], { timeoutMs: 15000 })); return (o.models ?? o).map((m) => m.slug ?? m.id).filter(Boolean); } catch { return null; } },
   cursor: async () => ((await run("cursor-agent", ["models"], { timeoutMs: 20000 })) ?? "").split("\n").map((l) => l.match(/^\s*([a-z0-9][\w.-]+) - /i)?.[1]).filter(Boolean),
   agy: async () => ((await run("agy", ["models"], { timeoutMs: 20000 })) ?? "").split("\n").map((l) => l.match(/^([a-z0-9][\w.-]+)\t/i)?.[1]).filter(Boolean),
+  kiro: async () => { try { return JSON.parse(await run("kiro-cli", ["chat", "--list-models", "--format", "json"], { timeoutMs: 20000 })).models.map((m) => m.model_id).filter(Boolean); } catch { return null; } },
 };
 
 // Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows.
@@ -50,7 +51,7 @@ function offPath(cmd) {
 
 const MODELS_SHOWN = 12;
 
-// Only Claude Code and Codex take a reasoning effort of their own; Cursor and Antigravity model ids carry it.
+// Only Claude Code and Codex take a reasoning effort of their own; Cursor and Antigravity model ids carry it, and Kiro ignores it.
 export const TAKES_EFFORT = Object.keys(HARNESS_TABLE).filter((n) => HARNESS_TABLE[n].effort);
 
 // The config `routr setup` writes: the user's defaults for the harnesses found. A model is set only when the user chose one.
@@ -70,7 +71,7 @@ export function nextSteps(r) {
   if (!r.config.exists) steps.push("Create your config (your defaults for each subscription found): routr setup");
   else if (r.config.problems?.length) steps.push(`Fix your settings: ${r.config.problems.join("; ")}`);
   else if (Object.entries(r.harnesses).some(([n, h]) => h.installed && !r.config.subscriptions.includes(n))) steps.push(`Add the harnesses found since the config was written (${Object.entries(r.harnesses).filter(([n, h]) => h.installed && !r.config.subscriptions.includes(n)).map(([n]) => n).join(", ")}): routr setup`);
-  if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push("Install and log in to at least one harness: Claude Code, Codex, Cursor (cursor-agent), or Antigravity (agy)");
+  if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push("Install and log in to at least one harness: Claude Code, Codex, Cursor (cursor-agent), Antigravity (agy), or Kiro (kiro-cli)");
   if (r.claude_usage_statusline === STATUSLINE_MISSING) steps.push("Let routr read Claude Code's usage (sets Claude's statusline command): routr setup");
   // Claude answered a prompt and still sent no windows: a seat with no quota, or a plan routr has not seen send them.
   // routr does not guess which; the user says, either way, and the step clears.
@@ -116,7 +117,7 @@ export async function inspect({ configPath, quiet } = {}) {
   for (const n of found) r.harnesses[n].models = lists[n];
   // The installer writes the skill and the binary together, but a skill copied by hand or left behind by an older
   // install can drift: it may name commands this binary lacks, or miss ones it has.
-  r.skill = [".agents/skills/routr", ".claude/skills/routr"].map((d) => {
+  r.skill = [".agents/skills/routr", ".claude/skills/routr", ".kiro/skills/routr"].map((d) => {
     try { return { where: `~/${d}`, version: readFileSync(join(homedir(), d, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\n]+)"?/m)?.[1] ?? "unknown" }; } catch { return null; }
   }).filter(Boolean);
   const path = configPath ?? CONFIG_PATH;
@@ -172,7 +173,7 @@ export function render(r) {
   if (!r.skill.length) line("need", "routr skill not installed for your agents: run `routr skill install`");
   for (const k of r.skill) line(r.from_source || baseVersion(k.version) === base ? "ok" : "need", `routr skill ${k.where} is ${k.version}${r.from_source || baseVersion(k.version) === base ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
   const any = Object.values(r.harnesses).some((h) => h.installed);
-  for (const [n, h] of Object.entries(r.harnesses)) line(h.installed ? "ok" : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${h.installed ? `\`${h.command}\` found · usage ${h.usage}` : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it` : `\`${h.command}\` not found`}${h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${h.models.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${h.command} models\` for the rest)` : ""}` : ""}`);
+  for (const [n, h] of Object.entries(r.harnesses)) line(h.installed ? "ok" : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${h.installed ? `\`${h.command}\` found · usage ${h.usage}` : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it` : `\`${h.command}\` not found`}${h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${h.models.length > MODELS_SHOWN ? `, … (${h.models.length} in all; run \`${HARNESS_TABLE[n].list ?? `${h.command} models`}\` for the rest)` : ""}` : ""}`);
   line(r.key.works ? "ok" : "need", `TypeSafe key ${r.key.works ? `works (${r.key.model}${jevModel() !== JEV_MODEL ? `, asked as ${jevModel()} by ROUTR_JEV_MODEL` : ""}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
   line(r.config.exists && !problems.length ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && [...problems, ...notes].length ? `\n   ${[...problems, ...notes].join("\n   ")}` : ""}`);
   line(r.claude_usage_statusline !== STATUSLINE_MISSING, `Claude usage statusline: ${r.claude_usage_statusline}`);

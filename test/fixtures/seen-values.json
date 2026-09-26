@@ -2,7 +2,7 @@
   "_about": "Values seen in real ledger rows (the maintainers' ledgers and received telemetry), with no text. Every one must survive telemetryRows as itself, never as \"other\": a value turned into \"other\" is data lost. Add a value here when the lab's review or `bun run smoke:telemetry` shows one arriving as \"other\".",
   "effort": ["none", "low", "medium", "high", "xhigh", "default"],
   "model": ["opus", "sonnet", "haiku", "gpt-6-astra", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "cursor-grok-4.6-high", "cursor-grok-4.6-medium", "composer-2.5-fast", "gemini-3.8-flash-low", "gemini-3.8-flash-medium", "gemini-3.8-flash-high", "claude-opus-5-5[1m]"],
-  "subscription": ["claude", "codex", "cursor", "agy"],
+  "subscription": ["claude", "codex", "cursor", "agy", "kiro"],
   "verdict": ["done", "partial", "blocked"],
   "check": ["pass", "fail", "none"]
 }
