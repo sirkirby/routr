@@ -40,7 +40,8 @@ fallback.
 - Your launch prompt says you are a **routr worker**, or you are about to spawn a subagent → read `references/worker.md`.
 - You are the **orchestrator**: you plan the work, hand it out, judge what comes back, and send it back when it
   falls short → read `references/orchestrator.md`, then `references/harnesses.md` before you launch anything.
-- The user wants routr **set up, configured, or checked** → read `references/setup.md`.
+- The user wants routr **set up, configured, or checked**, or **a setting changed** (a model, an effort, a reserve,
+  turning a subscription off) → read `references/setup.md`: every setting has a command.
 
 ## Reading the advice
 

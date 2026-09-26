@@ -104,6 +104,34 @@ the command that fixes it.
 - `auto_update` (`true`): routr checks for a new release in the background at most once a day and uses it from the
   next run. Set it to `false` if the user wants to update only by hand with `routr update`.
 
+## Changing a setting for the user
+
+The user can ask you to change any setting ("switch Cursor to Grok 4.7", "stop using Antigravity", "hold back more of
+Claude"). Do it with a flag; never edit the file by hand. First read what is set now:
+
+    routr setup --show
+
+It prints the settings as routr reads them, as JSON, asks no harness, and changes nothing. Then run `routr setup --yes`
+with the flag for what they asked, and tell them what changed (the output lists it). Each flag is repeatable and
+can be combined with the others in one run.
+
+| The user wants to… | Run |
+|---|---|
+| change the everyday model on a subscription | `routr setup --yes --model cursor=<id>` (from the harness's live list: `routr doctor` prints it) |
+| change the everyday effort | `routr setup --yes --effort codex=high` (one of the levels that harness takes for that model; Kiro's `auto` leaves it to the model) |
+| change the hardest work a subscription may take | `routr setup --yes --hardest cursor=strong` (`basic`, `standard`, or `strong`) |
+| change how much routr holds back | `routr setup --yes --reserve claude=25%` (a share: 0.25 or 25%; 0% holds nothing back) |
+| stop using a subscription, keeping its settings | `routr setup --yes --disable agy` |
+| use it again | `routr setup --yes --enable agy` |
+| add a harness installed since | `routr setup --yes` (it adds every harness that is installed and signed in) |
+| place a billed seat in the ranking | `routr setup --yes --metered codex=after` or `=with` |
+| share anonymous outcomes, or stop | `routr telemetry on` / `routr telemetry off`: only when the user says so |
+| let Claude Code's usage be read | `routr setup --yes` sets the statusline when there is none (`--no-statusline` leaves it) |
+
+A flag that routr cannot apply fails with the reason and changes nothing: a model the harness does not list, an effort
+it does not take for that model, a harness that is not signed in (the error says what to run). A subscription turned
+off keeps every setting and gets no work, in dispatch or launch, until it is on again.
+
 ## 4. Claude usage (only if Claude Code is a subscription)
 
 Claude Code reports usage only to its statusline. `routr statusline` is a statusline command: it prints the model and
