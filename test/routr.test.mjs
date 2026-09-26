@@ -626,6 +626,22 @@ test("the refresh lock lets one caller in at a time and gives up a lock left by 
   expect(takeLock(join(dir, "missing", "x.lock"), stale())).toBe(false); // cannot write: no lock, so no refresh
   rmSync(dir, { recursive: true, force: true });
 });
+test("dispatch and subagent answer from a function: Jev's reading, the ranking, and the user's fallback when Jev is down", async () => {
+  const { adviseCommand } = await import("../src/lib/commands.mjs");
+  const jev = async () => ({ model: "jev-test", latencyMs: 12.4, answers: fact(ans(1.1, 0.9), {}) });
+  const read = async (names) => names.map((n) => live(n, n === "cursor" ? 0.9 : 0.3));
+  const d = await adviseCommand("dispatch", "Fix the parser", { config: cfg(), notes: [] }, {}, { askFn: jev, read });
+  expect(d).toMatchObject({ mode: "dispatch", level: "standard", jev_model: "jev-test", ms: 12, brief_chars: 14 });
+  expect(d.subscriptions.most_room).toBe("cursor");
+  expect(d.rule).toContain("Launch on a subscription");
+  expect(JSON.stringify(d)).not.toContain("Fix the parser"); // the brief itself is never in the output
+  const down = await adviseCommand("subagent", "Fix it", { config: cfg(), notes: ["a note"] }, {}, { askFn: async () => { throw new Error("offline"); } });
+  expect(down).toMatchObject({ fallback: true, level: "standard", config_notes: ["a note"] });
+  expect(down.subscriptions).toBeUndefined();
+  expect(down.notes[0]).toContain("Router unavailable (offline)");
+  const none = await adviseCommand("dispatch", "x", { config: { ...cfg(), subscriptions: {} }, notes: [] }, {}, { askFn: jev, read });
+  expect(none.subscriptions.note).toContain("has not run `routr setup`");
+});
 test("routr usage ranks what it sees without a brief, and a name narrows it or opens the harness's screen", async () => {
   const c = cfg();
   const read = async (names, given) => names.map((n) => (n === "cursor" && given.cursor != null ? { pool: n, source: "given by caller", ageSec: 0, windows: [], headroom: given.cursor } : n === "claude" ? live("claude", 0.6) : none(n)));

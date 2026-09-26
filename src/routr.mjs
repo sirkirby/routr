@@ -4,33 +4,12 @@
 // Jev (TypeSafe System One) judges the WORK in ~300 ms; routr adds usage and ranks by arithmetic (docs/ranking.md);
 // the agent that asked makes the decision. Never names a model.
 // Advice writes nothing of the user's and fails open; launch reports failures as JSON and exits nonzero.
-import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { advise, headline } from "./lib/advise.mjs";
-import { assessCommand, checkCommand, recordCommand, shareCommand, usageCommand } from "./lib/commands.mjs";
-import { loadConfig } from "./lib/config.mjs";
-import { setup } from "./lib/setup.mjs";
-import { uninstall } from "./lib/uninstall.mjs";
-import { doctor } from "./lib/doctor.mjs";
-import { ask } from "./lib/jev.mjs";
-import { launch } from "./lib/launch.mjs";
-import { rankSubscriptions } from "./lib/pick.mjs";
-import { MEANING, questions, VERSION } from "./lib/questions.mjs";
-import { readUsage } from "./lib/harnesses.mjs";
-import { setKey } from "./lib/key.mjs";
-import { installSkill } from "./lib/skill-install.mjs";
-import { statusline } from "./lib/statusline.mjs";
-import { backgroundUpdate, maybeAutoUpdate, update } from "./lib/update.mjs";
-import { sendFeedback, sendRows, telemetryCommand, telemetryStatus } from "./lib/telemetry.mjs";
-import { ROUTR_VERSION } from "./lib/version.mjs";
-import { COMMANDS, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "./lib/help.mjs";
-
-const RULE = {
-  subagent: "You decide how much intelligence and reasoning this work needs, from these facts and what you know of the codebase; pick the model and effort that match, never a model stronger than yourself. Do not default to your own model. If you settle on a different level than advised, say so in your report: ROUTR: <advised> → <chosen> because <reason>.",
-  dispatch: "You decide how much intelligence and reasoning this work needs, from these facts and what you know of the codebase. Launch on a subscription with usable headroom, starting from the user's default model there and moving up or down to match. If you go against this advice, record why.",
-};
-
+// Each command's code is loaded only when that command runs: `statusline` runs on every Claude Code turn.
 const argv = process.argv.slice(2);
+const asksHelp = (args) => args.includes("--help") || args.includes("-h");
+if (argv[0] === "statusline" && !asksHelp(argv)) { (await import("./lib/statusline.mjs")).statusline(); process.exit(0); }
+
+const { COMMANDS, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } = await import("./lib/help.mjs");
 if (argv[0] === "--help" || argv[0] === "-h" || (argv[0] === "help" && (!argv[1] || !COMMANDS[argv[1]]))) {
   console.log(formatTopLevelHelp());
   process.exit(0);
@@ -39,93 +18,83 @@ if ((argv[0] === "help" || argv[0] === "--help" || argv[0] === "-h") && argv[1] 
   console.log(formatCommandHelp(COMMANDS[argv[1]]));
   process.exit(0);
 }
-if (COMMANDS[argv[0]]) {
-  const isHelp = (argv[0] === "subagent" || argv[0] === "dispatch")
-    ? (argv[1] === "--help" || argv[1] === "-h")
-    : (argv.slice(1).includes("--help") || argv.slice(1).includes("-h"));
-  if (isHelp) {
-    console.log(formatCommandHelp(COMMANDS[argv[0]]));
-    process.exit(0);
-  }
+// `subagent` and `dispatch` take a brief, which may itself say "--help": only the word right after the command counts.
+if (COMMANDS[argv[0]] && (["subagent", "dispatch"].includes(argv[0]) ? asksHelp(argv.slice(1, 2)) : asksHelp(argv.slice(1)))) {
+  console.log(formatCommandHelp(COMMANDS[argv[0]]));
+  process.exit(0);
 }
-if (argv[0] === "launch") {
-  const result = await launch(argv.slice(1));
-  console.log(JSON.stringify(result));
-  process.exit(result.ok ? 0 : 1);
-}
-if (argv[0] === "statusline" && !argv.includes("--help") && !argv.includes("-h")) { statusline(); process.exit(0); } // before anything else: it runs on every Claude turn
-if (argv.includes("--version")) { console.log(ROUTR_VERSION); process.exit(0); }
-if (argv[0] === "update" && argv.includes("--background")) { await backgroundUpdate(); process.exit(0); }
-if (argv[0] === "update" && !argv.includes("--help") && !argv.includes("-h")) { const r = await update({ checkOnly: argv.includes("--check"), force: argv.includes("--force") }); console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1); }
-if (argv[0] === "key" && argv[1] === "set" && !argv.includes("--help") && !argv.includes("-h")) { const r = await setKey({ verify: !argv.includes("--no-verify") }); console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1); }
-if (argv[0] === "uninstall" && !argv.includes("--help") && !argv.includes("-h")) { const r = await uninstall(argv.slice(1)); if (argv.includes("--json")) console.log(JSON.stringify(r, null, 1)); else if (r.error) console.error(r.error); else if (r.dry_run) console.log(JSON.stringify(r, null, 1)); else if (r.note) console.log(r.note); process.exit(r.ok ? 0 : 1); }
-if (((argv[0] === "doctor" && argv.includes("--fix")) || argv[0] === "setup") && !argv.includes("--help") && !argv.includes("-h")) { const r = await setup(argv.slice(1)); if (argv.includes("--json")) console.log(JSON.stringify(r, null, 1)); else if (!r.ok) console.error(r.error); process.exit(r.ok ? 0 : 1); }
-if (argv[0] === "telemetry" && !argv.includes("--help") && !argv.includes("-h")) {
-  const ci = argv.indexOf("--config"), cfg = ci > 0 ? argv[ci + 1] : undefined;
-  const words = argv.slice(1).filter((a, i) => !a.startsWith("--") && argv[i] !== "--config"); // flags in any order
-  const st = telemetryStatus(loadConfig(cfg).config);
-  const r = words[0] !== "send" ? telemetryCommand(words, loadConfig(cfg).config, cfg)
-    : !st.on ? { ok: false, error: `telemetry is off (${st.why_off}): nothing was sent` }
-    : await sendRows({ all: argv.includes("--all") }).catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) }));
-  console.log(JSON.stringify(r, null, 1)); process.exit(r.ok ? 0 : 1);
-}
-if (argv[0] === "feedback" && !argv.includes("--help") && !argv.includes("-h")) {
+
+const print = (r, indent) => console.log(JSON.stringify(r, null, indent));
+const failed = (e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) });
+const { loadConfig } = await import("./lib/config.mjs");
+
+// The commands that act, each given its own arguments as typed. Each returns the exit code.
+const ACT = {
+  launch: async (args) => { const r = await (await import("./lib/launch.mjs")).launch(args); print(r); return r.ok ? 0 : 1; },
+  update: async (args) => {
+    const u = await import("./lib/update.mjs");
+    if (args.includes("--background")) { await u.backgroundUpdate(); return 0; }
+    const r = await u.update({ checkOnly: args.includes("--check"), force: args.includes("--force") }); print(r); return r.ok ? 0 : 1;
+  },
+  key: async (args) => { const r = await (await import("./lib/key.mjs")).setKey({ verify: !args.includes("--no-verify") }); print(r); return r.ok ? 0 : 1; },
+  uninstall: async (args) => {
+    const r = await (await import("./lib/uninstall.mjs")).uninstall(args);
+    if (args.includes("--json")) print(r, 1); else if (r.error) console.error(r.error); else if (r.dry_run) print(r, 1); else if (r.note) console.log(r.note);
+    return r.ok ? 0 : 1;
+  },
+  setup: async (args) => { const r = await (await import("./lib/setup.mjs")).setup(args); if (args.includes("--json")) print(r, 1); else if (!r.ok) console.error(r.error); return r.ok ? 0 : 1; },
+  telemetry: async (args) => {
+    const { sendRows, telemetryCommand, telemetryStatus } = await import("./lib/telemetry.mjs");
+    const ci = args.indexOf("--config"), cfg = ci >= 0 ? args[ci + 1] : undefined;
+    const words = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--config"); // flags in any order
+    const { config } = loadConfig(cfg);
+    const st = telemetryStatus(config);
+    const r = words[0] !== "send" ? telemetryCommand(words, config, cfg)
+      : !st.on ? { ok: false, error: `telemetry is off (${st.why_off}): nothing was sent` }
+      : await sendRows({ all: args.includes("--all") }).catch(failed);
+    print(r, 1); return r.ok ? 0 : 1;
+  },
   // The text is an argument, never read from stdin: a pipe left open would hang.
-  const r = await sendFeedback(argv.slice(1).join(" "));
-  console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1);
-}
-if (argv[0] === "skill" && argv[1] === "install" && !argv.includes("--help") && !argv.includes("-h")) { console.log(JSON.stringify(installSkill({ dryRun: argv.includes("--dry-run") }), null, 1)); process.exit(0); }
-const flag = (name, repeatable = false) => {
-  if (repeatable) {
-    const r = [];
-    for (let i; (i = argv.indexOf(name)) >= 0; ) r.push(argv.splice(i, 2)[1]);
-    return r;
-  }
-  const i = argv.indexOf(name);
-  return i >= 0 ? argv.splice(i, 2)[1] : undefined;
+  feedback: async (args) => { const r = await (await import("./lib/telemetry.mjs")).sendFeedback(args.join(" ")); print(r); return r.ok ? 0 : 1; },
+  skill: async (args) => { print((await import("./lib/skill-install.mjs")).installSkill({ dryRun: args.includes("--dry-run") }), 1); return 0; },
 };
-const configPath = flag("--config");
+// Which of those a command line reaches: `key set` and `skill install` only with their word; `doctor --fix` is setup.
+const acting = (a) => (a[0] === "key" ? a[1] === "set" : a[0] === "skill" ? a[1] === "install" : a[0] === "doctor" ? a.includes("--fix") : a[0] !== "update" && Object.hasOwn(ACT, a[0]));
+
+if (argv[0] === "launch") process.exit(await ACT.launch(argv.slice(1)));
+if (argv.includes("--version")) { console.log((await import("./lib/version.mjs")).ROUTR_VERSION); process.exit(0); }
+if (argv[0] === "update") process.exit(await ACT.update(argv.slice(1)));
+if (acting(argv)) process.exit(await ACT[argv[0] === "doctor" ? "setup" : argv[0]](argv.slice(argv[0] === "key" || argv[0] === "skill" ? 2 : 1)));
+
+// The advice and file commands. `--config` and `--headroom` may stand anywhere on the line, as they always could.
+// `take` removes the first `name <value>` from `argv` and returns the value; `takeAll` every one.
+const take = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv.splice(i, 2)[1] : undefined; };
+const takeAll = (name) => { const r = []; while (argv.includes(name)) r.push(take(name)); return r; };
+const configPath = take("--config");
 // --headroom cursor=0.97 : usage the caller read itself (repeatable); it overrides any reading
-const given = {}; for (let h; (h = flag("--headroom")); ) { const [k, v] = h.split("="); if (k && !Number.isNaN(+v)) given[k] = +v; }
+const given = {}; for (let h; (h = take("--headroom")); ) { const [k, v] = h.split("="); if (k && !Number.isNaN(+v)) given[k] = +v; }
 const [mode, ...rest] = argv;
+const loaded = () => loadConfig(configPath);
 // At most once a day this starts a detached background updater; it never delays or changes the command itself.
-if (["subagent", "dispatch", "check", "launch", "record", "assess", "share", "doctor", "usage"].includes(mode)) maybeAutoUpdate(loadConfig(configPath).config);
+if (["subagent", "dispatch", "check", "record", "assess", "share", "doctor", "usage"].includes(mode)) (await import("./lib/update.mjs")).maybeAutoUpdate(loaded().config);
 
-if (mode === "check") { console.log(JSON.stringify(await checkCommand({ brief: flag("--brief"), report: flag("--report") }))); process.exit(0); }
-if (mode === "assess") { console.log(assessCommand({ ledger: flag("--ledger") }, loadConfig(configPath).config)); process.exit(0); }
-if (mode === "share") { console.log(shareCommand({ ledger: flag("--ledger"), out: flag("--out") }, loadConfig(configPath).config)); process.exit(0); }
-if (mode === "record") {
+const commands = () => import("./lib/commands.mjs");
+const ADVISE = {
+  check: async () => print(await (await commands()).checkCommand({ brief: take("--brief"), report: take("--report") })),
+  assess: async () => console.log((await commands()).assessCommand({ ledger: take("--ledger") }, loaded().config)),
+  share: async () => console.log((await commands()).shareCommand({ ledger: take("--ledger"), out: take("--out") }, loaded().config)),
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]
-  const o = Object.fromEntries(["--advice", "--subscription", "--model", "--effort", "--level", "--verdict", "--check", "--seconds", "--attempts", "--note", "--ledger", "--report", "--project"].map((f) => [f.slice(2), flag(f)]));
-  console.log(JSON.stringify(recordCommand(o, flag("--subagent", true)))); process.exit(0); // never blocks the agent
-}
-if (mode === "usage") { console.log(JSON.stringify(await usageCommand(rest, loadConfig(configPath).config, given), null, 1)); process.exit(0); } // never blocks an agent
-if (mode === "doctor") { await doctor({ json: rest.includes("--json"), configPath }); process.exit(0); }
+  record: async () => {
+    const o = Object.fromEntries(["advice", "subscription", "model", "effort", "level", "verdict", "check", "seconds", "attempts", "note", "ledger", "report", "project"].map((f) => [f, take(`--${f}`)]));
+    print((await commands()).recordCommand(o, takeAll("--subagent"))); // never blocks the agent
+  },
+  usage: async () => print(await (await commands()).usageCommand(rest, loaded().config, given), 1), // never blocks an agent
+  doctor: async () => (await import("./lib/doctor.mjs")).doctor({ json: rest.includes("--json"), configPath }),
+};
+if (ADVISE[mode]) { await ADVISE[mode](); process.exit(0); }
 if (mode !== "subagent" && mode !== "dispatch") { console.error(formatUnknownUsage()); process.exit(2); }
-let brief = rest.join(" ").trim();
-if (!brief && !process.stdin.isTTY) { try { brief = readFileSync(0, "utf8").trim(); } catch {} }
-if (!brief) { console.error("routr: empty brief"); process.exit(2); }
 
-const { config, notes: configNotes } = loadConfig(configPath);
-const out = { id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: createHash("sha256").update(brief).digest("hex").slice(0, 12), brief_chars: brief.length };
-let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };
-// Each source's newest reading, read while Jev answers; a slow source (Cursor's screen) is a snapshot refreshed in the background.
-const usageP = mode === "dispatch" ? readUsage(Object.keys(config.subscriptions), given).catch(() => []) : null;
-try {
-  const r = await ask({ task: { brief } }, questions, undefined, 10000);
-  advice = advise(r.answers, config);
-  // Raw judgments travel with the advice, so preferences can be re-evaluated later without asking again.
-  const a = r.answers;
-  Object.assign(out, { jev_model: r.model, ms: Math.round(r.latencyMs), answers: { level: { score: a.level.score, confidence: a.level.confidence, probabilities: a.level.probabilities }, work_type: { choice: a.work_type.choice, confidence: a.work_type.confidence }, high_blast_radius: a.high_blast_radius.noul } }); // fact probabilities are in `facts`
-} catch (e) {
-  advice.notes.push(`Router unavailable (${String(e?.message ?? e).slice(0, 120)}). "${config.fallback_level}" is only the user's fallback: judge the level yourself.`);
-  out.fallback = true;
-}
-Object.assign(out, { headline: headline(advice), ...advice, meaning: MEANING[advice.level] });
-if (mode === "dispatch") {
-  try { out.subscriptions = rankSubscriptions(advice.level, await usageP, config); }
-  catch (e) { out.subscriptions = { most_room: null, ranked: [], excluded: [], note: `could not read usage: ${String(e?.message ?? e).slice(0, 120)}` }; }
-  // An unconfigured routr ranks nothing; say why, so the lead tells the user instead of guessing (seen in a real session).
-  if (!Object.keys(config.subscriptions).length) out.subscriptions.note = "no subscriptions are configured, so none is ranked: the user has not run `routr setup` yet. Tell them, and ask which subscription to use meanwhile";
-}
-console.log(JSON.stringify({ ...out, rule: RULE[mode], ...(configNotes.length ? { config_notes: configNotes } : {}) }));
+let brief = rest.join(" ").trim();
+if (!brief && !process.stdin.isTTY) { try { brief = (await import("node:fs")).readFileSync(0, "utf8").trim(); } catch {} }
+if (!brief) { console.error("routr: empty brief"); process.exit(2); }
+print(await (await commands()).adviseCommand(mode, brief, loaded(), given));
