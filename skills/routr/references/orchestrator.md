@@ -101,7 +101,8 @@ object describing what it did.
   did, in order. A `needs_human` result is yours to resolve (`herdr notification show`), not to retry.
 - `prompted` means the worker took the prompt and started, not that it finished. Waiting for the work is step 4.
 - When herdr says the prompt stalled, launch looks at the pane with the agent idle. The task sitting unsent in the
-  input box (Cursor shows `→ [Pasted text #1 +N lines]`) gets Enter, once (`steps` then holds `prompt_enter`); a task
+  input box (Cursor shows `→ [Pasted text #1 +N lines]`, and no other `→` row is on screen) gets Enter, once (`steps`
+  then holds `prompt_enter`; it counts as started only if the agent then works); a task
   nowhere on the pane is sent once more (`prompt_retry`). If the prompt may be on the pane in any other way, launch
   never sends it twice: the state is not `prompted` and `warnings` holds "Prompt may have been submitted". Read the
   pane before you do anything: press Enter if the task sits unsent in the input box (`herdr pane send-keys <pane>

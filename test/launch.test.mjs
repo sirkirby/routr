@@ -752,17 +752,20 @@ test("a task pasted but never submitted gets Enter once, never a second send; on
   expect(unsentInInput(sent, "→")).toBe(false); // the transcript shows it; the box is empty
   expect(unsentInInput("  → You are a routr worker. Your first action", "→")).toBe(true); // a paste not folded away
   expect(unsentInInput(unsent, undefined)).toBe(false); // a harness with no measured input mark: never
+  // From the review of #39: Cursor marks the chosen row of a decision list, or of a / or @ palette, with the same →.
+  expect(unsentInInput("  Allow this command?\n  → Run once (enter)\n    Skip\n  → [Pasted text #1 +21 lines]", "→")).toBe(false);
+  expect(unsentInInput("  → [Pasted text #1 +21 lines]\n  → /model  switch model", "→")).toBe(false);
   const root = scratch("cursor-enter"), source = join(root, "source.json");
   writeFileSync(source, '{"model":"original"}');
-  const drive = async (shown) => {
+  const drive = async (shown, after = "working") => {
     let prompts = 0, entered = 0, started = false;
     const f = fakeHerdr({ kind: "cursor", reply: (a) => {
       if (a[1] === "run") started = true;
       if (a[1] === "prompt") { prompts++; return herdrError("agent_prompt_stalled"); }
       if (started && a[1] === "read") return herdrOK({ text: prompts ? shown : "Welcome to Cursor\n❯" });
       if (a[1] === "send-keys" && prompts) { entered++; return herdrOK({}); }
-      if (a[1] === "wait" && entered) return herdrOK({ agent: { agent_status: "working" } });
-      if (a[1] === "get") return herdrOK({ agent: { agent: "cursor", agent_status: entered ? "working" : "idle", interactive_ready: true } });
+      if (a[1] === "wait" && entered) return after === "working" ? herdrOK({ agent: { agent_status: "working" } }) : herdrError("timeout");
+      if (a[1] === "get") return herdrOK({ agent: { agent: "cursor", agent_status: entered ? after : "idle", interactive_ready: true } });
     } });
     const r = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--task", "Task"], { ...f.deps, cursorConfigSource: source, tempRoot: root });
     return { r, prompts, entered };
@@ -774,6 +777,9 @@ test("a task pasted but never submitted gets Enter once, never a second send; on
     const y = await drive(sent); // a trace, but not in the box: a person's call, as before
     expect(y).toMatchObject({ prompts: 1, entered: 0 });
     expect(y.r.state).not.toBe("prompted");
+    const z = await drive(unsent, "idle"); // Enter pressed, but the agent never started: not prompted, never sent again
+    expect(z).toMatchObject({ prompts: 1, entered: 1 });
+    expect(z.r.state).not.toBe("prompted");
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
