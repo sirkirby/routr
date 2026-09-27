@@ -29,7 +29,7 @@ model. routr spreads the work across what you have, and starts each piece at the
 3. **Judge.** When the worker reports, `routr check` takes a first read of the report against the brief. The lead
    then runs its own check, which is what decides.
 4. **Fix.** Work that falls short goes back to the same worker. If it falls short again, the lead relaunches it one
-   level up. Starting high "to be safe" is not needed, because the loop catches what a lower level misses.
+   level up. There is no need to start high "to be safe": work that falls short comes back through this loop.
 5. **Record.** `routr record` writes one line to a local ledger: what was advised, what was chosen, how it turned
    out, how many attempts it took. `routr assess` reads it back as advice about your own settings: what each
    subscription has handled, which of your preferences your agents keep overriding, whether a reserve is too tight.
@@ -159,8 +159,8 @@ more window (Codex: from its protocol, not yet observed on a seat).
 ## Evidence
 
 [docs/evidence.md](docs/evidence.md) shows how the decisions and the scoring were measured. In short: the facts
-routr reads from a brief are decisive and come out the same every time; the level is right on 59 of 68 labelled
-briefs; the judge questions separate good worker reports from flawed ones; workers on all four harnesses follow the
+routr reads from a brief are decisive and came out the same on 107 of 108 repeat readings; the level is right on 29 of
+36 real worker tasks (and on 53 to 54 of 68 short labelled briefs, where it runs high); the judge questions separate good worker reports from flawed ones; workers on all four harnesses follow the
 skill; and end-to-end runs with a real lead delivered verified work across subscriptions. routr does not estimate
 or manage context; harnesses own that.
 
