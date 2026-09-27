@@ -102,6 +102,24 @@ test("pane reads extract text from JSON without mistaking envelope fields for pa
   expect(() => paneText({ result: { type: "unknown" } })).toThrow("Unrecognized");
 });
 
+test("launch --advice warns when the advice was given on a different text than the task it sends", async () => {
+  const { briefSha } = await import("../src/lib/ledger.mjs");
+  const dir = scratch("launch-advice"), task = join(dir, "task.md"), advice = join(dir, "advice.json");
+  writeFileSync(task, "Fix the flaky retry test in src/retry.mjs.\n");
+  const go = (a) => launch([...launchArgs, "--task-file", task, "--advice", a, "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); } });
+  writeFileSync(advice, JSON.stringify({ brief_sha: briefSha("Fix the flaky retry test in src/retry.mjs.") })); // dispatch trims, as launch does
+  const same = await go(advice);
+  expect(same.advice).toEqual({ file: advice, matches: true });
+  expect(same.warnings.join(" ")).not.toContain("different text");
+  writeFileSync(advice, JSON.stringify({ brief_sha: briefSha("Retry test: see the task file for paths.") })); // a summary, as leads wrote 8 times
+  const other = await go(advice);
+  expect(other.advice).toEqual({ file: advice, matches: false });
+  expect(other.warnings.join(" ")).toContain("was given on a different text than this task");
+  const unread = await go(join(dir, "missing.json"));
+  expect(unread.warnings.join(" ")).toContain("could not read it");
+  expect(unread.advice).toBeUndefined();
+});
+
 test("launch options are validated before any pane operation", () => {
   const base = ["--kind", "claude", "--name", "worker"];
   for (const extra of [["--timeout", "0"], ["--timeout", "NaN"], ["--trust", "yes"], ["--direction", "left"], ["--task", "a", "--task-file", "b"], ["--model"], ["--bogus"], ["--name", "duplicate"]])

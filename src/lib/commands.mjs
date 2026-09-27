@@ -1,13 +1,13 @@
 // The advice commands (`subagent`, `dispatch`), the file-and-ledger commands, and `usage`: `check`, `record`, `assess`, `share`. Each takes its parsed flags and returns what to
 // print, so a test can drive it without a process. The pure parts stay where they were (check.mjs, ledger.mjs); this is
 // the I/O around them. None of them may fail an agent: an error becomes output, and the caller exits 0.
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { advise, headline } from "./advise.mjs";
 import { readReport } from "./check.mjs";
 import { ask } from "./jev.mjs";
-import { append, assess, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./ledger.mjs";
+import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
 import { CHECK_VERSION, checkQuestions, MEANING, questions, VERSION } from "./questions.mjs";
@@ -34,7 +34,7 @@ export function parseHeadroom(values) {
 // `routr subagent|dispatch "<brief>"`: Jev's reading of the brief with the user's preferences, and for dispatch the
 // subscriptions ranked by usage, read while Jev answers. An unreachable Jev still gets an answer: the user's fallback.
 export async function adviseCommand(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read = readUsage } = {}) {
-  const out = { id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: createHash("sha256").update(brief).digest("hex").slice(0, 12), brief_chars: brief.length };
+  const out = { id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length };
   let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };
   // Each source's newest reading, read while Jev answers; a slow source (Cursor's screen) is a snapshot refreshed in the background.
   const usageP = mode === "dispatch" ? read(enabledSubscriptions(config), given).catch(() => []) : null; // a turned-off one is not read
@@ -78,11 +78,11 @@ export function assessCommand({ ledger = LEDGER_PATH }, config) {
 }
 
 // `o` holds record's flags by name; the advice JSON comes from `--advice <file>` or stdin.
-export function recordCommand(o, subagentFlags = []) {
+export function recordCommand(o, subagentFlags = [], config = null) {
   try {
     const advice = JSON.parse(readFileSync(o.advice ?? 0, "utf8"));
     const subagents = [...(o.report ? parseReportSubagents(readFileSync(o.report, "utf8")) : []), ...subagentFlags];
-    append(toEntry(advice, { ...o, subagents }), o.ledger ?? LEDGER_PATH);
+    append(toEntry(advice, { ...o, subagents }, config), o.ledger ?? LEDGER_PATH);
     return { recorded: advice.id, ledger: o.ledger ?? LEDGER_PATH };
   } catch (e) { return { recorded: null, error: short(e) }; }
 }

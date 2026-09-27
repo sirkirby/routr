@@ -95,7 +95,7 @@ const ADVISE = {
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]
   record: async () => {
     const o = Object.fromEntries(["advice", "subscription", "model", "effort", "level", "verdict", "check", "seconds", "attempts", "note", "ledger", "report", "project"].map((f) => [f, take(`--${f}`)]));
-    print((await commands()).recordCommand(o, takeAll("--subagent"))); // never blocks the agent
+    print((await commands()).recordCommand(o, takeAll("--subagent"), loaded().config)); // never blocks the agent; the config resolves a "default" effort
   },
   usage: async () => print(withNotes(await (await commands()).usageCommand(rest, loaded().config, given)), 1), // never blocks an agent
   doctor: async () => (await import("./lib/doctor.mjs")).doctor({ json: rest.includes("--json"), configPath }),
@@ -103,7 +103,14 @@ const ADVISE = {
 if (ADVISE[mode]) { await ADVISE[mode](); process.exit(0); }
 if (mode !== "subagent" && mode !== "dispatch") { console.error(formatUnknownUsage()); process.exit(2); }
 
-let brief = rest.join(" ").trim();
+// A word that looks like a flag these commands do not take (--json) is never quietly advised on: alone, it is set aside
+// and the brief is read from stdin; beside other words it stays in the brief, and the answer says so. (Found
+// 2026-09-26: `routr subagent --json < brief.txt` gave advice about the text "--json".)
+const flagLike = rest.filter((w) => /^--?[a-z][\w-]*$/i.test(w));
+if (flagLike.length) inputNotes.push(flagLike.length === rest.length
+  ? `${flagLike.join(" ")}: not ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} takes, so ignored; the brief is the text, or stdin`
+  : `${flagLike.join(" ")} looks like a flag routr ${mode} does not take; it was read as part of the brief`);
+let brief = flagLike.length === rest.length ? "" : rest.join(" ").trim();
 if (!brief && !process.stdin.isTTY) { try { brief = (await import("node:fs")).readFileSync(0, "utf8").trim(); } catch {} }
-if (!brief) { console.error("routr: empty brief"); process.exit(2); }
+if (!brief) { console.error(`routr: empty brief${flagLike.length ? ` (${inputNotes.at(-1)})` : ""}`); process.exit(2); }
 print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given)));

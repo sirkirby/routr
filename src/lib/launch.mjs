@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
 import { HARNESSES, kindError, notReady, plan } from "./harnesses.mjs";
+import { briefSha } from "./ledger.mjs";
 import { OFF } from "./wording.mjs";
 import { clean, deadline, paneText, paneView, quote, runHerdr, SHELLS, shellFamily, shellPrompt, waitForShell } from "./herdr.mjs";
 import { home } from "./runtime.mjs";
@@ -103,7 +104,7 @@ export function permissiveConfirm(text, confirm) {
 
 export function parseLaunchArgs(args) {
   const o = { trust: "ask", timeout: 120000, dryRun: false };
-  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "direction", "task", "task-file", "trust", "timeout"];
+  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "direction", "task", "task-file", "trust", "timeout", "advice"];
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
@@ -155,6 +156,17 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     if (task != null && !task.trim()) throw new Error("The task must not be empty");
     const prompt = task == null ? null : composePrompt(task);
     out.prompt_chars = prompt?.length ?? null;
+    // The advice must be about the task the worker gets. Of 42 dispatch calls in the maintainer's ledger (2026-09-26),
+    // at least 12 were given a summary or a part of the task, and routr's facts then described that text instead
+    // (one summary said the paths were "in the task file", so routr read that the brief named no place to work).
+    if (o.advice != null && task != null) {
+      let adv = null; try { adv = JSON.parse(readFileSync(resolve(o.advice), "utf8")); } catch (e) { out.warnings.push(`--advice ${o.advice}: could not read it (${e.message}); nothing was compared`); }
+      if (adv) {
+        const matches = adv.brief_sha === briefSha(task);
+        out.advice = { file: o.advice, matches };
+        if (!matches) out.warnings.push("The advice in --advice was given on a different text than this task, so its facts and level describe that text, not what the worker receives. Ask routr about the task itself: routr dispatch < <the task file>.");
+      }
+    }
     // Known once the pane's shell has been seen; until then, this platform's usual shell.
     let shell = process.platform === "win32" ? "powershell" : "posix";
     const startArgs = (pane, timeout) => o.kind === "cursor" && SHELLS[shell].cursor

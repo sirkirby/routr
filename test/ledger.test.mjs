@@ -314,3 +314,19 @@ test("record --project labels the row, assess answers on an unreadable ledger, a
   expect(bad.exitCode).toBe(0);
   expect(bad.stdout.toString()).toContain("could not read the ledger");
 }, 20000); // several CLI spawns: over 5 s when the machine is busy (seen with four test runs at once)
+
+test("record keeps the effort a run actually had: from the model id on Cursor and Antigravity, from the config for \"default\"", async () => {
+  const { resolveEffort, toEntry } = await import("../src/lib/ledger.mjs");
+  const config = { subscriptions: { codex: { default_effort: "medium" }, claude: { default_effort: "high" } } };
+  // As the ledger held them (2026-09-26): the lead wrote none or "default" on the harnesses whose ids carry the effort.
+  expect(resolveEffort({ subscription: "cursor", model: "grok-4.7-high", effort: "default" }, config)).toEqual({ effort: "high", effort_from: "model id" });
+  expect(resolveEffort({ subscription: "agy", model: "gemini-3.8-flash-medium", effort: "none" }, config)).toEqual({ effort: "medium", effort_from: "model id" });
+  expect(resolveEffort({ subscription: "agy", model: "gemini-3.8-flash-low" }, config)).toEqual({ effort: "low", effort_from: "model id" });
+  expect(resolveEffort({ subscription: "cursor", model: "composer-2.5", effort: "default" }, config)).toEqual({ effort: "default", effort_from: "given" }); // no effort in the id: kept as written
+  expect(resolveEffort({ subscription: "codex", model: "gpt-6-sol", effort: "default" }, config)).toEqual({ effort: "medium", effort_from: "config default" });
+  expect(resolveEffort({ subscription: "codex", model: "gpt-6-sol", effort: "none" }, config)).toEqual({ effort: "none", effort_from: "given" }); // a level Codex takes
+  expect(resolveEffort({ subscription: "codex", model: "gpt-6-sol", effort: "high" }, config)).toEqual({ effort: "high", effort_from: "given" });
+  expect(resolveEffort({ subscription: "kiro", model: "auto", effort: "default" }, {})).toEqual({ effort: "default", effort_from: "given" }); // nothing configured: kept
+  const e = toEntry({ id: "a", level: "basic", facts: {} }, { subscription: "cursor", model: "grok-4.7-high", effort: "none", verdict: "done", check: "pass" }, config);
+  expect(e.chose).toMatchObject({ effort: "high", effort_from: "model id" });
+});

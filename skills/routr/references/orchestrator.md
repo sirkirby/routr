@@ -16,7 +16,11 @@ while you do something else or your own subscription is close to its reserve.
 
 ## 2. Ask for the facts, then decide
 
-    routr dispatch "<the brief you are about to hand over>"
+    routr dispatch < <the task file you will launch with> > <scratch>/advice-<n>.json
+
+Ask about the task itself, word for word: the file you will pass to `launch --task-file`. A summary gets advice about
+the summary (in the maintainer's ledger, at least 12 of 42 dispatch calls were given one, and routr's facts then
+described text the worker never saw). `launch --advice` checks this for you.
 
 First, the brief: if `states_check` or `standalone` reads `no`, fix the brief and ask again. A worker cannot ask you
 questions.
@@ -79,7 +83,8 @@ dialog, waits until the agent is ready, wraps your task in the opening and closi
 object describing what it did.
 
     routr launch --kind <claude|codex|cursor|agy|kiro> --name <agent-name> \
-        --cwd <repo> --worktree <branch> --model <id> [--effort <level>] [--task-file <path>] [--trust ask|auto] [--dry-run]
+        --cwd <repo> --worktree <branch> --model <id> [--effort <level>] [--task-file <path>] [--advice <file>] \
+        [--trust ask|auto] [--dry-run]
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
   `--effort` where the harness takes it separately. On Antigravity the model id already carries it, and routr says so
@@ -90,6 +95,8 @@ object describing what it did.
   before any prompt.
 - `--task-file` holds your task alone (parts 2 and 3). Without it the pane is left ready and unprompted, for you to
   prompt yourself.
+- `--advice` takes the advice file you saved from `routr dispatch`. launch compares the text that advice was about
+  with the task it sends, and warns when they differ (`advice.matches` is then `false`): ask routr about the task.
 - `--trust` defaults to `ask`: at a folder-trust dialog routr stops, leaves the pane alive, and reports
   `needs_human` with what the dialog says. Pass `--trust auto` only for a directory you created or a worktree of the
   repository the user already has you working in. With `auto` you are vouching for the folder; routr is not judging it.
@@ -158,6 +165,8 @@ ledger.
         --check <pass|fail|none> [--report <file>] [--subagent "<subtask> → <level> → <model>"] \
         [--attempts <n>] [--seconds <n>] [--note "<why you went against the advice, or what went wrong>"]
 
+`--effort` is what you launched with. Write `default` if you passed none: routr records your configured
+`default_effort` for that subscription, and on Cursor or Antigravity it reads the effort from the model id.
 `--verdict` is the worker's own VERDICT line. `--check` is your verification. Pass the saved report with `--report` so
 the worker's subagent choices are recorded too. `--attempts` counts the tries it took (1 means accepted first time);
 when you escalated, record the level and model that finally delivered. Record failures and cut-off workers too: they are

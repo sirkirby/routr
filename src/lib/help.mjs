@@ -43,6 +43,7 @@ export const COMMANDS = {
       { name: "--model", arg: "<id>", description: "model id", required: "required unless --dry-run" },
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
       { name: "--effort", arg: "<level>", description: "reasoning effort", required: false },
+      { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch warns when it was given on a different text than this task", required: false },
       { name: "--pane", arg: "<id>", description: "existing herdr pane id to run in", required: false },
       { name: "--worktree", arg: "<branch>", description: "give the worker its own git worktree, opened as a workspace nested under the repo (the rule for workers)", required: false },
       { name: "--copy", arg: "<path>", description: "copy an untracked file or folder from the repo into the worktree (repeatable; with --worktree)", required: false, repeatable: true },
@@ -151,7 +152,7 @@ export const COMMANDS = {
     flags: [
       { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")})`, required: true },
       { name: "--model", arg: "<name>", description: "model chosen", required: true },
-      { name: "--effort", arg: "<level>", description: "reasoning effort chosen", required: true },
+      { name: "--effort", arg: "<level>", description: "reasoning effort chosen; \"default\" is recorded as your configured default_effort, and on Cursor or Antigravity the effort is read from the model id", required: true },
       { name: "--verdict", arg: "<done|partial|blocked>", description: "worker outcome verdict", required: true },
       { name: "--check", arg: "<pass|fail|none>", description: "verification outcome", required: true },
       { name: "--advice", arg: "<file>", description: "path to advice JSON file (or pipe on stdin)", required: false, default: "stdin" },
