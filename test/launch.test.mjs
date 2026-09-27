@@ -777,6 +777,11 @@ test("a task pasted but never submitted gets Enter once, never a second send; on
     const y = await drive(sent); // a trace, but not in the box: a person's call, as before
     expect(y).toMatchObject({ prompts: 1, entered: 0 });
     expect(y.r.state).not.toBe("prompted");
+    // No trace in the look: the resend follows it directly, no other read between (from the verification of #39).
+    const w = await drive("  Cursor Agent\n\n  → Plan, search, build anything");
+    const look = w.r.command.findIndex((c) => c.includes("recent-unwrapped"));
+    expect(w.prompts).toBe(2);
+    expect(w.r.command[look + 1]).toContain("agent prompt");
     const z = await drive(unsent, "idle"); // Enter pressed, but the agent never started: not prompted, never sent again
     expect(z).toMatchObject({ prompts: 1, entered: 1 });
     expect(z.r.state).not.toBe("prompted");

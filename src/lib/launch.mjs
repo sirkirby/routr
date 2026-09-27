@@ -350,8 +350,10 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         const seen = idle ? clean(paneText((await call(["pane", "read", out.pane, "--source", "recent-unwrapped", "--lines", "1000"])).data)) : "";
         const dialog = trustDialog(seen) || permissiveConfirm(seen, HARNESSES[o.kind].confirm);
         const mark = HARNESSES[o.kind].inputLine;
-        // The visible screen for the box, then the agent's state again, then at once the key: still idle, nothing new.
-        const unsent = idle && !dialog && mark && unsentInInput(clean(paneText((await call(["pane", "read", out.pane, "--source", "visible"])).data)), mark)
+        // Only when the look above found a trace of the prompt (an unsent task is one), so the resend below still follows
+        // that look with nothing in between (from the verification of #39). The visible screen for the box, then the
+        // agent's state again, then at once the key: still idle, nothing new.
+        const unsent = idle && !dialog && mark && promptTrace(seen) && unsentInInput(clean(paneText((await call(["pane", "read", out.pane, "--source", "visible"])).data)), mark)
           && (await call(["agent", "get", out.pane], true)).data?.result?.agent?.agent_status === "idle";
         if (unsent) {
           step("prompt_enter", true, "herdr said the prompt stalled and it sat unsent in the input box: pressed Enter once");
