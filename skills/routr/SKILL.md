@@ -61,8 +61,8 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   brief before you send it.
 - `level`: a one-word summary: `basic` (rote or well-specified), `standard` (must find something out or choose an
   approach), or `strong` (a wrong or shallow result would be expensive and hard to notice). `sure: false` means routr
-  was torn between the two levels in `between`; it then reports the more likely one. On 36 real tasks that was right 29
-  times, and when it was wrong it was one level too low. routr never names a model.
+  was torn between the two levels in `between`; it then reports the more likely one (the lower, if they are equally likely). On 36 real
+  tasks that was right 29 times, and when it was wrong it was one level too low. routr never names a model.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
 - `input_notes` (only when present): something in what you passed that routr did not take as you may have meant: a
   `--headroom` it could not read (ignored), a flag-like word such as `--json` given as the whole brief (set aside, and

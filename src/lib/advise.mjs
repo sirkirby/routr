@@ -29,7 +29,13 @@ export function advise(a, c) {
     if (reading === "unclear") unclear.push(k);
     if (f.about === "brief" && reading === "no") notes.push(`Fix the brief first: ${f.say[1]}.`);
   }
-  if (!sure) notes.push(`routr is between ${between ? between.join(" and ") : "levels"} (${LEVELS.map((l, i) => `${l} ${pct(s.probabilities?.[i])}`).join(", ")}). Start at ${level}, the more likely: on 36 real tasks it was the right level 29 times, and when it was wrong it was one level too low. Go higher if a fact calls for it.`);
+  // Said as it was decided: the more likely of two, the lower of two equally likely, or the rounded score when Jev gave
+  // no spread at all (from the review of #42).
+  const tie = between && probs[topTwo[0]] === probs[topTwo[1]];
+  if (!sure) notes.push(!between ? `routr is unsure of the level. Start at ${level}, its score rounded. Go higher if a fact calls for it.`
+    : `routr is between ${between.join(" and ")} (${LEVELS.map((l, i) => `${l} ${pct(s.probabilities?.[i])}`).join(", ")}). ${tie
+      ? `Start at ${level}: the two are equally likely, so the lower one.`
+      : `Start at ${level}, the more likely: on 36 real tasks it was the right level 29 times, and when it was wrong it was one level too low.`} Go higher if a fact calls for it.`);
   if (unclear.length) notes.push(`routr could not tell from the brief: ${unclear.join(", ")}. You can: you know the codebase.`);
   // Preferences for every kind of work Jev finds plausible, so an unsure work type does not hide one.
   const kinds = Object.entries(a.work_type.probabilities ?? { [a.work_type.choice]: 1 }).filter(([, p]) => p >= 0.3).map(([k]) => k);
