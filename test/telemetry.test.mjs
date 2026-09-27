@@ -1,10 +1,42 @@
 // telemetry.mjs: what is shared, when, and that nothing leaks
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 
 import { COMMANDS } from "../src/lib/help.mjs";
-import { cliEnv, row, scratch } from "./helpers.mjs";
+import { cliEnv, row, scratch, SCRIPT } from "./helpers.mjs";
+
+test("telemetry status reads the last daily send and explains scheduling without writing", async () => {
+  const home = scratch("telemetry-status"), env = cliEnv(home, { PATH: home, ROUTR_NO_UPDATE: "" });
+  const cache = join(home, ".cache/routr"), log = join(cache, "telemetry.log"), stamp = join(cache, "update-check");
+  const command = () => JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "telemetry", "status"], { env }).stdout.toString());
+  try {
+    const empty = command();
+    expect(empty.last_send).toBeNull();
+    expect(empty.daily_send).toMatchObject({ can_run: false, why_not: "running from source: use routr telemetry send", next_run: null });
+    expect(existsSync(cache)).toBe(false);
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(log, JSON.stringify({ at: "2026-09-25T12:00:00.000Z", ok: true, sent: 3 }) + "\n");
+    expect(command().last_send).toEqual({ at: "2026-09-25T12:00:00.000Z", ok: true, sent: 3, refused: null, error: null });
+    writeFileSync(log, JSON.stringify({ at: "2026-09-26T12:00:00.000Z", ok: false, sent: 0, refused: 1, error: "endpoint answered 500" }) + "\n");
+    expect(command().last_send).toEqual({ at: "2026-09-26T12:00:00.000Z", ok: false, sent: 0, refused: 1, error: "endpoint answered 500" });
+    writeFileSync(log, "broken");
+    expect(command().last_send).toBeNull();
+    const state = join(home, ".local/share/routr/telemetry.json");
+    mkdirSync(join(home, ".local/share/routr"), { recursive: true });
+    writeFileSync(state, JSON.stringify({ opted_in_at: "2026-09-24T00:00:00.000Z" }));
+    writeFileSync(stamp, "\n");
+    const checked = new Date("2026-09-25T12:00:00.000Z");
+    utimesSync(stamp, checked, checked);
+    const yes = { telemetry: true, auto_update: false };
+    const daily = (config, switches = {}) => JSON.parse(Bun.spawnSync([process.execPath, "-e",
+      `import { dailyTelemetrySend } from './src/lib/telemetry.mjs'; console.log(JSON.stringify(dailyTelemetrySend(${JSON.stringify(config)}, process.env, true)))`],
+    { env: { ...env, ...switches } }).stdout.toString());
+    expect(daily(yes).next_run).toBe("2026-09-26T12:00:00.000Z");
+    expect(daily({ telemetry: false, auto_update: false }).why_not).toContain("auto-update and telemetry both off");
+    expect(daily(yes, { ROUTR_NO_UPDATE: "1" }).why_not).toBe("ROUTR_NO_UPDATE is set");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
 test("shared rows carry what tuning needs and nothing that identifies the user or the work", async () => {
   const { shareRows } = await import("../src/lib/ledger.mjs");
   const text = JSON.stringify(shareRows([row()]));

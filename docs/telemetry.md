@@ -25,6 +25,10 @@ until you run `routr telemetry on`.
 Each time you turn it on, only rows recorded from that moment are shared. Rows recorded before, or while it was off,
 stay on your machine unless you choose to send them with `routr telemetry send --all`.
 
+## Checking that it sends
+
+Run `routr telemetry status` to see `last_send` (time, rows sent, and any error) and when the next daily job can run. `routr doctor` flags a failed send or rows waiting more than 48 hours.
+
 ## What is sent
 
 Once a day, the detached background job that also checks for updates sends the ledger rows recorded since the last

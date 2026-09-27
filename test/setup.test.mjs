@@ -6,7 +6,40 @@ import { loadConfig } from "../src/lib/config.mjs";
 import { claudeSnapshot } from "../src/lib/usage.mjs";
 import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
 import { COMMANDS, formatCommandHelp } from "../src/lib/help.mjs";
-import { cliEnv, NOW, scratch, SCRIPT } from "./helpers.mjs";
+import { cliEnv, NOW, row, scratch, SCRIPT } from "./helpers.mjs";
+
+test("doctor reports opted-in telemetry sends in text and JSON and flags failures or stale pending rows", () => {
+  const home = scratch("doctor-telemetry"), env = cliEnv(home, { PATH: home, ROUTR_NO_UPDATE: "1" });
+  const config = join(home, ".config/routr/config.json"), state = join(home, ".local/share/routr/telemetry.json");
+  const ledger = join(home, ".local/share/routr/ledger.jsonl"), log = join(home, ".cache/routr/telemetry.log");
+  const json = () => JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString());
+  const text = () => Bun.spawnSync([process.execPath, SCRIPT, "doctor"], { env }).stdout.toString();
+  try {
+    mkdirSync(dirname(config), { recursive: true });
+    writeFileSync(config, JSON.stringify({ telemetry: false }));
+    expect(json().telemetry).toEqual({ on: false, why_off: "not turned on (the default): routr telemetry on" });
+    expect(text()).not.toContain("telemetry send ");
+    const old = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+    writeFileSync(config, JSON.stringify({ telemetry: true }));
+    mkdirSync(dirname(state), { recursive: true });
+    writeFileSync(state, JSON.stringify({ opted_in_at: old, sent_through: old }));
+    writeFileSync(ledger, JSON.stringify(row({ ts: new Date().toISOString() })) + "\n");
+    expect(json().telemetry).toMatchObject({ on: true, last_send: null, pending: 1, needs_attention: true });
+    expect(text()).toContain("!! telemetry send never · 1 row waiting for over 48 h");
+    mkdirSync(dirname(log), { recursive: true });
+    writeFileSync(log, JSON.stringify({ at: new Date().toISOString(), ok: true, sent: 3 }) + "\n");
+    expect(json().telemetry).toMatchObject({ last_send: { ok: true, sent: 3 }, needs_attention: false });
+    expect(text()).toContain("ok telemetry send ");
+    expect(text()).toContain("3 rows sent");
+    writeFileSync(log, JSON.stringify({ at: old, ok: true, sent: 3 }) + "\n");
+    expect(json().telemetry.needs_attention).toBe(true);
+    expect(text()).toContain("3 rows sent · 1 row waiting for over 48 h");
+    writeFileSync(log, JSON.stringify({ at: new Date().toISOString(), ok: false, sent: 0, error: "endpoint answered 500" }) + "\n");
+    expect(json().telemetry).toMatchObject({ last_send: { ok: false, error: "endpoint answered 500" }, needs_attention: true });
+    expect(text()).toContain("!! telemetry send ");
+    expect(text()).toContain("failed: endpoint answered 500");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
 test("doctor's next steps name the command for each thing missing, most important first", async () => {
   const { nextSteps, starterConfig, STATUSLINE_MISSING } = await import("../src/lib/doctor.mjs");
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");

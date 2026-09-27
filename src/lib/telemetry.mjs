@@ -8,12 +8,13 @@
 // for every send, `routr telemetry send` included.
 // Sending happens only in the detached daily job (update.mjs) or on an explicit command: never inside advice.
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONFIG_PATH } from "./config.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { LEDGER_PATH, read } from "./ledger.mjs";
 import { FACTS, questions } from "./questions.mjs";
+import { standalone, TELEMETRY_LOG, UPDATE_STAMP } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 export const ENDPOINT = process.env.ROUTR_TELEMETRY_URL || "https://telemetry.routr.build";
@@ -31,6 +32,26 @@ export function telemetryStatus(config, env = process.env, st = state()) {
   const why = envOff(env) ?? (config?.telemetry !== true ? "not turned on (the default): routr telemetry on"
     : !st.opted_in_at ? "turned on before sharing became opt-in: run routr telemetry on to confirm" : null);
   return { on: !why, why_off: why };
+}
+
+const DAY = 24 * 60 * 60 * 1000;
+export function lastTelemetrySend() {
+  try {
+    const s = JSON.parse(readFileSync(TELEMETRY_LOG(), "utf8"));
+    if (!s || !Number.isFinite(Date.parse(s.at)) || typeof s.ok !== "boolean" || !Number.isInteger(s.sent) || s.sent < 0) return null;
+    return { at: s.at, ok: s.ok, sent: s.sent, refused: s.refused ?? null, error: s.error ?? null };
+  } catch { return null; }
+}
+
+export function dailyTelemetrySend(config, env = process.env, isStandalone = standalone()) {
+  const st = telemetryStatus(config, env);
+  const why = !isStandalone ? "running from source: use routr telemetry send"
+    : env.ROUTR_NO_UPDATE ? "ROUTR_NO_UPDATE is set"
+    : !st.on && config?.auto_update === false ? `auto-update and telemetry both off (${st.why_off})`
+    : !st.on ? `telemetry off: ${st.why_off}` : null;
+  let next = null;
+  try { next = new Date(statSync(UPDATE_STAMP()).mtimeMs + DAY).toISOString(); } catch {}
+  return { can_run: !why, why_not: why, next_run: why ? null : next, timing: "first routr command after next_run (or the next command when next_run is null)" };
 }
 
 // How many ledger rows the next send would carry: only rows after the mark (`telemetry on` sets it to that moment).
@@ -160,5 +181,6 @@ export function telemetryCommand(args, config, configPath) {
     return r.ok && sub === "on" && blocked ? { ...r, telemetry: "off", why_off: blocked, note: `set to on, but it stays off while ${blocked}` } : r;
   }
   const st = telemetryStatus(config), s = state();
-  return { ok: true, telemetry: st.on ? "on" : "off", ...(st.why_off ? { why_off: st.why_off } : {}), endpoint: ENDPOINT, install_id: s.install_id ?? null, last_sent_through: s.sent_through ?? null, what: NOTICE };
+  return { ok: true, telemetry: st.on ? "on" : "off", ...(st.why_off ? { why_off: st.why_off } : {}), endpoint: ENDPOINT, install_id: s.install_id ?? null, last_sent_through: s.sent_through ?? null,
+    last_send: lastTelemetrySend(), daily_send: dailyTelemetrySend(config), what: NOTICE };
 }

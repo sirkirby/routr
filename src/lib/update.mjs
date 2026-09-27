@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "./config.mjs";
-import { CACHE_DIR, spawnSelf, standalone, takeLock } from "./runtime.mjs";
+import { CACHE_DIR, spawnSelf, standalone, takeLock, TELEMETRY_LOG, UPDATE_STAMP } from "./runtime.mjs";
 import { forgetConsentUnlessOn, sendRows, telemetryStatus } from "./telemetry.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
@@ -99,10 +99,9 @@ export function swapBinary(self, bin, { rename = renameSync } = {}) {
 }
 
 const CACHE = CACHE_DIR;
-const STAMP = () => join(CACHE(), "update-check");     // its mtime is the time of the last check
 const LOCK = () => join(CACHE(), "update.lock");
 export const UPDATE_LOG = () => join(CACHE(), "update.log");
-export const TELEMETRY_LOG = () => join(CACHE(), "telemetry.log");
+export { TELEMETRY_LOG };
 const DAY = 24 * 60 * 60 * 1000;
 
 export const dueForCheck = (lastCheckMs, nowMs = Date.now()) => !Number.isFinite(lastCheckMs) || nowMs - lastCheckMs > DAY;
@@ -114,8 +113,8 @@ export function maybeAutoUpdate(config) {
   try {
     if (!standalone()) return false;
     try { rmSync(`${process.execPath}.old`, { force: true }); } catch {} // Windows: the binary a previous update moved aside
-    if (!updatesOn(config) && !telemetryStatus(config).on) return false;
-    let last = NaN; try { last = statSync(STAMP()).mtimeMs; } catch {}
+    if (process.env.ROUTR_NO_UPDATE || !updatesOn(config) && !telemetryStatus(config).on) return false;
+    let last = NaN; try { last = statSync(UPDATE_STAMP()).mtimeMs; } catch {}
     if (!dueForCheck(last)) return false;
     return spawnSelf(["update", "--background"]);
   } catch { return false; } // updating must never get in the way of the command that was asked for
@@ -125,7 +124,7 @@ export async function backgroundUpdate() {
   mkdirSync(CACHE(), { recursive: true });
   if (!takeLock(LOCK(), (f) => lockIsStale(f))) return; // one updater at a time
   try {
-    writeFileSync(STAMP(), new Date().toISOString() + "\n"); // first, so a failing check is not retried on every command
+    writeFileSync(UPDATE_STAMP(), new Date().toISOString() + "\n"); // first, so a failing check is not retried on every command
     const { config } = loadConfig();
     // Telemetry first: it is quick, and an update that swaps the binary should not take it with it.
     forgetConsentUnlessOn(config);
@@ -139,7 +138,7 @@ export async function backgroundUpdate() {
 export function autoUpdateStatus(config) {
   const on = standalone() && updatesOn(config);
   let checked = null, last = null;
-  try { checked = Math.round((Date.now() - statSync(STAMP()).mtimeMs) / 3600000); } catch {}
+  try { checked = Math.round((Date.now() - statSync(UPDATE_STAMP()).mtimeMs) / 3600000); } catch {}
   try { last = JSON.parse(readFileSync(UPDATE_LOG(), "utf8")); } catch {}
   return { on, why_off: on ? null : !standalone() ? "running from source" : "turned off (auto_update: false, or ROUTR_NO_UPDATE)", checked_hours_ago: checked, last };
 }

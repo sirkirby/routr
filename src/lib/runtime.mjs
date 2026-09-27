@@ -15,6 +15,8 @@ export const home = () => (process.platform === "win32" ? process.env.USERPROFIL
 export const standalone = () => !/\.m?js$/.test(process.argv[1] ?? "");
 
 export const CACHE_DIR = () => join(home(), ".cache/routr");
+export const UPDATE_STAMP = () => join(CACHE_DIR(), "update-check");
+export const TELEMETRY_LOG = () => join(CACHE_DIR(), "telemetry.log");
 // Written by `routr statusline` on each Claude Code turn, read by the usage reader.
 export const CLAUDE_SNAPSHOT = join(home(), ".cache/routr/claude-usage.json");
 // Written by `routr usage cursor` (by hand, or in the background when the reading is old), read by the usage reader.

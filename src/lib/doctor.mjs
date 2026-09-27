@@ -11,7 +11,7 @@ import { JEV_MODEL } from "./questions.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
 import { CLAUDE_SNAPSHOT, home, standalone } from "./runtime.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
-import { telemetryStatus } from "./telemetry.mjs";
+import { lastTelemetrySend, pendingCount, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 
@@ -145,6 +145,12 @@ export async function inspect({ configPath, quiet } = {}) {
   if (!r.config.exists) r.starter_config = starterConfig(found);
   r.auto_update = autoUpdateStatus(config);
   r.telemetry = telemetryStatus(config);
+  if (r.telemetry.on) {
+    const last = lastTelemetrySend(), pending = pendingCount();
+    const since = last?.at ?? telemetryState().opted_in_at;
+    r.telemetry = { ...r.telemetry, last_send: last, pending,
+      needs_attention: last?.ok === false || pending > 0 && Number.isFinite(Date.parse(since)) && Date.now() - Date.parse(since) > 48 * 60 * 60 * 1000 };
+  }
   r.next_steps = nextSteps(r);
   return r;
 }
@@ -190,6 +196,10 @@ export function render(r) {
   line("ok", `automatic updates ${au.on ? `on · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off}`}`);
   if (r.telemetry) line("ok", r.telemetry.on ? "telemetry on: anonymous outcomes (never text) once a day · `routr share` shows exactly what · `routr telemetry off` stops it"
     : `telemetry off${r.telemetry.why_off.startsWith("not turned on") ? " (the default)" : `: ${r.telemetry.why_off}`} · \`routr telemetry on\` shares anonymous outcomes that help tune routr (docs/telemetry.md)`);
+  if (r.telemetry?.on) {
+    const t = r.telemetry.last_send;
+    line(r.telemetry.needs_attention ? "need" : "ok", `telemetry send ${t ? `${t.at} · ${t.ok ? `${t.sent} rows sent${t.refused ? `, ${t.refused} refused` : ""}` : `failed: ${t.error ?? "unknown error"}`}` : "never"}${r.telemetry.needs_attention && t?.ok !== false ? ` · ${r.telemetry.pending} ${r.telemetry.pending === 1 ? "row" : "rows"} waiting for over 48 h` : ""} · \`routr telemetry status\` for details`);
+  }
   out.push("", r.next_steps.length ? paint(1, "Next steps") : paint(32, "Everything routr needs is in place."));
   r.next_steps.forEach((s, i) => out.push(`  ${i + 1}. ${s}`));
   return out.join("\n");
