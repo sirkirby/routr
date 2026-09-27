@@ -9,7 +9,10 @@ export const scratch = (name) => mkdtempSync(join(SCRATCH, `${name}-`));
 // The CLI as a test spawns it, and the environment it gets: a scratch home, no TypeSafe key, and whatever `over` adds
 // (PATH: home, for a spawn that could otherwise start a harness).
 export const SCRIPT = join(import.meta.dir, "../src/routr.mjs");
-export const cliEnv = (home, over = {}) => ({ ...process.env, HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "", ...over });
+// A CLI run in a test sees the same environment locally and in CI: the variables that turn telemetry off are dropped
+// (CI sets CI and GITHUB_ACTIONS), and a test that wants one passes it in `over`.
+const QUIET = ["CI", "GITHUB_ACTIONS", "DO_NOT_TRACK", "ROUTR_TELEMETRY"];
+export const cliEnv = (home, over = {}) => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !QUIET.includes(k))), HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "", ...over });
 
 export const cfg = (over = {}) => ({ ...DEFAULTS, subscriptions: {
   claude: { hardest_work: "strong", reserve: 0.25, assumed_headroom: 0.5 },
