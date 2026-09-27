@@ -3,7 +3,7 @@
 // (63-88% of answers below 0.2 or above 0.8) and unsure about estimates of what the work will take (22-43%), which
 // depend on the codebase: the asking agent knows that, Jev cannot. So Jev reads the brief; the agent decides.
 // All questions go in ONE request; Jev answers them in parallel and none can see another's answer. Code combines them.
-export const VERSION = "r4"; // r4 asks the same questions as r3; an unsure level now reads as the lower of the two most likely
+export const VERSION = "r5"; // r5 asks the same questions as r3 and r4; a torn level now reads as the most likely one (advise.mjs, P32)
 import { LEVEL_MEANING } from "./wording.mjs";
 
 export const LEVELS = ["basic", "standard", "strong"];
@@ -15,7 +15,7 @@ export const MEANING = {
   strong: `${LEVEL_MEANING.strong}; a strong model`,
 };
 // The Jev version every result in docs/evidence.md was measured on. Answers, and the thresholds tuned on them (0.2/0.8,
-// sure_at, the lower-of-two rule), belong to a version, so the pin moves only after the maintainers' model gate has run
+// sure_at, how a torn level is read), belong to a version, so the pin moves only after the maintainers' model gate has run
 // the saved items on the new version beside this one (CONTRIBUTING.md, "Moving to a new Jev version"). ROUTR_JEV_MODEL
 // overrides it for that gate and for trying a preview on real work; it is not a user setting.
 export const JEV_MODEL = "jev-1.13.0";

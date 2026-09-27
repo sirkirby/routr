@@ -93,11 +93,16 @@ test("worth a worker: tiny work stays with the agent, a user decision comes firs
   expect(advise(fact(ans(1, 1), { tiny: 0.5 }), cfg()).worker.suggestion).toBe("worth a worker");
 });
 
-test("an unsure level reads as the lower of the two most likely levels", () => {
+test("a torn level reads as the more likely of the two (r5)", () => {
   const torn = (probabilities, score) => ({ level: { score, confidence: 0.3, probabilities }, work_type: { choice: "implement", confidence: 1, probabilities: { implement: 1 } }, high_blast_radius: { noul: 0.1 } });
   const a = advise(torn({ 0: 0.05, 1: 0.45, 2: 0.5 }, 1.45), cfg());
-  expect(a.level).toBe("standard"); expect(a.between).toEqual(["standard", "strong"]);
-  expect(advise(torn({ 0: 0.48, 1: 0.52, 2: 0 }, 0.52), cfg()).level).toBe("basic");
+  expect(a.level).toBe("strong"); expect(a.between).toEqual(["standard", "strong"]);
+  expect(advise(torn({ 0: 0.48, 1: 0.52, 2: 0 }, 0.52), cfg()).level).toBe("standard");
+  // Two of the real tasks behind r5 (P32): r4 advised standard and basic; both were labelled one level higher.
+  expect(advise(torn({ 0: 0, 1: 0.2, 2: 0.8 }, 1.8), cfg()).level).toBe("strong");
+  expect(advise(torn({ 0: 0.27, 1: 0.7, 2: 0.03 }, 0.76), cfg()).level).toBe("standard");
+  expect(advise(torn({ 0: 0.5, 1: 0.5, 2: 0 }, 0.5), cfg()).level).toBe("basic"); // a tie goes to the lower level
+  expect(a.notes.join(" ")).toContain("Start at strong, the more likely");
   expect(advise(ans(1.6, 0.9), cfg()).between).toBeUndefined();             // sure: plain rounding, no range
 });
 

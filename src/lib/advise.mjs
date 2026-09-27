@@ -9,14 +9,17 @@ const YES = 0.8, NO = 0.2; // P26's bar for a decisive answer
 export function advise(a, c) {
   const s = a.level;
   const sure = s.confidence >= c.sure_at;
-  // Sure: round to the nearest level. Unsure: the LOWER of the two most likely levels. Measured on 68 labelled briefs
-  // (P31): when routr was unsure the true level was the lower of its top two 27 times out of 30, the higher once; asked
-  // afresh by the model gate (2026-09-24), 27 of 32 and 25 of 30, the higher 3 times each: about five times in six.
-  // That lifts the level from 54/68 right to 61/68, and it matches the loop: start low, judge, escalate.
+  // Sure: round to the nearest level. Torn: the MOST LIKELY level (r5). Measured on 36 real tasks from the
+  // maintainer's worker runs (P32, 2026-09-26: each labelled by two blind judges, the 16 they split by the maintainer):
+  // Jev was torn on 31; on the same gate answers (2026-09-27) the most likely level was right on 29 of 36 (7 one level
+  // low, none high), r4's "lower of the two" on 15 (21 low). r4's rule came from 68 short labelled briefs (P31), where
+  // Jev reads high and the lower level was right about five times in six; there the most likely level scores 53-54
+  // against 59-60 (13-14 over). Over all 104, 82-83 against 74-75. The gate reports both sets. A tie goes lower.
   const probs = LEVELS.map((_, i) => s.probabilities?.[i] ?? 0);
   const topTwo = [0, 1, 2].sort((x, y) => probs[y] - probs[x]).slice(0, 2).sort((x, y) => x - y);
   const between = sure || !s.probabilities ? null : topTwo.map((i) => LEVELS[i]);
-  const level = between ? between[0] : LEVELS[Math.min(2, Math.max(0, Math.round(s.score)))];
+  const likely = [0, 1, 2].reduce((best, i) => (probs[i] > probs[best] ? i : best), 0);
+  const level = between ? LEVELS[likely] : LEVELS[Math.min(2, Math.max(0, Math.round(s.score)))];
   const notes = [], facts = {}, unclear = [];
   for (const [k, f] of Object.entries(FACTS)) {
     const p = a[k]?.noul;
@@ -26,7 +29,7 @@ export function advise(a, c) {
     if (reading === "unclear") unclear.push(k);
     if (f.about === "brief" && reading === "no") notes.push(`Fix the brief first: ${f.say[1]}.`);
   }
-  if (!sure) notes.push(`routr is between ${between ? between.join(" and ") : "levels"} (${LEVELS.map((l, i) => `${l} ${pct(s.probabilities?.[i])}`).join(", ")}). Start at ${level}: when routr is torn, the lower level has been the right one about five times in six. Go higher only if a fact calls for it.`);
+  if (!sure) notes.push(`routr is between ${between ? between.join(" and ") : "levels"} (${LEVELS.map((l, i) => `${l} ${pct(s.probabilities?.[i])}`).join(", ")}). Start at ${level}, the more likely: on 36 real tasks it was the right level 29 times, and when it was wrong it was one level too low. Go higher if a fact calls for it.`);
   if (unclear.length) notes.push(`routr could not tell from the brief: ${unclear.join(", ")}. You can: you know the codebase.`);
   // Preferences for every kind of work Jev finds plausible, so an unsure work type does not hide one.
   const kinds = Object.entries(a.work_type.probabilities ?? { [a.work_type.choice]: 1 }).filter(([, p]) => p >= 0.3).map(([k]) => k);
