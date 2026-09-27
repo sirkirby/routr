@@ -49,6 +49,21 @@ test("launch prompt preserves the required opening, task with verification, and 
   expect(prompt).toBe(`${opening}\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`);
 });
 
+test("--rules-file goes to the worker after the task, and only the task is compared with the advice", async () => {
+  const { briefSha } = await import("../src/lib/ledger.mjs");
+  expect(composePrompt("Do X.", "/g.md", "Do not push.\n")).toBe(composePrompt("Do X.\n\nDo not push.", "/g.md"));
+  expect(composePrompt("Do X.", "/g.md", null)).toBe(composePrompt("Do X.", "/g.md"));
+  const dir = scratch("rules-file"), task = join(dir, "task.md"), rules = join(dir, "rules.md"), advice = join(dir, "advice.json");
+  writeFileSync(task, "Fix the flaky retry test in src/retry.mjs.\n"); writeFileSync(rules, "Do not edit anything outside src/. Commit on your branch; never push.\n");
+  writeFileSync(advice, JSON.stringify({ brief_sha: briefSha("Fix the flaky retry test in src/retry.mjs.") }));
+  const r = await launch([...launchArgs, "--task-file", task, "--rules-file", rules, "--advice", advice, "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); } });
+  expect(r.advice).toEqual({ file: advice, matches: true }); // the rules are not part of what routr judged
+  expect(r.prompt_chars).toBe(composePrompt(readFileSync(task, "utf8"), WORKER_GUIDE, readFileSync(rules, "utf8")).length);
+  expect(() => parseLaunchArgs([...launchArgs, "--rules-file", rules])).toThrow("--rules-file goes with a task");
+  writeFileSync(rules, "  \n");
+  expect((await launch([...launchArgs, "--task-file", task, "--rules-file", rules, "--dry-run"])).steps.at(-1).detail).toContain("The rules file must not be empty");
+});
+
 test("shell detection distinguishes dotenv, a clean prompt, and unfinished startup", () => {
   expect(shellPrompt("found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver) ")).toBe("dotenv");
   for (const text of ["chris@host repo % ", "user@host:~/repo$ ", "❯ ", "\x1b[32m❯\x1b[0m ", "root #", "found '.env' file. Source it? ([y]es/[N]o)\n❯ "])
@@ -95,11 +110,46 @@ test("trust detection chooses the affirmative option even when No is selected", 
   expect(trustDialog("Ready\n❯")).toBeNull();
 });
 
+test("Claude Code's newer trust question is found even when the pane wraps text after it (2.1.283, 2026-09-26)", () => {
+  const screen = [" Accessing workspace:", " /private/tmp/scratchpad/labels",
+    " Quick safety check: Is this a project you created or one you trust? (Like",
+    " your own code, a well-known open source project, or work from your team).",
+    " If not, take a moment to review what's in this folder first.", " Claude Code'll be able to read, edit, and execute files here.",
+    " Security guide", " ❯ No, exit", "   Yes, I trust this folder", " Enter to confirm · Esc to cancel"].join("\n");
+  expect(trustDialog(screen)).toMatchObject({ affirmative: { text: "Yes, I trust this folder" }, keys: ["down", "enter"] });
+  // A narrower pane (seen the same day) puts "project" and "trust?" on different lines.
+  const narrow = [" Quick safety check: Is this a project you", " created or one you trust? (Like your own", " code, a well-known open source project, or",
+    " work from your team). If not, take a", " moment to review what's in this folder", " first.", " Security guide", " ❯ No, exit", "   Yes, I trust this folder", " Enter to confirm · Esc to cancel"].join("\n");
+  expect(trustDialog(narrow)).toMatchObject({ affirmative: { text: "Yes, I trust this folder" }, keys: ["down", "enter"] });
+  // Prose about a project beside an unrelated "Can we trust?" menu is not a folder-trust question (from the verification of #41).
+  expect(trustDialog(" This project has a cached token.\n Can we trust?\n ❯ No\n   Yes, continue")).toBeNull();
+  // The question with its options not drawn yet still counts, as before: launch stops rather than type into it.
+  expect(trustDialog(screen.split("\n").slice(0, 4).join("\n"))?.keys).toBeNull();
+});
+
 test("pane reads extract text from JSON without mistaking envelope fields for pane contents", () => {
   expect(paneText({ id: "cli:pane:read", result: { text: claudeTrust, type: "pane_read" } })).toBe(claudeTrust);
   expect(paneText({ result: { snapshot: { lines: ["hello", "❯"] } } })).toBe("hello\n❯");
   expect(paneText("❯")).toBe("❯");
   expect(() => paneText({ result: { type: "unknown" } })).toThrow("Unrecognized");
+});
+
+test("launch --advice warns when the advice was given on a different text than the task it sends", async () => {
+  const { briefSha } = await import("../src/lib/ledger.mjs");
+  const dir = scratch("launch-advice"), task = join(dir, "task.md"), advice = join(dir, "advice.json");
+  writeFileSync(task, "Fix the flaky retry test in src/retry.mjs.\n");
+  const go = (a) => launch([...launchArgs, "--task-file", task, "--advice", a, "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); } });
+  writeFileSync(advice, JSON.stringify({ brief_sha: briefSha("Fix the flaky retry test in src/retry.mjs.") })); // dispatch trims, as launch does
+  const same = await go(advice);
+  expect(same.advice).toEqual({ file: advice, matches: true });
+  expect(same.warnings.join(" ")).not.toContain("different text");
+  writeFileSync(advice, JSON.stringify({ brief_sha: briefSha("Retry test: see the task file for paths.") })); // a summary, as leads wrote 8 times
+  const other = await go(advice);
+  expect(other.advice).toEqual({ file: advice, matches: false });
+  expect(other.warnings.join(" ")).toContain("was given on a different text than this task");
+  const unread = await go(join(dir, "missing.json"));
+  expect(unread.warnings.join(" ")).toContain("could not read it");
+  expect(unread.advice).toBeUndefined();
 });
 
 test("launch options are validated before any pane operation", () => {

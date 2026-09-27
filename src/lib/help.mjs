@@ -8,7 +8,7 @@ export const COMMANDS = {
     name: "subagent",
     description: "an agent is about to spawn a subagent → what the work demands",
     args: [
-      { name: '"<brief>"', description: "task brief (or pipe on stdin)", required: true },
+      { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin); a flag-like word given alone is set aside when stdin carries the brief, and is the brief otherwise", required: true },
     ],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
@@ -18,7 +18,7 @@ export const COMMANDS = {
     name: "dispatch",
     description: "an orchestrator is about to launch a pane → the same, plus subscriptions ranked by usable headroom",
     args: [
-      { name: '"<brief>"', description: "task brief (or pipe on stdin)", required: true },
+      { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin); a flag-like word given alone is set aside when stdin carries the brief, and is the brief otherwise", required: true },
     ],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
@@ -43,6 +43,8 @@ export const COMMANDS = {
       { name: "--model", arg: "<id>", description: "model id", required: "required unless --dry-run" },
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
       { name: "--effort", arg: "<level>", description: "reasoning effort", required: false },
+      { name: "--rules-file", arg: "<path>", description: "your process rules for the worker (what it may do, how to report, git steps): added after the task, and never read by routr, which judges only the task", required: false },
+      { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch warns when it was given on a different text than this task", required: false },
       { name: "--pane", arg: "<id>", description: "existing herdr pane id to run in", required: false },
       { name: "--worktree", arg: "<branch>", description: "give the worker its own git worktree, opened as a workspace nested under the repo (the rule for workers)", required: false },
       { name: "--copy", arg: "<path>", description: "copy an untracked file or folder from the repo into the worktree (repeatable; with --worktree)", required: false, repeatable: true },
@@ -151,7 +153,7 @@ export const COMMANDS = {
     flags: [
       { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")})`, required: true },
       { name: "--model", arg: "<name>", description: "model chosen", required: true },
-      { name: "--effort", arg: "<level>", description: "reasoning effort chosen", required: true },
+      { name: "--effort", arg: "<level>", description: "reasoning effort chosen. On Claude, Codex and Kiro, \"default\" is recorded as your configured default_effort; on Cursor and Antigravity, none or \"default\" is recorded as the effort word at the end of the model id, or just before a last qualifier (grok-4.7-high, grok-4.6-high-fast). Otherwise it is kept as written; chose.effort_from records which", required: true },
       { name: "--verdict", arg: "<done|partial|blocked>", description: "worker outcome verdict", required: true },
       { name: "--check", arg: "<pass|fail|none>", description: "verification outcome", required: true },
       { name: "--advice", arg: "<file>", description: "path to advice JSON file (or pipe on stdin)", required: false, default: "stdin" },

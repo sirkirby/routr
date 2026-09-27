@@ -46,6 +46,8 @@ fallback.
 ## Reading the advice
 
 `routr subagent "<brief>"` and `routr dispatch "<brief>"` print one JSON object. The brief can also be piped on stdin.
+Ask about the exact text the worker will get, not a summary of it: for a launch, `routr dispatch < <task file>`
+(`references/orchestrator.md` has the whole flow, and `launch --advice` checks it).
 
 - `headline`: the advice in one line. Read it first; the rest is the detail behind it.
 - `worker`: whether the work is worth handing out at all: `do it yourself` (one or two small edits), `settle it with
@@ -62,8 +64,11 @@ fallback.
   was torn between the two levels in `between`; it then reports the lower one, which testing showed is right about
   five times in six. routr never names a model.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
-- `input_notes` (only when present): something you passed that routr ignored, such as a `--headroom` it could not read.
-  Fix it and ask again, or tell the user.
+- `input_notes` (only when present): something in what you passed that routr did not take as you may have meant: a
+  `--headroom` it could not read (ignored), a flag-like word such as `--json` given as the whole brief (set aside, and
+  the brief read from stdin), or such a word kept as the brief or part of it. When the note says something was ignored,
+  fix it and ask again, or tell the user; a word kept in the brief needs nothing (asking again with a changed brief
+  makes `launch --advice` warn).
 - `subscriptions` (dispatch only). `ranked` lists each subscription with its usable headroom, marked `live`, `given`
   (you passed it in), or `assumed`. `age_sec` is how old the reading is, and `note` says what the harness showed beside
   the number (Cursor: its Auto and API pools; Kiro: its plan and credits) or why a number is assumed. Under `windows` it shows each usage window as the harness reports it: percent

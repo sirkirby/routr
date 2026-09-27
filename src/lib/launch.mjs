@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
 import { HARNESSES, kindError, notReady, plan } from "./harnesses.mjs";
+import { briefSha } from "./ledger.mjs";
 import { OFF } from "./wording.mjs";
 import { clean, deadline, paneText, paneView, quote, runHerdr, SHELLS, shellFamily, shellPrompt, waitForShell } from "./herdr.mjs";
 import { home } from "./runtime.mjs";
@@ -33,8 +34,11 @@ export const unsentInInput = (screen, mark) => {
   const marked = String(screen ?? "").split("\n").filter((l) => l.trimStart().startsWith(mark));
   return marked.length === 1 && promptTrace(marked[0]);
 };
-export function composePrompt(task, guide = WORKER_GUIDE) {
-  return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
+// `rules` is the lead's process text (what the worker may and may not do, how to report, git steps): the worker reads it
+// after the task, and routr never does. Only the task is the work that `dispatch` and `--advice` judge. (Measured
+// 2026-09-26: 18 of 36 real tasks carried such text, 5 to 38% of each, and it moved Jev's readings.)
+export function composePrompt(task, guide = WORKER_GUIDE, rules = null) {
+  return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}${rules ? `\n\n${rules.trim()}` : ""}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
 }
 
 const command = (args) => ["herdr", ...args].map(quote).join(" ");
@@ -56,7 +60,9 @@ export function logCommand(log, text) {
 // when there is no such question, or when a later input prompt (or `answered`) shows it has already scrolled past.
 function menuAfter(text, isQuestion, answered) {
   const t = clean(text).replace(/^[│┃][ \t]?|[ \t]*[│┃]$/gm, "");
-  const question = [...t.matchAll(/^[^\n]*$/gm)].filter((m) => isQuestion(m[0])).at(-1);
+  // Each line is judged with the two above it too, so a question the pane wrapped still reads as one sentence.
+  const lines = [...t.matchAll(/^[^\n]*$/gm)];
+  const question = lines.filter((m, i) => isQuestion(m[0], lines.slice(Math.max(0, i - 2), i + 1).map((x) => x[0]).join(" "))).at(-1);
   if (!question) return null;
   const below = t.slice(question.index + question[0].length);
   if (shellPrompt(below) === "ready" || answered?.test(below)) return null;
@@ -70,9 +76,21 @@ function menuAfter(text, isQuestion, answered) {
 }
 
 // A folder-trust question: the last one on screen, never an affirmative option or a historical status message.
-const TRUST_QUESTION = /^\s*(?:(?:Do you trust|Trust (?:this|the))\b[^\n]*|[^\n]*\b(?:folder|directory|project|workspace)\b[^\n]*\btrust\s*\?)[ \t]*$/i;
+// The question, however the pane wraps it: Claude Code 2.1.283 (2026-09-26) asks "Quick safety check: Is this a
+// project you created or one you trust? (Like your own code, …)", and a narrow pane puts "project" and "trust?" on
+// different lines. So: "trust?" on the line, and what is trusted (folder, project, …) in the same SENTENCE, read across
+// the two lines above: nearby prose about a project beside an unrelated "Can we trust?" is not it (from the
+// verification of #41).
+const TRUST_OPENS = /^\s*(?:Do you trust|Trust (?:this|the))\b/i, TRUSTED = /\b(?:folder|directory|project|workspace)\b/i;
+const trustQuestion = (line, near) => {
+  if (TRUST_OPENS.test(line)) return true;
+  const at = near.search(/\btrust\s*\?/i);
+  if (at < 0 || !/\btrust\s*\?/i.test(line)) return false;
+  const sentence = near.slice(0, at).split(/[.!?](?:\s|$)/).at(-1); // from the last sentence end before "trust?"
+  return TRUSTED.test(sentence);
+};
 export function trustDialog(text) {
-  const menu = menuAfter(text, (line) => TRUST_QUESTION.test(line));
+  const menu = menuAfter(text, trustQuestion);
   if (!menu) return null;
   const { options, matches, below } = menu;
   const affirmative = options.filter((o) => /^(?:yes(?:$|,?\s+(?:I trust\b|continue\b|trust\b))|trust (?:this|the)\b)/i.test(o.text)
@@ -103,7 +121,7 @@ export function permissiveConfirm(text, confirm) {
 
 export function parseLaunchArgs(args) {
   const o = { trust: "ask", timeout: 120000, dryRun: false };
-  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "direction", "task", "task-file", "trust", "timeout"];
+  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "direction", "task", "task-file", "rules-file", "trust", "timeout", "advice"];
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
@@ -128,6 +146,7 @@ export function parseLaunchArgs(args) {
   if (!["ask", "auto"].includes(o.trust)) throw new Error("--trust must be ask or auto");
   if (o.direction && !["right", "down"].includes(o.direction)) throw new Error("--direction must be right or down");
   if (o.task != null && o["task-file"] != null) throw new Error("Use only one of --task and --task-file");
+  if (o["rules-file"] != null && o.task == null && o["task-file"] == null) throw new Error("--rules-file goes with a task: pass --task-file (or --task) too");
   o.timeout = Number(o.timeout);
   if (!Number.isSafeInteger(o.timeout) || o.timeout <= 0) throw new Error("--timeout must be a positive integer in milliseconds");
   return o;
@@ -153,8 +172,21 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     Object.assign(out, { argv: p.argv, env: p.env, warnings: p.warnings });
     const task = o["task-file"] != null ? readFileSync(resolve(o["task-file"]), "utf8") : o.task;
     if (task != null && !task.trim()) throw new Error("The task must not be empty");
-    const prompt = task == null ? null : composePrompt(task);
+    const rules = o["rules-file"] != null ? readFileSync(resolve(o["rules-file"]), "utf8") : null;
+    if (rules != null && !rules.trim()) throw new Error("The rules file must not be empty");
+    const prompt = task == null ? null : composePrompt(task, WORKER_GUIDE, rules);
     out.prompt_chars = prompt?.length ?? null;
+    // The advice must be about the task the worker gets. Of 42 dispatch calls in the maintainer's ledger (2026-09-26),
+    // at least 12 were given a summary or a part of the task, and routr's facts then described that text instead
+    // (one summary said the paths were "in the task file", so routr read that the brief named no place to work).
+    if (o.advice != null && task != null) {
+      let adv = null; try { adv = JSON.parse(readFileSync(resolve(o.advice), "utf8")); } catch (e) { out.warnings.push(`--advice ${o.advice}: could not read it (${e.message}); nothing was compared`); }
+      if (adv) {
+        const matches = adv.brief_sha === briefSha(task);
+        out.advice = { file: o.advice, matches };
+        if (!matches) out.warnings.push("The advice in --advice was given on a different text than this task, so its facts and level describe that text, not what the worker receives. Ask routr about the task itself: routr dispatch < <the task file>.");
+      }
+    }
     // Known once the pane's shell has been seen; until then, this platform's usual shell.
     let shell = process.platform === "win32" ? "powershell" : "posix";
     const startArgs = (pane, timeout) => o.kind === "cursor" && SHELLS[shell].cursor

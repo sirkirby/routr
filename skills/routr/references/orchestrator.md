@@ -16,7 +16,14 @@ while you do something else or your own subscription is close to its reserve.
 
 ## 2. Ask for the facts, then decide
 
-    routr dispatch "<the brief you are about to hand over>"
+    routr dispatch < <the task file you will launch with> > <scratch>/advice-<n>.json
+
+Ask about the task itself, word for word: the file you will pass to `launch --task-file`. A summary gets advice about
+the summary (in the maintainer's ledger, at least 12 of 42 dispatch calls were given one, and routr's facts then
+described text the worker never saw). `launch --advice` checks this for you. Keep your process rules for the worker
+(what it may and may not do, how to report, git steps) out of that file: they go in `--rules-file`, which launch passes
+to the worker and routr does not judge. In 18 of 36 real tasks such rules were 5 to 38% of the text, and they moved routr's
+readings.
 
 First, the brief: if `states_check` or `standalone` reads `no`, fix the brief and ask again. A worker cannot ask you
 questions.
@@ -66,9 +73,13 @@ fourth; you write the second and third.
        ~/.agents/skills/routr/references/worker.md. It is mandatory for this task: it says how to size each subagent
        before you spawn it and the exact report format the orchestrator parses.
 
-2. The task: what to do, where, what done looks like, and what is out of scope. For a worker that writes, say that
-   it commits on its own branch and never pushes.
+2. The task: what to do, where, what done looks like, and what is out of scope.
 3. How to verify it (the command to run), so the worker can check its own work.
+
+Parts 2 and 3 are the work, and they go in `--task-file`: it is what you ask routr about. Your rules for how the
+worker operates go in `--rules-file`, and launch adds them after the task: for a worker that writes, that it commits
+on its own branch and never pushes; for a reviewer, that it changes nothing, which commands it may run, and how to
+set out its findings.
 4. The closing line. Without it a worker on a small task ended with a sentence instead of the report.
 
        Finish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.
@@ -79,7 +90,8 @@ dialog, waits until the agent is ready, wraps your task in the opening and closi
 object describing what it did.
 
     routr launch --kind <claude|codex|cursor|agy|kiro> --name <agent-name> \
-        --cwd <repo> --worktree <branch> --model <id> [--effort <level>] [--task-file <path>] [--trust ask|auto] [--dry-run]
+        --cwd <repo> --worktree <branch> --model <id> [--effort <level>] --task-file <path> [--rules-file <path>] \
+        --advice <file> [--trust ask|auto] [--dry-run]
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
   `--effort` where the harness takes it separately. On Antigravity the model id already carries it, and routr says so
@@ -90,6 +102,11 @@ object describing what it did.
   before any prompt.
 - `--task-file` holds your task alone (parts 2 and 3). Without it the pane is left ready and unprompted, for you to
   prompt yourself.
+- `--rules-file` holds your process rules, added after the task. routr passes them on without judging them, and
+  `--advice` compares the task alone.
+- `--advice` takes the advice file you saved from `routr dispatch`. launch compares the text that advice was about
+  with the task it sends, and warns when they differ (`advice.matches` is then `false`): ask routr about the task.
+  With no task (no `--task-file` or `--task`) there is nothing to compare, and no `advice` field.
 - `--trust` defaults to `ask`: at a folder-trust dialog routr stops, leaves the pane alive, and reports
   `needs_human` with what the dialog says. Pass `--trust auto` only for a directory you created or a worktree of the
   repository the user already has you working in. With `auto` you are vouching for the folder; routr is not judging it.
@@ -158,6 +175,10 @@ ledger.
         --check <pass|fail|none> [--report <file>] [--subagent "<subtask> → <level> → <model>"] \
         [--attempts <n>] [--seconds <n>] [--note "<why you went against the advice, or what went wrong>"]
 
+`--effort` is what you launched with. Write `default` if you passed none: routr records the effort the run had, and
+says where it came from in `chose.effort_from`: `model id` on Cursor and Antigravity, whose ids carry it
+(`grok-4.7-high`); `config default`, your configured `default_effort`, on a harness that takes effort separately; or
+`given`, what you wrote, kept as it is when neither says (no default set, or no effort in the id).
 `--verdict` is the worker's own VERDICT line. `--check` is your verification. Pass the saved report with `--report` so
 the worker's subagent choices are recorded too. `--attempts` counts the tries it took (1 means accepted first time);
 when you escalated, record the level and model that finally delivered. Record failures and cut-off workers too: they are
