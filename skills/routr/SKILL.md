@@ -61,7 +61,8 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   brief before you send it.
 - `level`: a one-word summary: `basic` (rote or well-specified), `standard` (must find something out or choose an
   approach), or `strong` (a wrong or shallow result would be expensive and hard to notice). `sure: false` means routr
-  was torn between the two levels in `between`; it then reports the more likely one (the lower, if they are equally likely). On 36 real
+  was torn between the two levels in `between`; it then reports the more likely one (the lower, if they are equally likely; and when Jev gives
+  no spread there is no `between`, and the level is its score rounded). On 36 real
   tasks that was right 29 times, and when it was wrong it was one level too low. routr never names a model.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
 - `input_notes` (only when present): something in what you passed that routr did not take as you may have meant: a
@@ -83,7 +84,7 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
 ## Deciding
 
 **Start at the advice, not above it.** The loop is ask, build, judge, fix: work that falls short gets sent back or
-relaunched one level up, so starting high "to be safe" only costs more. (Measured: a lead left to itself went above
+relaunched one level up, so there is no need to start high "to be safe". (Measured: a lead left to itself went above
 the advice on 5 of 7 briefs and set effort to high every time.)
 
 - **Intelligence** (which model): start from the advised level and the user's default model. Go higher only when a
