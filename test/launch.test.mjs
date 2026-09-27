@@ -744,6 +744,39 @@ test("a prompt herdr says stalled is sent once more only when the pane shows no 
   }
 });
 
+test("a task pasted but never submitted gets Enter once, never a second send; one already sent gets neither", async () => {
+  const { unsentInInput } = await import("../src/lib/launch.mjs");
+  const unsent = "  Cursor Agent\n\n  → [Pasted text #1 +21 lines]\n\n  Grok 4.7 256K High      Run Everything\n  ~/.herdr/worktrees/routr/r · r";
+  const sent = "  [Pasted text #1 +21 lines]\n ⠘⠆ Working\n  → Add a follow-up      ctrl+c to stop\n  Grok 4.7 256K High";
+  expect(unsentInInput(unsent, "→")).toBe(true);
+  expect(unsentInInput(sent, "→")).toBe(false); // the transcript shows it; the box is empty
+  expect(unsentInInput("  → You are a routr worker. Your first action", "→")).toBe(true); // a paste not folded away
+  expect(unsentInInput(unsent, undefined)).toBe(false); // a harness with no measured input mark: never
+  const root = scratch("cursor-enter"), source = join(root, "source.json");
+  writeFileSync(source, '{"model":"original"}');
+  const drive = async (shown) => {
+    let prompts = 0, entered = 0, started = false;
+    const f = fakeHerdr({ kind: "cursor", reply: (a) => {
+      if (a[1] === "run") started = true;
+      if (a[1] === "prompt") { prompts++; return herdrError("agent_prompt_stalled"); }
+      if (started && a[1] === "read") return herdrOK({ text: prompts ? shown : "Welcome to Cursor\n❯" });
+      if (a[1] === "send-keys" && prompts) { entered++; return herdrOK({}); }
+      if (a[1] === "wait" && entered) return herdrOK({ agent: { agent_status: "working" } });
+      if (a[1] === "get") return herdrOK({ agent: { agent: "cursor", agent_status: entered ? "working" : "idle", interactive_ready: true } });
+    } });
+    const r = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--task", "Task"], { ...f.deps, cursorConfigSource: source, tempRoot: root });
+    return { r, prompts, entered };
+  };
+  try {
+    const x = await drive(unsent);
+    expect(x).toMatchObject({ prompts: 1, entered: 1, r: { ok: true, state: "prompted" } });
+    expect(x.r.steps.some((st) => st.step === "prompt_enter")).toBe(true);
+    const y = await drive(sent); // a trace, but not in the box: a person's call, as before
+    expect(y).toMatchObject({ prompts: 1, entered: 0 });
+    expect(y.r.state).not.toBe("prompted");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
 test("prompt traces survive any wrap and box drawing, and ordinary screens have none", async () => {
   const { promptTrace, composePrompt } = await import("../src/lib/launch.mjs");
   const full = composePrompt("Do the thing.\n".repeat(1200));

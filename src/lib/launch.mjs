@@ -23,6 +23,14 @@ export const PROMPT_OPENING = "You are a routr worker.";
 export const PROMPT_TRACES = ["You are a", "routr worker guide", "report block from the worker guide", "VERDICT: done | partial | blocked", "[Pasted text"];
 const squeeze = (t) => String(t).replace(/[\s│┃─━╭╮╰╯┌┐└┘├┤▏▕|]+/g, "");
 export const promptTrace = (screen) => PROMPT_TRACES.some((t) => squeeze(screen).includes(squeeze(t)));
+// The task sitting unsent in the input box: the last line starting with the harness's input mark (the registry's
+// `inputLine`) is the box, and a trace of the prompt on it means it was pasted but not submitted. The same trace
+// elsewhere on screen (the transcript of a prompt already sent) does not count.
+export const unsentInInput = (screen, mark) => {
+  if (!mark) return false;
+  const box = String(screen ?? "").split("\n").findLast((l) => l.trimStart().startsWith(mark));
+  return Boolean(box && promptTrace(box));
+};
 export function composePrompt(task, guide = WORKER_GUIDE) {
   return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
 }
@@ -318,9 +326,10 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       }
       return null;
     };
-    // Submit the task and confirm the worker took it. A prompt is resent only when herdr says it stalled AND the pane
-    // shows it never arrived (the agent idle, the worker opening nowhere in its scrollback): seen 2026-09-26 on Claude,
-    // idle with an empty input line after "agent_prompt_stalled". Anything less certain goes to a person, never twice.
+    // Submit the task and confirm the worker took it. After herdr says "agent_prompt_stalled", with the agent idle:
+    // the task sitting unsent in the input box gets Enter, once (seen twice on Cursor, 2026-09-26); a task nowhere on
+    // the pane is resent, once (seen twice on Claude, idle with an empty input line). Anything less certain goes to a
+    // person, never twice.
     const submitPrompt = async () => {
       // Reserve time to inspect the result.
       const budget = remaining();
@@ -337,7 +346,12 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         // and the send. Resent only with no trace of the prompt anywhere and no dialog on screen.
         const idle = (await call(["agent", "get", out.pane], true)).data?.result?.agent?.agent_status === "idle";
         const seen = idle ? clean(paneText((await call(["pane", "read", out.pane, "--source", "recent-unwrapped", "--lines", "1000"])).data)) : "";
-        if (idle && !promptTrace(seen) && !trustDialog(seen) && !permissiveConfirm(seen, HARNESSES[o.kind].confirm)) {
+        const dialog = trustDialog(seen) || permissiveConfirm(seen, HARNESSES[o.kind].confirm);
+        if (idle && !dialog && unsentInInput(seen, HARNESSES[o.kind].inputLine)) {
+          step("prompt_enter", true, "herdr said the prompt stalled and it sat unsent in the input box: pressed Enter once");
+          await call(["pane", "send-keys", out.pane, "enter"]);
+          r = await call(["agent", "wait", out.pane, "--until", "working", "--until", "blocked", "--until", "done", "--timeout", String(Math.min(10000, remaining()))], true);
+        } else if (idle && !promptTrace(seen) && !dialog) {
           step("prompt_retry", true, "herdr said the prompt stalled and the pane never showed it: sent once more");
           logCommand(out.command, promptForLog(a));
           r = await run(a, wait());
