@@ -1,8 +1,10 @@
 // The run ledger: one JSON line per piece of work handed out: what routr advised, what the agent chose, how it turned
 // out. It is how routr's questions get judged against real work instead of dedicated experiments.
 // `routr record` is the only command that writes the ledger; the advice commands stay side-effect free.
+import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { HARNESSES } from "./harnesses.mjs";
 import { LEVELS } from "./questions.mjs";
 import { home } from "./runtime.mjs";
 
@@ -76,14 +78,31 @@ export function parseReportSubagents(reportText) {
   return result;
 }
 
-export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, note, subagents, project }) {
+// The ledger's key for a brief (never the brief itself). `dispatch` hashes the brief it read; `launch --advice` hashes
+// the task it sends the same way, so the two can be compared.
+export const briefSha = (text) => createHash("sha256").update(String(text).trim()).digest("hex").slice(0, 12);
+
+// The effort a run actually had, when the lead wrote none, "none" or "default". Cursor and Antigravity carry it in the
+// model id (grok-4.7-high); for a harness that takes it separately, "default" is the user's configured default_effort.
+// In the maintainer's ledger (2026-09-26), 13 of 44 rows said "default", "none" or nothing, all on Cursor and
+// Antigravity, and the model id gave the effort every time. `effort_from` says where it came from (kept locally, not sent).
+const IN_ID = /-(minimal|low|medium|high|xhigh|max)(?:-[a-z0-9]+)?$/; // one qualifier may follow: cursor-grok-4.6-high-fast
+export function resolveEffort({ subscription, model, effort }, config = null) {
+  const h = HARNESSES[subscription], unset = effort == null || effort === "" || /^(none|default)$/i.test(effort);
+  if (h && !h.effort && unset) { const m = String(model ?? "").match(IN_ID); if (m) return { effort: m[1], effort_from: "model id" }; }
+  const configured = config?.subscriptions?.[subscription]?.default_effort;
+  if (h?.effort && (effort == null || effort === "" || /^default$/i.test(effort)) && configured) return { effort: configured, effort_from: "config default" };
+  return { effort: effort ?? null, effort_from: "given" };
+}
+
+export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, note, subagents, project }, config = null) {
   return {
     ts: new Date().toISOString(), project: project ?? projectName(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set, jev_model: advice.jev_model ?? null, // the version that answered: a new Jev is compared on real work
     brief_sha: advice.brief_sha, brief_chars: advice.brief_chars, // never the brief itself: briefs can be private
     advised: { level: advice.level, sure: advice.sure, between: advice.between ?? null, work_type: advice.work_type, high_risk: advice.high_risk, fallback: !!advice.fallback,
       facts: Object.fromEntries(Object.entries(advice.facts ?? {}).map(([k, f]) => [k, f.p])) },
     headroom: Object.fromEntries((advice.subscriptions?.ranked ?? []).map((r) => [r.subscription, { usable: r.usable, usage: r.usage }])),
-    chose: { subscription: subscription ?? null, model: model ?? null, effort: effort ?? null, level: LEVELS.includes(level) ? level : advice.level },
+    chose: { subscription: subscription ?? null, model: model ?? null, ...resolveEffort({ subscription, model, effort }, config), level: LEVELS.includes(level) ? level : advice.level },
     outcome: { verdict: verdict ?? "unknown", check: check ?? "none", seconds: seconds ? +seconds : null, attempts: attempts ? +attempts : 1, note: note ?? null },
     subagents: (subagents ?? []).map(parseSubagent).filter(Boolean),
   };

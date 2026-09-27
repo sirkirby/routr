@@ -252,3 +252,21 @@ test("--headroom: a share or a percent is read; empty, % alone, out of range, or
   expect(r.given).toEqual({ claude: 0.4, codex: 0.9, claude2: 0.5 });
   expect(r.notes.map((n) => n.split(" is not")[0])).toEqual(["--headroom cursor=%", "--headroom agy=% ", "--headroom kiro=150%", "--headroom x=1.5", "--headroom =0.5", "--headroom lots", "--headroom y="]);
 });
+
+test("a flag subagent and dispatch do not take is never advised on as the brief", () => {
+  const home = scratch("flag-brief"), file = join(home, "brief.txt"), text = "Rename the helper foo to bar in src/a.js and update its two callers.";
+  writeFileSync(file, text);
+  const run = (args, input) => { const r = Bun.spawnSync([process.execPath, SCRIPT, ...args], { env: cliEnv(home), stdin: input ? Bun.file(input) : "ignore" }); return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() }; };
+  // Found 2026-09-26: `routr subagent --json < brief.txt` gave advice about the text "--json".
+  const alone = run(["subagent", "--json"], file), a = JSON.parse(alone.out);
+  expect(alone.code).toBe(0);
+  expect(a.brief_chars).toBe(text.length); // the brief came from stdin
+  expect(a.input_notes).toEqual(["--json: not a flag routr subagent takes, so ignored; the brief was read from stdin"]);
+  const inside = JSON.parse(run(["dispatch", "Add", "a", "--verbose", "flag", "to", "the", "CLI"]).out);
+  expect(inside.brief_chars).toBe("Add a --verbose flag to the CLI".length);
+  expect(inside.input_notes).toEqual(["--verbose looks like a flag routr dispatch does not take; read as part of the brief"]);
+  // With nothing on stdin, flag-like words are the brief (-Werror can be one), and the note says so (from the review of #41).
+  const alone2 = JSON.parse(run(["subagent", "-Werror"]).out);
+  expect(alone2.brief_chars).toBe("-Werror".length);
+  expect(alone2.input_notes).toEqual(["-Werror looks like a flag routr subagent does not take; read as the brief"]);
+});
