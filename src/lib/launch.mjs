@@ -34,8 +34,11 @@ export const unsentInInput = (screen, mark) => {
   const marked = String(screen ?? "").split("\n").filter((l) => l.trimStart().startsWith(mark));
   return marked.length === 1 && promptTrace(marked[0]);
 };
-export function composePrompt(task, guide = WORKER_GUIDE) {
-  return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
+// `rules` is the lead's process text (what the worker may and may not do, how to report, git steps): the worker reads it
+// after the task, and routr never does. Only the task is the work that `dispatch` and `--advice` judge. (Measured
+// 2026-09-26: 18 of 36 real tasks carried such text, 5 to 38% of each, and it moved Jev's readings.)
+export function composePrompt(task, guide = WORKER_GUIDE, rules = null) {
+  return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}${rules ? `\n\n${rules.trim()}` : ""}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
 }
 
 const command = (args) => ["herdr", ...args].map(quote).join(" ");
@@ -109,7 +112,7 @@ export function permissiveConfirm(text, confirm) {
 
 export function parseLaunchArgs(args) {
   const o = { trust: "ask", timeout: 120000, dryRun: false };
-  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "direction", "task", "task-file", "trust", "timeout", "advice"];
+  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "direction", "task", "task-file", "rules-file", "trust", "timeout", "advice"];
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
@@ -134,6 +137,7 @@ export function parseLaunchArgs(args) {
   if (!["ask", "auto"].includes(o.trust)) throw new Error("--trust must be ask or auto");
   if (o.direction && !["right", "down"].includes(o.direction)) throw new Error("--direction must be right or down");
   if (o.task != null && o["task-file"] != null) throw new Error("Use only one of --task and --task-file");
+  if (o["rules-file"] != null && o.task == null && o["task-file"] == null) throw new Error("--rules-file goes with a task: pass --task-file (or --task) too");
   o.timeout = Number(o.timeout);
   if (!Number.isSafeInteger(o.timeout) || o.timeout <= 0) throw new Error("--timeout must be a positive integer in milliseconds");
   return o;
@@ -159,7 +163,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     Object.assign(out, { argv: p.argv, env: p.env, warnings: p.warnings });
     const task = o["task-file"] != null ? readFileSync(resolve(o["task-file"]), "utf8") : o.task;
     if (task != null && !task.trim()) throw new Error("The task must not be empty");
-    const prompt = task == null ? null : composePrompt(task);
+    const rules = o["rules-file"] != null ? readFileSync(resolve(o["rules-file"]), "utf8") : null;
+    if (rules != null && !rules.trim()) throw new Error("The rules file must not be empty");
+    const prompt = task == null ? null : composePrompt(task, WORKER_GUIDE, rules);
     out.prompt_chars = prompt?.length ?? null;
     // The advice must be about the task the worker gets. Of 42 dispatch calls in the maintainer's ledger (2026-09-26),
     // at least 12 were given a summary or a part of the task, and routr's facts then described that text instead

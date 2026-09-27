@@ -49,6 +49,21 @@ test("launch prompt preserves the required opening, task with verification, and 
   expect(prompt).toBe(`${opening}\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`);
 });
 
+test("--rules-file goes to the worker after the task, and only the task is compared with the advice", async () => {
+  const { briefSha } = await import("../src/lib/ledger.mjs");
+  expect(composePrompt("Do X.", "/g.md", "Do not push.\n")).toBe(composePrompt("Do X.\n\nDo not push.", "/g.md"));
+  expect(composePrompt("Do X.", "/g.md", null)).toBe(composePrompt("Do X.", "/g.md"));
+  const dir = scratch("rules-file"), task = join(dir, "task.md"), rules = join(dir, "rules.md"), advice = join(dir, "advice.json");
+  writeFileSync(task, "Fix the flaky retry test in src/retry.mjs.\n"); writeFileSync(rules, "Do not edit anything outside src/. Commit on your branch; never push.\n");
+  writeFileSync(advice, JSON.stringify({ brief_sha: briefSha("Fix the flaky retry test in src/retry.mjs.") }));
+  const r = await launch([...launchArgs, "--task-file", task, "--rules-file", rules, "--advice", advice, "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); } });
+  expect(r.advice).toEqual({ file: advice, matches: true }); // the rules are not part of what routr judged
+  expect(r.prompt_chars).toBe(composePrompt(readFileSync(task, "utf8"), WORKER_GUIDE, readFileSync(rules, "utf8")).length);
+  expect(() => parseLaunchArgs([...launchArgs, "--rules-file", rules])).toThrow("--rules-file goes with a task");
+  writeFileSync(rules, "  \n");
+  expect((await launch([...launchArgs, "--task-file", task, "--rules-file", rules, "--dry-run"])).steps.at(-1).detail).toContain("The rules file must not be empty");
+});
+
 test("shell detection distinguishes dotenv, a clean prompt, and unfinished startup", () => {
   expect(shellPrompt("found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver) ")).toBe("dotenv");
   for (const text of ["chris@host repo % ", "user@host:~/repo$ ", "❯ ", "\x1b[32m❯\x1b[0m ", "root #", "found '.env' file. Source it? ([y]es/[N]o)\n❯ "])

@@ -43,6 +43,7 @@ export const COMMANDS = {
       { name: "--model", arg: "<id>", description: "model id", required: "required unless --dry-run" },
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
       { name: "--effort", arg: "<level>", description: "reasoning effort", required: false },
+      { name: "--rules-file", arg: "<path>", description: "your process rules for the worker (what it may do, how to report, git steps): added after the task, and never read by routr, which judges only the task", required: false },
       { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch warns when it was given on a different text than this task", required: false },
       { name: "--pane", arg: "<id>", description: "existing herdr pane id to run in", required: false },
       { name: "--worktree", arg: "<branch>", description: "give the worker its own git worktree, opened as a workspace nested under the repo (the rule for workers)", required: false },
