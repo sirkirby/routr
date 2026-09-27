@@ -8,7 +8,7 @@ export const COMMANDS = {
     name: "subagent",
     description: "an agent is about to spawn a subagent → what the work demands",
     args: [
-      { name: '"<brief>"', description: "task brief (or pipe on stdin)", required: true },
+      { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin); a flag-like word given alone is set aside and stdin read", required: true },
     ],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
@@ -18,7 +18,7 @@ export const COMMANDS = {
     name: "dispatch",
     description: "an orchestrator is about to launch a pane → the same, plus subscriptions ranked by usable headroom",
     args: [
-      { name: '"<brief>"', description: "task brief (or pipe on stdin)", required: true },
+      { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin); a flag-like word given alone is set aside and stdin read", required: true },
     ],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
@@ -152,7 +152,7 @@ export const COMMANDS = {
     flags: [
       { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")})`, required: true },
       { name: "--model", arg: "<name>", description: "model chosen", required: true },
-      { name: "--effort", arg: "<level>", description: "reasoning effort chosen; \"default\" is recorded as your configured default_effort, and on Cursor or Antigravity the effort is read from the model id", required: true },
+      { name: "--effort", arg: "<level>", description: "reasoning effort chosen. On Claude, Codex and Kiro, \"default\" is recorded as your configured default_effort; on Cursor and Antigravity, none or \"default\" is recorded as the effort word the model id ends with (grok-4.7-high, or high-fast). Otherwise it is kept as written; chose.effort_from records which", required: true },
       { name: "--verdict", arg: "<done|partial|blocked>", description: "worker outcome verdict", required: true },
       { name: "--check", arg: "<pass|fail|none>", description: "verification outcome", required: true },
       { name: "--advice", arg: "<file>", description: "path to advice JSON file (or pipe on stdin)", required: false, default: "stdin" },

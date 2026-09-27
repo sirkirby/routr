@@ -103,14 +103,16 @@ const ADVISE = {
 if (ADVISE[mode]) { await ADVISE[mode](); process.exit(0); }
 if (mode !== "subagent" && mode !== "dispatch") { console.error(formatUnknownUsage()); process.exit(2); }
 
-// A word that looks like a flag these commands do not take (--json) is never quietly advised on: alone, it is set aside
-// and the brief is read from stdin; beside other words it stays in the brief, and the answer says so. (Found
-// 2026-09-26: `routr subagent --json < brief.txt` gave advice about the text "--json".)
+// A word that looks like a flag these commands do not take (--json) is never quietly advised on. Given alone with a
+// brief on stdin, it is set aside and stdin is the brief (found 2026-09-26: `routr subagent --json < brief.txt` gave
+// advice about the text "--json"). Otherwise it is the brief, or part of it (-Werror can be one), and the answer says so.
 const flagLike = rest.filter((w) => /^--?[a-z][\w-]*$/i.test(w));
-if (flagLike.length) inputNotes.push(flagLike.length === rest.length
-  ? `${flagLike.join(" ")}: not ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} takes, so ignored; the brief is the text, or stdin`
-  : `${flagLike.join(" ")} looks like a flag routr ${mode} does not take; it was read as part of the brief`);
-let brief = flagLike.length === rest.length ? "" : rest.join(" ").trim();
-if (!brief && !process.stdin.isTTY) { try { brief = (await import("node:fs")).readFileSync(0, "utf8").trim(); } catch {} }
-if (!brief) { console.error(`routr: empty brief${flagLike.length ? ` (${inputNotes.at(-1)})` : ""}`); process.exit(2); }
+let piped = "";
+if (!process.stdin.isTTY && (!rest.length || flagLike.length === rest.length)) { try { piped = (await import("node:fs")).readFileSync(0, "utf8").trim(); } catch {} }
+const setAside = flagLike.length && flagLike.length === rest.length && piped;
+if (flagLike.length) inputNotes.push(setAside
+  ? `${flagLike.join(" ")}: not ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} takes, so ignored; the brief was read from stdin`
+  : `${flagLike.join(" ")} looks like ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} does not take; read as ${flagLike.length === rest.length ? "the brief" : "part of the brief"}`);
+const brief = rest.length && !setAside ? rest.join(" ").trim() : piped;
+if (!brief) { console.error("routr: empty brief"); process.exit(2); }
 print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given)));

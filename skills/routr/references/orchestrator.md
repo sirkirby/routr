@@ -83,7 +83,7 @@ dialog, waits until the agent is ready, wraps your task in the opening and closi
 object describing what it did.
 
     routr launch --kind <claude|codex|cursor|agy|kiro> --name <agent-name> \
-        --cwd <repo> --worktree <branch> --model <id> [--effort <level>] [--task-file <path>] [--advice <file>] \
+        --cwd <repo> --worktree <branch> --model <id> [--effort <level>] --task-file <path> --advice <file> \
         [--trust ask|auto] [--dry-run]
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
@@ -97,6 +97,7 @@ object describing what it did.
   prompt yourself.
 - `--advice` takes the advice file you saved from `routr dispatch`. launch compares the text that advice was about
   with the task it sends, and warns when they differ (`advice.matches` is then `false`): ask routr about the task.
+  With no task (no `--task-file` or `--task`) there is nothing to compare, and no `advice` field.
 - `--trust` defaults to `ask`: at a folder-trust dialog routr stops, leaves the pane alive, and reports
   `needs_human` with what the dialog says. Pass `--trust auto` only for a directory you created or a worktree of the
   repository the user already has you working in. With `auto` you are vouching for the folder; routr is not judging it.
@@ -165,8 +166,10 @@ ledger.
         --check <pass|fail|none> [--report <file>] [--subagent "<subtask> → <level> → <model>"] \
         [--attempts <n>] [--seconds <n>] [--note "<why you went against the advice, or what went wrong>"]
 
-`--effort` is what you launched with. Write `default` if you passed none: routr records your configured
-`default_effort` for that subscription, and on Cursor or Antigravity it reads the effort from the model id.
+`--effort` is what you launched with. Write `default` if you passed none: routr records the effort the run had, and
+says where it came from in `chose.effort_from`: `model id` on Cursor and Antigravity, whose ids carry it
+(`grok-4.7-high`); `config default`, your configured `default_effort`, on a harness that takes effort separately; or
+`given`, what you wrote, kept as it is when neither says (no default set, or no effort in the id).
 `--verdict` is the worker's own VERDICT line. `--check` is your verification. Pass the saved report with `--report` so
 the worker's subagent choices are recorded too. `--attempts` counts the tries it took (1 means accepted first time);
 when you escalated, record the level and model that finally delivered. Record failures and cut-off workers too: they are

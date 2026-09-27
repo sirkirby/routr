@@ -322,6 +322,7 @@ test("record keeps the effort a run actually had: from the model id on Cursor an
   expect(resolveEffort({ subscription: "cursor", model: "grok-4.7-high", effort: "default" }, config)).toEqual({ effort: "high", effort_from: "model id" });
   expect(resolveEffort({ subscription: "agy", model: "gemini-3.8-flash-medium", effort: "none" }, config)).toEqual({ effort: "medium", effort_from: "model id" });
   expect(resolveEffort({ subscription: "agy", model: "gemini-3.8-flash-low" }, config)).toEqual({ effort: "low", effort_from: "model id" });
+  expect(resolveEffort({ subscription: "cursor", model: "cursor-grok-4.6-high-fast", effort: "none" }, config)).toEqual({ effort: "high", effort_from: "model id" }); // a qualifier after it (from the review of #41)
   expect(resolveEffort({ subscription: "cursor", model: "composer-2.5", effort: "default" }, config)).toEqual({ effort: "default", effort_from: "given" }); // no effort in the id: kept as written
   expect(resolveEffort({ subscription: "codex", model: "gpt-6-sol", effort: "default" }, config)).toEqual({ effort: "medium", effort_from: "config default" });
   expect(resolveEffort({ subscription: "codex", model: "gpt-6-sol", effort: "none" }, config)).toEqual({ effort: "none", effort_from: "given" }); // a level Codex takes

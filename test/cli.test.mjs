@@ -261,11 +261,12 @@ test("a flag subagent and dispatch do not take is never advised on as the brief"
   const alone = run(["subagent", "--json"], file), a = JSON.parse(alone.out);
   expect(alone.code).toBe(0);
   expect(a.brief_chars).toBe(text.length); // the brief came from stdin
-  expect(a.input_notes).toEqual(["--json: not a flag routr subagent takes, so ignored; the brief is the text, or stdin"]);
+  expect(a.input_notes).toEqual(["--json: not a flag routr subagent takes, so ignored; the brief was read from stdin"]);
   const inside = JSON.parse(run(["dispatch", "Add", "a", "--verbose", "flag", "to", "the", "CLI"]).out);
   expect(inside.brief_chars).toBe("Add a --verbose flag to the CLI".length);
-  expect(inside.input_notes).toEqual(["--verbose looks like a flag routr dispatch does not take; it was read as part of the brief"]);
-  const empty = run(["subagent", "--json"]);
-  expect(empty.code).toBe(2);
-  expect(empty.err).toContain("routr: empty brief (--json: not a flag");
+  expect(inside.input_notes).toEqual(["--verbose looks like a flag routr dispatch does not take; read as part of the brief"]);
+  // With nothing on stdin, flag-like words are the brief (-Werror can be one), and the note says so (from the review of #41).
+  const alone2 = JSON.parse(run(["subagent", "-Werror"]).out);
+  expect(alone2.brief_chars).toBe("-Werror".length);
+  expect(alone2.input_notes).toEqual(["-Werror looks like a flag routr subagent does not take; read as the brief"]);
 });
