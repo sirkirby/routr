@@ -95,6 +95,21 @@ test("trust detection chooses the affirmative option even when No is selected", 
   expect(trustDialog("Ready\n❯")).toBeNull();
 });
 
+test("Claude Code's newer trust question is found even when the pane wraps text after it (2.1.283, 2026-09-26)", () => {
+  const screen = [" Accessing workspace:", " /private/tmp/scratchpad/labels",
+    " Quick safety check: Is this a project you created or one you trust? (Like",
+    " your own code, a well-known open source project, or work from your team).",
+    " If not, take a moment to review what's in this folder first.", " Claude Code'll be able to read, edit, and execute files here.",
+    " Security guide", " ❯ No, exit", "   Yes, I trust this folder", " Enter to confirm · Esc to cancel"].join("\n");
+  expect(trustDialog(screen)).toMatchObject({ affirmative: { text: "Yes, I trust this folder" }, keys: ["down", "enter"] });
+  // A narrower pane (seen the same day) puts "project" and "trust?" on different lines.
+  const narrow = [" Quick safety check: Is this a project you", " created or one you trust? (Like your own", " code, a well-known open source project, or",
+    " work from your team). If not, take a", " moment to review what's in this folder", " first.", " Security guide", " ❯ No, exit", "   Yes, I trust this folder", " Enter to confirm · Esc to cancel"].join("\n");
+  expect(trustDialog(narrow)).toMatchObject({ affirmative: { text: "Yes, I trust this folder" }, keys: ["down", "enter"] });
+  // The question with its options not drawn yet still counts, as before: launch stops rather than type into it.
+  expect(trustDialog(screen.split("\n").slice(0, 4).join("\n"))?.keys).toBeNull();
+});
+
 test("pane reads extract text from JSON without mistaking envelope fields for pane contents", () => {
   expect(paneText({ id: "cli:pane:read", result: { text: claudeTrust, type: "pane_read" } })).toBe(claudeTrust);
   expect(paneText({ result: { snapshot: { lines: ["hello", "❯"] } } })).toBe("hello\n❯");

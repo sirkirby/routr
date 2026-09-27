@@ -57,7 +57,9 @@ export function logCommand(log, text) {
 // when there is no such question, or when a later input prompt (or `answered`) shows it has already scrolled past.
 function menuAfter(text, isQuestion, answered) {
   const t = clean(text).replace(/^[│┃][ \t]?|[ \t]*[│┃]$/gm, "");
-  const question = [...t.matchAll(/^[^\n]*$/gm)].filter((m) => isQuestion(m[0])).at(-1);
+  // Each line is judged with the two above it too, so a question the pane wrapped still reads as one sentence.
+  const lines = [...t.matchAll(/^[^\n]*$/gm)];
+  const question = lines.filter((m, i) => isQuestion(m[0], lines.slice(Math.max(0, i - 2), i + 1).map((x) => x[0]).join(" "))).at(-1);
   if (!question) return null;
   const below = t.slice(question.index + question[0].length);
   if (shellPrompt(below) === "ready" || answered?.test(below)) return null;
@@ -71,9 +73,12 @@ function menuAfter(text, isQuestion, answered) {
 }
 
 // A folder-trust question: the last one on screen, never an affirmative option or a historical status message.
-const TRUST_QUESTION = /^\s*(?:(?:Do you trust|Trust (?:this|the))\b[^\n]*|[^\n]*\b(?:folder|directory|project|workspace)\b[^\n]*\btrust\s*\?)[ \t]*$/i;
+// The question, however the pane wraps it: Claude Code 2.1.283 (2026-09-26) asks "Quick safety check: Is this a
+// project you created or one you trust? (Like your own code, …)", and a narrow pane puts "project" and "trust?" on
+// different lines. So: "trust?" on the line, and what is trusted (folder, project, …) on it or the two lines above.
+const TRUST_OPENS = /^\s*(?:Do you trust|Trust (?:this|the))\b/i, TRUST_ASKED = /\btrust\s*\?/i, TRUSTED = /\b(?:folder|directory|project|workspace)\b/i;
 export function trustDialog(text) {
-  const menu = menuAfter(text, (line) => TRUST_QUESTION.test(line));
+  const menu = menuAfter(text, (line, near) => TRUST_OPENS.test(line) || (TRUST_ASKED.test(line) && TRUSTED.test(near)));
   if (!menu) return null;
   const { options, matches, below } = menu;
   const affirmative = options.filter((o) => /^(?:yes(?:$|,?\s+(?:I trust\b|continue\b|trust\b))|trust (?:this|the)\b)/i.test(o.text)
