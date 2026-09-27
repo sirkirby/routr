@@ -1,6 +1,6 @@
 // telemetry.mjs: what is shared, when, and that nothing leaks
 import { expect, test } from "bun:test";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 
 import { COMMANDS } from "../src/lib/help.mjs";
@@ -285,6 +285,21 @@ test("end to end: nothing leaves before a yes, then only rows after it, with no 
     expect(JSON.stringify(got)).not.toMatch(/acme|private|deadbeef|a1b2c3d4/);
     expect(JSON.parse(await run("telemetry", "send")).sent).toBe(0);                // never twice
   } finally { server.stop(true); rmSync(home, { recursive: true, force: true }); }
+});
+
+test("ROUTR_NO_UPDATE stops updates, never a daily send the person turned on (from the verification of #40)", () => {
+  const home = scratch("no-update-send"), state = join(home, ".local/share/routr/telemetry.json");
+  mkdirSync(dirname(state), { recursive: true });
+  writeFileSync(state, JSON.stringify({ opted_in_at: "2026-09-24T00:00:00.000Z" }));
+  // The real start path (maybeAutoUpdate), as a release binary runs it, in its own process with that HOME.
+  const starts = (config, extra = {}) => Bun.spawnSync([process.execPath, "-e",
+    `import { maybeAutoUpdate } from './src/lib/update.mjs'; let spawned = false; maybeAutoUpdate(${JSON.stringify(config)}, { isStandalone: () => true, spawn: () => (spawned = true) }); console.log(spawned)`],
+  { env: { ...cliEnv(home, { ROUTR_NO_UPDATE: "1", ...extra }) } }).stdout.toString().trim();
+  try {
+    expect(starts({ telemetry: true })).toBe("true");
+    expect(starts({ telemetry: false })).toBe("false"); // nothing to send and updates off: nothing starts
+    expect(starts({ telemetry: true }, { DO_NOT_TRACK: "1" })).toBe("false");
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
 test("the commands telemetry status names as starting the daily job are the ones that start it", async () => {

@@ -103,14 +103,15 @@ export const dueForCheck = (lastCheckMs, nowMs = Date.now()) => !Number.isFinite
 const updatesOn = (config) => config?.auto_update !== false && !process.env.ROUTR_NO_UPDATE;
 
 // The daily job: the update check and the telemetry send share one detached process and one stamp.
-export function maybeAutoUpdate(config) {
+// `isStandalone` and `spawn` are seams, so a test can check which runs start without a release binary.
+export function maybeAutoUpdate(config, { isStandalone = standalone, spawn = spawnSelf } = {}) {
   try {
-    if (!standalone()) return false;
+    if (!isStandalone()) return false;
     try { rmSync(`${process.execPath}.old`, { force: true }); } catch {} // Windows: the binary a previous update moved aside
     if (!updatesOn(config) && !telemetryStatus(config).on) return false; // ROUTR_NO_UPDATE stops updates, not a send the person turned on
     let last = NaN; try { last = statSync(UPDATE_STAMP()).mtimeMs; } catch {}
     if (!dueForCheck(last)) return false;
-    return spawnSelf(["update", "--background"]);
+    return spawn(["update", "--background"]);
   } catch { return false; } // updating must never get in the way of the command that was asked for
 }
 

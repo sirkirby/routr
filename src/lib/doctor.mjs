@@ -147,12 +147,15 @@ export async function inspect({ configPath, quiet } = {}) {
   r.auto_update = autoUpdateStatus(config);
   r.telemetry = telemetryStatus(config);
   if (r.telemetry.on) {
-    // Rows pending with no send for two days (since the last send, or since the yes) mean the daily job is not sending.
-    const last = lastTelemetrySend(), pending = pendingCount(), daily = dailyTelemetrySend(config);
-    const quiet = hoursAgo(last?.at ?? telemetryState().opted_in_at);
+    // Only what happened since the current yes counts: a send before it (then off, then on again) says nothing now.
+    // Rows pending with no send for two days (since that send, or since the yes) mean the daily job is not sending;
+    // so do rows pending where the job cannot run at all (a source checkout).
+    const pending = pendingCount(), daily = dailyTelemetrySend(config), yes = telemetryState().opted_in_at;
+    const logged = lastTelemetrySend(), last = logged && !(Date.parse(logged.at) < Date.parse(yes ?? "")) ? logged : null;
+    const quiet = hoursAgo(last?.at ?? yes);
     const stale = pending > 0 && quiet != null && quiet > 48;
     r.telemetry = { ...r.telemetry, last_send: last, pending, daily_send: daily, quiet_hours: quiet,
-      needs_attention: last?.ok === false || Boolean(daily.problem) || stale };
+      needs_attention: last?.ok === false || Boolean(daily.problem) || stale || Boolean(daily.why_not && pending > 0) };
   }
   r.next_steps = nextSteps(r);
   return r;
@@ -204,8 +207,10 @@ export function render(r) {
     const rows = (n) => `${n} ${n === 1 ? "row" : "rows"}`;
     const said = [s ? (s.ok ? `last sent ${ago} (${rows(s.sent)}${s.refused ? `, ${s.refused} refused` : ""})` : `last send failed ${ago}: ${s.error ?? "unknown error"}`) : "nothing sent yet"];
     if (t.daily_send?.why_not) said.push(t.daily_send.why_not);
+    else if (t.daily_send?.running) said.push("a daily run is in progress now");
     else if (t.daily_send?.problem) said.push(t.daily_send.problem);
     if (t.pending > 0 && t.quiet_hours > 48) said.push(`no send for over 48 h, ${rows(t.pending)} pending`);
+    else if (t.pending > 0 && t.daily_send?.why_not) said.push(`${rows(t.pending)} pending`);
     line(t.needs_attention ? "need" : "ok", `telemetry sends: ${said.join(" · ")}`);
   }
   out.push("", r.next_steps.length ? paint(1, "Next steps") : paint(32, "Everything routr needs is in place."));

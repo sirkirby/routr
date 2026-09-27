@@ -30,9 +30,13 @@ test("doctor reports opted-in telemetry sends in text and JSON and flags failure
     expect(text()).toContain("Telemetry is on but not sending: `routr telemetry status` says why");
     expect(text()).not.toContain("Everything routr needs is in place.");
     mkdirSync(dirname(log), { recursive: true });
+    // A failed send from before the current yes (off, then on again) raises nothing now (from the verification of #40).
+    writeFileSync(log, JSON.stringify({ at: new Date(Date.now() - 100 * 3600000).toISOString(), ok: false, sent: 0, error: "endpoint answered 500" }) + "\n");
+    expect(json().telemetry).toMatchObject({ last_send: null, quiet_hours: 72 });
     writeFileSync(log, JSON.stringify({ at: new Date(Date.now() - 5 * 3600000).toISOString(), ok: true, sent: 3 }) + "\n");
-    expect(json().telemetry).toMatchObject({ last_send: { ok: true, sent: 3 }, needs_attention: false });
-    expect(text()).toContain("telemetry sends: last sent 5 h ago (3 rows)"); // hours, as the updates line says them
+    // From source the daily job never runs, so a pending row needs a hand send, however recent the last one.
+    expect(json().telemetry).toMatchObject({ last_send: { ok: true, sent: 3 }, needs_attention: true });
+    expect(text()).toContain("telemetry sends: last sent 5 h ago (3 rows) · running from source: the daily job never runs here; use routr telemetry send · 1 row pending"); // hours, as the updates line says them
     writeFileSync(log, JSON.stringify({ at: old, ok: true, sent: 3 }) + "\n");
     expect(json().telemetry.needs_attention).toBe(true);
     expect(text()).toContain("last sent 72 h ago (3 rows)");
