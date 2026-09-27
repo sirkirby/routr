@@ -78,10 +78,19 @@ function menuAfter(text, isQuestion, answered) {
 // A folder-trust question: the last one on screen, never an affirmative option or a historical status message.
 // The question, however the pane wraps it: Claude Code 2.1.283 (2026-09-26) asks "Quick safety check: Is this a
 // project you created or one you trust? (Like your own code, …)", and a narrow pane puts "project" and "trust?" on
-// different lines. So: "trust?" on the line, and what is trusted (folder, project, …) on it or the two lines above.
-const TRUST_OPENS = /^\s*(?:Do you trust|Trust (?:this|the))\b/i, TRUST_ASKED = /\btrust\s*\?/i, TRUSTED = /\b(?:folder|directory|project|workspace)\b/i;
+// different lines. So: "trust?" on the line, and what is trusted (folder, project, …) in the same SENTENCE, read across
+// the two lines above: nearby prose about a project beside an unrelated "Can we trust?" is not it (from the
+// verification of #41).
+const TRUST_OPENS = /^\s*(?:Do you trust|Trust (?:this|the))\b/i, TRUSTED = /\b(?:folder|directory|project|workspace)\b/i;
+const trustQuestion = (line, near) => {
+  if (TRUST_OPENS.test(line)) return true;
+  const at = near.search(/\btrust\s*\?/i);
+  if (at < 0 || !/\btrust\s*\?/i.test(line)) return false;
+  const sentence = near.slice(0, at).split(/[.!?](?:\s|$)/).at(-1); // from the last sentence end before "trust?"
+  return TRUSTED.test(sentence);
+};
 export function trustDialog(text) {
-  const menu = menuAfter(text, (line, near) => TRUST_OPENS.test(line) || (TRUST_ASKED.test(line) && TRUSTED.test(near)));
+  const menu = menuAfter(text, trustQuestion);
   if (!menu) return null;
   const { options, matches, below } = menu;
   const affirmative = options.filter((o) => /^(?:yes(?:$|,?\s+(?:I trust\b|continue\b|trust\b))|trust (?:this|the)\b)/i.test(o.text)

@@ -121,6 +121,8 @@ test("Claude Code's newer trust question is found even when the pane wraps text 
   const narrow = [" Quick safety check: Is this a project you", " created or one you trust? (Like your own", " code, a well-known open source project, or",
     " work from your team). If not, take a", " moment to review what's in this folder", " first.", " Security guide", " ❯ No, exit", "   Yes, I trust this folder", " Enter to confirm · Esc to cancel"].join("\n");
   expect(trustDialog(narrow)).toMatchObject({ affirmative: { text: "Yes, I trust this folder" }, keys: ["down", "enter"] });
+  // Prose about a project beside an unrelated "Can we trust?" menu is not a folder-trust question (from the verification of #41).
+  expect(trustDialog(" This project has a cached token.\n Can we trust?\n ❯ No\n   Yes, continue")).toBeNull();
   // The question with its options not drawn yet still counts, as before: launch stops rather than type into it.
   expect(trustDialog(screen.split("\n").slice(0, 4).join("\n"))?.keys).toBeNull();
 });

@@ -21,8 +21,8 @@ while you do something else or your own subscription is close to its reserve.
 Ask about the task itself, word for word: the file you will pass to `launch --task-file`. A summary gets advice about
 the summary (in the maintainer's ledger, at least 12 of 42 dispatch calls were given one, and routr's facts then
 described text the worker never saw). `launch --advice` checks this for you. Keep your process rules for the worker
-(what it may and may not do, how to report, git steps) out of that file: they go in `--rules-file`, which the worker
-reads and routr never judges. In 18 of 36 real tasks such rules were 5 to 38% of the text, and they moved routr's
+(what it may and may not do, how to report, git steps) out of that file: they go in `--rules-file`, which launch passes
+to the worker and routr does not judge. In 18 of 36 real tasks such rules were 5 to 38% of the text, and they moved routr's
 readings.
 
 First, the brief: if `states_check` or `standalone` reads `no`, fix the brief and ask again. A worker cannot ask you
@@ -102,8 +102,8 @@ object describing what it did.
   before any prompt.
 - `--task-file` holds your task alone (parts 2 and 3). Without it the pane is left ready and unprompted, for you to
   prompt yourself.
-- `--rules-file` holds your process rules, added after the task. routr never reads them, and `--advice` compares the
-  task alone.
+- `--rules-file` holds your process rules, added after the task. routr passes them on without judging them, and
+  `--advice` compares the task alone.
 - `--advice` takes the advice file you saved from `routr dispatch`. launch compares the text that advice was about
   with the task it sends, and warns when they differ (`advice.matches` is then `false`): ask routr about the task.
   With no task (no `--task-file` or `--task`) there is nothing to compare, and no `advice` field.
