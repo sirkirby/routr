@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "./config.mjs";
-import { CACHE_DIR, spawnSelf, standalone, takeLock, TELEMETRY_LOG, UPDATE_STAMP } from "./runtime.mjs";
+import { CACHE_DIR, lockIsStale, spawnSelf, standalone, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
 import { forgetConsentUnlessOn, sendRows, telemetryStatus } from "./telemetry.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
@@ -78,13 +78,7 @@ export async function update({ checkOnly = false, force = false, base = process.
 // A normal command only looks at one file's age. When the last check is more than a day old it starts a DETACHED
 // updater and carries on; it never waits for it and makes no network call itself. The updater swaps the binary in
 // place, so a run already in progress keeps the binary it started with and the next run gets the new one.
-// A lock is only taken over when its owner is gone: age alone would let a slow download be overlapped by a second swap.
-// A lock with no readable pid (written by an older routr) falls back to age.
-export function lockIsStale(file, { alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } } } = {}) {
-  const pid = Number(readFileSync(file, "utf8").trim());
-  if (Number.isInteger(pid) && pid > 0) return !alive(pid);
-  return Date.now() - statSync(file).mtimeMs >= 10 * 60 * 1000;
-}
+export { lockIsStale }; // lives in runtime.mjs now, beside takeLock, so telemetry status can read the lock too
 
 // Put `bin` where `self` is. A running binary can be renamed on every system, but on Windows it cannot be overwritten,
 // so it is moved aside first. If the new file cannot be moved in, the old one goes back: never leave no binary.
@@ -99,7 +93,7 @@ export function swapBinary(self, bin, { rename = renameSync } = {}) {
 }
 
 const CACHE = CACHE_DIR;
-const LOCK = () => join(CACHE(), "update.lock");
+const LOCK = UPDATE_LOCK;
 export const UPDATE_LOG = () => join(CACHE(), "update.log");
 export { TELEMETRY_LOG };
 const DAY = 24 * 60 * 60 * 1000;
@@ -113,7 +107,7 @@ export function maybeAutoUpdate(config) {
   try {
     if (!standalone()) return false;
     try { rmSync(`${process.execPath}.old`, { force: true }); } catch {} // Windows: the binary a previous update moved aside
-    if (process.env.ROUTR_NO_UPDATE || !updatesOn(config) && !telemetryStatus(config).on) return false;
+    if (!updatesOn(config) && !telemetryStatus(config).on) return false; // ROUTR_NO_UPDATE stops updates, not a send the person turned on
     let last = NaN; try { last = statSync(UPDATE_STAMP()).mtimeMs; } catch {}
     if (!dueForCheck(last)) return false;
     return spawnSelf(["update", "--background"]);

@@ -18,26 +18,28 @@ test("doctor reports opted-in telemetry sends in text and JSON and flags failure
     mkdirSync(dirname(config), { recursive: true });
     writeFileSync(config, JSON.stringify({ telemetry: false }));
     expect(json().telemetry).toEqual({ on: false, why_off: "not turned on (the default): routr telemetry on" });
-    expect(text()).not.toContain("telemetry send ");
+    expect(text()).not.toContain("telemetry sends");
     const old = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
     writeFileSync(config, JSON.stringify({ telemetry: true }));
     mkdirSync(dirname(state), { recursive: true });
     writeFileSync(state, JSON.stringify({ opted_in_at: old, sent_through: old }));
     writeFileSync(ledger, JSON.stringify(row({ ts: new Date().toISOString() })) + "\n");
-    expect(json().telemetry).toMatchObject({ on: true, last_send: null, pending: 1, needs_attention: true });
-    expect(text()).toContain("!! telemetry send never · 1 row waiting for over 48 h");
+    // Opted in 72 h ago, a row pending, nothing ever sent: no send for over 48 h.
+    expect(json().telemetry).toMatchObject({ on: true, last_send: null, pending: 1, quiet_hours: 72, needs_attention: true });
+    expect(text()).toContain("!! telemetry sends: nothing sent yet · running from source: the daily job never runs here; use routr telemetry send · no send for over 48 h, 1 row pending");
+    expect(text()).toContain("Telemetry is on but not sending: `routr telemetry status` says why");
+    expect(text()).not.toContain("Everything routr needs is in place.");
     mkdirSync(dirname(log), { recursive: true });
-    writeFileSync(log, JSON.stringify({ at: new Date().toISOString(), ok: true, sent: 3 }) + "\n");
+    writeFileSync(log, JSON.stringify({ at: new Date(Date.now() - 5 * 3600000).toISOString(), ok: true, sent: 3 }) + "\n");
     expect(json().telemetry).toMatchObject({ last_send: { ok: true, sent: 3 }, needs_attention: false });
-    expect(text()).toContain("ok telemetry send ");
-    expect(text()).toContain("3 rows sent");
+    expect(text()).toContain("telemetry sends: last sent 5 h ago (3 rows)"); // hours, as the updates line says them
     writeFileSync(log, JSON.stringify({ at: old, ok: true, sent: 3 }) + "\n");
     expect(json().telemetry.needs_attention).toBe(true);
-    expect(text()).toContain("3 rows sent · 1 row waiting for over 48 h");
+    expect(text()).toContain("last sent 72 h ago (3 rows)");
+    expect(text()).toContain("no send for over 48 h, 1 row pending");
     writeFileSync(log, JSON.stringify({ at: new Date().toISOString(), ok: false, sent: 0, error: "endpoint answered 500" }) + "\n");
     expect(json().telemetry).toMatchObject({ last_send: { ok: false, error: "endpoint answered 500" }, needs_attention: true });
-    expect(text()).toContain("!! telemetry send ");
-    expect(text()).toContain("failed: endpoint answered 500");
+    expect(text()).toContain("!! telemetry sends: last send failed 0 h ago: endpoint answered 500");
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 test("doctor's next steps name the command for each thing missing, most important first", async () => {

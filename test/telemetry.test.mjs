@@ -13,7 +13,7 @@ test("telemetry status reads the last daily send and explains scheduling without
   try {
     const empty = command();
     expect(empty.last_send).toBeNull();
-    expect(empty.daily_send).toMatchObject({ can_run: false, why_not: "running from source: use routr telemetry send", next_run: null });
+    expect(empty.daily_send).toEqual({ can_run: false, why_not: "running from source: the daily job never runs here; use routr telemetry send" });
     expect(existsSync(cache)).toBe(false);
     mkdirSync(cache, { recursive: true });
     writeFileSync(log, JSON.stringify({ at: "2026-09-25T12:00:00.000Z", ok: true, sent: 3 }) + "\n");
@@ -28,13 +28,28 @@ test("telemetry status reads the last daily send and explains scheduling without
     writeFileSync(stamp, "\n");
     const checked = new Date("2026-09-25T12:00:00.000Z");
     utimesSync(stamp, checked, checked);
+    // The daily job's own view, as a release binary sees it (standalone), with a clock the test sets.
     const yes = { telemetry: true, auto_update: false };
-    const daily = (config, switches = {}) => JSON.parse(Bun.spawnSync([process.execPath, "-e",
-      `import { dailyTelemetrySend } from './src/lib/telemetry.mjs'; console.log(JSON.stringify(dailyTelemetrySend(${JSON.stringify(config)}, process.env, true)))`],
+    const daily = (config, switches = {}, now = Date.parse("2026-09-25T20:00:00.000Z")) => JSON.parse(Bun.spawnSync([process.execPath, "-e",
+      `import { dailyTelemetrySend } from './src/lib/telemetry.mjs'; console.log(JSON.stringify(dailyTelemetrySend(${JSON.stringify(config)}, process.env, true, ${now})))`],
     { env: { ...env, ...switches } }).stdout.toString());
-    expect(daily(yes).next_run).toBe("2026-09-26T12:00:00.000Z");
-    expect(daily({ telemetry: false, auto_update: false }).why_not).toContain("auto-update and telemetry both off");
-    expect(daily(yes, { ROUTR_NO_UPDATE: "1" }).why_not).toBe("ROUTR_NO_UPDATE is set");
+    writeFileSync(state, JSON.stringify({ opted_in_at: "2026-09-24T00:00:00.000Z" }));
+    // Opted in, auto-update off: the job still runs for the send. ROUTR_NO_UPDATE stops updates, never a send (from the review of #40).
+    writeFileSync(log, JSON.stringify({ at: "2026-09-25T12:00:02.000Z", ok: true, sent: 3 }) + "\n");
+    expect(daily(yes)).toMatchObject({ can_run: true, problem: null, running: false, last_run: "2026-09-25T12:00:00.000Z", next_run: "2026-09-26T12:00:00.000Z" });
+    expect(daily(yes).started_by).toContain("dispatch");
+    expect(daily(yes, { ROUTR_NO_UPDATE: "1" })).toMatchObject({ can_run: true, why_not: null });
+    expect(daily(yes, {}, Date.parse("2026-09-27T00:00:00.000Z")).next_run).toBe("now");
+    expect(daily({ telemetry: false }).why_not).toContain("telemetry off");
+    // A run that stamped and then logged no send: said, unless the lock's owner is alive (a run in progress).
+    writeFileSync(log, JSON.stringify({ at: "2026-09-24T12:00:00.000Z", ok: true, sent: 3 }) + "\n");
+    expect(daily(yes).problem).toContain("recorded no send");
+    writeFileSync(join(cache, "update.lock"), String(process.pid));
+    expect(daily(yes)).toMatchObject({ running: true, problem: null });
+    rmSync(join(cache, "update.lock"));
+    // A stamp from before the yes (an update-only run) is not a lost send.
+    writeFileSync(state, JSON.stringify({ opted_in_at: "2026-09-25T13:00:00.000Z" }));
+    expect(daily(yes).problem).toBeNull();
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 test("shared rows carry what tuning needs and nothing that identifies the user or the work", async () => {
@@ -270,4 +285,10 @@ test("end to end: nothing leaves before a yes, then only rows after it, with no 
     expect(JSON.stringify(got)).not.toMatch(/acme|private|deadbeef|a1b2c3d4/);
     expect(JSON.parse(await run("telemetry", "send")).sent).toBe(0);                // never twice
   } finally { server.stop(true); rmSync(home, { recursive: true, force: true }); }
+});
+
+test("the commands telemetry status names as starting the daily job are the ones that start it", async () => {
+  const { DAILY_STARTERS } = await import("../src/lib/telemetry.mjs");
+  const started = readFileSync(join(import.meta.dir, "../src/routr.mjs"), "utf8").match(/if \((\[[^\]]+\])\.includes\(mode\)\)[^\n]*maybeAutoUpdate/);
+  expect(JSON.parse(started[1])).toEqual(DAILY_STARTERS);
 });

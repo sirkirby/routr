@@ -14,7 +14,7 @@ import { CONFIG_PATH } from "./config.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { LEDGER_PATH, read } from "./ledger.mjs";
 import { FACTS, questions } from "./questions.mjs";
-import { standalone, TELEMETRY_LOG, UPDATE_STAMP } from "./runtime.mjs";
+import { lockIsStale, standalone, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 export const ENDPOINT = process.env.ROUTR_TELEMETRY_URL || "https://telemetry.routr.build";
@@ -43,16 +43,28 @@ export function lastTelemetrySend() {
   } catch { return null; }
 }
 
-export function dailyTelemetrySend(config, env = process.env, isStandalone = standalone()) {
+// The commands that may start the daily job (src/routr.mjs); `telemetry status` is not one of them.
+export const DAILY_STARTERS = ["subagent", "dispatch", "check", "record", "assess", "share", "doctor", "usage"];
+// Whether the daily send can run here, and whether its last run left a result: one judgement, which `telemetry status`
+// and doctor both show. The job stamps first and logs its send after it, so a stamp newer than the last logged send,
+// with no live owner of the lock, is a run that stopped before it could say how the send went.
+export function dailyTelemetrySend(config, env = process.env, isStandalone = standalone(), nowMs = Date.now()) {
   const st = telemetryStatus(config, env);
-  const why = !isStandalone ? "running from source: use routr telemetry send"
-    : env.ROUTR_NO_UPDATE ? "ROUTR_NO_UPDATE is set"
-    : !st.on && config?.auto_update === false ? `auto-update and telemetry both off (${st.why_off})`
-    : !st.on ? `telemetry off: ${st.why_off}` : null;
-  let next = null;
-  try { next = new Date(statSync(UPDATE_STAMP()).mtimeMs + DAY).toISOString(); } catch {}
-  return { can_run: !why, why_not: why, next_run: why ? null : next, timing: "first routr command after next_run (or the next command when next_run is null)" };
+  const why = !isStandalone ? "running from source: the daily job never runs here; use routr telemetry send" : !st.on ? `telemetry off: ${st.why_off}` : null;
+  if (why) return { can_run: false, why_not: why };
+  let stamp = NaN, running = false;
+  try { stamp = statSync(UPDATE_STAMP()).mtimeMs; } catch {}
+  try { running = !lockIsStale(UPDATE_LOCK()); } catch {}
+  const last = lastTelemetrySend(), consented = Date.parse(state().opted_in_at ?? "");
+  const lost = Number.isFinite(stamp) && !running && !(stamp < consented) && !(Date.parse(last?.at ?? "") >= stamp);
+  return { can_run: true, why_not: null, running,
+    last_run: Number.isFinite(stamp) ? new Date(stamp).toISOString() : null,
+    problem: lost ? "the last daily run recorded no send: it stopped before sending, or could not start the send" : null,
+    next_run: Number.isFinite(stamp) && stamp + DAY > nowMs ? new Date(stamp + DAY).toISOString() : "now",
+    started_by: `the first of these commands after next_run: ${DAILY_STARTERS.join(", ")}` };
 }
+// Hours between an ISO time and now, for a person to read at a glance.
+export const hoursAgo = (iso, nowMs = Date.now()) => { const t = Date.parse(iso ?? ""); return Number.isFinite(t) ? Math.max(0, Math.round((nowMs - t) / 3600000)) : null; };
 
 // How many ledger rows the next send would carry: only rows after the mark (`telemetry on` sets it to that moment).
 export function pendingCount(ledger = LEDGER_PATH) {
