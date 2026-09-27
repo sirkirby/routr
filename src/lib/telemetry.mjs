@@ -8,12 +8,13 @@
 // for every send, `routr telemetry send` included.
 // Sending happens only in the detached daily job (update.mjs) or on an explicit command: never inside advice.
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONFIG_PATH } from "./config.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { LEDGER_PATH, read } from "./ledger.mjs";
 import { FACTS, questions } from "./questions.mjs";
+import { lockIsStale, standalone, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 export const ENDPOINT = process.env.ROUTR_TELEMETRY_URL || "https://telemetry.routr.build";
@@ -32,6 +33,38 @@ export function telemetryStatus(config, env = process.env, st = state()) {
     : !st.opted_in_at ? "turned on before sharing became opt-in: run routr telemetry on to confirm" : null);
   return { on: !why, why_off: why };
 }
+
+const DAY = 24 * 60 * 60 * 1000;
+export function lastTelemetrySend() {
+  try {
+    const s = JSON.parse(readFileSync(TELEMETRY_LOG(), "utf8"));
+    if (!s || !Number.isFinite(Date.parse(s.at)) || typeof s.ok !== "boolean" || !Number.isInteger(s.sent) || s.sent < 0) return null;
+    return { at: s.at, ok: s.ok, sent: s.sent, refused: s.refused ?? null, error: s.error ?? null };
+  } catch { return null; }
+}
+
+// The commands that may start the daily job (src/routr.mjs); `telemetry status` is not one of them.
+export const DAILY_STARTERS = ["subagent", "dispatch", "check", "record", "assess", "share", "doctor", "usage"];
+// Whether the daily send can run here, and whether its last run left a result: one judgement, which `telemetry status`
+// and doctor both show. The job stamps first and logs its send after it, so a stamp newer than the last logged send,
+// with no live owner of the lock, is a run that stopped before it could say how the send went.
+export function dailyTelemetrySend(config, env = process.env, isStandalone = standalone(), nowMs = Date.now()) {
+  const st = telemetryStatus(config, env);
+  const why = !isStandalone ? "running from source: the daily job never runs here; use routr telemetry send" : !st.on ? `telemetry off: ${st.why_off}` : null;
+  if (why) return { can_run: false, why_not: why };
+  let stamp = NaN, running = false;
+  try { stamp = statSync(UPDATE_STAMP()).mtimeMs; } catch {}
+  try { running = !lockIsStale(UPDATE_LOCK()); } catch {}
+  const last = lastTelemetrySend(), consented = Date.parse(state().opted_in_at ?? "");
+  const lost = Number.isFinite(stamp) && !running && !(stamp < consented) && !(Date.parse(last?.at ?? "") >= stamp);
+  return { can_run: true, why_not: null, running,
+    last_run: Number.isFinite(stamp) ? new Date(stamp).toISOString() : null,
+    problem: lost ? "the last daily run recorded no send: it stopped before sending, or could not start the send" : null,
+    next_run: Number.isFinite(stamp) && stamp + DAY > nowMs ? new Date(stamp + DAY).toISOString() : "now",
+    started_by: `the first of these commands after next_run: ${DAILY_STARTERS.join(", ")}` };
+}
+// Hours between an ISO time and now, for a person to read at a glance.
+export const hoursAgo = (iso, nowMs = Date.now()) => { const t = Date.parse(iso ?? ""); return Number.isFinite(t) ? Math.max(0, Math.round((nowMs - t) / 3600000)) : null; };
 
 // How many ledger rows the next send would carry: only rows after the mark (`telemetry on` sets it to that moment).
 export function pendingCount(ledger = LEDGER_PATH) {
@@ -160,5 +193,6 @@ export function telemetryCommand(args, config, configPath) {
     return r.ok && sub === "on" && blocked ? { ...r, telemetry: "off", why_off: blocked, note: `set to on, but it stays off while ${blocked}` } : r;
   }
   const st = telemetryStatus(config), s = state();
-  return { ok: true, telemetry: st.on ? "on" : "off", ...(st.why_off ? { why_off: st.why_off } : {}), endpoint: ENDPOINT, install_id: s.install_id ?? null, last_sent_through: s.sent_through ?? null, what: NOTICE };
+  return { ok: true, telemetry: st.on ? "on" : "off", ...(st.why_off ? { why_off: st.why_off } : {}), endpoint: ENDPOINT, install_id: s.install_id ?? null, last_sent_through: s.sent_through ?? null,
+    last_send: lastTelemetrySend(), daily_send: dailyTelemetrySend(config), what: NOTICE };
 }

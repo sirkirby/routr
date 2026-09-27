@@ -2,7 +2,7 @@
 // (an atomic write, a lock, a detached copy of routr, a subprocess read). No imports beyond node: `statusline` loads
 // this on every Claude Code turn.
 import { spawn } from "node:child_process";
-import { closeSync, mkdirSync, openSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -15,6 +15,9 @@ export const home = () => (process.platform === "win32" ? process.env.USERPROFIL
 export const standalone = () => !/\.m?js$/.test(process.argv[1] ?? "");
 
 export const CACHE_DIR = () => join(home(), ".cache/routr");
+export const UPDATE_STAMP = () => join(CACHE_DIR(), "update-check");
+export const TELEMETRY_LOG = () => join(CACHE_DIR(), "telemetry.log");
+export const UPDATE_LOCK = () => join(CACHE_DIR(), "update.lock");
 // Written by `routr statusline` on each Claude Code turn, read by the usage reader.
 export const CLAUDE_SNAPSHOT = join(home(), ".cache/routr/claude-usage.json");
 // Written by `routr usage cursor` (by hand, or in the background when the reading is old), read by the usage reader.
@@ -38,6 +41,13 @@ export function takeLock(file, stale) {
   const make = () => { const fd = openSync(file, "wx"); try { writeSync(fd, String(process.pid)); } catch {} closeSync(fd); };
   try { make(); return true; } catch (e) { if (e?.code !== "EEXIST") return false; }
   try { if (!stale(file)) return false; rmSync(file, { force: true }); make(); return true; } catch { return false; }
+}
+// The updater's lock is only taken over when its owner is gone: age alone would let a slow download be overlapped by a
+// second swap. A lock with no readable pid (written by an older routr) falls back to age.
+export function lockIsStale(file, { alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } } } = {}) {
+  const pid = Number(readFileSync(file, "utf8").trim());
+  if (Number.isInteger(pid) && pid > 0) return !alive(pid);
+  return Date.now() - statSync(file).mtimeMs >= 10 * 60 * 1000;
 }
 // A lock whose file was last written `ms` or more before `nowMs`.
 export const olderThan = (ms, nowMs = Date.now()) => (file) => nowMs - statSync(file).mtimeMs >= ms;

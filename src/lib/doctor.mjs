@@ -11,7 +11,7 @@ import { JEV_MODEL } from "./questions.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
 import { CLAUDE_SNAPSHOT, home, standalone } from "./runtime.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
-import { telemetryStatus } from "./telemetry.mjs";
+import { dailyTelemetrySend, hoursAgo, lastTelemetrySend, pendingCount, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 
@@ -66,6 +66,7 @@ export function nextSteps(r) {
   if (cl?.installed && cl.usage_reason === NO_WINDOWS_AFTER_ANSWER && !r.config.billing?.claude)
     steps.push(`Claude answered a prompt but reported no usage windows, and routr cannot tell why. If this seat has no quota (usage-based Enterprise, an API key), add "billing": "metered" under subscriptions.claude in ${r.config.path} and routr ranks it as billed usage. If it has a quota (routr has not yet seen a Team or Enterprise seat send windows), add "billing": "included", or check again after another turn`);
   if (!r.skill.length || (!r.from_source && r.skill.some((k) => baseVersion(k.version) !== baseVersion(ROUTR_VERSION)))) steps.push("Install the routr skill that matches this routr: routr skill install");
+  if (r.telemetry?.needs_attention) steps.push("Telemetry is on but not sending: `routr telemetry status` says why (last_send, daily_send), and `routr telemetry send` sends now");
   if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
   if (!r.herdr.path) steps.push("For orchestration, install herdr (https://herdr.dev). Sizing subagents works without it");
   else if (!r.herdr.skill) steps.push("Install herdr's agent skill: npx skills add herdrdev/herdr --skill herdr -g");
@@ -145,6 +146,17 @@ export async function inspect({ configPath, quiet } = {}) {
   if (!r.config.exists) r.starter_config = starterConfig(found);
   r.auto_update = autoUpdateStatus(config);
   r.telemetry = telemetryStatus(config);
+  if (r.telemetry.on) {
+    // Only what happened since the current yes counts: a send before it (then off, then on again) says nothing now.
+    // Rows pending with no send for two days (since that send, or since the yes) mean the daily job is not sending;
+    // so do rows pending where the job cannot run at all (a source checkout).
+    const pending = pendingCount(), daily = dailyTelemetrySend(config), yes = telemetryState().opted_in_at;
+    const logged = lastTelemetrySend(), last = logged && !(Date.parse(logged.at) < Date.parse(yes ?? "")) ? logged : null;
+    const quiet = hoursAgo(last?.at ?? yes);
+    const stale = pending > 0 && quiet != null && quiet > 48;
+    r.telemetry = { ...r.telemetry, last_send: last, pending, daily_send: daily, quiet_hours: quiet,
+      needs_attention: last?.ok === false || Boolean(daily.problem) || stale || Boolean(daily.why_not && pending > 0) };
+  }
   r.next_steps = nextSteps(r);
   return r;
 }
@@ -190,6 +202,17 @@ export function render(r) {
   line("ok", `automatic updates ${au.on ? `on · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off}`}`);
   if (r.telemetry) line("ok", r.telemetry.on ? "telemetry on: anonymous outcomes (never text) once a day · `routr share` shows exactly what · `routr telemetry off` stops it"
     : `telemetry off${r.telemetry.why_off.startsWith("not turned on") ? " (the default)" : `: ${r.telemetry.why_off}`} · \`routr telemetry on\` shares anonymous outcomes that help tune routr (docs/telemetry.md)`);
+  if (r.telemetry?.on) {
+    const t = r.telemetry, s = t.last_send, ago = s ? `${hoursAgo(s.at)} h ago` : "";
+    const rows = (n) => `${n} ${n === 1 ? "row" : "rows"}`;
+    const said = [s ? (s.ok ? `last sent ${ago} (${rows(s.sent)}${s.refused ? `, ${s.refused} refused` : ""})` : `last send failed ${ago}: ${s.error ?? "unknown error"}`) : "nothing sent yet"];
+    if (t.daily_send?.why_not) said.push(t.daily_send.why_not);
+    else if (t.daily_send?.running) said.push("a daily run is in progress now");
+    else if (t.daily_send?.problem) said.push(t.daily_send.problem);
+    if (t.pending > 0 && t.quiet_hours > 48) said.push(`no send for over 48 h, ${rows(t.pending)} pending`);
+    else if (t.pending > 0 && t.daily_send?.why_not) said.push(`${rows(t.pending)} pending`);
+    line(t.needs_attention ? "need" : "ok", `telemetry sends: ${said.join(" · ")}`);
+  }
   out.push("", r.next_steps.length ? paint(1, "Next steps") : paint(32, "Everything routr needs is in place."));
   r.next_steps.forEach((s, i) => out.push(`  ${i + 1}. ${s}`));
   return out.join("\n");

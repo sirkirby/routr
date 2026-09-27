@@ -1,10 +1,57 @@
 // telemetry.mjs: what is shared, when, and that nothing leaks
 import { expect, test } from "bun:test";
-import { join } from "node:path";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 
 import { COMMANDS } from "../src/lib/help.mjs";
-import { cliEnv, row, scratch } from "./helpers.mjs";
+import { cliEnv, row, scratch, SCRIPT } from "./helpers.mjs";
+
+test("telemetry status reads the last daily send and explains scheduling without writing", async () => {
+  const home = scratch("telemetry-status"), env = cliEnv(home, { PATH: home, ROUTR_NO_UPDATE: "" });
+  const cache = join(home, ".cache/routr"), log = join(cache, "telemetry.log"), stamp = join(cache, "update-check");
+  const command = () => JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "telemetry", "status"], { env }).stdout.toString());
+  try {
+    const empty = command();
+    expect(empty.last_send).toBeNull();
+    expect(empty.daily_send).toEqual({ can_run: false, why_not: "running from source: the daily job never runs here; use routr telemetry send" });
+    expect(existsSync(cache)).toBe(false);
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(log, JSON.stringify({ at: "2026-09-25T12:00:00.000Z", ok: true, sent: 3 }) + "\n");
+    expect(command().last_send).toEqual({ at: "2026-09-25T12:00:00.000Z", ok: true, sent: 3, refused: null, error: null });
+    writeFileSync(log, JSON.stringify({ at: "2026-09-26T12:00:00.000Z", ok: false, sent: 0, refused: 1, error: "endpoint answered 500" }) + "\n");
+    expect(command().last_send).toEqual({ at: "2026-09-26T12:00:00.000Z", ok: false, sent: 0, refused: 1, error: "endpoint answered 500" });
+    writeFileSync(log, "broken");
+    expect(command().last_send).toBeNull();
+    const state = join(home, ".local/share/routr/telemetry.json");
+    mkdirSync(join(home, ".local/share/routr"), { recursive: true });
+    writeFileSync(state, JSON.stringify({ opted_in_at: "2026-09-24T00:00:00.000Z" }));
+    writeFileSync(stamp, "\n");
+    const checked = new Date("2026-09-25T12:00:00.000Z");
+    utimesSync(stamp, checked, checked);
+    // The daily job's own view, as a release binary sees it (standalone), with a clock the test sets.
+    const yes = { telemetry: true, auto_update: false };
+    const daily = (config, switches = {}, now = Date.parse("2026-09-25T20:00:00.000Z")) => JSON.parse(Bun.spawnSync([process.execPath, "-e",
+      `import { dailyTelemetrySend } from './src/lib/telemetry.mjs'; console.log(JSON.stringify(dailyTelemetrySend(${JSON.stringify(config)}, process.env, true, ${now})))`],
+    { env: { ...env, ...switches } }).stdout.toString());
+    writeFileSync(state, JSON.stringify({ opted_in_at: "2026-09-24T00:00:00.000Z" }));
+    // Opted in, auto-update off: the job still runs for the send. ROUTR_NO_UPDATE stops updates, never a send (from the review of #40).
+    writeFileSync(log, JSON.stringify({ at: "2026-09-25T12:00:02.000Z", ok: true, sent: 3 }) + "\n");
+    expect(daily(yes)).toMatchObject({ can_run: true, problem: null, running: false, last_run: "2026-09-25T12:00:00.000Z", next_run: "2026-09-26T12:00:00.000Z" });
+    expect(daily(yes).started_by).toContain("dispatch");
+    expect(daily(yes, { ROUTR_NO_UPDATE: "1" })).toMatchObject({ can_run: true, why_not: null });
+    expect(daily(yes, {}, Date.parse("2026-09-27T00:00:00.000Z")).next_run).toBe("now");
+    expect(daily({ telemetry: false }).why_not).toContain("telemetry off");
+    // A run that stamped and then logged no send: said, unless the lock's owner is alive (a run in progress).
+    writeFileSync(log, JSON.stringify({ at: "2026-09-24T12:00:00.000Z", ok: true, sent: 3 }) + "\n");
+    expect(daily(yes).problem).toContain("recorded no send");
+    writeFileSync(join(cache, "update.lock"), String(process.pid));
+    expect(daily(yes)).toMatchObject({ running: true, problem: null });
+    rmSync(join(cache, "update.lock"));
+    // A stamp from before the yes (an update-only run) is not a lost send.
+    writeFileSync(state, JSON.stringify({ opted_in_at: "2026-09-25T13:00:00.000Z" }));
+    expect(daily(yes).problem).toBeNull();
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
 test("shared rows carry what tuning needs and nothing that identifies the user or the work", async () => {
   const { shareRows } = await import("../src/lib/ledger.mjs");
   const text = JSON.stringify(shareRows([row()]));
@@ -238,4 +285,25 @@ test("end to end: nothing leaves before a yes, then only rows after it, with no 
     expect(JSON.stringify(got)).not.toMatch(/acme|private|deadbeef|a1b2c3d4/);
     expect(JSON.parse(await run("telemetry", "send")).sent).toBe(0);                // never twice
   } finally { server.stop(true); rmSync(home, { recursive: true, force: true }); }
+});
+
+test("ROUTR_NO_UPDATE stops updates, never a daily send the person turned on (from the verification of #40)", () => {
+  const home = scratch("no-update-send"), state = join(home, ".local/share/routr/telemetry.json");
+  mkdirSync(dirname(state), { recursive: true });
+  writeFileSync(state, JSON.stringify({ opted_in_at: "2026-09-24T00:00:00.000Z" }));
+  // The real start path (maybeAutoUpdate), as a release binary runs it, in its own process with that HOME.
+  const starts = (config, extra = {}) => Bun.spawnSync([process.execPath, "-e",
+    `import { maybeAutoUpdate } from './src/lib/update.mjs'; let spawned = false; maybeAutoUpdate(${JSON.stringify(config)}, { isStandalone: () => true, spawn: () => (spawned = true) }); console.log(spawned)`],
+  { env: { ...cliEnv(home, { ROUTR_NO_UPDATE: "1", ...extra }) } }).stdout.toString().trim();
+  try {
+    expect(starts({ telemetry: true })).toBe("true");
+    expect(starts({ telemetry: false })).toBe("false"); // nothing to send and updates off: nothing starts
+    expect(starts({ telemetry: true }, { DO_NOT_TRACK: "1" })).toBe("false");
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test("the commands telemetry status names as starting the daily job are the ones that start it", async () => {
+  const { DAILY_STARTERS } = await import("../src/lib/telemetry.mjs");
+  const started = readFileSync(join(import.meta.dir, "../src/routr.mjs"), "utf8").match(/if \((\[[^\]]+\])\.includes\(mode\)\)[^\n]*maybeAutoUpdate/);
+  expect(JSON.parse(started[1])).toEqual(DAILY_STARTERS);
 });
