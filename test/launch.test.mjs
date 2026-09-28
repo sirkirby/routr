@@ -532,6 +532,8 @@ test("prompt results distinguish blocked, unknown, wrong-agent, refusal, and obs
     let submitted = false;
     const f = fakeHerdr({ reply: (a) => {
       if (a[1] === "prompt") { submitted = true; return response; }
+      // As herdr: a wait for working or blocked answers OK only once the agent reaches one of them.
+      if (a[1] === "wait" && submitted) return ["working", "blocked"].includes(status) ? herdrOK({}) : herdrError("timeout");
       if (a[1] === "get" && submitted) return herdrOK({ agent: { agent: kind, agent_status: status } });
     } });
     const r = await launch([...launchArgs, "--task", "Task"], f.deps);
@@ -788,4 +790,28 @@ test("a prompt herdr says stalled is never sent again: launch waits on the agent
   expect(never.r.needs_human.pane_text).not.toContain("Task"); // the brief is never printed
   const asks = await drive("blocked", "claude"); // it took the task and now asks something
   expect(asks).toMatchObject({ prompts: 1, keys: 0, r: { state: "needs_human" } });
+});
+
+test("from the review of #46: a worker seen starting counts even if it is done by the status read; the wait leaves time for the reads after it; the brief stays off the output", async () => {
+  // Seen working by the wait, finished by the time launch reads its state: it took the task.
+  let prompts = 0;
+  const quick = fakeHerdr({ kind: "codex", reply: (a) => {
+    if (a[1] === "prompt") { prompts++; return herdrError("agent_prompt_stalled"); }
+    if (a[1] === "wait" && prompts) return herdrOK({ agent: { agent_status: "working" } });
+    if (a[1] === "get" && prompts) return herdrOK({ agent: { agent: "codex", agent_status: "done", interactive_ready: true } });
+  } });
+  expect(await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--task", "Task"], quick.deps)).toMatchObject({ ok: true, state: "prompted" });
+  // A wait that uses all the time it is given: launch still reads the state and the pane, and ends as needs_human.
+  const brief = "Rotate the production signing key in vault/prod";
+  let sent = false, given = null, left = null;
+  const slow = fakeHerdr({ kind: "codex", reply: async (a, ms) => {
+    if (a[1] === "prompt") { sent = true; return herdrError("agent_prompt_stalled"); }
+    if (a[1] === "wait" && sent) { given = ms; left = 30000 - slow.deps.now(); await slow.deps.sleep(ms); return herdrError("timeout"); }
+    if (a[1] === "get" && sent) return herdrOK({ agent: { agent: "codex", agent_status: "idle", interactive_ready: true } });
+    if (a[1] === "read" && sent) return herdrOK({ text: `› ${brief}\n  Waiting for startup` });
+  } });
+  const r = await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--timeout", "30000", "--task", brief], slow.deps);
+  expect(given).toBeLessThan(left); // the wait never gets the whole of what is left
+  expect(r).toMatchObject({ ok: false, state: "needs_human" });
+  expect(JSON.stringify(r)).not.toContain(brief); // the pane showed the brief; the output does not
 });

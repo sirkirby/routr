@@ -361,7 +361,12 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       const quiet = !r.ok && ["agent_prompt_stalled", "timeout"].includes(r.data?.error?.code);
       if (quiet) {
         step("prompt_wait", true, "Sent once; herdr has not seen the agent start yet, so launch waits on its state and sends nothing again");
-        r = await call(["agent", "wait", out.pane, "--until", "working", "--until", "blocked", "--timeout", String(Math.max(1, remaining() - 1000))], true);
+        // Time is kept back for the status read and the pane read after it, in herdr's timeout AND in the command's
+        // own (from the review of #46: the command could otherwise use the rest of the launch and end it as "failed").
+        const keep = Math.min(3000, Math.floor(remaining() / 3)), waitMs = Math.max(1, remaining() - keep);
+        const w = ["agent", "wait", out.pane, "--until", "working", "--until", "blocked", "--timeout", String(waitMs)];
+        logCommand(out.command, command(w));
+        r = await run(w, Math.max(1, remaining() - Math.floor(keep / 2)));
       }
       const got = await call(["agent", "get", out.pane]);
       const agent = got.data?.result?.agent;
@@ -371,9 +376,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         step("prompt", r.ok, `Submitted ${prompt.length} characters; the agent is asking something`);
         return human("The worker is blocked on a question or approval right after its prompt", await readPane());
       }
-      // Working is always a start. Idle or done count only when herdr's own prompt wait saw activity first (a short
-      // task can finish inside it); after a quiet prompt, only working says the task was taken.
-      if (status === "working" || (r.ok && !quiet && ["idle", "done"].includes(status))) {
+      // Working is always a start. Idle or done count when herdr's wait (the prompt's own, or the one after a quiet
+      // prompt) saw the agent working first: a short task can finish before this read (from the review of #46).
+      if (status === "working" || (r.ok && ["idle", "done"].includes(status))) {
         step("prompt", true, `Submitted ${prompt.length} characters; the agent settled at ${status}`);
         out.state = "prompted";
         return null;
