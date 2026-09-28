@@ -190,8 +190,12 @@ jobs:
           spctl --assess --type install -vv "$RUNNER_TEMP/downloaded" 2>&1 | tee "$RUNNER_TEMP/gk.txt"
           grep -q "source=Notarized Developer ID" "$RUNNER_TEMP/gk.txt"
           # And run it, as a person would: Gatekeeper kills a quarantined binary it refuses (no dialog on a runner).
-          chmod +x "$RUNNER_TEMP/downloaded"
-          test "$("$RUNNER_TEMP/downloaded" --version)" = "${{ needs.validate-tag.outputs.version }}"
+          # Only where it runs natively: the runner is Apple Silicon, and the x64 binary would need Rosetta.
+          if [ "${{ matrix.target }}" = darwin-arm64 ]; then
+            chmod +x "$RUNNER_TEMP/downloaded"
+            RAN="$("$RUNNER_TEMP/downloaded" --version)" # its own line, so set -e sees the exit status
+            test "$RAN" = "${{ needs.validate-tag.outputs.version }}"
+          fi
       # Whatever failed above: the keychain and any key file are removed before the job ends.
       - name: Remove the signing keychain and key files
         if: always()
