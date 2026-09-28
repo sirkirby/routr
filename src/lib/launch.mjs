@@ -405,13 +405,14 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     out.ok = false; out.state = "failed"; step("failed", false, String(e?.message ?? e));
     // The harness may have exited with its own complaint (a model id it does not accept, a login it wants). That
     // message is on the pane and nowhere else, and without it the orchestrator only learns that something timed out.
-    if (out.pane && touchedPane) {
+    if (out.pane && touchedPane && promptAttempted) out.pane_text = PANE_WITHHELD; // sent: the pane may show the brief, so it is not read
+    else if (out.pane && touchedPane) {
       try {
         const a = ["pane", "read", out.pane, "--source", "recent-unwrapped", "--lines", "40"];
         logCommand(out.command, command(a));
         const tail = clean(paneText((await run(a, 1000)).data))
           .split("\n").filter((l) => l.trim()).slice(-8).map((l) => (l.length > 200 ? `${l.slice(0, 200)}…` : l)).join("\n");
-        if (tail) out.pane_text = promptAttempted ? PANE_WITHHELD : tail; // once the prompt is on the pane, its text is the brief
+        if (tail) out.pane_text = tail;
       } catch {}
     }
   } finally {

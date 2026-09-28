@@ -816,4 +816,16 @@ test("from the review of #46: a worker seen starting counts even if it is done b
   expect(r).toMatchObject({ ok: false, state: "needs_human" });
   expect(JSON.stringify(r)).not.toContain(brief); // the pane showed the brief; the output does not
   expect(paneRead).toBe(false); // and after the task is sent, launch does not read the pane at all
+  // Not on the failure path either (from the second verification of #46): a status read that errors ends as failed,
+  // with the pane text withheld and the pane never read.
+  let posted = false, readAfter = false;
+  const broken = fakeHerdr({ kind: "codex", reply: (a) => {
+    if (a[1] === "prompt") { posted = true; return herdrOK({}); }
+    if (a[1] === "get" && posted) return herdrError("server_error");
+    if (a[1] === "read" && posted) { readAfter = true; return herdrOK({ text: brief }); }
+  } });
+  const b = await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--task", brief], broken.deps);
+  expect(b.state).toBe("failed");
+  expect(readAfter).toBe(false);
+  expect(JSON.stringify(b)).not.toContain(brief);
 });
