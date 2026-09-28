@@ -803,15 +803,17 @@ test("from the review of #46: a worker seen starting counts even if it is done b
   expect(await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--task", "Task"], quick.deps)).toMatchObject({ ok: true, state: "prompted" });
   // A wait that uses all the time it is given: launch still reads the state and the pane, and ends as needs_human.
   const brief = "Rotate the production signing key in vault/prod";
-  let sent = false, given = null, left = null;
+  let sent = false, given = null, left = null, paneRead = false;
   const slow = fakeHerdr({ kind: "codex", reply: async (a, ms) => {
     if (a[1] === "prompt") { sent = true; return herdrError("agent_prompt_stalled"); }
     if (a[1] === "wait" && sent) { given = ms; left = 30000 - slow.deps.now(); await slow.deps.sleep(ms); return herdrError("timeout"); }
-    if (a[1] === "get" && sent) return herdrOK({ agent: { agent: "codex", agent_status: "idle", interactive_ready: true } });
-    if (a[1] === "read" && sent) return herdrOK({ text: `› ${brief}\n  Waiting for startup` });
+    // The status read takes time too, after the wait used all of its own: still needs_human, never failed.
+    if (a[1] === "get" && sent) { await slow.deps.sleep(Math.min(ms, 1500)); return herdrOK({ agent: { agent: "codex", agent_status: "idle", interactive_ready: true } }); }
+    if (a[1] === "read" && sent) { paneRead = true; return herdrOK({ text: `› ${brief}\n  Waiting for startup` }); }
   } });
   const r = await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--timeout", "30000", "--task", brief], slow.deps);
-  expect(given).toBeLessThan(left); // the wait never gets the whole of what is left
+  expect(given).toBeLessThanOrEqual(left); // the wait never gets more than is left
   expect(r).toMatchObject({ ok: false, state: "needs_human" });
   expect(JSON.stringify(r)).not.toContain(brief); // the pane showed the brief; the output does not
+  expect(paneRead).toBe(false); // and after the task is sent, launch does not read the pane at all
 });

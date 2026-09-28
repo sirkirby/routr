@@ -361,20 +361,22 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       const quiet = !r.ok && ["agent_prompt_stalled", "timeout"].includes(r.data?.error?.code);
       if (quiet) {
         step("prompt_wait", true, "Sent once; herdr has not seen the agent start yet, so launch waits on its state and sends nothing again");
-        // Time is kept back for the status read and the pane read after it, in herdr's timeout AND in the command's
-        // own (from the review of #46: the command could otherwise use the rest of the launch and end it as "failed").
-        const keep = Math.min(3000, Math.floor(remaining() / 3)), waitMs = Math.max(1, remaining() - keep);
-        const w = ["agent", "wait", out.pane, "--until", "working", "--until", "blocked", "--timeout", String(waitMs)];
+        const w = ["agent", "wait", out.pane, "--until", "working", "--until", "blocked", "--timeout", String(Math.max(1, remaining() - 500))];
         logCommand(out.command, command(w));
-        r = await run(w, Math.max(1, remaining() - Math.floor(keep / 2)));
+        r = await run(w, Math.max(1, remaining()));
       }
-      const got = await call(["agent", "get", out.pane]);
+      // The outcome is decided by this one read. It gets its own short allowance, not what is left of the launch
+      // timeout, so a wait that used that up cannot turn needs_human into failed (from the verification of #46). No
+      // pane read follows: once the task is sent the pane may show the brief, and launch never prints it.
+      logCommand(out.command, command(["agent", "get", out.pane]));
+      const got = await run(["agent", "get", out.pane], 2000);
+      if (!got.ok) throw new Error(got.data?.error?.message ?? JSON.stringify(got.data));
       const agent = got.data?.result?.agent;
       const status = agent?.agent_status ?? "unknown";
-      if (agent?.agent !== o.kind) return human("Cannot confirm the prompted agent's identity", await readPane());
+      if (agent?.agent !== o.kind) return human("Cannot confirm the prompted agent's identity", null);
       if (status === "blocked") {
         step("prompt", r.ok, `Submitted ${prompt.length} characters; the agent is asking something`);
-        return human("The worker is blocked on a question or approval right after its prompt", await readPane());
+        return human("The worker is blocked on a question or approval right after its prompt", null);
       }
       // Working is always a start. Idle or done count when herdr's wait (the prompt's own, or the one after a quiet
       // prompt) saw the agent working first: a short task can finish before this read (from the review of #46).
@@ -384,7 +386,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         return null;
       }
       step("prompt", false, `Sent once; the agent never started (${status}): ${JSON.stringify(r.data)}`);
-      return human(`The task was sent once and the agent has not started within the timeout (${status}). Look at the pane: it may still be starting, the task may sit unsent in its input box (press Enter there), or it never arrived (send it by hand). launch never sends it twice.`, await readPane());
+      return human(`The task was sent once and the agent has not started within the timeout (${status}). Look at the pane: it may still be starting, the task may sit unsent in its input box (press Enter there), or it never arrived (send it by hand). launch never sends it twice.`, null);
     };
     const startCommand = startArgs(out.pane, Math.min(30000, remaining()));
     startAttempted = true;
