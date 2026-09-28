@@ -186,7 +186,7 @@ export function render(r) {
   const any = Object.values(r.harnesses).some((h) => h.installed);
   for (const [n, h] of Object.entries(r.harnesses)) {
     const off = r.config.off?.includes(n);
-    const where = off ? `\`${h.command}\`${h.installed ? " found" : " not found"} · turned off in your settings (routr setup --enable ${n})`
+    const where = off ? `\`${h.command}\`${h.installed ? " found" : " not found"} · turned off in your settings (${h.installed && !h.signed_in ? `${h.sign_in}, then ` : ""}routr setup --enable ${n})`
       : h.installed && !h.signed_in ? `\`${h.command}\` found, but ${h.sign_in.replace(/^`[^`]+` /, "it ")}. routr leaves it out until then`
       : h.installed ? `\`${h.command}\` found · usage ${h.usage}`
       : h.off_path ? `\`${h.command}\` is installed at ${h.off_path} but not on PATH: add its folder to PATH so routr and herdr can start it`

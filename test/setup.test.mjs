@@ -160,7 +160,7 @@ async function runSetup({ config, args = [], answers = [], found = ["agy", "curs
   const inspect = async () => {
     const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
     return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy", "kiro"].map((n) => [n, { installed: found.includes(n) || signedOut.includes(n), signed_in: found.includes(n), ...(signedOut.includes(n) ? { sign_in: `not signed in: run \`${n}-cli login\`` } : {}), models: models[n] ?? [], usage_class: usage[n] ?? "included", usage_note: usage[n] === "metered" ? "metered: unlimited credits" : undefined }])),
-      config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}) }, skill,
+      config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}), off: Object.keys(saved?.subscriptions ?? {}).filter((n) => saved.subscriptions[n].enabled === false) }, skill,
       claude_usage_statusline: statusline, key: { works: keyWorks }, next_steps: [] };
   };
   const queue = [...answers];
@@ -220,6 +220,37 @@ test("setup: a harness installed but not signed in is listed, greyed, with what 
   expect(lists.every((a) => a.includes("[-] Kiro (not signed in: run `kiro-cli login`)"))).toBe(true);
   expect(again.saved).toEqual(x.saved);
   expect(again.left).toBe(0);
+});
+
+test("from the review: one set up but signed out is never asked anything and is not turned on, and a run that changes nothing still says who was left out", async () => {
+  const called = [];
+  const efforts = async (n) => { called.push(n); return ["low", "medium", "high"]; };
+  const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1 }, kiro: { hardest_work: "standard", reserve: 0.1, enabled: false }, codex: { hardest_work: "strong", reserve: 0.2 } } };
+  // Walk through everything (3rd with telemetry answered): Kiro, off, is a greyed row; Codex, on, can be turned off; Enter
+  // keeps things; only Cursor's settings are walked; then Save (nothing changed, so none is offered: Exit).
+  const x = await runSetup({ config, found: ["cursor"], signedOut: ["kiro", "codex"], efforts, answers: ["3", "", "", "", "", "4"] });
+  expect(x.left).toBe(0);
+  const list = x.asked.find((a) => a.startsWith("Which subscriptions"));
+  expect(list).toContain("[-] Kiro (not signed in: run `kiro-cli login`)");
+  expect(list).toContain("[x] Codex (strong work · reserve 20% · not signed in: run `codex-cli login`)".replace("strong work", "model left to the lead agent · strong work"));
+  expect(x.asked.some((a) => a.startsWith("Kiro:") || a.startsWith("Codex:"))).toBe(false);
+  expect(called.filter((n) => n !== "cursor")).toEqual([]);
+  expect(x.saved).toEqual(config);
+  expect(x.r.skipped).toEqual(["nothing changed"]); // both are set up: nothing was left out
+  // "Change one subscription's settings" on one signed out says what to run and opens nothing.
+  const said = [];
+  const one = await runSetup({ config, found: ["cursor"], signedOut: ["kiro", "codex"], efforts, answers: ["", "1", "4", "4"], print: (t) => said.push(t) }); // Codex, told, Back, Exit
+  expect(one.left).toBe(0);
+  expect(one.asked.find((a) => a.startsWith("Which subscription?"))).toContain("Codex (model left to the lead agent · strong work · reserve 20% · not signed in: run `codex-cli login`)");
+  expect(said.join("\n")).toContain("Codex: not signed in: run `codex-cli login`, then change its settings here.");
+  expect(one.asked.some((a) => a.startsWith("Codex: which setting?"))).toBe(false);
+  // An agent cannot turn it on either; it can still turn one off, or change a setting that asks nothing of the harness.
+  expect((await runSetup({ config, found: ["cursor"], signedOut: ["kiro"], args: ["--yes", "--enable", "kiro"] })).r.error).toBe("--enable kiro: not signed in: run `kiro-cli login`");
+  const off = await runSetup({ config, found: ["cursor"], signedOut: ["codex"], args: ["--yes", "--disable", "codex", "--hardest", "codex=standard"] });
+  expect(off.saved.subscriptions.codex).toMatchObject({ enabled: false, hardest_work: "standard" });
+  // A person who exits without a change still hears about one not set up, as an agent's run does.
+  const quiet = await runSetup({ config, found: ["cursor"], signedOut: ["agy"], answers: ["4"] }); // Exit
+  expect(quiet.r.skipped).toEqual(["Antigravity left out: not signed in: run `agy-cli login`, then routr setup again", "nothing changed"]);
 });
 
 test("setup, run again: a menu to change one thing, then save and exit, and only that is written", async () => {
@@ -495,4 +526,6 @@ test("doctor's text says each harness's state in words: signed in, signed out, t
   expect(text).toContain("… (30 in all; run `cursor-agent models` for the rest)");
   expect(text).toContain("agy     `agy` is installed at /Users/x/.local/bin/agy but not on PATH");
   expect(text).toContain("kiro    `kiro-cli` found · turned off in your settings (routr setup --enable kiro)");
+  r.harnesses.kiro = { command: "kiro-cli", installed: true, signed_in: false, sign_in: "not signed in: run `kiro-cli login`" };
+  expect(render(r)).toContain("kiro    `kiro-cli` found · turned off in your settings (not signed in: run `kiro-cli login`, then routr setup --enable kiro)");
 });

@@ -26,7 +26,11 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
   const candidates = Object.keys(HARNESSES).filter((n) => signedIn(n) || current[n]);
   // Installed but not signed in, and not set up: listed with what to run, never offered until the sign-in is done.
   const waiting = Object.keys(HARNESSES).filter((n) => r.harnesses[n]?.installed && !signedIn(n) && !current[n]);
-  const signInOf = (n) => r.harnesses[n]?.sign_in ?? "not signed in";
+  const signInOf = (n) => (r.harnesses[n]?.installed ? r.harnesses[n].sign_in ?? "not signed in" : `\`${HARNESSES[n].executable}\` was not found on this machine`);
+  // One set up but not signed in (or not installed) keeps its settings and can be turned off, but not turned on, and
+  // its settings are not walked: the model list and the effort levels come from the harness, and asking a harness that
+  // is not signed in can open its sign-in (signin.mjs).
+  const locked = (n) => !signedIn(n) && !(current[n] && current[n].enabled !== false);
   // The working copy: what is set now, or the suggestions for a harness routr has not set up yet.
   // An existing subscription is drafted as it is (no effort suggested where none is set: that would be a change the
   // person did not make); `enabled` is computed last, the way loadConfig reads it.
@@ -114,9 +118,9 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
       return "none";
     }
     const v = await ui.multiselect({ message: "Which subscriptions may routr hand work to?", min: 1,
-      options: [...candidates.map((n) => ({ value: n, label: HARNESSES[n].label,
-        hint: [current[n] ? describe(n, draft[n]) : "new", ...(signedIn(n) ? [] : [signInOf(n)])].join(" · ") })),
-      ...waiting.map((n) => ({ value: n, label: HARNESSES[n].label, disabled: signInOf(n) }))],
+      options: Object.keys(HARNESSES).filter((n) => candidates.includes(n) || waiting.includes(n)).map((n) => (waiting.includes(n) || locked(n)
+        ? { value: n, label: HARNESSES[n].label, disabled: signInOf(n) }
+        : { value: n, label: HARNESSES[n].label, hint: [current[n] ? describe(n, draft[n]) : "new", ...(signedIn(n) ? [] : [signInOf(n)])].join(" · ") })),
       initial: candidates.filter((n) => draft[n].enabled) });
     if (Array.isArray(v)) for (const n of candidates) draft[n].enabled = v.includes(n);
     return v;
@@ -166,7 +170,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
       if (steps[s] === "choose") v = await choose();
       else if (steps[s] === "settings") {
         v = "done";
-        for (const n of candidates.filter((x) => draft[x].enabled)) { v = await fields(n, fieldsOf(n)); if (v !== "done") break; }
+        for (const n of candidates.filter((x) => draft[x].enabled && signedIn(x))) { v = await fields(n, fieldsOf(n)); if (v !== "done") break; }
       } else if (steps[s] === "extras") v = await extras();
       else { v = await finish(); if (v === "back") { s = 0; continue; } if (v === "quit") return CANCEL; if (v === "write" || v === "nothing") return v; }
       if (v === CANCEL) return CANCEL;
@@ -203,10 +207,11 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
       let n = candidates[0];
       for (;;) {
         const picked = await ui.select({ message: "Which subscription?", initial: n, options: [
-          ...candidates.map((x) => ({ value: x, label: HARNESSES[x].label, hint: describe(x, draft[x]) })), { value: BACK, label: "Back" }] });
+          ...candidates.map((x) => ({ value: x, label: HARNESSES[x].label, hint: signedIn(x) ? describe(x, draft[x]) : `${describe(x, draft[x])} · ${signInOf(x)}` })), { value: BACK, label: "Back" }] });
         if (picked === CANCEL) return CANCEL;
         if (picked === BACK) break;
         n = picked;
+        if (!signedIn(n)) { ui.line(`${HARNESSES[n].label}: ${signInOf(n)}, then change its settings here.`, { dim: true }); continue; }
         let f = "model";
         for (;;) {
           const now = { model: draft[n].default_model || "left to the lead agent", effort: draft[n].default_effort ?? "not set", hardest: draft[n].hardest_work, reserve: pct(draft[n].reserve ?? 0), billed: draft[n].metered_rank === "with" ? "with your subscriptions" : "after your subscriptions" };
