@@ -56,9 +56,6 @@ jobs:
           - { os: ubuntu-latest, target: linux-x64 }
           - { os: ubuntu-latest, target: linux-arm64 }
           - { os: ubuntu-latest, target: windows-x64, ext: .exe }
-          # macOS binaries are built on macOS so they can be signed: Apple Silicon refuses to run an unsigned binary.
-          - { os: macos-latest, target: darwin-arm64, sign: true }
-          - { os: macos-latest, target: darwin-x64, sign: true }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -70,11 +67,8 @@ jobs:
           bun build --compile --minify --target=bun-${{ matrix.target }}
           --define 'ROUTR_BUILD_VERSION="${{ needs.validate-tag.outputs.version }}"'
           src/routr.mjs --outfile routr-${{ matrix.target }}${{ matrix.ext }}
-      - name: Sign (ad hoc; no Apple account needed)
-        if: matrix.sign
-        run: codesign --sign - --force routr-${{ matrix.target }}
       - name: Smoke-test the binary this runner can execute
-        if: matrix.target == 'linux-x64' || matrix.target == 'darwin-arm64'
+        if: matrix.target == 'linux-x64'
         run: |
           test "$(./routr-${{ matrix.target }} --version)" = "${{ needs.validate-tag.outputs.version }}"
           ./routr-${{ matrix.target }} skill install --dry-run
@@ -85,6 +79,133 @@ jobs:
         with:
           name: routr-${{ matrix.target }}
           path: routr-${{ matrix.target }}${{ matrix.ext }}
+          if-no-files-found: error
+
+  # macOS binaries are built on macOS, signed with the maintainer's Developer ID under the hardened runtime, and
+  # notarized by Apple. An ad-hoc signature is not enough: macOS updates have started killing ad-hoc binaries
+  # (cs_invalid_page, seen on a sibling project's linker-signed binary, 2026-09-28), and Gatekeeper refuses one that a
+  # browser downloaded. Only this job sees the signing secrets: they live in the `release` environment, which only a
+  # `v*` tag can use. A release never ships an unsigned or ad-hoc macOS binary: missing secrets fail it.
+  build-macos:
+    name: Build ${{ matrix.target }} (signed, notarized)
+    needs: [validate-tag, test]
+    environment: release
+    strategy:
+      fail-fast: true
+      matrix:
+        target: [darwin-arm64, darwin-x64]
+    runs-on: macos-latest
+    env:
+      BIN: routr-${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - name: Stamp the tag's version into the source (the guides embedded in the binary carry it)
+        run: bun scripts/stamp-version.mjs "${{ needs.validate-tag.outputs.version }}"
+      - name: Compile a standalone binary
+        run: >-
+          bun build --compile --minify --target=bun-${{ matrix.target }}
+          --define 'ROUTR_BUILD_VERSION="${{ needs.validate-tag.outputs.version }}"'
+          src/routr.mjs --outfile "$BIN"
+      - name: Sign with Developer ID (hardened runtime)
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_TEAM_ID: ${{ vars.MACOS_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          for v in MACOS_CERT_P12 MACOS_CERT_PASSWORD MACOS_TEAM_ID; do
+            [ -n "${!v}" ] || { echo "$v is not set in the release environment: refusing to ship an unsigned macOS binary" >&2; exit 1; }
+          done
+          KEYCHAIN="$RUNNER_TEMP/routr-signing.keychain-db"
+          # A keychain of its own, in the search list (or the intermediate is not found and the chain does not build),
+          # with codesign: in the key's partition list (without it codesign fails with errSecInternalComponent).
+          KP="$(openssl rand -hex 24)"
+          security create-keychain -p "$KP" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KP" "$KEYCHAIN"
+          printf %s "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign >/dev/null
+          rm -f "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KP" "$KEYCHAIN" >/dev/null
+          # shellcheck disable=SC2046 # one word per keychain the runner already searches
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          # The identity by its hash, and only the one for this team.
+          ID="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -v t="($MACOS_TEAM_ID)" 'index($0, "Developer ID Application:") && index($0, t) { print $2; exit }')"
+          [ -n "$ID" ] || { echo "no Developer ID Application identity for team $MACOS_TEAM_ID in the certificate" >&2; exit 1; }
+          codesign --force --sign "$ID" --keychain "$KEYCHAIN" --options runtime --timestamp \
+            --identifier co.goondocks.routr --entitlements .github/macos-entitlements.plist "$BIN"
+          codesign --verify --strict --verbose=2 "$BIN"
+          codesign -dv --verbose=2 "$BIN" 2>&1 | tee "$RUNNER_TEMP/sig.txt"
+          grep -qx "TeamIdentifier=$MACOS_TEAM_ID" "$RUNNER_TEMP/sig.txt"
+          grep -qx "Identifier=co.goondocks.routr" "$RUNNER_TEMP/sig.txt"
+          grep -q "flags=0x10000(runtime)" "$RUNNER_TEMP/sig.txt"
+          grep -q "^Timestamp=" "$RUNNER_TEMP/sig.txt"
+      - name: Smoke-test the signed binary under the hardened runtime
+        if: matrix.target == 'darwin-arm64'
+        run: |
+          test "$(./"$BIN" --version)" = "${{ needs.validate-tag.outputs.version }}"
+          ./"$BIN" skill install --dry-run
+          # The skill it installs must name the same release, or doctor tells every user to reinstall it.
+          H="$(mktemp -d)"; HOME="$H" ./"$BIN" skill install >/dev/null
+          V="${{ needs.validate-tag.outputs.version }}"; grep -q "version: \"${V%%-*}\"" "$H/.agents/skills/routr/SKILL.md"
+      - name: Notarize with Apple
+        env:
+          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
+          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
+          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          for v in MACOS_NOTARY_KEY MACOS_NOTARY_KEY_ID MACOS_NOTARY_ISSUER_ID; do
+            [ -n "${!v}" ] || { echo "$v is not set in the release environment: refusing to ship an unnotarized macOS binary" >&2; exit 1; }
+          done
+          KEY="$RUNNER_TEMP/notary.p8"
+          printf %s "$MACOS_NOTARY_KEY" | base64 --decode > "$KEY"
+          auth=(--key "$KEY" --key-id "$MACOS_NOTARY_KEY_ID" --issuer "$MACOS_NOTARY_ISSUER_ID")
+          # A bare binary is sent in a zip; notarizing does not change it, so SHA256SUMS still matches what ships.
+          ditto -c -k --keepParent "$BIN" "$RUNNER_TEMP/$BIN.zip"
+          xcrun notarytool submit "$RUNNER_TEMP/$BIN.zip" "${auth[@]}" --wait --timeout 30m --output-format json | tee "$RUNNER_TEMP/notary.json"
+          SUB="$(jq -r .id "$RUNNER_TEMP/notary.json")"; STATUS="$(jq -r .status "$RUNNER_TEMP/notary.json")"
+          xcrun notarytool log "$SUB" "${auth[@]}" "$RUNNER_TEMP/notary-log.json" || true
+          cat "$RUNNER_TEMP/notary-log.json" 2>/dev/null || true
+          rm -f "$KEY"
+          [ "$STATUS" = "Accepted" ] || { echo "notarization: $STATUS" >&2; exit 1; }
+      # Required for a release; a pre-release reports it and carries on, so one can be downloaded and looked at.
+      - name: Check Gatekeeper accepts a downloaded copy
+        continue-on-error: ${{ needs.validate-tag.outputs.is_prerelease == 'true' }}
+        run: |
+          set -euo pipefail
+          # A bare binary cannot carry its ticket (no stapling): Gatekeeper fetches it from Apple by the code hash.
+          # Wait until Apple publishes it, then assess a copy marked as a browser download, as a person's would be.
+          CDHASH="$(codesign -dvvv "$BIN" 2>&1 | sed -n 's/^CDHash=//p')"
+          for i in $(seq 1 30); do
+            if curl -fsS -X POST https://api.apple-cloudkit.com/database/1/com.apple.gk.ticket-delivery/production/public/records/lookup \
+                 -H 'Content-Type: application/json' -d "{\"records\":[{\"recordName\":\"2/2/$CDHASH\"}]}" \
+               | jq -e '.records[0].fields.signedTicket' >/dev/null; then echo "ticket published for $CDHASH"; break; fi
+            [ "$i" = 30 ] && { echo "Apple has not published the ticket for $CDHASH after 5 minutes" >&2; exit 1; }
+            sleep 10
+          done
+          cp "$BIN" "$RUNNER_TEMP/downloaded"
+          xattr -w com.apple.quarantine "0083;$(printf %x "$(date +%s)");Safari;$(uuidgen)" "$RUNNER_TEMP/downloaded"
+          spctl --assess --type install -vv "$RUNNER_TEMP/downloaded" 2>&1 | tee "$RUNNER_TEMP/gk.txt"
+          grep -q "source=Notarized Developer ID" "$RUNNER_TEMP/gk.txt"
+          # And run it, as a person would: Gatekeeper kills a quarantined binary it refuses (no dialog on a runner).
+          # Only where it runs natively: the runner is Apple Silicon, and the x64 binary would need Rosetta.
+          if [ "${{ matrix.target }}" = darwin-arm64 ]; then
+            chmod +x "$RUNNER_TEMP/downloaded"
+            RAN="$("$RUNNER_TEMP/downloaded" --version)" # its own line, so set -e sees the exit status
+            test "$RAN" = "${{ needs.validate-tag.outputs.version }}"
+          fi
+      # Whatever failed above: the keychain and any key file are removed before the job ends.
+      - name: Remove the signing keychain and key files
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/routr-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/notary.p8"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN }}
+          path: ${{ env.BIN }}
           if-no-files-found: error
 
   # The Windows binary is cross-compiled on Linux, where it cannot run. Run it on Windows before anything is published.
@@ -105,7 +226,7 @@ jobs:
 
   github-release:
     name: GitHub release
-    needs: [validate-tag, build, smoke-windows]
+    needs: [validate-tag, build, build-macos, smoke-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

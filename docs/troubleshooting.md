@@ -10,10 +10,13 @@ is not on your PATH. Add it to your shell profile, or to your user PATH on Windo
 
 ## macOS: the binary is killed, or "cannot be verified"
 
-This only happens if you downloaded the binary **in a browser** from the Releases page. macOS marks browser downloads
-as quarantined, and routr's binaries are signed but not notarized by Apple, so the first run is blocked. The install
-script is not affected: a download made with `curl` is never quarantined. Either use the install script, or clear the
-mark once:
+From 0.3.2 on, routr's macOS binaries are signed with a Developer ID and notarized by Apple. Before a stable release is
+published, a copy marked the way a browser marks a download must pass Gatekeeper's check, and the Apple Silicon one must run (on a
+CI runner; a pre-release reports that check but is published either way). Releases before 0.3.2 were signed ad hoc only. macOS
+blocks the first run of such a binary when it was downloaded **in a browser** (browser downloads are quarantined), and
+a macOS update has started killing another project's ad-hoc binary that ran before. The fix for both is to upgrade: `routr update`, or the
+install script, which is never affected by quarantine (a download made with `curl` is not marked). To run an old one
+you downloaded in a browser, clear the mark once:
 
 ```sh
 xattr -d com.apple.quarantine ~/.local/bin/routr
