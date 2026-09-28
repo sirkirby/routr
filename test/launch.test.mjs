@@ -522,16 +522,18 @@ test("prompt results distinguish blocked, unknown, wrong-agent, refusal, and obs
   for (const { status, response, kind = "claude", expected } of [
     { status: "blocked", response: herdrOK(), expected: "needs_human" },
     { status: "blocked", response: herdrError("agent_blocked"), expected: "needs_human" },
-    { status: "unknown", response: herdrOK(), expected: "failed" },
-    { status: "working", response: herdrError("agent_prompt_stalled"), expected: "failed" },
+    { status: "unknown", response: herdrOK(), expected: "needs_human" },
+    { status: "working", response: herdrError("agent_prompt_stalled"), expected: "prompted" }, // it started after all
     { status: "working", response: herdrError("timeout"), expected: "prompted" },
-    { status: "idle", response: herdrError("timeout"), expected: "failed" },
+    { status: "idle", response: herdrError("timeout"), expected: "needs_human" },
     { status: "done", response: herdrOK(), expected: "prompted" },
     { status: "working", response: herdrOK(), kind: "codex", expected: "needs_human" },
   ]) {
     let submitted = false;
     const f = fakeHerdr({ reply: (a) => {
       if (a[1] === "prompt") { submitted = true; return response; }
+      // As herdr: a wait for working or blocked answers OK only once the agent reaches one of them.
+      if (a[1] === "wait" && submitted) return ["working", "blocked"].includes(status) ? herdrOK({}) : herdrError("timeout");
       if (a[1] === "get" && submitted) return herdrOK({ agent: { agent: kind, agent_status: status } });
     } });
     const r = await launch([...launchArgs, "--task", "Task"], f.deps);
@@ -763,85 +765,67 @@ test("a pane whose folder is gone is a person's call, not a crash; no process in
   const noCwd = { read: async () => "chris % ", keys: async () => {}, info: async () => ({ shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh" }] }) };
   expect(await waitForShell(noCwd, { ...time, cwd: SCRATCH })).toMatchObject({ ok: false, why: "The pane's shell did not say which folder it is in" });
 });
-test("a prompt herdr says stalled is sent once more only when the pane shows no trace of it, no dialog, and the agent idle", async () => {
-  const drive = async (shown, status = "idle") => {
-    let prompts = 0;
-    const f = fakeHerdr({ reply: (a) => {
-      if (a[1] === "prompt") return ++prompts === 1 ? herdrError("agent_prompt_stalled") : undefined;
-      if (a[1] === "read" && a.includes("recent-unwrapped")) return herdrOK({ text: shown });
-      if (a[1] === "get" && prompts === 1) return herdrOK({ agent: { agent: "claude", agent_status: status, interactive_ready: true } });
-    } });
-    const r = await launch([...launchArgs, "--task", "Task"], f.deps);
-    return { r, prompts, retried: r.steps.some((s) => s.step === "prompt_retry") };
-  };
-  const never = await drive("Welcome\n❯");
-  expect(never).toMatchObject({ prompts: 2, retried: true, r: { ok: true, state: "prompted" } });
-  // Any trace of the prompt, a dialog, or an agent that is not idle: never sent twice, and the person is warned.
-  for (const [why, shown, status] of [
-    ["the opening", "❯ You are a routr worker. Your first action…", "idle"],
-    ["a half-pasted opening", "❯ You are a routr wor", "idle"],
-    ["only the closing line of a long task (the opening scrolled away)", "…line 400 of the task\n\nFinish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.", "idle"],
-    ["a folder-trust dialog", claudeTrust, "idle"],
-    ["a paste the harness folded into a placeholder", "  → [Pasted text #1 +18 lines]", "idle"],
-    ["a short part of the opening", "❯ You are a", "idle"],
-    ["the closing line hard-wrapped at 40 columns", "Finish with the report block from the\nworker guide, starting with the line `VERD\nICT: done | partial | blocked`.", "idle"],
-    ["an agent that is not idle", "Welcome\n❯", "working"],
-  ]) {
-    const x = await drive(shown, status);
-    expect([why, x.prompts, x.retried]).toEqual([why, 1, false]);
-    expect(x.r.state).not.toBe("prompted");
-    expect(x.r.warnings).toContain("Prompt may have been submitted; inspect the pane before retrying.");
-  }
-});
-
-test("a task pasted but never submitted gets Enter once, never a second send; one already sent gets neither", async () => {
-  const { unsentInInput } = await import("../src/lib/launch.mjs");
-  const unsent = "  Cursor Agent\n\n  → [Pasted text #1 +21 lines]\n\n  Grok 4.7 256K High      Run Everything\n  ~/.herdr/worktrees/routr/r · r";
-  const sent = "  [Pasted text #1 +21 lines]\n ⠘⠆ Working\n  → Add a follow-up      ctrl+c to stop\n  Grok 4.7 256K High";
-  expect(unsentInInput(unsent, "→")).toBe(true);
-  expect(unsentInInput(sent, "→")).toBe(false); // the transcript shows it; the box is empty
-  expect(unsentInInput("  → You are a routr worker. Your first action", "→")).toBe(true); // a paste not folded away
-  expect(unsentInInput(unsent, undefined)).toBe(false); // a harness with no measured input mark: never
-  // From the review of #39: Cursor marks the chosen row of a decision list, or of a / or @ palette, with the same →.
-  expect(unsentInInput("  Allow this command?\n  → Run once (enter)\n    Skip\n  → [Pasted text #1 +21 lines]", "→")).toBe(false);
-  expect(unsentInInput("  → [Pasted text #1 +21 lines]\n  → /model  switch model", "→")).toBe(false);
-  const root = scratch("cursor-enter"), source = join(root, "source.json");
-  writeFileSync(source, '{"model":"original"}');
-  const drive = async (shown, after = "working") => {
-    let prompts = 0, entered = 0, started = false;
-    const f = fakeHerdr({ kind: "cursor", reply: (a) => {
-      if (a[1] === "run") started = true;
+// The task is sent once, and herdr's lifecycle state says whether the worker took it: never a second send, never a key
+// pressed on what the screen seems to show. 2026-09-28: Codex held a task behind "Waiting for startup" and herdr said the
+// prompt stalled; the old screen-reading path sent it again into the same box. Codex then started it on its own.
+test("a prompt herdr says stalled is never sent again: launch waits on the agent's state, and a person decides the rest", async () => {
+  const drive = async (after, kind = "codex") => {
+    let prompts = 0, keys = 0, waited = null;
+    const f = fakeHerdr({ kind, reply: (a) => {
       if (a[1] === "prompt") { prompts++; return herdrError("agent_prompt_stalled"); }
-      if (started && a[1] === "read") return herdrOK({ text: prompts ? shown : "Welcome to Cursor\n❯" });
-      if (a[1] === "send-keys" && prompts) { entered++; return herdrOK({}); }
-      if (a[1] === "wait" && entered) return after === "working" ? herdrOK({ agent: { agent_status: "working" } }) : herdrError("timeout");
-      if (a[1] === "get") return herdrOK({ agent: { agent: "cursor", agent_status: entered ? after : "idle", interactive_ready: true } });
+      if (a[1] === "send-keys" && prompts) { keys++; return herdrOK({}); }
+      if (a[1] === "wait" && prompts) { waited = a; return after === "never" ? herdrError("timeout") : herdrOK({ agent: { agent_status: after } }); }
+      if (a[1] === "get" && prompts) return herdrOK({ agent: { agent: kind, agent_status: after === "never" ? "idle" : after, interactive_ready: true } });
     } });
-    const r = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--task", "Task"], { ...f.deps, cursorConfigSource: source, tempRoot: root });
-    return { r, prompts, entered };
+    const r = await launch(["--kind", kind, "--name", "worker", "--model", kind === "codex" ? "gpt-6-sol" : "sonnet", "--task", "Task"], f.deps);
+    return { r, prompts, keys, waited };
   };
-  try {
-    const x = await drive(unsent);
-    expect(x).toMatchObject({ prompts: 1, entered: 1, r: { ok: true, state: "prompted" } });
-    expect(x.r.steps.some((st) => st.step === "prompt_enter")).toBe(true);
-    const y = await drive(sent); // a trace, but not in the box: a person's call, as before
-    expect(y).toMatchObject({ prompts: 1, entered: 0 });
-    expect(y.r.state).not.toBe("prompted");
-    // No trace in the look: the resend follows it directly, no other read between (from the verification of #39).
-    const w = await drive("  Cursor Agent\n\n  → Plan, search, build anything");
-    const look = w.r.command.findIndex((c) => c.includes("recent-unwrapped"));
-    expect(w.prompts).toBe(2);
-    expect(w.r.command[look + 1]).toContain("agent prompt");
-    const z = await drive(unsent, "idle"); // Enter pressed, but the agent never started: not prompted, never sent again
-    expect(z).toMatchObject({ prompts: 1, entered: 1 });
-    expect(z.r.state).not.toBe("prompted");
-  } finally { rmSync(root, { recursive: true, force: true }); }
+  const late = await drive("working"); // queued behind its startup, then started on its own
+  expect(late).toMatchObject({ prompts: 1, keys: 0, r: { ok: true, state: "prompted" } });
+  expect(late.r.steps.some((st) => st.step === "prompt_wait")).toBe(true);
+  expect(late.waited.slice(3, 7)).toEqual(["--until", "working", "--until", "blocked"]);
+  const never = await drive("never"); // sent once, never started: a person looks, launch sends nothing more
+  expect(never).toMatchObject({ prompts: 1, keys: 0, r: { ok: false, state: "needs_human" } });
+  expect(never.r.needs_human.why).toContain("never sends it twice");
+  expect(never.r.needs_human.pane_text).not.toContain("Task"); // the brief is never printed
+  const asks = await drive("blocked", "claude"); // it took the task and now asks something
+  expect(asks).toMatchObject({ prompts: 1, keys: 0, r: { state: "needs_human" } });
 });
 
-test("prompt traces survive any wrap and box drawing, and ordinary screens have none", async () => {
-  const { promptTrace, composePrompt } = await import("../src/lib/launch.mjs");
-  const full = composePrompt("Do the thing.\n".repeat(1200));
-  const wrapped = (w) => full.split("\n").flatMap((l) => l.match(new RegExp(`.{1,${w}}`, "g")) ?? [""]).map((l) => `│ ${l} │`);
-  for (const w of [20, 40, 80]) expect(promptTrace(wrapped(w).slice(-1000).join("\n"))).toBe(true); // the closing survives, however it wraps
-  for (const screen of ["Welcome\n❯", "kiro_default · auto · ◔ 1%", "  ~/.herdr/worktrees/routr/review5-verify · review5-verify", "chris % "]) expect(promptTrace(screen)).toBe(false);
+test("from the review of #46: a worker seen starting counts even if it is done by the status read; the wait leaves time for the reads after it; the brief stays off the output", async () => {
+  // Seen working by the wait, finished by the time launch reads its state: it took the task.
+  let prompts = 0;
+  const quick = fakeHerdr({ kind: "codex", reply: (a) => {
+    if (a[1] === "prompt") { prompts++; return herdrError("agent_prompt_stalled"); }
+    if (a[1] === "wait" && prompts) return herdrOK({ agent: { agent_status: "working" } });
+    if (a[1] === "get" && prompts) return herdrOK({ agent: { agent: "codex", agent_status: "done", interactive_ready: true } });
+  } });
+  expect(await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--task", "Task"], quick.deps)).toMatchObject({ ok: true, state: "prompted" });
+  // A wait that uses all the time it is given: launch still reads the state and the pane, and ends as needs_human.
+  const brief = "Rotate the production signing key in vault/prod";
+  let sent = false, given = null, left = null, paneRead = false;
+  const slow = fakeHerdr({ kind: "codex", reply: async (a, ms) => {
+    if (a[1] === "prompt") { sent = true; return herdrError("agent_prompt_stalled"); }
+    if (a[1] === "wait" && sent) { given = ms; left = 30000 - slow.deps.now(); await slow.deps.sleep(ms); return herdrError("timeout"); }
+    // The status read takes time too, after the wait used all of its own: still needs_human, never failed.
+    if (a[1] === "get" && sent) { await slow.deps.sleep(Math.min(ms, 1500)); return herdrOK({ agent: { agent: "codex", agent_status: "idle", interactive_ready: true } }); }
+    if (a[1] === "read" && sent) { paneRead = true; return herdrOK({ text: `› ${brief}\n  Waiting for startup` }); }
+  } });
+  const r = await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--timeout", "30000", "--task", brief], slow.deps);
+  expect(given).toBeLessThanOrEqual(left); // the wait never gets more than is left
+  expect(r).toMatchObject({ ok: false, state: "needs_human" });
+  expect(JSON.stringify(r)).not.toContain(brief); // the pane showed the brief; the output does not
+  expect(paneRead).toBe(false); // and after the task is sent, launch does not read the pane at all
+  // Not on the failure path either (from the second verification of #46): a status read that errors ends as failed,
+  // with the pane text withheld and the pane never read.
+  let posted = false, readAfter = false;
+  const broken = fakeHerdr({ kind: "codex", reply: (a) => {
+    if (a[1] === "prompt") { posted = true; return herdrOK({}); }
+    if (a[1] === "get" && posted) return herdrError("server_error");
+    if (a[1] === "read" && posted) { readAfter = true; return herdrOK({ text: brief }); }
+  } });
+  const b = await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--task", brief], broken.deps);
+  expect(b.state).toBe("failed");
+  expect(readAfter).toBe(false);
+  expect(JSON.stringify(b)).not.toContain(brief);
 });

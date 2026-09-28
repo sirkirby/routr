@@ -11,8 +11,6 @@
 //   confirm: a question it asks at every start because of the permissive flags routr itself passed (not a folder
 //     trust), answered with the one option that holds for this session only. showsModel: how to tell from the
 //     screen that it took `--model`, for a harness that silently runs its default on an id it does not know.
-//     inputLine: the mark its input box starts with, where a task pasted but never submitted can be seen (launch
-//     presses Enter once for it, never resends).
 //   list: its own command that lists model ids; models(): that list, read now (routr keeps no model list of its own).
 //     openList: the list is a sample, not every id it takes (Claude Code names its aliases; its help says it also takes a model's full name),
 //     so an id not on it is not refused.
@@ -70,9 +68,6 @@ export const HARNESSES = {
   cursor: { label: "Cursor", executable: "cursor-agent", installAs: "Cursor (cursor-agent)",
     permissions: ["--yolo", "--trust"], model: "--model", list: "cursor-agent models",
     noEffort: "cursor has no separate --effort flag; choose a model id with the desired effort",
-    // Twice on 2026-09-26 (a 2.4k-character task): herdr said the prompt stalled while the input box read
-    // "→ [Pasted text #1 +21 lines]"; Enter sent it. Once sent, the box reads "→ Add a follow-up".
-    inputLine: "→",
     env: (dir) => ({ CURSOR_CONFIG_DIR: dir ?? "<private-cursor-config-dir>" }),
     notes: () => ["Cursor changes its configured default model; launch uses a private copy of ~/.cursor/cli-config.json."],
     // "✓ Logged in as <email>" / "Not logged in", and exit 0 BOTH ways: only the text tells.
