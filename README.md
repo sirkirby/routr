@@ -1,6 +1,6 @@
 # routr
 
-![routr: one lead agent plans and decides, then hands work to Claude Code, Codex, Cursor, and Antigravity workers](assets/routr-banner.png)
+![routr: the lead agent in your terminal hands work, through routr, to workers on the other AI subscriptions you pay for](assets/routr-banner.png)
 
 routr lets one coding agent run a team of others across the AI subscriptions you already pay for: Claude Code,
 Codex, Cursor, Antigravity, and Kiro.
