@@ -137,8 +137,10 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   }
   // Only a harness that is installed AND signed in can be set up: one signed out gets no work until the user signs in.
   const found = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && r.harnesses[n].signed_in);
-  // Installed but not signed in, and not set up: said in every kind of run (--json too), so an agent can tell the person.
-  const leftOut = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && !r.harnesses[n].signed_in && !r.config.subscriptions.includes(n))
+  // Installed but not signed in, and not set up (--force sets up nothing that was): said in every kind of run (--json
+  // too), so an agent can tell the person.
+  const kept = args.includes("--force") ? [] : r.config.subscriptions;
+  const leftOut = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && !r.harnesses[n].signed_in && !kept.includes(n))
     .map((n) => `${HARNESSES[n]?.label ?? n} left out: ${r.harnesses[n].sign_in}, then routr setup again`);
   for (const n of Object.keys(ranks)) {
     if (!found.includes(n)) return { ok: false, error: `--metered ${n}=…: ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };

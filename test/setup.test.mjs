@@ -246,6 +246,10 @@ test("from the review: one set up but signed out is never asked anything and is 
   expect(one.asked.some((a) => a.startsWith("Codex: which setting?"))).toBe(false);
   // An agent cannot turn it on either; it can still turn one off, or change a setting that asks nothing of the harness.
   expect((await runSetup({ config, found: ["cursor"], signedOut: ["kiro"], args: ["--yes", "--enable", "kiro"] })).r.error).toBe("--enable kiro: not signed in: run `kiro-cli login`");
+  // --force sets up only what is signed in now, so one set up before is left out, and says so.
+  const forced = await runSetup({ config, found: ["cursor"], signedOut: ["kiro"], args: ["--yes", "--force"] });
+  expect(Object.keys(forced.saved.subscriptions)).toEqual(["cursor"]);
+  expect(forced.r.skipped).toContain("Kiro left out: not signed in: run `kiro-cli login`, then routr setup again");
   const off = await runSetup({ config, found: ["cursor"], signedOut: ["codex"], args: ["--yes", "--disable", "codex", "--hardest", "codex=standard"] });
   expect(off.saved.subscriptions.codex).toMatchObject({ enabled: false, hardest_work: "standard" });
   // A person who exits without a change still hears about one not set up, as an agent's run does.

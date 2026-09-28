@@ -22,8 +22,9 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
 
 It changes nothing. It reports which harnesses are installed and signed in, which have a live usage source, whether
 the TypeSafe key works, and whether a config exists. A harness that is installed but not signed in gets no work
-(dispatch, launch) and cannot be added or turned on in setup until the user signs in: setup lists it greyed with the
-command to run, `setup --yes` says so in its notes ("<name> left out: …"), doctor names the command, and routr never
+(dispatch, launch) until the user signs in, and setup neither adds it, turns it on, nor asks it for models or effort
+levels; one already on can still be turned off. Setup shows the command to run beside it (greyed when it cannot be
+chosen), `setup --yes` notes each one it did not add ("<name> left out: …"), doctor names the command, and routr never
 starts a sign-in itself. Lines marked `!!` need fixing, and it ends with a numbered list of what to
 do next. `routr setup` does the writing (steps 3 and 4). A person can run it alone in a terminal and answer its
 questions; you run it with `--yes` and the choices you settled with the user. `routr doctor --fix` is the same
