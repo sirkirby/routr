@@ -189,9 +189,15 @@ jobs:
           xattr -w com.apple.quarantine "0083;$(printf %x "$(date +%s)");Safari;$(uuidgen)" "$RUNNER_TEMP/downloaded"
           spctl --assess --type install -vv "$RUNNER_TEMP/downloaded" 2>&1 | tee "$RUNNER_TEMP/gk.txt"
           grep -q "source=Notarized Developer ID" "$RUNNER_TEMP/gk.txt"
-      - name: Remove the signing keychain
+          # And run it, as a person would: Gatekeeper kills a quarantined binary it refuses (no dialog on a runner).
+          chmod +x "$RUNNER_TEMP/downloaded"
+          test "$("$RUNNER_TEMP/downloaded" --version)" = "${{ needs.validate-tag.outputs.version }}"
+      # Whatever failed above: the keychain and any key file are removed before the job ends.
+      - name: Remove the signing keychain and key files
         if: always()
-        run: security delete-keychain "$RUNNER_TEMP/routr-signing.keychain-db" 2>/dev/null || true
+        run: |
+          security delete-keychain "$RUNNER_TEMP/routr-signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/notary.p8"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BIN }}

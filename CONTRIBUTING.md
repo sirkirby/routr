@@ -94,9 +94,10 @@ in the repository `src/lib/version.mjs`, `package.json`, and the `version` line 
 
 `.github/workflows/release.yml` then checks the tag's form, runs the tests, stamps the tag's version into those three
 files in each build (`scripts/stamp-version.mjs`; the skill and `package.json` get the base version `0.2.0`), builds the five binaries
-(macOS ones on macOS, signed with the maintainer's Developer ID under the hardened runtime, notarized by Apple, and
-checked with Gatekeeper; the signing secrets live in the `release` environment, which only a `v*` tag can use, and a
-release fails without them rather than ship an ad-hoc binary), and creates the GitHub
+(macOS ones on macOS, signed with the maintainer's Developer ID under the hardened runtime and notarized by Apple; a
+copy marked as a browser download must then pass Gatekeeper and run, which fails a stable release and is only reported
+for a pre-release; the signing secrets live in the `release` environment, which only a `v*` tag can use, and a release
+fails without them rather than ship an ad-hoc binary), and creates the GitHub
 release with checksums, install commands, and a "What's Changed" list of the commit subjects since the previous
 stable tag. Write commit subjects a user can read: they become the release notes. Pre-releases are marked as such
 and are never "latest", so the install scripts ignore them unless `ROUTR_VERSION` names one. The guides are embedded
