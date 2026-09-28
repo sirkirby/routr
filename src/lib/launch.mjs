@@ -16,25 +16,6 @@ const besideSource = fileURLToPath(new URL("../../skills/routr/references/worker
 export const WORKER_GUIDE = existsSync(besideSource) ? besideSource : join(home(), ".agents/skills/routr/references/worker.md");
 // The first words of every launch prompt.
 export const PROMPT_OPENING = "You are a routr worker.";
-// Any of these on the pane means the prompt, or part of it, may have arrived: its opening (even a short part of it),
-// its middle, its closing line (a long task scrolls the opening away; the closing stays near the bottom), and the
-// placeholder a harness shows for a paste it has folded away, with the text itself nowhere on screen: Cursor's
-// "[Pasted text #1 +18 lines]" (2026-09-26) and Codex's "[Pasted Content 3102 chars]" (2026-09-28: missing from this
-// list, a stalled Codex prompt was sent a second time into the same box). Matched with all whitespace and box-drawing removed, so no
-// wrap, soft or hard, can split one. A false match only hands the pane to a person; a miss would send the task twice.
-export const PROMPT_TRACES = ["You are a", "routr worker guide", "report block from the worker guide", "VERDICT: done | partial | blocked", "[Pasted text", "[Pasted Content"];
-const squeeze = (t) => String(t).replace(/[\s│┃─━╭╮╰╯┌┐└┘├┤▏▕|]+/g, "");
-export const promptTrace = (screen) => PROMPT_TRACES.some((t) => squeeze(screen).includes(squeeze(t)));
-// The task sitting unsent in the input box, read from the visible screen: exactly one line there starts with the
-// harness's input mark (the registry's `inputLine`), and it carries a trace of the prompt. The same trace elsewhere
-// (the transcript of a prompt already sent) does not count, and a second marked line (Cursor marks the chosen row of
-// a decision list or a / or @ palette with the same →, from the review of #39) leaves it to a person: Enter there
-// would choose that row.
-export const unsentInInput = (screen, mark) => {
-  if (!mark) return false;
-  const marked = String(screen ?? "").split("\n").filter((l) => l.trimStart().startsWith(mark));
-  return marked.length === 1 && promptTrace(marked[0]);
-};
 // `rules` is the lead's process text (what the worker may and may not do, how to report, git steps): the worker reads it
 // after the task, and routr never does. Only the task is the work that `dispatch` and `--advice` judge. (Measured
 // 2026-09-26: 18 of 36 real tasks carried such text, 5 to 38% of each, and it moved Jev's readings.)
@@ -301,7 +282,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     // After the start: answer the harness's own permissive-mode confirmation, the folder trust (as --trust says), wait
     // until the agent is ready, and check it took the model. Returns null when ready, or what needs a person.
     const awaitReady = async (text) => {
-      let answeredTrust = null, trustAnsweredAt = null, moves = 0, confirmedAt = null, waitedStartup = false;
+      let answeredTrust = null, trustAnsweredAt = null, moves = 0, confirmedAt = null;
       const h = HARNESSES[o.kind];
       for (;;) {
         // Kiro shows it idle and ready while it asks (measured), so the screen is the only sign.
@@ -346,10 +327,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         if (agent && agent.agent !== o.kind) return human("The pane contains a different agent kind", text);
         if (agent?.agent_status === "blocked") return human("Agent is waiting at an unrecognized question or approval", text);
         // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
-        // A harness still showing its startup screen is not ready, whatever herdr says (the registry's `starting`).
-        const starting = h.starting?.test(clean(text));
-        if (starting && !waitedStartup) { step("startup", true, `Waited for ${o.kind} to finish starting before the prompt`); waitedStartup = true; }
-        if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false && !starting) break;
+        if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) break;
         await pause();
       }
       if (o.kind === "cursor" && SHELLS[shell].cursor) await call(["agent", "rename", out.pane, o.name]); // pane-run: herdr did not get the name
@@ -364,10 +342,13 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       }
       return null;
     };
-    // Submit the task and confirm the worker took it. After herdr says "agent_prompt_stalled", with the agent idle:
-    // the task sitting unsent in the input box gets Enter, once (seen twice on Cursor, 2026-09-26); a task nowhere on
-    // the pane is resent, once (seen twice on Claude, idle with an empty input line). Anything less certain goes to a
-    // person, never twice.
+    // Submit the task once and let herdr say whether the worker took it. herdr sends the text and Enter as one
+    // submission, in the pane's paste mode, and reports the agent's lifecycle state; its own rule is that a stalled or
+    // timed-out prompt does not prove the task was not delivered, so it is never sent again and no key is pressed for
+    // it. A harness can hold a task until it has finished starting (Codex queued one behind "Waiting for startup",
+    // 2026-09-28), and a slow link delays everything, so a prompt with no activity yet is waited on, by state, for the
+    // rest of the launch timeout. Reading the screen for traces of the task, and resending or pressing Enter on what it
+    // showed, sent a task twice into Codex's box the same day: that is no longer done.
     const submitPrompt = async () => {
       // Reserve time to inspect the result.
       const budget = remaining();
@@ -376,49 +357,29 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       const a = promptArgs(out.pane, submitMs);
       logCommand(out.command, promptForLog(a));
       promptAttempted = true;
-      const wait = () => Math.min(remaining(), submitMs + Math.min(1000, Math.floor((budget - submitMs) / 2)));
-      let r = await run(a, wait()), entered = false;
-      if (!r.ok && r.data?.error?.code === "agent_prompt_stalled") {
-        await pause();
-        // The agent's state first, then a fresh read of the pane, then at once the resend: nothing between the look
-        // and the send. Resent only with no trace of the prompt anywhere and no dialog on screen.
-        const idle = (await call(["agent", "get", out.pane], true)).data?.result?.agent?.agent_status === "idle";
-        const seen = idle ? clean(paneText((await call(["pane", "read", out.pane, "--source", "recent-unwrapped", "--lines", "1000"])).data)) : "";
-        // Its startup screen back on the pane counts as a dialog: neither Enter nor a resend, a person's call.
-        const dialog = trustDialog(seen) || permissiveConfirm(seen, HARNESSES[o.kind].confirm) || HARNESSES[o.kind].starting?.test(seen);
-        const mark = HARNESSES[o.kind].inputLine;
-        // Only when the look above found a trace of the prompt (an unsent task is one), so the resend below still follows
-        // that look with nothing in between (from the verification of #39). The visible screen for the box, then the
-        // agent's state again, then at once the key: still idle, nothing new.
-        const unsent = idle && !dialog && mark && promptTrace(seen) && unsentInInput(clean(paneText((await call(["pane", "read", out.pane, "--source", "visible"])).data)), mark)
-          && (await call(["agent", "get", out.pane], true)).data?.result?.agent?.agent_status === "idle";
-        if (unsent) {
-          step("prompt_enter", true, "herdr said the prompt stalled and it sat unsent in the input box: pressed Enter once");
-          entered = true;
-          await call(["pane", "send-keys", out.pane, "enter"]);
-          r = await call(["agent", "wait", out.pane, "--until", "working", "--timeout", String(Math.max(1, Math.min(10000, remaining())))], true);
-        } else if (idle && !promptTrace(seen) && !dialog) {
-          step("prompt_retry", true, "herdr said the prompt stalled and the pane never showed it: sent once more");
-          logCommand(out.command, promptForLog(a));
-          r = await run(a, wait());
-        }
+      let r = await run(a, Math.min(remaining(), submitMs + Math.min(1000, Math.floor((budget - submitMs) / 2))));
+      const quiet = !r.ok && ["agent_prompt_stalled", "timeout"].includes(r.data?.error?.code);
+      if (quiet) {
+        step("prompt_wait", true, "Sent once; herdr has not seen the agent start yet, so launch waits on its state and sends nothing again");
+        r = await call(["agent", "wait", out.pane, "--until", "working", "--until", "blocked", "--timeout", String(Math.max(1, remaining() - 1000))], true);
       }
       const got = await call(["agent", "get", out.pane]);
       const agent = got.data?.result?.agent;
       const status = agent?.agent_status ?? "unknown";
       if (agent?.agent !== o.kind) return human("Cannot confirm the prompted agent's identity", await readPane());
       if (status === "blocked") {
-        step("prompt", r.ok, r.ok ? `Submitted ${prompt.length} characters; the agent is asking something` : JSON.stringify(r.data));
+        step("prompt", r.ok, `Submitted ${prompt.length} characters; the agent is asking something`);
         return human("The worker is blocked on a question or approval right after its prompt", await readPane());
-      } else if ((r.ok && (entered ? status === "working" : ["working", "idle", "done"].includes(status))) // after Enter, only working says it took the task
-        || (!r.ok && r.data?.error?.code === "timeout" && status === "working")) {
+      }
+      // Working is always a start. Idle or done count only when herdr's own prompt wait saw activity first (a short
+      // task can finish inside it); after a quiet prompt, only working says the task was taken.
+      if (status === "working" || (r.ok && !quiet && ["idle", "done"].includes(status))) {
         step("prompt", true, `Submitted ${prompt.length} characters; the agent settled at ${status}`);
         out.state = "prompted";
-      } else {
-        step("prompt", false, `Could not confirm the worker started (${status}): ${JSON.stringify(r.data)}`);
-        out.ok = false; out.state = "failed";
+        return null;
       }
-      return null;
+      step("prompt", false, `Sent once; the agent never started (${status}): ${JSON.stringify(r.data)}`);
+      return human(`The task was sent once and the agent has not started within the timeout (${status}). Look at the pane: it may still be starting, the task may sit unsent in its input box (press Enter there), or it never arrived (send it by hand). launch never sends it twice.`, await readPane());
     };
     const startCommand = startArgs(out.pane, Math.min(30000, remaining()));
     startAttempted = true;
