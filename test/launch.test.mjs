@@ -838,6 +838,53 @@ test("a task pasted but never submitted gets Enter once, never a second send; on
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+// 2026-09-28, a review worker on Codex: herdr reported Codex idle while its screen read "Waiting for startup"; the task
+// sat unsent in the box as "› [Pasted Content 3102 chars]", and launch, seeing no trace it knew, sent it a second time.
+const codexStarting = "  >_ OpenAI Codex\n\n› \n\n  GPT-6-Sol medium · ~/.herdr/worktrees/routr/review-45\n  Waiting for startup  · esc cancel";
+const codexReady = "  >_ OpenAI Codex\n\n› Ask Codex to do anything\n\n  GPT-6-Sol medium · ~/.herdr/worktrees/routr/review-45";
+const codexUnsent = "  >_ OpenAI Codex\n\n› [Pasted Content 3102 chars]\n\n  GPT-6-Sol medium · ~/.herdr/worktrees/routr/review-45";
+const codexArgs = ["--kind", "codex", "--name", "worker", "--model", "gpt-6-sol", "--task", "Task"];
+
+test("Codex: no prompt while its startup screen shows, however herdr reports it", async () => {
+  let reads = 0, started = false, promptedAt = null;
+  const f = fakeHerdr({ kind: "codex", reply: (a) => {
+    if (a[1] === "start") started = true;
+    if (started && a[1] === "read") return herdrOK({ text: ++reads <= 4 ? codexStarting : codexReady });
+    if (a[1] === "prompt") { promptedAt = reads; return undefined; }
+  } });
+  const r = await launch(codexArgs, f.deps);
+  expect(r).toMatchObject({ ok: true, state: "prompted" });
+  expect(promptedAt).toBeGreaterThan(4); // only once the startup screen was gone
+  expect(r.steps.some((st) => st.step === "startup")).toBe(true);
+  expect(f.calls.filter((c) => c[1] === "prompt")).toHaveLength(1);
+});
+
+test("Codex: a stalled task in the box as a folded paste gets Enter once, never a second send", async () => {
+  const { unsentInInput, promptTrace } = await import("../src/lib/launch.mjs");
+  expect(promptTrace("› [Pasted Content 3102 chars]")).toBe(true);
+  expect(unsentInInput(codexUnsent, "›")).toBe(true);
+  expect(unsentInInput(codexReady, "›")).toBe(false);
+  const drive = async (shown) => {
+    let prompts = 0, entered = 0, started = false;
+    const f = fakeHerdr({ kind: "codex", reply: (a) => {
+      if (a[1] === "start") started = true;
+      if (a[1] === "prompt") { prompts++; return herdrError("agent_prompt_stalled"); }
+      if (started && a[1] === "read") return herdrOK({ text: prompts ? shown : codexReady });
+      if (a[1] === "send-keys" && prompts) { entered++; return herdrOK({}); }
+      if (a[1] === "wait" && entered) return herdrOK({ agent: { agent_status: "working" } });
+      if (a[1] === "get" && prompts) return herdrOK({ agent: { agent: "codex", agent_status: entered ? "working" : "idle", interactive_ready: true } });
+    } });
+    const r = await launch(codexArgs, f.deps);
+    return { r, prompts, entered };
+  };
+  const x = await drive(codexUnsent);
+  expect(x).toMatchObject({ prompts: 1, entered: 1, r: { ok: true, state: "prompted" } });
+  // The startup screen back after the stall: neither Enter nor a resend, a person's call.
+  const y = await drive(codexStarting.replace("› ", "› [Pasted Content 3102 chars]"));
+  expect(y).toMatchObject({ prompts: 1, entered: 0 });
+  expect(y.r.state).not.toBe("prompted");
+});
+
 test("prompt traces survive any wrap and box drawing, and ordinary screens have none", async () => {
   const { promptTrace, composePrompt } = await import("../src/lib/launch.mjs");
   const full = composePrompt("Do the thing.\n".repeat(1200));

@@ -117,8 +117,11 @@ object describing what it did.
   `warnings` holds anything it answered on your behalf and anything it wants you to look at. `steps` says what it
   did, in order. A `needs_human` result is yours to resolve (`herdr notification show`), not to retry.
 - `prompted` means the worker took the prompt and started, not that it finished. Waiting for the work is step 4.
+- A harness that is still starting (Codex's `Waiting for startup`) is not prompted until it has finished, however herdr
+  reports it (`steps` then holds `startup`).
 - When herdr says the prompt stalled, launch looks at the pane with the agent idle. The task sitting unsent in the
-  input box (Cursor shows `→ [Pasted text #1 +N lines]`, and no other `→` row is on screen) gets Enter, once (`steps`
+  input box (Cursor shows `→ [Pasted text #1 +N lines]`, Codex `› [Pasted Content N chars]`, and no other row with
+  that mark is on screen) gets Enter, once (`steps`
   then holds `prompt_enter`; it counts as started only if the agent then works); a task
   nowhere on the pane is sent once more (`prompt_retry`). If the prompt may be on the pane in any other way, launch
   never sends it twice: the state is not `prompted` and `warnings` holds "Prompt may have been submitted". Read the

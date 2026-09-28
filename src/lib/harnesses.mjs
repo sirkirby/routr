@@ -12,7 +12,8 @@
 //     trust), answered with the one option that holds for this session only. showsModel: how to tell from the
 //     screen that it took `--model`, for a harness that silently runs its default on an id it does not know.
 //     inputLine: the mark its input box starts with, where a task pasted but never submitted can be seen (launch
-//     presses Enter once for it, never resends).
+//     presses Enter once for it, never resends). starting: what its screen shows while it is still starting and
+//     cannot take a task, whatever herdr reports (launch waits until it is gone).
 //   list: its own command that lists model ids; models(): that list, read now (routr keeps no model list of its own).
 //     openList: the list is a sample, not every id it takes (Claude Code names its aliases; its help says it also takes a model's full name),
 //     so an id not on it is not refused.
@@ -65,6 +66,11 @@ export const HARNESSES = {
     // Only the models Codex lists (visibility "list"); each carries its own levels (gpt-5.5 stops at xhigh, measured).
     models: async () => (await readCodexModels())?.filter((m) => m.visibility !== "hide").map((m) => m.slug ?? m.id).filter(Boolean) ?? null,
     efforts: async (model) => (await readCodexModels())?.find((m) => (m.slug ?? m.id) === model)?.supported_reasoning_levels?.map((e) => e.effort ?? e) ?? null,
+    // 2026-09-28: while its MCP servers started, Codex showed "Waiting for startup · esc cancel" and herdr reported it
+    // idle; a task sent then sat in the box as "› [Pasted Content 3102 chars]", unsent. Once ready the box reads
+    // "› Ask Codex to do anything".
+    starting: /\bWaiting for startup\b/,
+    inputLine: "›",
     suggested: { hardest_work: "strong", reserve: 0.2 },
     usage: { read: readCodexLive } },
   cursor: { label: "Cursor", executable: "cursor-agent", installAs: "Cursor (cursor-agent)",

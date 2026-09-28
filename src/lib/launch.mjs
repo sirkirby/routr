@@ -18,10 +18,11 @@ export const WORKER_GUIDE = existsSync(besideSource) ? besideSource : join(home(
 export const PROMPT_OPENING = "You are a routr worker.";
 // Any of these on the pane means the prompt, or part of it, may have arrived: its opening (even a short part of it),
 // its middle, its closing line (a long task scrolls the opening away; the closing stays near the bottom), and the
-// placeholder a harness shows for a paste it has folded away ("[Pasted text #1 +18 lines]", seen on Cursor
-// 2026-09-26, with the text itself nowhere on screen). Matched with all whitespace and box-drawing removed, so no
+// placeholder a harness shows for a paste it has folded away, with the text itself nowhere on screen: Cursor's
+// "[Pasted text #1 +18 lines]" (2026-09-26) and Codex's "[Pasted Content 3102 chars]" (2026-09-28: missing from this
+// list, a stalled Codex prompt was sent a second time into the same box). Matched with all whitespace and box-drawing removed, so no
 // wrap, soft or hard, can split one. A false match only hands the pane to a person; a miss would send the task twice.
-export const PROMPT_TRACES = ["You are a", "routr worker guide", "report block from the worker guide", "VERDICT: done | partial | blocked", "[Pasted text"];
+export const PROMPT_TRACES = ["You are a", "routr worker guide", "report block from the worker guide", "VERDICT: done | partial | blocked", "[Pasted text", "[Pasted Content"];
 const squeeze = (t) => String(t).replace(/[\s│┃─━╭╮╰╯┌┐└┘├┤▏▕|]+/g, "");
 export const promptTrace = (screen) => PROMPT_TRACES.some((t) => squeeze(screen).includes(squeeze(t)));
 // The task sitting unsent in the input box, read from the visible screen: exactly one line there starts with the
@@ -300,7 +301,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     // After the start: answer the harness's own permissive-mode confirmation, the folder trust (as --trust says), wait
     // until the agent is ready, and check it took the model. Returns null when ready, or what needs a person.
     const awaitReady = async (text) => {
-      let answeredTrust = null, trustAnsweredAt = null, moves = 0, confirmedAt = null;
+      let answeredTrust = null, trustAnsweredAt = null, moves = 0, confirmedAt = null, waitedStartup = false;
       const h = HARNESSES[o.kind];
       for (;;) {
         // Kiro shows it idle and ready while it asks (measured), so the screen is the only sign.
@@ -345,7 +346,10 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         if (agent && agent.agent !== o.kind) return human("The pane contains a different agent kind", text);
         if (agent?.agent_status === "blocked") return human("Agent is waiting at an unrecognized question or approval", text);
         // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
-        if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) break;
+        // A harness still showing its startup screen is not ready, whatever herdr says (the registry's `starting`).
+        const starting = h.starting?.test(clean(text));
+        if (starting && !waitedStartup) { step("startup", true, `Waited for ${o.kind} to finish starting before the prompt`); waitedStartup = true; }
+        if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false && !starting) break;
         await pause();
       }
       if (o.kind === "cursor" && SHELLS[shell].cursor) await call(["agent", "rename", out.pane, o.name]); // pane-run: herdr did not get the name
@@ -380,7 +384,8 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         // and the send. Resent only with no trace of the prompt anywhere and no dialog on screen.
         const idle = (await call(["agent", "get", out.pane], true)).data?.result?.agent?.agent_status === "idle";
         const seen = idle ? clean(paneText((await call(["pane", "read", out.pane, "--source", "recent-unwrapped", "--lines", "1000"])).data)) : "";
-        const dialog = trustDialog(seen) || permissiveConfirm(seen, HARNESSES[o.kind].confirm);
+        // Its startup screen back on the pane counts as a dialog: neither Enter nor a resend, a person's call.
+        const dialog = trustDialog(seen) || permissiveConfirm(seen, HARNESSES[o.kind].confirm) || HARNESSES[o.kind].starting?.test(seen);
         const mark = HARNESSES[o.kind].inputLine;
         // Only when the look above found a trace of the prompt (an unsent task is one), so the resend below still follows
         // that look with nothing in between (from the verification of #39). The visible screen for the box, then the
