@@ -11,8 +11,8 @@ is not on your PATH. Add it to your shell profile, or to your user PATH on Windo
 ## macOS: the binary is killed, or "cannot be verified"
 
 From 0.3.2 on, routr's macOS binaries are signed with a Developer ID and notarized by Apple. Before a stable release is
-published, a copy marked the way a browser marks a download must pass Gatekeeper's check and run (on a CI runner; a
-pre-release reports that check but is published either way). Releases before 0.3.2 were signed ad hoc only. macOS
+published, a copy marked the way a browser marks a download must pass Gatekeeper's check, and the Apple Silicon one must run (on a
+CI runner; a pre-release reports that check but is published either way). Releases before 0.3.2 were signed ad hoc only. macOS
 blocks the first run of such a binary when it was downloaded **in a browser** (browser downloads are quarantined), and
 a macOS update has started killing another project's ad-hoc binary that ran before. The fix for both is to upgrade: `routr update`, or the
 install script, which is never affected by quarantine (a download made with `curl` is not marked). To run an old one
