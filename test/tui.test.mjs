@@ -55,6 +55,15 @@ test("multiselect: Space toggles, a toggles all, and a required choice says so u
   expect(t.output()).toContain("choose at least 1");
 });
 
+test("multiselect: a disabled option is shown greyed with why, is skipped by a, and says why when chosen", async () => {
+  const t = terminal();
+  const options = [{ value: "claude", label: "Claude Code" }, { value: "kiro", label: "Kiro", disabled: "not signed in: run `kiro-cli login`" }];
+  t.press("a", "down", " ", "return");
+  expect(await t.ui.multiselect({ message: "Which?", options, initial: ["kiro"], min: 1 })).toEqual(["claude"]);
+  expect(t.output()).toContain("◻ Kiro (not signed in: run `kiro-cli login`)");
+  expect(t.output()).toContain("Kiro: not signed in: run `kiro-cli login`"); // the refusal
+});
+
 test("search: typing filters a long list, Backspace widens it, and nothing matching is said", async () => {
   const t = terminal();
   const options = [...Array.from({ length: 230 }, (_, i) => `vendor-model-${i}`), "cursor-grok-4.6-high", "grok-4.7-high"].map((v) => ({ value: v, label: v }));

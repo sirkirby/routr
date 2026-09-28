@@ -151,25 +151,30 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
     },
 
     // Any of `options`. Space toggles, `a` toggles all, Enter confirms; `min` is how many must be chosen.
+    // An option with `disabled: "why"` is shown, greyed, with why beside it, and cannot be chosen: a harness that is
+    // installed but not signed in is listed where the person looks for it, with what to run.
     multiselect: async ({ message, options, initial: given = [], min = 0 }) => {
       const need = `choose at least ${min}`;
-      const initial = given.filter((v) => options.some((o) => o.value === v)); // a value that is not an option counts for nothing
+      const open = options.filter((o) => !o.disabled);
+      const initial = given.filter((v) => open.some((o) => o.value === v)); // a value that is not an option counts for nothing
+      const why = (o) => `${o.label}: ${o.disabled}`;
       if (accessible) {
         const chosen = new Set(initial);
         for (;;) {
-          const a = await plain(`${message}\n${options.map((o, i) => `  ${String(i + 1).padStart(2)}. [${chosen.has(o.value) ? "x" : " "}] ${o.label}${o.hint ? ` (${o.hint})` : ""}`).join("\n")}\nNumbers to switch on or off, Enter when done (b = back): `);
+          const a = await plain(`${message}\n${options.map((o, i) => `  ${String(i + 1).padStart(2)}. [${o.disabled ? "-" : chosen.has(o.value) ? "x" : " "}] ${o.label}${o.disabled ? ` (${o.disabled})` : o.hint ? ` (${o.hint})` : ""}`).join("\n")}\nNumbers to switch on or off, Enter when done (b = back): `);
           if (/^b(ack)?$/i.test(a)) return BACK;
           if (!a) { if (chosen.size >= min) return options.filter((o) => chosen.has(o.value)).map((o) => o.value); write(`  ${need}\n`); continue; }
-          for (const n of a.split(/[\s,]+/)) { const o = options[Number(n) - 1]; if (o) chosen.has(o.value) ? chosen.delete(o.value) : chosen.add(o.value); }
+          for (const n of a.split(/[\s,]+/)) { const o = options[Number(n) - 1]; if (o?.disabled) write(`  ${why(o)}\n`); else if (o) chosen.has(o.value) ? chosen.delete(o.value) : chosen.add(o.value); }
         }
       }
-      return run({ message, init: { i: 0, on: new Set(initial) },
-        view: ({ i, on }) => [...options.map((o, j) => `${on.has(o.value) ? c.green(g.checked) : c.dim(g.unchecked)} ${j === i ? o.label : c.dim(o.label)}${j === i && o.hint ? ` ${c.dim(`(${o.hint})`)}` : ""}`), help("↑/↓ move · space choose · a all · enter confirm · esc back")],
+      return run({ message, init: { i: Math.max(0, options.findIndex((o) => !o.disabled)), on: new Set(initial) },
+        view: ({ i, on }) => [...options.map((o, j) => (o.disabled ? c.dim(`${g.unchecked} ${o.label} (${o.disabled})`)
+          : `${on.has(o.value) ? c.green(g.checked) : c.dim(g.unchecked)} ${j === i ? o.label : c.dim(o.label)}${j === i && o.hint ? ` ${c.dim(`(${o.hint})`)}` : ""}`)), help("↑/↓ move · space choose · a all · enter confirm · esc back")],
         key: ({ i, on }, s, k) => {
           if (k.name === "up" || s === "k") return { i: (i - 1 + options.length) % options.length, on };
           if (k.name === "down" || s === "j") return { i: (i + 1) % options.length, on };
-          if (k.name === "space") { const n = new Set(on); n.has(options[i].value) ? n.delete(options[i].value) : n.add(options[i].value); return { i, on: n }; }
-          if (s === "a") return { i, on: on.size === options.length ? new Set() : new Set(options.map((o) => o.value)) };
+          if (k.name === "space") { if (options[i].disabled) return { error: why(options[i]) }; const n = new Set(on); n.has(options[i].value) ? n.delete(options[i].value) : n.add(options[i].value); return { i, on: n }; }
+          if (s === "a") return { i, on: on.size === open.length ? new Set() : new Set(open.map((o) => o.value)) };
           if (k.name === "return") return on.size >= min ? { submit: options.filter((o) => on.has(o.value)).map((o) => o.value) } : { error: need };
           return { i, on };
         },

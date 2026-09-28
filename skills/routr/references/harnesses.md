@@ -20,7 +20,8 @@ choosing a model, when a launch does something you did not expect, or when you a
 
 ## Is it signed in? (measured 2026-09-26, signed in and signed out)
 
-routr asks each harness before anything else, and leaves one that is not signed in out of setup, dispatch, and launch.
+routr asks each harness before anything else, and one that is not signed in gets no work (dispatch, launch) and cannot
+be added or turned on in setup, which lists it with the command to sign in.
 These commands never start a sign-in. The ones they replace can: Antigravity's `-p /usage` starts Google's sign-in and
 waits for a code, and any Kiro `chat` command opens Kiro's.
 

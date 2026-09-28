@@ -137,6 +137,11 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   }
   // Only a harness that is installed AND signed in can be set up: one signed out gets no work until the user signs in.
   const found = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && r.harnesses[n].signed_in);
+  // Installed but not signed in, and not set up (--force sets up nothing that was): said in every kind of run (--json
+  // too), so an agent can tell the person.
+  const kept = args.includes("--force") ? [] : r.config.subscriptions;
+  const leftOut = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && !r.harnesses[n].signed_in && !kept.includes(n))
+    .map((n) => `${HARNESSES[n]?.label ?? n} left out: ${r.harnesses[n].sign_in}, then routr setup again`);
   for (const n of Object.keys(ranks)) {
     if (!found.includes(n)) return { ok: false, error: `--metered ${n}=…: ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
     if (r.harnesses[n].usage_class !== "metered") return { ok: false, error: `--metered ${n}=…: ${n} does not report as metered (${r.harnesses[n].usage_note ?? r.harnesses[n].usage}). For a seat routr cannot read, set "billing": "metered" in the config instead` };
@@ -149,7 +154,8 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   for (const [flagName, set] of [["--hardest", hardest], ["--reserve", reserves]])
     for (const n of Object.keys(set)) if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `${flagName} ${n}=…: ${n} is not configured and ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
   for (const [n, on] of Object.entries(switches)) {
-    if (r.config.subscriptions.includes(n)) continue; // on or off, it keeps its settings
+    // Set up, it keeps its settings on or off; one turned off is turned on again only once it is signed in.
+    if (r.config.subscriptions.includes(n) && (!on || found.includes(n) || !r.config.off?.includes(n))) continue;
     // A harness found now is added in this run, so it can be added turned off ("set up, but keep agy off").
     if (!on && !found.includes(n)) return { ok: false, error: `--disable ${n}: ${n} is not set up in routr, so there is nothing to turn off` };
     if (!found.includes(n)) return { ok: false, error: `--enable ${n}: ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
@@ -192,7 +198,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     if (!choices.write) {
       if (skillStep()) ui.note("Done", did);
       ui.outro("Your settings did not change."); ui.close();
-      return { ok: true, did, skipped: [...skipped, "nothing changed"], config: path, next_steps: r.next_steps };
+      return { ok: true, did, skipped: [...skipped, ...leftOut, "nothing changed"], config: path, next_steps: r.next_steps };
     }
     Object.assign(models, choices.models); Object.assign(efforts, choices.efforts); Object.assign(hardest, choices.hardest);
     Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches); Object.assign(ranks, choices.ranks);
@@ -252,6 +258,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
     did.push(`wrote ${path}${fresh.length ? ` with ${fresh.join(", ")}` : changed.length ? "" : " (no harness found yet: run `routr setup` again after installing one)"}`);
   } else skipped.push(`config ${path} already covers every harness found: kept as it is`);
+  skipped.push(...leftOut);
 
   // 2. Claude Code's usage, which it reports only to its statusline. Someone else's statusline is never replaced.
   if (statuslineOffer && (choices ? choices.statusline === true : true)) {
