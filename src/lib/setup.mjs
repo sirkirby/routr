@@ -252,6 +252,8 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
     did.push(`wrote ${path}${fresh.length ? ` with ${fresh.join(", ")}` : changed.length ? "" : " (no harness found yet: run `routr setup` again after installing one)"}`);
   } else skipped.push(`config ${path} already covers every harness found: kept as it is`);
+  // Installed but not signed in, and not set up: said in every kind of run (--json too), so an agent can tell the person.
+  for (const n of Object.keys(r.harnesses)) if (r.harnesses[n].installed && !r.harnesses[n].signed_in && !config?.subscriptions?.[n]) skipped.push(`${HARNESSES[n]?.label ?? n} left out: ${r.harnesses[n].sign_in}, then routr setup again`);
 
   // 2. Claude Code's usage, which it reports only to its statusline. Someone else's statusline is never replaced.
   if (statuslineOffer && (choices ? choices.statusline === true : true)) {

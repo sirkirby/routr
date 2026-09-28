@@ -24,6 +24,9 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
   const current = config?.subscriptions ?? {};
   const signedIn = (n) => r.harnesses[n]?.installed && r.harnesses[n]?.signed_in;
   const candidates = Object.keys(HARNESSES).filter((n) => signedIn(n) || current[n]);
+  // Installed but not signed in, and not set up: listed with what to run, never offered until the sign-in is done.
+  const waiting = Object.keys(HARNESSES).filter((n) => r.harnesses[n]?.installed && !signedIn(n) && !current[n]);
+  const signInOf = (n) => r.harnesses[n]?.sign_in ?? "not signed in";
   // The working copy: what is set now, or the suggestions for a harness routr has not set up yet.
   // An existing subscription is drafted as it is (no effort suggested where none is set: that would be a change the
   // person did not make); `enabled` is computed last, the way loadConfig reads it.
@@ -103,11 +106,17 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
 
 
   // Which subscriptions routr may hand work to. Unchecked, a new harness is kept, turned off, so it can be turned on later.
+  // A harness not signed in says so on its own line of the list, so going back to this question does not repeat it.
   const choose = async () => {
-    for (const n of Object.keys(HARNESSES)) if (r.harnesses[n]?.installed && !r.harnesses[n]?.signed_in) ui.line(`${HARNESSES[n].label}: ${r.harnesses[n].sign_in}`, { dim: true });
-    if (!candidates.length) { ui.line("No harness is installed and signed in yet: sign in to one, then run routr setup again."); return "none"; }
+    if (!candidates.length) {
+      for (const n of waiting) ui.line(`${HARNESSES[n].label}: ${signInOf(n)}`, { dim: true });
+      ui.line("No harness is installed and signed in yet: sign in to one, then run routr setup again.");
+      return "none";
+    }
     const v = await ui.multiselect({ message: "Which subscriptions may routr hand work to?", min: 1,
-      options: candidates.map((n) => ({ value: n, label: HARNESSES[n].label, hint: current[n] ? describe(n, draft[n]) : "new" })),
+      options: [...candidates.map((n) => ({ value: n, label: HARNESSES[n].label,
+        hint: [current[n] ? describe(n, draft[n]) : "new", ...(signedIn(n) ? [] : [signInOf(n)])].join(" · ") })),
+      ...waiting.map((n) => ({ value: n, label: HARNESSES[n].label, disabled: signInOf(n) }))],
       initial: candidates.filter((n) => draft[n].enabled) });
     if (Array.isArray(v)) for (const n of candidates) draft[n].enabled = v.includes(n);
     return v;
@@ -170,7 +179,8 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
 
   // Run again: what is set, then a menu, until the person writes or leaves.
   const menu = async () => {
-    ui.note("Your settings", candidates.map((n) => `${HARNESSES[n].label.padEnd(12)} ${current[n] ? describe(n, draft[n]) : "detected, not set up yet"}`));
+    ui.note("Your settings", [...candidates.map((n) => `${HARNESSES[n].label.padEnd(12)} ${current[n] ? describe(n, draft[n]) : "detected, not set up yet"}${signedIn(n) ? "" : ` · ${signInOf(n)}`}`),
+      ...waiting.map((n) => `${HARNESSES[n].label.padEnd(12)} ${signInOf(n)}`)]);
     for (;;) {
       const pending = changes().length;
       const v = await ui.select({ message: "What would you like to do?", initial: "one", options: [
