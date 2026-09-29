@@ -349,7 +349,7 @@ test("a question the user's shell asks at startup is not answered: its screen go
   expect(r).toMatchObject({ ok: false, state: "needs_input", needs_input: { pane: "w1:p2", screen: expect.stringContaining("Source it?") } });
   expect(r.needs_input.why).toContain("asked a question");
   expect(r.needs_input.then).toContain("herdr pane send-keys w1:p2");
-  expect(r.needs_input.then).toContain(`--task-file ${task} --pane w1:p2`);
+  expect(r.needs_input.then).toContain(`--task-file ${quote(task)} --pane w1:p2`); // quoted as the shell needs it (Windows paths)
   expect(f.calls.some((a) => ["send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
 });
 
