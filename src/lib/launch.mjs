@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -73,19 +73,38 @@ export function parseLaunchArgs(args) {
 // Inject transport and time for tests; no test needs a live pane.
 // `ready(kind)`: null when the harness is signed in, or why not (harnesses.mjs). `settings()`: the user's config.
 export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(), env = process.env, ready = notReady, settings = () => loadConfig().config,
-  cursorConfigSource = join(home(), ".cursor", "cli-config.json"), tempRoot = tmpdir() } = {}) {
+  cursorConfigSource = join(home(), ".cursor", "cli-config.json"), tempRoot = tmpdir(), models = (kind) => HARNESSES[kind].models?.() } = {}) {
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
-    command: [], argv: [], env: {}, steps: [], warnings: [], needs_human: null, prompt_chars: null };
+    command: [], argv: [], env: {}, steps: [], warnings: [], needs_input: null, prompt_chars: null };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
   let configDir, createdPane = false, startAttempted = false, touchedPane = false, promptAttempted = false;
-  const human = (why, text) => {
-    out.ok = false; out.state = "needs_human"; out.needs_human = { why, pane_text: promptAttempted ? PANE_WITHHELD : text }; step("needs_human", false, why); return out;
+  // Something in the pane needs an answer that routr does not give: a shell's own question, a harness's startup
+  // question, an agent that has not started. The orchestrator gets what the pane shows (withheld once the task has been
+  // sent: it shows the brief), herdr's reading when there is one, and `then`: how to carry on once it has answered.
+  // It decides, and asks the user only for what is not its to answer (a password, a sign-in, a folder it did not make).
+  let then = () => null;
+  const needsInput = (why, text, more = {}) => {
+    out.ok = false; out.state = "needs_input";
+    out.needs_input = { why, screen: promptAttempted ? PANE_WITHHELD : text ?? null, pane: out.pane, ...more, then: more.then ?? then() };
+    step("needs_input", false, why); return out;
   };
   try {
     const o = parseLaunchArgs(args);
     // Kept so the launch lines of older guides still work; routr answers no startup question now.
     if (args.includes("--trust")) out.warnings.push("--trust is no longer used: routr passes each harness's own flags so it asks nothing at startup, and reports any question it asks anyway");
     Object.assign(out, { kind: o.kind ?? null, name: o.name, pane: o.pane ?? null, cwd: resolve(o.cwd ?? "."), model: o.model ?? null, effort: o.effort ?? null });
+    // The same launch, into the pane it made: it carries on from the shell, or adopts the agent already running there.
+    // An inline --task is not repeated (the brief is never printed).
+    then = () => {
+      if (!out.pane) return null;
+      const keep = [];
+      for (let i = 0; i < args.length; i++) {
+        if (["--worktree", "--direction", "--pane", "--cwd", "--trust", "--copy"].includes(args[i])) { i++; continue; }
+        if (args[i] === "--task") { keep.push("--task", "<the same task>"); i++; continue; }
+        keep.push(args[i]);
+      }
+      return `Answer it in the pane (herdr pane send-keys ${out.pane} <keys>), then: ${["routr", "launch", ...keep, "--pane", out.pane, "--cwd", out.cwd].map(quote).join(" ")}`;
+    };
     if (!statSync(out.cwd).isDirectory()) throw new Error("--cwd must be a directory");
     const privateDir = join(tempRoot, `routr-cursor-${randomUUID()}`);
     const p = plan({ ...o, cwd: out.cwd, cursorConfigDir: privateDir });
@@ -152,15 +171,32 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     const pane = () => paneView(call, out.pane); // the pane id is known only once it is split or adopted
     const readPane = async () => { touchedPane = true; return pane().read(); };
     const pause = async () => sleep(Math.min(250, remaining()));
+    let shellCwd = null;
     const shellReady = async (expectedCwd) => {
       const r = await waitForShell({ ...pane(), read: readPane }, { sleep, now, remaining, cwd: expectedCwd, refuseBusy: Boolean(o.pane && !expectedCwd),
-        onShell: (name) => { shell = shellFamily(name); },
-        onAnswer: () => { out.warnings.push("Answered no to the shell's dotenv Source it? question."); step("shell_answer", true, "dotenv: sent n, enter"); } });
-      if (!r.ok) return human(r.why, r.text);
+        onShell: (name) => { shell = shellFamily(name); } });
+      if (!r.ok) return needsInput(r.why, r.text);
+      shellCwd = r.cwd;
       step("shell_ready", true, `Interactive ${shell} shell in ${r.cwd}`); return null;
     };
+    // --pane may name a pane where the agent asked for is already running (the `then` of an earlier launch that stopped
+    // at its startup question): launch adopts it, waits for it to be ready, and sends the task. A pane running another
+    // agent is refused; a pane with no agent goes through the shell as before.
+    let adopted = false;
+    if (o.pane) {
+      const occupant = (await call(["agent", "get", out.pane], true)).data?.result?.agent;
+      if (occupant?.agent && occupant.agent !== o.kind) return needsInput(`The pane runs ${occupant.agent}, not ${o.kind}`, await readPane(), { then: "Choose another pane, or leave --pane off" });
+      if (occupant?.agent) { adopted = true; step("adopt", true, `${o.kind} is already running in ${out.pane}: launch carries on with it (the model it runs is not checked again)`); }
+    }
+    // A harness that runs its default model on an id it does not know, without a word (Kiro), is checked against its
+    // own list of ids before any pane. Kept until the harness refuses an unknown id itself.
+    if (!adopted && HARNESSES[o.kind].unknownModelRunsDefault) {
+      const ids = await models(o.kind);
+      if (ids?.length && !ids.includes(o.model)) throw new Error(`${HARNESSES[o.kind].executable} does not list --model ${o.model}, and ${o.kind} runs its default model on an id it does not know. Its ids: \`${HARNESSES[o.kind].list}\``);
+      if (ids?.length) step("model", true, `${o.model} is in ${o.kind}'s own list`);
+    }
     // Check Cursor's copy before creating a pane; never fall back to its account config.
-    if (o.kind === "cursor") {
+    if (o.kind === "cursor" && !adopted) {
       configDir = privateDir;
       mkdirSync(configDir, { mode: 0o700 });
       copyFileSync(cursorConfigSource, join(configDir, "cli-config.json"));
@@ -205,13 +241,15 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     }
     // A pane we split already opened in --cwd; one adopted from the caller must be checked before we type `cd`.
     let stop = null;
-    if (o.pane) {
+    if (o.pane && !adopted) {
       stop = await shellReady(); if (stop) return stop;
-      await call(["pane", "run", out.pane, SHELLS[shell].cd(out.cwd)]);
-      await pause();
+      // Only when the shell is elsewhere: a `cd` runs the shell's directory hooks again, and a hook that asks (a dotenv
+      // plugin) would ask again every time the `then` of a launch was run (seen 2026-09-28).
+      const same = (() => { try { return realpathSync(shellCwd) === realpathSync(out.cwd); } catch { return false; } })();
+      if (!same) { await call(["pane", "run", out.pane, SHELLS[shell].cd(out.cwd)]); await pause(); }
     }
-    stop = await shellReady(out.cwd); if (stop) return stop;
-    if (o.kind === "cursor" && SHELLS[shell].cursorEnv) {
+    if (!adopted) { stop = await shellReady(out.cwd); if (stop) return stop; }
+    if (o.kind === "cursor" && SHELLS[shell].cursorEnv && !adopted) {
       await call(["pane", "run", out.pane, SHELLS[shell].cursorEnv(privateDir)]);
       await pause();
       stop = await shellReady(out.cwd); if (stop) return stop;
@@ -224,13 +262,14 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     // dropped their numbers, 2026-09-28.) Returns null when ready, or what needs a person.
     // What herdr makes of the question the agent stopped at: its rule and the version of its rules for this harness,
     // plus what the registry knows about that harness's startup questions. The block is already confirmed, so this
-    // extra reading gets its own short allowance and can never turn needs_human into failed (from the review of #47).
-    const blockedAtStart = async (h) => {
+    // extra reading gets its own short allowance and can never turn needs_input into failed (from the review of #47).
+    const blockedAtStart = async (h, text) => {
       const a = ["agent", "explain", out.pane, "--json"];
       logCommand(out.command, command(a));
       let x = null; try { x = (await run(a, 2000)).data; } catch {}
       const rule = x?.matched_rule?.id ?? x?.result?.matched_rule?.id, rules = x?.manifest_version ?? x?.result?.manifest_version;
-      return `${h.label} is waiting at a question before it can start${rule ? ` (herdr reads it as ${rule}${rules ? `, rules ${rules}` : ""})` : ""}. routr answers no startup question: read the pane, answer it there, then prompt the worker, or close the pane.${h.startup ? ` ${h.startup}` : ""}`;
+      return needsInput(`${h.label} is waiting at a question before it can start${rule ? ` (herdr reads it as ${rule}${rules ? `, rules ${rules}` : ""})` : ""}.`, text,
+        { herdr: { state: "blocked", ...(rule ? { rule } : {}), ...(rules ? { rules } : {}) }, ...(h.startup ? { note: h.startup } : {}) });
     };
     const awaitReady = async (text) => {
       const h = HARNESSES[o.kind];
@@ -241,22 +280,13 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         const got = await call(["agent", "get", out.pane], true);
         if (!got.ok && got.data?.error?.code !== "agent_not_found") throw new Error(got.data?.error?.message ?? "Agent inspection failed");
         const agent = got.data?.result?.agent;
-        if (agent && agent.agent !== o.kind) return human("The pane contains a different agent kind", text);
-        if (agent?.agent_status === "blocked") return human(await blockedAtStart(h), text);
+        if (agent && agent.agent !== o.kind) return needsInput(`The pane runs ${agent.agent}, not ${o.kind}`, text, { then: `Close the pane (herdr pane close ${out.pane}) and launch again` });
+        if (agent?.agent_status === "blocked") return blockedAtStart(h, text);
         // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
         if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) break;
         await pause();
       }
       if (o.kind === "cursor" && SHELLS[shell].cursor) await call(["agent", "rename", out.pane, o.name]); // pane-run: herdr did not get the name
-      if (h.showsModel) {
-        // Kiro runs its default on a model id it does not know, and says so only by leaving the id out of its footer.
-        const shownBy = now() + 3000;
-        while (!h.showsModel(clean(text), o.model)) {
-          if (now() >= shownBy) throw new Error(`${h.executable} did not take --model ${o.model}: the screen does not show it, and ${o.kind} runs its default model on an id it does not know. Close this pane; list the ids with \`${h.list}\``);
-          await pause(); text = await readPane();
-        }
-        step("model", true, `The screen shows ${o.model}`);
-      }
       return null;
     };
     // Submit the task once and let herdr say whether the worker took it. herdr sends the text and Enter as one
@@ -283,17 +313,18 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         r = await run(w, Math.max(1, remaining()));
       }
       // The outcome is decided by this one read. It gets its own short allowance, not what is left of the launch
-      // timeout, so a wait that used that up cannot turn needs_human into failed (from the verification of #46). No
+      // timeout, so a wait that used that up cannot turn needs_input into failed (from the verification of #46). No
       // pane read follows: once the task is sent the pane may show the brief, and launch never prints it.
       logCommand(out.command, command(["agent", "get", out.pane]));
       const got = await run(["agent", "get", out.pane], 2000);
       if (!got.ok) throw new Error(got.data?.error?.message ?? JSON.stringify(got.data));
       const agent = got.data?.result?.agent;
       const status = agent?.agent_status ?? "unknown";
-      if (agent?.agent !== o.kind) return human("Cannot confirm the prompted agent's identity", null);
+      const sent = { then: `The task was sent: do not launch it again. Read the pane (herdr agent read ${out.pane}): answer a question it asks; press Enter if the task sits unsent in its input box (herdr agent send-keys ${out.pane} enter); send it with herdr agent prompt only if it never arrived` };
+      if (agent?.agent !== o.kind) return needsInput("Cannot confirm the prompted agent's identity", null, sent);
       if (status === "blocked") {
         step("prompt", r.ok, `Submitted ${prompt.length} characters; the agent is asking something`);
-        return human("The worker is blocked on a question or approval right after its prompt", null);
+        return needsInput("The worker is asking a question or an approval right after its prompt", null, { ...sent, herdr: { state: "blocked" } });
       }
       // Working is always a start. Idle or done count when herdr's wait (the prompt's own, or the one after a quiet
       // prompt) saw the agent working first: a short task can finish before this read (from the review of #46).
@@ -303,17 +334,20 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         return null;
       }
       step("prompt", false, `Sent once; the agent never started (${status}): ${JSON.stringify(r.data)}`);
-      return human(`The task was sent once and the agent has not started within the timeout (${status}). Look at the pane: it may still be starting, the task may sit unsent in its input box (press Enter there), or it never arrived (send it by hand). launch never sends it twice.`, null);
+      return needsInput(`The task was sent once and the agent has not started within the timeout (${status}); launch never sends it twice.`, null, { ...sent, herdr: { state: status } });
     };
-    const startCommand = startArgs(out.pane, Math.min(30000, remaining()));
-    startAttempted = true;
-    const started = await call(startCommand, true);
-    step("start", started.ok, started.ok ? "Herdr accepted the launch" : JSON.stringify(started.data));
-    let text = await readPane(); // Codex's trust dialog can be reported as idle.
-    const startError = started.data?.error?.code;
-    if (!started.ok && !["agent_not_ready", "timeout"].includes(startError)) {
-      throw new Error(started.data?.error?.message ?? "Agent start failed");
-    }
+    let text = null;
+    if (!adopted) {
+      const startCommand = startArgs(out.pane, Math.min(30000, remaining()));
+      startAttempted = true;
+      const started = await call(startCommand, true);
+      step("start", started.ok, started.ok ? "Herdr accepted the launch" : JSON.stringify(started.data));
+      text = await readPane();
+      const startError = started.data?.error?.code;
+      if (!started.ok && !["agent_not_ready", "timeout"].includes(startError)) {
+        throw new Error(started.data?.error?.message ?? "Agent start failed");
+      }
+    } else await call(["agent", "rename", out.pane, o.name], true); // the name the orchestrator will use
     stop = await awaitReady(text); if (stop) return stop;
     step("ready", true, "herdr reports the agent ready for input");
     out.state = "ready"; out.ok = true;
