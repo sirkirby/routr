@@ -64,8 +64,8 @@ test("--rules-file goes to the worker after the task, and only the task is compa
   expect((await launch([...launchArgs, "--task-file", task, "--rules-file", rules, "--dry-run"])).steps.at(-1).detail).toContain("The rules file must not be empty");
 });
 
-test("shell detection distinguishes dotenv, a clean prompt, and unfinished startup", () => {
-  expect(shellPrompt("found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver) ")).toBe("dotenv");
+test("shell detection tells a question, a clean prompt, and unfinished startup apart; no plugin is known by name", () => {
+  expect(shellPrompt("found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver) ")).toBe("question");
   for (const text of ["chris@host repo % ", "user@host:~/repo$ ", "❯ ", "\x1b[32m❯\x1b[0m ", "root #", "found '.env' file. Source it? ([y]es/[N]o)\n❯ "])
     expect(shellPrompt(text)).toBe("ready");
   expect(shellPrompt("")).toBe("waiting");
@@ -127,11 +127,14 @@ test("launch options are validated before any pane operation", () => {
   expect(quote("a'$(touch /tmp/no);`whoami`\n")).toBe("'a'\\''$(touch /tmp/no);`whoami`\n'");
 });
 
-function fakeHerdr({ kind = "claude", trust = null, notReady = false, foreground = false, stuck = false, reply = () => undefined } = {}) {
-  let stage = "shell", dotenv = true, ticks = 0;
+// A herdr session with one shell pane. `dotenv`: the user's shell asks its plugin's question first (routr answers none).
+function fakeHerdr({ kind = "claude", trust = null, notReady = false, foreground = false, stuck = false, dotenv = false, reply = () => undefined } = {}) {
+  let stage = "shell", ticks = 0;
   const calls = [];
   const ok = (result) => ({ ok: true, data: { result } });
   const deps = {
+    // Tests start no harness: a model list read would run the real CLI (Kiro's opened its sign-in in a browser).
+    models: async () => { throw new Error("a test must pass models() itself; the real one starts the harness"); },
     env: { HERDR_ENV: "1" }, now: () => ticks, sleep: async (ms) => { ticks += ms; }, ready: async () => null,
     run: async (a, ms) => {
       calls.push(a);
@@ -142,19 +145,17 @@ function fakeHerdr({ kind = "claude", trust = null, notReady = false, foreground
       if (a[1] === "split") return ok({ pane: { pane_id: "w1:p2" } });
       if (a[1] === "read") return ok({ text: stage === "shell" ? (dotenv ? "found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)" : "chris % ") : stage === "trust" ? trust : "Welcome\n❯" });
       if (a[1] === "process-info") return ok({ process_info: { shell_pid: 1, foreground_processes: [{ pid: foreground ? 2 : 1, cwd: process.cwd() }] } });
-      if (a[1] === "send-keys") {
-        if (stage === "shell") { expect(a.slice(3)).toEqual(["n", "enter"]); dotenv = false; }
-        else throw new Error(`launch pressed ${a.slice(3).join(" ")} at a startup question; it answers none`);
-        return ok({});
-      }
+      if (a[1] === "send-keys") throw new Error(`launch pressed ${a.slice(3).join(" ")}; it answers no question`);
       if (a[1] === "run") return ok({});
       if (a[1] === "close" || a[1] === "rename") return ok({});
       if (a[1] === "start") {
-        expect(dotenv).toBe(false); stage = trust ? "trust" : "starting";
+        stage = trust ? "trust" : "starting";
         return notReady ? { ok: false, data: { error: { code: "agent_not_ready", message: "blocked on startup" } } } : ok({});
       }
       // A question at startup: herdr reports the agent blocked, and explains it with its own rule.
       if (a[1] === "wait") { if (stage === "trust") return { ok: false, data: { error: { code: "agent_not_ready", message: "blocked during startup" } } }; if (!stuck) stage = "ready"; return ok({}); }
+      // As herdr: a pane with no agent in it yet has none to get.
+      if (a[1] === "get" && stage === "shell") return { ok: false, data: { error: { code: "agent_not_found", message: "no agent" } } };
       if (a[1] === "get") return ok({ agent: { agent: kind, agent_status: stage === "ready" ? "idle" : stage === "trust" ? "blocked" : "unknown", interactive_ready: stage === "ready" } });
       if (a[1] === "explain") return { ok: true, data: { agent: kind, state: "blocked", matched_rule: { id: "live_blocked_form" }, manifest_version: "2026.09.11.1" } };
       if (a[1] === "prompt") { expect(stage).toBe("ready"); expect(a).toContain("--wait"); return ok({}); }
@@ -166,11 +167,10 @@ function fakeHerdr({ kind = "claude", trust = null, notReady = false, foreground
 
 const launchArgs = ["--kind", "claude", "--name", "worker", "--model", "sonnet"];
 
-test("startup answers the shell, recovers agent_not_ready, then prompts", async () => {
+test("startup waits for the shell, recovers agent_not_ready, then prompts", async () => {
   const f = fakeHerdr({ notReady: true });
   const r = await launch([...launchArgs, "--task", "Fix the parser. Verify with bun test."], f.deps);
-  expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w1:p2", needs_human: null });
-  expect(r.warnings.join(" ")).toContain("Answered no");
+  expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w1:p2", needs_input: null });
   expect(r.steps.map((s) => s.step).indexOf("ready")).toBeLessThan(r.steps.map((s) => s.step).indexOf("prompt"));
 });
 
@@ -179,21 +179,27 @@ test("a question at startup is never answered: herdr's reading and the screen go
   for (const extra of [[], ["--trust", "auto"]]) {
     const f = fakeHerdr({ trust: claudeTrust, notReady: true });
     const r = await launch([...launchArgs, ...extra, "--task", "Task"], f.deps);
-    expect(r).toMatchObject({ ok: false, state: "needs_human", needs_human: { pane_text: claudeTrust } });
-    expect(r.needs_human.why).toContain("herdr reads it as live_blocked_form, rules 2026.09.11.1");
-    expect(r.needs_human.why).toContain("trusted the repository in Claude"); // Claude's own way to be asked no more
+    expect(r).toMatchObject({ ok: false, state: "needs_input", needs_input: { screen: claudeTrust, pane: "w1:p2", herdr: { state: "blocked", rule: "live_blocked_form", rules: "2026.09.11.1" } } });
+    expect(r.needs_input.why).toContain("herdr reads it as live_blocked_form, rules 2026.09.11.1");
+    expect(r.needs_input.note).toContain("trusted the repository in Claude"); // Claude's own way to be asked no more
+    // How to carry on: the same launch into this pane, which adopts the agent once the question is answered.
+    expect(r.needs_input.then).toContain("--pane w1:p2");
+    // An inline brief is never repeated, and no placeholder stands in for it: the orchestrator gives it again.
+    expect(r.needs_input.then).toContain("with your --task given again");
+    expect(r.needs_input.then).toMatch(/--task <your task>$/);
+    expect(r.needs_input.then).not.toContain("'Task'");
     expect(f.calls.some((a) => a[1] === "prompt")).toBe(false);
-    expect(f.calls.filter((a) => a[1] === "send-keys")).toHaveLength(1); // the dotenv answer only
+    expect(f.calls.filter((a) => a[1] === "send-keys")).toHaveLength(0);
     expect(r.warnings.some((w) => w.startsWith("--trust is no longer used"))).toBe(extra.length > 0);
   }
   // From the review of #47: herdr's explanation is extra; when it errors, throws, or comes back in another shape, the
-  // confirmed block is still reported as needs_human, with the screen and the registry's note.
+  // confirmed block is still reported as needs_input, with the screen and the registry's note.
   for (const explain of [() => herdrError("invalid_request"), () => { throw new Error("herdr went away"); }, () => herdrOK({ nothing: true })]) {
     const f = fakeHerdr({ trust: claudeTrust, notReady: true, reply: (a) => (a[1] === "explain" ? explain() : undefined) });
     const r = await launch([...launchArgs, "--task", "Task"], f.deps);
-    expect(r).toMatchObject({ ok: false, state: "needs_human", needs_human: { pane_text: claudeTrust } });
-    expect(r.needs_human.why).toContain("trusted the repository in Claude");
-    expect(r.needs_human.why).not.toContain("herdr reads it as");
+    expect(r).toMatchObject({ ok: false, state: "needs_input", needs_input: { screen: claudeTrust, herdr: { state: "blocked" } } });
+    expect(r.needs_input.note).toContain("trusted the repository in Claude");
+    expect(r.needs_input.why).not.toContain("herdr reads it as");
   }
 });
 
@@ -201,8 +207,8 @@ test("a question at startup is never answered: herdr's reading and the screen go
 test("an existing occupied pane receives no input and is never closed", async () => {
   const f = fakeHerdr({ foreground: true });
   const r = await launch([...launchArgs, "--pane", "w1:p9"], f.deps);
-  expect(r.state).toBe("needs_human");
-  expect(f.calls.every((a) => ["read", "process-info"].includes(a[1]))).toBe(true);
+  expect(r.state).toBe("needs_input");
+  expect(f.calls.every((a) => ["get", "read", "process-info"].includes(a[1]))).toBe(true); // looks, never types
 });
 
 test("startup timeout fails without ever prompting or closing the pane", async () => {
@@ -336,23 +342,73 @@ test("a fixed prompt line does not hide changing startup output above it", async
   expect((await launch(launchArgs, f.deps)).ok).toBe(true);
 });
 
-test("unchanged dotenv questions stop after one answer and leave the pane for a human", async () => {
-  let sent = 0;
-  const f = fakeHerdr({ reply: (a) => {
-    if (a[1] === "send-keys") { sent++; return herdrOK(); }
-  } });
-  const r = await launch(launchArgs, f.deps);
-  expect(r).toMatchObject({ ok: false, state: "needs_human" });
-  expect(r.needs_human.why).toContain("did not clear");
-  expect(sent).toBe(1);
-  expect(f.deps.now()).toBe(5000);
+test("a question the user's shell asks at startup is not answered: its screen goes to the orchestrator with how to carry on", async () => {
+  const f = fakeHerdr({ dotenv: true }), task = join(scratch("shell-question"), "task.md");
+  writeFileSync(task, "Task");
+  const r = await launch([...launchArgs, "--task-file", task], f.deps);
+  expect(r).toMatchObject({ ok: false, state: "needs_input", needs_input: { pane: "w1:p2", screen: expect.stringContaining("Source it?") } });
+  expect(r.needs_input.why).toContain("asked a question");
+  expect(r.needs_input.then).toContain("herdr pane send-keys w1:p2");
+  expect(r.needs_input.then).toContain(`--task-file ${quote(task)} --pane w1:p2`); // quoted as the shell needs it (Windows paths)
+  expect(f.calls.some((a) => ["send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
+});
+
+test("a pane adopted at a shell already in --cwd gets no cd: its directory hooks (a dotenv plugin) would ask again", async () => {
+  const here = fakeHerdr();
+  const r = await launch([...launchArgs, "--pane", "w1:p9", "--cwd", process.cwd()], here.deps);
+  expect(r).toMatchObject({ ok: true, state: "ready" });
+  expect(here.calls.some((a) => a[1] === "run")).toBe(false);
+  const elsewhere = fakeHerdr();
+  await launch([...launchArgs, "--pane", "w1:p9", "--cwd", SCRATCH], elsewhere.deps);
+  expect(elsewhere.calls.some((a) => a[1] === "run" && a[3].includes("cd"))).toBe(true); // still moved when it is not there
+});
+
+test("from the review of #48: an agent of another kind in a pane launch did not make is never offered for closing", async () => {
+  let started = false;
+  const f = fakeHerdr({ reply: (a) => { if (a[1] === "start") started = true; if (a[1] === "get" && started) return herdrOK({ agent: { agent: "codex", agent_status: "idle" } }); } });
+  const passed = await launch([...launchArgs, "--pane", "w1:p9", "--cwd", process.cwd()], f.deps);
+  expect(passed.needs_input.then).toBe("Leave that pane; choose another, or leave --pane off");
+  started = false;
+  const made = await launch(launchArgs, fakeHerdr({ reply: (a) => { if (a[1] === "start") started = true; if (a[1] === "get" && started) return herdrOK({ agent: { agent: "codex", agent_status: "idle" } }); } }).deps);
+  expect(made.needs_input.then).toContain("Close the pane this launch made (herdr pane close w1:p2)");
+});
+
+test("--pane adopts only an idle agent of the kind asked for, in --cwd; anything else goes back with the screen", async () => {
+  const here = process.cwd();
+  const occupying = (agent, extra = {}) => fakeHerdr({ reply: (a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", interactive_ready: true, cwd: here, ...agent } }) : undefined), ...extra });
+  const args = [...launchArgs, "--pane", "w1:p9", "--cwd", here, "--task", "Task"];
+  // The `then` of a launch that stopped at a startup question: the agent is running, idle, the question answered.
+  const adopt = occupying({});
+  const r = await launch(args, adopt.deps);
+  expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w1:p9" });
+  expect(r.steps.map((st) => st.step)).toContain("adopt");
+  expect(adopt.calls.some((a) => ["start", "run", "send-keys"].includes(a[1]))).toBe(false); // no shell, no second agent
+  // From the review of #48: another kind, another folder, a working or a blocked agent are never sent the task.
+  for (const [agent, why] of [[{ agent: "codex" }, "The pane runs codex, not claude"], [{ cwd: SCRATCH }, `works in ${SCRATCH}`],
+    [{ agent_status: "working" }, "is working, not waiting for a task"], [{ agent_status: "blocked" }, "is waiting at a question"]]) {
+    const f = occupying(agent);
+    const x = await launch(args, f.deps);
+    expect([why, x.state]).toEqual([why, "needs_input"]);
+    expect(x.needs_input.why).toContain(why);
+    expect(f.calls.some((a) => ["start", "prompt", "send-keys", "rename"].includes(a[1]))).toBe(false);
+  }
+  // A rename that fails is said, with the pane to address instead.
+  const unnamed = fakeHerdr({ reply: (a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", cwd: here } }) : a[1] === "rename" ? herdrError("name_taken") : undefined) });
+  const u = await launch(args, unnamed.deps);
+  expect(u.state).toBe("prompted");
+  expect(u.warnings.join(" ")).toContain("address it by its pane, w1:p9");
+  // Cursor too: its later rename (for one launch started) is not repeated for an adopted agent.
+  const cursor = fakeHerdr({ kind: "cursor", reply: (a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "cursor", agent_status: "idle", cwd: here } }) : a[1] === "rename" ? herdrError("name_taken") : undefined) });
+  const c = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--pane", "w1:p9", "--cwd", here, "--task", "Task"], cursor.deps);
+  expect(c.state).toBe("prompted");
+  expect(cursor.calls.filter((a) => a[1] === "rename")).toHaveLength(1);
 });
 
 test("a settled shell in the wrong directory is reported rather than started", async () => {
   const f = fakeHerdr({ reply: (a) => a[1] === "process-info" ? shellInfo([{ pid: 1, cwd: "/" }]) : undefined });
   const r = await launch(launchArgs, f.deps);
-  expect(r).toMatchObject({ ok: false, state: "needs_human" });
-  expect(r.needs_human.why).toContain("wrong directory");
+  expect(r).toMatchObject({ ok: false, state: "needs_input" });
+  expect(r.needs_input.why).toContain("wrong directory");
   expect(f.calls.some((a) => a[1] === "start")).toBe(false);
 });
 
@@ -366,13 +422,19 @@ function fakeKiro({ model = "glm-5", shown = model } = {}) {
   return f;
 }
 
-test("a Kiro that silently dropped the model id is never prompted", async () => {
-  const f = fakeKiro({ model: "not-a-model", shown: null });
-  const r = await launch(["--kind", "kiro", "--name", "worker", "--model", "not-a-model", "--task", "Task"], f.deps);
+test("Kiro: a model id it does not list is refused before any pane, from its own list, not its screen", async () => {
+  const f = fakeKiro();
+  const listed = { ...f.deps, models: async () => ["auto", "glm-5"] };
+  const r = await launch(["--kind", "kiro", "--name", "worker", "--model", "not-a-model", "--task", "Task"], listed);
   expect(r).toMatchObject({ ok: false, state: "failed" });
-  expect(r.steps.at(-1).detail).toContain("did not take --model not-a-model");
+  expect(r.steps.at(-1).detail).toContain("does not list --model not-a-model");
   expect(r.steps.at(-1).detail).toContain("kiro-cli chat --list-models");
-  expect(f.calls.some((a) => a[1] === "prompt")).toBe(false);
+  expect(f.calls).toHaveLength(0); // no pane, no worktree
+  const ok = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...fakeKiro().deps, models: async () => ["auto", "glm-5"] });
+  expect(ok).toMatchObject({ ok: true, state: "prompted" });
+  // From the review of #48: a list that cannot be read is said, never passed over in silence.
+  const unread = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...fakeKiro().deps, models: async () => null });
+  expect(unread.warnings.join(" ")).toContain("Could not read kiro's model list");
 });
 
 test("fatal start, wait, and inspection errors cannot be masked by UI or polled forever", async () => {
@@ -421,14 +483,14 @@ for (const readiness of [undefined, null, false]) test(`Cursor idle readiness ${
 
 test("prompt results distinguish blocked, unknown, wrong-agent, refusal, and observed work", async () => {
   for (const { status, response, kind = "claude", expected } of [
-    { status: "blocked", response: herdrOK(), expected: "needs_human" },
-    { status: "blocked", response: herdrError("agent_blocked"), expected: "needs_human" },
-    { status: "unknown", response: herdrOK(), expected: "needs_human" },
+    { status: "blocked", response: herdrOK(), expected: "needs_input" },
+    { status: "blocked", response: herdrError("agent_blocked"), expected: "needs_input" },
+    { status: "unknown", response: herdrOK(), expected: "needs_input" },
     { status: "working", response: herdrError("agent_prompt_stalled"), expected: "prompted" }, // it started after all
     { status: "working", response: herdrError("timeout"), expected: "prompted" },
-    { status: "idle", response: herdrError("timeout"), expected: "needs_human" },
+    { status: "idle", response: herdrError("timeout"), expected: "needs_input" },
     { status: "done", response: herdrOK(), expected: "prompted" },
-    { status: "working", response: herdrOK(), kind: "codex", expected: "needs_human" },
+    { status: "working", response: herdrOK(), kind: "codex", expected: "needs_input" },
   ]) {
     let submitted = false;
     const f = fakeHerdr({ reply: (a) => {
@@ -611,22 +673,23 @@ test("launch types each shell's own syntax: Cursor's private config is set and r
   expect(SHELLS.posix.cd("/a b")).toBe("cd -- '/a b'");
 });
 
-test("waitForShell: ready at a settled prompt, answers dotenv once, and stops at a question, a busy adopted pane, or the wrong folder", async () => {
+test("waitForShell: ready at a settled prompt; stops at any question, a busy adopted pane, or the wrong folder", async () => {
   const { waitForShell } = await import("../src/lib/herdr.mjs");
   const here = process.cwd();
   const pane = (screens, { busy = false } = {}) => {
-    const keys = [];
-    return { keys, read: async () => screens.length > 1 ? screens.shift() : screens[0], keys: async (...k) => { keys.push(k); },
+    const pressed = [];
+    return { pressed, read: async () => screens.length > 1 ? screens.shift() : screens[0], keys: async (...k) => { pressed.push(k); },
       info: async () => ({ shell_pid: 1, foreground_processes: busy ? [{ pid: 1, name: "zsh", cwd: here }, { pid: 2 }] : [{ pid: 1, name: "zsh", cwd: here }] }) };
   };
   let t = 0;
   const time = { sleep: async (ms) => { t += ms; }, now: () => t, remaining: () => 60000 };
   expect(await waitForShell(pane(["chris % "]), time)).toEqual({ ok: true, name: "zsh", cwd: here }); // settles on the second read
-  const dotenv = pane(["found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)", "chris % "]);
-  const answered = [];
-  expect((await waitForShell(dotenv, { ...time, onAnswer: () => answered.push(1) })).ok).toBe(true);
-  expect(answered).toEqual([1]);
-  expect(await waitForShell(pane(["Overwrite? [y/N]"]), time)).toMatchObject({ ok: false, why: "Unrecognized shell question" });
+  // Any question, a plugin's or anything else: returned with the screen, never answered.
+  for (const q of ["found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)", "Overwrite? [y/N]"]) {
+    const p = pane([q]);
+    expect(await waitForShell(p, time)).toMatchObject({ ok: false, why: "The shell asked a question before its prompt", text: q });
+    expect(p.pressed).toEqual([]);
+  }
   expect(await waitForShell(pane(["chris % "], { busy: true }), { ...time, refuseBusy: true })).toMatchObject({ ok: false, why: expect.stringContaining("foreground process") });
   expect(await waitForShell(pane(["chris % "]), { ...time, cwd: SCRATCH })).toMatchObject({ ok: false, why: "Shell is at a prompt in the wrong directory" });
 });
@@ -676,11 +739,11 @@ test("a prompt herdr says stalled is never sent again: launch waits on the agent
   expect(late.r.steps.some((st) => st.step === "prompt_wait")).toBe(true);
   expect(late.waited.slice(3, 7)).toEqual(["--until", "working", "--until", "blocked"]);
   const never = await drive("never"); // sent once, never started: a person looks, launch sends nothing more
-  expect(never).toMatchObject({ prompts: 1, keys: 0, r: { ok: false, state: "needs_human" } });
-  expect(never.r.needs_human.why).toContain("never sends it twice");
-  expect(never.r.needs_human.pane_text).not.toContain("Task"); // the brief is never printed
+  expect(never).toMatchObject({ prompts: 1, keys: 0, r: { ok: false, state: "needs_input" } });
+  expect(never.r.needs_input.why).toContain("never sends it twice");
+  expect(never.r.needs_input.screen).not.toContain("Task"); // the brief is never printed
   const asks = await drive("blocked", "claude"); // it took the task and now asks something
-  expect(asks).toMatchObject({ prompts: 1, keys: 0, r: { state: "needs_human" } });
+  expect(asks).toMatchObject({ prompts: 1, keys: 0, r: { state: "needs_input" } });
 });
 
 test("from the review of #46: a worker seen starting counts even if it is done by the status read; the wait leaves time for the reads after it; the brief stays off the output", async () => {
@@ -692,19 +755,19 @@ test("from the review of #46: a worker seen starting counts even if it is done b
     if (a[1] === "get" && prompts) return herdrOK({ agent: { agent: "codex", agent_status: "done", interactive_ready: true } });
   } });
   expect(await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--task", "Task"], quick.deps)).toMatchObject({ ok: true, state: "prompted" });
-  // A wait that uses all the time it is given: launch still reads the state and the pane, and ends as needs_human.
+  // A wait that uses all the time it is given: launch still reads the state and the pane, and ends as needs_input.
   const brief = "Rotate the production signing key in vault/prod";
   let sent = false, given = null, left = null, paneRead = false;
   const slow = fakeHerdr({ kind: "codex", reply: async (a, ms) => {
     if (a[1] === "prompt") { sent = true; return herdrError("agent_prompt_stalled"); }
     if (a[1] === "wait" && sent) { given = ms; left = 30000 - slow.deps.now(); await slow.deps.sleep(ms); return herdrError("timeout"); }
-    // The status read takes time too, after the wait used all of its own: still needs_human, never failed.
+    // The status read takes time too, after the wait used all of its own: still needs_input, never failed.
     if (a[1] === "get" && sent) { await slow.deps.sleep(Math.min(ms, 1500)); return herdrOK({ agent: { agent: "codex", agent_status: "idle", interactive_ready: true } }); }
     if (a[1] === "read" && sent) { paneRead = true; return herdrOK({ text: `› ${brief}\n  Waiting for startup` }); }
   } });
   const r = await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--timeout", "30000", "--task", brief], slow.deps);
   expect(given).toBeLessThanOrEqual(left); // the wait never gets more than is left
-  expect(r).toMatchObject({ ok: false, state: "needs_human" });
+  expect(r).toMatchObject({ ok: false, state: "needs_input" });
   expect(JSON.stringify(r)).not.toContain(brief); // the pane showed the brief; the output does not
   expect(paneRead).toBe(false); // and after the task is sent, launch does not read the pane at all
   // Not on the failure path either (from the second verification of #46): a status read that errors ends as failed,

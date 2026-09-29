@@ -74,7 +74,6 @@ export function shellPrompt(text) {
   const lines = clean(text).split("\n");
   const last = lines.at(-1)?.trim() ?? "";
   // Only the current line counts: answered questions remain in scrollback.
-  if (/source it\?/i.test(lines.slice(-3).join("\n")) && /\[y\].*\[n\]/i.test(last)) return "dotenv";
   if (/[?？]\s*(?:\([^\n]*\)|\[[^\n]*\])?\s*$/.test(last)
     || /(?:\[[yn](?:es)?\/[yn](?:o)?\]|\([yn](?:es)?\/[yn](?:o)?\)|:)\s*$/i.test(last)
     || /^(?:>|quote>|dquote>|heredoc>)$/.test(last)) return "question";
@@ -135,13 +134,15 @@ export function deadline(timeout, now, message) {
   };
 }
 
-// Wait until a pane's shell sits at a settled prompt, answering a dotenv plugin's question with "n" (a login shell in a
-// folder holding a .env asks before sourcing it). Anything else that asks stops the wait: routr never guesses an answer.
+// Wait until a pane's shell sits at a settled prompt. Anything the shell asks first (its plugins, its startup files)
+// stops the wait and is returned with the screen: routr answers no question, the orchestrator reads it and decides.
+// (A dotenv plugin's "Source it?" was once answered here; the next plugin would have needed its own rule. The standard
+// signal would be the shell's own prompt marks, OSC 133, which herdr parses but does not expose yet.)
 // `pane` is { read(): screen text, info(): herdr's process_info, keys(...keys) }. Something else running in the pane is
 // waited out (new shells and directory hooks run short commands), unless `refuseBusy` (a pane adopted from the caller).
 // `cwd`, when given, must be where the shell is. Returns { ok: true, name, cwd } or { ok: false, why, text }.
-export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBusy = false, onShell, onAnswer } = {}) {
-  let answers = 0, answered = false, answeredAt = null, previous = null;
+export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBusy = false, onShell } = {}) {
+  let previous = null;
   const pause = () => sleep(Math.min(250, remaining()));
   for (;;) {
     const text = await pane.read();
@@ -156,27 +157,16 @@ export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBus
     }
     if (!shell) { previous = null; await pause(); continue; }
     const state = shellPrompt(text);
-    if (state === "dotenv") {
-      if (!answered) {
-        if (++answers > 3) return fail("Shell repeated the dotenv question");
-        await pane.keys("n", "enter");
-        onAnswer?.();
-        answered = true; answeredAt = now();
-      }
-      if (now() - answeredAt >= 5000) return fail("Shell did not clear the dotenv question after answering");
-    } else {
-      answered = false;
-      if (state === "question") return fail("Unrecognized shell question");
-      // Even a recognized prompt must settle while the shell remains in the foreground.
-      if (state === "ready" && promptSettled(text, previous)) {
-        // A folder that is gone (removed while the launch waited) is a person's call, not a crash.
-        let here, there;
-        if (cwd && typeof shell.cwd !== "string") return fail("The pane's shell did not say which folder it is in");
-        try { here = cwd && realpathSync(shell.cwd); there = cwd && realpathSync(cwd); }
-        catch (e) { return fail(e?.code === "ENOENT" ? `The pane's folder is gone (${shell.cwd}), or the one asked for (${cwd})` : `The pane's folder cannot be read (${e?.code ?? e})`); }
-        if (cwd && here !== there) return fail("Shell is at a prompt in the wrong directory");
-        return { ok: true, name: shell.name, cwd: shell.cwd };
-      }
+    if (state === "question") return fail("The shell asked a question before its prompt");
+    // Even a recognized prompt must settle while the shell remains in the foreground.
+    if (state === "ready" && promptSettled(text, previous)) {
+      // A folder that is gone (removed while the launch waited) is a person's call, not a crash.
+      let here, there;
+      if (cwd && typeof shell.cwd !== "string") return fail("The pane's shell did not say which folder it is in");
+      try { here = cwd && realpathSync(shell.cwd); there = cwd && realpathSync(cwd); }
+      catch (e) { return fail(e?.code === "ENOENT" ? `The pane's folder is gone (${shell.cwd}), or the one asked for (${cwd})` : `The pane's folder cannot be read (${e?.code ?? e})`); }
+      if (cwd && here !== there) return fail("Shell is at a prompt in the wrong directory");
+      return { ok: true, name: shell.name, cwd: shell.cwd };
     }
     previous = text;
     await pause();

@@ -98,8 +98,8 @@ object describing what it did.
   instead of passing a flag Antigravity refuses when it disagrees with the id. On Kiro, `--effort auto` (its suggested default,
   with `--model auto`) passes no flag and leaves effort to the model; a level is passed, but Kiro remembers it as
   the user's default for that model, and a model without effort ignores it. Kiro also runs its default on a model id
-  it does not know, without a word: launch checks that the screen shows the model you named and fails otherwise,
-  before any prompt.
+  it does not know, without a word: launch checks the id against Kiro's own list (`kiro-cli chat --list-models`)
+  before it opens a pane, and says so in `warnings` when it could not read the list.
 - `--task-file` holds your task alone (parts 2 and 3). Without it the pane is left ready and unprompted, for you to
   prompt yourself.
 - `--rules-file` holds your process rules, added after the task. routr passes them on without judging them, and
@@ -107,23 +107,31 @@ object describing what it did.
 - `--advice` takes the advice file you saved from `routr dispatch`. launch compares the text that advice was about
   with the task it sends, and warns when they differ (`advice.matches` is then `false`): ask routr about the task.
   With no task (no `--task-file` or `--task`) there is nothing to compare, and no `advice` field.
-- routr answers no question a harness asks at startup. It passes each harness's own flags so none is asked (Cursor
-  `--trust`, Kiro `--trust-tools=*`; Codex asks none), and when one is asked anyway (Claude's folder trust outside a
-  trusted folder) herdr reports the agent blocked and launch returns `needs_human`: herdr's reading of it (the rule
-  `herdr agent explain` matched), the screen, and what routr knows about that harness. Answer it in the pane when it
-  is within the task's scope (a worktree you created), then prompt the worker with `herdr agent prompt`; otherwise
-  ask the user. `--trust` is still accepted and does nothing.
+- routr answers no question: not the user's shell (its plugins and startup files ask their own), not a harness at
+  startup. It passes each harness's own flags so none is asked (Cursor `--trust`, Kiro `--trust-tools=*`; Codex asks
+  none), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is still accepted and does
+  nothing.
 - `--dry-run` prints the plan and changes nothing. Use it to see the flags before spending anything.
-- Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_human`, or `failed`.
-  `warnings` holds anything it answered on your behalf and anything it wants you to look at. `steps` says what it
-  did, in order. A `needs_human` result is yours to resolve (`herdr notification show`), not to retry.
+- Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_input`, or `failed`.
+  `warnings` holds anything it wants you to look at. `steps` says what it did, in order.
+- **`needs_input` is yours to decide.** Something in the pane waits for an answer routr does not give: a shell's own
+  question, a harness's startup question, a worker that has not started. `needs_input` holds `why`, the `screen`
+  (what the pane shows; withheld once the task was sent, since it then shows the brief: read the pane yourself),
+  `pane`, `herdr` (its reading: the state and the rule `herdr agent explain` matched), a `note` from what routr knows
+  about that harness, and `then`: how to carry on. Answer what is within the task's scope yourself, with
+  `herdr pane send-keys <pane> <keys>`: a question your own launch raised, a folder you created, the user's shell
+  asking whether to load a file. Ask the user for anything that is not yours to answer: a password or other secret, a
+  sign-in, a folder you did not create, anything that cannot be undone. Then run `then`: before the task was sent it
+  is the same `routr launch` with `--pane <pane>`, which carries on from the shell, or adopts the agent already
+  running there and sends it the task. It adopts only an idle agent of the kind you asked for, in `--cwd`, and keeps
+  the model and effort it is running. A task you gave inline with `--task` is never printed: give it again.
 - `prompted` means the worker took the prompt and started, not that it finished. Waiting for the work is step 4.
 - launch sends the task once, and herdr's own state says whether the worker took it. When herdr sees no activity at
   first ("the prompt stalled": a harness still starting, a slow connection), launch waits for the agent to start
   (`steps` then holds `prompt_wait`) and never sends the task again or presses a key for it: herdr's rule is that a
   stalled prompt may still have arrived. If the agent has not started by the end of the timeout, the result is
-  `needs_human`: read the pane before you do anything. Press Enter if the task sits unsent in the input box
-  (`herdr pane send-keys <pane> enter`), and send it by hand only if it is not there at all.
+  `needs_input`, and its `then` says: do not launch it again; read the pane; press Enter if the task sits unsent in
+  the input box (`herdr agent send-keys <pane> enter`), and send it with `herdr agent prompt` only if it never arrived.
 
 `references/harnesses.md` records what each harness does and what goes wrong with it. Read it when a launch surprises
 you, when you are choosing a model, or when you launch by hand. The by-hand sequence is what `routr launch` performs:

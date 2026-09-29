@@ -9,8 +9,8 @@
 //     for a harness that ignores its current one. env(dir): its environment, given a private config folder.
 //     notes(model, effort): what launch tells the orchestrator about this start.
 //   startup: what to tell the orchestrator when the harness stops at a question before it can start (routr answers
-//     none; herdr reports it blocked). showsModel: how to tell from the
-//     screen that it took `--model`, for a harness that silently runs its default on an id it does not know.
+//     none; herdr reports it blocked). unknownModelRunsDefault: it runs its default model on an id it does not know,
+//     without a word, so launch checks the id against its own list (models()) first.
 //   list: its own command that lists model ids; models(): that list, read now (routr keeps no model list of its own).
 //     openList: the list is a sample, not every id it takes (Claude Code names its aliases; its help says it also takes a model's full name),
 //     so an id not on it is not refused.
@@ -98,8 +98,9 @@ export const HARNESSES = {
   // user's default for that model (its docs), so `auto`, the default, passes none and the model decides.
   kiro: { label: "Kiro", executable: "kiro-cli", installAs: "Kiro (kiro-cli)", skills: ".kiro/skills", // Kiro reads only ~/.kiro/skills (measured)
     permissions: ["chat", "--trust-tools=*"], model: "--model", effort: "--effort", autoEffort: "auto", list: "kiro-cli chat --list-models",
-    // The footer reads `kiro_default · claude-sonnet-4.5 · ◔ 5%`; with an unknown id it reads `kiro_default · ◔ 5%`.
-    showsModel: (screen, model) => screen.split("\n").some((l) => l.split("·").map((s) => s.trim()).includes(model)),
+    // 2026-09-26: an unknown id ran its default model without a word (its footer then showed no model). Checked
+    // against `kiro-cli chat --list-models` before launch, not read from its screen; drop once Kiro refuses one.
+    unknownModelRunsDefault: true,
     // Its docs: "start with --effort, and Kiro remembers it for future sessions". Not measured: no model on the
     // measured account took effort.
     notes: (model, effort) => [...(effort ? [`Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently: check the model's /effort panel.`] : [])],
