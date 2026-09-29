@@ -397,6 +397,11 @@ test("--pane adopts only an idle agent of the kind asked for, in --cwd; anything
   const u = await launch(args, unnamed.deps);
   expect(u.state).toBe("prompted");
   expect(u.warnings.join(" ")).toContain("address it by its pane, w1:p9");
+  // Cursor too: its later rename (for one launch started) is not repeated for an adopted agent.
+  const cursor = fakeHerdr({ kind: "cursor", reply: (a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "cursor", agent_status: "idle", cwd: here } }) : a[1] === "rename" ? herdrError("name_taken") : undefined) });
+  const c = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--pane", "w1:p9", "--cwd", here, "--task", "Task"], cursor.deps);
+  expect(c.state).toBe("prompted");
+  expect(cursor.calls.filter((a) => a[1] === "rename")).toHaveLength(1);
 });
 
 test("a settled shell in the wrong directory is reported rather than started", async () => {

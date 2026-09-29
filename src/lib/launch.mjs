@@ -300,7 +300,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) break;
         await pause();
       }
-      if (o.kind === "cursor" && SHELLS[shell].cursor) await call(["agent", "rename", out.pane, o.name]); // pane-run: herdr did not get the name
+      // pane-run: herdr did not get the name. Not for an adopted agent: that one was renamed already, tolerantly (from the
+      // verification of #48: a second, strict rename failed the launch it had just warned about).
+      if (o.kind === "cursor" && SHELLS[shell].cursor && !adopted) await call(["agent", "rename", out.pane, o.name]);
       return null;
     };
     // Submit the task once and let herdr say whether the worker took it. herdr sends the text and Enter as one
