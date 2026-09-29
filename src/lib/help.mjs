@@ -51,7 +51,7 @@ export const COMMANDS = {
       { name: "--direction", arg: "<right|down>", description: "split direction", required: false, default: "right if wide else down" },
       { name: "--task", arg: "<text>", description: "task prompt string (mutually exclusive with --task-file)", required: false },
       { name: "--task-file", arg: "<path>", description: "file containing task prompt (mutually exclusive with --task)", required: false },
-      { name: "--trust", arg: "<ask|auto>", description: "folder trust policy", required: false, default: "ask" },
+      { name: "--trust", arg: "<ask|auto>", description: "no longer used: routr answers no startup question (accepted so older launch lines still work)", required: false, default: "ask" },
       { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds", required: false, default: 120000 },
       { name: "--dry-run", arg: null, description: "plan commands without executing or writing files", required: false, default: false },
     ],

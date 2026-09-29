@@ -25,7 +25,7 @@ model. routr spreads the work across what you have, and starts each piece at the
 1. **Plan.** The lead asks `routr dispatch < task.md`, on the exact task it will hand over, and gets a fixed set of narrow facts about it, plus
    each subscription's usable headroom. routr never names a model.
 2. **Build.** The lead picks the subscription, the model, and the reasoning effort, and `routr launch` starts the
-   worker in a herdr pane with that harness's flags, handling shell prompts and trust dialogs on the way.
+   worker in a herdr pane with that harness's flags, handling shell prompts on the way and reporting any question a harness asks at startup.
 3. **Judge.** When the worker reports, `routr check` takes a first read of the report against the brief. The lead
    then runs its own check, which is what decides.
 4. **Fix.** Work that falls short goes back to the same worker. If it falls short again, the lead relaunches it one
@@ -73,7 +73,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `subagent "<brief>"` | An agent is about to spawn a subagent: facts, level, worth-a-worker. |
 | `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus subscriptions ranked by usable headroom. Give it the exact task the worker will get (`routr dispatch < task.md > advice.json`); `launch --advice advice.json` warns when they differ. `--headroom <name>=0.9` (or `90%`) overrides a reading. |
 | `usage [cursor\|kiro]` | Each subscription's usage, ranked as `dispatch` ranks it, with no brief. `usage cursor` or `usage kiro` reads that one now. |
-| `launch` | Start one worker in its own git worktree, nested under the repo in herdr: flags, model syntax, shell prompts, trust dialog, readiness, prompt. `--dry-run` shows the plan. |
+| `launch` | Start one worker in its own git worktree, nested under the repo in herdr: flags, model syntax, shell prompts, startup questions reported (never answered), readiness, prompt. `--dry-run` shows the plan. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
 | `record`, `assess` | Write one ledger line; read the ledger back as advice about your own settings. |
 | `share` | Write exactly what telemetry sends to a file you can read. Sends nothing. |

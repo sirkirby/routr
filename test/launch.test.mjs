@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { isAbsolute, join } from "node:path";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { HARNESSES, plan } from "../src/lib/harnesses.mjs";
-import { composePrompt, launch, parseLaunchArgs, permissiveConfirm, trustDialog, WORKER_GUIDE } from "../src/lib/launch.mjs";
+import { composePrompt, launch, parseLaunchArgs, WORKER_GUIDE } from "../src/lib/launch.mjs";
 import { paneText, promptSettled, quote, shellPrompt } from "../src/lib/herdr.mjs";
 import { herdrError, herdrOK, SCRATCH, scratch, SCRIPT, shellInfo } from "./helpers.mjs";
 test("launch plans use each harness's measured permissions and model syntax", () => {
@@ -15,15 +15,15 @@ test("launch plans use each harness's measured permissions and model syntax", ()
     .toMatchObject({ executable: "cursor-agent", argv: ["--yolo", "--trust", "--model", "composer-2.5"], env: { CURSOR_CONFIG_DIR: "/private/config" } });
   expect(plan({ kind: "agy", model: "gemini-3.8-flash-low", cwd: "/work" }).argv)
     .toEqual(["--dangerously-skip-permissions", "--add-dir", "/work", "--model", "gemini-3.8-flash-low"]);
-  expect(plan({ kind: "kiro", model: "claude-haiku-4.5" })).toMatchObject({ executable: "kiro-cli", argv: ["chat", "--trust-all-tools", "--model", "claude-haiku-4.5"], env: {} });
+  expect(plan({ kind: "kiro", model: "claude-haiku-4.5" })).toMatchObject({ executable: "kiro-cli", argv: ["chat", "--trust-tools=*", "--model", "claude-haiku-4.5"], env: {} });
 });
 
 test("Kiro's effort: auto passes no flag (the model decides, nothing remembered); a level is passed and its side effect said", () => {
   const auto = plan({ kind: "kiro", model: "auto", effort: "auto" });
-  expect(auto.argv).toEqual(["chat", "--trust-all-tools", "--model", "auto"]);
+  expect(auto.argv).toEqual(["chat", "--trust-tools=*", "--model", "auto"]);
   expect(auto.warnings.join(" ")).not.toContain("remembers");
   const high = plan({ kind: "kiro", model: "claude-opus-4.8", effort: "high" });
-  expect(high.argv).toEqual(["chat", "--trust-all-tools", "--model", "claude-opus-4.8", "--effort", "high"]);
+  expect(high.argv).toEqual(["chat", "--trust-tools=*", "--model", "claude-opus-4.8", "--effort", "high"]);
   expect(high.warnings.join(" ")).toContain("remembers --effort as the user's default for claude-opus-4.8");
   expect(plan({ kind: "claude", model: "sonnet", effort: "auto" }).argv).toContain("auto"); // only Kiro reads auto as "no flag"
 });
@@ -83,12 +83,6 @@ test("shell output that merely ends like a prompt never counts on its own", () =
   expect(promptSettled("Downloading plugins 45%", "Downloading plugins 45%")).toBe(true); // settled: the launcher then also requires an idle shell
 });
 
-test("a trust dialog's options come only from the dialog", () => {
-  const withTips = "Tips for getting started:\n  1. Run /init\n  2. Ask questions\n\nDo you trust the files in this folder?\n\n  1. Yes, I trust this folder\n❯ 2. No, exit";
-  expect(trustDialog(withTips)).toMatchObject({ affirmative: { text: "Yes, I trust this folder" }, keys: ["up", "enter"] });
-  expect(trustDialog(withTips).options).toHaveLength(2);   // the tip list above the question is not an option
-});
-
 test("an unrecognized prompt counts only once it has stopped changing", () => {
   const powerline = " dev@workstation  ~/Repos/routr  ↱ routr-skill ";
   expect(promptSettled(powerline, powerline.trim())).toBe(true);   // same line twice: settled
@@ -96,36 +90,9 @@ test("an unrecognized prompt counts only once it has stopped changing", () => {
   expect(promptSettled("", "")).toBe(false);                        // nothing on the line is never a prompt
 });
 
-const claudeTrust = "Do you trust the files in this folder?\n\n  1. Yes, I trust this folder\n❯ 2. No, exit\n\nEnter to confirm · Esc to cancel";
-
-const codexTrust = "Do you trust the contents of this directory?\n\n› 1. Yes, continue\n  2. No, quit\n\nPress enter to continue";
-
-test("trust detection chooses the affirmative option even when No is selected", () => {
-  expect(trustDialog(claudeTrust)).toMatchObject({ affirmative: { number: "1", text: "Yes, I trust this folder" }, keys: ["up", "enter"] });
-  expect(trustDialog(codexTrust)).toMatchObject({ affirmative: { number: "1" }, keys: ["enter"] });
-  expect(trustDialog("Trust this workspace?\n› 1. No, exit\n  2. Yes, continue")?.keys).toEqual(["down", "enter"]);
-  expect(trustDialog(claudeTrust.replace("❯", " "))?.keys).toBeNull();
-  expect(trustDialog("Do you trust the files in this folder?" )?.keys).toBeNull();
-  expect(trustDialog("Folder trust is configured.\nReady\n❯")).toBeNull();
-  expect(trustDialog("Ready\n❯")).toBeNull();
-});
-
-test("Claude Code's newer trust question is found even when the pane wraps text after it (2.1.283, 2026-09-26)", () => {
-  const screen = [" Accessing workspace:", " /private/tmp/scratchpad/labels",
-    " Quick safety check: Is this a project you created or one you trust? (Like",
-    " your own code, a well-known open source project, or work from your team).",
-    " If not, take a moment to review what's in this folder first.", " Claude Code'll be able to read, edit, and execute files here.",
-    " Security guide", " ❯ No, exit", "   Yes, I trust this folder", " Enter to confirm · Esc to cancel"].join("\n");
-  expect(trustDialog(screen)).toMatchObject({ affirmative: { text: "Yes, I trust this folder" }, keys: ["down", "enter"] });
-  // A narrower pane (seen the same day) puts "project" and "trust?" on different lines.
-  const narrow = [" Quick safety check: Is this a project you", " created or one you trust? (Like your own", " code, a well-known open source project, or",
-    " work from your team). If not, take a", " moment to review what's in this folder", " first.", " Security guide", " ❯ No, exit", "   Yes, I trust this folder", " Enter to confirm · Esc to cancel"].join("\n");
-  expect(trustDialog(narrow)).toMatchObject({ affirmative: { text: "Yes, I trust this folder" }, keys: ["down", "enter"] });
-  // Prose about a project beside an unrelated "Can we trust?" menu is not a folder-trust question (from the verification of #41).
-  expect(trustDialog(" This project has a cached token.\n Can we trust?\n ❯ No\n   Yes, continue")).toBeNull();
-  // The question with its options not drawn yet still counts, as before: launch stops rather than type into it.
-  expect(trustDialog(screen.split("\n").slice(0, 4).join("\n"))?.keys).toBeNull();
-});
+// Claude Code 2.1.284's folder trust, read from a herdr pane (2026-09-28): routr no longer parses it, herdr reports it
+// blocked. It differs from 2.1.283's (numbered, "Yes" first): screen patterns for it did not last one release.
+const claudeTrust = " Accessing workspace:\n /private/tmp/work\n Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from your team). If not,\n take a moment to review what's in this folder first.\n Claude Code'll be able to read, edit, and execute files here.\n Security guide\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel";
 
 test("pane reads extract text from JSON without mistaking envelope fields for pane contents", () => {
   expect(paneText({ id: "cli:pane:read", result: { text: claudeTrust, type: "pane_read" } })).toBe(claudeTrust);
@@ -177,7 +144,7 @@ function fakeHerdr({ kind = "claude", trust = null, notReady = false, foreground
       if (a[1] === "process-info") return ok({ process_info: { shell_pid: 1, foreground_processes: [{ pid: foreground ? 2 : 1, cwd: process.cwd() }] } });
       if (a[1] === "send-keys") {
         if (stage === "shell") { expect(a.slice(3)).toEqual(["n", "enter"]); dotenv = false; }
-        else { expect(a.slice(3)).toEqual(trustDialog(trust).keys); stage = "starting"; }
+        else throw new Error(`launch pressed ${a.slice(3).join(" ")} at a startup question; it answers none`);
         return ok({});
       }
       if (a[1] === "run") return ok({});
@@ -186,8 +153,10 @@ function fakeHerdr({ kind = "claude", trust = null, notReady = false, foreground
         expect(dotenv).toBe(false); stage = trust ? "trust" : "starting";
         return notReady ? { ok: false, data: { error: { code: "agent_not_ready", message: "blocked on startup" } } } : ok({});
       }
-      if (a[1] === "wait") { expect(stage).not.toBe("trust"); if (!stuck) stage = "ready"; return ok({}); }
-      if (a[1] === "get") return ok({ agent: { agent: kind, agent_status: stage === "ready" ? "idle" : "unknown", interactive_ready: stage === "ready" } });
+      // A question at startup: herdr reports the agent blocked, and explains it with its own rule.
+      if (a[1] === "wait") { if (stage === "trust") return { ok: false, data: { error: { code: "agent_not_ready", message: "blocked during startup" } } }; if (!stuck) stage = "ready"; return ok({}); }
+      if (a[1] === "get") return ok({ agent: { agent: kind, agent_status: stage === "ready" ? "idle" : stage === "trust" ? "blocked" : "unknown", interactive_ready: stage === "ready" } });
+      if (a[1] === "explain") return { ok: true, data: { agent: kind, state: "blocked", matched_rule: { id: "live_blocked_form" }, manifest_version: "2026.09.11.1" } };
       if (a[1] === "prompt") { expect(stage).toBe("ready"); expect(a).toContain("--wait"); return ok({}); }
       throw new Error(`Unexpected command ${a.join(" ")}`);
     },
@@ -197,29 +166,28 @@ function fakeHerdr({ kind = "claude", trust = null, notReady = false, foreground
 
 const launchArgs = ["--kind", "claude", "--name", "worker", "--model", "sonnet"];
 
-test("startup answers the shell, recovers agent_not_ready, selects trust, then prompts", async () => {
-  const f = fakeHerdr({ trust: claudeTrust, notReady: true });
-  const r = await launch([...launchArgs, "--trust", "auto", "--task", "Fix the parser. Verify with bun test."], f.deps);
+test("startup answers the shell, recovers agent_not_ready, then prompts", async () => {
+  const f = fakeHerdr({ notReady: true });
+  const r = await launch([...launchArgs, "--task", "Fix the parser. Verify with bun test."], f.deps);
   expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w1:p2", needs_human: null });
   expect(r.warnings.join(" ")).toContain("Answered no");
-  expect(r.steps.find((s) => s.step === "trust").detail).toContain("1. Yes, I trust this folder; sent up, enter");
   expect(r.steps.map((s) => s.step).indexOf("ready")).toBeLessThan(r.steps.map((s) => s.step).indexOf("prompt"));
 });
 
-test("Codex idle at trust still needs a human under the default policy", async () => {
-  const f = fakeHerdr({ kind: "codex", trust: codexTrust });
-  const r = await launch(["--kind", "codex", "--name", "worker", "--model", "gpt-5.6-sol", "--task", "Task"], f.deps);
-  expect(r).toMatchObject({ ok: false, state: "needs_human", needs_human: { pane_text: codexTrust } });
-  expect(f.calls.some((a) => a[1] === "prompt" || a[1] === "close")).toBe(false);
-  expect(f.calls.filter((a) => a[1] === "send-keys")).toHaveLength(1); // dotenv only
+test("a question at startup is never answered: herdr's reading and the screen go to the orchestrator, with what the registry knows", async () => {
+  // --trust auto (an older guide's launch line) still parses, answers nothing, and says so.
+  for (const extra of [[], ["--trust", "auto"]]) {
+    const f = fakeHerdr({ trust: claudeTrust, notReady: true });
+    const r = await launch([...launchArgs, ...extra, "--task", "Task"], f.deps);
+    expect(r).toMatchObject({ ok: false, state: "needs_human", needs_human: { pane_text: claudeTrust } });
+    expect(r.needs_human.why).toContain("herdr reads it as live_blocked_form, rules 2026.09.11.1");
+    expect(r.needs_human.why).toContain("trusted the repository in Claude"); // Claude's own way to be asked no more
+    expect(f.calls.some((a) => a[1] === "prompt")).toBe(false);
+    expect(f.calls.filter((a) => a[1] === "send-keys")).toHaveLength(1); // the dotenv answer only
+    expect(r.warnings.some((w) => w.startsWith("--trust is no longer used"))).toBe(extra.length > 0);
+  }
 });
 
-test("auto trust leaves an ambiguous menu alive without guessing an answer", async () => {
-  const f = fakeHerdr({ trust: claudeTrust.replace("❯", " "), notReady: true });
-  const r = await launch([...launchArgs, "--trust", "auto"], f.deps);
-  expect(r.state).toBe("needs_human");
-  expect(f.calls.filter((a) => a[1] === "send-keys")).toHaveLength(1);
-});
 
 test("an existing occupied pane receives no input and is never closed", async () => {
   const f = fakeHerdr({ foreground: true });
@@ -379,91 +347,15 @@ test("a settled shell in the wrong directory is reported rather than started", a
   expect(f.calls.some((a) => a[1] === "start")).toBe(false);
 });
 
-test("trust parsing ignores old dialogs and refuses ambiguous menus", () => {
-  expect(trustDialog(`${claudeTrust}\nReady\n❯`)).toBeNull();
-  expect(trustDialog(`Folder trust is configured.\n1. Yes, continue\n› 2. No`)).toBeNull();
-  expect(trustDialog(`${claudeTrust}\n\n${codexTrust}`).keys).toEqual(["enter"]);
-  expect(trustDialog(codexTrust.replace("?", "?\n/projects/$")).keys).toEqual(["enter"]);
-  expect(trustDialog(codexTrust.split("\n").map((line) => `│ ${line} │`).join("\n")).keys).toEqual(["enter"]);
-  for (const options of [
-    "› 1. Yes, continue\n❯ 2. No, quit",
-    "› 1. Yes, continue\n2. Yes, I trust this folder",
-    "› 1. No, quit\n3. Yes, continue",
-    "› 1. Yes, delete all files\n2. No, quit",
-    "› 1. No, quit\nUnrelated menu:\n2. Yes, continue",
-  ]) expect(trustDialog(`Do you trust this folder?\n${options}`).keys).toBeNull();
-});
-
-test("a persistent trust dialog is answered once, then requires a human", async () => {
-  const f = fakeHerdr({ trust: claudeTrust, reply: (a) =>
-    a[1] === "send-keys" && a[3] !== "n" ? herdrOK() : undefined });
-  const r = await launch([...launchArgs, "--trust", "auto"], f.deps);
-  expect(r).toMatchObject({ ok: false, state: "needs_human" });
-  expect(r.needs_human.why).toContain("did not clear");
-  expect(f.calls.filter((a) => a[1] === "send-keys" && a[3] !== "n")).toHaveLength(1);
-  expect(r.warnings.join(" ")).toContain("Accepted folder trust");
-  expect(f.deps.now()).toBeLessThan(6000);
-});
-
-test("a different trust menu after one acceptance stops without sending more keys", async () => {
-  let answered = false;
-  const f = fakeHerdr({ trust: claudeTrust, reply: (a) => {
-    if (a[1] === "send-keys" && a[3] !== "n") { answered = true; return herdrOK(); }
-    if (a[1] === "read" && answered) return herdrOK({ text: codexTrust });
-  } });
-  const r = await launch([...launchArgs, "--trust", "auto"], f.deps);
-  expect(r.state).toBe("needs_human");
-  expect(r.needs_human.why).toContain("different");
-  expect(f.calls.filter((a) => a[1] === "send-keys" && a[3] !== "n")).toHaveLength(1);
-});
-
-// Kiro CLI 2.24.1's screens, as read from a herdr pane (2026-09-26).
-const kiroConfirm = (sel) => ` Warning: Kiro is running in trust all tools mode\n ────────\n In this mode, Kiro will execute all tool calls — including shell commands, file operations, and MCP tools — without asking for your approval.\n By proceeding, you confirm that you understand the risks and accept responsibility for all actions taken during this session.\n${["No, exit", "Yes, I accept", "Yes, and don't ask again"].map((o, i) => ` ${i === sel ? "❯" : " "} ${o}`).join("\n")}\n ────────\n  esc to cancel · ↑↓ to navigate · ↵ to select`;
-
-const kiroReady = (model) => ` Trust All Tools active, confirmations are off · /quit to exit\n────────\nkiro_default · ${model ? `${model} · ` : ""}◔ 5%        /private/tmp/work\n›  ask a question or describe a task ↵`;
-
-test("Kiro's trust-all-tools confirmation: move to \"Yes, I accept\", see it selected, then enter; never \"don't ask again\"", () => {
-  const { confirm } = HARNESSES.kiro;
-  expect(permissiveConfirm(kiroConfirm(0), confirm)).toMatchObject({ answer: "Yes, I accept", keys: ["down"] });
-  expect(permissiveConfirm(kiroConfirm(1), confirm)).toMatchObject({ keys: ["enter"] });
-  expect(permissiveConfirm(kiroConfirm(2), confirm).keys).toEqual(["up"]);
-  expect(permissiveConfirm(kiroConfirm(0).replace("❯", " "), confirm).keys).toBeNull(); // nothing selected: no guess
-  expect(permissiveConfirm(kiroConfirm(0).replace("Yes, I accept", "Yes, continue"), confirm).keys).toBeNull();
-  expect(permissiveConfirm(`${kiroConfirm(0)}\n${kiroReady("glm-5")}`, confirm)).toBeNull(); // answered: scrolled past
-  expect(permissiveConfirm(kiroReady("glm-5"), confirm)).toBeNull();
-  expect(permissiveConfirm(claudeTrust, confirm)).toBeNull();
-  expect(permissiveConfirm(kiroConfirm(0), undefined)).toBeNull(); // only a harness that asks
-  expect(trustDialog(kiroConfirm(0))).toBeNull(); // not a folder trust: --trust does not govern it
-  expect(HARNESSES.kiro.showsModel(kiroReady("claude-sonnet-4.5"), "claude-sonnet-4.5")).toBe(true);
-  expect(HARNESSES.kiro.showsModel(kiroReady(null), "not-a-model")).toBe(false);
-  expect(HARNESSES.kiro.showsModel(kiroReady("claude-sonnet-4.5"), "claude-sonnet-4")).toBe(false);
-});
+// Kiro CLI 2.24.1 started with --trust-tools=* goes straight to its prompt (2026-09-28): no confirmation to answer.
+const kiroReady = (model) => `────────\nkiro_default · ${model ? `${model} · ` : ""}◔ 1%        /private/tmp/work\n›  ask a question or describe a task ↵`;
 
 function fakeKiro({ model = "glm-5", shown = model } = {}) {
-  let sel = 0, accepted = false;
-  const keys = [];
   const f = fakeHerdr({ kind: "kiro", reply: (a) => {
-    const started = f.calls.some((c) => c[1] === "start");
-    if (a[1] === "read" && started) return herdrOK({ text: accepted ? kiroReady(shown) : kiroConfirm(sel) });
-    if (a[1] === "send-keys" && started) {
-      keys.push(a.slice(3));
-      if (a[3] === "down") sel++; else if (a[3] === "up") sel--; else if (a[3] === "enter") accepted = sel === 1;
-      return herdrOK();
-    }
+    if (a[1] === "read" && f.calls.some((c) => c[1] === "start")) return herdrOK({ text: kiroReady(shown) });
   } });
-  return { ...f, keys };
+  return f;
 }
-
-test("launch answers Kiro's confirmation under the default --trust ask, one key at a time, and checks the model took", async () => {
-  const f = fakeKiro();
-  const r = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], f.deps);
-  expect(r).toMatchObject({ ok: true, state: "prompted" });
-  expect(f.keys).toEqual([["down"], ["enter"]]); // an arrow and enter in one burst chose "No, exit" (measured)
-  expect(f.calls.find((a) => a[1] === "start")).toEqual(expect.arrayContaining(["--kind", "kiro", "--", "chat", "--trust-all-tools", "--model", "glm-5"]));
-  expect(r.steps.find((s) => s.step === "confirm").detail).toContain("Yes, I accept");
-  expect(r.steps.find((s) => s.step === "model").ok).toBe(true);
-  expect(r.warnings.join(" ")).toContain("this session");
-});
 
 test("a Kiro that silently dropped the model id is never prompted", async () => {
   const f = fakeKiro({ model: "not-a-model", shown: null });
@@ -666,16 +558,6 @@ unixOnly("transport timeouts return a timeout code, even if the subprocess print
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout.toString())).toMatchObject({ ok: false, data: { error: { code: "timeout" } } });
   } finally { rmSync(root, { recursive: true, force: true }); }
-});
-
-test("unnumbered trust menus are parsed: Antigravity selects Yes already, Claude Code defaults to No", async () => {
-  const { trustDialog } = await import("../src/lib/launch.mjs");
-  const agy = trustDialog("Accessing workspace:\n\n/w/x\n\nDo you trust the contents of this project?\n\nAntigravity CLI requires permission to read, edit, and execute files here.\n\n> Yes, I trust this folder\n  No, exit\n\n  ↑/↓ Navigate · enter Confirm\n");
-  expect(agy.affirmative.text).toBe("Yes, I trust this folder"); expect(agy.keys).toEqual(["enter"]);
-  const claude = trustDialog(" Accessing workspace:\n /w/x\n Quick safety check: Is this a project you created or one you trust? If not, review it first.\n Do you trust the files in this folder?\n ❯ No, exit\n   Yes, I trust this folder\n Enter to confirm · Esc to cancel\n");
-  expect(claude.keys).toEqual(["down", "enter"]);
-  // A menu with no selection marker is never guessed at.
-  expect(trustDialog("Do you trust the contents of this project?\n  Yes, I trust this folder\n  No, exit\n").keys).toBeNull();
 });
 
 test("launch --copy is repeatable, needs --worktree, and refuses paths outside the repository", async () => {

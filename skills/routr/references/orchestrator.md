@@ -52,8 +52,8 @@ worker there. This is the rule for read-only workers too. The user can find ever
 it, your own tab stays clean, and no worker can touch the main checkout. A worktree holds tracked files only: if the
 work needs an untracked file or folder (a local config, test data), pass `--copy <path>` for each one and the
 launcher copies it across. Never copy a file holding secrets unless the task needs it. Worktrees live under
-`~/.herdr/worktrees`; where the harness asks whether it trusts a new folder, `--trust auto` answers for a worktree
-you just created. Outside a git repository there is nothing to nest under: leave `--worktree` off and the launcher
+`~/.herdr/worktrees`; Claude Code counts a worktree as its repository, so a worker is asked whether to trust the
+folder only when the user has never trusted the repository in Claude (run `claude` in it once and choose Yes). Outside a git repository there is nothing to nest under: leave `--worktree` off and the launcher
 splits a pane beside you.
 
 Workers run without a human, so their permissions must cover the scope of the task, and the task must stay inside
@@ -85,13 +85,13 @@ set out its findings.
        Finish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.
 
 **Launch.** `routr launch` does the whole sequence in one call. It splits the pane, answers whatever the user's shell
-asks first, applies that harness's permissive flags and its model and effort syntax, deals with the folder-trust
-dialog, waits until the agent is ready, wraps your task in the opening and closing lines, and prints one JSON
+asks first, applies that harness's permissive flags and its model and effort syntax (chosen so it asks nothing at
+startup), waits until the agent is ready, wraps your task in the opening and closing lines, and prints one JSON
 object describing what it did.
 
     routr launch --kind <claude|codex|cursor|agy|kiro> --name <agent-name> \
         --cwd <repo> --worktree <branch> --model <id> [--effort <level>] --task-file <path> [--rules-file <path>] \
-        --advice <file> [--trust ask|auto] [--dry-run]
+        --advice <file> [--dry-run]
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
   `--effort` where the harness takes it separately. On Antigravity the model id already carries it, and routr says so
@@ -107,11 +107,12 @@ object describing what it did.
 - `--advice` takes the advice file you saved from `routr dispatch`. launch compares the text that advice was about
   with the task it sends, and warns when they differ (`advice.matches` is then `false`): ask routr about the task.
   With no task (no `--task-file` or `--task`) there is nothing to compare, and no `advice` field.
-- `--trust` defaults to `ask`: at a folder-trust dialog routr stops, leaves the pane alive, and reports
-  `needs_human` with what the dialog says. Pass `--trust auto` only for a directory you created or a worktree of the
-  repository the user already has you working in. With `auto` you are vouching for the folder; routr is not judging it.
-  Kiro's "running in trust all tools mode" question is not a folder trust: it is about the permissive flag routr
-  passed, so launch answers "Yes, I accept" (that session only) whatever `--trust` says, and says so in `warnings`.
+- routr answers no question a harness asks at startup. It passes each harness's own flags so none is asked (Cursor
+  `--trust`, Kiro `--trust-tools=*`; Codex asks none), and when one is asked anyway (Claude's folder trust outside a
+  trusted folder) herdr reports the agent blocked and launch returns `needs_human`: herdr's reading of it (the rule
+  `herdr agent explain` matched), the screen, and what routr knows about that harness. Answer it in the pane when it
+  is within the task's scope (a worktree you created), then prompt the worker with `herdr agent prompt`; otherwise
+  ask the user. `--trust` is still accepted and does nothing.
 - `--dry-run` prints the plan and changes nothing. Use it to see the flags before spending anything.
 - Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_human`, or `failed`.
   `warnings` holds anything it answered on your behalf and anything it wants you to look at. `steps` says what it
@@ -130,8 +131,9 @@ you, when you are choosing a model, or when you launch by hand. The by-hand sequ
 1. `herdr worktree create --cwd <repo> --branch <name> --no-focus`, and take the root pane it returns.
 2. Read the pane; wait for a clean shell prompt before typing (see `harnesses.md` rule 0).
 3. `herdr agent start <name> --kind <kind> --pane <id> -- <permissive flags>`.
-4. **Read the pane after every start**, whatever state herdr reports. A folder-trust dialog may be showing (herdr
-   reports Claude's as `agent_not_ready`, but Codex's as `idle`). You may accept it yourself only for a directory
+4. **Read the pane after every start**, whatever state herdr reports. A startup question may be showing: herdr
+   reports Claude's folder trust as `agent_not_ready`, then `blocked`, and `herdr agent explain <pane>` says what it
+   matched; a screen herdr's rules do not know reads as `idle`. You may accept it yourself only for a directory
    you created, or a worktree of the repository the user already has you working in. For anything else, ask the user
    (`herdr notification show`). The default answer can be "No, exit": read the options before sending keys.
 5. `herdr agent prompt <name> "<text>" --wait`.
