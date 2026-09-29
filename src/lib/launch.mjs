@@ -7,7 +7,7 @@ import { loadConfig } from "./config.mjs";
 import { HARNESSES, kindError, notReady, plan } from "./harnesses.mjs";
 import { briefSha } from "./ledger.mjs";
 import { OFF } from "./wording.mjs";
-import { clean, deadline, paneText, paneView, quote, runHerdr, SHELLS, shellFamily, shellPrompt, waitForShell } from "./herdr.mjs";
+import { clean, deadline, paneText, paneView, quote, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
 import { home } from "./runtime.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files

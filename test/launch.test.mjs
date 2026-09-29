@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { isAbsolute, join } from "node:path";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { HARNESSES, plan } from "../src/lib/harnesses.mjs";
+import { plan } from "../src/lib/harnesses.mjs";
 import { composePrompt, launch, parseLaunchArgs, WORKER_GUIDE } from "../src/lib/launch.mjs";
 import { paneText, promptSettled, quote, shellPrompt } from "../src/lib/herdr.mjs";
 import { herdrError, herdrOK, SCRATCH, scratch, SCRIPT, shellInfo } from "./helpers.mjs";
