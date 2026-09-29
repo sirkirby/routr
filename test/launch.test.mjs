@@ -186,6 +186,15 @@ test("a question at startup is never answered: herdr's reading and the screen go
     expect(f.calls.filter((a) => a[1] === "send-keys")).toHaveLength(1); // the dotenv answer only
     expect(r.warnings.some((w) => w.startsWith("--trust is no longer used"))).toBe(extra.length > 0);
   }
+  // From the review of #47: herdr's explanation is extra; when it errors, throws, or comes back in another shape, the
+  // confirmed block is still reported as needs_human, with the screen and the registry's note.
+  for (const explain of [() => herdrError("invalid_request"), () => { throw new Error("herdr went away"); }, () => herdrOK({ nothing: true })]) {
+    const f = fakeHerdr({ trust: claudeTrust, notReady: true, reply: (a) => (a[1] === "explain" ? explain() : undefined) });
+    const r = await launch([...launchArgs, "--task", "Task"], f.deps);
+    expect(r).toMatchObject({ ok: false, state: "needs_human", needs_human: { pane_text: claudeTrust } });
+    expect(r.needs_human.why).toContain("trusted the repository in Claude");
+    expect(r.needs_human.why).not.toContain("herdr reads it as");
+  }
 });
 
 

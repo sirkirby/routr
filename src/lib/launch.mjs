@@ -223,9 +223,12 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     // (Screen patterns for trust dialogs broke with harness releases: Claude Code 2.1.284 reversed its options and
     // dropped their numbers, 2026-09-28.) Returns null when ready, or what needs a person.
     // What herdr makes of the question the agent stopped at: its rule and the version of its rules for this harness,
-    // plus what the registry knows about that harness's startup questions.
+    // plus what the registry knows about that harness's startup questions. The block is already confirmed, so this
+    // extra reading gets its own short allowance and can never turn needs_human into failed (from the review of #47).
     const blockedAtStart = async (h) => {
-      const x = (await call(["agent", "explain", out.pane, "--json"], true)).data;
+      const a = ["agent", "explain", out.pane, "--json"];
+      logCommand(out.command, command(a));
+      let x = null; try { x = (await run(a, 2000)).data; } catch {}
       const rule = x?.matched_rule?.id ?? x?.result?.matched_rule?.id, rules = x?.manifest_version ?? x?.result?.manifest_version;
       return `${h.label} is waiting at a question before it can start${rule ? ` (herdr reads it as ${rule}${rules ? `, rules ${rules}` : ""})` : ""}. routr answers no startup question: read the pane, answer it there, then prompt the worker, or close the pane.${h.startup ? ` ${h.startup}` : ""}`;
     };
@@ -312,7 +315,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       throw new Error(started.data?.error?.message ?? "Agent start failed");
     }
     stop = await awaitReady(text); if (stop) return stop;
-    step("ready", true, "Herdr wait settled and the pane has no folder-trust dialog");
+    step("ready", true, "herdr reports the agent ready for input");
     out.state = "ready"; out.ok = true;
     if (prompt) { stop = await submitPrompt(); if (stop) return stop; }
   } catch (e) {
