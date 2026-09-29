@@ -184,7 +184,10 @@ test("a question at startup is never answered: herdr's reading and the screen go
     expect(r.needs_input.note).toContain("trusted the repository in Claude"); // Claude's own way to be asked no more
     // How to carry on: the same launch into this pane, which adopts the agent once the question is answered.
     expect(r.needs_input.then).toContain("--pane w1:p2");
-    expect(r.needs_input.then).toContain("<the same task>"); // an inline brief is never repeated
+    // An inline brief is never repeated, and no placeholder stands in for it: the orchestrator gives it again.
+    expect(r.needs_input.then).toContain("with your --task given again");
+    expect(r.needs_input.then).toMatch(/--task <your task>$/);
+    expect(r.needs_input.then).not.toContain("'Task'");
     expect(f.calls.some((a) => a[1] === "prompt")).toBe(false);
     expect(f.calls.filter((a) => a[1] === "send-keys")).toHaveLength(0);
     expect(r.warnings.some((w) => w.startsWith("--trust is no longer used"))).toBe(extra.length > 0);
@@ -360,18 +363,40 @@ test("a pane adopted at a shell already in --cwd gets no cd: its directory hooks
   expect(elsewhere.calls.some((a) => a[1] === "run" && a[3].includes("cd"))).toBe(true); // still moved when it is not there
 });
 
-test("--pane adopts the agent asked for when it already runs there, and refuses another kind", async () => {
-  // The `then` of a launch that stopped at a startup question: the agent is running, the question answered.
-  const adopt = fakeHerdr({ reply: (a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", interactive_ready: true } }) : undefined) });
-  const r = await launch([...launchArgs, "--pane", "w1:p9", "--task", "Task"], adopt.deps);
+test("from the review of #48: an agent of another kind in a pane launch did not make is never offered for closing", async () => {
+  let started = false;
+  const f = fakeHerdr({ reply: (a) => { if (a[1] === "start") started = true; if (a[1] === "get" && started) return herdrOK({ agent: { agent: "codex", agent_status: "idle" } }); } });
+  const passed = await launch([...launchArgs, "--pane", "w1:p9", "--cwd", process.cwd()], f.deps);
+  expect(passed.needs_input.then).toBe("Leave that pane; choose another, or leave --pane off");
+  started = false;
+  const made = await launch(launchArgs, fakeHerdr({ reply: (a) => { if (a[1] === "start") started = true; if (a[1] === "get" && started) return herdrOK({ agent: { agent: "codex", agent_status: "idle" } }); } }).deps);
+  expect(made.needs_input.then).toContain("Close the pane this launch made (herdr pane close w1:p2)");
+});
+
+test("--pane adopts only an idle agent of the kind asked for, in --cwd; anything else goes back with the screen", async () => {
+  const here = process.cwd();
+  const occupying = (agent, extra = {}) => fakeHerdr({ reply: (a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", interactive_ready: true, cwd: here, ...agent } }) : undefined), ...extra });
+  const args = [...launchArgs, "--pane", "w1:p9", "--cwd", here, "--task", "Task"];
+  // The `then` of a launch that stopped at a startup question: the agent is running, idle, the question answered.
+  const adopt = occupying({});
+  const r = await launch(args, adopt.deps);
   expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w1:p9" });
   expect(r.steps.map((st) => st.step)).toContain("adopt");
   expect(adopt.calls.some((a) => ["start", "run", "send-keys"].includes(a[1]))).toBe(false); // no shell, no second agent
-  const other = fakeHerdr({ reply: (a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "codex", agent_status: "idle" } }) : undefined) });
-  const o = await launch([...launchArgs, "--pane", "w1:p9", "--task", "Task"], other.deps);
-  expect(o).toMatchObject({ ok: false, state: "needs_input" });
-  expect(o.needs_input.why).toBe("The pane runs codex, not claude");
-  expect(other.calls.some((a) => ["start", "prompt", "send-keys"].includes(a[1]))).toBe(false);
+  // From the review of #48: another kind, another folder, a working or a blocked agent are never sent the task.
+  for (const [agent, why] of [[{ agent: "codex" }, "The pane runs codex, not claude"], [{ cwd: SCRATCH }, `works in ${SCRATCH}`],
+    [{ agent_status: "working" }, "is working, not waiting for a task"], [{ agent_status: "blocked" }, "is waiting at a question"]]) {
+    const f = occupying(agent);
+    const x = await launch(args, f.deps);
+    expect([why, x.state]).toEqual([why, "needs_input"]);
+    expect(x.needs_input.why).toContain(why);
+    expect(f.calls.some((a) => ["start", "prompt", "send-keys", "rename"].includes(a[1]))).toBe(false);
+  }
+  // A rename that fails is said, with the pane to address instead.
+  const unnamed = fakeHerdr({ reply: (a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", cwd: here } }) : a[1] === "rename" ? herdrError("name_taken") : undefined) });
+  const u = await launch(args, unnamed.deps);
+  expect(u.state).toBe("prompted");
+  expect(u.warnings.join(" ")).toContain("address it by its pane, w1:p9");
 });
 
 test("a settled shell in the wrong directory is reported rather than started", async () => {
@@ -402,6 +427,9 @@ test("Kiro: a model id it does not list is refused before any pane, from its own
   expect(f.calls).toHaveLength(0); // no pane, no worktree
   const ok = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...fakeKiro().deps, models: async () => ["auto", "glm-5"] });
   expect(ok).toMatchObject({ ok: true, state: "prompted" });
+  // From the review of #48: a list that cannot be read is said, never passed over in silence.
+  const unread = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...fakeKiro().deps, models: async () => null });
+  expect(unread.warnings.join(" ")).toContain("Could not read kiro's model list");
 });
 
 test("fatal start, wait, and inspection errors cannot be masked by UI or polled forever", async () => {

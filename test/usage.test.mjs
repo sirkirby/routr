@@ -122,7 +122,7 @@ const CURSOR_UI = "  Cursor Agent\n  Grok 4.6 High\n  /tmp";
 const CU_TMP = scratch("cu");
 
 
-function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = true, failCreate = false, spawnFails = false, sessions = null } = {}) {
+function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = true, failCreate = false, spawnFails = false, sessions = null, shellAsks = null } = {}) {
   let stage = "shell", ticks = 0, extraEnter = false, up = 0;
   const calls = [], started = [], privateDirs = [];
   const tmp = CU_TMP, cursorConfig = join(tmp, "real-cli-config.json");
@@ -143,7 +143,7 @@ function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = 
         return failCreate ? herdrError("boom") : herdrOK({ root_pane: { pane_id: "w1:p1" } });
       }
       if (a[1] === "read") {
-        if (stage === "shell") return herdrOK({ text: "chris % " });
+        if (stage === "shell") return herdrOK({ text: shellAsks ?? "chris % " });
         if (neverDraws) return herdrOK({ text: "chris % " });
         if (stage === "usage") return herdrOK({ text: delayPanel && !extraEnter ? CURSOR_UI : CURSOR_USAGE_PANEL });
         return herdrOK({ text: CURSOR_UI });
@@ -200,6 +200,14 @@ test("cursorUsage removes the session when Cursor never draws or the session fai
     expect(r.error).toContain(says);
     expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
   }
+});
+
+test("a question the private session's shell asks is not answered: the read stops, Cursor never starts, the session goes", async () => {
+  const f = fakeCursorUsage({ shellAsks: "found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)" });
+  const r = await cursorUsage({ ...f.deps, timeout: 5000 });
+  expect(r).toMatchObject({ ok: false, read_yourself: CURSOR_BY_HAND });
+  expect(f.calls.some((a) => ["send-keys", "run"].includes(a[3]))).toBe(false); // no key, no cursor-agent
+  expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
 });
 
 test("cursor-agent missing is said in seconds, not at the 90 s timeout", async () => {

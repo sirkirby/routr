@@ -98,8 +98,8 @@ object describing what it did.
   instead of passing a flag Antigravity refuses when it disagrees with the id. On Kiro, `--effort auto` (its suggested default,
   with `--model auto`) passes no flag and leaves effort to the model; a level is passed, but Kiro remembers it as
   the user's default for that model, and a model without effort ignores it. Kiro also runs its default on a model id
-  it does not know, without a word: launch checks that the screen shows the model you named and fails otherwise,
-  before any prompt.
+  it does not know, without a word: launch checks the id against Kiro's own list (`kiro-cli chat --list-models`)
+  before it opens a pane, and says so in `warnings` when it could not read the list.
 - `--task-file` holds your task alone (parts 2 and 3). Without it the pane is left ready and unprompted, for you to
   prompt yourself.
 - `--rules-file` holds your process rules, added after the task. routr passes them on without judging them, and
@@ -123,7 +123,8 @@ object describing what it did.
   asking whether to load a file. Ask the user for anything that is not yours to answer: a password or other secret, a
   sign-in, a folder you did not create, anything that cannot be undone. Then run `then`: before the task was sent it
   is the same `routr launch` with `--pane <pane>`, which carries on from the shell, or adopts the agent already
-  running there and sends it the task.
+  running there and sends it the task. It adopts only an idle agent of the kind you asked for, in `--cwd`, and keeps
+  the model and effort it is running. A task you gave inline with `--task` is never printed: give it again.
 - `prompted` means the worker took the prompt and started, not that it finished. Waiting for the work is step 4.
 - launch sends the task once, and herdr's own state says whether the worker took it. When herdr sees no activity at
   first ("the prompt stalled": a harness still starting, a slow connection), launch waits for the agent to start
