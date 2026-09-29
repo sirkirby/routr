@@ -7,7 +7,7 @@ import { loadConfig } from "./config.mjs";
 import { HARNESSES, kindError, notReady, plan } from "./harnesses.mjs";
 import { briefSha } from "./ledger.mjs";
 import { OFF } from "./wording.mjs";
-import { clean, deadline, paneText, paneView, quote, runHerdr, SHELLS, shellFamily, shellPrompt, waitForShell } from "./herdr.mjs";
+import { clean, deadline, paneText, paneView, quote, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
 import { home } from "./runtime.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
@@ -35,70 +35,6 @@ export function logCommand(log, text) {
   const m = typeof last === "string" && last.match(/^(.*)  \(x(\d+)\)$/);
   if (m && m[1] === text) { log[log.length - 1] = `${m[1]}  (x${Number(m[2]) + 1})`; return log; }
   log.push(text); return log;
-}
-
-// The menu below the last line on screen that `isQuestion` accepts: numbered options ("› 1. Yes, continue"), or else
-// the lines that START with Yes or No, numbered by order, so a tip or a status line can never be taken for one. Null
-// when there is no such question, or when a later input prompt (or `answered`) shows it has already scrolled past.
-function menuAfter(text, isQuestion, answered) {
-  const t = clean(text).replace(/^[│┃][ \t]?|[ \t]*[│┃]$/gm, "");
-  // Each line is judged with the two above it too, so a question the pane wrapped still reads as one sentence.
-  const lines = [...t.matchAll(/^[^\n]*$/gm)];
-  const question = lines.filter((m, i) => isQuestion(m[0], lines.slice(Math.max(0, i - 2), i + 1).map((x) => x[0]).join(" "))).at(-1);
-  if (!question) return null;
-  const below = t.slice(question.index + question[0].length);
-  if (shellPrompt(below) === "ready" || answered?.test(below)) return null;
-  let matches = [...below.matchAll(/^[ \t]*([❯›>→▶]?)[ \t]*(\d+)[.)][ \t]+(.+)$/gm)];
-  let options = matches.map((m) => ({ number: m[2], text: m[3].trim(), selected: !!m[1] }));
-  if (!options.length) {
-    matches = [...below.matchAll(/^[ \t]*([❯›>→▶]?)[ \t]*((?:Yes|No)\b[^\n]*)$/gmi)];
-    options = matches.map((m, i) => ({ number: String(i + 1), text: m[2].trim(), selected: !!m[1] }));
-  }
-  return { options, matches, below };
-}
-
-// A folder-trust question: the last one on screen, never an affirmative option or a historical status message.
-// The question, however the pane wraps it: Claude Code 2.1.283 (2026-09-26) asks "Quick safety check: Is this a
-// project you created or one you trust? (Like your own code, …)", and a narrow pane puts "project" and "trust?" on
-// different lines. So: "trust?" on the line, and what is trusted (folder, project, …) in the same SENTENCE, read across
-// the two lines above: nearby prose about a project beside an unrelated "Can we trust?" is not it (from the
-// verification of #41).
-const TRUST_OPENS = /^\s*(?:Do you trust|Trust (?:this|the))\b/i, TRUSTED = /\b(?:folder|directory|project|workspace)\b/i;
-const trustQuestion = (line, near) => {
-  if (TRUST_OPENS.test(line)) return true;
-  const at = near.search(/\btrust\s*\?/i);
-  if (at < 0 || !/\btrust\s*\?/i.test(line)) return false;
-  const sentence = near.slice(0, at).split(/[.!?](?:\s|$)/).at(-1); // from the last sentence end before "trust?"
-  return TRUSTED.test(sentence);
-};
-export function trustDialog(text) {
-  const menu = menuAfter(text, trustQuestion);
-  if (!menu) return null;
-  const { options, matches, below } = menu;
-  const affirmative = options.filter((o) => /^(?:yes(?:$|,?\s+(?:I trust\b|continue\b|trust\b))|trust (?:this|the)\b)/i.test(o.text)
-    && !/\b(?:don't|do not|no)\b/i.test(o.text));
-  const yes = affirmative.length === 1 ? options.indexOf(affirmative[0]) : -1;
-  const selected = options.findIndex((o) => o.selected);
-  const ordered = options.every((o, i) => !i || Number(o.number) === Number(options[i - 1].number) + 1);
-  // Text between options may be a wrapped label or another menu. Do not guess arrow counts across it.
-  const contiguous = matches.every((m, i) => !i || !below.slice(matches[i - 1].index + matches[i - 1][0].length, m.index).trim());
-  const keys = yes < 0 || options.filter((o) => o.selected).length !== 1 || !ordered || !contiguous ? null : [
-    ...Array(Math.abs(yes - selected)).fill(yes < selected ? "up" : "down"), "enter",
-  ];
-  return { options, affirmative: yes < 0 ? null : options[yes], keys };
-}
-
-// A harness's confirmation of the permissive mode routr asked for (Kiro's trust-all-tools warning). Answered whatever
-// `--trust` says: it is about the flags routr passed, not the folder. `keys` MOVES to the answer, or is ["enter"] once
-// the answer is selected: Kiro dropped an arrow sent in the same burst as enter and took "No, exit" (measured).
-export function permissiveConfirm(text, confirm) {
-  if (!confirm) return null;
-  const menu = menuAfter(text, (line) => confirm.question.test(line), confirm.answered);
-  if (!menu) return null;
-  const options = menu.options.map(({ text, selected }) => ({ text, selected }));
-  const answer = options.findIndex((o) => confirm.answer.test(o.text)), selected = options.findIndex((o) => o.selected);
-  if (answer < 0 || selected < 0 || options.filter((o) => o.selected).length !== 1 || options.filter((o) => confirm.answer.test(o.text)).length !== 1) return { options, keys: null };
-  return { options, answer: options[answer].text, keys: answer === selected ? ["enter"] : Array(Math.abs(answer - selected)).fill(answer < selected ? "up" : "down") };
 }
 
 export function parseLaunchArgs(args) {
@@ -147,11 +83,13 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
   };
   try {
     const o = parseLaunchArgs(args);
+    // Kept so the launch lines of older guides still work; routr answers no startup question now.
+    if (args.includes("--trust")) out.warnings.push("--trust is no longer used: routr passes each harness's own flags so it asks nothing at startup, and reports any question it asks anyway");
     Object.assign(out, { kind: o.kind ?? null, name: o.name, pane: o.pane ?? null, cwd: resolve(o.cwd ?? "."), model: o.model ?? null, effort: o.effort ?? null });
     if (!statSync(out.cwd).isDirectory()) throw new Error("--cwd must be a directory");
     const privateDir = join(tempRoot, `routr-cursor-${randomUUID()}`);
     const p = plan({ ...o, cwd: out.cwd, cursorConfigDir: privateDir });
-    Object.assign(out, { argv: p.argv, env: p.env, warnings: p.warnings });
+    Object.assign(out, { argv: p.argv, env: p.env, warnings: [...out.warnings, ...p.warnings] });
     const task = o["task-file"] != null ? readFileSync(resolve(o["task-file"]), "utf8") : o.task;
     if (task != null && !task.trim()) throw new Error("The task must not be empty");
     const rules = o["rules-file"] != null ? readFileSync(resolve(o["rules-file"]), "utf8") : null;
@@ -194,7 +132,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         ...(o.kind === "cursor" ? [command(["agent", "rename", pane, o.name])] : []),
         ...(prompt ? [promptForLog(promptArgs(pane, Math.max(1, Math.min(Math.floor(o.timeout / 2), 30000)))), command(["agent", "get", pane])] : []),
       ];
-      step("plan", true, "No commands executed or files written. Pane ids, geometry, polling, timeouts, shell questions and trust options are resolved at launch.");
+      step("plan", true, "No commands executed or files written. Pane ids, geometry, polling, timeouts and shell questions are resolved at launch.");
       return { ...out, ok: true, state: "planned" };
     }
     if (env.HERDR_ENV !== "1") throw new Error("Launch requires HERDR_ENV=1 inside a Herdr pane");
@@ -279,53 +217,32 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       stop = await shellReady(out.cwd); if (stop) return stop;
       step("cursor_env", true, `Set CURSOR_CONFIG_DIR in the pane's ${shell} shell`);
     }
-    // After the start: answer the harness's own permissive-mode confirmation, the folder trust (as --trust says), wait
-    // until the agent is ready, and check it took the model. Returns null when ready, or what needs a person.
+    // After the start: wait until herdr says the agent is ready, and check it took the model. routr answers no question
+    // a harness asks at startup: it passes each harness's own flags so none is asked (the registry), and when one is
+    // asked anyway herdr reports the agent blocked, and the orchestrator gets herdr's reading of it and the screen.
+    // (Screen patterns for trust dialogs broke with harness releases: Claude Code 2.1.284 reversed its options and
+    // dropped their numbers, 2026-09-28.) Returns null when ready, or what needs a person.
+    // What herdr makes of the question the agent stopped at: its rule and the version of its rules for this harness,
+    // plus what the registry knows about that harness's startup questions. The block is already confirmed, so this
+    // extra reading gets its own short allowance and can never turn needs_human into failed (from the review of #47).
+    const blockedAtStart = async (h) => {
+      const a = ["agent", "explain", out.pane, "--json"];
+      logCommand(out.command, command(a));
+      let x = null; try { x = (await run(a, 2000)).data; } catch {}
+      const rule = x?.matched_rule?.id ?? x?.result?.matched_rule?.id, rules = x?.manifest_version ?? x?.result?.manifest_version;
+      return `${h.label} is waiting at a question before it can start${rule ? ` (herdr reads it as ${rule}${rules ? `, rules ${rules}` : ""})` : ""}. routr answers no startup question: read the pane, answer it there, then prompt the worker, or close the pane.${h.startup ? ` ${h.startup}` : ""}`;
+    };
     const awaitReady = async (text) => {
-      let answeredTrust = null, trustAnsweredAt = null, moves = 0, confirmedAt = null;
       const h = HARNESSES[o.kind];
       for (;;) {
-        // Kiro shows it idle and ready while it asks (measured), so the screen is the only sign.
-        const ask = permissiveConfirm(text, h.confirm);
-        if (ask) {
-          if (!ask.keys) return human("Cannot identify the options of the harness's permissive-mode confirmation", text);
-          if (ask.keys[0] !== "enter") {
-            // Moved, then read again: the answer is pressed only once the screen shows it selected.
-            if (++moves > 3) return human("The selection in the permissive-mode confirmation did not move", text);
-            await call(["pane", "send-keys", out.pane, ...ask.keys]);
-          } else if (confirmedAt == null) {
-            await call(["pane", "send-keys", out.pane, "enter"]);
-            step("confirm", true, `Selected "${ask.answer}" (this session only; never "don't ask again")`);
-            out.warnings.push(`Accepted ${o.kind}'s permissive-mode confirmation for this session: ${ask.answer}`);
-            confirmedAt = now();
-          } else if (now() - confirmedAt >= 5000) return human("The permissive-mode confirmation did not clear after answering", text);
-          await pause(); text = await readPane(); continue;
-        }
-        const trust = trustDialog(text);
-        if (trust) {
-          if (o.trust === "ask") return human("Folder trust requires a human decision (--trust ask)", text);
-          if (!trust.keys) return human("Cannot identify the selected and affirmative folder-trust options", text);
-          const signature = JSON.stringify(trust.options.map(({ number, text }) => ({ number, text })));
-          if (answeredTrust && answeredTrust !== signature) return human("A different folder-trust menu appeared after answering; inspect before sending more keys", text);
-          if (!answeredTrust) {
-            await call(["pane", "send-keys", out.pane, ...trust.keys]);
-            step("trust", true, `Selected ${trust.affirmative.number}. ${trust.affirmative.text}; sent ${trust.keys.join(", ")}`);
-            out.warnings.push(`Accepted folder trust: ${trust.affirmative.text}`);
-            answeredTrust = signature; trustAnsweredAt = now();
-          }
-          if (now() - trustAnsweredAt >= 5000) return human("Folder trust did not clear after answering", text);
-          await pause(); text = await readPane(); continue;
-        }
-        // Even after start succeeds, wait and then inspect the actual UI before prompting.
         const waited = await call(["agent", "wait", out.pane, "--timeout", String(Math.min(1000, remaining()))], true);
         if (!waited.ok && !["timeout", "agent_not_found", "agent_not_ready"].includes(waited.data?.error?.code)) throw new Error(waited.data?.error?.message ?? "Agent wait failed");
         text = await readPane();
-        if (trustDialog(text) || permissiveConfirm(text, h.confirm)) continue;
         const got = await call(["agent", "get", out.pane], true);
         if (!got.ok && got.data?.error?.code !== "agent_not_found") throw new Error(got.data?.error?.message ?? "Agent inspection failed");
         const agent = got.data?.result?.agent;
         if (agent && agent.agent !== o.kind) return human("The pane contains a different agent kind", text);
-        if (agent?.agent_status === "blocked") return human("Agent is waiting at an unrecognized question or approval", text);
+        if (agent?.agent_status === "blocked") return human(await blockedAtStart(h), text);
         // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
         if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) break;
         await pause();
@@ -398,7 +315,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       throw new Error(started.data?.error?.message ?? "Agent start failed");
     }
     stop = await awaitReady(text); if (stop) return stop;
-    step("ready", true, "Herdr wait settled and the pane has no folder-trust dialog");
+    step("ready", true, "herdr reports the agent ready for input");
     out.state = "ready"; out.ok = true;
     if (prompt) { stop = await submitPrompt(); if (stop) return stop; }
   } catch (e) {

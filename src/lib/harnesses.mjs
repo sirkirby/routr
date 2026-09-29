@@ -8,8 +8,8 @@
 //     as no flag at all. noEffort: why a separate effort is refused. dirFlag: the flag naming the working directory,
 //     for a harness that ignores its current one. env(dir): its environment, given a private config folder.
 //     notes(model, effort): what launch tells the orchestrator about this start.
-//   confirm: a question it asks at every start because of the permissive flags routr itself passed (not a folder
-//     trust), answered with the one option that holds for this session only. showsModel: how to tell from the
+//   startup: what to tell the orchestrator when the harness stops at a question before it can start (routr answers
+//     none; herdr reports it blocked). showsModel: how to tell from the
 //     screen that it took `--model`, for a harness that silently runs its default on an id it does not know.
 //   list: its own command that lists model ids; models(): that list, read now (routr keeps no model list of its own).
 //     openList: the list is a sample, not every id it takes (Claude Code names its aliases; its help says it also takes a model's full name),
@@ -54,10 +54,16 @@ export const HARNESSES = {
     // Its help names the latest aliases (fable, opus, sonnet on 2.1.283); its help says `--model` also takes a model's full name.
     models: async () => modelsInHelp(await readClaudeHelp()), openList: true,
     efforts: async () => effortsInHelp(await readClaudeHelp()),
+    // Measured 2.1.284, 2026-09-28: it asks whether to trust a folder not under one already trusted (herdr: blocked at
+    // startup), and a git worktree counts as its main repository: a worktree in ~/.herdr/worktrees of a repository under
+    // a trusted folder went straight to its prompt.
+    startup: "Claude Code asks to trust a folder it has not been told to trust; a worktree counts as its repository. Once the user has trusted the repository in Claude (run `claude` in it and choose Yes), no worker in its worktrees is asked.",
     suggested: { hardest_work: "strong", reserve: 0.25 },
     usage: { read: readClaude } },
   codex: { label: "Codex", executable: "codex", installAs: "Codex",
-    permissions: ["--yolo"], model: "-m", effort: "-c", effortValue: (level) => `model_reasoning_effort=${level}`, list: "codex debug models",
+    // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
+    // "Update available" just after herdr reported it ready, and the Enter that submitted the task chose "Update now".
+    permissions: ["--yolo", "-c", "check_for_update_on_startup=false"], model: "-m", effort: "-c", effortValue: (level) => `model_reasoning_effort=${level}`, list: "codex debug models",
     // "Logged in using ChatGPT" / "Not logged in" (exit 1), both on stderr.
     auth: { check: ["login", "status"], signedIn: (out, code) => code === 0 && /^\s*Logged in\b/m.test(out), signIn: "run `codex login`" },
     // Only the models Codex lists (visibility "list"); each carries its own levels (gpt-5.5 stops at xhigh, measured).
@@ -84,20 +90,19 @@ export const HARNESSES = {
     models: () => lines("agy", ["models"], /^([a-z0-9][\w.-]+)\t/i),
     suggested: { hardest_work: "standard", reserve: 0.1 },
     usage: { read: readAgy } },
-  // Kiro CLI 2.24.1, measured 2026-09-26: `--trust-all-tools` asks "Kiro is running in trust all tools mode" with
-  // "No, exit" selected; "Yes, and don't ask again" would change the user's Kiro settings, so never that one.
+  // Kiro CLI 2.24.1: `--trust-all-tools` asks "Kiro is running in trust all tools mode" at every start, with "No, exit"
+  // selected, and herdr reads that screen as idle (2026-09-26/28). `--trust-tools=*` allows every built-in tool (its
+  // /tools list: all 14 "allowed") and asks nothing (measured 2026-09-28; MCP tools not measured).
   // `--effort` is per model (kiro.dev/docs/models/effort: the newer Claude and GPT models); a model without it, `auto`
   // included, shows effort "n/a" and ignores the flag silently (measured). Kiro remembers an explicit level as the
   // user's default for that model (its docs), so `auto`, the default, passes none and the model decides.
   kiro: { label: "Kiro", executable: "kiro-cli", installAs: "Kiro (kiro-cli)", skills: ".kiro/skills", // Kiro reads only ~/.kiro/skills (measured)
-    permissions: ["chat", "--trust-all-tools"], model: "--model", effort: "--effort", autoEffort: "auto", list: "kiro-cli chat --list-models",
-    confirm: { question: /\brunning in trust all tools mode\b/i, answer: /^Yes, I accept$/i, answered: /\bTrust All Tools active\b/i },
+    permissions: ["chat", "--trust-tools=*"], model: "--model", effort: "--effort", autoEffort: "auto", list: "kiro-cli chat --list-models",
     // The footer reads `kiro_default · claude-sonnet-4.5 · ◔ 5%`; with an unknown id it reads `kiro_default · ◔ 5%`.
     showsModel: (screen, model) => screen.split("\n").some((l) => l.split("·").map((s) => s.trim()).includes(model)),
     // Its docs: "start with --effort, and Kiro remembers it for future sessions". Not measured: no model on the
     // measured account took effort.
-    notes: (model, effort) => ["Kiro asks to confirm trust-all-tools mode at every start; launch answers \"Yes, I accept\" (this session only).",
-      ...(effort ? [`Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently: check the model's /effort panel.`] : [])],
+    notes: (model, effort) => [...(effort ? [`Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently: check the model's /effort panel.`] : [])],
     // `{"accountType":"SocialGitHub","email":…}` / `{"account":null}` (exit 1). Any `chat` command opens a sign-in.
     auth: { check: ["whoami", "--format", "json"], signedIn: (out, code) => code === 0 && /"email"\s*:\s*"[^"]/.test(out), signIn: "run `kiro-cli login`" },
     // Its help lists the levels; `auto` (no flag) leaves effort to the model, and is the only choice a model without levels has.
