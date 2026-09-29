@@ -10,7 +10,7 @@ test("launch plans use each harness's measured permissions and model syntax", ()
   expect(plan({ kind: "claude", model: "sonnet", effort: "medium" }).argv)
     .toEqual(["--dangerously-skip-permissions", "--model", "sonnet", "--effort", "medium"]);
   expect(plan({ kind: "codex", model: "gpt-5.6-sol", effort: "high" }).argv)
-    .toEqual(["--yolo", "-m", "gpt-5.6-sol", "-c", "model_reasoning_effort=high"]);
+    .toEqual(["--yolo", "-c", "check_for_update_on_startup=false", "-m", "gpt-5.6-sol", "-c", "model_reasoning_effort=high"]);
   expect(plan({ kind: "cursor", model: "composer-2.5", cursorConfigDir: "/private/config" }))
     .toMatchObject({ executable: "cursor-agent", argv: ["--yolo", "--trust", "--model", "composer-2.5"], env: { CURSOR_CONFIG_DIR: "/private/config" } });
   expect(plan({ kind: "agy", model: "gemini-3.8-flash-low", cwd: "/work" }).argv)

@@ -61,7 +61,9 @@ export const HARNESSES = {
     suggested: { hardest_work: "strong", reserve: 0.25 },
     usage: { read: readClaude } },
   codex: { label: "Codex", executable: "codex", installAs: "Codex",
-    permissions: ["--yolo"], model: "-m", effort: "-c", effortValue: (level) => `model_reasoning_effort=${level}`, list: "codex debug models",
+    // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
+    // "Update available" just after herdr reported it ready, and the Enter that submitted the task chose "Update now".
+    permissions: ["--yolo", "-c", "check_for_update_on_startup=false"], model: "-m", effort: "-c", effortValue: (level) => `model_reasoning_effort=${level}`, list: "codex debug models",
     // "Logged in using ChatGPT" / "Not logged in" (exit 1), both on stderr.
     auth: { check: ["login", "status"], signedIn: (out, code) => code === 0 && /^\s*Logged in\b/m.test(out), signIn: "run `codex login`" },
     // Only the models Codex lists (visibility "list"); each carries its own levels (gpt-5.5 stops at xhigh, measured).
