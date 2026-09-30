@@ -92,14 +92,23 @@ For a pre-release use `v0.2.0-rc.1` (`-alpha.N`, `-beta.N`, `-rc.N`). The tag is
 in the repository `src/lib/version.mjs`, `package.json`, and the `version` line in `skills/routr/SKILL.md` all read
 `0.0.0-dev` (a test checks it), so there is nothing to bump before a release and nothing to write back after one.
 
+Before pushing any release tag, merge `docs/releases/<tag>.md` (for example `docs/releases/v0.4.0.md`) with the
+release's user-facing highlights and upgrade instructions. State whether setup or a settings review is needed,
+which existing defaults are preserved, and any JSON compatibility changes. When no action is needed, say so.
+Keep measured results separate from intended benefits. A pre-release needs its own exact-tag file too.
+The workflow requires a nonempty file before building and inserts it verbatim between the install instructions
+and the generated commit list. It does not infer migration advice from PR titles. Review the file with the code;
+when choosing the tag, confirm it covers the final release scope. Versioned note filenames do not change the
+`0.0.0-dev` fields above.
+
 `.github/workflows/release.yml` then checks the tag's form, runs the tests, stamps the tag's version into those three
 files in each build (`scripts/stamp-version.mjs`; the skill and `package.json` get the base version `0.2.0`), builds the five binaries
 (macOS ones on macOS, signed with the maintainer's Developer ID under the hardened runtime and notarized by Apple; a
 copy marked as a browser download must then pass Gatekeeper (and the Apple Silicon one must run), which fails a stable release and is only reported
 for a pre-release; the signing secrets live in the `release` environment, which only a `v*` tag can use, and a release
 fails without them rather than ship an ad-hoc binary), and creates the GitHub
-release with checksums, install commands, and a "What's Changed" list of the commit subjects since the previous
-stable tag. Write commit subjects a user can read: they become the release notes. Pre-releases are marked as such
+release with checksums, install commands, the reviewed version-specific notes, and a "What's Changed" list of the
+commit subjects since the previous stable tag. Write commit subjects a user can read: they become that list. Pre-releases are marked as such
 and are never "latest", so the install scripts ignore them unless `ROUTR_VERSION` names one. The guides are embedded
 in the binary (`routr skill install`), so a guide change ships with the next release.
 

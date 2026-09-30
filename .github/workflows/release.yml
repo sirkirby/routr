@@ -32,6 +32,10 @@ jobs:
           if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]; then
             echo "Unsupported release tag: $TAG_NAME (want vX.Y.Z or vX.Y.Z-alpha.N / -beta.N / -rc.N)" >&2; exit 1
           fi
+          # Reviewed upgrade guidance is required before building; commit titles alone cannot describe migrations.
+          if ! grep -q '[^[:space:]]' "docs/releases/${TAG_NAME}.md"; then
+            echo "Missing release notes: add docs/releases/${TAG_NAME}.md in a PR before tagging (see CONTRIBUTING.md)" >&2; exit 1
+          fi
           # The tag is the only place the version is set: the repository reads 0.0.0-dev, and each build stamps this one in.
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -292,6 +296,8 @@ jobs:
             echo '```'
             echo
             echo "The same command upgrades an existing install. One standalone binary; no Node or Bun needed. Checksums are in \`SHA256SUMS\`."
+            echo
+            cat "docs/releases/${TAG_NAME}.md"
             echo
             echo "## What's Changed"
             echo
