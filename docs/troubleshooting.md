@@ -29,9 +29,9 @@ routr updates itself in the background, at most once a day, and the new version 
 looks. To stop automatic updates, set `"auto_update": false` in `~/.config/routr/config.json`. Versions before
 0.1.7 do not update themselves: run the install command once more.
 
-After upgrading to 0.4.0, run `routr setup` to review configuration. Existing choices are preserved; a funded account
-previously treated as metered fallback stays fallback until you choose normal use. Follow the
-[upgrade steps](../README.md#upgrading-to-040). If an agent still follows an older guide after the update, ask it to
+After updating, run `routr setup` to review settings and check the
+[release notes](https://github.com/sirkirby/routr/releases) for specific upgrade steps.
+If an agent still follows an older guide after the update, ask it to
 reread the installed routr skill and its orchestration guide, or start a new session.
 
 ## Every answer says `fallback`

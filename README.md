@@ -128,8 +128,9 @@ a command, and the skill tells it which.
 routr keeps itself current. At most once a day a command starts a background check; a new release is downloaded,
 verified against its checksums, and swapped in, and your next `routr` run uses it. Nothing you are running is
 interrupted. `routr update` does it on demand, `routr doctor` shows when it last checked, and `"auto_update": false`
-in the config turns it off. Updates also reinstall the bundled agent skill. If an agent has already loaded the old
-guide, ask it to reread the installed routr skill and its orchestration guide, or start a new session.
+in the config turns it off. Updates also reinstall the bundled agent skill.
+After updating, run `routr setup` to review your settings. See the
+[release notes](https://github.com/sirkirby/routr/releases) for changes and upgrade details.
 
 To remove it, run `routr uninstall`. It shows what it will remove and asks first. Your config, key, and ledger stay
 for a later reinstall unless you choose otherwise (`--purge`).
@@ -140,33 +141,6 @@ either is missing. Sizing subagents works without them.
 
 Something not working? `routr doctor` says what is missing, and [docs/troubleshooting.md](docs/troubleshooting.md)
 covers the rest.
-
-## Upgrading to 0.4.0
-
-**Run `routr setup` after upgrading to review your configuration.** It keeps your existing choices and lets you
-change one subscription's settings or walk through everything. Review the new **Account use** setting along with
-your everyday models, effort, hardest work and reserves, then save any changes.
-
-Choose **Change one subscription's settings**, choose the account, then **Account use** → **Normal use** if you
-want a funded enterprise or other usage-based account considered for everyday work. Or set choices you already
-know directly:
-
-```sh
-routr setup --yes --use claude=normal --use codex=normal
-routr usage
-```
-
-Use the names of your installed, signed-in accounts. `routr usage` shows `candidates.normal` and
-`candidates.fallback`; disabled, signed-out or exhausted accounts are still unavailable. Running `routr setup --yes`
-alone preserves existing preferences; choose `--use` explicitly to change them. No `--force` is needed.
-
-Existing configurations remain valid. Without an explicit `use`, metered accounts with legacy
-`metered_rank: "after"` (the default) remain fallback; `"with"` means normal. Other accounts default to normal.
-
-Normal use permits everyday consideration; it does not guarantee selection or set a spending budget. Routr still
-cannot infer a shared prepaid balance or personal allowance. Metered capacity stays unknown, including for legacy
-`metered_rank: "with"`; `ranked` and `most_room` describe numeric capacity, not which model is best for the work.
-See [how candidates and capacity work](docs/ranking.md).
 
 ## Configuration
 
