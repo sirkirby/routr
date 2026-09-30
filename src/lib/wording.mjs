@@ -38,7 +38,7 @@ export const OFF = {
 };
 
 // The one-line summary of what is set.
-export const settingSummary = (name, s) => `${name} takes ${s.hardest_work} work, reserve ${Math.round(s.reserve * 100)}%`;
+export const settingSummary = (name, s) => `${name} takes ${s.hardest_work} work, reserve ${Math.round(s.reserve * 100)}%${s.use ? `, ${s.use} use` : ""}`;
 
 // A missing config is not an error: routr answers on its defaults, and says how to write one.
 export const NO_CONFIG = (path) => `no config at ${path}: using defaults (run \`routr setup\`)`;
@@ -46,5 +46,5 @@ export const NO_CONFIG = (path) => `no config at ${path}: using defaults (run \`
 // The last line of every `subagent` and `dispatch` answer: whose decision it is, and what to report.
 export const ADVICE_RULE = {
   subagent: "You decide how much intelligence and reasoning this work needs, from these facts and what you know of the codebase; pick the model and effort that match, never a model stronger than yourself. Do not default to your own model. If you settle on a different level than advised, say so in your report: ROUTR: <advised> → <chosen> because <reason>.",
-  dispatch: "You decide how much intelligence and reasoning this work needs, from these facts and what you know of the codebase. Launch on a subscription with usable headroom, starting from the user's default model there and moving up or down to match. If you go against this advice, record why.",
+  dispatch: "You decide how much intelligence and reasoning this work needs, from these facts and what you know of the codebase. Choose suitable model and effort options from normal candidates, starting with the user's defaults. Compare capacity among suitable options; most_room is only a capacity observation. Use fallback when no normal candidate suitably takes the work. Metered budget is unknown. Record your choice and why.",
 };

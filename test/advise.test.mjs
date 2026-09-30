@@ -119,7 +119,7 @@ test("dispatch and subagent answer from a function: Jev's reading, the ranking, 
   const d = await adviseCommand("dispatch", "Fix the parser", { config: cfg(), notes: [] }, {}, { askFn: jev, read });
   expect(d).toMatchObject({ mode: "dispatch", level: "standard", jev_model: "jev-test", ms: 12, brief_chars: 14 });
   expect(d.subscriptions.most_room).toBe("cursor");
-  expect(d.rule).toContain("Launch on a subscription");
+  expect(d.rule).toContain("Choose suitable model and effort options from normal candidates");
   expect(JSON.stringify(d)).not.toContain("Fix the parser"); // the brief itself is never in the output
   const down = await adviseCommand("subagent", "Fix it", { config: cfg(), notes: ["a note"] }, {}, { askFn: async () => { throw new Error("offline"); } });
   expect(down).toMatchObject({ fallback: true, level: "standard", config_notes: ["a note"] });

@@ -107,7 +107,8 @@ export const COMMANDS = {
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
       { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list (Claude Code also takes a model's full name, which it does not list); repeatable. Also changes it on an existing config", required: false, repeatable: true },
-      { name: "--metered", arg: "<subscription>=after|with", description: "where a seat billed per token with no quota goes in the ranking: after your subscriptions (default) or with them; repeatable", required: false, repeatable: true },
+      { name: "--use", arg: "<subscription>=normal|fallback", description: "normal: consider for everyday work; fallback: when normal accounts cannot suitably take it. Independent of billing; repeatable", required: false, repeatable: true },
+      { name: "--metered", arg: "<subscription>=after|with", description: "legacy metered setting: after sets fallback use, with sets normal use; --use wins when both are given. Remaining budget stays unknown", required: false, repeatable: true },
       { name: "--hardest", arg: "<subscription>=basic|standard|strong", description: `${HARDEST.flag}: basic, standard, or strong; repeatable. Also changes it on an existing config`, required: false, repeatable: true },
       { name: "--reserve", arg: "<subscription>=<share>", description: `${RESERVE.flag}; repeatable. Also changes it on an existing config`, required: false, repeatable: true },
       { name: "--effort", arg: "<subscription>=<level>", description: "your everyday effort there, one of the levels the harness takes for that model (Kiro: auto leaves it to the model); repeatable", required: false, repeatable: true },
@@ -160,8 +161,10 @@ export const COMMANDS = {
       { name: "--report", arg: "<file>", description: "path to worker report file", required: false },
       { name: "--subagent", arg: '"<subtask> → <level advised> → <model chosen>"', description: "subagent sizing decision", required: false, repeatable: true },
       { name: "--level", arg: "<level>", description: "level chosen (basic, standard, strong)", required: false, default: "advised level" },
-      { name: "--seconds", arg: "<n>", description: "duration in seconds", required: false },
-      { name: "--attempts", arg: "<n>", description: "number of attempts", required: false, default: 1 },
+      { name: "--seconds", arg: "<n>", description: "elapsed seconds from handoff through verification (or stopping); omit when unknown", required: false },
+      { name: "--attempts", arg: "<n>", description: "positive count of worker attempts; activity, not a quality score. Omit when unknown", required: false },
+      { name: "--cause", arg: "<execution|brief|scope|review|launch|unknown|none>", description: "why extra work occurred, including lead corrections; repeatable, local only. none means no extra work and must be used alone", required: false, repeatable: true },
+      { name: "--run-id", arg: "<id>", description: "revise an existing run from record's returned run_id; otherwise a new worker run is recorded. Local only", required: false },
       { name: "--project", arg: "<name>", description: "label for the row (default: the git repository's folder name; kept local, never shared)", required: false },
       { name: "--note", arg: "<text>", description: "note explaining choice or outcome", required: false },
       { name: "--ledger", arg: "<path>", description: "path to ledger file", required: false, default: "~/.local/share/routr/ledger.jsonl" },
@@ -169,7 +172,7 @@ export const COMMANDS = {
   },
   assess: {
     name: "assess",
-    description: "what your ledger says about your own settings: reserves, preferences, and what each subscription can take",
+    description: "verified outcomes, correction causes and capacity observations from your ledger; explicit run revisions counted once",
     flags: [
       { name: "--ledger", arg: "<path>", description: "path to ledger file", required: false, default: "~/.local/share/routr/ledger.jsonl" },
     ],

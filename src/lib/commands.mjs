@@ -51,7 +51,7 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
   Object.assign(out, { headline: headline(advice), ...advice, meaning: MEANING[advice.level] });
   if (mode === "dispatch") {
     try { out.subscriptions = rankSubscriptions(advice.level, await usageP, config); }
-    catch (e) { out.subscriptions = { most_room: null, ranked: [], excluded: [], note: `could not read usage: ${short(e, 120)}` }; }
+    catch (e) { out.subscriptions = { most_room: null, candidates: { normal: [], fallback: [] }, ranked: [], excluded: [], note: `could not read usage: ${short(e, 120)}` }; }
     // An unconfigured routr ranks nothing; say why, so the lead tells the user instead of guessing (seen in a real session).
     if (!Object.keys(config.subscriptions).length) out.subscriptions.note = "no subscriptions are configured, so none is ranked: the user has not run `routr setup` yet. Tell them, and ask which subscription to use meanwhile";
   }
@@ -82,8 +82,9 @@ export function recordCommand(o, subagentFlags = [], config = null) {
   try {
     const advice = JSON.parse(readFileSync(o.advice ?? 0, "utf8"));
     const subagents = [...(o.report ? parseReportSubagents(readFileSync(o.report, "utf8")) : []), ...subagentFlags];
-    append(toEntry(advice, { ...o, subagents }, config), o.ledger ?? LEDGER_PATH);
-    return { recorded: advice.id, ledger: o.ledger ?? LEDGER_PATH };
+    const entry = toEntry(advice, { ...o, subagents }, config);
+    append(entry, o.ledger ?? LEDGER_PATH, { revision: o.run_id != null });
+    return { recorded: advice.id, run_id: entry.run_id, ledger: o.ledger ?? LEDGER_PATH };
   } catch (e) { return { recorded: null, error: short(e) }; }
 }
 
@@ -129,7 +130,7 @@ export async function usageCommand(words, config, given = {}, { read = readUsage
     const subs = Object.fromEntries(names.map((n) => [n, config.subscriptions[n]]));
     // Ranked for basic work, which every subscription takes: harder work leaves out one whose hardest_work is lower.
     const r = rankSubscriptions("basic", await read(names.filter((n) => subs[n].enabled !== false), given, { sources }), { ...config, subscriptions: subs });
-    return { ok: true, most_room: r.most_room, note: r.note, ...(r.excluded.length ? { excluded: r.excluded } : {}), ranked: r.ranked.map((row) => ({ ...row, hardest_work: subs[row.subscription].hardest_work })),
+    return { ok: true, most_room: r.most_room, candidates: r.candidates, note: r.note, ...(r.excluded.length ? { excluded: r.excluded } : {}), ranked: r.ranked.map((row) => ({ ...row, hardest_work: subs[row.subscription].hardest_work })),
       how: "usable = what is left in the tightest window minus your reserve, and the reserve shrinks as the window nears its reset. dispatch ranks the same way and leaves out a subscription whose hardest_work is below the level of the work" };
   } catch (e) { return { ok: false, error: short(e) }; }
 }

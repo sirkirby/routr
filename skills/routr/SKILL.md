@@ -70,7 +70,9 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   the brief read from stdin), or such a word kept as the brief or part of it. When the note says something was ignored,
   fix it and ask again, or tell the user; a word kept in the brief needs nothing (asking again with a changed brief
   makes `launch --advice` warn).
-- `subscriptions` (dispatch only). `ranked` lists each subscription with its usable headroom, marked `live`, `given`
+- `subscriptions` (dispatch only). `candidates.normal` lists accounts for everyday work; `candidates.fallback` lists
+  accounts for when no normal candidate can suitably take it. Choose model/effort fit first, then compare capacity
+  among suitable options. `most_room` is only a capacity observation. `ranked` lists usable headroom, marked `live`, `given`
   (you passed it in), or `assumed`. `age_sec` is how old the reading is, and `note` says what the harness showed beside
   the number (Cursor: its Auto and API pools; Kiro: its plan and credits) or why a number is assumed. Under `windows` it shows each usage window as the harness reports it: percent
   used and hours until it resets. The user's reserve shrinks as a window nears its reset, because unused capacity
@@ -79,7 +81,8 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   says what to run). Never spend a reserve: when everything is at its reserve, hold the work or ask
   the user. `class` says what kind of pool each one is: `included` (a subscription whose windows expire), `capped`
   (a spend cap the vendor enforces, shown as one more window), `metered` (a seat with no quota, billed per token:
-  no headroom number, listed after every pool that still has room, so it takes the overflow), or `unknown`.
+  no headroom number or known remaining budget), or `unknown`. `use` is the user's normal/fallback preference,
+  independent of billing. A normal metered account is considered alongside normal included accounts.
 
 ## Deciding
 

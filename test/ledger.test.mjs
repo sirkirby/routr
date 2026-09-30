@@ -191,7 +191,7 @@ test("old ledger rows without a subagents field assess without error", async () 
 
   expect(() => assess([oldRow])).not.toThrow();
   const report = assess([oldRow]);
-  expect(report).toContain("1 recorded pieces of work");
+  expect(report).toContain("1 recorded runs");
   expect(report).not.toContain("subagents:");
 });
 
@@ -271,16 +271,18 @@ test("CLI round trip for record with repeatable --subagent and --report flags", 
 
 }, 20000); // several CLI spawns: over 5 s when the machine is busy (seen with four test runs at once)
 
-test("assess turns the ledger into suggestions about the user's own settings, and only with enough runs", async () => {
+test("assess reports outcomes without treating different tasks and attempts as a model comparison", async () => {
   const { assess } = await import("../src/lib/ledger.mjs");
   const c = { prefer: { research: "strong" }, subscriptions: { codex: { hardest_work: "standard", reserve: 0.2 } } };
   expect(assess([row(), row()], c)).toContain("Nothing here argues for changing your settings yet");
   const six = Array.from({ length: 6 }, () => row());                       // six research pieces run BELOW the preference, all delivered
   const report = assess(six, c);
-  expect(report).toContain('prefer.research is "strong": agents went lower 6 times and 6 delivered');
-  expect(report).toContain("If you trust it with more, raise hardest_work");
+  expect(report).toContain("6 verified accepted");
+  expect(report).not.toContain("raise hardest_work");
   const struggling = Array.from({ length: 5 }, () => row({ outcome: { verdict: "done", check: "pass", attempts: 2 } }));
-  expect(assess(struggling, c)).toContain("subscriptions.codex.hardest_work");
+  expect(assess(struggling, c)).toContain("5 runs with multiple attempts");
+  expect(assess(struggling, c)).not.toContain("stronger default_model");
+  expect(assess(struggling, c)).toContain("unknown 5");
   expect(report).not.toContain("TOO LOW");                                    // the level review is for the lab, not the user
 });
 
@@ -295,7 +297,7 @@ test("ledger rows are labelled with their project, a worktree counts as its repo
   const e = toEntry({ id: "x", level: "basic", sure: true, facts: {} }, { project: "acme-api", verdict: "done", check: "pass" });
   expect(e.project).toBe("acme-api");
   expect(JSON.stringify(shareRows([e]))).not.toContain("acme-api");
-  const other = { ...e, project: "site" };
+  const other = toEntry({ id: "x", level: "basic", sure: true, facts: {} }, { project: "site", verdict: "done", check: "pass" });
   expect(assess([e, other])).toContain("by project");
   expect(assess([e])).not.toContain("by project");                        // one project: no breakdown to show
 });

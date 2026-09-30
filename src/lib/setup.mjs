@@ -3,7 +3,7 @@
 // A person gets questions; an agent passes `--yes` and the choices it settled with the user as flags. Same code, same file.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { CONFIG_PATH, loadConfig, SUB_DEFAULTS } from "./config.mjs";
+import { ACCOUNT_USE, CONFIG_PATH, loadConfig, SUB_DEFAULTS } from "./config.mjs";
 import { LEVELS } from "./questions.mjs";
 import { settingSummary } from "./wording.mjs";
 import { envOff, setTelemetry } from "./telemetry.mjs";
@@ -50,14 +50,15 @@ function parsePairs(args, flag, parse, what) {
   const out = {};
   for (let i = 0; i < args.length; i++) {
     if (args[i] !== flag) continue;
-    const [name, v] = (args[i + 1] ?? "").split("=");
-    const value = parse(v);
+    const [name, v, extra] = (args[i + 1] ?? "").split("=");
+    const value = extra === undefined ? parse(v) : null;
     if (!HARNESSES[name] || value == null) throw new Error(`${flag} takes <subscription>=${what}, with one of: ${Object.keys(HARNESSES).join(", ")}`);
     out[name] = value;
   }
   return out;
 }
 export const parseHardest = (args) => parsePairs(args, "--hardest", parseLevel, "basic|standard|strong");
+export const parseUse = (args) => parsePairs(args, "--use", (v) => ACCOUNT_USE.includes(v) ? v : null, "normal|fallback");
 // `--effort codex=high`: the everyday effort there, checked against the harness's own levels once it is found.
 export const parseEffort = (args) => parsePairs(args, "--effort", (v) => (/^[a-z]+$/i.test(v ?? "") ? v.toLowerCase() : null), "<level>");
 // `--enable agy` / `--disable agy`: which subscriptions routr may hand work to. Turning one off keeps its settings.
@@ -115,13 +116,15 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const interactive = tty && !args.includes("--yes");
   const say = (s) => { if (!args.includes("--json")) print(s); };
   const did = [], skipped = [];
-  let models, ranks, hardest, reserves, efforts, switches;
-  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); } catch (e) { return { ok: false, error: e.message }; }
+  let models, ranks, hardest, reserves, efforts, switches, uses;
+  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); } catch (e) { return { ok: false, error: e.message }; }
+  // The legacy flag remains a setter; explicit --use wins when both flags name the same account.
+  uses = { ...Object.fromEntries(Object.entries(ranks).map(([n, rank]) => [n, rank === "with" ? "normal" : "fallback"])), ...uses };
   // --show only reads: with a change flag beside it, an agent could take the settings printed for the change made.
-  if (args.includes("--show")) return Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length || args.includes("--force")
+  if (args.includes("--show")) return Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches, ...uses }).length || args.includes("--force")
     ? { ok: false, error: "--show only reads your settings: run the change without it, then --show again to see it" } : showSettings(path);
 
-  const guidedRun = interactive && !Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length;
+  const guidedRun = interactive && !Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches, ...uses }).length;
   // Scripted answers (a test, or a caller with its own line reader) drive the tui's accessible mode: numbered questions.
   const ui = !guidedRun ? null : makeUI ? makeUI() : question ? createUI({ ask: question, accessible: true, output: { write: (t) => print(t.replace(/\n$/, "")) } }) : createUI();
   let r;
@@ -151,7 +154,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     const list = r.harnesses[n].models;
     if (list?.length && !list.includes(id) && !HARNESSES[n].openList) return { ok: false, error: `--model ${n}=${id}: not in the harness's current list (${list.join(", ")})` };
   }
-  for (const [flagName, set] of [["--hardest", hardest], ["--reserve", reserves]])
+  for (const [flagName, set] of [["--hardest", hardest], ["--reserve", reserves], ["--use", uses]])
     for (const n of Object.keys(set)) if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `${flagName} ${n}=…: ${n} is not configured and ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
   for (const [n, on] of Object.entries(switches)) {
     // Set up, it keeps its settings on or off; one turned off is turned on again only once it is signed in.
@@ -177,7 +180,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     install(); did.push(`installed the routr skill ${base} for your agents`); return true;
   };
   // A person at a terminal gets the guided flow; flags and --yes (an agent) never ask anything.
-  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches }).length > 0;
+  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches, ...uses }).length > 0;
   let config = null;
   if (r.config.exists && !args.includes("--force")) { try { config = JSON.parse(readFileSync(path, "utf8")); } catch { return { ok: false, error: `${path} is not valid JSON. Fix it, or rewrite it with: routr setup --force` }; } }
   const claudeFile = join(home(), ".claude/settings.json");
@@ -202,6 +205,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     }
     Object.assign(models, choices.models); Object.assign(efforts, choices.efforts); Object.assign(hardest, choices.hardest);
     Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches); Object.assign(ranks, choices.ranks);
+    Object.assign(uses, choices.uses);
   }
 
   skillStep();
@@ -216,16 +220,18 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // A choice or a flag always wins, for a new subscription or one already configured.
   for (const [n, v] of Object.entries(hardest)) settings[n] = { ...settings[n], hardest_work: v };
   for (const [n, v] of Object.entries(reserves)) settings[n] = { ...settings[n], reserve: v };
-  // A seat that reads as metered (measured on a ChatGPT Enterprise seat: no windows, unlimited credits) has no headroom
-  // number: it goes after the subscriptions with a quota unless --metered says otherwise (included usage expires, billed
-  // usage does not).
-  await meteredRanks(fresh, r.harnesses, ranks, null);
+  // Fresh metered accounts keep the legacy fallback default until the person chooses normal use.
+  let old = null; try { old = JSON.parse(readFileSync(path, "utf8")); } catch {}
+  await meteredRanks(fresh.filter((n) => !old?.subscriptions?.[n]?.metered_rank), r.harnesses, ranks, null);
   // --force rewrites the file from the suggestions, but keeps the person's own choices: telemetry, automatic updates,
   // and which subscriptions are turned off.
-  let old = null; try { old = JSON.parse(readFileSync(path, "utf8")); } catch {}
   if (!config) {
     config = { ...starterConfig(found, models, ranks), ...(typeof old?.telemetry === "boolean" ? { telemetry: old.telemetry } : {}), ...(typeof old?.auto_update === "boolean" ? { auto_update: old.auto_update } : {}) };
-    for (const [n, s] of Object.entries(old?.subscriptions ?? {})) if (s?.enabled === false && config.subscriptions[n]) config.subscriptions[n].enabled = false;
+    for (const [n, s] of Object.entries(old?.subscriptions ?? {})) if (config.subscriptions[n]) {
+      if (s?.enabled === false) config.subscriptions[n].enabled = false;
+      // A rebuild must not silently change where the person permits routine spending.
+      for (const k of ["use", "metered_rank", "billing"]) if (s?.[k] !== undefined) config.subscriptions[n][k] = s[k];
+    }
   }
   else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models, ranks).subscriptions[n] };
   // Then every choice onto its subscription, new or old; what changed on an old one is said.
@@ -251,6 +257,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   }
   for (const [n, on] of Object.entries(switches)) put(n, "enabled", on);
   for (const [n, rank] of Object.entries(ranks)) put(n, "metered_rank", rank);
+  for (const [n, use] of Object.entries(uses)) put(n, "use", use);
   if (changed.length) did.push(`changed ${changed.join(", ")}`);
   if (!r.config.exists || args.includes("--force") || fresh.length || changed.length) {
     mkdirSync(dirname(path), { recursive: true });
@@ -292,6 +299,6 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   if (args.includes("--json")) return result;
   say(`\n${did.map((d) => `${paint(32, "done")} ${d}`).concat(skipped.map((x) => `${paint(33, "note")} ${x}`)).join("\n")}\n\n${render(after)}`);
   if (!interactive && !args.includes("--yes") && !flagged) say("\nNot a terminal, so nothing was asked: suggestions were used. An agent changes a setting with a flag: routr setup --help lists them.");
-  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour settings are plain JSON at ${path}: ${Object.entries(config.subscriptions).map(([n, x]) => settingSummary(n, x)).join("; ")}. Change one any time: routr setup --yes --model <name>=<id> (or --effort, --hardest, --reserve, --disable), or ask your agent.`);
+  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour settings are plain JSON at ${path}: ${Object.entries(config.subscriptions).map(([n, x]) => settingSummary(n, x)).join("; ")}. Change one any time: routr setup --yes --model <name>=<id> (or --effort, --hardest, --reserve, --use, --disable), or ask your agent.`);
   return result;
 }
