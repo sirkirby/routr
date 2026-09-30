@@ -81,6 +81,8 @@ holding your key. The install scripts only ever download release assets.
 
 ## Building and releasing
 
+Agents preparing or publishing a release follow the [repo release skill](.agents/skills/routr-release/SKILL.md).
+
 The source is plain JavaScript under `src/`, run with Bun while developing
 (`bun src/routr.mjs doctor`). Releases are standalone binaries built with `bun build --compile`.
 

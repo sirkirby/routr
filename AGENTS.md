@@ -77,10 +77,13 @@ measured questions about a brief or a worker report; code adds live usage; the l
 
 ## Releasing
 
+For release preparation, publication or verification, read [.agents/skills/routr-release/SKILL.md](.agents/skills/routr-release/SKILL.md).
+
 Merging to `main` only runs tests. A release happens when a `vX.Y.Z` tag is pushed (`-alpha.N` / `-beta.N` / `-rc.N`
 for a pre-release). The tag is the ONLY place a version is set: `src/lib/version.mjs`, `package.json`, and the
 `version` line of `skills/routr/SKILL.md` stay `0.0.0-dev` in the repository and are stamped from the tag at build time.
-Never commit a real version into them. Commit subjects become the release notes: write them for a user. Details: `CONTRIBUTING.md`.
+Never commit a real version into them. Reviewed `docs/releases/<tag>.md` supplies upgrade guidance; commit subjects
+supply the generated change list. Write both for a user. Details: `CONTRIBUTING.md`.
 
 ## Working style
 
