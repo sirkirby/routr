@@ -43,6 +43,7 @@ model. routr spreads the work across what you have, and starts each piece at the
     worker     worth a worker
     facts      names_location no · approach_open yes · cause_unknown yes · cross_cutting no
                concurrency_or_data unclear · hard_to_reverse no · states_check yes · standalone yes
+    candidates normal: agy, claude, codex, cursor · fallback: none
     ranked     agy     0.86 usable   weekly 3% used, resets in 164 h · 5-hour 12% used, resets in 1 h
                cursor  0.82 usable   (given by the caller)
                codex   0.36 usable   weekly 50% used, resets in 116 h
@@ -56,8 +57,10 @@ routr prints this as one JSON object; the listing shows what is in it.
   does not settle it; the lead can, because it knows the codebase. `states_check` and `standalone` are about the
   brief itself: when either reads no, fix the brief before sending it.
 - **level**: `basic`, `standard`, or `strong`, a one-word summary, with `sure: false` when routr was split.
-- **ranked**: usable headroom per subscription, with every usage window as the harness reports it. Your reserve is
-  subtracted, and it shrinks as a window nears its reset, because unused capacity expires then. How the ranking
+- **candidates**: eligible accounts grouped by your normal/fallback preference, listed alphabetically. The lead
+  chooses suitable model and effort options on normal accounts first; fallback is available when none suitably takes the work.
+- **ranked**: a capacity diagnostic, not a model recommendation. Usable headroom per subscription, with every
+  usage window as the harness reports it. Your reserve is subtracted, and it shrinks as a window nears its reset, because unused capacity expires then. How the ranking
   works, step by step: [docs/ranking.md](docs/ranking.md).
 - **notes**: your standing preferences and any risk warning. Advice, never an override.
 
@@ -72,8 +75,8 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | Command | What it does |
 |---|---|
 | `subagent "<brief>"` | An agent is about to spawn a subagent: facts, level, worth-a-worker. |
-| `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus subscriptions ranked by usable headroom. Give it the exact task the worker will get (`routr dispatch < task.md > advice.json`); `launch --advice advice.json` warns when they differ. `--headroom <name>=0.9` (or `90%`) overrides a reading. |
-| `usage [cursor\|kiro]` | Each subscription's usage, ranked as `dispatch` ranks it, with no brief. `usage cursor` or `usage kiro` reads that one now. |
+| `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus normal/fallback candidates and a capacity ranking. Give it the exact task the worker will get (`routr dispatch < task.md > advice.json`); `launch --advice advice.json` warns when they differ. `--headroom <name>=0.9` (or `90%`) overrides a reading. |
+| `usage [cursor\|kiro]` | Each subscription's usage, candidates and capacity ranking, with no brief. `usage cursor` or `usage kiro` reads that one now. |
 | `launch` | Start one worker in its own git worktree, nested under the repo in herdr: flags, model syntax, shell prompts, startup questions reported (never answered), readiness, prompt. `--dry-run` shows the plan. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
 | `record`, `assess` | Write one ledger line; read the ledger back as advice about your own settings. |
@@ -82,7 +85,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `feedback "<text>"` | Send the maintainers a note in your own words. |
 | `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
 | `update` | Update to the latest release now (routr also does this by itself in the background, at most once a day). |
-| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work and reserve; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--enable`, `--disable`) and reads them first with `--show`. |
+| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--enable`, `--disable`) and reads them first with `--show`. |
 | `uninstall` | Remove routr: the binary, the skill, the cache, its Claude statusline entry. Keeps your config, key, and ledger; `--purge` removes those too. |
 | `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
@@ -115,7 +118,7 @@ routr setup
 
 It asks for your [TypeSafe API key](https://console.typesafe.ai/keys) if it has none (typed without echo, never
 shown), finds the harnesses that are installed and signed in, and lets you choose which ones routr may use and each
-one's everyday model, effort, hardest work and reserve. Arrow keys choose, Esc goes back, and nothing is written
+one's everyday model, effort, hardest work, reserve and account use. Arrow keys choose, Esc goes back, and nothing is written
 until you pick Save and exit. It also sets up Claude Code's usage reading. `routr doctor` then shows what is in place and lists anything left to do, and `routr doctor --fix` is
 the same command as `routr setup`: safe to run again, it only fills in what is missing. Or ask your agent to "set up
 routr", or paste [INSTALL.md](INSTALL.md) into it: it uses the same command and talks the choices through with you.
@@ -125,7 +128,8 @@ a command, and the skill tells it which.
 routr keeps itself current. At most once a day a command starts a background check; a new release is downloaded,
 verified against its checksums, and swapped in, and your next `routr` run uses it. Nothing you are running is
 interrupted. `routr update` does it on demand, `routr doctor` shows when it last checked, and `"auto_update": false`
-in the config turns it off.
+in the config turns it off. Updates also reinstall the bundled agent skill. If an agent has already loaded the old
+guide, ask it to reread the installed routr skill and its orchestration guide, or start a new session.
 
 To remove it, run `routr uninstall`. It shows what it will remove and asks first. Your config, key, and ledger stay
 for a later reinstall unless you choose otherwise (`--purge`).
@@ -136,6 +140,31 @@ either is missing. Sizing subagents works without them.
 
 Something not working? `routr doctor` says what is missing, and [docs/troubleshooting.md](docs/troubleshooting.md)
 covers the rest.
+
+## Upgrading to 0.4.0
+
+**A full setup rerun is optional.** Existing configurations work as they are, and updating does not rewrite your
+account preferences. Without an explicit `use`, metered accounts with legacy `metered_rank: "after"` (the default)
+remain fallback; `"with"` means normal. Other accounts default to normal.
+
+If you want a funded enterprise or other usage-based account considered for everyday work, review **Account use**
+once: run `routr setup`, choose **Change one subscription's settings**, choose the account, then **Account use** →
+**Normal use**, and save. Or set the accounts you want directly:
+
+```sh
+routr setup --yes --use claude=normal --use codex=normal
+routr usage
+```
+
+Use the names of your installed, signed-in accounts. `routr usage` shows `candidates.normal` and
+`candidates.fallback`; disabled, signed-out or exhausted accounts are still unavailable. Running `routr setup --yes`
+alone preserves existing preferences; choose `--use` explicitly to change them. No `--force` is needed.
+
+Normal use permits everyday consideration; it does not guarantee selection or set a spending budget. Routr still
+cannot infer a shared prepaid balance or personal allowance. Metered capacity stays unknown, including for legacy
+`metered_rank: "with"`; `ranked` and `most_room` describe numeric capacity, not which model is best for the work.
+See [how candidates and capacity work](docs/ranking.md).
+
 
 ## Configuration
 

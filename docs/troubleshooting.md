@@ -29,6 +29,11 @@ routr updates itself in the background, at most once a day, and the new version 
 looks. To stop automatic updates, set `"auto_update": false` in `~/.config/routr/config.json`. Versions before
 0.1.7 do not update themselves: run the install command once more.
 
+For 0.4.0, existing account preferences are preserved. A funded account previously treated as metered fallback
+stays fallback until you choose normal use; a full setup rerun is optional. Follow the
+[upgrade steps](../README.md#upgrading-to-040). If an agent still follows an older guide after the update, ask it to
+reread the installed routr skill and its orchestration guide, or start a new session.
+
 ## Every answer says `fallback`
 
 routr could not reach TypeSafe: there is no key, the key is wrong, or there is no network. `routr doctor` shows which.

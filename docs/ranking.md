@@ -65,6 +65,8 @@ Existing configurations keep their use preference: without `use`, a metered acco
 "after"` (the default) is fallback; `"with"` is normal. Other accounts are normal. Reading config never rewrites it.
 Explicit `use` wins. The legacy `--metered name=after|with` flag remains a setter for fallback or normal respectively;
 when passed with `--use`, `--use` wins. Prefer `--use` for new settings, including seats whose billing is unknown.
+Upgrading does not require setup again; see the [0.4.0 upgrade steps](../README.md#upgrading-to-040) to change an
+existing fallback account to normal use.
 
 Your default model on each subscription is shown beside it in the ranking but does not change the order.
 

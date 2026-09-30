@@ -33,10 +33,14 @@ key works, each signed-in harness's current model list (for Claude Code, its ali
 
 **3. Set up.** Read `~/.agents/skills/routr/references/setup.md` and follow it with the user: the TypeSafe API key
 (they create one at https://console.typesafe.ai/keys and store it themselves with `routr key set`, so it never
-passes through you), the config and the Claude usage statusline with `routr setup --yes --model <subscription>=<id> --reserve <subscription>=<share> ...`
-(a default model, the hardest work, and the reserve per subscription, settled with the user; never edit the file by
+passes through you), the config and the Claude usage statusline with `routr setup --yes --model <subscription>=<id> --reserve <subscription>=<share> --use <subscription>=normal ...`
+(a default model and effort, the hardest work, reserve and normal/fallback account use per subscription, settled with the user; never edit the file by
 hand), and, if they want orchestration, herdr and herdr's agent skill. A user who would rather choose on screen can
 run `routr setup` in their own terminal instead.
+
+For an existing install upgrading to 0.4.0, a full setup rerun is optional. Read the
+[upgrade guidance](README.md#upgrading-to-040): existing metered fallback preferences stay in place until the user
+chooses normal use. Review that choice with them if they want funded usage-based accounts considered for everyday work.
 
 **4. Confirm.** Run `routr doctor` again and show it to the user, then one real call:
 
