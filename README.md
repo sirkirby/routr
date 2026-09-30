@@ -143,13 +143,13 @@ covers the rest.
 
 ## Upgrading to 0.4.0
 
-**A full setup rerun is optional.** Existing configurations work as they are, and updating does not rewrite your
-account preferences. Without an explicit `use`, metered accounts with legacy `metered_rank: "after"` (the default)
-remain fallback; `"with"` means normal. Other accounts default to normal.
+**Run `routr setup` after upgrading to review your configuration.** It keeps your existing choices and lets you
+change one subscription's settings or walk through everything. Review the new **Account use** setting along with
+your everyday models, effort, hardest work and reserves, then save any changes.
 
-If you want a funded enterprise or other usage-based account considered for everyday work, review **Account use**
-once: run `routr setup`, choose **Change one subscription's settings**, choose the account, then **Account use** →
-**Normal use**, and save. Or set the accounts you want directly:
+Choose **Change one subscription's settings**, choose the account, then **Account use** → **Normal use** if you
+want a funded enterprise or other usage-based account considered for everyday work. Or set choices you already
+know directly:
 
 ```sh
 routr setup --yes --use claude=normal --use codex=normal
@@ -160,11 +160,13 @@ Use the names of your installed, signed-in accounts. `routr usage` shows `candid
 `candidates.fallback`; disabled, signed-out or exhausted accounts are still unavailable. Running `routr setup --yes`
 alone preserves existing preferences; choose `--use` explicitly to change them. No `--force` is needed.
 
+Existing configurations remain valid. Without an explicit `use`, metered accounts with legacy
+`metered_rank: "after"` (the default) remain fallback; `"with"` means normal. Other accounts default to normal.
+
 Normal use permits everyday consideration; it does not guarantee selection or set a spending budget. Routr still
 cannot infer a shared prepaid balance or personal allowance. Metered capacity stays unknown, including for legacy
 `metered_rank: "with"`; `ranked` and `most_room` describe numeric capacity, not which model is best for the work.
 See [how candidates and capacity work](docs/ranking.md).
-
 
 ## Configuration
 
