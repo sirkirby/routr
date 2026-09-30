@@ -225,7 +225,7 @@ test("setup: a harness installed but not signed in is listed, greyed, with what 
 test("from the review: one set up but signed out is never asked anything and is not turned on, and a run that changes nothing still says who was left out", async () => {
   const called = [];
   const efforts = async (n) => { called.push(n); return ["low", "medium", "high"]; };
-  const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1 }, kiro: { hardest_work: "standard", reserve: 0.1, enabled: false }, codex: { hardest_work: "strong", reserve: 0.2 } } };
+  const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, use: "normal" }, kiro: { hardest_work: "standard", reserve: 0.1, enabled: false }, codex: { hardest_work: "strong", reserve: 0.2 } } };
   // Walk through everything (3rd with telemetry answered): Kiro, off, is a greyed row; Codex, on, can be turned off; Enter
   // keeps things; only Cursor's settings are walked; then Save (nothing changed, so none is offered: Exit).
   const x = await runSetup({ config, found: ["cursor"], signedOut: ["kiro", "codex"], efforts, answers: ["3", "", "", "", "", "", "4"] });
@@ -519,6 +519,20 @@ test("guided setup offers normal use for unknown billing and fallback for an inc
   expect(unknown.saved.subscriptions.claude.use).toBe("normal");
   const included = await runSetup({ found: ["cursor"], answers: ["", "", "", "", "2", "n", ""] });
   expect(included.saved.subscriptions.cursor.use).toBe("fallback");
+});
+
+test("guided account-use selection pins the inferred default on existing accounts", async () => {
+  const { accountUse } = await import("../src/lib/config.mjs");
+  const config = { telemetry: false, subscriptions: { claude: { hardest_work: "strong", reserve: 0.2 } } };
+  for (const [usage, answer, use] of [["unknown", "1", "normal"], ["metered", "2", "fallback"]]) {
+    // Change one -> Claude -> Account use (fifth field) -> explicit selection -> back twice -> Save.
+    const x = await runSetup({ config, found: ["claude"], usage: { claude: usage }, answers: ["", "", "5", answer, "b", "b", "4"] });
+    expect(x.saved.subscriptions.claude.use).toBe(use);
+    for (const cls of ["included", "unknown", "metered"]) expect(accountUse(x.saved.subscriptions.claude, cls)).toBe(use);
+    expect(x.r.did.join(" ")).toContain("claude.use set to");
+  }
+  const untouched = await runSetup({ config, found: ["claude"], answers: ["4"] });
+  expect(untouched.saved).toEqual(config);
 });
 
 test("--no-statusline leaves Claude Code's settings alone, even when routr's statusline is missing", async () => {

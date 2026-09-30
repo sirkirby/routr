@@ -90,7 +90,8 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
     const v = await ui.select({ message: `${HARNESSES[n].label}: how may routr use this account?`, initial: useOf(n), options: [
       { value: "normal", label: "Normal use", hint: "consider it for everyday work, including funded enterprise usage" },
       { value: "fallback", label: "Fallback", hint: "use when normal accounts cannot suitably take the work" }] });
-    if (typeof v === "string" && (!current[n] || draft[n].use != null || v !== useOf(n))) draft[n].use = v;
+    // Visiting this setting is an explicit choice, even when it matches today's inferred default.
+    if (typeof v === "string") draft[n].use = v;
     return v;
   };
   const fieldsOf = (n) => Object.keys(FIELDS).filter((k) => k !== "effort" || TAKES_EFFORT.includes(n));

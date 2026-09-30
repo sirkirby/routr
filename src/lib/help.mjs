@@ -164,7 +164,7 @@ export const COMMANDS = {
       { name: "--seconds", arg: "<n>", description: "elapsed seconds from handoff through verification (or stopping); omit when unknown", required: false },
       { name: "--attempts", arg: "<n>", description: "positive count of worker attempts; activity, not a quality score. Omit when unknown", required: false },
       { name: "--cause", arg: "<execution|brief|scope|review|launch|unknown|none>", description: "why extra work occurred, including lead corrections; repeatable, local only. none means no extra work and must be used alone", required: false, repeatable: true },
-      { name: "--run-id", arg: "<id>", description: "revise an existing run from record's returned run_id; otherwise a new worker run is recorded. Local only", required: false },
+      { name: "--run-id", arg: "<id>", description: "revise an existing run from record's returned run_id; supply its updated outcome. Omitted note and subagent data are preserved. Otherwise records a new worker run. Local only", required: false },
       { name: "--project", arg: "<name>", description: "label for the row (default: the git repository's folder name; kept local, never shared)", required: false },
       { name: "--note", arg: "<text>", description: "note explaining choice or outcome", required: false },
       { name: "--ledger", arg: "<path>", description: "path to ledger file", required: false, default: "~/.local/share/routr/ledger.jsonl" },

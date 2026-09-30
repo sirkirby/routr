@@ -81,7 +81,8 @@ export function assessCommand({ ledger = LEDGER_PATH }, config) {
 export function recordCommand(o, subagentFlags = [], config = null) {
   try {
     const advice = JSON.parse(readFileSync(o.advice ?? 0, "utf8"));
-    const subagents = [...(o.report ? parseReportSubagents(readFileSync(o.report, "utf8")) : []), ...subagentFlags];
+    const subagents = o.report != null || subagentFlags.length
+      ? [...(o.report != null ? parseReportSubagents(readFileSync(o.report, "utf8")) : []), ...subagentFlags] : undefined;
     const entry = toEntry(advice, { ...o, subagents }, config);
     append(entry, o.ledger ?? LEDGER_PATH, { revision: o.run_id != null });
     return { recorded: advice.id, run_id: entry.run_id, ledger: o.ledger ?? LEDGER_PATH };

@@ -4,7 +4,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { accountUse, loadConfig } from "../src/lib/config.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
-import { append, assess, latestRuns, read, shareRows, toEntry } from "../src/lib/ledger.mjs";
+import { append, assess, latestRuns, levelReview, read, shareRows, toEntry } from "../src/lib/ledger.mjs";
 import { recordCommand, usageCommand } from "../src/lib/commands.mjs";
 import { telemetryRows } from "../src/lib/telemetry.mjs";
 import { cfg, cliEnv, live, metered, none, row, scratch, SCRIPT } from "./helpers.mjs";
@@ -100,6 +100,43 @@ test("unknown attempts, successful reviews and launch trouble cannot masquerade 
   for (const bad of [["none", "execution"], ["model bad"], "execution"]) expect(() => toEntry(advice, { causes: bad })).toThrow("--cause");
   expect(toEntry(advice, { seconds: 0 }).outcome.seconds).toBe(0);
   expect(() => toEntry(advice, { run_id: "not-an-id" })).toThrow("--run-id");
+});
+
+test("outcome revisions preserve omitted choice evidence and permit explicit replacements", () => {
+  const dir = scratch("revision-evidence"), ledger = join(dir, "ledger.jsonl"), adviceFile = join(dir, "advice.json"), report = join(dir, "report.txt");
+  writeFileSync(adviceFile, JSON.stringify(advice));
+  const args = { ...choice, advice: adviceFile, ledger, verdict: "done", check: "pass", attempts: "1", causes: ["none"] };
+  const first = recordCommand({ ...args, note: "Model fits the task; funded normal account" }, ["count files → basic → small-model"]);
+  const revised = recordCommand({ ...args, run_id: first.run_id, attempts: "2", causes: ["execution"] });
+  expect(revised.run_id).toBe(first.run_id);
+  let latest = latestRuns(read(ledger))[0];
+  expect(latest.subagents).toEqual([{ subtask: "count files", advised: "basic", model: "small-model" }]);
+  expect(latest.outcome.note).toBe("Model fits the task; funded normal account");
+  expect(assess(read(ledger))).toContain("subagents: 1 recorded");
+  writeFileSync(report, "SUBAGENTS: none\n");
+  expect(recordCommand({ ...args, run_id: first.run_id, report, note: "" }).run_id).toBe(first.run_id);
+  latest = latestRuns(read(ledger))[0];
+  expect(latest.subagents).toEqual([]); expect(latest.outcome.note).toBe("");
+  expect(recordCommand({ ...args, run_id: first.run_id, note: "Updated evidence" }, ["inspect → standard → another-model"]).run_id).toBe(first.run_id);
+  latest = latestRuns(read(ledger))[0];
+  expect(latest.subagents[0].model).toBe("another-model"); expect(latest.outcome.note).toBe("Updated evidence");
+});
+
+test("calibration treats unchecked outcomes as unknown and counts explicit run revisions once", () => {
+  const make = (outcome) => row({ outcome });
+  const unknown = Array.from({ length: 5 }, () => make({ verdict: "done", check: "none" }));
+  expect(levelReview(unknown)).toEqual([]);
+  expect(levelReview(unknown.map((e) => ({ ...e, outcome: { verdict: "done" } })))).toEqual([]);
+  const failures = ["partial", "blocked"].map((verdict) => make({ verdict, check: "none" }));
+  expect(levelReview([...unknown, ...failures])).toEqual([]); // two evaluated runs are below MIN
+  const accepted = Array.from({ length: 3 }, () => make({ verdict: "done", check: "pass" }));
+  const mixed = [...unknown, ...failures, ...accepted];
+  expect(levelReview(mixed)[0]).toContain("2/5");
+  const lower = [...accepted, accepted[0], accepted[1], ...unknown].map((e) => ({ ...e, chose: { ...e.chose, level: "basic" } }));
+  expect(levelReview(lower)[0]).toContain("went lower 5 times and 5 delivered");
+  const failed = toEntry(advice, { ...choice, verdict: "done", check: "fail" });
+  expect(levelReview(Array.from({ length: 5 }, () => failed))).toEqual([]);
+  expect(levelReview([...unknown, ...Array.from({ length: 5 }, () => make({ verdict: "done", check: "fail" }))])[0]).toContain("5/5");
 });
 
 test("new local outcome fields do not change the telemetry or share projection", () => {

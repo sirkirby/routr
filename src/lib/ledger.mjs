@@ -109,8 +109,9 @@ export function toEntry(advice, { subscription, model, effort, level, verdict, c
       facts: Object.fromEntries(Object.entries(advice.facts ?? {}).map(([k, f]) => [k, f.p])) },
     headroom: Object.fromEntries((advice.subscriptions?.ranked ?? []).map((r) => [r.subscription, { usable: r.usable, usage: r.usage }])),
     chose: { subscription: subscription ?? null, model: model ?? null, ...resolveEffort({ subscription, model, effort }, config), level: LEVELS.includes(level) ? level : advice.level },
-    outcome: { verdict: verdict ?? "unknown", check: check ?? "none", seconds: seconds == null ? null : +seconds, attempts: attempts == null ? null : +attempts, causes: causes?.length ? [...new Set(causes)].filter((c) => c !== "none") : null, note: note ?? null },
-    subagents: (subagents ?? []).map(parseSubagent).filter(Boolean),
+    outcome: { verdict: verdict ?? "unknown", check: check ?? "none", seconds: seconds == null ? null : +seconds, attempts: attempts == null ? null : +attempts, causes: causes?.length ? [...new Set(causes)].filter((c) => c !== "none") : null,
+      ...(run_id && note === undefined ? {} : { note: note ?? null }) },
+    ...(run_id && subagents === undefined ? {} : { subagents: (subagents ?? []).map(parseSubagent).filter(Boolean) }),
   };
 }
 
@@ -120,6 +121,9 @@ export function append(entry, path = LEDGER_PATH, { revision = false } = {}) {
     if (!prior) throw new Error("--run-id was not found in this ledger; omit it to record a new worker run");
     if (["id", "brief_sha", "project"].some((k) => prior[k] !== entry[k]) || ["subscription", "model", "effort", "level"].some((k) => prior.chose?.[k] !== entry.chose?.[k]))
       throw new Error("--run-id belongs to different work or a different worker choice; omit it for a new run");
+    // Outcome revisions keep stable choice evidence unless the caller explicitly replaces it.
+    entry = { ...entry, subagents: entry.subagents ?? prior.subagents ?? [],
+      outcome: { ...entry.outcome, note: entry.outcome.note === undefined ? prior.outcome.note ?? null : entry.outcome.note } };
   }
   mkdirSync(dirname(path), { recursive: true }); appendFileSync(path, JSON.stringify(entry) + "\n");
 }
@@ -218,12 +222,16 @@ export function assess(entries, config = null) {
 // For the people tuning routr's questions (the lab), not for a user's report: where does the ADVISED level look wrong?
 // Nothing in this repository calls it: the private workbench imports it, so the review reads rows exactly as routr writes them.
 export function levelReview(entries) {
+  entries = latestRuns(entries);
   const flags = [];
+  // The stricter verified-acceptance rule must not turn an unchecked result into a known failure.
+  const failed = (e) => e.outcome.check === "fail" || ["partial", "blocked"].includes(e.outcome.verdict);
+  const evaluated = entries.filter((e) => good(e) || failed(e));
   for (const L of LEVELS) {
-    const at = entries.filter((e) => e.chose.level === L && e.advised.level === L);
-    const failed = at.filter((e) => !good(e));
-    if (at.length >= MIN && failed.length / at.length >= 0.3) flags.push(`TOO LOW?  ${L}: ${failed.length}/${at.length} pieces advised and run at ${L} did not deliver. Common facts: ${topFacts(failed)}`);
-    const lower = entries.filter((e) => e.advised.level === L && idx(e.chose.level) < idx(L));
+    const at = evaluated.filter((e) => e.chose.level === L && e.advised.level === L);
+    const failures = at.filter(failed);
+    if (at.length >= MIN && failures.length / at.length >= 0.3) flags.push(`TOO LOW?  ${L}: ${failures.length}/${at.length} pieces advised and run at ${L} explicitly failed verification or remained unfinished. Common facts: ${topFacts(failures)}`);
+    const lower = evaluated.filter((e) => e.advised.level === L && idx(e.chose.level) < idx(L));
     if (lower.length >= MIN && lower.filter(good).length / lower.length >= 0.8) flags.push(`TOO HIGH? ${L}: agents went lower ${lower.length} times and ${lower.filter(good).length} delivered anyway.`);
     const higher = entries.filter((e) => e.advised.level === L && idx(e.chose.level) > idx(L));
     if (higher.length >= MIN) flags.push(`DISAGREED UP ${L}: agents went higher ${higher.length} times. Common facts: ${topFacts(higher)}`);

@@ -206,6 +206,8 @@ occurred. Attempts alone never establish model failure.
 Record each worker separately, including failed launches and workers replaced during escalation. Each call returns
 a new `run_id`, even when workers share advice. To revise the outcome for that same worker, pass its returned
 `--run-id` and the same advice, project, subscription, model, effort and level, with the complete updated outcome.
+Omitted `--note`, `--report` and `--subagent` preserve the existing note and subagent choices. To replace them, supply
+the new note or report/subagent list; an empty note clears the note, and `--subagent none` clears the list.
 `assess` counts the latest revision once. It keeps old rows without run IDs separate. Only `done`, `check pass`,
 `attempts 1` and `cause none` count as accepted first pass. The ledger stores a brief hash and length, never its text.
 
