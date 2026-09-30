@@ -21,6 +21,8 @@ and verification. Do not turn skill creation or documentation work into a new re
    in a PR before tagging, including for prereleases. Cover the final release scope, user-visible behavior,
    configuration defaults and JSON compatibility. Commit titles supply the generated change list; this file
    supplies the explanation and upgrade steps. Ensure its tag matches the planned tag.
+   Keep README streamlined and version-independent: what routr does, installation, setup and links to detailed
+   docs. Put version-specific upgrade instructions and change history in the release notes, not README.
 3. When new settings or configuration choices ship, recommend running `routr setup` after upgrading. It is the
    normal place to review existing choices, change one subscription or walk through everything. Explain what
    to review and which choices are preserved. Distinguish required migrations from this recommended review;

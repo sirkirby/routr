@@ -38,10 +38,9 @@ passes through you), the config and the Claude usage statusline with `routr setu
 hand), and, if they want orchestration, herdr and herdr's agent skill. A user who would rather choose on screen can
 run `routr setup` in their own terminal instead.
 
-For an existing install upgrading to 0.4.0, recommend `routr setup` to review configuration, including the new
-Account use setting and existing model/effort choices. Read the [upgrade guidance](README.md#upgrading-to-040):
-setup preserves existing choices until changed; metered fallback preferences stay in place until the user chooses
-normal use. An agent reviews those choices with the user and applies the agreed flags.
+After updating an existing install, recommend `routr setup` to review settings. Read the
+[release notes](https://github.com/sirkirby/routr/releases) for any specific upgrade steps. An agent reviews choices
+with the user and applies the agreed flags.
 
 **4. Confirm.** Run `routr doctor` again and show it to the user, then one real call:
 
