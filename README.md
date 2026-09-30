@@ -24,15 +24,16 @@ model. routr spreads the work across what you have, and starts each piece at the
 
 1. **Plan.** The lead asks `routr dispatch < task.md`, on the exact task it will hand over, and gets a fixed set of narrow facts about it, plus
    each subscription's usable headroom. routr never names a model.
-2. **Build.** The lead picks the subscription, the model, and the reasoning effort, and `routr launch` starts the
+2. **Build.** The lead chooses suitable model and effort options on normal accounts, then compares their capacity.
+   Fallback accounts are available when none suitably takes the task. `routr launch` starts the
    worker in a herdr pane with that harness's flags, handling shell prompts on the way and reporting any question a harness asks at startup.
 3. **Judge.** When the worker reports, `routr check` takes a first read of the report against the brief. The lead
    then runs its own check, which is what decides.
 4. **Fix.** Work that falls short goes back to the same worker. If it falls short again, the lead relaunches it one
    level up. There is no need to start high "to be safe": work that falls short comes back through this loop.
 5. **Record.** `routr record` writes one line to a local ledger: what was advised, what was chosen, how it turned
-   out, how many attempts it took. `routr assess` reads it back as advice about your own settings: what each
-   subscription has handled, which of your preferences your agents keep overriding, whether a reserve is too tight.
+   out, how many attempts it took, and what caused extra work. `routr assess` reports verified acceptance, execution
+   corrections, review follow-ups and launch trouble separately, plus capacity observations. Attempts alone do not rate a model.
 
 ## What the advice looks like
 
@@ -145,15 +146,17 @@ goes stale when models change.
   `--reserve <name>=<share>`: `reserve` (the share routr must never offer), `hardest_work` (the hardest work you would hand
   it), `default_model` and `default_effort` (your everyday choice there, picked from the harness's live list; for Claude Code, whose help says it also takes a model's full name, setup accepts an id it does not list), and
   `assumed_headroom` for a subscription whose usage cannot be read. For a seat billed per token with no quota (an
-  Enterprise seat), `metered_rank` says whether it takes the overflow after your subscriptions (`after`, the default)
-  or ranks with them (`with`); `billing` names the kind when the harness cannot show it.
+  Enterprise seat), remaining budget is unknown. `--use <name>=normal` makes an account a candidate for everyday
+  work; `=fallback` keeps it for when normal accounts cannot suitably take the task. This is independent of billing.
+  Without `use`, legacy metered `after` means fallback and `with` means normal; other accounts are normal.
+  `billing` names the kind when the harness cannot show it.
 - `prefer`: your standing preference per kind of work, for example `"review": "strong"`.
 
 Usage is read live for Claude Code (through `routr statusline`, set up as Claude's statusline command), Codex, and
 Antigravity. Cursor's and Kiro's are read in the background about once per working session, since they take seconds. A seat with no quota reports no windows: measured on a
 ChatGPT Enterprise seat, which routr detects and calls `metered`; for Claude the class is your `billing` setting,
 because the statusline sends nothing to tell a seat with no quota from a plan routr has not seen. A metered seat gets
-no headroom number and is ranked by your setting rather than by a guess. A cap the vendor enforces is read as one
+no headroom number and is a normal or fallback candidate by your setting. A cap the vendor enforces is read as one
 more window (Codex: from its protocol, not yet observed on a seat).
 
 ## Evidence

@@ -64,16 +64,17 @@ test("the statusline writes every render and keeps the last windows seen; absenc
   expect(at(gw)).toMatchObject({ class: "capped", headroom: 0 }); expect(at(gw).windows[0]).toMatchObject({ name: "spend_limit", usedPct: 100, windowMin: null });
 });
 
-test("a metered seat gets a position, not a number: after every pool with room, and it takes the overflow", () => {
+test("metered capacity stays unknown while legacy settings determine normal or fallback use", () => {
   const r = rankSubscriptions("strong", [live("claude", 0.6), metered("codex")], cfg());
   expect(r.ranked.map((x) => [x.subscription, x.usable])).toEqual([["claude", 0.35], ["codex", null]]);
   expect(r.ranked[1]).toMatchObject({ class: "metered", usage: "metered", headroom: null }); expect(r.ranked[1].note).toContain("billed"); expect(r.most_room).toBe("claude");
   const spill = rankSubscriptions("strong", [live("claude", 0.2), metered("codex")], cfg());
-  expect(spill.ranked.map((x) => x.subscription)).toEqual(["codex", "claude"]); expect(spill.most_room).toBe("codex"); expect(spill.note).toContain("every token there is billed");
+  expect(spill.ranked.map((x) => x.subscription)).toEqual(["codex", "claude"]); expect(spill.most_room).toBeNull(); expect(spill.candidates).toEqual({ normal: [], fallback: ["codex"] });
   const c = cfg(); c.subscriptions.codex.metered_rank = "with";
   const w = rankSubscriptions("strong", [live("claude", 0.6), metered("codex")], c);
-  expect(w.ranked.map((x) => [x.subscription, x.usable, x.usage])).toEqual([["codex", 0.5, "assumed"], ["claude", 0.35, "live"]]);
-  expect(rankSubscriptions("strong", [metered("codex")], cfg({ subscriptions: { codex: cfg().subscriptions.codex } })).note).toBe("codex is metered: every token there is billed");
+  expect(w.ranked.map((x) => [x.subscription, x.usable, x.usage])).toEqual([["claude", 0.35, "live"], ["codex", null, "metered"]]);
+  expect(w.candidates).toEqual({ normal: ["claude", "codex"], fallback: [] });
+  expect(rankSubscriptions("strong", [metered("codex")], cfg({ subscriptions: { codex: cfg().subscriptions.codex } })).note).toContain("remaining capacity is unknown");
   const g = cfg(); g.subscriptions.cursor.billing = "metered";                                  // a number the caller read wins over the class
   expect(rankSubscriptions("basic", [{ pool: "cursor", source: "given by caller", given: true, ageSec: 0, windows: [], headroom: 0.9 }], g).ranked[0]).toMatchObject({ class: "included", usable: 0.8, usage: "given" });
   const b = cfg(); b.subscriptions.claude.billing = "metered";                                   // the reader sees nothing; the user knows

@@ -6,10 +6,11 @@ Three parties take part:
 - **Jev judges the work.** A small, fast model reads the brief and says how demanding the work is (`basic`,
   `standard`, or `strong`), what kind of work it is, and whether the brief is ready to send. Jev knows nothing about
   your subscriptions or their usage.
-- **routr works out where there is room.** It looks at how much of each subscription you have left and ranks them.
+- **routr lists candidates and capacity.** Your account-use settings decide which accounts are normal or fallback
+  candidates. Separately, routr ranks the capacity it can read or that you have told it to assume.
   This is plain arithmetic on your usage and your settings: no model, the same inputs always give the same answer.
-- **The orchestrator decides.** It gets both answers and picks the subscription and model. It may go against the
-  ranking, because it knows things routr does not: what is already running and what comes next.
+- **The orchestrator decides.** It chooses suitable model and effort options first, then compares capacity among
+  those options. Headroom alone says nothing about quality, speed or the cost of finishing the task.
 
 You can see the ranking any time, with no brief, by running `routr usage`.
 
@@ -22,7 +23,7 @@ nowhere. Every reading shows how old it is. If routr cannot read a subscription,
 
 ## Your settings
 
-You decide where work may go, with two settings per subscription. `routr setup` asks you for both, for each
+You decide where work may go, with three settings per subscription. `routr setup` asks you for each, for every
 subscription you let routr use, with each level's meaning beside it and the suggestion already chosen. It saves them
 in `~/.config/routr/config.json` when you pick Save and exit.
 
@@ -31,8 +32,9 @@ directly:
 
     routr setup --yes --hardest cursor=strong
     routr setup --yes --reserve claude=30%
+    routr setup --yes --use codex=normal
 
-A subscription you turn off (`routr setup --yes --disable agy`) keeps both settings and gets no work until it is on
+A subscription you turn off (`routr setup --yes --disable agy`) keeps its settings and gets no work until it is on
 again.
 
 An agent setting routr up for you asks you the same questions and passes your answers the same way. A change applies
@@ -52,10 +54,17 @@ invalid, with the command that fixes it.
 - **`reserve`**: the share of the subscription routr holds back from workers, for example 25%, so the orchestrator
   (which usually runs on one of your subscriptions) and anything you run outside routr still have room. routr stops
   sending workers to a subscription when less than its reserve is left; 0% holds nothing back.
+- **`use`**: `normal` means consider this account for everyday work, including funded enterprise usage. `fallback`
+  means use it when no normal account can suitably take the work. This is independent of billing: either an included
+  subscription or a metered account can be normal or fallback. It does not set or enforce a spending budget.
 
-Two more you rarely need: `metered_rank`, where a seat billed per use with no quota goes in the order (see below;
-`routr setup --yes --metered codex=after|with`, or on the setup screen), and `assumed_headroom`, the share routr
-assumes is left when it cannot read a subscription's usage (set in the file).
+`assumed_headroom` is the share routr assumes when it cannot read an included or unknown account's usage. It is
+labelled assumed. Metered accounts always have unknown remaining budget.
+
+Existing configurations keep their use preference: without `use`, a metered account with legacy `metered_rank:
+"after"` (the default) is fallback; `"with"` is normal. Other accounts are normal. Reading config never rewrites it.
+Explicit `use` wins. The legacy `--metered name=after|with` flag remains a setter for fallback or normal respectively;
+when passed with `--use`, `--use` wins. Prefer `--use` for new settings, including seats whose billing is unknown.
 
 Your default model on each subscription is shown beside it in the ranking but does not change the order.
 
@@ -76,16 +85,20 @@ For each subscription that can take the work, routr works out a **usable** share
 3. **Count the tightest window.** A subscription with plenty left this week but little left in the next few hours is
    only as usable as those few hours.
 
-A seat billed per use with no quota has no window to measure. By default it is listed after every subscription that
-still has room, so it takes the overflow: your subscriptions' included usage expires, billed usage does not.
-`metered_rank: "with"` ranks it alongside your subscriptions instead, using your `assumed_headroom` as it stands: no
-reserve is taken off, because nothing expires there to keep back.
+A seat billed per use with no quota has no window to measure. Its `headroom` and `usable` are null, including when
+legacy `metered_rank: "with"` is set. Routr cannot infer a shared prepaid balance or a personal allowance from this.
+A cap the harness reports is still enforced as a window, even with a `billing: "metered"` override.
 
 ## The order
 
-Subscriptions with room come first, most usable at the top, then billed seats, then subscriptions already at their
-reserve. The first one with room is named `most_room`. If every subscription that can take the work is at its
-reserve, routr says to hold the work or ask you. It never offers a reserve.
+`candidates.normal` and `candidates.fallback` list eligible names alphabetically, without ranking model quality.
+Accounts at their reserve are absent. The lead starts with suitable model/effort options on normal accounts and may
+use fallback when none suitably takes the work, including when the remaining normal models do not fit the task.
+
+`ranked` remains a capacity diagnostic: accounts with a number come first, most usable at the top, then metered
+accounts, then accounts at their reserve. `most_room` names only an account with a positive number; it is null when
+only metered candidates remain. Numbers may be labelled assumed. Neither field is a recommendation to choose that
+account. If there are no candidates, hold the work or ask the user. Routr never offers a reserve.
 
 ## An example
 
@@ -96,8 +109,9 @@ Subscription A has a reserve of 0.25 and two windows:
 - The weekly window is 19% used with most of the week to go: 0.81 left − 0.18 held back = 0.63 usable.
 - A counts as **0.53**, its tighter window.
 
-Beside it: B at 0.55 and C at 0.24, both set to `standard`, and D, a seat billed per use. For `standard` work the order
-is B, A, C, then D. For `strong` work B and C are left out, so A comes first and D takes the overflow.
+Beside it: B at 0.55 and C at 0.24, both set to `standard`, and D, a metered account set to normal use. For `standard`
+work the capacity order is B, A, C, then D, but all four are normal candidates. For `strong` work B and C are left out.
+A and D are candidates; the lead may select D for task fit even though its remaining budget is unknown.
 
 ## What routr leaves to the orchestrator
 

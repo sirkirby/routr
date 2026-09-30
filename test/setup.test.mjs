@@ -176,7 +176,7 @@ const q = (asked, start) => asked.filter((x) => x.startsWith(start)).length;
 
 test("setup, new install: which subscriptions, then each one's settings, telemetry off by default, then save and exit", async () => {
   // cursor then agy (the registry's order): model (Enter: leave it to the lead), hardest work, reserve; then telemetry; then Save and exit.
-  const x = await runSetup({ answers: ["", "", "3", "4", "", "", "", "n", ""] });
+  const x = await runSetup({ answers: ["", "", "3", "4", "", "", "", "", "", "n", ""] });
   expect(x.r.ok).toBe(true);
   expect(x.asked[0]).toMatch(/^Which subscriptions may routr hand work to\?/);
   expect(q(x.asked, "Cursor: the hardest work routr may send there")).toBe(1);
@@ -190,7 +190,7 @@ test("setup, new install: which subscriptions, then each one's settings, telemet
 });
 
 test("setup, new install: a harness left unticked is added turned off, with its settings, to turn on later", async () => {
-  const x = await runSetup({ answers: ["2", "", "", "", "", "n", ""] }); // untick Antigravity, then Cursor's three, telemetry, Save
+  const x = await runSetup({ answers: ["2", "", "", "", "", "", "n", ""] }); // choose Cursor, confirm, model/hardest/reserve/use, telemetry, Save
   expect(x.saved.subscriptions.agy).toMatchObject({ enabled: false, hardest_work: "standard", reserve: 0.1 });
   expect(x.saved.subscriptions.cursor).toMatchObject({ enabled: true });
   expect(q(x.asked, "Antigravity:")).toBe(0); // nothing asked about one that is off
@@ -199,7 +199,7 @@ test("setup, new install: a harness left unticked is added turned off, with its 
 test("setup: a harness installed but not signed in is listed, greyed, with what to run, once per question, and cannot be chosen", async () => {
   // First run: Kiro is on the list with its sign-in; choosing it (3) says why and asks again; Enter keeps the two signed in.
   const said = [];
-  const x = await runSetup({ signedOut: ["kiro"], answers: ["3", "", "", "", "", "", "", "", "n", ""], print: (t) => said.push(t) });
+  const x = await runSetup({ signedOut: ["kiro"], answers: ["3", "", "", "", "", "", "", "", "", "", "n", ""], print: (t) => said.push(t) });
   expect(said.filter((t) => t.includes("Kiro: not signed in"))).toEqual(["  Kiro: not signed in: run `kiro-cli login`"]); // only as the reason a choice was refused
   const list = x.asked[0];
   expect(list).toContain("[-] Kiro (not signed in: run `kiro-cli login`)");
@@ -225,10 +225,10 @@ test("setup: a harness installed but not signed in is listed, greyed, with what 
 test("from the review: one set up but signed out is never asked anything and is not turned on, and a run that changes nothing still says who was left out", async () => {
   const called = [];
   const efforts = async (n) => { called.push(n); return ["low", "medium", "high"]; };
-  const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1 }, kiro: { hardest_work: "standard", reserve: 0.1, enabled: false }, codex: { hardest_work: "strong", reserve: 0.2 } } };
+  const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, use: "normal" }, kiro: { hardest_work: "standard", reserve: 0.1, enabled: false }, codex: { hardest_work: "strong", reserve: 0.2 } } };
   // Walk through everything (3rd with telemetry answered): Kiro, off, is a greyed row; Codex, on, can be turned off; Enter
   // keeps things; only Cursor's settings are walked; then Save (nothing changed, so none is offered: Exit).
-  const x = await runSetup({ config, found: ["cursor"], signedOut: ["kiro", "codex"], efforts, answers: ["3", "", "", "", "", "4"] });
+  const x = await runSetup({ config, found: ["cursor"], signedOut: ["kiro", "codex"], efforts, answers: ["3", "", "", "", "", "", "4"] });
   expect(x.left).toBe(0);
   const list = x.asked.find((a) => a.startsWith("Which subscriptions"));
   expect(list).toContain("[-] Kiro (not signed in: run `kiro-cli login`)");
@@ -261,7 +261,7 @@ test("setup, run again: a menu to change one thing, then save and exit, and only
   const config = { subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 }, cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" } } };
   // Change one subscription → Cursor → Hardest work → strong; Back to the subscriptions (4th), Back to the menu (3rd);
   // then Save and exit (5th), with no second question.
-  const x = await runSetup({ config, answers: ["", "", "2", "3", "4", "3", "5"] });
+  const x = await runSetup({ config, answers: ["", "", "2", "3", "5", "3", "5"] });
   expect(x.asked[0]).toMatch(/^What would you like to do\?/);
   expect(x.saved.subscriptions.cursor).toEqual({ hardest_work: "strong", reserve: 0.1, default_model: "m" });
   expect(x.saved.subscriptions.agy).toEqual({ hardest_work: "standard", reserve: 0.1 });
@@ -309,7 +309,7 @@ test("setup: a harness whose list is a sample (Claude Code's aliases) takes an i
 
 test("setup: effort is chosen from the levels the harness takes for that model", async () => {
   const efforts = async (n, model) => (n === "codex" ? (model === "gpt-5.5" ? ["low", "medium", "high", "xhigh"] : null) : null);
-  const x = await runSetup({ found: ["codex"], models: { codex: ["gpt-5.5", "gpt-5.6-terra"] }, efforts, answers: ["", "2", "3", "", "", "n", ""] }); // 1 is "leave it to the lead agent"
+  const x = await runSetup({ found: ["codex"], models: { codex: ["gpt-5.5", "gpt-5.6-terra"] }, efforts, answers: ["", "2", "3", "", "", "", "n", ""] }); // 1 is "leave it to the lead agent"
   expect(x.asked.find((a) => a.startsWith("Codex: everyday effort"))).toContain("xhigh");
   expect(x.saved.subscriptions.codex).toMatchObject({ default_model: "gpt-5.5", default_effort: "high" });
 });
@@ -329,7 +329,7 @@ test("setup run by an agent (--yes) asks nothing, takes suggestions, never turns
   expect(x.keys).toEqual([]);
   expect(x.r.skipped.join(" ")).toContain("Ask the user whether to share");
   // A person at a terminal with no key is asked for it first: nothing routr advises works without it.
-  const person = await runSetup({ keyWorks: false, found: ["agy"], answers: ["", "", "", "", "n", ""] });
+  const person = await runSetup({ keyWorks: false, found: ["agy"], answers: ["", "", "", "", "", "n", ""] });
   expect(person.keys).toEqual([1]);
 });
 
@@ -413,11 +413,11 @@ test("setup, guided: offers to set Claude's usage statusline, and sets it only o
   const settings = join(process.env.HOME, ".claude/settings.json");
   rmSync(settings, { force: true });
   // Claude only: model (leave), effort (none listed), hardest, reserve; then the statusline (Enter: yes), telemetry, Save.
-  const yes = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", answers: ["", "", "", "", "", "n", ""] });
+  const yes = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", answers: ["", "", "", "", "", "", "n", ""] });
   expect(yes.asked.some((a) => a.startsWith("Claude Code reports usage only to its statusline"))).toBe(true);
   expect(JSON.parse(readFileSync(settings, "utf8")).statusLine.command).toMatch(/routr statusline$/);
   rmSync(settings, { force: true });
-  const no = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", answers: ["", "", "", "", "n", "n", ""] });
+  const no = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", answers: ["", "", "", "", "", "n", "n", ""] });
   expect(existsSync(settings)).toBe(false);
   expect(no.r.skipped.join(" ")).toContain("Claude statusline left alone");
 });
@@ -447,7 +447,7 @@ test("an agent changing a setting through the real CLI: --show prints the settin
 test("setup, run again: a subscription's settings are a list you come back to after each change, never 'All of these'", async () => {
   const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, default_model: "m" } } };
   // Cursor → Hardest work → strong → (back on Cursor's list) Reserve → 20% → Back → Back → Save and exit.
-  const x = await runSetup({ config, found: ["cursor"], answers: ["", "", "2", "3", "3", "3", "4", "2", "4"] });
+  const x = await runSetup({ config, found: ["cursor"], answers: ["", "", "2", "3", "3", "3", "5", "2", "4"] });
   const lists = x.asked.filter((a) => a.startsWith("Cursor: which setting?"));
   expect(lists).toHaveLength(3); // before the first change, after it, and after the second
   expect(lists[1]).toContain("Hardest work (strong)"); // the new value, shown on the list you come back to
@@ -482,12 +482,57 @@ test("setup fixes from the independent review: each finding stays fixed", async 
   expect(plain.saved.subscriptions.codex.default_effort).toBeUndefined();
 });
 
-test("setup, guided: a seat billed per token with no quota is asked where it goes in the ranking", async () => {
-  // Codex reads as metered: model (leave), effort (none listed), hardest, reserve, then where its billed usage goes (2: with), telemetry, Save.
-  const x = await runSetup({ found: ["codex"], usage: { codex: "metered" }, answers: ["", "", "", "", "2", "n", ""] });
-  expect(x.asked.some((a) => a.startsWith("Codex: where does its billed usage go?"))).toBe(true);
-  expect(x.saved.subscriptions.codex.metered_rank).toBe("with");
+test("setup, guided: a metered seat can be normal use without an assumed budget", async () => {
+  const x = await runSetup({ found: ["codex"], usage: { codex: "metered" }, answers: ["", "", "", "", "1", "n", ""] });
+  expect(x.asked.some((a) => a.startsWith("Codex: how may routr use this account?"))).toBe(true);
+  expect(x.saved.subscriptions.codex.use).toBe("normal");
   expect(x.r.skipped.join(" ")).not.toContain("Ask the user"); // a person's wording, not an agent's
+});
+
+test("account-use flags handle unknown billing and legacy settings without changing other preferences", async () => {
+  const { parseUse } = await import("../src/lib/setup.mjs");
+  expect(parseUse(["--use", "claude=normal", "--use", "codex=fallback"])).toEqual({ claude: "normal", codex: "fallback" });
+  for (const value of ["claude=normal=extra", "claude=free", "nope=normal", "claude"]) expect(() => parseUse(["--use", value])).toThrow("--use takes");
+  const config = { telemetry: false, subscriptions: { claude: { hardest_work: "strong", reserve: 0.2, billing: "metered", metered_rank: "after" }, codex: { hardest_work: "strong", reserve: 0.1, use: "fallback" } } };
+  const x = await runSetup({ config, found: ["claude", "codex"], usage: { claude: "unknown", codex: "metered" }, args: ["--yes", "--use", "claude=normal"] });
+  expect(x.asked).toEqual([]);
+  expect(x.saved.subscriptions.claude).toEqual({ ...config.subscriptions.claude, use: "normal" });
+  expect(x.saved.subscriptions.codex).toEqual(config.subscriptions.codex);
+  const legacy = await runSetup({ config, found: ["claude", "codex"], usage: { codex: "metered" }, args: ["--yes", "--metered", "codex=with"] });
+  expect(legacy.saved.subscriptions.codex).toMatchObject({ use: "normal", metered_rank: "with" });
+  const both = await runSetup({ config, found: ["claude", "codex"], usage: { codex: "metered" }, args: ["--yes", "--metered", "codex=with", "--use", "codex=fallback"] });
+  expect(both.saved.subscriptions.codex.use).toBe("fallback");
+  const show = await runSetup({ config, args: ["--show", "--use", "claude=normal"] });
+  expect(show.r.ok).toBe(false); expect(show.saved).toEqual(config);
+  const signedOut = await runSetup({ config, found: ["codex"], signedOut: ["claude"], args: ["--yes", "--use", "claude=normal"] });
+  expect(signedOut.saved.subscriptions.claude.use).toBe("normal");
+  const forced = await runSetup({ config: x.saved, found: ["claude", "codex"], usage: { claude: "unknown", codex: "metered" }, args: ["--yes", "--force"] });
+  expect(forced.saved.subscriptions.claude).toMatchObject({ billing: "metered", use: "normal", metered_rank: "after" });
+  expect(forced.saved.subscriptions.codex.use).toBe("fallback");
+  const oldWith = { telemetry: false, subscriptions: { codex: { hardest_work: "strong", reserve: 0, metered_rank: "with" } } };
+  const rebuilt = await runSetup({ config: oldWith, found: ["codex"], usage: { codex: "metered" }, args: ["--yes", "--force"] });
+  expect(rebuilt.saved.subscriptions.codex.metered_rank).toBe("with");
+});
+
+test("guided setup offers normal use for unknown billing and fallback for an included account", async () => {
+  const unknown = await runSetup({ found: ["claude"], usage: { claude: "unknown" }, answers: ["", "", "", "", "1", "n", ""] });
+  expect(unknown.saved.subscriptions.claude.use).toBe("normal");
+  const included = await runSetup({ found: ["cursor"], answers: ["", "", "", "", "2", "n", ""] });
+  expect(included.saved.subscriptions.cursor.use).toBe("fallback");
+});
+
+test("guided account-use selection pins the inferred default on existing accounts", async () => {
+  const { accountUse } = await import("../src/lib/config.mjs");
+  const config = { telemetry: false, subscriptions: { claude: { hardest_work: "strong", reserve: 0.2 } } };
+  for (const [usage, answer, use] of [["unknown", "1", "normal"], ["metered", "2", "fallback"]]) {
+    // Change one -> Claude -> Account use (fifth field) -> explicit selection -> back twice -> Save.
+    const x = await runSetup({ config, found: ["claude"], usage: { claude: usage }, answers: ["", "", "5", answer, "b", "b", "4"] });
+    expect(x.saved.subscriptions.claude.use).toBe(use);
+    for (const cls of ["included", "unknown", "metered"]) expect(accountUse(x.saved.subscriptions.claude, cls)).toBe(use);
+    expect(x.r.did.join(" ")).toContain("claude.use set to");
+  }
+  const untouched = await runSetup({ config, found: ["claude"], answers: ["4"] });
+  expect(untouched.saved).toEqual(config);
 });
 
 test("--no-statusline leaves Claude Code's settings alone, even when routr's statusline is missing", async () => {

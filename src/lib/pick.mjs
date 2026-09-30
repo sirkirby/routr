@@ -3,12 +3,11 @@
 // what routr holds back from workers (for the orchestrator and whatever the user runs outside routr) during the REST of
 // the window, so it shrinks as the reset approaches:
 // unused capacity expires at the reset, and holding a full reserve on the last day only wastes it.
-// A METERED pool (billed usage, no quota: an Enterprise seat) has no window, so it has no number. It gets a position
-// instead: after every pool with a quota that still has room, because included usage expires and billed usage does not.
-// `metered_rank: "with"` ranks it by the user's assumed_headroom like the rest. Neither names a price.
+// A metered account has no observed remaining budget. Its use preference determines candidacy, never a made-up quota.
 // The orchestrator chooses; it may know things this cannot (what is already running, what comes next).
 import { LEVELS } from "./questions.mjs";
 import { OFF } from "./wording.mjs";
+import { accountUse } from "./config.mjs";
 
 export function rankSubscriptions(level, usage, c) {
   const ranked = [], excluded = [];
@@ -22,12 +21,11 @@ export function rankSubscriptions(level, usage, c) {
     const live = u?.headroom != null;
     // The class is the shape the harness reported (usage.mjs), or the user's `billing` when the harness cannot show it.
     // A number the caller read itself (`--headroom`) is a window and outranks both.
-    const cls = u?.given ? "included" : s.billing ?? u?.class ?? (live ? "included" : "unknown");
+    const cls = live ? (u.given ? "included" : u.class === "capped" ? "capped" : "included") : s.billing ?? u?.class ?? "unknown";
     const r2 = (x) => Math.round(x * 100) / 100, nowSec = (c.now ?? Date.now()) / 1000;
-    const base = { subscription: name, class: cls, reserve: s.reserve, ...(s.default_model ? { your_default: s.default_model + (s.default_effort ? ` @ ${s.default_effort}` : "") } : {}) };
+    const base = { subscription: name, class: cls, use: accountUse(s, s.billing ?? u?.class ?? cls), reserve: s.reserve, ...(s.default_model ? { your_default: s.default_model + (s.default_effort ? ` @ ${s.default_effort}` : "") } : {}) };
     if (cls === "metered") {
-      const usable = s.metered_rank === "with" ? r2(s.assumed_headroom) : null;
-      ranked.push({ ...base, usable, headroom: usable, usage: usable == null ? "metered" : "assumed", age_sec: u?.ageSec ?? null, note: u?.note ?? "metered: usage is billed, no quota reported" });
+      ranked.push({ ...base, usable: null, headroom: null, usage: "metered", age_sec: u?.ageSec ?? null, note: u?.note ?? "metered: remaining budget is unknown" });
       continue;
     }
     // No local usage source (or no snapshot yet): use the user's assumption and say so, never "full".
@@ -48,11 +46,11 @@ export function rankSubscriptions(level, usage, c) {
   const key = (r) => (r.usable == null ? -0.5 : r.usable > 0 ? r.usable : -1);
   ranked.sort((x, y) => key(y) - key(x));
   const open = ranked.filter((r) => r.usable > 0), metered = ranked.filter((r) => r.usable == null);
-  const first = open[0] ?? metered[0] ?? null;
+  // Candidate lists express permission, not suitability or a ranking. The lead chooses model/effort fit first.
+  const candidates = Object.fromEntries(["normal", "fallback"].map((use) => [use,
+    [...open, ...metered].filter((r) => r.use === use).map((r) => r.subscription).sort()]));
   const note = !ranked.length ? `no configured subscription takes ${level} work`
-    : !first ? `every subscription that takes ${level} work is at its reserve: hold the work or ask the user`
-    : open.length ? `${open[0].subscription} has the most usable headroom`
-    : ranked.length === metered.length ? `${first.subscription} is metered: every token there is billed`
-    : `every subscription with a quota that takes ${level} work is at its reserve; ${first.subscription} is metered: every token there is billed`;
-  return { most_room: first?.subscription ?? null, ranked, excluded, note };
+    : !open.length && !metered.length ? `every subscription that takes ${level} work is at its reserve: hold the work or ask the user`
+    : `${open.length ? `${open[0].subscription} has the most usable headroom among accounts with a number` : "remaining capacity is unknown"}. Choose a suitable model and effort from normal candidates first; use fallback when no normal candidate suitably takes the work. Metered budget is unknown.`;
+  return { most_room: open[0]?.subscription ?? null, candidates, ranked, excluded, note };
 }

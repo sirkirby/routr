@@ -53,18 +53,19 @@ risks being committed. Without a key routr still answers, but only with the fall
 
 ## 3. Config
 
-Do not write the file by hand. For each subscription, settle three things with the user: their everyday model there
+Use the setup flags. For each subscription, settle their everyday model there
 (doctor prints each harness's live list; Claude Code's is its aliases, and its help says it also takes a model's full name), the hardest work they will send it (`basic`, `standard`, or `strong`; say
 what each means, below), and the reserve: the share routr holds back from workers, so the orchestrator and anything they run outside routr
-still have room (0% holds nothing back). Offer the suggestion setup prints for the last
-two; the user can take it. Then run:
+still have room (0% holds nothing back). Also settle account use: `normal` for everyday work, including funded
+enterprise usage, or `fallback` when normal accounts cannot suitably take the work. Offer setup's work-level and
+reserve suggestions. Existing choices stand until the user changes them. Then run:
 
-    routr setup --yes --model claude=<id> --hardest cursor=standard --reserve claude=25% [--metered codex=after|with] ...
+    routr setup --yes --model claude=<id> --hardest cursor=standard --reserve claude=25% --use codex=normal ...
 
 A person can instead run `routr setup` alone in a terminal: it is a guided screen. The first time it asks which
 subscriptions routr may use, then each one's model (from the harness's live list, typed to filter; for Claude Code a full model name that is not
 listed is offered "as typed", chosen by its number in accessible mode), effort, hardest
-work, and reserve, then lists the changes with Save and exit as the default (nothing is written before it). Run again,
+work, reserve, and account use, then lists the changes with Save and exit as the default (nothing is written before it). Run again,
 it shows what is set and a menu to change one thing, turn a subscription on or off, or walk through everything, then
 Save and exit or Exit without saving. Arrow keys choose, Esc goes back,
 Ctrl+C stops without writing. `ACCESSIBLE=1` asks the same questions as numbered lines, for a screen reader. Suggest it
@@ -78,7 +79,7 @@ harnesses found since, fills a missing `hardest_work` or `reserve`, and applies 
 else alone; `--force` rewrites it (the old file is kept as `config.json.bak`). **To change a setting later**, run
 setup with just that flag, for example `routr setup --yes --hardest cursor=strong`. A subscription that reads as
 metered when first written (billed per token, no quota: a ChatGPT Enterprise seat) gets `metered_rank` written out,
-`after` unless `--metered <name>=with` is passed or the person chooses it on the setup screen. Every value is
+`after` unless `--metered <name>=with` is passed. An explicit `use` takes precedence. Every value is
 the user's preference, and none describes a model. `routr doctor` flags a setting that is missing or invalid, with
 the command that fixes it.
 
@@ -98,17 +99,20 @@ the command that fixes it.
     nothing is saved to the user's Kiro settings).
   - `assumed_headroom`: used only when nothing better is known. Claude, Codex, and Antigravity are read live; Cursor's
     shows only in its own `/usage` screen and Kiro's `/usage` takes about 10 s, so routr reads those two in the
-    background about once per working session (the first time during setup). The advice marks the rest `assumed`. `routr usage` shows what routr sees of each one.
+    background about once per working session (the first time during setup). The advice marks the rest `assumed`.
+    Metered remaining budget stays unknown, even with legacy `metered_rank: "with"`. `routr usage` shows each reading.
   - `billing`: `included` or `metered`, only when the harness cannot show which it is. A Codex Enterprise seat on
     flexible pricing is detected (measured: no windows, unlimited credits). Claude is never detected: a plan with no
     quota (usage-based Enterprise, an API key) sends the statusline no windows, and so may a plan routr has not seen
     yet, so the advice says "no usage windows" and leaves the class to you. `routr doctor` lists it as a next step
     when Claude has answered a prompt and still sent no windows. Set `"billing": "metered"` for such a Claude seat
     by hand; `"billing": "included"` says the seat has a quota and clears the same step. Leave it out otherwise.
-  - `metered_rank`: where a metered seat (billed per token, no quota) goes in the ranking. `after` (default): after
-    every subscription that still has room, so it takes the overflow, because included usage expires and billed
-    usage does not. `with`: ranked with the rest by its `assumed_headroom`. A cap the vendor enforces is read as a
-    window and needs neither.
+  - `use`: `normal` or `fallback`, independent of billing. Normal accounts are considered for suitable model/effort
+    options before comparing headroom. Fallback is considered when none suitably takes the task. This preference
+    does not infer or enforce a shared prepaid balance or personal allowance. Set it with `--use name=normal|fallback`.
+  - `metered_rank`: legacy preference, applied only when `use` is absent. Metered `after` (default) means fallback;
+    `with` means normal. Nonmetered accounts default to normal. The legacy `--metered` flag also sets `use`; explicit
+    `--use` wins if both flags are given. Actual observed caps remain windows, including with a billing override.
 - `prefer`: the user's standing preference per kind of work (`implement`, `debug`, `refactor`, `review`, `research`,
   `test_writing`, `docs`), for example `"research": "strong"`. Shown to agents as advice, never forced.
 - `sure_at` (0.8), `risk_above` (0.75), `fallback_level` (`standard`): leave at the defaults unless asked.
@@ -135,7 +139,8 @@ can be combined with the others in one run.
 | stop using a subscription, keeping its settings | `routr setup --yes --disable agy` |
 | use it again | `routr setup --yes --enable agy` |
 | add a harness installed since | `routr setup --yes` (it adds every harness that is installed and signed in) |
-| place a billed seat in the ranking | `routr setup --yes --metered codex=after` or `=with` |
+| use a funded account for everyday work | `routr setup --yes --use codex=normal` |
+| keep an account for fallback | `routr setup --yes --use codex=fallback` |
 | share anonymous outcomes, or stop | `routr telemetry on` / `routr telemetry off`: only when the user says so |
 | let Claude Code's usage be read | `routr setup --yes` sets the statusline when there is none (`--no-statusline` leaves it) |
 

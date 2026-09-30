@@ -3,7 +3,7 @@
 // `routr setup` (lib/setup.mjs) does, from the same inspection.
 import { existsSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
-import { CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
+import { accountUse, CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, TAKES_EFFORT } from "./harnesses.mjs";
 import { signInHint } from "./signin.mjs";
 import { jevModel, KEY_FILES, loadKey, ping } from "./jev.mjs";
@@ -131,7 +131,8 @@ export async function inspect({ configPath, quiet } = {}) {
     const h = r.harnesses[n];
     if (!h?.installed) continue;
     if (sub.billing) h.usage = h.usage_class === "unknown" ? `${sub.billing} by your setting (billing: ${sub.billing})` : `${h.usage} · billing: ${sub.billing} by your setting`;
-    if ((sub.billing ?? h.usage_class) === "metered") h.usage += sub.metered_rank === "with" ? " · ranked with your subscriptions by assumed_headroom (metered_rank: with)" : " · ranked after your subscriptions (metered_rank: after)";
+    h.account_use = accountUse(sub, sub.billing ?? h.usage_class);
+    h.usage += ` · ${h.account_use} use${sub.use ? "" : " (legacy default; set with --use)"}`;
   }
   // The one moment a default needs the user's attention: the harness no longer offers it.
   for (const [n, sub] of Object.entries(config.subscriptions)) {

@@ -28,14 +28,17 @@ readings.
 First, the brief: if `states_check` or `standalone` reads `no`, fix the brief and ask again. A worker cannot ask you
 questions.
 
-Then decide three things yourself, from `facts`, `notes`, `subscriptions.ranked`, and what only you know (what is
+Then decide three things yourself, from `facts`, `notes`, `subscriptions.candidates`, `subscriptions.ranked`, and what only you know (what is
 already running in other panes, what comes next, which harness suits this repository):
 
 1. **Intelligence and reasoning** the work needs (see "Deciding" in `SKILL.md`).
-2. **Subscription**: spread load. Prefer one with plenty of usable headroom over your own when both can do the work.
-3. **Model and effort** on that subscription: start from `your_default`, the user's everyday model there, and move up
-   or down to match. With no default set, list the harness's models (see `harnesses.md`) and choose. Never launch a
-   harness without naming the model: its built-in default may be its largest.
+2. **Suitable model and effort options** on `candidates.normal`: start from each account's `your_default` and move
+   up or down to fit the work. With no default set, list its models (see `harnesses.md`). If no normal candidate can
+   suitably take the work, consider `candidates.fallback`; explain the missing capability or capacity.
+3. **Account** among those suitable options: compare usable capacity and its age, the user's preferences, and any
+   known time or spending constraints. `most_room` is a capacity observation, not a model choice. Metered budget is
+   unknown; normal use means the user permits everyday use, not unlimited spend. Never spend a reserve. Name the
+   model and effort explicitly when launching.
 
 Usage moves while you work, so ask again before every launch; never reuse an earlier answer.
 
@@ -182,17 +185,34 @@ ledger.
     routr record --advice <file> --subscription <s> --model <m> --effort <e> \
         [--level <the level you settled on, if not the advised one>] --verdict <done|partial|blocked> \
         --check <pass|fail|none> [--report <file>] [--subagent "<subtask> → <level> → <model>"] \
-        [--attempts <n>] [--seconds <n>] [--note "<why you went against the advice, or what went wrong>"]
+        [--attempts <n>] [--seconds <n>] [--cause <cause>] [--run-id <id>] \
+        [--note "<reasons for the model, effort and account; what happened>"]
 
 `--effort` is what you launched with. Write `default` if you passed none: routr records the effort the run had, and
 says where it came from in `chose.effort_from`: `model id` on Cursor and Antigravity, whose ids carry it
 (`grok-4.7-high`); `config default`, your configured `default_effort`, on a harness that takes effort separately; or
 `given`, what you wrote, kept as it is when neither says (no default set, or no effort in the id).
 `--verdict` is the worker's own VERDICT line. `--check` is your verification. Pass the saved report with `--report` so
-the worker's subagent choices are recorded too. `--attempts` counts the tries it took (1 means accepted first time);
-when you escalated, record the level and model that finally delivered. Record failures and cut-off workers too: they are
-what shows a level is too low. The ledger never stores the brief, only its hash and length.
-`routr assess` tells the user what the ledger says about their own settings. If the user turned telemetry on, recorded
+the worker's subagent choices are recorded too. `--attempts` counts tries by this worker; omit when unknown.
+`--seconds` is elapsed time from handoff through your verification, including waiting and corrections, or until the
+run stops. Omit it when unknown. A pass means you verified and accepted the result.
+
+Classify extra work with repeatable `--cause`: `execution` for correcting work against the agreed brief (including
+fixes you made yourself); `brief` for missing or ambiguous context; `scope` for requirements added later; `review`
+for a successful review finding issues and checking their fixes; `launch` for trouble starting or delivering the
+prompt; `unknown` when the cause is not established. Several may apply. Use `--cause none` alone when no extra work
+occurred. Attempts alone never establish model failure.
+
+Record each worker separately, including failed launches and workers replaced during escalation. Each call returns
+a new `run_id`, even when workers share advice. To revise the outcome for that same worker, pass its returned
+`--run-id` and the same advice, project, subscription, model, effort and level, with the complete updated outcome.
+Omitted `--note`, `--report` and `--subagent` preserve the existing note and subagent choices. To replace them, supply
+the new note or report/subagent list; an empty note clears the note, and `--subagent none` clears the list.
+`assess` counts the latest revision once. It keeps old rows without run IDs separate. Only `done`, `check pass`,
+`attempts 1` and `cause none` count as accepted first pass. The ledger stores a brief hash and length, never its text.
+
+`routr assess` reports verified acceptance, causes and capacity without automatically recommending a different model
+from attempt counts. Run IDs and causes stay local. If the user turned telemetry on, recorded
 rows also reach routr's maintainers (anonymous, never text; `routr share` shows exactly what).
 When you finish a long run, mention `routr assess`, and that `routr feedback "<text>"` sends the maintainers a note.
 

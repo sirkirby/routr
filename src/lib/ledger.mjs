@@ -1,7 +1,7 @@
 // The run ledger: one JSON line per piece of work handed out: what routr advised, what the agent chose, how it turned
 // out. It is how routr's questions get judged against real work instead of dedicated experiments.
 // `routr record` is the only command that writes the ledger; the advice commands stay side-effect free.
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { HARNESSES } from "./harnesses.mjs";
@@ -95,20 +95,38 @@ export function resolveEffort({ subscription, model, effort }, config = null) {
   return { effort: effort ?? null, effort_from: "given" };
 }
 
-export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, note, subagents, project }, config = null) {
+export const OUTCOME_CAUSES = ["execution", "brief", "scope", "review", "launch", "unknown"];
+const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, causes, run_id, note, subagents, project }, config = null) {
+  if (run_id != null && !RUN_ID.test(run_id)) throw new Error("--run-id must be an existing run_id returned by record");
+  if (attempts != null && (!/^[1-9]\d*$/.test(String(attempts)) || !Number.isSafeInteger(+attempts))) throw new Error("--attempts must be a positive whole number; omit it when unknown");
+  if (seconds != null && (String(seconds).trim() === "" || !Number.isFinite(+seconds) || +seconds < 0)) throw new Error("--seconds must be a nonnegative duration; omit it when unknown");
+  if (causes != null && (!Array.isArray(causes) || causes.some((c) => ![...OUTCOME_CAUSES, "none"].includes(c)) || (causes.includes("none") && causes.length !== 1))) throw new Error(`--cause takes ${OUTCOME_CAUSES.join("|")}|none; none must be used alone`);
   return {
-    ts: new Date().toISOString(), project: project ?? projectName(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set, jev_model: advice.jev_model ?? null, // the version that answered: a new Jev is compared on real work
+    ts: new Date().toISOString(), run_id: run_id ?? randomUUID(), project: project ?? projectName(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set, jev_model: advice.jev_model ?? null, // the version that answered: a new Jev is compared on real work
     brief_sha: advice.brief_sha, brief_chars: advice.brief_chars, // never the brief itself: briefs can be private
     advised: { level: advice.level, sure: advice.sure, between: advice.between ?? null, work_type: advice.work_type, high_risk: advice.high_risk, fallback: !!advice.fallback,
       facts: Object.fromEntries(Object.entries(advice.facts ?? {}).map(([k, f]) => [k, f.p])) },
     headroom: Object.fromEntries((advice.subscriptions?.ranked ?? []).map((r) => [r.subscription, { usable: r.usable, usage: r.usage }])),
     chose: { subscription: subscription ?? null, model: model ?? null, ...resolveEffort({ subscription, model, effort }, config), level: LEVELS.includes(level) ? level : advice.level },
-    outcome: { verdict: verdict ?? "unknown", check: check ?? "none", seconds: seconds ? +seconds : null, attempts: attempts ? +attempts : 1, note: note ?? null },
-    subagents: (subagents ?? []).map(parseSubagent).filter(Boolean),
+    outcome: { verdict: verdict ?? "unknown", check: check ?? "none", seconds: seconds == null ? null : +seconds, attempts: attempts == null ? null : +attempts, causes: causes?.length ? [...new Set(causes)].filter((c) => c !== "none") : null,
+      ...(run_id && note === undefined ? {} : { note: note ?? null }) },
+    ...(run_id && subagents === undefined ? {} : { subagents: (subagents ?? []).map(parseSubagent).filter(Boolean) }),
   };
 }
 
-export function append(entry, path = LEDGER_PATH) { mkdirSync(dirname(path), { recursive: true }); appendFileSync(path, JSON.stringify(entry) + "\n"); }
+export function append(entry, path = LEDGER_PATH, { revision = false } = {}) {
+  if (revision) {
+    const prior = read(path).findLast((e) => e.run_id === entry.run_id);
+    if (!prior) throw new Error("--run-id was not found in this ledger; omit it to record a new worker run");
+    if (["id", "brief_sha", "project"].some((k) => prior[k] !== entry[k]) || ["subscription", "model", "effort", "level"].some((k) => prior.chose?.[k] !== entry.chose?.[k]))
+      throw new Error("--run-id belongs to different work or a different worker choice; omit it for a new run");
+    // Outcome revisions keep stable choice evidence unless the caller explicitly replaces it.
+    entry = { ...entry, subagents: entry.subagents ?? prior.subagents ?? [],
+      outcome: { ...entry.outcome, note: entry.outcome.note === undefined ? prior.outcome.note ?? null : entry.outcome.note } };
+  }
+  mkdirSync(dirname(path), { recursive: true }); appendFileSync(path, JSON.stringify(entry) + "\n");
+}
 
 export function read(path = LEDGER_PATH) {
   if (!existsSync(path)) return [];
@@ -116,63 +134,57 @@ export function read(path = LEDGER_PATH) {
 }
 
 const MIN = 5; // below this many runs a rate is an anecdote, and the report says so
-const good = (e) => e.outcome.verdict === "done" && e.outcome.check !== "fail";
-const firstTime = (e) => good(e) && (e.outcome.attempts ?? 1) === 1;
+const good = (e) => e.outcome.verdict === "done" && e.outcome.check === "pass";
+const firstTime = (e) => good(e) && e.outcome.attempts === 1 && Array.isArray(e.outcome.causes) && !e.outcome.causes.length;
 const idx = (l) => LEVELS.indexOf(l);
 const few = (n) => (n < MIN ? "   (too few to read)" : "");
 
-// `routr assess`: what YOUR ledger says about YOUR setup. A user cannot change routr's questions, only their own
-// settings, so every finding names the setting it bears on and nothing is read into fewer than MIN runs.
+// Only explicit run identities join revisions. Advice ids and brief hashes can be shared by different workers.
+export function latestRuns(entries) {
+  const out = [], positions = new Map();
+  for (const e of entries) {
+    if (RUN_ID.test(e.run_id ?? "") && positions.has(e.run_id)) out[positions.get(e.run_id)] = e;
+    else { if (RUN_ID.test(e.run_id ?? "")) positions.set(e.run_id, out.length); out.push(e); }
+  }
+  return out;
+}
+
+// Attempts describe activity, not the cause of trouble or comparative model quality. Keep causes explicit.
 // Pure: entries (+ the user's config, when there is one) → report text.
 export function assess(entries, config = null) {
   if (!entries.length) return "The ledger is empty. Record work with `routr record` (see references/orchestrator.md).";
+  const rowCount = entries.length;
+  entries = latestRuns(entries);
   const out = [], suggestions = [];
-  const delivered = entries.filter(good), rework = entries.filter((e) => (e.outcome.attempts ?? 1) > 1);
-  out.push(`${entries.length} recorded pieces of work · ${entries.filter(firstTime).length} delivered first time · ${rework.length} needed rework · ${entries.length - delivered.length} not delivered`);
+  const delivered = entries.filter(good), corrected = (e) => e.outcome.causes?.includes("execution");
+  out.push(`${entries.length} recorded runs (${rowCount} rows) · ${delivered.length} verified accepted · ${entries.filter(firstTime).length} accepted first pass · ${entries.filter(corrected).length} execution corrections · ${entries.length - delivered.length} not verified accepted`);
+  out.push("First pass requires done, check pass, attempts 1 and cause none. Missing attempts or causes stay unknown. Execution corrections include fixes made by the lead; review follow-ups and launch trouble are separate.");
 
   // Where the work went, and how it did there: this is what `hardest_work` and `default_model` are about.
-  out.push("\nwhere your work went            runs  first time  rework  not delivered");
+  out.push("\nwhere your work went            runs  accepted  execution corrections  not verified accepted");
   const groups = {};
   for (const e of entries) (groups[`${e.chose.subscription ?? "?"} · ${e.chose.model ?? "?"}`] ??= []).push(e);
   for (const [k, g] of Object.entries(groups).sort((x, y) => y[1].length - x[1].length))
-    out.push(`  ${k.padEnd(30)} ${String(g.length).padStart(3)}  ${String(g.filter(firstTime).length).padStart(9)}  ${String(g.filter((e) => good(e) && !firstTime(e)).length).padStart(6)}  ${String(g.filter((e) => !good(e)).length).padStart(13)}${few(g.length)}`);
+    out.push(`  ${k.padEnd(30)} ${String(g.length).padStart(3)}  ${String(g.filter(good).length).padStart(8)}  ${String(g.filter(corrected).length).padStart(21)}  ${String(g.filter((e) => !good(e)).length).padStart(21)}${few(g.length)}`);
 
   const projects = [...new Set(entries.map((e) => e.project ?? "(unlabelled)"))];
   if (projects.length > 1) {
-    out.push("\nby project                      runs  first time  rework  not delivered");
+    out.push("\nby project                      runs  accepted  execution corrections  not verified accepted");
     for (const pr of projects) {
       const g = entries.filter((e) => (e.project ?? "(unlabelled)") === pr);
-      out.push(`  ${pr.padEnd(30)} ${String(g.length).padStart(3)}  ${String(g.filter(firstTime).length).padStart(9)}  ${String(g.filter((e) => good(e) && !firstTime(e)).length).padStart(6)}  ${String(g.filter((e) => !good(e)).length).padStart(13)}${few(g.length)}`);
+      out.push(`  ${pr.padEnd(30)} ${String(g.length).padStart(3)}  ${String(g.filter(good).length).padStart(8)}  ${String(g.filter(corrected).length).padStart(21)}  ${String(g.filter((e) => !good(e)).length).padStart(21)}${few(g.length)}`);
     }
   }
-  out.push("\nlevel chosen   runs   delivered (done, check not failed)");
+  out.push("\nlevel chosen   runs   verified accepted (done, check pass)");
   for (const L of LEVELS) {
     const g = entries.filter((e) => e.chose.level === L);
     if (g.length) out.push(`  ${L.padEnd(11)} ${String(g.length).padStart(4)}   ${g.filter(good).length}/${g.length}${few(g.length)}`);
   }
-  if (rework.length) out.push(`\nrework: ${rework.length}/${entries.length} pieces needed more than one attempt (by level chosen: ${LEVELS.map((L) => `${L} ${rework.filter((e) => e.chose.level === L).length}`).join(", ")})`);
+  out.push(`\nattempts: ${entries.filter((e) => e.outcome.attempts > 1).length} runs with multiple attempts; ${entries.filter((e) => e.outcome.attempts == null).length} unknown. Multiple attempts alone do not establish execution corrections.`);
+  out.push("causes (a run may have several): " + OUTCOME_CAUSES.map((c) => `${c} ${entries.filter((e) => c === "unknown" ? !e.outcome.causes || e.outcome.causes.includes(c) : e.outcome.causes?.includes(c)).length}`).join(", "));
   out.push(`\nroutr was torn between two levels on ${entries.filter((e) => !e.advised.sure).length}/${entries.length}; your agents settled on a different level than advised on ${entries.filter((e) => e.chose.level !== e.advised.level).length}.`);
 
-  // Each subscription at the hardest work the user allows it: struggling there bears on `hardest_work`.
-  for (const [name, sub] of Object.entries(config?.subscriptions ?? {})) {
-    const top = entries.filter((e) => e.chose.subscription === name && e.chose.level === sub.hardest_work);
-    const trouble = top.filter((e) => !firstTime(e));
-    if (top.length >= MIN && trouble.length / top.length >= 0.4)
-      suggestions.push(`subscriptions.${name}.hardest_work is "${sub.hardest_work}": ${trouble.length} of ${top.length} pieces at that level needed rework or were not delivered. Consider lowering it, or a stronger default_model there.`);
-    const all = entries.filter((e) => e.chose.subscription === name);
-    if (all.length >= MIN && all.every(firstTime) && idx(sub.hardest_work) < 2)
-      suggestions.push(`subscriptions.${name}: all ${all.length} pieces delivered first time. If you trust it with more, raise hardest_work above "${sub.hardest_work}".`);
-  }
-  // A standing preference that agents keep going below, with the work delivered anyway, is costing usage for nothing.
-  for (const [kind, want] of Object.entries(config?.prefer ?? {})) {
-    const ofKind = entries.filter((e) => e.advised.work_type === kind);
-    const below = ofKind.filter((e) => idx(e.chose.level) < idx(want));
-    if (below.length >= MIN && below.filter(good).length / below.length >= 0.8)
-      suggestions.push(`prefer.${kind} is "${want}": agents went lower ${below.length} times and ${below.filter(good).length} delivered. Consider lowering or removing that preference.`);
-    const lifted = ofKind.filter((e) => e.chose.level === want && idx(e.advised.level) < idx(want));
-    if (lifted.length >= MIN && lifted.filter((e) => !firstTime(e)).length / lifted.length >= 0.4)
-      suggestions.push(`prefer.${kind} is "${want}": it raised ${lifted.length} pieces, and ${lifted.filter((e) => !firstTime(e)).length} still needed rework or failed. The preference is earning its keep.`);
-  }
+  out.push("\nThese outcomes are observations of different tasks, not a model comparison. Review the task and correction evidence before changing model, effort or work-level preferences.");
 
   const allSubagents = entries.flatMap((e) => e.subagents ?? []);
   if (allSubagents.length) {
@@ -210,12 +222,16 @@ export function assess(entries, config = null) {
 // For the people tuning routr's questions (the lab), not for a user's report: where does the ADVISED level look wrong?
 // Nothing in this repository calls it: the private workbench imports it, so the review reads rows exactly as routr writes them.
 export function levelReview(entries) {
+  entries = latestRuns(entries);
   const flags = [];
+  // The stricter verified-acceptance rule must not turn an unchecked result into a known failure.
+  const failed = (e) => e.outcome.check === "fail" || ["partial", "blocked"].includes(e.outcome.verdict);
+  const evaluated = entries.filter((e) => good(e) || failed(e));
   for (const L of LEVELS) {
-    const at = entries.filter((e) => e.chose.level === L && e.advised.level === L);
-    const failed = at.filter((e) => !good(e));
-    if (at.length >= MIN && failed.length / at.length >= 0.3) flags.push(`TOO LOW?  ${L}: ${failed.length}/${at.length} pieces advised and run at ${L} did not deliver. Common facts: ${topFacts(failed)}`);
-    const lower = entries.filter((e) => e.advised.level === L && idx(e.chose.level) < idx(L));
+    const at = evaluated.filter((e) => e.chose.level === L && e.advised.level === L);
+    const failures = at.filter(failed);
+    if (at.length >= MIN && failures.length / at.length >= 0.3) flags.push(`TOO LOW?  ${L}: ${failures.length}/${at.length} pieces advised and run at ${L} explicitly failed verification or remained unfinished. Common facts: ${topFacts(failures)}`);
+    const lower = evaluated.filter((e) => e.advised.level === L && idx(e.chose.level) < idx(L));
     if (lower.length >= MIN && lower.filter(good).length / lower.length >= 0.8) flags.push(`TOO HIGH? ${L}: agents went lower ${lower.length} times and ${lower.filter(good).length} delivered anyway.`);
     const higher = entries.filter((e) => e.advised.level === L && idx(e.chose.level) > idx(L));
     if (higher.length >= MIN) flags.push(`DISAGREED UP ${L}: agents went higher ${higher.length} times. Common facts: ${topFacts(higher)}`);

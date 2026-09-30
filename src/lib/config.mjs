@@ -15,12 +15,13 @@ export const DEFAULTS = {
   telemetry: false,            // opt-in: share anonymous outcomes (never text) once a day to help tune routr; docs/telemetry.md
   subscriptions: {},
 };
-// `billing` overrides what the usage reader can tell (`included` or `metered`); it is for seats whose harness reports
-// nothing, such as Claude usage-based Enterprise. `metered_rank` places a metered pool: `after` every pool with a quota
-// that still has room (the default: included usage expires, billed usage does not), or `with` the rest by assumed_headroom.
+// `billing` fills a gap when the harness reports no capacity; a measured cap always counts.
+// `use` is independent of billing. Absent it, keep the legacy metered after/with preference without inventing capacity.
 // `enabled: false` turns a subscription off without forgetting its settings: routr gives it no work until it is on again.
-export const SUB_DEFAULTS = { enabled: true, hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after" };
+export const SUB_DEFAULTS = { enabled: true, hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after", use: null };
 const BILLING = ["included", "metered"], METERED_RANK = ["after", "with"];
+export const ACCOUNT_USE = ["normal", "fallback"];
+export const accountUse = (s, cls) => s.use ?? (cls === "metered" && s.metered_rank !== "with" ? "fallback" : "normal");
 const isLevel = (v) => LEVELS.includes(v);
 
 // Never throws: a missing or broken config means defaults plus a note, so the router still answers.
@@ -47,7 +48,7 @@ export function loadConfig(path = CONFIG_PATH) {
     const validReserve = typeof s?.reserve === "number" && s.reserve >= 0 && s.reserve <= 1;
     if (s?.reserve === undefined) notes.push(`${RESERVE.unset(name)}. ${RESERVE.choose(name)}`);
     else if (!validReserve) notes.push(`${RESERVE.invalid(name, s.reserve)}. ${RESERVE.choose(name)}`);
-    const oneOf = (k, allowed, fallback) => { const v = s?.[k]; if (v === undefined || v === null) return fallback; if (allowed.includes(v)) return v; notes.push(`subscriptions.${name}.${k}: ${JSON.stringify(v)} is not one of ${allowed.join(", ")}, using ${fallback ?? "the harness's own reading"}`); return fallback; };
+    const oneOf = (k, allowed, fallback) => { const v = s?.[k]; if (v === undefined || v === null) return fallback; if (allowed.includes(v)) return v; notes.push(`subscriptions.${name}.${k}: ${JSON.stringify(v)} is not one of ${allowed.join(", ")}, using ${fallback ?? (k === "use" ? "the legacy account-use preference" : "the harness's own reading")}`); return fallback; };
     if (s?.enabled !== undefined && typeof s.enabled !== "boolean") notes.push(`subscriptions.${name}.enabled: ${JSON.stringify(s.enabled)} is not true or false, so it stays on`);
     config.subscriptions[name] = {
       enabled: s?.enabled !== false,
@@ -59,6 +60,7 @@ export function loadConfig(path = CONFIG_PATH) {
       default_effort: typeof s?.default_effort === "string" ? s.default_effort : null,
       billing: oneOf("billing", BILLING, SUB_DEFAULTS.billing),
       metered_rank: oneOf("metered_rank", METERED_RANK, SUB_DEFAULTS.metered_rank),
+      use: oneOf("use", ACCOUNT_USE, SUB_DEFAULTS.use),
     };
   }
   return { config, notes };
