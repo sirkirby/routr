@@ -76,7 +76,7 @@ if (acting(argv)) process.exit(await ACT[argv[0] === "doctor" ? "setup" : argv[0
 // `take` removes the first `name <value>` from `argv` and returns the value; `takeAll` every one.
 // Keep the raw level count: a missing global value can otherwise consume --level before usage sees it, even when
 // globals precede the command. Other commands retain their existing value/brief parsing.
-const levelFlags = argv.filter((word) => word === "--level").length;
+const levelFlags = argv.filter((word) => /^--level(?:=|$)/.test(word)).length;
 const take = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv.splice(i, 2)[1] : undefined; };
 const takeAll = (name) => { const r = []; while (argv.includes(name)) r.push(take(name)); return r; };
 const configPath = take("--config");
@@ -86,7 +86,7 @@ const configPath = take("--config");
 const { given, notes: inputNotes } = (await import("./lib/commands.mjs")).parseHeadroom(takeAll("--headroom"));
 const withNotes = (r) => (inputNotes.length && r && typeof r === "object" ? { ...r, input_notes: inputNotes } : r);
 const [mode, ...rest] = argv;
-if (mode === "usage" && levelFlags !== rest.filter((word) => word === "--level").length) {
+if (mode === "usage" && levelFlags !== rest.filter((word) => /^--level(?:=|$)/.test(word)).length) {
   print({ ok: false, error: "usage: --level cannot be a value for --config or --headroom; eligibility was not refreshed" });
   process.exit(0);
 }

@@ -138,6 +138,7 @@ test("usage level CLI fails open and keeps headroom overrides and default behavi
     ["cursor", "--headroom", "--level"], ["kiro", "--config", "--level"],
     ["--headroom", "--level", "--level", "strong"], ["--config", "--level", "--level", "strong"],
     ["cursor", "--headroom", "--level", "standard"], ["kiro", "--config", "--level", "standard"],
+    ["cursor", "--headroom", "--level=strong"], ["kiro", "--config", "--level="],
   ]) {
     const invalid = invokeRaw(...words);
     expect(invalid.ok).toBe(false);
@@ -147,6 +148,7 @@ test("usage level CLI fails open and keeps headroom overrides and default behavi
     ["--config", "--level", "usage", "cursor"], ["--headroom", "--level", "usage", "kiro"],
     ["--headroom", "codex=90%", "usage", "cursor", "--config", "--level"],
     ["--config", config, "--headroom", "--level", "usage", "--level", "strong"],
+    ["--config", "--level=basic", "usage", "kiro"], ["--headroom", "--level=strong", "usage", "--level", "standard"],
   ]) {
     const invalid = invokeArgs(...words);
     expect(invalid.ok).toBe(false);
