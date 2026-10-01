@@ -116,12 +116,13 @@ test("usage rejects invalid level combinations before any usage read or named re
 test("usage level CLI fails open and keeps headroom overrides and default behavior", () => {
   const home = scratch("usage-level-cli"), config = join(home, "config.json");
   writeFileSync(config, JSON.stringify(cfg()));
-  const invokeRaw = (...args) => {
-    const r = Bun.spawnSync([process.execPath, SCRIPT, "usage", ...args], { env: cliEnv(home, { PATH: home }) });
+  const invokeArgs = (...args) => {
+    const r = Bun.spawnSync([process.execPath, SCRIPT, ...args], { env: cliEnv(home, { PATH: home }) });
     expect(r.exitCode).toBe(0);
     expect(r.stderr.toString()).toBe("");
     return JSON.parse(r.stdout.toString());
   };
+  const invokeRaw = (...args) => invokeArgs("usage", ...args);
   const invoke = (...args) => invokeRaw("--config", config, ...args);
   expect(invoke()).not.toHaveProperty("level");
   const r = invoke("--level", "strong", "--headroom", "codex=90%", "--json");
@@ -142,6 +143,16 @@ test("usage level CLI fails open and keeps headroom overrides and default behavi
     expect(invalid.ok).toBe(false);
     expect(invalid.error).toStartWith("usage: --level");
   }
+  for (const words of [
+    ["--config", "--level", "usage", "cursor"], ["--headroom", "--level", "usage", "kiro"],
+    ["--headroom", "codex=90%", "usage", "cursor", "--config", "--level"],
+    ["--config", config, "--headroom", "--level", "usage", "--level", "strong"],
+  ]) {
+    const invalid = invokeArgs(...words);
+    expect(invalid.ok).toBe(false);
+    expect(invalid.error).toStartWith("usage: --level");
+  }
+  expect(invokeArgs("--config", config, "--headroom", "codex=90%", "usage", "--level", "strong")).toMatchObject({ ok: true, level: "strong" });
 });
 
 const advice = { id: "same-advice", brief_sha: "abc", level: "standard", mode: "dispatch", facts: {} };
