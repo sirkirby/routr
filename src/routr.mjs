@@ -73,8 +73,13 @@ if (argv[0] === "update") process.exit(await ACT.update(argv.slice(1)));
 if (acting(argv)) process.exit(await ACT[argv[0] === "doctor" ? "setup" : argv[0]](argv.slice(Object.hasOwn(WITH_WORD, argv[0]) ? 2 : 1)));
 
 // The advice and file commands. `--config` and `--headroom` may stand anywhere on the line, as they always could.
-// `take` removes the first `name <value>` from `argv` and returns the value; `takeAll` every one.
-const take = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv.splice(i, 2)[1] : undefined; };
+// `take` removes the first `name <value>` from `argv` and returns the value; `takeAll` every one. On usage, a missing
+// global option value must leave the next flag visible: swallowing --level could bypass its named-refresh guard.
+const take = (name) => {
+  const i = argv.indexOf(name);
+  const count = argv[0] === "usage" && argv[i + 1]?.startsWith("--") ? 1 : 2;
+  return i >= 0 ? argv.splice(i, count)[1] : undefined;
+};
 const takeAll = (name) => { const r = []; while (argv.includes(name)) r.push(take(name)); return r; };
 const configPath = take("--config");
 // --headroom cursor=0.97 : usage the caller read itself (repeatable); it overrides any reading

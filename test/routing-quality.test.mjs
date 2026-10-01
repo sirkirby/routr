@@ -116,12 +116,13 @@ test("usage rejects invalid level combinations before any usage read or named re
 test("usage level CLI fails open and keeps headroom overrides and default behavior", () => {
   const home = scratch("usage-level-cli"), config = join(home, "config.json");
   writeFileSync(config, JSON.stringify(cfg()));
-  const invoke = (...args) => {
-    const r = Bun.spawnSync([process.execPath, SCRIPT, "usage", "--config", config, ...args], { env: cliEnv(home, { PATH: home }) });
+  const invokeRaw = (...args) => {
+    const r = Bun.spawnSync([process.execPath, SCRIPT, "usage", ...args], { env: cliEnv(home, { PATH: home }) });
     expect(r.exitCode).toBe(0);
     expect(r.stderr.toString()).toBe("");
     return JSON.parse(r.stdout.toString());
   };
+  const invoke = (...args) => invokeRaw("--config", config, ...args);
   expect(invoke()).not.toHaveProperty("level");
   const r = invoke("--level", "strong", "--headroom", "codex=90%", "--json");
   expect(r).toMatchObject({ ok: true, level: "strong" });
@@ -130,6 +131,17 @@ test("usage level CLI fails open and keeps headroom overrides and default behavi
   expect(r.candidates).toEqual({ normal: [], fallback: [] });
   for (const words of [["--level"], ["--level", "nope"], ["--level", "basic", "--level", "strong"], ["cursor", "--level", "standard"], ["--level", "strong", "--background"]])
     expect(invoke(...words).ok).toBe(false);
+  // Global option parsing must not swallow --level before usage validates it. Otherwise these reach Cursor/Kiro's
+  // named refresh or hide a duplicate. Assert the validation error, not merely a harness failing to start.
+  for (const words of [
+    ["cursor", "--headroom", "--level"], ["kiro", "--config", "--level"],
+    ["--headroom", "--level", "--level", "strong"], ["--config", "--level", "--level", "strong"],
+    ["cursor", "--headroom", "--level", "standard"], ["kiro", "--config", "--level", "standard"],
+  ]) {
+    const invalid = invokeRaw(...words);
+    expect(invalid.ok).toBe(false);
+    expect(invalid.error).toStartWith("usage: --level");
+  }
 });
 
 const advice = { id: "same-advice", brief_sha: "abc", level: "standard", mode: "dispatch", facts: {} };
