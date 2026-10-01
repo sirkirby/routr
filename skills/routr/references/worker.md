@@ -20,7 +20,9 @@ If its `worker` field says `do it yourself`, do not spawn one. Otherwise decide 
 that piece of work needs, from the facts routr returns and what you know of the code, and choose the model and
 effort that match: never one stronger than yourself, and never your own model by default. Ask once per subagent,
 because different subtasks need different levels. If `sure` is false, or you disagree with the advice, decide
-yourself and record it (see the ROUTR line below).
+yourself and record it (see the ROUTR line below). Apply the model and effort guidance under "Deciding" in `SKILL.md`
+within these subagent boundaries, with a separate reason for model and effort. If the work needs
+execution beyond those boundaries, report the evidence to the orchestrator so it can change the assignment.
 
 On Cursor, give subagents Cursor's own models only (Grok, Composer). Other vendors' models inside Cursor draw on a
 separate, smaller usage pool.

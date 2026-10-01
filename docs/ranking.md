@@ -9,8 +9,9 @@ Three parties take part:
 - **routr lists candidates and capacity.** Your account-use settings decide which accounts are normal or fallback
   candidates. Separately, routr ranks the capacity it can read or that you have told it to assume.
   This is plain arithmetic on your usage and your settings: no model, the same inputs always give the same answer.
-- **The orchestrator decides.** It chooses suitable model and effort options first, then compares capacity among
-  those options. Headroom alone says nothing about quality, speed or the cost of finishing the task.
+- **The orchestrator decides.** Quality comes first: it chooses model and effort options it trusts to deliver a
+  verified result, then weighs efficiency and capacity among suitable options. Efficiency includes corrections.
+  Headroom alone says nothing about quality, speed or the cost of finishing the task.
 
 You can see the ranking any time, with no brief, by running `routr usage`.
 
@@ -68,13 +69,26 @@ when passed with `--use`, `--use` wins. Prefer `--use` for new settings, includi
 After updating, run `routr setup` to review Account use and your other settings. Version-specific upgrade steps
 are in the [release notes](https://github.com/sirkirby/routr/releases).
 
-Your default model on each subscription is shown beside it in the ranking but does not change the order.
+Your default model on each subscription is shown beside it in the ranking but does not change the order. It is an
+everyday preference, not a model assignment for a difficulty level. The orchestrator explains its model and effort
+choices from the task and relevant experience. Choosing a larger model does not itself make the work harder.
 
 ## Which subscriptions can take the work
 
 A subscription takes work at its `hardest_work` level and below. For `strong` work, a subscription you set to
 `standard` is left out of the ranking, and the output says why. A subscription whose harness is not signed in is left
 out of every ranking, with the command that signs it in.
+
+Dispatch filters candidates for the level it advised. When the orchestrator chooses a different level from user
+preferences or repository evidence, it refreshes eligibility with:
+
+    routr usage --level standard
+
+Use `basic`, `standard` or `strong` as chosen. This returns `level` with fresh capacity diagnostics and candidates,
+without reassessing the brief. Plain `routr usage` retains its basic-work view. `--level` is accepted once, only on
+unnamed usage; combining it with a subscription name or `--background` returns an error before any named refresh.
+An error means eligibility was not refreshed. Both upgrades and downgrades use the same account limits, reserves
+and normal/fallback preferences. Keep the original advice for launch and record, and record the chosen level explicitly.
 
 ## How much room each subscription has
 
@@ -96,6 +110,8 @@ A cap the harness reports is still enforced as a window, even with a `billing: "
 `candidates.normal` and `candidates.fallback` list eligible names alphabetically, without ranking model quality.
 Accounts at their reserve are absent. The lead starts with suitable model/effort options on normal accounts and may
 use fallback when none suitably takes the work, including when the remaining normal models do not fit the task.
+Those settings authorize use in those circumstances. An unknown metered budget is uncertainty to weigh with the
+user's explicit spending limits; it does not by itself revoke that permission.
 
 `ranked` remains a capacity diagnostic: accounts with a number come first, most usable at the top, then metered
 accounts, then accounts at their reserve. `most_room` names only an account with a positive number; it is null when
@@ -122,3 +138,10 @@ A and D are candidates; the lead may select D for task fit even though its remai
 - **How big the work is.** routr ranks by room left, not by whether a large task fits in it. Jev's level says
   something about size; the orchestrator judges the rest.
 - **The decision.** routr advises; the orchestrator chooses.
+
+The orchestrator verifies the result and can change model, effort or harness within the user's settings when
+evidence warrants it. Immediate recovery and future preferences are separate decisions: a failed run can warrant
+a retry elsewhere, while later routing should consider comparable verified outcomes and distinguish execution
+problems from brief gaps, scope changes and launch trouble. Changes to persistent user preferences remain explicit.
+This quality-first procedure is working guidance; improved quality or efficiency has not been established by an
+outcome comparison.
