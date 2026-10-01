@@ -10,7 +10,7 @@ import { ask } from "./jev.mjs";
 import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
-import { CHECK_VERSION, checkQuestions, MEANING, questions, VERSION } from "./questions.mjs";
+import { CHECK_VERSION, checkQuestions, LEVELS, MEANING, questions, VERSION } from "./questions.mjs";
 import { ADVICE_RULE } from "./wording.mjs";
 import { rankSubscriptions } from "./pick.mjs";
 import { enabledSubscriptions } from "./config.mjs";
@@ -119,19 +119,32 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null, { env
 // `routr usage [<subscription>]`: what routr sees of each subscription's usage and how dispatch would rank it, with no
 // brief. Named, a harness with a `check` (Cursor) prints its raw reading instead, for a person to verify. Fails open.
 export async function usageCommand(words, config, given = {}, { read = readUsage, sources = SOURCES } = {}) {
+  // Filter capacity for the lead's chosen level without replacing Jev's original assessment. Parse here so neither
+  // record's --level nor words in a task brief change meaning. Validate before any named usage action can run.
+  words = [...words];
+  const at = words.indexOf("--level"), explicit = at !== -1;
+  let level = "basic";
+  if (explicit) {
+    if (words.lastIndexOf("--level") !== at || !LEVELS.includes(words[at + 1]))
+      return { ok: false, error: "usage: --level takes one of basic, standard, strong, once; eligibility was not refreshed" };
+    level = words[at + 1];
+    words.splice(at, 2);
+  }
   const flags = words.filter((w) => w.startsWith("-")), configured = Object.keys(config.subscriptions);
   const [name, ...extra] = words.filter((w) => !w.startsWith("-"));
   // The output is JSON already, so --json (which doctor and setup take) is accepted and changes nothing.
   const unknown = flags.filter((f) => f !== "--json" && f !== "--background"); // --background: routr's own refresh job
-  if (extra.length || unknown.length) return { ok: false, error: `usage: routr usage [--config <path>] [--headroom <subscription>=<share, 0.9 or 90%>]... [<subscription>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}` };
+  if (extra.length || unknown.length) return { ok: false, error: `usage: routr usage [--config <path>] [--headroom <subscription>=<share, 0.9 or 90%>]... [<subscription> | --level <basic|standard|strong>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}` };
+  if (explicit && (name || flags.includes("--background")))
+    return { ok: false, error: "usage: --level is for unnamed usage only; omit the subscription and --background. Eligibility was not refreshed" };
   if (name && sources[name]?.check) return sources[name].check({ background: flags.includes("--background") });
   if (name && !configured.includes(name)) return { ok: false, error: `${name} is not a configured subscription (configured: ${configured.join(", ") || "none, run routr setup"})` };
   try {
     const names = name ? [name] : configured;
     const subs = Object.fromEntries(names.map((n) => [n, config.subscriptions[n]]));
-    // Ranked for basic work, which every subscription takes: harder work leaves out one whose hardest_work is lower.
-    const r = rankSubscriptions("basic", await read(names.filter((n) => subs[n].enabled !== false), given, { sources }), { ...config, subscriptions: subs });
-    return { ok: true, most_room: r.most_room, candidates: r.candidates, note: r.note, ...(r.excluded.length ? { excluded: r.excluded } : {}), ranked: r.ranked.map((row) => ({ ...row, hardest_work: subs[row.subscription].hardest_work })),
+    // Plain usage keeps its basic-work view; the explicit filter uses the same account policy as dispatch.
+    const r = rankSubscriptions(level, await read(names.filter((n) => subs[n].enabled !== false), given, { sources }), { ...config, subscriptions: subs });
+    return { ok: true, ...(explicit ? { level } : {}), most_room: r.most_room, candidates: r.candidates, note: r.note, ...(r.excluded.length ? { excluded: r.excluded } : {}), ranked: r.ranked.map((row) => ({ ...row, hardest_work: subs[row.subscription].hardest_work })),
       how: "usable = what is left in the tightest window minus your reserve, and the reserve shrinks as the window nears its reset. dispatch ranks the same way and leaves out a subscription whose hardest_work is below the level of the work" };
   } catch (e) { return { ok: false, error: short(e) }; }
 }

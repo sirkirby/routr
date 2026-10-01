@@ -16,7 +16,7 @@ export const COMMANDS = {
   },
   dispatch: {
     name: "dispatch",
-    description: "an orchestrator is about to launch a pane → the same, plus subscriptions ranked by usable headroom",
+    description: "an orchestrator is about to launch a pane → work assessment plus eligible subscriptions and headroom; choose for quality, then compare capacity among suitable options",
     args: [
       { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin); a flag-like word given alone is set aside when stdin carries the brief, and is the brief otherwise", required: true },
     ],
@@ -32,6 +32,7 @@ export const COMMANDS = {
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--headroom", arg: "<subscription>=<share>", description: "usage you read yourself, as for dispatch (0.9 or 90%)", required: false, repeatable: true },
+      { name: "--level", arg: "<basic|standard|strong>", description: "refresh eligible accounts for your chosen work level without reassessing the brief; unnamed usage only, once, without --background. Plain usage uses basic", required: false },
     ],
   },
   launch: {
@@ -160,7 +161,7 @@ export const COMMANDS = {
       { name: "--advice", arg: "<file>", description: "path to advice JSON file (or pipe on stdin)", required: false, default: "stdin" },
       { name: "--report", arg: "<file>", description: "path to worker report file", required: false },
       { name: "--subagent", arg: '"<subtask> → <level advised> → <model chosen>"', description: "subagent sizing decision", required: false, repeatable: true },
-      { name: "--level", arg: "<level>", description: "level chosen (basic, standard, strong)", required: false, default: "advised level" },
+      { name: "--level", arg: "<level>", description: "actual work level chosen (basic, standard, strong); supply explicitly, even when unchanged. A larger model alone does not change the work level", required: false, default: "advised level" },
       { name: "--seconds", arg: "<n>", description: "elapsed seconds from handoff through verification (or stopping); omit when unknown", required: false },
       { name: "--attempts", arg: "<n>", description: "positive count of worker attempts; activity, not a quality score. Omit when unknown", required: false },
       { name: "--cause", arg: "<execution|brief|scope|review|launch|unknown|none>", description: "why extra work occurred, including lead corrections; repeatable, local only. none means no extra work and must be used alone", required: false, repeatable: true },

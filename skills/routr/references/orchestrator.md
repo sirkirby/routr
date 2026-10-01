@@ -28,19 +28,24 @@ readings.
 First, the brief: if `states_check` or `standalone` reads `no`, fix the brief and ask again. A worker cannot ask you
 questions.
 
-Then decide three things yourself, from `facts`, `notes`, `subscriptions.candidates`, `subscriptions.ranked`, and what only you know (what is
-already running in other panes, what comes next, which harness suits this repository):
+Follow "Deciding" in `SKILL.md`: settle the work level, identify suitable model/effort options, then compare accounts.
+Use `facts`, `notes`, `subscriptions.candidates`, `subscriptions.ranked` and relevant repository or verified outcome
+evidence. Consult the harness's models when needed (see `harnesses.md`); an everyday default does not establish fit.
 
-1. **Intelligence and reasoning** the work needs (see "Deciding" in `SKILL.md`).
-2. **Suitable model and effort options** on `candidates.normal`: start from each account's `your_default` and move
-   up or down to fit the work. With no default set, list its models (see `harnesses.md`). If no normal candidate can
-   suitably take the work, consider `candidates.fallback`; explain the missing capability or capacity.
-3. **Account** among those suitable options: compare usable capacity and its age, the user's preferences, and any
-   known time or spending constraints. `most_room` is a capacity observation, not a model choice. Metered budget is
-   unknown; normal use means the user permits everyday use, not unlimited spend. Never spend a reserve. Name the
-   model and effort explicitly when launching.
+Dispatch's candidates were filtered for the advised level. If you choose a different level, refresh eligibility:
 
-Usage moves while you work, so ask again before every launch; never reuse an earlier answer.
+    routr usage --level <basic|standard|strong>
+
+Use the level you chose. This reads usage and applies the user's account settings without asking Jev again. Check
+`ok` and `level`, then choose from its `candidates`; if it fails, eligibility was not refreshed. Resolve the error or
+hold the launch until you can establish eligibility. Keep the original dispatch file for `launch --advice` and
+`record --advice`; the usage response is a capacity view, not a replacement assessment.
+
+Ask about each worker's exact brief before launch. If selection is delayed or intervening work changes capacity,
+refresh with `routr usage --level <chosen>` again. A changed brief needs new dispatch advice.
+
+Before launch, state the advised and chosen level, model, effort and account with a short reason for each choice.
+If the level changed, include the `ROUTR:` line from the skill. Name model and effort explicitly in the launch.
 
 Usage is read by routr itself for every subscription; you pass nothing. Cursor's and Kiro's come from a reading routr
 refreshes in the background about once per working session (its `age_sec` says how old); `routr usage cursor` or
@@ -170,9 +175,10 @@ result against the project's own standards, not just the brief.
 - Then run YOUR check: the diff exists and is in the right directory, the project's tests pass when you run them,
   the change follows the patterns around it. Never trust an exit code, a "success" status, or the report alone.
 - **Falls short → send it back to the same worker** with the specific points; it has the context, so this is the
-  cheap fix. **Falls short again, or the problem is the approach itself → relaunch one level up** (more intelligence,
-  or more effort if it lost the thread over many steps) and attach the first report. Cut off a worker that thrashes
-  (many turns, a large diff on a small task) and do the same.
+  context-preserving fix when the approach is sound. If the approach is wrong, corrections repeat, or the worker
+  thrashes, use the evidence to change model, effort or harness and attach the relevant report. Correct missing
+  context or changed requirements before blaming execution. You may change the execution within the user's account
+  boundaries without asking for each adjustment; reassess the work level only when the work warrants it.
 - Keep the user able to follow: one line when you launch (what, where, which model, why) and one line when a result
   lands (accepted, sent back, or escalated, and why).
 
@@ -183,17 +189,22 @@ result, record it. `record` is the only command that writes to routr's own state
 ledger.
 
     routr record --advice <file> --subscription <s> --model <m> --effort <e> \
-        [--level <the level you settled on, if not the advised one>] --verdict <done|partial|blocked> \
+        --level <the level you settled on> --verdict <done|partial|blocked> \
         --check <pass|fail|none> [--report <file>] [--subagent "<subtask> → <level> → <model>"] \
         [--attempts <n>] [--seconds <n>] [--cause <cause>] [--run-id <id>] \
         [--note "<reasons for the model, effort and account; what happened>"]
+
+Pass `--level` explicitly, even when unchanged, and use `--note` for separate model, effort and account reasons,
+any level override, and the observed result. Keep the original advice intact: selecting a larger model alone does
+not change the work's difficulty.
 
 `--effort` is what you launched with. Write `default` if you passed none: routr records the effort the run had, and
 says where it came from in `chose.effort_from`: `model id` on Cursor and Antigravity, whose ids carry it
 (`grok-4.7-high`); `config default`, your configured `default_effort`, on a harness that takes effort separately; or
 `given`, what you wrote, kept as it is when neither says (no default set, or no effort in the id).
 `--verdict` is the worker's own VERDICT line. `--check` is your verification. Pass the saved report with `--report` so
-the worker's subagent choices are recorded too. `--attempts` counts tries by this worker; omit when unknown.
+the worker's subagent choices are recorded too. `--attempts` counts observed tries by this worker; a partial report
+does not establish a count. Omit it when unknown.
 `--seconds` is elapsed time from handoff through your verification, including waiting and corrections, or until the
 run stops. Omit it when unknown. A pass means you verified and accepted the result.
 
@@ -212,7 +223,10 @@ the new note or report/subagent list; an empty note clears the note, and `--suba
 `attempts 1` and `cause none` count as accepted first pass. The ledger stores a brief hash and length, never its text.
 
 `routr assess` reports verified acceptance, causes and capacity without automatically recommending a different model
-from attempt counts. Run IDs and causes stay local. If the user turned telemetry on, recorded
+from attempt counts. A failure can justify immediate recovery; repeated comparable verified outcomes can inform
+future choices. Review the actual work and correction causes before generalizing. Session evidence and the local
+ledger support judgment, not a model ranking or automatic learning across sessions. Persistent changes to the user's
+configured preferences remain explicit. Run IDs, notes and causes stay local. If the user turned telemetry on, recorded
 rows also reach routr's maintainers (anonymous, never text; `routr share` shows exactly what).
 When you finish a long run, mention `routr assess`, and that `routr feedback "<text>"` sends the maintainers a note.
 

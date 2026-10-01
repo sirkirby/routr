@@ -86,21 +86,32 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
 
 ## Deciding
 
-**Start at the advice, not above it.** The loop is ask, build, judge, fix: work that falls short gets sent back or
-relaunched one level up, so there is no need to start high "to be safe". (Measured: a lead left to itself went above
-the advice on 5 of 7 briefs and set effort to high every time.)
+**Quality first; efficiency among suitable options.** Choose a model and effort you have reason to trust to deliver
+a verified result. Include the time and usage spent correcting work when judging efficiency. Costly or hard-to-detect
+failures can justify stronger initial execution; a larger model needs a reason tied to the work or relevant experience.
 
-- **Intelligence** (which model): start from the advised level and the user's default model. Go higher only when a
-  fact that calls for it reads `yes`: approach open, cross-cutting, concurrency or stored data, expensive to undo,
-  high risk. For `basic` work go below the user's default when the harness has a smaller model.
-- **Reasoning effort**: start at the user's default effort. Raise it only for work that needs many steps held
-  together: an unknown cause to run down, a long chain of changes that must agree. Size alone is not a reason.
-- Give one reason for the intelligence you chose and a separate one for the effort, in the record's `--note`.
+1. **Work level:** start with the advised level, facts and uncertainty. Weigh the user's preferences and concrete
+   repository context, including facts the brief did not give routr. Explain any change to the level. If you change it,
+   refresh eligible accounts for that level before choosing one (see `references/orchestrator.md`).
+2. **Model and effort:** identify suitable options on eligible normal accounts. `your_default` is an everyday
+   preference, not a mapping from difficulty to model. Consider smaller models when you trust them to meet the
+   quality requirements. Choosing a larger model does not itself change the work's level. Judge effort separately:
+   an unknown cause or a long chain of dependent changes may call for more reasoning; size alone does not.
+3. **Account:** among suitable options, weigh usable capacity and its age, user preferences, and known time or
+   spending constraints. Use fallback accounts when normal options lack suitability or capacity. Respect disabled
+   accounts, sign-in requirements, `hardest_work` and reserves. Configured normal/fallback use already supplies
+   permission in those circumstances. Weigh unknown capacity or budget alongside explicit spending limits; an
+   assumed reading is the user's assumption, not a measurement. Headroom does not estimate whether a task fits.
 
-The split between intelligence and reasoning effort is routr's working guidance. It has not been measured.
+You own the final choice within those boundaries. Before launch, state the advised and chosen level, model, effort
+and account, with separate reasons for model and effort; keep those reasons in the record's `--note`. After inspecting
+the result, you may change model, effort or harness when the evidence warrants it. The orchestrator guide covers
+verification, recovery and recording.
 
-When you settle on something other than what was advised, say so where the user will see it:
+This is working guidance, not a measured guarantee of better quality or efficiency.
+
+When you choose a different level, also say so where the user will see it:
 
     ROUTR: <advised> → <chosen> because <reason>
 
-Those lines are how the questions get better, so do not skip them.
+Record the chosen level explicitly so the original assessment and your decision remain distinguishable.

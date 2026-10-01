@@ -58,8 +58,120 @@ test("account use validates without rewriting config, and overrides legacy polic
   expect(accountUse({ use: "fallback", metered_rank: "with" }, "included")).toBe("fallback");
 });
 
+test("usage filters both level overrides through account policy while preserving the plain view", async () => {
+  const c = cfg();
+  c.subscriptions.claude.hardest_work = "basic";
+  c.subscriptions.codex.use = "normal";
+  c.subscriptions.cursor.use = "fallback";
+  const readings = [live("claude", 0.9), metered("codex"), live("cursor", 0.6)];
+  const read = async () => readings;
+  const original = structuredClone(c);
+  const plain = await usageCommand([], c, {}, { read });
+  expect(plain).not.toHaveProperty("level");
+  expect(plain.candidates).toEqual({ normal: ["claude", "codex"], fallback: ["cursor"] });
+  const basic = await usageCommand(["--level", "basic"], c, {}, { read });
+  expect(basic).toEqual({ ...plain, level: "basic" });
+  const standard = await usageCommand(["--json", "--level", "standard"], c, {}, { read });
+  expect(standard).toMatchObject({ ok: true, level: "standard", candidates: { normal: ["codex"], fallback: ["cursor"] } });
+  expect(standard.excluded).toEqual([{ subscription: "claude", reason: "the user does not give it standard work" }]);
+  expect(standard.ranked.find((x) => x.subscription === "codex")).toMatchObject({ usable: null, headroom: null, age_sec: 1 });
+  const strong = await usageCommand(["--level", "strong"], c, {}, { read });
+  expect(strong.candidates).toEqual({ normal: ["codex"], fallback: [] });
+  // Downgrading restores standard accounts; neither direction rewrites preferences.
+  expect(await usageCommand(["--level", "standard"], c, {}, { read })).toEqual(standard);
+  expect(c).toEqual(original);
+
+  for (const boundary of ["reserve", "disabled", "signedout"]) {
+    const limited = cfg({ subscriptions: { codex: { ...c.subscriptions.codex } } });
+    const u = live("codex", boundary === "reserve" ? 0.1 : 0.9);
+    if (boundary === "disabled") limited.subscriptions.codex.enabled = false;
+    if (boundary === "signedout") { u.signedIn = false; u.note = "sign in first"; }
+    let names;
+    const result = await usageCommand(["--level", "standard"], limited, {}, { read: async (n) => { names = n; return [u]; } });
+    expect(result.candidates).toEqual({ normal: [], fallback: [] });
+    expect(names).toEqual(boundary === "disabled" ? [] : ["codex"]);
+  }
+  const failed = await usageCommand(["--level", "strong"], c, {}, { read: async () => { throw new Error("unavailable"); } });
+  expect(failed).toEqual({ ok: false, error: "unavailable" });
+});
+
+test("usage rejects invalid level combinations before any usage read or named refresh", async () => {
+  let calls = 0;
+  const called = async () => { calls++; return []; };
+  const deps = { read: called, sources: { cursor: { check: called }, kiro: { check: called } } };
+  for (const words of [
+    ["--level"], ["--level", ""], ["--level", "standard "], ["--level", "STRONG"],
+    ["--level", "unknown"], ["--level", "--json"], ["--level=strong"],
+    ["--level", "basic", "--level", "strong"], ["--level", "strong", "--level"],
+    ["cursor", "--level", "basic"], ["--level", "strong", "kiro"], ["claude", "--level", "standard"],
+    ["--background", "--level", "strong"], ["cursor", "--background", "--level", "basic"],
+  ]) {
+    const result = await usageCommand(words, cfg(), {}, deps);
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("usage:");
+  }
+  expect(calls).toBe(0);
+});
+
+test("usage level CLI fails open and keeps headroom overrides and default behavior", () => {
+  const home = scratch("usage-level-cli"), config = join(home, "config.json");
+  writeFileSync(config, JSON.stringify(cfg()));
+  const invokeArgs = (...args) => {
+    const r = Bun.spawnSync([process.execPath, SCRIPT, ...args], { env: cliEnv(home, { PATH: home }) });
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr.toString()).toBe("");
+    return JSON.parse(r.stdout.toString());
+  };
+  const invokeRaw = (...args) => invokeArgs("usage", ...args);
+  const invoke = (...args) => invokeRaw("--config", config, ...args);
+  expect(invoke()).not.toHaveProperty("level");
+  const r = invoke("--level", "strong", "--headroom", "codex=90%", "--json");
+  expect(r).toMatchObject({ ok: true, level: "strong" });
+  expect(r.ranked.some((x) => x.subscription === "cursor")).toBe(false);
+  // With no harness on PATH, a supplied reading cannot bypass the sign-in gate.
+  expect(r.candidates).toEqual({ normal: [], fallback: [] });
+  for (const words of [["--level"], ["--level", "nope"], ["--level", "basic", "--level", "strong"], ["cursor", "--level", "standard"], ["--level", "strong", "--background"]])
+    expect(invoke(...words).ok).toBe(false);
+  // Global option parsing must not swallow --level before usage validates it. Otherwise these reach Cursor/Kiro's
+  // named refresh or hide a duplicate. Assert the validation error, not merely a harness failing to start.
+  for (const words of [
+    ["cursor", "--headroom", "--level"], ["kiro", "--config", "--level"],
+    ["--headroom", "--level", "--level", "strong"], ["--config", "--level", "--level", "strong"],
+    ["cursor", "--headroom", "--level", "standard"], ["kiro", "--config", "--level", "standard"],
+    ["cursor", "--headroom", "--level=strong"], ["kiro", "--config", "--level="],
+  ]) {
+    const invalid = invokeRaw(...words);
+    expect(invalid.ok).toBe(false);
+    expect(invalid.error).toStartWith("usage: --level");
+  }
+  for (const words of [
+    ["--config", "--level", "usage", "cursor"], ["--headroom", "--level", "usage", "kiro"],
+    ["--headroom", "codex=90%", "usage", "cursor", "--config", "--level"],
+    ["--config", config, "--headroom", "--level", "usage", "--level", "strong"],
+    ["--config", "--level=basic", "usage", "kiro"], ["--headroom", "--level=strong", "usage", "--level", "standard"],
+  ]) {
+    const invalid = invokeArgs(...words);
+    expect(invalid.ok).toBe(false);
+    expect(invalid.error).toStartWith("usage: --level");
+  }
+  expect(invokeArgs("--config", config, "--headroom", "codex=90%", "usage", "--level", "strong")).toMatchObject({ ok: true, level: "strong" });
+});
+
 const advice = { id: "same-advice", brief_sha: "abc", level: "standard", mode: "dispatch", facts: {} };
 const choice = { subscription: "codex", model: "worker-model", effort: "medium", project: "fixture" };
+test("record keeps work-level overrides independent of model changes and original advice", () => {
+  const dir = scratch("chosen-level"), path = join(dir, "advice.json"), ledger = join(dir, "ledger.jsonl");
+  writeFileSync(path, JSON.stringify(advice));
+  const saved = readFileSync(path, "utf8");
+  for (const level of ["basic", "standard", "strong"]) {
+    const result = recordCommand({ ...choice, advice: path, ledger, model: "larger-worker-model", level, verdict: "done", check: "pass" });
+    expect(result.recorded).toBe(advice.id);
+  }
+  expect(readFileSync(path, "utf8")).toBe(saved);
+  expect(read(ledger).map((e) => [e.advised.level, e.chose.level])).toEqual([
+    ["standard", "basic"], ["standard", "standard"], ["standard", "strong"],
+  ]);
+});
 test("separate workers share advice, but only explicit matching run revisions replace an outcome", () => {
   const dir = scratch("runs"), ledger = join(dir, "ledger.jsonl"), adviceFile = join(dir, "advice.json");
   writeFileSync(adviceFile, JSON.stringify(advice));
