@@ -53,8 +53,10 @@ measured questions about a brief or a worker report; code adds live usage; the l
   same way: written to `~/.agents/skills` and linked into each harness's own skills folder (the registry's `skills`).
   Install and uninstall touch only what is provably routr's, by structure, never by reading a skill's text: a folder
   holding routr's manifest `.routr-install.json` (written in the same staged write as the skill, naming it and every
-  file routr wrote), or a link to such a folder in `~/.agents/skills`. Uninstall removes only the listed files; anything
-  else (a same-named skill, a user's file in routr's folder) is kept and reported, and no link is followed.
+  file routr wrote), or a link to such a folder in `~/.agents/skills`. Nothing is written or removed through a link.
+  Install leaves routr's folder as it is while it holds a file routr did not write, and says so; uninstall removes only
+  the listed files and reports the rest. Known limit: routr trusts its manifest, so one the user copies into another
+  folder makes routr treat that folder as its own.
 - The binary is self-contained: the files under `skills/` are embedded at build time, and it MUST NOT depend on a repository checkout at run time. It reads the user's harness state read-only
   (usage sources, settings, model lists) and writes only under `~/.config/routr`, `~/.cache/routr`,
   `~/.local/share/routr`, the skill folders on `skill install`, and temporary files it removes (including the private

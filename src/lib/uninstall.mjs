@@ -73,8 +73,11 @@ export async function uninstall(args, { home = userHome() } = {}) {
         start("cmd", ["/c", `ping -n 4 127.0.0.1 >nul & del /f /q ${basename(aside)}`], { cwd: dirname(aside), detached: true, stdio: "ignore" }).unref();
       } else if (x.skill) {
         // routr's skill: only the files its manifest lists, then the folders left empty. A file the user added stays.
-        const left = removeOwned(x.path, x.skill).map((f) => join(x.path, f));
-        if (left.length) { userFiles.push(...left); removed.push(`${x.path} (routr's files)`); continue; }
+        // A file it could not remove (or would have to follow a link to reach) is a failure; the manifest then stays.
+        const out = removeOwned(x.path, x.skill);
+        failed.push(...out.failed);
+        userFiles.push(...out.left.map((f) => join(x.path, f)));
+        if (out.failed.length || out.left.length) { if (!out.failed.length) removed.push(`${x.path} (routr's files)`); continue; }
       } else removePath(x.path);
       removed.push(x.path);
     } catch (e) { failed.push(`${x.path}: ${String(e?.message ?? e).slice(0, 100)}`); }

@@ -1,7 +1,7 @@
 // `routr doctor`: read-only setup check. Finds the harnesses that are installed, the usage sources that exist,
 // the TypeSafe key, and the config, and ends with the commands that fix what is missing. It writes nothing:
 // `routr setup` (lib/setup.mjs) does, from the same inspection.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { accountUse, CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
@@ -13,7 +13,7 @@ import { home, standalone } from "./runtime.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
 import { dailyTelemetrySend, hoursAgo, lastTelemetrySend, pendingCount, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
-import { missingFiles, owner, skillPlaces } from "./skill-install.mjs";
+import { extraFiles, hasExtras, missingFiles, owner, skillPlaces } from "./skill-install.mjs";
 
 // Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows.
 export function which(cmd) {
@@ -76,6 +76,8 @@ export function nextSteps(r) {
   if (skillsMissing(r).length || skillsIncomplete(r).length || skillsStale(r).length) steps.push("Install the routr skills that match this routr: routr skill install");
   // A folder of the same name that routr did not write is never replaced: the user moves it, or keeps theirs.
   for (const k of r.skill.filter((x) => x.ours === false && x.where.endsWith(`.agents/skills/${x.name}`))) steps.push(`${k.where} is not routr's, so routr installs no ${k.name} skill there: rename or remove it, then run routr skill install`);
+  // routr's folder holding files routr did not write is left as it is by install: the person clears it first.
+  for (const k of r.skill.filter((x) => x.extra?.length)) steps.push(hasExtras(k.where, k.extra));
   if (r.telemetry?.needs_attention) steps.push("Telemetry is on but not sending: `routr telemetry status` says why (last_send, daily_send), and `routr telemetry send` sends now");
   if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
   if (!r.herdr.path) steps.push("For orchestration, install herdr (https://herdr.dev). Sizing subagents works without it");
@@ -135,7 +137,8 @@ export async function inspect({ configPath, quiet } = {}) {
     const path = join(home(), d), state = owner(home(), name, path);
     if (state === "absent") return null;
     let version = "unknown"; try { version = readFileSync(join(path, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\r\n]+)"?/m)?.[1] ?? "unknown"; } catch {}
-    return { name, where: `~/${d}`, version, ours: state === "ours", missing: state === "ours" ? missingFiles(name, path) : [] };
+    const real = state === "ours" && lstatSync(path).isDirectory(); // a link is checked through the folder it points at
+    return { name, where: `~/${d}`, version, ours: state === "ours", missing: state === "ours" ? missingFiles(name, path) : [], extra: real ? extraFiles(path, name) : [] };
   }).filter(Boolean);
   // Each harness set up here should have routr's link (or copy) of each skill whose shared copy is routr's: one that
   // is absent (its link failed, or was removed) is a repair. A folder there that is not routr's is reported above.
@@ -208,6 +211,7 @@ export function render(r) {
     }
     for (const k of ours.filter((x) => x.missing?.length)) line("need", `${name} skill ${k.where} is incomplete (no ${k.missing.join(", ")}): run \`routr skill install\``);
     for (const u of (r.skill_unlinked ?? []).filter((x) => x.name === name)) line("need", `${name} skill not linked for ${u.for} (${u.where}): run \`routr skill install\``);
+    for (const k of ours.filter((x) => x.extra?.length)) line("need", hasExtras(k.where, k.extra));
     for (const k of all.filter((x) => x.ours === false)) line("absent", `${k.where} is not routr's: routr leaves it as it is`);
   }
   const any = Object.values(r.harnesses).some((h) => h.installed);

@@ -2,7 +2,7 @@
 // which only the user starts) into the shared skills folder, and link each into every harness's own skills folder, so
 // a machine with no Node and no Bun needs nothing but the routr binary. The files are embedded at build time.
 // routr touches only what is provably its own (`owner` below): anything else of the same name is kept and reported.
-import { accessSync, constants, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { HARNESSES, KINDS, SKILLS } from "./harnesses.mjs";
 import skillMd from "../../skills/routr/SKILL.md" with { type: "text" };
@@ -27,10 +27,13 @@ const LINKED = Object.fromEntries(KINDS.filter((n) => HARNESSES[n].skills).map((
 // ---- What is routr's, by structure, never by reading a skill's text. Each folder routr writes holds a manifest,
 // `.routr-install.json`: { skill, version, files } with every file routr wrote there. A folder is routr's when that
 // manifest is a regular file that parses and names that skill (a Windows copy carries the same manifest). One
-// exception, once: a `routr` folder written before manifests (routr up to 0.5.0-beta.1) is known by `name: routr` in
-// its frontmatter and its guides, and gets its manifest at the next install. A harness link is routr's only when it
-// points at routr's shared folder and that folder is itself routr's; any other link (a developer's, into a checkout, or
-// to a shared folder that is itself their link) is never followed, replaced or removed.
+// exception, once: a `routr` folder with no manifest at all, written before manifests (routr up to 0.5.0-beta.1), is
+// known by `name: routr` in its frontmatter and its guides, and gets its manifest at the next install. A harness link is
+// routr's only when it points at routr's shared folder and that folder is itself routr's; any other link (a
+// developer's, into a checkout, or to a shared folder that is itself their link) is never followed, replaced or
+// removed, and no file is written or removed through a link inside a skill folder. routr's folder holding anything it
+// did not write is left as it is until the person clears it. Known limit: routr trusts its receipt, so a manifest the
+// user copies into another folder makes routr treat that folder as its own.
 export const MANIFEST = ".routr-install.json";
 const LEGACY = { routr: ["references/worker.md", "references/orchestrator.md"] };
 export const sharedPath = (home, skill) => join(home, ".agents/skills", skill);
@@ -57,10 +60,26 @@ export function owner(home, skill, path) {
     try { return resolve(dirname(path), readlinkSync(path)) === shared && owner(home, skill, shared) === "ours" ? "ours" : "theirs"; } catch { return "theirs"; }
   }
   if (!st.isDirectory()) return "theirs";
-  return manifest(path, skill) || legacy(path, skill) ? "ours" : "theirs";
+  // The legacy rule fails closed: only where there is no manifest at all. One that is invalid, a link, or another
+  // skill's makes the folder someone else's.
+  return manifest(path, skill) || (!present(join(path, MANIFEST)) && legacy(path, skill)) ? "ours" : "theirs";
 }
+const present = (p) => { try { lstatSync(p); return true; } catch { return false; } };
 // The files routr wrote in an owned folder: its manifest's list, or (before manifests) what this routr ships.
 export const ownedFiles = (dir, skill) => manifest(dir, skill)?.files ?? Object.keys(FILES[skill]);
+// Is any folder between `root` and `rel` (not `root` itself, not the target) a link? routr never writes, renames or
+// deletes through one: a link inside a skill folder could point anywhere (a user's real files).
+export function linkAbove(root, rel) {
+  const parts = String(rel).split(/[\\/]/);
+  for (let i = 1; i < parts.length; i++) { try { if (lstatSync(join(root, ...parts.slice(0, i))).isSymbolicLink()) return true; } catch { return false; } }
+  return false;
+}
+// Write one file of routr's inside a folder it is filling, never through a link.
+function writeInside(root, rel, text) {
+  if (linkAbove(root, rel)) throw new Error(`${join(root, rel)}: a folder above it is a link, not followed`);
+  mkdirSync(dirname(join(root, rel)), { recursive: true });
+  writeFileSync(join(root, rel), text);
+}
 // Every file routr's copy at `dir` should have that is not a readable regular file there (a folder in place of a file
 // counts as missing): its manifest's list and what this routr ships, and the manifest itself.
 export function missingFiles(skill, dir) {
@@ -69,17 +88,25 @@ export function missingFiles(skill, dir) {
 }
 // Every entry in a folder that is not a folder (files, links), as relative paths. Links are listed, never followed.
 const entries = (dir, pre = "") => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() && !e.isSymbolicLink() ? entries(join(dir, e.name), `${pre}${e.name}/`) : [`${pre}${e.name}`]));
-// What a user added to routr's folder: everything routr did not write there.
+// What is in routr's folder that routr did not write there (a link where a folder was counts: it is not routr's).
 export const extraFiles = (dir, skill) => { const own = new Set([...ownedFiles(dir, skill), MANIFEST].map((f) => f.replace(/\\/g, "/"))); try { return entries(dir).filter((f) => !own.has(f)); } catch { return []; } };
-// Remove routr's files from its folder, then each folder left empty; the folder itself only if nothing is left.
-// Returns what stayed (the user's own files).
+export const hasExtras = (dir, extras) => `${dir} has files routr didn't write (${extras.join(", ")}): remove them or the folder, then run \`routr skill install\``;
+// Remove routr's files from its folder: each listed file, never through a link; the manifest only once all of them are
+// gone; then each folder left empty, the folder itself only if nothing is left. Returns what stayed (`left`: the
+// user's, `failed`: what could not be removed).
 export function removeOwned(dir, skill) {
-  if (lstatSync(dir).isSymbolicLink()) { unlinkSync(dir); return []; }
-  const left = extraFiles(dir, skill);
-  for (const f of [...ownedFiles(dir, skill), MANIFEST]) { try { const p = join(dir, f); if (!lstatSync(p).isDirectory()) unlinkSync(p); } catch {} }
+  if (lstatSync(dir).isSymbolicLink()) { unlinkSync(dir); return { left: [], failed: [] }; }
+  const left = extraFiles(dir, skill), failed = [];
+  for (const f of ownedFiles(dir, skill)) {
+    const p = join(dir, f);
+    if (linkAbove(dir, f)) { failed.push(`${p}: a folder above it is a link, not followed`); continue; }
+    try { if (lstatSync(p).isDirectory()) failed.push(`${p}: a folder where routr wrote a file`); else unlinkSync(p); }
+    catch (e) { if (e?.code !== "ENOENT") failed.push(`${p}: ${String(e?.message ?? e).slice(0, 100)}`); }
+  }
+  if (!failed.length) try { unlinkSync(join(dir, MANIFEST)); } catch (e) { if (e?.code !== "ENOENT") failed.push(`${join(dir, MANIFEST)}: ${String(e?.message ?? e).slice(0, 100)}`); }
   const prune = (d) => { for (const e of readdirSync(d, { withFileTypes: true })) if (e.isDirectory() && !e.isSymbolicLink()) prune(join(d, e.name)); if (!readdirSync(d).length) rmdirSync(d); };
-  prune(dir);
-  return left;
+  try { prune(dir); } catch (e) { failed.push(`${dir}: ${String(e?.message ?? e).slice(0, 100)}`); }
+  return { left, failed };
 }
 // Every place a skill of routr's can be, harness folders first (links before the folder they point at), each with its
 // owner. `set`: that harness is set up on this machine (the folder above its skills folder exists).
@@ -101,51 +128,44 @@ export function staged(dest, fill) {
   try { renameSync(tmp, dest); } catch (e) { if (had) renameSync(old, dest); rmSync(tmp, { recursive: true, force: true }); throw e; }
   if (had) rmSync(old, { recursive: true, force: true });
 }
-// Replace routr's folder at `dest` (or make it): `fill` writes routr's files, and anything the user added to the old one
-// comes along, unless it sits where routr now writes a file. Returns what was carried over.
-function writeOwned(dest, skill, fill) {
-  let extras = [];
-  try { if (lstatSync(dest).isDirectory()) extras = extraFiles(dest, skill).filter((f) => !Object.hasOwn(FILES[skill], f)); } catch {}
-  staged(dest, (tmp) => {
-    fill(tmp);
-    for (const f of extras) {
-      const from = join(dest, f), to = join(tmp, f);
-      mkdirSync(dirname(to), { recursive: true });
-      if (lstatSync(from).isSymbolicLink()) symlinkSync(readlinkSync(from), to); else copyFileSync(from, to);
-    }
-  });
-  return extras;
-}
+// A real folder of routr's holding anything routr did not write is left exactly as it is: routr neither replaces nor
+// merges it (the person decides what to keep). Returns that folder's extra entries, or none.
+const extrasIn = (path, skill) => { try { return lstatSync(path).isDirectory() ? extraFiles(path, skill) : []; } catch { return []; } };
 
 // Each skill the same way: written to ~/.agents/skills/<name>, then linked (copied on Windows) into each harness's folder
-// that is set up. Only what is absent or routr's is written; the rest is reported in `kept`, a failure in `failed`.
+// that is set up. Only what is absent or routr's (and holds nothing else) is written; the rest is reported in `kept`,
+// a failure in `failed`.
 export function installSkill({ home = userHome(), dryRun = false } = {}) {
   const done = [], kept = [], failed = [];
   for (const skill of SKILLS) {
     const places = skillPlaces(home).filter((p) => p.skill === skill), shared = places.at(-1);
     if (shared.state === "theirs") { kept.push({ skill, where: shared.path, why: NOT_OURS }); continue; } // nothing to link to
-    const userFiles = (dir, extras) => { for (const f of extras) kept.push({ skill, where: join(dir, f), why: "yours, in routr's folder: kept" }); };
+    const extra = shared.state === "ours" ? extrasIn(shared.path, skill) : [];
+    if (extra.length) { kept.push({ skill, where: shared.path, why: hasExtras(shared.path, extra) }); continue; }
+    const receipt = JSON.stringify({ skill, version: ROUTR_VERSION, files: Object.keys(FILES[skill]) }, null, 1) + "\n";
     try {
       if (!dryRun) {
         mkdirSync(dirname(shared.path), { recursive: true });
         // routr's files and its manifest, in the same staged write: the folder is routr's exactly when it is complete.
-        userFiles(shared.path, writeOwned(shared.path, skill, (tmp) => {
-          for (const [rel, text] of Object.entries(FILES[skill])) { const f = join(tmp, rel); mkdirSync(dirname(f), { recursive: true }); writeFileSync(f, text); }
-          writeFileSync(join(tmp, MANIFEST), JSON.stringify({ skill, version: ROUTR_VERSION, files: Object.keys(FILES[skill]) }, null, 1) + "\n");
-        }));
+        staged(shared.path, (tmp) => {
+          for (const [rel, text] of Object.entries(FILES[skill])) writeInside(tmp, rel, text);
+          writeInside(tmp, MANIFEST, receipt);
+        });
       }
       done.push({ skill, where: shared.path, how: "written" });
     } catch (e) { failed.push({ skill, where: shared.path, error: String(e?.message ?? e).slice(0, 160) }); continue; }
     // Read each harness's place again now that routr's shared copy is in place: a link to it is routr's only from here.
     for (const p of places.slice(0, -1).filter((x) => x.set).map((x) => (dryRun ? x : { ...x, state: owner(home, skill, x.path) }))) {
       if (p.state === "theirs") { kept.push({ skill, where: p.path, why: NOT_OURS }); continue; }
+      const more = p.state === "ours" ? extrasIn(p.path, skill) : [];
+      if (more.length) { kept.push({ skill, where: p.path, why: hasExtras(p.path, more) }); continue; }
       if (dryRun) { done.push({ skill, where: p.path, how: `for ${p.label}` }); continue; }
       try {
         mkdirSync(dirname(p.path), { recursive: true });
         // A link keeps one copy; Windows often refuses links without admin rights, so copy there (staged, like the shared
-        // one, with its manifest). A copy routr made stays a copy, so nothing the user added to it is lost.
+        // one, with its manifest: routr's files only, written afresh, never through a link). A copy routr made stays a copy.
         let how;
-        const copy = () => { userFiles(p.path, writeOwned(p.path, skill, (tmp) => cpSync(shared.path, tmp, { recursive: true }))); how = "copied"; };
+        const copy = () => { staged(p.path, (tmp) => { for (const [rel, text] of Object.entries(FILES[skill])) writeInside(tmp, rel, text); writeInside(tmp, MANIFEST, receipt); }); how = "copied"; };
         if (process.platform === "win32" || (p.state === "ours" && !lstatSync(p.path).isSymbolicLink())) copy();
         else try { if (p.state === "ours") unlinkSync(p.path); symlinkSync(shared.path, p.path, "dir"); how = "linked"; } catch { copy(); }
         done.push({ skill, where: p.path, how: `${how} for ${p.label}` });
