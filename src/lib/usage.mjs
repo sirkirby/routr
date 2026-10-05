@@ -5,7 +5,7 @@
 // or `unknown` (nothing readable). Measured 2026-09-22 on a ChatGPT Enterprise seat: no windows at all, only
 // `credits.unlimited: true`, and a plan name of `business`. So the shape is the key, never the plan name.
 import { CLAUDE_SNAPSHOT, home, run } from "./runtime.mjs";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -119,23 +119,27 @@ export function readCodex() {
 const CLAUDE_LINES = { "session": { name: "five_hour", windowMin: 300 }, "week (all models)": { name: "seven_day", windowMin: 10080 } };
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
-// The zone's offset from UTC, in ms, at the instant `ms`, from Intl alone (no time zone data of routr's own).
-function zoneOffset(ms, zone) {
+// The wall time in a zone at the instant `ms`, read back as if it were UTC (ms), from Intl alone (no time zone data of
+// routr's own).
+function wallAt(ms, zone) {
   const p = Object.fromEntries(new Intl.DateTimeFormat("en-US", { timeZone: zone, hourCycle: "h23", year: "numeric", month: "numeric", day: "numeric", hour: "numeric", minute: "numeric", second: "numeric" })
     .formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
-  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second) - Math.floor(ms / 1000) * 1000;
+  return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour % 24, +p.minute, +p.second);
 }
-// A wall time in a zone, as epoch ms: guess with the offset at the wall time read as UTC, then correct once with the
-// offset at the guess, which settles it on either side of a DST change.
-function wallTime(y, mo, d, h, mi, zone) {
-  const asUtc = Date.UTC(y, mo, d, h, mi);
-  const first = asUtc - zoneOffset(asUtc, zone);
-  return asUtc - zoneOffset(first, zone);
+// Every instant (epoch ms) at which the zone's clock shows this wall time: one as a rule, two in the hour a clock goes
+// back (ambiguous), none in the hour it skips forward (nonexistent). Each offset in force within a day either side is
+// tried, and an instant counts only if it reads back as the same wall time in that zone.
+function wallTimes(y, mo, d, h, mi, zone) {
+  const asUtc = Date.UTC(y, mo, d, h, mi), day = 86400000;
+  const offsets = new Set([asUtc - day, asUtc, asUtc + day].map((ms) => wallAt(ms, zone) - ms));
+  return [...new Set([...offsets].map((o) => asUtc - o))].filter((t) => wallAt(t, zone) === asUtc).sort((a, b) => a - b);
 }
-// "Oct 5 at 3:59pm (America/Detroit)" → epoch seconds, or null when it does not read exactly so. It names no year: the
-// occurrence nearest now that is not more than a day past (a reset has just happened, or is ahead), so a December
-// reading of "Jan 1" is next year's. Never guessed: anything else is null and the note says so.
-export function parseClaudeReset(text, nowSec = now()) {
+// "Oct 5 at 3:59pm (America/Detroit)" → epoch seconds, or null when it does not read exactly so. It names no year: of
+// last year's, this year's and next year's, the occurrence nearest now; a reset just past stays past, and summarize
+// rolls its window over, as for the statusline. One further from now than `maxSec` (the window's length and a day) is
+// not a reading of this window: null. A wall time the clock skips is null; one it shows twice takes the LATER instant,
+// so a window is never rolled over before its reset (no headroom invented). Never guessed: null, and the note says so.
+export function parseClaudeReset(text, nowSec = now(), maxSec = Infinity) {
   const m = String(text ?? "").trim().match(/^([a-z]{3})[a-z]*\.?\s+(\d{1,2})\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([A-Za-z0-9_+\-/]+)\)$/i);
   if (!m) return null;
   const mo = MONTHS.indexOf(m[1].toLowerCase()), d = +m[2], h12 = +m[3], mi = +(m[4] ?? 0);
@@ -143,9 +147,12 @@ export function parseClaudeReset(text, nowSec = now()) {
   const h = (h12 % 12) + (m[5].toLowerCase() === "pm" ? 12 : 0); // 12am is 0, 12pm is 12
   const year = new Date(nowSec * 1000).getUTCFullYear();
   try {
-    const at = [year - 1, year, year + 1].filter((y) => d <= new Date(Date.UTC(y, mo + 1, 0)).getUTCDate())
-      .map((y) => wallTime(y, mo, d, h, mi, m[6]) / 1000).filter((t) => t >= nowSec - 86400).sort((a, b) => a - b);
-    return at[0] ?? null;
+    // The year first, by the wall time read as UTC (within hours of the truth), then the instant in that year alone:
+    // a wall time skipped this year must not borrow another year's.
+    const y = [year - 1, year, year + 1].filter((x) => d <= new Date(Date.UTC(x, mo + 1, 0)).getUTCDate())
+      .sort((a, b) => Math.abs(Date.UTC(a, mo, d, h, mi) / 1000 - nowSec) - Math.abs(Date.UTC(b, mo, d, h, mi) / 1000 - nowSec))[0];
+    const at = y == null ? null : wallTimes(y, mo, d, h, mi, m[6]).at(-1);
+    return at != null && Math.abs(at / 1000 - nowSec) <= maxSec ? at / 1000 : null;
   } catch { return null; } // a zone Intl does not know
 }
 
@@ -157,7 +164,7 @@ export function parseClaudeUsage(text, nowSec = now()) {
     if (!m) continue;
     const used = Number(m[3]), key = m[1].toLowerCase(), known = CLAUDE_LINES[key];
     if (!known) { scoped.push(used); continue; } // a weekly limit for one model: counted, never named
-    const resetsAt = m[4] ? parseClaudeReset(m[4], nowSec) : null;
+    const resetsAt = m[4] ? parseClaudeReset(m[4], nowSec, known.windowMin * 60 + 86400) : null;
     if (m[4] && resetsAt == null) unread.push(known.name);
     windows.push({ name: known.name, usedPct: Math.min(100, used), windowMin: known.windowMin, resetsAt });
   }
@@ -179,17 +186,42 @@ export const CLAUDE_FRESH_SEC = 5 * 60;
 // carries on with the fallback.
 const CLAUDE_TIMEOUT_MS = 12000;
 // `quiet`: the registry's arguments that keep the user's hooks and MCP servers out of routr's read (harnesses.mjs).
-// `--no-session-persistence` leaves no session file; Claude still makes an empty `~/.claude/projects/<folder>/memory`
-// for the folder it runs in, so it always runs in the same one, the system temp folder (as Kiro's /usage does).
+// `--no-session-persistence` leaves no session file, so it runs in the system temp folder, never the user's project
+// (as Kiro's /usage does).
 export const claudeUsageArgs = (quiet = []) => ["-p", "/usage", "--output-format", "json", "--no-session-persistence", ...quiet];
 const readJson = (file) => { try { return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null; } catch { return null; } };
 
-// Seams: `file` the statusline snapshot, `nowSec` the clock, `exec` runtime's run, `cwd` where Claude runs.
-export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT, nowSec = now(), exec = run, cwd = tmpdir() } = {}) {
+// Claude still makes `~/.claude/projects/<folder>/memory`, empty, for the folder it ran in (measured 2.1.289: the
+// folder is the path with every character but a letter or digit turned into `-`, macOS's /var resolved to
+// /private/var). That is Claude's own naming, so the cleanup is tolerant: it looks at the folders the path and its
+// real path would give, and removes one only if this read made it (absent before) and it holds an empty `memory` and
+// nothing else. rmdir, never a recursive remove: a folder that is not empty stays.
+const claudeProjectsDir = () => join(home(), ".claude/projects");
+export const claudeProjectFolders = (cwd, projects = claudeProjectsDir()) => {
+  let real = cwd; try { real = realpathSync(cwd); } catch {}
+  return [...new Set([cwd, real].map((x) => join(projects, x.replace(/[^A-Za-z0-9]/g, "-"))))];
+};
+function removeIfOurs(folder) {
+  try {
+    if (readdirSync(folder).join() !== "memory" || readdirSync(join(folder, "memory")).length) return;
+    rmdirSync(join(folder, "memory")); rmdirSync(folder);
+  } catch {}
+}
+
+// Seams: `file` the statusline snapshot, `nowSec` the clock, `exec` runtime's run, `cwd` where Claude runs,
+// `projects` Claude's projects folder. It is only called once readUsage's sign-in gate says Claude is signed in. That
+// answer is kept up to 6 hours (signin.mjs, as for every harness), so one read may follow a sign-out; Claude's `-p`
+// does not open a browser sign-in.
+export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT, nowSec = now(), exec = run, cwd = tmpdir(), projects = claudeProjectsDir() } = {}) {
   const snap = readJson(file);
   const fromSnap = snap ? claudeSnapshot(snap, nowSec) : null;
-  if (fromSnap?.headroom != null && fromSnap.ageSec != null && fromSnap.ageSec < CLAUDE_FRESH_SEC) return fromSnap;
-  const out = await exec("claude", claudeUsageArgs(quiet), { cwd, timeoutMs: CLAUDE_TIMEOUT_MS });
+  // A snapshot from the future (a clock set back) is not fresh: its age says nothing.
+  const age = fromSnap?.ageSec;
+  if (fromSnap?.headroom != null && Number.isFinite(age) && age >= 0 && age < CLAUDE_FRESH_SEC) return fromSnap;
+  const made = claudeProjectFolders(cwd, projects).filter((f) => !existsSync(f));
+  let out;
+  try { out = await exec("claude", claudeUsageArgs(quiet), { cwd, timeoutMs: CLAUDE_TIMEOUT_MS }); }
+  finally { made.forEach(removeIfOurs); } // also after a timeout: Claude may have made it before it was stopped
   let why, answered = false;
   if (out == null) why = `\`claude -p /usage\` did not answer in ${CLAUDE_TIMEOUT_MS / 1000} s`;
   else {

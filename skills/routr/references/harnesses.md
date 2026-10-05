@@ -97,7 +97,10 @@ to own Claude's single statusline slot. The read, run in the system temp folder:
   the statusline's names. A week scoped to one model is counted in the note ("plus 1 model-specific weekly limit"),
   never named and never ranked on: routr's advice carries no model names. The first line and the breakdown are not
   read. Reset times seen: "Oct 5 at 4pm", "Oct 5 at 3:59pm", "Oct 5 at 10pm", always with an IANA zone in
-  parentheses; routr converts them with the zone's own offset at that time, and leaves one it cannot read unset.
+  parentheses. No year is shown: routr takes the nearest occurrence (a reset just past stays past, and the window
+  rolls over), converts it with the zone's own offset at that time, and leaves a reset unset when it cannot read it,
+  when the clock skips that time, or when it is further away than the window plus a day. A time the clock shows twice
+  takes the later instant, so a window never rolls over early.
 - Hooks: without `--settings '{"disableAllHooks":true}'` the user's SessionStart and SessionEnd hooks ran (seen in
   `--debug-file`); with it none ran, and the user's other settings still applied. `--setting-sources=project` also
   stops them but drops the user's settings (a gateway or env set there), so routr does not use it.
@@ -110,8 +113,13 @@ to own Claude's single statusline slot. The read, run in the system temp folder:
 - The numbers agree with the statusline's: at the same minute, 4% session and 91% week from `/usage`, 4% and 90% in the
   last statusline snapshot (a few minutes older), with identical reset times.
 - `--bare` shows no subscription numbers (it skips the keychain): unusable.
-- `--no-session-persistence` leaves no session file. Claude still makes an empty
-  `~/.claude/projects/<folder>/memory` for the folder it runs in, so routr always runs it in the same one.
+- `--no-session-persistence` leaves no session file. Claude still makes an empty `memory` folder in
+  `~/.claude/projects/<folder>`, where `<folder>` is the path it ran in with every character but a letter or digit
+  turned into `-` (observed: the temp folder `/var/folders/…/T` became `-private-var-folders-…-T`, its real path).
+  That naming is Claude's own and may change. routr notes before each read whether that folder exists; if it did not,
+  and afterwards holds only an empty `memory`, routr removes both, as it deletes Kiro's empty session. A folder that
+  was there before, or holds anything else, is left alone, and so is one named some other way. Verified on macOS:
+  absent before, created by a plain read, gone after routr's. Not checked on Linux or Windows.
 - A statusline snapshot under 5 minutes old (`routr statusline`, for a user who runs it) is used instead of the read.
   Five minutes is a judgment, not a measurement.
 - Windows: routr starts `claude` as it starts every harness CLI, with no shell, hidden, and without herdr's pane

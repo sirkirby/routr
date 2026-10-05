@@ -1,10 +1,10 @@
 // usage readers: Claude's statusline, Codex, Cursor's screen, Kiro's /usage, the background snapshots, and `routr usage`
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { tmpdir } from "node:os";
-import { claudeSnapshot, codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, parseClaudeReset, parseClaudeUsage, readClaude } from "../src/lib/usage.mjs";
+import { claudeProjectFolders, claudeSnapshot, codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, parseClaudeReset, parseClaudeUsage, readClaude, summarize } from "../src/lib/usage.mjs";
 import { KIRO_BY_HAND, kiroUsage, parseKiroUsage, readKiro, refreshKiro } from "../src/lib/kiro-usage.mjs";
 import { HARNESSES, readUsage } from "../src/lib/harnesses.mjs";
 import { olderThan, takeLock } from "../src/lib/runtime.mjs";
@@ -108,9 +108,21 @@ test("Claude's reset times read in their own zone, across DST, midnight and noon
   expect(parseClaudeReset("Mar 14 at 3pm (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 14, 22));
   expect(parseClaudeReset("Mar 14 at 1:30am (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 14, 9, 30));
   expect(parseClaudeReset("Mar 14 at 3:30am (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 14, 10, 30));
-  // No year is shown: December's "Jan 1" is next year's; just after New Year, last night's reset is last year's.
+  // The hour a clock skips does not exist: unread, never moved an hour. The hour it repeats takes the later instant,
+  // so a window is not rolled over (headroom invented) before its reset: here the earlier one has already passed.
+  expect(parseClaudeReset("Mar 14 at 2:30am (America/Los_Angeles)", mar)).toBeNull();
+  expect(parseClaudeReset("Nov 1 at 1:30am (America/Detroit)", utc(2026, 10, 1, 6))).toBe(utc(2026, 10, 1, 6, 30));
+  const full = parseClaudeUsage("Current session: 100% used · resets Nov 1 at 1:30am (America/Detroit)", utc(2026, 10, 1, 6));
+  expect(summarize({ pool: "claude", source: "t", ts: utc(2026, 10, 1, 6), windows: full.windows, nowSec: utc(2026, 10, 1, 6) }).headroom).toBe(0);
+  // No year is shown: the nearest of last, this and next year's. December's "Jan 1" is next year's; just after New
+  // Year, last night's reset is last year's; yesterday's stays yesterday (and its window rolls over), never next year.
   expect(parseClaudeReset("Jan 1 at 12am (America/Detroit)", utc(2026, 11, 31, 20))).toBe(utc(2027, 0, 1, 5));
   expect(parseClaudeReset("Dec 31 at 11pm (America/Detroit)", utc(2027, 0, 1, 6))).toBe(utc(2027, 0, 1, 4));
+  expect(parseClaudeReset("Oct 4 at 12pm (America/Detroit)", utc(2026, 9, 5, 17))).toBe(utc(2026, 9, 4, 16));
+  // Further from now than the window and a day: not this window's reset.
+  expect(parseClaudeReset("Oct 9 at 4pm (America/Detroit)", OCT5, 300 * 60 + 86400)).toBeNull();
+  expect(parseClaudeReset("Oct 9 at 4pm (America/Detroit)", OCT5, 10080 * 60 + 86400)).toBe(utc(2026, 9, 9, 20));
+  expect(parseClaudeUsage("Current session: 5% used · resets Oct 9 at 4pm (America/Detroit)", OCT5).windows[0].resetsAt).toBeNull();
   for (const bad of ["", "soon", "Oct 5 at 4pm", "Oct 5 at 13pm (America/Detroit)", "Oct 5 at 4:75pm (America/Detroit)", "Feb 30 at 4pm (America/Detroit)", "Foo 5 at 4pm (America/Detroit)", "Oct 5 at 4pm (Not/AZone)", "Oct 5 at 4pm (America/Detroit) extra", null])
     expect([bad, parseClaudeReset(bad, OCT5)]).toEqual([bad, null]);
 });
@@ -136,6 +148,37 @@ test("Claude: a recent statusline snapshot is used as it is; otherwise its own /
   calls.length = 0;
   writeFileSync(file, JSON.stringify({ ts: OCT5 - 5, rate_limits: null, answered: false, seen: null }));
   expect((await read({ exec: exec(claudeAnswer(CLAUDE_USAGE)) })).source).toBe("claude /usage"); expect(calls.length).toBe(1);
+  // Nor is one stamped in the future (a clock set back): its age says nothing.
+  writeFileSync(file, JSON.stringify({ ts: OCT5 + 120, rate_limits: rl, answered: true }));
+  expect((await read({ exec: exec(claudeAnswer(CLAUDE_USAGE)) })).source).toBe("claude /usage"); expect(calls.length).toBe(2);
+});
+
+test("Claude's read removes the empty project folder it made for the temp folder, and nothing else", async () => {
+  const home = scratch("claude-home"), projects = join(home, ".claude", "projects"), cwd = scratch("claude-cwd");
+  const [folder] = claudeProjectFolders(cwd, projects).slice(-1); // the real path's: what Claude names
+  expect(folder).toBe(join(projects, realpathSync(cwd).replace(/[^A-Za-z0-9]/g, "-")));
+  // What Claude does (measured): an empty memory folder under the project folder named for where it ran.
+  const claude = (extra) => async () => { mkdirSync(join(folder, "memory"), { recursive: true }); extra?.(); return claudeAnswer(CLAUDE_USAGE); };
+  const read = (exec) => readClaude({ file: join(home, "none.json"), nowSec: OCT5, exec, cwd, projects });
+  expect((await read(claude())).source).toBe("claude /usage");
+  expect(existsSync(folder)).toBe(false);                                               // made by this read: removed
+  expect(existsSync(projects)).toBe(true);                                              // Claude's own folder stays
+  await read(async () => { mkdirSync(join(folder, "memory"), { recursive: true }); return null; }); // timed out after making it
+  expect(existsSync(folder)).toBe(false);
+  await read(claude(() => writeFileSync(join(folder, "memory", "note.md"), "x")));      // something was written: kept
+  expect(existsSync(join(folder, "memory", "note.md"))).toBe(true);
+  rmSync(folder, { recursive: true });
+  await read(claude(() => writeFileSync(join(folder, "s.jsonl"), "{}")));                // a session file beside it: kept
+  expect(existsSync(join(folder, "s.jsonl"))).toBe(true);
+  rmSync(folder, { recursive: true });
+  mkdirSync(join(folder, "memory"), { recursive: true });                                // there before the read: kept
+  await read(claude());
+  expect(existsSync(join(folder, "memory"))).toBe(true);
+  // A folder named some other way is not found, and nothing is removed.
+  rmSync(folder, { recursive: true });
+  const other = join(projects, "named-otherwise");
+  await read(async () => { mkdirSync(join(other, "memory"), { recursive: true }); return claudeAnswer(CLAUDE_USAGE); });
+  expect(existsSync(join(other, "memory"))).toBe(true);
 });
 
 test("Claude's live read fails open: the old snapshot however old, else the assumed headroom, and the note says why", async () => {
