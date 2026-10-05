@@ -179,7 +179,8 @@ test("going back to stable on a pre-release never downgrades by itself, and --fo
 
 test("update_channel defaults to stable, and an unknown value is reported and read as stable", () => {
   const dir = scratch("channel");
-  const at = (v) => { const f = join(dir, `${JSON.stringify(v)}.json`); writeFileSync(f, JSON.stringify(v === undefined ? {} : { update_channel: v })); return loadConfig(f); };
+  let n = 0; // plain file names: Windows refuses the quotes a JSON-encoded name would hold
+  const at = (v) => { const f = join(dir, `config-${n++}.json`); writeFileSync(f, JSON.stringify(v === undefined ? {} : { update_channel: v })); return loadConfig(f); };
   expect(at(undefined).config.update_channel).toBe("stable");
   expect(at(undefined).notes).toEqual([]);
   expect(at("beta").config.update_channel).toBe("beta");
