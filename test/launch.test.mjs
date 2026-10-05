@@ -410,14 +410,18 @@ test("--pane adopts only an idle agent of the kind asked for, in --cwd; anything
 // what `agent get` says, in order (the last one repeats), `explains` what `agent explain` reads.
 const codexTrust = "> You are in /private/tmp/work\n  Do you trust the contents of this directory?\n› 1. Yes, continue\n  2. No, quit";
 const explained = (state, rule) => ({ ok: true, data: { agent: "codex", state, matched_rule: rule ? { id: rule } : null, manifest_version: "2026.10.01.1" } });
-const codexPane = (gets, explains, extra = {}) => {
+// `cost`: what each herdr command takes on the fake clock; `waits`: the state `agent wait` reports, when it reports one.
+const codexPane = (gets, explains, { cost = 0, waits = null } = {}) => {
   let prompted = false;
   const next = (list) => (list.length > 1 ? list.shift() : list[0]);
-  return fakeHerdr({ kind: "codex", ...extra, reply: (a) => {
+  const f = fakeHerdr({ kind: "codex", reply: async (a) => {
+    if (cost) await f.deps.sleep(cost);
     if (a[1] === "prompt") { prompted = true; return herdrOK({}); }
     if (a[1] === "get" && a[2] === "w1:p2") { const s = prompted ? "working" : next(gets); return herdrOK({ agent: { agent: "codex", agent_status: s, cwd: process.cwd(), interactive_ready: s === "idle" } }); }
+    if (a[1] === "wait" && waits) return herdrOK({ agent: { agent: "codex", agent_status: next(waits) } });
     if (a[1] === "explain") return next(explains);
   } });
+  return f;
 };
 
 test("the `then` of a startup question adopts the agent once herdr reads it past the question, and waits while it starts", async () => {
@@ -459,6 +463,47 @@ test("the `then` of a startup question adopts the agent once herdr reads it past
   expect(s.needs_input.herdr.rule).toBeUndefined();
   expect(s.needs_input.why).not.toContain("reads it as osc_title_idle");
   expect(stuck.calls.some((a) => a[1] === "prompt")).toBe(false);
+});
+
+// From the review of f8a30f9: an adopted agent read as working, by get, wait or explain, at any point before the prompt,
+// was waited out until idle and sent this task on top of its own. Only blocked -> idle and unknown -> idle are waited for.
+test("an adopted agent herdr reads as working at any point before the prompt is never waited out or sent the task", async () => {
+  const again = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task", "--pane", "w1:p2", "--cwd", process.cwd()];
+  for (const [what, f] of [
+    ["get: unknown, then working", codexPane(["unknown", "working", "idle"], [explained("idle", "osc_title_idle")])],
+    ["get: blocked, explain: working", codexPane(["blocked", "working", "idle"], [explained("working", "osc_title_working")])],
+    ["get: blocked (explain idle), then working", codexPane(["blocked", "working", "idle"], [explained("idle", "osc_title_idle")])],
+    ["wait: working", codexPane(["unknown", "unknown", "idle"], [explained("idle")], { waits: ["working"] })]]) {
+    const r = await launch(again, f.deps);
+    expect([what, r.state]).toEqual([what, "needs_input"]);
+    expect(r.needs_input.why).toContain("is working, not waiting for a task");
+    expect(r.needs_input.then).toContain("herdr agent wait w1:p2 --until idle");
+    expect(f.calls.some((a) => ["prompt", "send-keys"].includes(a[1]))).toBe(false);
+  }
+  // An agent launch started itself has no task yet: herdr reading it working while it starts is waited through.
+  let started = false;
+  const ours = fakeHerdr({ kind: "codex", reply: (a) => {
+    if (a[1] === "start") { started = true; return herdrOK({}); }
+    if (a[1] === "get" && started) return herdrOK({ agent: { agent: "codex", agent_status: ours.calls.filter((c) => c[1] === "get").length < 3 ? "working" : "idle", interactive_ready: true } });
+  } });
+  expect(await launch(["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task"], ours.deps)).toMatchObject({ state: "prompted" });
+});
+
+// From the review of f8a30f9: with each herdr command taking time, the deadline ran out inside a call while get said
+// blocked and explain said idle, and launch returned failed ("Launch readiness timeout") instead of the block.
+test("herdr's two readings disagreeing until the deadline end in needs_input, wherever the time runs out", async () => {
+  const again = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task", "--pane", "w1:p2", "--cwd", process.cwd()];
+  for (const cost of [0, 100, 170, 333]) for (const timeout of [3000, 3200, 3333]) {
+    const f = codexPane(["blocked"], [explained("idle", "osc_title_idle")], { cost });
+    const r = await launch([...again, "--timeout", String(timeout)], f.deps);
+    expect([cost, timeout, r.state]).toEqual([cost, timeout, "needs_input"]);
+    expect(r.needs_input.herdr).toEqual({ state: "blocked", explained: "idle", rules: "2026.10.01.1" });
+    expect(r.needs_input.why).toContain("its rules read the screen as idle by osc_title_idle");
+    expect(f.calls.some((a) => a[1] === "prompt")).toBe(false);
+  }
+  // A timeout with no disagreement as the last reading is still a timeout.
+  const slow = codexPane(["blocked", "unknown"], [explained("idle", "osc_title_idle")], { cost: 100 });
+  expect(await launch([...again, "--timeout", "3200"], slow.deps)).toMatchObject({ state: "failed" });
 });
 
 test("a settled shell in the wrong directory is reported rather than started", async () => {
