@@ -186,11 +186,16 @@ export async function setup(args, { inspect: look = inspect, question, interacti
       skipped.push(`routr's skills need repair (${gaps.join("; ")}), but this routr runs from a source checkout and the installed skills come from a release: run the installed routr's \`routr skill install\` (usually ~/.local/bin/routr skill install)`);
       return false;
     }
-    const out = install();
-    did.push(`installed the routr skills ${base} for your agents`);
+    // Only what was installed is said; a step that failed makes the whole run unsuccessful (`failure` below).
+    const out = install(), failed = out?.failed ?? [];
+    if (!failed.length) did.push(`installed the routr skills ${base} for your agents`);
+    else if (out.installed?.length) did.push(`installed the routr skills ${base} at ${out.installed.map((x) => x.where).join(", ")}`);
+    skillFailures.push(...failed.map((f) => `${f.where}: ${f.error}`));
     for (const k of out?.kept ?? []) skipped.push(`${k.where}: ${k.why}`);
     return true;
   };
+  const skillFailures = [];
+  const failure = () => (skillFailures.length ? { ok: false, error: `routr's skills were not fully installed (${skillFailures.join("; ")}): fix that, then run routr skill install`, failed: skillFailures } : {});
   // A person at a terminal gets the guided flow; flags and --yes (an agent) never ask anything.
   let config = null;
   if (r.config.exists && !args.includes("--force")) { try { config = JSON.parse(readFileSync(path, "utf8")); } catch { return { ok: false, error: `${path} is not valid JSON. Fix it, or rewrite it with: routr setup --force` }; } }
@@ -207,9 +212,9 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     choices = await guided({ ui, r, config, efforts: levelsOf, telemetry: !telemetryAsked && !envOff(env) });
     if (choices === CANCEL) { ui.cancel("Setup stopped: nothing was written."); ui.close(); return { ok: false, cancelled: true, error: "setup stopped: nothing was written", did, skipped }; }
     if (!choices.write) {
-      if (skillStep()) ui.note("Done", did);
+      if (skillStep()) { if (did.length) ui.note("Done", did); if (skillFailures.length) ui.note("Failed", skillFailures); }
       ui.outro("Your settings did not change."); ui.close();
-      return { ok: true, did, skipped: [...skipped, ...leftOut, "nothing changed"], config: path, next_steps: r.next_steps };
+      return { ok: true, did, skipped: [...skipped, ...leftOut, "nothing changed"], config: path, next_steps: r.next_steps, ...failure() };
     }
     Object.assign(models, choices.models); Object.assign(efforts, choices.efforts); Object.assign(hardest, choices.hardest);
     Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches); Object.assign(ranks, choices.ranks);
@@ -297,10 +302,11 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // Looked at again, not reused: this second look is what starts the first background usage reading (Cursor, Kiro)
   // for a subscription setup just configured, so a new install has a reading before its first dispatch.
   const after = await look({ configPath: path, quiet: true });
-  const result = { ok: true, did, skipped, config: path, next_steps: after.next_steps };
+  const result = { ok: true, did, skipped, config: path, next_steps: after.next_steps, ...failure() };
   if (ui) {
     ui.note("Done", did.length ? did : ["nothing needed writing"]);
     if (skipped.length) ui.note("Notes", skipped, { dim: true });
+    if (skillFailures.length) ui.note("Failed", skillFailures);
     if (after.next_steps.length) ui.note("Still to do", after.next_steps.map((x, i) => `${i + 1}. ${x}`));
     ui.outro(`Change any setting later with routr setup, or ask your agent: every setting has a flag (routr setup --help).`);
     ui.close();

@@ -245,6 +245,55 @@ test("routr touches only its own skills: a same-named skill, a folder behind som
   expect(uninstallPlan({ home: dev }).not_ours.map((x) => x.path)).toEqual([join(dev, ".claude/skills/routr-orchestrate")]);
 });
 
+test("routr's mark counts only in the frontmatter's metadata, and a link through someone else's shared link is not routr's", async () => {
+  const { frontmatter, installSkill, owner } = await import("../src/lib/skill-install.mjs");
+  const { uninstallPlan } = await import("../src/lib/uninstall.mjs");
+  const { existsSync, symlinkSync } = await import("node:fs");
+  expect(frontmatter("---\nname: routr\nmetadata:\n  version: \"1\"\n  installed-by: routr\n---\nbody\n")).toEqual({ name: "routr", marked: true });
+  expect(frontmatter("---\r\nname: routr\r\nmetadata:\r\n  installed-by: routr\r\n---\r\n")).toEqual({ name: "routr", marked: true }); // a Windows checkout
+  expect(frontmatter("---\nname: routr\ninstalled-by: routr\n---\n").marked).toBe(false);           // not under metadata
+  expect(frontmatter("---\nname: routr\nmetadata:\n  version: \"1\"\nother:\n  installed-by: routr\n---\n").marked).toBe(false);
+  expect(frontmatter("no frontmatter\nname: routr\n  installed-by: routr\n")).toEqual({ name: null, marked: false });
+  // The user's own routr-orchestrate whose body shows routr's mark as an example: kept by install and by uninstall.
+  const home = scratch("mark"); mkdirSync(`${home}/.agents/skills/routr-orchestrate`, { recursive: true });
+  const mine = "---\nname: routr-orchestrate\ndescription: mine\n---\nAn example:\n\n    metadata:\n      installed-by: routr\n";
+  writeFileSync(`${home}/.agents/skills/routr-orchestrate/SKILL.md`, mine);
+  expect(owner(home, "routr-orchestrate", `${home}/.agents/skills/routr-orchestrate`)).toBe("theirs");
+  installSkill({ home });
+  expect(readFileSync(`${home}/.agents/skills/routr-orchestrate/SKILL.md`, "utf8")).toBe(mine);
+  expect(uninstallPlan({ home }).remove.map((x) => x.path)).not.toContain(join(home, ".agents/skills/routr-orchestrate"));
+  if (process.platform === "win32") return;
+  // A developer links the shared folder to a checkout (even one carrying routr's mark), and Claude's to the shared one:
+  // neither is routr's, so install and uninstall leave both, and the checkout.
+  const dev = scratch("mark-dev"), checkout = join(dev, "checkout"); mkdirSync(`${dev}/.agents/skills`, { recursive: true }); mkdirSync(`${dev}/.claude/skills`, { recursive: true });
+  mkdirSync(checkout); writeFileSync(join(checkout, "SKILL.md"), readFileSync(join(import.meta.dir, "../skills/routr/SKILL.md"), "utf8"));
+  symlinkSync(checkout, `${dev}/.agents/skills/routr`, "dir"); symlinkSync(join(dev, ".agents/skills/routr"), `${dev}/.claude/skills/routr`, "dir");
+  expect(owner(dev, "routr", `${dev}/.claude/skills/routr`)).toBe("theirs");
+  const r = installSkill({ home: dev });
+  expect(r.kept.map((k) => k.where)).toEqual([join(dev, ".agents/skills/routr")]); // nothing linked or written for routr
+  const plan = uninstallPlan({ home: dev });
+  expect(plan.not_ours.map((x) => x.path)).toEqual([join(dev, ".claude/skills/routr"), join(dev, ".agents/skills/routr")]);
+  expect(plan.remove.map((x) => x.path).filter((p) => p.includes("skills/routr") && !p.includes("orchestrate"))).toEqual([]);
+  expect(existsSync(join(checkout, "SKILL.md"))).toBe(true);
+});
+
+test("routr skill install and setup report a failed step as a failure, and claim only what was installed", () => {
+  const home = scratch("skill-fail"); writeFileSync(join(home, ".agents"), "a file where the folder goes");
+  const env = cliEnv(home, { PATH: home });
+  const install = Bun.spawnSync([process.execPath, SCRIPT, "skill", "install"], { env });
+  expect(install.exitCode).toBe(1);
+  const out = JSON.parse(install.stdout.toString());
+  expect(out.ok).toBe(false);
+  expect(out.installed).toEqual([]);
+  expect(out.failed.map((f) => f.skill)).toEqual(["routr", "routr-orchestrate"]);
+  const setup = Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--json"], { env });
+  expect(setup.exitCode).toBe(1);
+  const s = JSON.parse(setup.stdout.toString());
+  expect(s.ok).toBe(false);
+  expect(s.error).toContain("routr's skills were not fully installed");
+  expect(s.did.join(" ")).not.toContain("installed the routr skills");
+});
+
 test("routr key set stores a piped key owner-only, never prints it, and refuses junk", () => {
   const home = scratch("key");
   const env = cliEnv(home);

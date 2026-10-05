@@ -13,7 +13,7 @@ import { home, standalone } from "./runtime.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
 import { dailyTelemetrySend, hoursAgo, lastTelemetrySend, pendingCount, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
-import { FILES, owner } from "./skill-install.mjs";
+import { missingFiles, owner, skillPlaces } from "./skill-install.mjs";
 
 // Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows.
 export function which(cmd) {
@@ -50,8 +50,9 @@ export function starterConfig(found, models = {}, ranks = {}) {
 const mine = (r) => r.skill.filter((k) => k.ours !== false);
 // The skills routr installs of which no copy of routr's is in any skills folder.
 export const skillsMissing = (r) => SKILLS.filter((n) => !mine(r).some((k) => (k.name ?? "routr") === n));
-// routr's copies that lack one of the files it ships (a SKILL.md with no openai.yaml, say).
-export const skillsIncomplete = (r) => mine(r).filter((k) => k.missing?.length);
+// routr's copies that lack one of the files it ships (a SKILL.md with no openai.yaml, say), and harness folders set up
+// here that lack routr's link to one of its skills.
+export const skillsIncomplete = (r) => [...mine(r).filter((k) => k.missing?.length), ...(r.skill_unlinked ?? []).map((u) => ({ ...u, missing: [`the link for ${u.for}`] }))];
 // Its copies that came from another release: from a source checkout (0.0.0-dev) every release differs, so none counts.
 export const skillsStale = (r) => (r.from_source ? [] : mine(r).filter((k) => baseVersion(k.version) !== baseVersion(ROUTR_VERSION)));
 
@@ -134,8 +135,13 @@ export async function inspect({ configPath, quiet } = {}) {
     const path = join(home(), d), state = owner(home(), name, path);
     if (state === "absent") return null;
     let version = "unknown"; try { version = readFileSync(join(path, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\r\n]+)"?/m)?.[1] ?? "unknown"; } catch {}
-    return { name, where: `~/${d}`, version, ours: state === "ours", missing: state === "ours" ? Object.keys(FILES[name]).filter((f) => !existsSync(join(path, f))) : [] };
+    return { name, where: `~/${d}`, version, ours: state === "ours", missing: state === "ours" ? missingFiles(name, path) : [] };
   }).filter(Boolean);
+  // Each harness set up here should have routr's link (or copy) of each skill whose shared copy is routr's: one that
+  // is absent (its link failed, or was removed) is a repair. A folder there that is not routr's is reported above.
+  const places = skillPlaces(home());
+  r.skill_unlinked = places.filter((p) => p.label && p.set && p.state === "absent" && places.some((s) => s.skill === p.skill && !s.label && s.state === "ours"))
+    .map((p) => ({ name: p.skill, where: p.path.replace(home(), "~"), for: p.label }));
   // `problems` are settings that are missing or wrong, each with its fix; `notes` are only for information.
   const problems = existsSync(path) ? [...notes] : [], info = []; // no config at all is its own line and next step
   r.config = { path, exists: existsSync(path), subscriptions: Object.keys(config.subscriptions), off: Object.keys(config.subscriptions).filter((n) => config.subscriptions[n].enabled === false), billing: Object.fromEntries(Object.entries(config.subscriptions).filter(([, s]) => s.billing).map(([n, s]) => [n, s.billing])), problems, notes: info };
@@ -201,6 +207,7 @@ export function render(r) {
       line(ok ? "ok" : "need", `${name} skill ${at.join(", ")} ${at.length > 1 ? "are" : "is"} ${v}${ok ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
     }
     for (const k of ours.filter((x) => x.missing?.length)) line("need", `${name} skill ${k.where} is incomplete (no ${k.missing.join(", ")}): run \`routr skill install\``);
+    for (const u of (r.skill_unlinked ?? []).filter((x) => x.name === name)) line("need", `${name} skill not linked for ${u.for} (${u.where}): run \`routr skill install\``);
     for (const k of all.filter((x) => x.ours === false)) line("absent", `${k.where} is not routr's: routr leaves it as it is`);
   }
   const any = Object.values(r.harnesses).some((h) => h.installed);

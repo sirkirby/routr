@@ -2,7 +2,7 @@
 // which only the user starts) into the shared skills folder, and link each into every harness's own skills folder, so
 // a machine with no Node and no Bun needs nothing but the routr binary. The files are embedded at build time.
 // routr touches only what is provably its own (`owner` below): anything else of the same name is kept and reported.
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, constants, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { HARNESSES, KINDS, SKILLS } from "./harnesses.mjs";
 import skillMd from "../../skills/routr/SKILL.md" with { type: "text" };
@@ -24,20 +24,40 @@ export const FILES = {
 const LINKED = Object.fromEntries(KINDS.filter((n) => HARNESSES[n].skills).map((n) => [HARNESSES[n].label, HARNESSES[n].skills]));
 
 // ---- What is routr's. Each SKILL.md routr ships carries `installed-by: routr` under `metadata`. A routr skill written
-// before that mark (routr up to 0.5.0-beta.1) is known by its name and its guides. A harness link is routr's only when
-// it points at routr's shared copy; any other link (a developer's, into a checkout) is never followed, replaced or removed.
-const MARK = /^\s*installed-by:\s*routr\s*$/m;
+// before that mark (routr up to 0.5.0-beta.1) is known by its name and its guides. Both are read from the YAML
+// frontmatter only: an example in the body proves nothing. A harness link is routr's only when it points at routr's
+// shared copy and that copy is itself routr's real folder; any other link (a developer's, into a checkout, or to a
+// shared folder that is itself their link) is never followed, replaced or removed.
 const LEGACY = { routr: ["references/worker.md", "references/orchestrator.md"] };
 export const sharedPath = (home, skill) => join(home, ".agents/skills", skill);
+// The frontmatter of a SKILL.md: its `name`, and whether `installed-by: routr` sits in its `metadata:` block.
+export function frontmatter(text) {
+  const m = String(text).match(/^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/);
+  if (!m) return { name: null, marked: false };
+  const lines = m[1].split(/\r?\n/);
+  const name = lines.map((l) => l.match(/^name:\s*(\S+)\s*$/)?.[1]).find(Boolean) ?? null;
+  const at = lines.findIndex((l) => /^metadata:\s*$/.test(l));
+  let marked = false;
+  if (at >= 0) for (const l of lines.slice(at + 1)) { if (!/^\s/.test(l)) break; if (/^\s+installed-by:\s*"?routr"?\s*$/.test(l)) marked = true; }
+  return { name, marked };
+}
 // "absent", "ours", or "theirs" for the thing at `path` that would be `skill`.
 export function owner(home, skill, path) {
   let st; try { st = lstatSync(path); } catch { return "absent"; }
   const shared = sharedPath(home, skill);
-  if (st.isSymbolicLink()) { try { return path !== shared && resolve(dirname(path), readlinkSync(path)) === shared ? "ours" : "theirs"; } catch { return "theirs"; } }
+  if (st.isSymbolicLink()) {
+    if (path === shared) return "theirs"; // routr never makes its shared copy a link
+    try { return resolve(dirname(path), readlinkSync(path)) === shared && owner(home, skill, shared) === "ours" ? "ours" : "theirs"; } catch { return "theirs"; }
+  }
   if (!st.isDirectory()) return "theirs";
   let text = ""; try { text = readFileSync(join(path, "SKILL.md"), "utf8"); } catch { return "theirs"; }
-  if (!new RegExp(`^name:\\s*${skill}\\s*$`, "m").test(text)) return "theirs";
-  return MARK.test(text) || (LEGACY[skill] && LEGACY[skill].every((f) => existsSync(join(path, f)))) ? "ours" : "theirs";
+  const fm = frontmatter(text);
+  if (fm.name !== skill) return "theirs";
+  return fm.marked || (LEGACY[skill] && LEGACY[skill].every((f) => existsSync(join(path, f)))) ? "ours" : "theirs";
+}
+// Every file a skill ships that is not a readable regular file at `dir` (a folder in place of a file counts as missing).
+export function missingFiles(skill, dir) {
+  return Object.keys(FILES[skill]).filter((f) => { try { if (!statSync(join(dir, f)).isFile()) return true; accessSync(join(dir, f), constants.R_OK); return false; } catch { return true; } });
 }
 // Every place a skill of routr's can be, harness folders first (links before the folder they point at), each with its
 // owner. `set`: that harness is set up on this machine (the folder above its skills folder exists).
@@ -76,7 +96,8 @@ export function installSkill({ home = userHome(), dryRun = false } = {}) {
       }
       done.push({ skill, where: shared.path, how: "written" });
     } catch (e) { failed.push({ skill, where: shared.path, error: String(e?.message ?? e).slice(0, 160) }); continue; }
-    for (const p of places.slice(0, -1).filter((x) => x.set)) {
+    // Read each harness's place again now that routr's shared copy is in place: a link to it is routr's only from here.
+    for (const p of places.slice(0, -1).filter((x) => x.set).map((x) => (dryRun ? x : { ...x, state: owner(home, skill, x.path) }))) {
       if (p.state === "theirs") { kept.push({ skill, where: p.path, why: NOT_OURS }); continue; }
       if (dryRun) { done.push({ skill, where: p.path, how: `for ${p.label}` }); continue; }
       try {

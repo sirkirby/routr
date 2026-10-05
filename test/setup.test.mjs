@@ -648,11 +648,19 @@ test("doctor reports both skills with their versions, setup repairs a missing on
   expect(doc.skill.map((k) => `${k.name} ${k.where} ${k.version}`)).toEqual(SKILLS.flatMap((s) => SKILL_FOLDERS.map((f) => `${s} ~/${f}/${s} 0.0.0-dev`)));
   expect(doc.next_steps.join(" ")).not.toContain("skill install");
   // Every file routr ships is checked, not SKILL.md alone: a copy without its openai.yaml is incomplete, and said.
-  rmSync(join(home, ".agents/skills/routr-orchestrate/agents"), { recursive: true });
+  // A folder in place of a file is no file. And a harness set up here without routr's link (its link failed) is a repair.
+  rmSync(join(home, ".agents/skills/routr-orchestrate/agents/openai.yaml")); mkdirSync(join(home, ".agents/skills/routr-orchestrate/agents/openai.yaml"));
+  rmSync(join(home, ".kiro/skills/routr"), { recursive: true, force: true });
   const partial = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString());
   expect(partial.skill.find((k) => k.where === "~/.agents/skills/routr-orchestrate").missing).toEqual(["agents/openai.yaml"]);
+  expect(partial.skill_unlinked).toEqual([{ name: "routr", where: join("~", ".kiro/skills/routr"), for: "Kiro" }]);
   expect(partial.next_steps).toContain("Install the routr skills that match this routr: routr skill install");
-  expect(Bun.spawnSync([process.execPath, SCRIPT, "doctor"], { env }).stdout.toString()).toContain("routr-orchestrate skill ~/.agents/skills/routr-orchestrate is incomplete (no agents/openai.yaml): run `routr skill install`");
+  const text = Bun.spawnSync([process.execPath, SCRIPT, "doctor"], { env }).stdout.toString();
+  expect(text).toContain("routr-orchestrate skill ~/.agents/skills/routr-orchestrate is incomplete (no agents/openai.yaml): run `routr skill install`");
+  expect(text).toContain(`routr skill not linked for Kiro (${join("~", ".kiro/skills/routr")}): run \`routr skill install\``);
+  // The repair it names works: install replaces routr's incomplete copy and links Kiro again.
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "skill", "install"], { env }).exitCode).toBe(0);
+  expect(JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString()).next_steps.join(" ")).not.toContain("skill install");
   expect(Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes"], { env }).exitCode).toBe(0);
   for (const s of SKILLS) for (const f of SKILL_FOLDERS) expect(existsSync(join(home, f, s))).toBe(false);
 });
