@@ -268,7 +268,7 @@ test("off Windows a child that outlives SIGTERM gets SIGKILL after a grace; one 
 
 test.skipIf(process.platform === "win32")("a real child that ignores SIGTERM is gone soon after run() times out, and run() answers on time", async () => {
   const dir = scratch("stubborn"), pidFile = join(dir, "pid");
-  const script = `process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`;
+  const script = `process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 20000);`;
   const began = Date.now();
   expect(await run(process.execPath, ["-e", script], { timeoutMs: 1500 })).toBeNull();
   expect(Date.now() - began).toBeLessThan(2500); // the grace is not the caller's wait
@@ -276,5 +276,42 @@ test.skipIf(process.platform === "win32")("a real child that ignores SIGTERM is 
   const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
   expect(alive()).toBe(true); // SIGTERM alone did not stop it
   for (let i = 0; i < 40 && alive(); i++) await Bun.sleep(100);
+  expect(alive()).toBe(false);
+});
+
+// From the verification of 2b89d1d, with real processes in a routr-like parent (`bun -e`), so what is checked is
+// whether that parent exits and what it leaves behind. A process that ends by itself after `life` ms stands in for a
+// CLI, and for a taskkill that hangs: none outlives the test by more than that.
+const RUNTIME = JSON.stringify(new URL("../src/lib/runtime.mjs", import.meta.url).href);
+const lingering = (life) => `setTimeout(() => {}, ${life})`;
+const parent = (code) => {
+  const began = Date.now();
+  const r = Bun.spawnSync([process.execPath, "-e", code], { timeout: 30000 });
+  return { ms: Date.now() - began, code: r.exitCode, err: r.stderr.toString() };
+};
+
+// A taskkill that hung was outlived by the grace, then left running and referenced: routr stayed up until it ended.
+test("a taskkill that hangs is killed and let go at the grace, so routr exits; the child it was for is killed", () => {
+  const r = parent(`import { spawn } from "node:child_process"; import { stop } from ${RUNTIME};
+    const target = spawn(process.execPath, ["-e", ${JSON.stringify(lingering(12000))}], { stdio: "ignore" });
+    target.on("exit", (code, sig) => console.error("target", sig));
+    const hang = () => spawn(process.execPath, ["-e", ${JSON.stringify(lingering(12000))}], { stdio: "ignore" });
+    stop(target, { platform: "win32", via: hang });`);
+  expect(r.code).toBe(0);
+  expect(r.ms).toBeLessThan(6000); // the 2 s grace, not the hung taskkill's 12 s
+  expect(r.err).toContain("target SIGTERM");
+});
+
+// usage and doctor call process.exit right after printing: the unref'd SIGKILL timer never fired, and a CLI that
+// ignores SIGTERM outlived routr. Exit now kills what is still owed its SIGKILL.
+test.skipIf(process.platform === "win32")("a child that ignores SIGTERM does not outlive a routr that exits right after the timeout", async () => {
+  const pidFile = join(scratch("exit-reap"), "pid");
+  const child = `process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); ${lingering(15000)}`;
+  const r = parent(`import { run } from ${RUNTIME};
+    console.log(await run(process.execPath, ["-e", ${JSON.stringify(child)}], { timeoutMs: 1000 })); process.exit(0);`);
+  expect([r.code, r.ms < 5000]).toEqual([0, true]);
+  const pid = Number(readFileSync(pidFile, "utf8"));
+  const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  for (let i = 0; i < 10 && alive(); i++) await Bun.sleep(100);
   expect(alive()).toBe(false);
 });

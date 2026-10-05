@@ -172,23 +172,49 @@ export function windowsCommand(cmd, args = [], { env = process.env, cwd = proces
 const KILL_GRACE_MS = 2000;
 const alive = (child) => child.exitCode == null && child.signalCode == null;
 const later = (ms, fn) => { const t = setTimeout(fn, ms); t.unref?.(); return t; };
+// Children still owed their last kill, and the taskkills still running for them. The grace timers are unref'd, and
+// usage and doctor call process.exit right after printing, so a timer alone never fired there and a child that
+// ignored SIGTERM outlived routr (from the verification of 2b89d1d). On exit, whatever is still pending is killed at
+// once (process.kill is synchronous): SIGKILL off Windows, TerminateProcess on Windows.
+const pending = new Map(); // child -> the signal it is owed
+let reaping = false;
+const reapPending = () => {
+  for (const [c, sig] of pending) { if (alive(c)) { try { c.kill(sig); } catch {} } }
+  pending.clear();
+};
+const owe = (c, sig) => {
+  if (!reaping) { reaping = true; process.on("exit", reapPending); }
+  pending.set(c, sig); c.once?.("exit", () => pending.delete(c));
+};
 export function stop(child, { platform = process.platform, via, after = later } = {}) {
   if (!child || !alive(child)) return;
   if (platform === "win32" && child.pid) {
-    let fell = false;
-    const fallBack = () => { if (fell) return; fell = true; if (alive(child)) { try { child.kill(); } catch {} } };
+    let fell = false, tk;
+    // taskkill's work is over (it answered, failed, or ran out of time): the child alone, unless it has exited (its
+    // pid may be someone else's by then). A taskkill that hangs is killed and let go, its listeners off: a child
+    // still referenced kept routr running after the grace (from the verification of 2b89d1d).
+    const fallBack = ({ hung = false } = {}) => {
+      if (fell) return; fell = true; pending.delete(tk);
+      if (hung && tk) { try { tk.removeAllListeners?.(); tk.on("error", () => {}); tk.kill(); tk.unref?.(); } catch {} }
+      if (alive(child)) { try { child.kill(); } catch {} }
+      pending.delete(child);
+    };
     try {
       // Windows' own taskkill.exe by its full path: no PATH search to resolve (or to plant a taskkill in).
       const exe = win32.join(envGet(process.env, "SystemRoot") || "C:\\Windows", "System32", "taskkill.exe");
-      const tk = (via ?? spawn)(exe, ["/PID", String(child.pid), "/T", "/F"], startOptions({ stdio: "ignore" }));
-      const t = after(KILL_GRACE_MS, fallBack);
+      tk = (via ?? spawn)(exe, ["/PID", String(child.pid), "/T", "/F"], startOptions({ stdio: "ignore" }));
+      owe(child); owe(tk);
+      const t = after(KILL_GRACE_MS, () => fallBack({ hung: true }));
       tk.on("error", () => { clearTimeout(t); fallBack(); });
-      tk.on("exit", (code) => { clearTimeout(t); if (code !== 0) fallBack(); });
+      tk.on("exit", (code) => { clearTimeout(t); if (code !== 0) fallBack(); else { pending.delete(tk); pending.delete(child); } });
       return;
     } catch {}
   }
   try { child.kill(); } catch {}
-  if (platform !== "win32") after(KILL_GRACE_MS, () => { if (alive(child)) { try { child.kill("SIGKILL"); } catch {} } });
+  if (platform !== "win32") {
+    owe(child, "SIGKILL");
+    after(KILL_GRACE_MS, () => { pending.delete(child); if (alive(child)) { try { child.kill("SIGKILL"); } catch {} } });
+  }
 }
 
 // The environment for a harness read (`run`, `probe`): routr's own, without herdr's pane variables (HERDR_ENV,
