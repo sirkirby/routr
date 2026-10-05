@@ -218,7 +218,8 @@ test("routr touches only its own skills: a same-named skill, a folder behind som
   expect(plan.remove.map((x) => x.path)).not.toContain(join(home, ".kiro/skills/routr"));
   // A copy routr made (the Windows branch) carries the manifest and is routr's. Holding a file the user added, it is
   // left exactly as it is and said; cleared, it is replaced, stays a copy, and a file an older routr listed goes.
-  const copy = scratch("own-copy"), c = `${copy}/.claude/skills/routr`; mkdirSync(`${copy}/.claude/skills`, { recursive: true });
+  // `join`: the path as routr reports it, with this OS's separators.
+  const copy = scratch("own-copy"), c = join(copy, ".claude", "skills", "routr"); mkdirSync(`${copy}/.claude/skills`, { recursive: true });
   installSkill({ home: copy });
   rmSync(c, { recursive: true, force: true }); cpSync(`${copy}/.agents/skills/routr`, c, { recursive: true });
   writeFileSync(`${c}/stale.md`, "a file an older routr shipped");
