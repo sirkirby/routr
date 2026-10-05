@@ -94,21 +94,31 @@ export const promptSettled = (text, previous) => {
   return !!screen && typeof previous === "string" && screen === clean(previous).trim();
 };
 
-export function runHerdr(args, timeout) {
+// One herdr command. The timeout answers by itself, then kills: waiting for `close` after the kill (as before) kept the
+// call pending past its timeout whenever something else still held the pipes, e.g. on Windows a herdr started through
+// cmd.exe, where the kill reaches cmd.exe and not the hung client below it (from the final review). Only the child is
+// killed, never its tree: a herdr client may have started the herdr server, the user's whole session. Our ends of
+// the pipes are closed and the child unref'd, so a client that lingers holds neither this call nor routr's exit.
+// `via` is a test seam (runtime's start).
+export function runHerdr(args, timeout, { via = start } = {}) {
   return new Promise((done, reject) => {
-    const child = start("herdr", args, { stdio: ["ignore", "pipe", "pipe"] });
-    let stdout = "", stderr = "", timedOut = false;
+    const child = via("herdr", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "", stderr = "", settled = false;
+    const settle = (f, v) => { if (settled) return; settled = true; clearTimeout(timer); f(v); };
     child.stdout.on("data", (s) => { stdout += s; });
     child.stderr.on("data", (s) => { stderr += s; });
-    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, Math.max(1, Math.min(timeout, 2147483647)));
-    child.on("error", (e) => { clearTimeout(timer); reject(e); });
+    const timer = setTimeout(() => {
+      settle(done, { ok: false, data: { error: { code: "timeout", message: "Herdr command timed out" } } });
+      try { child.kill("SIGKILL"); } catch {}
+      try { child.stdout.destroy(); child.stderr.destroy(); child.unref?.(); } catch {}
+    }, Math.max(1, Math.min(timeout, 2147483647)));
+    child.on("error", (e) => settle(reject, e));
     child.on("close", (code) => {
-      clearTimeout(timer);
+      if (settled) return;
       let data;
-      if (timedOut) return done({ ok: false, data: { error: { code: "timeout", message: "Herdr command timed out" } } });
       try { data = JSON.parse(code === 0 ? stdout : stderr || stdout); }
       catch { data = code === 0 ? stdout : { error: { code: "herdr_failed", message: (stderr || stdout || "Herdr timed out").trim() } }; }
-      done({ ok: code === 0 && !data?.error, data });
+      settle(done, { ok: code === 0 && !data?.error, data });
     });
   });
 }

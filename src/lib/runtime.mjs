@@ -81,7 +81,8 @@ export const startSync = (cmd, args, opts, { via = spawnSync, platform } = {}) =
 //   - npm's own shim starts `node` on its script directly, the node the shim would pick (its folder's node.exe, else
 //     node on PATH): no shell and no quoting;
 //   - any other `.cmd`/`.bat` starts through `cmd.exe /d /s /c` with every argument quoted for cmd (cmdLine below).
-// A name not found is passed on unchanged, so the start fails as it did (ENOENT, or Bun's own error). Through cmd.exe
+// A name not found fails the start with ENOENT, as a missing program does: passed on bare, libuv's own search would
+// look in the current folder first, the hijack the lookup avoids (from the final review). Through cmd.exe
 // or node the CLI runs one or more processes below the child routr holds, so a timeout stops the tree (stop, below).
 const RUNNABLE = [".com", ".exe", ".bat", ".cmd"];
 const isFile = (p) => { try { return statSync(p).isFile(); } catch { return false; } };
@@ -147,7 +148,8 @@ export const cmdLine = (file, args) => [file.replace(CMD_META, "^$1"), ...args.m
 // What to start for `cmd args` on Windows: { cmd, args, verbatim } (verbatim: hand the line to cmd.exe as it is).
 export function windowsCommand(cmd, args = [], { env = process.env, cwd = process.cwd(), exists = isFile, read = readSmall, depth = 0 } = {}) {
   const file = resolveCommand(cmd, { env, cwd, exists });
-  if (!file || !/\.(cmd|bat)$/i.test(file)) return { cmd: file ?? cmd, args };
+  if (!file) throw Object.assign(new Error(`spawn ${cmd} ENOENT`), { code: "ENOENT", errno: -4058, syscall: `spawn ${cmd}`, path: cmd });
+  if (!/\.(cmd|bat)$/i.test(file)) return { cmd: file, args };
   const script = npmShimScript(read(file)), dir = win32.dirname(file);
   if (script && depth < 2 && exists(win32.join(dir, script))) {
     const local = win32.join(dir, "node.exe");
@@ -160,19 +162,33 @@ export function windowsCommand(cmd, args = [], { env = process.env, cwd = proces
 // Stop a child routr no longer waits for (a timeout, or `until` has its answer), and on Windows all it started: a .cmd
 // runs the CLI under cmd.exe, and an npm shim's node may start the CLI's own binary, so killing the child alone would
 // leave the CLI running. `taskkill /T /F` walks the tree by parent id, so it runs while the child is still there, and
-// never for a child that has exited (its pid may belong to another process by then). If taskkill cannot start, the
-// child alone is killed, as before. Off Windows, and for herdr (runHerdr: one herdr.exe, and a tree kill could reach a
-// herdr server it started, the user's session), only the child is killed.
-export function stop(child, { platform = process.platform, via } = {}) {
-  if (!child || child.exitCode != null || child.signalCode != null) return;
+// never for a child that has exited (its pid may belong to another process by then). If taskkill cannot start, exits
+// non-zero, or has not finished within KILL_GRACE_MS, the child alone is killed, unless it has exited meanwhile (from
+// the final review: a failing taskkill used to leave the child running). Off Windows a SIGTERM, then SIGKILL after
+// KILL_GRACE_MS if the child is still there: a CLI that ignores SIGTERM survived the one signal (from the final review;
+// Claude's /usage read is the newest such call). The caller has its answer already; the grace timers are unref'd, so
+// they never hold routr's exit. For herdr (runHerdr: one herdr.exe, and a tree kill could reach a herdr server it
+// started, the user's session), only the child is killed, and not through here. `via` and `after` are test seams.
+const KILL_GRACE_MS = 2000;
+const alive = (child) => child.exitCode == null && child.signalCode == null;
+const later = (ms, fn) => { const t = setTimeout(fn, ms); t.unref?.(); return t; };
+export function stop(child, { platform = process.platform, via, after = later } = {}) {
+  if (!child || !alive(child)) return;
   if (platform === "win32" && child.pid) {
+    let fell = false;
+    const fallBack = () => { if (fell) return; fell = true; if (alive(child)) { try { child.kill(); } catch {} } };
     try {
-      start("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" }, { ...(via ? { via } : {}), platform })
-        .on("error", () => { try { child.kill(); } catch {} });
+      // Windows' own taskkill.exe by its full path: no PATH search to resolve (or to plant a taskkill in).
+      const exe = win32.join(envGet(process.env, "SystemRoot") || "C:\\Windows", "System32", "taskkill.exe");
+      const tk = (via ?? spawn)(exe, ["/PID", String(child.pid), "/T", "/F"], startOptions({ stdio: "ignore" }));
+      const t = after(KILL_GRACE_MS, fallBack);
+      tk.on("error", () => { clearTimeout(t); fallBack(); });
+      tk.on("exit", (code) => { clearTimeout(t); if (code !== 0) fallBack(); });
       return;
     } catch {}
   }
   try { child.kill(); } catch {}
+  if (platform !== "win32") after(KILL_GRACE_MS, () => { if (alive(child)) { try { child.kill("SIGKILL"); } catch {} } });
 }
 
 // The environment for a harness read (`run`, `probe`): routr's own, without herdr's pane variables (HERDR_ENV,

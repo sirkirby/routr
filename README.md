@@ -119,7 +119,8 @@ routr setup
 It asks for your [TypeSafe API key](https://console.typesafe.ai/keys) if it has none (typed without echo, never
 shown), finds the harnesses that are installed and signed in, and lets you choose which ones routr may use and each
 one's everyday model, effort, hardest work, reserve and account use. Arrow keys choose, Esc goes back, and nothing is written
-until you pick Save and exit. It also sets up Claude Code's usage reading. `routr doctor` then shows what is in place and lists anything left to do, and `routr doctor --fix` is
+until you pick Save and exit. Claude Code's usage needs no setup: routr reads it from Claude's own `/usage` in each
+call. `routr doctor` then shows what is in place and lists anything left to do, and `routr doctor --fix` is
 the same command as `routr setup`: safe to run again, it only fills in what is missing. Or ask your agent to "set up
 routr", or paste [INSTALL.md](INSTALL.md) into it: it uses the same command and talks the choices through with you.
 Later, ask your agent to change a setting ("switch Cursor to Grok 4.7", "stop using Antigravity"): every setting has

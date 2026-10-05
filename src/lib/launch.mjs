@@ -77,7 +77,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
     command: [], argv: [], env: {}, steps: [], warnings: [], needs_input: null, prompt_chars: null };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
-  let configDir, createdPane = false, startAttempted = false, touchedPane = false, promptAttempted = false;
+  let configDir, createdPane = false, startAttempted = false, touchedPane = false, promptAttempted = false, unconfirmed = false;
   // Something in the pane needs an answer that routr does not give: a shell's own question, a harness's startup
   // question, an agent that has not started. The orchestrator gets what the pane shows (withheld once the task has been
   // sent: it shows the brief), herdr's reading when there is one, and `then`: how to carry on once it has answered.
@@ -332,7 +332,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
             const x = await explain();
             if (x.reads === "blocked" || typeof x.reads !== "string") return blockedAtStart(h, text, x);
             disagreed = { text, reading: x };
-          } else if (agent) disagreed = null; // herdr's state has moved on: no disagreement left to report
+          // herdr's state has moved on, or there is no agent any more: no disagreement left to report. A vanished agent
+          // kept the old one, and the deadline reported a block it no longer saw instead of failing (from the final review).
+          } else disagreed = null;
           // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
           if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) break;
           await pause();
@@ -377,7 +379,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       const agent = got.data?.result?.agent;
       const status = agent?.agent_status ?? "unknown";
       const sent = { then: `The task was sent: do not launch it again. Read the pane (herdr agent read ${out.pane}): answer a question it asks; press Enter if the task sits unsent in its input box (herdr agent send-keys ${out.pane} enter); send it with herdr agent prompt only if it never arrived` };
-      if (agent?.agent !== o.kind) return needsInput("Cannot confirm the prompted agent's identity", null, sent);
+      if (agent?.agent !== o.kind) { unconfirmed = true; return needsInput("Cannot confirm the prompted agent's identity", null, sent); }
       if (status === "blocked") {
         step("prompt", r.ok, `Submitted ${prompt.length} characters; the agent is asking something`);
         return needsInput("The worker is asking a question or an approval right after its prompt", null, { ...sent, herdr: { state: "blocked" } });
@@ -411,7 +413,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     // The name the orchestrator will use for an adopted agent, given once the task is in (whatever herdr then reports),
     // so a rename that hangs cannot take the submission's time (from the verification of d47051e: it used all of
     // --timeout, and the task was never sent). Its own short allowance, like explain's; a failure costs only the name.
-    if (adopted) {
+    // Not when the outcome read could not confirm the agent it prompted: the pane may hold another agent by then, and
+    // the name would go to it (from the final review).
+    if (adopted && !unconfirmed) {
       const a = ["agent", "rename", out.pane, o.name];
       logCommand(out.command, command(a));
       let renamed = null; try { renamed = await run(a, 2000); } catch {}

@@ -77,13 +77,15 @@ What's contributing to your limits usage?
 Approximate, based on local sessions on this machine — does not include other devices or claude.ai.`;
 const OCT5 = Date.UTC(2026, 9, 5, 17, 35) / 1000; // 1:35pm in Detroit, when it was read
 const utc = (...a) => Date.UTC(...a) / 1000;
+// A displayed reset is the END of the minute it shows: the last second of it.
+const endOf = (...a) => utc(...a) + 59;
 const claudeAnswer = (result, over = {}) => JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 0, total_cost_usd: 0, result, ...over });
 
 test("Claude's /usage text: the session and all-models week are the statusline's windows; a model's own week is counted, never named", () => {
   const p = parseClaudeUsage(CLAUDE_USAGE, OCT5);
   expect(p.windows).toEqual([
-    { name: "five_hour", usedPct: 1, windowMin: 300, resetsAt: utc(2026, 9, 5, 19, 59) },
-    { name: "seven_day", usedPct: 90, windowMin: 10080, resetsAt: utc(2026, 9, 6, 1, 59) }]);
+    { name: "five_hour", usedPct: 1, windowMin: 300, resetsAt: endOf(2026, 9, 5, 19, 59) },
+    { name: "seven_day", usedPct: 90, windowMin: 10080, resetsAt: endOf(2026, 9, 6, 1, 59) }]);
   expect(p.note).toBe("plus 1 model-specific weekly limit (highest 0% used), not ranked on");
   expect(p.note).not.toContain("Fable");
   // A reset that does not read exactly so is left unset, and said; the window still counts.
@@ -95,36 +97,45 @@ test("Claude's /usage text: the session and all-models week are the statusline's
 });
 
 test("Claude's reset times read in their own zone, across DST, midnight and noon, and the year that makes sense", () => {
-  expect(parseClaudeReset("Oct 5 at 4pm (America/Detroit)", OCT5)).toBe(utc(2026, 9, 5, 20));
-  expect(parseClaudeReset("Oct 5 at 10pm (America/Los_Angeles)", OCT5)).toBe(utc(2026, 9, 6, 5));
-  expect(parseClaudeReset("Oct 5 at 3:05pm (America/Detroit)", OCT5)).toBe(utc(2026, 9, 5, 19, 5));
-  expect(parseClaudeReset("Oct 6 at 12am (America/Detroit)", OCT5)).toBe(utc(2026, 9, 6, 4));   // midnight
-  expect(parseClaudeReset("Oct 6 at 12pm (America/Detroit)", OCT5)).toBe(utc(2026, 9, 6, 16));  // noon
+  expect(parseClaudeReset("Oct 5 at 4pm (America/Detroit)", OCT5)).toBe(endOf(2026, 9, 5, 20));
+  expect(parseClaudeReset("Oct 5 at 10pm (America/Los_Angeles)", OCT5)).toBe(endOf(2026, 9, 6, 5));
+  expect(parseClaudeReset("Oct 5 at 3:05pm (America/Detroit)", OCT5)).toBe(endOf(2026, 9, 5, 19, 5));
+  expect(parseClaudeReset("Oct 6 at 12am (America/Detroit)", OCT5)).toBe(endOf(2026, 9, 6, 4));   // midnight
+  expect(parseClaudeReset("Oct 6 at 12pm (America/Detroit)", OCT5)).toBe(endOf(2026, 9, 6, 16));  // noon
   // US daylight time ends Nov 1 2026 and starts Mar 14 2027: the offset is the one at that wall time.
-  expect(parseClaudeReset("Oct 31 at 3pm (America/Detroit)", OCT5)).toBe(utc(2026, 9, 31, 19));
-  expect(parseClaudeReset("Nov 1 at 3pm (America/Detroit)", OCT5)).toBe(utc(2026, 10, 1, 20));
+  expect(parseClaudeReset("Oct 31 at 3pm (America/Detroit)", OCT5)).toBe(endOf(2026, 9, 31, 19));
+  expect(parseClaudeReset("Nov 1 at 3pm (America/Detroit)", OCT5)).toBe(endOf(2026, 10, 1, 20));
   const mar = utc(2027, 2, 10);
-  expect(parseClaudeReset("Mar 13 at 3pm (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 13, 23));
-  expect(parseClaudeReset("Mar 14 at 3pm (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 14, 22));
-  expect(parseClaudeReset("Mar 14 at 1:30am (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 14, 9, 30));
-  expect(parseClaudeReset("Mar 14 at 3:30am (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 14, 10, 30));
+  expect(parseClaudeReset("Mar 13 at 3pm (America/Los_Angeles)", mar)).toBe(endOf(2027, 2, 13, 23));
+  expect(parseClaudeReset("Mar 14 at 3pm (America/Los_Angeles)", mar)).toBe(endOf(2027, 2, 14, 22));
+  expect(parseClaudeReset("Mar 14 at 1:30am (America/Los_Angeles)", mar)).toBe(endOf(2027, 2, 14, 9, 30));
+  expect(parseClaudeReset("Mar 14 at 3:30am (America/Los_Angeles)", mar)).toBe(endOf(2027, 2, 14, 10, 30));
   // The hour a clock skips does not exist: unread, never moved an hour. The hour it repeats takes the later instant,
   // so a window is not rolled over (headroom invented) before its reset: here the earlier one has already passed.
   expect(parseClaudeReset("Mar 14 at 2:30am (America/Los_Angeles)", mar)).toBeNull();
-  expect(parseClaudeReset("Nov 1 at 1:30am (America/Detroit)", utc(2026, 10, 1, 6))).toBe(utc(2026, 10, 1, 6, 30));
+  expect(parseClaudeReset("Nov 1 at 1:30am (America/Detroit)", utc(2026, 10, 1, 6))).toBe(endOf(2026, 10, 1, 6, 30));
   const full = parseClaudeUsage("Current session: 100% used · resets Nov 1 at 1:30am (America/Detroit)", utc(2026, 10, 1, 6));
   expect(summarize({ pool: "claude", source: "t", ts: utc(2026, 10, 1, 6), windows: full.windows, nowSec: utc(2026, 10, 1, 6) }).headroom).toBe(0);
   // No year is shown: the nearest of last, this and next year's. December's "Jan 1" is next year's; just after New
   // Year, last night's reset is last year's; yesterday's stays yesterday (and its window rolls over), never next year.
-  expect(parseClaudeReset("Jan 1 at 12am (America/Detroit)", utc(2026, 11, 31, 20))).toBe(utc(2027, 0, 1, 5));
-  expect(parseClaudeReset("Dec 31 at 11pm (America/Detroit)", utc(2027, 0, 1, 6))).toBe(utc(2027, 0, 1, 4));
-  expect(parseClaudeReset("Oct 4 at 12pm (America/Detroit)", utc(2026, 9, 5, 17))).toBe(utc(2026, 9, 4, 16));
+  expect(parseClaudeReset("Jan 1 at 12am (America/Detroit)", utc(2026, 11, 31, 20))).toBe(endOf(2027, 0, 1, 5));
+  expect(parseClaudeReset("Dec 31 at 11pm (America/Detroit)", utc(2027, 0, 1, 6))).toBe(endOf(2027, 0, 1, 4));
+  expect(parseClaudeReset("Oct 4 at 12pm (America/Detroit)", utc(2026, 9, 5, 17))).toBe(endOf(2026, 9, 4, 16));
   // Further from now than the window and a day: not this window's reset.
   expect(parseClaudeReset("Oct 9 at 4pm (America/Detroit)", OCT5, 300 * 60 + 86400)).toBeNull();
-  expect(parseClaudeReset("Oct 9 at 4pm (America/Detroit)", OCT5, 10080 * 60 + 86400)).toBe(utc(2026, 9, 9, 20));
+  expect(parseClaudeReset("Oct 9 at 4pm (America/Detroit)", OCT5, 10080 * 60 + 86400)).toBe(endOf(2026, 9, 9, 20));
   expect(parseClaudeUsage("Current session: 5% used · resets Oct 9 at 4pm (America/Detroit)", OCT5).windows[0].resetsAt).toBeNull();
   for (const bad of ["", "soon", "Oct 5 at 4pm", "Oct 5 at 13pm (America/Detroit)", "Oct 5 at 4:75pm (America/Detroit)", "Feb 30 at 4pm (America/Detroit)", "Foo 5 at 4pm (America/Detroit)", "Oct 5 at 4pm (Not/AZone)", "Oct 5 at 4pm (America/Detroit) extra", null])
     expect([bad, parseClaudeReset(bad, OCT5)]).toEqual([bad, null]);
+});
+
+// From the final review: "resets Oct 5 at 3:59pm" was read as 3:59:00, so for up to a minute before the real reset a
+// full window was rolled over and its headroom invented. The reset is the minute's end.
+test("a full Claude window is not rolled over during the minute its reset shows", () => {
+  const read = utc(2026, 9, 5, 19, 59, 30); // 3:59:30pm in Detroit
+  const full = parseClaudeUsage("Current session: 100% used · resets Oct 5 at 3:59pm (America/Detroit)", read);
+  expect(full.windows[0].resetsAt).toBe(utc(2026, 9, 5, 19, 59, 59));
+  expect(summarize({ pool: "claude", source: "t", ts: read, windows: full.windows, nowSec: read }).headroom).toBe(0);
 });
 
 test("Claude: a recent statusline snapshot is used as it is; otherwise its own /usage is read, hooks and MCP servers off, from the temp folder", async () => {
@@ -231,6 +242,12 @@ test("Claude's live read fails open: the old snapshot however old, else the assu
   // It answered, and showed no windows: the seat may have no quota; doctor's step keys on the reason.
   const bare = await read(claudeAnswer("You are using an API key"), missing);
   expect(bare).toMatchObject({ headroom: null, class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER }); expect(bare.note).toContain('billing: "metered"');
+  // From the final review: Claude answered and shows no windows (now an API key or a metered seat), while an old
+  // snapshot still holds the previous subscription's exhausted windows. The answer wins: that snapshot is not ranked.
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 3 * 3600, rate_limits: { seven_day: { used_percentage: 100, resets_at: OCT5 + 86400 } }, answered: true }));
+  const switched = await read(claudeAnswer("You are using an API key"));
+  expect(switched).toMatchObject({ source: "claude /usage", headroom: null, class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER });
+  expect(switched.note).not.toContain("statusline's last reading");
   // A snapshot saying Claude sent no windows after a prompt keeps its reason when the live read fails.
   writeFileSync(file, JSON.stringify({ ts: OCT5 - 3 * 3600, rate_limits: null, answered: true, seen: null }));
   expect((await read(null)).reason).toBe(NO_WINDOWS_AFTER_ANSWER);

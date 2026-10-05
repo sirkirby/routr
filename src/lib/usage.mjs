@@ -138,7 +138,8 @@ function wallTimes(y, mo, d, h, mi, zone) {
 // last year's, this year's and next year's, the occurrence nearest now; a reset just past stays past, and summarize
 // rolls its window over, as for the statusline. One further from now than `maxSec` (the window's length and a day) is
 // not a reading of this window: null. A wall time the clock skips is null; one it shows twice takes the LATER instant,
-// so a window is never rolled over before its reset (no headroom invented). Never guessed: null, and the note says so.
+// so a window is never rolled over before its reset (no headroom invented), and the instant is the end of the minute
+// shown (below). Never guessed: null, and the note says so.
 export function parseClaudeReset(text, nowSec = now(), maxSec = Infinity) {
   const m = String(text ?? "").trim().match(/^([a-z]{3})[a-z]*\.?\s+(\d{1,2})\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([A-Za-z0-9_+\-/]+)\)$/i);
   if (!m) return null;
@@ -152,7 +153,10 @@ export function parseClaudeReset(text, nowSec = now(), maxSec = Infinity) {
     const y = [year - 1, year, year + 1].filter((x) => d <= new Date(Date.UTC(x, mo + 1, 0)).getUTCDate())
       .sort((a, b) => Math.abs(Date.UTC(a, mo, d, h, mi) / 1000 - nowSec) - Math.abs(Date.UTC(b, mo, d, h, mi) / 1000 - nowSec))[0];
     const at = y == null ? null : wallTimes(y, mo, d, h, mi, m[6]).at(-1);
-    return at != null && Math.abs(at / 1000 - nowSec) <= maxSec ? at / 1000 : null;
+    // The text shows minutes only, and "3:59pm" may mean any second of that minute: the reset is taken as the minute's
+    // END (+59 s), so a full window is never rolled over up to a minute early, headroom invented (from the final review).
+    const end = at == null ? null : at / 1000 + 59;
+    return end != null && Math.abs(end - nowSec) <= maxSec ? end : null;
   } catch { return null; } // a zone Intl does not know
 }
 
@@ -252,10 +256,13 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT, nowSec = 
       answered = true; why = "Claude's /usage shows no usage windows for this seat";
     }
   }
-  // The statusline's reading however old (its age is shown), as before this reader existed; else nothing, and why.
-  if (fromSnap?.headroom != null) return { ...fromSnap, note: [fromSnap.note, `${why}: this is the statusline's last reading`].filter(Boolean).join("; ") };
+  // Claude answered and shows no windows: that is this seat's reading now, ahead of any snapshot. An old snapshot from
+  // before a switch to an API key or a metered seat would rank the previous subscription's windows, exhausted ones
+  // included (from the final review); the snapshot is only for a live read that failed.
   if (answered) return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: NO_WINDOWS_AFTER_ANSWER,
     note: `${why}. A plan with no quota (usage-based Enterprise, an API key) shows none: if that is this seat, set \`billing: "metered"\` for claude in the config` });
+  // The statusline's reading however old (its age is shown), as before this reader existed; else nothing, and why.
+  if (fromSnap?.headroom != null) return { ...fromSnap, note: [fromSnap.note, `${why}: this is the statusline's last reading`].filter(Boolean).join("; ") };
   // A snapshot that says Claude sent no windows after a response keeps saying so: doctor's step keys on it.
   return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: fromSnap?.reason, note: `${why}; using the assumed headroom` });
 }
