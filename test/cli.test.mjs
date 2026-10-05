@@ -343,6 +343,62 @@ test("nothing is written or removed through a link inside routr's folder, and un
   expect(existsSync(`${home}/.agents/skills/routr`)).toBe(false);              // the other skill went in full
 });
 
+test("a skill place under a linked folder is never routr's: a checkout linked in as ~/.agents/skills, or a harness folder that is a link, is left whole", async () => {
+  if (process.platform === "win32") return; // links need admin rights there
+  const { installSkill, linkedWhy, MANIFEST, owner } = await import("../src/lib/skill-install.mjs");
+  const { uninstallPlan } = await import("../src/lib/uninstall.mjs");
+  const { cpSync, existsSync, symlinkSync } = await import("node:fs");
+  // The final review's case: ~/.agents/skills is a developer's link into a checkout holding the legacy routr skill (no
+  // manifest), with an uncommitted edit to a guide.
+  const dev = scratch("linked-above"), checkout = join(dev, "checkout", "skills"), guide = join(checkout, "routr/references/worker.md");
+  mkdirSync(checkout, { recursive: true }); cpSync(join(import.meta.dir, "../skills/routr"), join(checkout, "routr"), { recursive: true });
+  writeFileSync(guide, "an uncommitted edit");
+  mkdirSync(`${dev}/.agents`); symlinkSync(checkout, `${dev}/.agents/skills`, "dir"); mkdirSync(`${dev}/.claude`);
+  expect(owner(dev, "routr", `${dev}/.agents/skills/routr`)).toBe("theirs");
+  const r = installSkill({ home: dev });
+  const above = join(dev, ".agents/skills");
+  expect(r.kept).toEqual(["routr", "routr-orchestrate"].map((skill) => ({ skill, where: join(dev, ".agents/skills", skill), why: linkedWhy(above) })));
+  expect(r.installed).toEqual([]);
+  expect(readFileSync(guide, "utf8")).toBe("an uncommitted edit");
+  expect(existsSync(join(checkout, "routr", MANIFEST))).toBe(false);
+  expect(existsSync(join(checkout, "routr-orchestrate"))).toBe(false);          // nothing new written into the checkout
+  expect(existsSync(`${dev}/.claude/skills`)).toBe(false);                      // nor linked to it
+  const plan = uninstallPlan({ home: dev });
+  expect(plan.remove.filter((x) => x.skill)).toEqual([]);
+  expect(plan.not_ours).toEqual([{ path: join(dev, ".agents/skills/routr"), what: linkedWhy(above) }]);
+  // A harness folder that is a link (dotfiles): a copy of routr's in it, manifest and all, is still not routr's to replace.
+  const dot = scratch("linked-harness"), kiro = join(dot, "dotfiles", "kiro");
+  mkdirSync(`${dot}/.agents`, { recursive: true }); installSkill({ home: dot });
+  mkdirSync(join(kiro, "skills"), { recursive: true }); cpSync(`${dot}/.agents/skills/routr`, join(kiro, "skills/routr"), { recursive: true });
+  writeFileSync(join(kiro, "skills/routr/SKILL.md"), "the dotfiles' copy"); symlinkSync(kiro, `${dot}/.kiro`, "dir");
+  const k = installSkill({ home: dot });
+  expect(k.kept.map((x) => [x.where, x.why])).toEqual(["routr", "routr-orchestrate"].map((s) => [join(dot, ".kiro/skills", s), linkedWhy(join(dot, ".kiro"))]));
+  expect(readFileSync(join(kiro, "skills/routr/SKILL.md"), "utf8")).toBe("the dotfiles' copy");
+  expect(existsSync(join(kiro, "skills/routr-orchestrate"))).toBe(false);
+  expect(uninstallPlan({ home: dot }).remove.map((x) => x.path)).not.toContain(join(dot, ".kiro/skills/routr"));
+});
+
+test("uninstall checks each skill place again right before it removes it: a folder swapped in after the plan was made is kept", async () => {
+  const { installSkill, ownedFiles } = await import("../src/lib/skill-install.mjs");
+  const { carryOut, uninstallPlan } = await import("../src/lib/uninstall.mjs");
+  const { existsSync } = await import("node:fs");
+  const home = scratch("swap-un"); installSkill({ home });
+  const plan = uninstallPlan({ home });                                        // shown to the person, who is asked…
+  // …and meanwhile routr's folder is replaced by the user's own skill of that name, with no manifest.
+  const dir = join(home, ".agents/skills/routr-orchestrate");
+  rmSync(dir, { recursive: true }); mkdirSync(join(dir, "agents"), { recursive: true });
+  writeFileSync(join(dir, "SKILL.md"), "mine"); writeFileSync(join(dir, "agents/openai.yaml"), "mine too");
+  const out = carryOut(plan, { home });
+  expect(readFileSync(join(dir, "SKILL.md"), "utf8")).toBe("mine");
+  expect(readFileSync(join(dir, "agents/openai.yaml"), "utf8")).toBe("mine too");
+  expect(out.notOurs.map((x) => x.path)).toEqual([dir]);
+  expect(out.failed).toEqual([]);
+  expect(out.removed).toContain(join(home, ".agents/skills/routr"));           // the one still routr's went
+  expect(existsSync(join(home, ".agents/skills/routr"))).toBe(false);
+  // Today's file names stand in for a manifest only for the grandfathered legacy routr folder, never for any other.
+  expect(ownedFiles(dir, "routr-orchestrate")).toEqual([]);
+});
+
 test("routr skill install and setup report a failed step as a failure, and claim only what was installed", () => {
   const home = scratch("skill-fail"); writeFileSync(join(home, ".agents"), "a file where the folder goes");
   const env = cliEnv(home, { PATH: home });
