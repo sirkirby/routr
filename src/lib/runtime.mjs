@@ -5,7 +5,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, win32 } from "node:path";
 
 // The user's home, read when asked: HOME (USERPROFILE on Windows), as Node's os.homedir() reads it. Bun's os.homedir()
 // ignores a HOME changed while it runs (measured 2026-09-26, Bun 1.3.13), so a test's scratch home reached only the CLIs
@@ -58,9 +58,86 @@ export const olderThan = (ms, nowMs = Date.now()) => (file) => nowMs - statSync(
 // Windows 11 opens as a Windows Terminal window: QA saw 20 to 70 windows flash per Cursor refresh, one per herdr poll,
 // before every start came through here. Off Windows the option does nothing. It is forced, never left to the caller.
 export const startOptions = (opts = {}) => ({ ...opts, windowsHide: true });
-// Start a process with those defaults: `start` as node's spawn, `startSync` as spawnSync. `via` is a test seam.
-export const start = (cmd, args, opts, { via = spawn } = {}) => via(cmd, args, startOptions(opts));
-export const startSync = (cmd, args, opts, { via = spawnSync } = {}) => via(cmd, args, startOptions(opts));
+// Start a process with those defaults: `start` as node's spawn, `startSync` as spawnSync, the command resolved on
+// Windows as below. `via` and `platform` are test seams.
+const prepare = (cmd, args = [], opts = {}, platform = process.platform) => {
+  if (platform !== "win32") return [cmd, args, startOptions(opts)];
+  const w = windowsCommand(cmd, args, { env: opts.env ?? process.env });
+  return [w.cmd, w.args, startOptions(w.verbatim ? { ...opts, windowsVerbatimArguments: true } : opts)];
+};
+export const start = (cmd, args, opts, { via = spawn, platform } = {}) => via(...prepare(cmd, args, opts, platform));
+export const startSync = (cmd, args, opts, { via = spawnSync, platform } = {}) => via(...prepare(cmd, args, opts, platform));
+
+// Windows: a command resolved as the shell would. A CLI installed with npm is a `.cmd` shim (`%APPDATA%\npm\codex.cmd`),
+// and child_process without a shell neither finds it by its bare name nor starts it. Measured on windows-latest,
+// 2026-10-05, Bun 1.4.2 (test/windows-shims.test.mjs): `codex`-style bare names failed with ERR_INVALID_ARG_VALUE, a
+// `.cmd` by name or full path with EINVAL, so run() and probe() answered null and every such harness read as not
+// installed; `cmd.exe /d /s /c` with windowsVerbatimArguments started the same file. So, before every start:
+//   - a bare name is looked up in PATH with PATHEXT (case-insensitive), a name with an extension or a folder as given;
+//     the current folder is not searched first, as cmd would (a planted `codex.cmd` in a work tree is the classic hijack);
+//   - `.exe`/`.com` start directly;
+//   - npm's own shim starts `node` on its script directly, the node the shim would pick (its folder's node.exe, else
+//     node on PATH): no shell, no quoting, and a timeout's kill reaches the CLI itself, not just a cmd.exe above it;
+//   - any other `.cmd`/`.bat` starts through `cmd.exe /d /s /c` with every argument quoted for cmd (cmdLine below).
+// A name not found is passed on unchanged, so the start fails as it did (ENOENT, or Bun's own error).
+const RUNNABLE = [".com", ".exe", ".bat", ".cmd"];
+const isFile = (p) => { try { return statSync(p).isFile(); } catch { return false; } };
+const readSmall = (p) => { try { return statSync(p).size < 65536 ? readFileSync(p, "utf8") : ""; } catch { return ""; } };
+const envGet = (env, name) => { const k = Object.keys(env).find((key) => key.toLowerCase() === name.toLowerCase()); return k ? env[k] : undefined; };
+
+// The file a shell would start for `cmd`, or null. Only extensions both PATHEXT and CreateProcess-or-cmd can start count:
+// PATHEXT also lists .JS and .VBS, which cmd would hand to Windows Script Host (an npm shim strips .JS for that reason).
+export function resolveCommand(cmd, { env = process.env, exists = isFile } = {}) {
+  const exts = (envGet(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").map((e) => e.trim().toLowerCase()).filter((e) => RUNNABLE.includes(e));
+  const tries = (base) => [...(win32.extname(base) ? [base] : []), ...exts.map((e) => base + e)].find(exists) ?? null;
+  if (/[\\/]/.test(cmd) || /^[a-z]:/i.test(cmd)) return tries(cmd);
+  for (const dir of String(envGet(env, "PATH") ?? "").split(";").map((d) => d.trim().replace(/^"(.*)"$/, "$1"))) {
+    const hit = dir && tries(win32.join(dir, cmd));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// npm's cmd-shim, as npm 7 to 11 write it for a `#!/usr/bin/env node` bin (cmd-shim 4 to 9; 9.0.2 checked line by
+// line): it sets dp0 to its own folder, picks `%dp0%\node.exe` or `node`, and runs `"%_prog%"  "%dp0%\<script>" %*`.
+// Returns the script, relative to the shim's folder, or null for anything else: a shebang with arguments or variables
+// (`env -S X=1 node`), another program than node, pnpm's shim (it also sets NODE_PATH), an older or edited file. Those
+// go through cmd.exe, which runs them exactly as written.
+export function npmShimScript(text) {
+  const lines = String(text).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const known = /^(@?echo off|goto start|:find_dp0|set dp0=%~dp0|exit \/b|exit \/b %errorlevel%|:start|setlocal|endlocal|call :find_dp0|if exist "%dp0%\\node\.exe" \(|set "_prog=%dp0%\\node\.exe"|\) else \(|set "_prog=node"|set pathext=%pathext:;\.js;=;%|\))$/i;
+  const runLine = /^(?:endLocal & goto #_undefined_# 2>NUL \|\| title %COMSPEC% & )?(?:set PATHEXT=%PATHEXT:;\.JS;=;% & )?"%_prog%" +"%dp0%\\([^"%]+)" %\*$/i;
+  const runs = lines.filter((l) => !known.test(l));
+  const script = runs.length === 1 ? runs[0].match(runLine)?.[1] : null;
+  return script && lines.some((l) => /^set "_prog=node"$/i.test(l)) && lines.some((l) => /^set dp0=%~dp0$/i.test(l)) ? script : null;
+}
+
+// cmd.exe's own parse, then the C runtime's argv parse in the program it starts (cross-spawn's rules, which Node's docs
+// point to): each argument is quoted for the C runtime (backslashes doubled before a quote and at the end), then every
+// cmd metacharacter, the quotes included, is escaped with ^. Twice: a shim hands its arguments on with %*, and cmd parses
+// that expanded line again, so one escape would leave `a"&b` able to run `b` (cross-spawn escapes npm shims twice for
+// the same reason). Every .cmd a CLI installs forwards %* that way (npm, pnpm, yarn, scoop). A line break cannot cross
+// cmd at all, so such an argument is refused rather than cut.
+const CMD_META = /([()\][%!^"`<>&|;, *?])/g;
+export const cmdArg = (arg) => {
+  const s = String(arg);
+  if (/[\r\n\0]/.test(s)) throw new Error("an argument with a line break cannot be passed through cmd.exe");
+  return `"${s.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, "$1$1")}"`.replace(CMD_META, "^$1").replace(CMD_META, "^$1");
+};
+export const cmdLine = (file, args) => [file.replace(CMD_META, "^$1"), ...args.map(cmdArg)].join(" ");
+
+// What to start for `cmd args` on Windows: { cmd, args, verbatim } (verbatim: hand the line to cmd.exe as it is).
+export function windowsCommand(cmd, args = [], { env = process.env, exists = isFile, read = readSmall, depth = 0 } = {}) {
+  const file = resolveCommand(cmd, { env, exists });
+  if (!file || !/\.(cmd|bat)$/i.test(file)) return { cmd: file ?? cmd, args };
+  const script = npmShimScript(read(file)), dir = win32.dirname(file);
+  if (script && depth < 2 && exists(win32.join(dir, script))) {
+    const local = win32.join(dir, "node.exe");
+    return windowsCommand(exists(local) ? local : "node", [win32.join(dir, script), ...args], { env, exists, read, depth: depth + 1 });
+  }
+  const comspec = envGet(env, "ComSpec") || win32.join(envGet(env, "SystemRoot") || "C:\\Windows", "System32", "cmd.exe");
+  return { cmd: comspec, args: ["/d", "/s", "/c", `"${cmdLine(file, args)}"`], verbatim: true };
+}
 
 // The environment for a harness read (`run`, `probe`): routr's own, without herdr's pane variables (HERDR_ENV,
 // HERDR_SOCKET_PATH, HERDR_PANE_ID, ...). Inside a herdr pane a harness inherits them, and herdr's integration hooks in
