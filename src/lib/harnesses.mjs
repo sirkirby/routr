@@ -2,7 +2,8 @@
 // references/harnesses.md). Launch flags are measured; see references/harnesses.md.
 //   label, executable: how it is named to a person, and the command that starts it. installAs: how the install hint
 //     names it ("Cursor (cursor-agent)": the command, where the name does not already say it).
-//   skills: the skills folder it reads, when not the shared ~/.agents/skills (the skill is linked there on install).
+//   skills: the skills folder it reads, when not the shared ~/.agents/skills (routr's skills are linked there on
+//     install, when the folder above it exists: that harness is set up on this machine).
 //   permissions, model, effort: its permissive flags and model/effort syntax. effortValue(level): the value passed
 //     after `effort`, when not the level itself. autoEffort: the effort that means "the model's own default", passed
 //     as no flag at all. noEffort: why a separate effort is refused. dirFlag: the flag naming the working directory,
@@ -91,7 +92,10 @@ export const HARNESSES = {
     models: () => lines("cursor-agent", ["models"], /^\s*([a-z0-9][\w.-]+) - /i),
     suggested: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 },
     usage: { read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor({ ...o, ready: ready("cursor") }) } },
-  agy: { label: "Antigravity", executable: "agy", installAs: "Antigravity (agy)",
+  // Skills: the user folder its docs name (antigravity.google/docs/skills); it does not read ~/.agents/skills (only a
+  // workspace's .agents/skills). Documented, not yet measured: the guide bundled with agy 1.2.17 names ~/.gemini/config/
+  // as its global root instead (references/harnesses.md).
+  agy: { label: "Antigravity", executable: "agy", installAs: "Antigravity (agy)", skills: ".gemini/antigravity-cli/skills",
     permissions: ["--dangerously-skip-permissions"], model: "--model", list: "agy models", dirFlag: "--add-dir",
     noEffort: "agy encodes effort in --model; omit --effort (agy 1.2.11 refuses one that disagrees with the id)",
     // No status command. `agy models` says "Please sign in to view available models" (exit 1) when signed out, and never
@@ -135,8 +139,11 @@ const KIND_ERROR = `--kind must be ${KINDS.slice(0, -1).join(", ")}, or ${KINDS.
 export const kindError = () => new Error(KIND_ERROR);
 // The harnesses that take a reasoning effort of their own; Cursor and Antigravity model ids carry it.
 export const TAKES_EFFORT = KINDS.filter((n) => HARNESSES[n].effort);
-// Where the routr skill is installed: the shared folder, then each harness's own.
+// Where routr's skills are installed: the shared folder, then each harness's own.
 export const SKILL_FOLDERS = [".agents/skills", ...KINDS.map((n) => HARNESSES[n].skills).filter(Boolean)];
+// The skills routr installs, each a folder under skills/ in this repository: the routr skill, and routr-orchestrate,
+// which only the user starts (`/routr-orchestrate <plan>`).
+export const SKILLS = ["routr", "routr-orchestrate"];
 
 
 export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir }) {

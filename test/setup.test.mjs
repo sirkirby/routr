@@ -49,7 +49,7 @@ test("doctor reports opted-in telemetry sends in text and JSON and flags failure
 test("doctor's next steps name the command for each thing missing, most important first", async () => {
   const { nextSteps, starterConfig } = await import("../src/lib/doctor.mjs");
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
-  const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true } }, skill: [{ version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
+  const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true } }, skill: [{ version: ROUTR_VERSION.split("-")[0] }, { name: "routr-orchestrate", version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
   expect(nextSteps(base)).toEqual([]);
   // Claude's usage is read through its own /usage: no statusline is ever a step.
   const fresh = nextSteps({ ...base, key: { works: false, found: false }, config: { exists: false, subscriptions: [] } });
@@ -149,7 +149,7 @@ test("routr setup changes a setting on an existing config, fills one that is mis
 
 // setup, driven end to end as a person would: scripted answers, a fake machine, nothing written outside a temp folder.
 // Every question asked is recorded, and a question the scenario did not expect fails it.
-async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], signedOut = [], keyWorks = true, env = {}, efforts = async () => null, models = {}, skill = [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }], usage = {}, print = () => {} } = {}) {
+async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], signedOut = [], keyWorks = true, env = {}, efforts = async () => null, models = {}, skill = [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: "0.0.0-dev" }], usage = {}, print = () => {} } = {}) {
   const { setup } = await import("../src/lib/setup.mjs");
   const dir = scratch("setup-run"), path = join(dir, "config.json");
   if (config) writeFileSync(path, JSON.stringify(config));
@@ -618,4 +618,31 @@ test("the update channel is a setting: --channel writes it, says what happens ne
   expect(said.join("\n")).toMatch(/update channel: stable \S+ beta/); // the review of what is saved
   expect(menu.saved).toEqual({ ...config, update_channel: "beta" });
   expect(menu.r.did).toContain('changed update_channel set to "beta"');
+});
+
+test("doctor reports both skills with their versions, setup repairs a missing one, and uninstall removes both everywhere", async () => {
+  const { nextSteps, render, skillsMissing } = await import("../src/lib/doctor.mjs");
+  const r = { runtime: "routr 0.0.0-dev (from source)", from_source: true, herdr: { path: "/bin/herdr", inside_session: true, skill: true },
+    skill: [{ name: "routr", where: "~/.agents/skills/routr", version: "0.0.0-dev" }, { name: "routr", where: "~/.kiro/skills/routr", version: "0.0.0-dev" }],
+    harnesses: {}, key: { works: true, model: "jev", ms: 300 }, config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] },
+    auto_update: { on: false, why_off: "running from source" }, telemetry: { on: false, why_off: "not turned on" }, next_steps: [] };
+  expect(skillsMissing(r)).toEqual(["routr-orchestrate"]);
+  expect(render(r)).toContain("routr skill ~/.agents/skills/routr, ~/.kiro/skills/routr are 0.0.0-dev");
+  expect(render(r)).toContain("routr-orchestrate skill not installed for your agents: run `routr skill install`");
+  expect(nextSteps(r)).toContain("Install the routr skills that match this routr: routr skill install");
+  // A person who leaves setup unchanged still gets the missing skill installed (it is not a setting).
+  const kept = await runSetup({ config: { telemetry: false, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } }, found: ["agy"], skill: r.skill, answers: ["5"] });
+  expect(kept.installs).toEqual([1]);
+  expect(kept.r.did).toContain("installed the routr skills 0.0.0 for your agents"); // the base version
+  // The real thing, in a scratch home: both skills in every folder, read by doctor, then removed by uninstall.
+  const { installSkill } = await import("../src/lib/skill-install.mjs");
+  const { SKILL_FOLDERS, SKILLS } = await import("../src/lib/harnesses.mjs");
+  const home = scratch("skills-un"); for (const d of [".claude", ".kiro", ".gemini/antigravity-cli"]) mkdirSync(join(home, d), { recursive: true });
+  installSkill({ home });
+  const env = cliEnv(home, { PATH: home });
+  const doc = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString());
+  expect(doc.skill.map((k) => `${k.name} ${k.where} ${k.version}`)).toEqual(SKILLS.flatMap((s) => SKILL_FOLDERS.map((f) => `${s} ~/${f}/${s} 0.0.0-dev`)));
+  expect(doc.next_steps.join(" ")).not.toContain("skill install");
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes"], { env }).exitCode).toBe(0);
+  for (const s of SKILLS) for (const f of SKILL_FOLDERS) expect(existsSync(join(home, f, s))).toBe(false);
 });

@@ -91,7 +91,7 @@ Merging to `main` only runs the tests. **A release happens when a version tag is
     git tag v0.2.0 && git push origin v0.2.0
 
 For a pre-release use `v0.2.0-rc.1` (`-alpha.N`, `-beta.N`, `-rc.N`). The tag is the only place a version is set:
-in the repository `src/lib/version.mjs`, `package.json`, and the `version` line in `skills/routr/SKILL.md` all read
+in the repository `src/lib/version.mjs`, `package.json`, and the `version` lines in `skills/routr/SKILL.md` and `skills/routr-orchestrate/SKILL.md` all read
 `0.0.0-dev` (a test checks it), so there is nothing to bump before a release and nothing to write back after one.
 
 Before pushing any release tag, merge `docs/releases/<tag>.md` (for example `docs/releases/v0.4.0.md`) with the

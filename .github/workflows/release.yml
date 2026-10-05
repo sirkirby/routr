@@ -77,8 +77,12 @@ jobs:
           test "$(./routr-${{ matrix.target }} --version)" = "${{ needs.validate-tag.outputs.version }}"
           ./routr-${{ matrix.target }} skill install --dry-run
           # The skill it installs must name the same release, or doctor tells every user to reinstall it.
-          H="$(mktemp -d)"; HOME="$H" ./routr-${{ matrix.target }} skill install >/dev/null
+          # So does routr-orchestrate, here and through a harness's link (a ~/.kiro makes Kiro count as set up).
+          H="$(mktemp -d)"; mkdir "$H/.kiro"; HOME="$H" ./routr-${{ matrix.target }} skill install >/dev/null
           V="${{ needs.validate-tag.outputs.version }}"; grep -q "version: \"${V%%-*}\"" "$H/.agents/skills/routr/SKILL.md"
+          grep -q "version: \"${V%%-*}\"" "$H/.agents/skills/routr-orchestrate/SKILL.md"
+          grep -q "version: \"${V%%-*}\"" "$H/.kiro/skills/routr-orchestrate/SKILL.md"
+          grep -q "allow_implicit_invocation: false" "$H/.agents/skills/routr-orchestrate/agents/openai.yaml"
       - uses: actions/upload-artifact@v4
         with:
           name: routr-${{ matrix.target }}
@@ -151,8 +155,12 @@ jobs:
           test "$(./"$BIN" --version)" = "${{ needs.validate-tag.outputs.version }}"
           ./"$BIN" skill install --dry-run
           # The skill it installs must name the same release, or doctor tells every user to reinstall it.
-          H="$(mktemp -d)"; HOME="$H" ./"$BIN" skill install >/dev/null
+          # So does routr-orchestrate, here and through a harness's link (a ~/.kiro makes Kiro count as set up).
+          H="$(mktemp -d)"; mkdir "$H/.kiro"; HOME="$H" ./"$BIN" skill install >/dev/null
           V="${{ needs.validate-tag.outputs.version }}"; grep -q "version: \"${V%%-*}\"" "$H/.agents/skills/routr/SKILL.md"
+          grep -q "version: \"${V%%-*}\"" "$H/.agents/skills/routr-orchestrate/SKILL.md"
+          grep -q "version: \"${V%%-*}\"" "$H/.kiro/skills/routr-orchestrate/SKILL.md"
+          grep -q "allow_implicit_invocation: false" "$H/.agents/skills/routr-orchestrate/agents/openai.yaml"
       - name: Notarize with Apple
         env:
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}

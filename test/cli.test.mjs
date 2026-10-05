@@ -124,18 +124,19 @@ test("unrecognized mode prints usage from table to stderr and exits 2", () => {
   }
 });
 
-test("the repository carries no version: the three version fields read 0.0.0-dev, and only the tag sets one", async () => {
+test("the repository carries no version: the four version fields read 0.0.0-dev, and only the tag sets one", async () => {
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
   const root = `${import.meta.dir}/..`;
   expect(ROUTR_VERSION).toBe("0.0.0-dev");
   expect(JSON.parse(readFileSync(`${root}/package.json`, "utf8")).version).toBe("0.0.0-dev");
   expect(readFileSync(`${root}/skills/routr/SKILL.md`, "utf8")).toContain('version: "0.0.0-dev"');
+  expect(readFileSync(`${root}/skills/routr-orchestrate/SKILL.md`, "utf8")).toContain('version: "0.0.0-dev"');
 });
 
-test("a release build stamps the tag's version into all three files, and refuses anything that is not a release version", () => {
+test("a release build stamps the tag's version into all four files, and refuses anything that is not a release version", () => {
   const root = scratch("stamp");
   try {
-    for (const f of ["src/lib/version.mjs", "package.json", "skills/routr/SKILL.md"]) {
+    for (const f of ["src/lib/version.mjs", "package.json", "skills/routr/SKILL.md", "skills/routr-orchestrate/SKILL.md"]) {
       mkdirSync(join(root, f, ".."), { recursive: true });
       writeFileSync(join(root, f), readFileSync(join(import.meta.dir, "..", f), "utf8"));
     }
@@ -144,6 +145,7 @@ test("a release build stamps the tag's version into all three files, and refuses
     expect(readFileSync(join(root, "src/lib/version.mjs"), "utf8")).toContain('const BASE = "0.3.0-rc.2";');
     expect(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version).toBe("0.3.0");   // the base version
     expect(readFileSync(join(root, "skills/routr/SKILL.md"), "utf8")).toContain('  version: "0.3.0"'); // what doctor compares
+    expect(readFileSync(join(root, "skills/routr-orchestrate/SKILL.md"), "utf8")).toContain('  version: "0.3.0"');
     expect(stamp("v0.3.0").exitCode).not.toBe(0);                                                  // the tag name, not the version
     expect(stamp("0.3").exitCode).not.toBe(0);
   } finally { rmSync(root, { recursive: true, force: true }); }
@@ -156,19 +158,37 @@ test("a pre-release or source build and its skill count as the same release", as
   expect(baseVersion(undefined)).toBe("");
 });
 
-test("routr skill install writes the guides and links them for Claude Code and Kiro", async () => {
-  const { installSkill } = await import("../src/lib/skill-install.mjs");
-  const { mkdirSync, readFileSync, existsSync } = await import("node:fs");
+test("routr skill install writes both skills and links each into every harness folder that is set up, Kiro and Antigravity included", async () => {
+  const { FILES, installSkill } = await import("../src/lib/skill-install.mjs");
+  const { SKILLS, SKILL_FOLDERS } = await import("../src/lib/harnesses.mjs");
+  const { existsSync, readdirSync } = await import("node:fs");
+  expect(Object.keys(FILES)).toEqual(SKILLS);              // every skill in the registry's list has its files embedded
+  expect(SKILLS).toEqual(["routr", "routr-orchestrate"]);
+  // Every file under skills/ is installed: the folder holds exactly what ships.
+  const tree = (d, pre = "") => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? tree(join(d, e.name), `${pre}${e.name}/`) : [`${pre}${e.name}`]));
+  for (const s of SKILLS) expect(tree(join(import.meta.dir, "../skills", s)).sort()).toEqual(Object.keys(FILES[s]).sort());
+  expect(SKILL_FOLDERS).toEqual([".agents/skills", ".claude/skills", ".gemini/antigravity-cli/skills", ".kiro/skills"]);
 
   const home = scratch("skill"); mkdirSync(`${home}/.claude`);
   const r = installSkill({ home });
-  expect(readFileSync(`${home}/.agents/skills/routr/SKILL.md`, "utf8")).toContain("name: routr");
+  expect(r.installed.map((x) => [x.skill, x.how.replace("copied", "linked")])).toEqual([["routr", "written"], ["routr", "linked for Claude Code"], ["routr-orchestrate", "written"], ["routr-orchestrate", "linked for Claude Code"]]);
   expect(existsSync(`${home}/.agents/skills/routr/references/worker.md`)).toBe(true);
-  expect(readFileSync(`${home}/.claude/skills/routr/SKILL.md`, "utf8")).toContain("name: routr");
-  expect(r.installed.length).toBe(2); // no ~/.kiro: Kiro is not set up here
-  mkdirSync(`${home}/.kiro`);                              // Kiro reads only ~/.kiro/skills (measured)
-  expect(installSkill({ home }).installed.map((x) => x.how)).toEqual(["written", expect.stringContaining("Claude Code"), expect.stringContaining("Kiro")]);
-  expect(readFileSync(`${home}/.kiro/skills/routr/SKILL.md`, "utf8")).toContain("name: routr");
+  for (const s of SKILLS) for (const f of SKILL_FOLDERS.slice(0, 2)) expect(readFileSync(`${home}/${f}/${s}/SKILL.md`, "utf8")).toContain(`name: ${s}`);
+  expect(existsSync(`${home}/.kiro`) || existsSync(`${home}/.gemini`)).toBe(false); // neither is set up here: nothing made for them
+  // Kiro (reads only ~/.kiro/skills, measured) and Antigravity (its documented user folder) once they are set up.
+  mkdirSync(`${home}/.kiro`); mkdirSync(`${home}/.gemini/antigravity-cli`, { recursive: true });
+  const all = installSkill({ home });
+  expect(all.installed.filter((x) => x.skill === "routr-orchestrate").map((x) => x.how.replace("copied", "linked"))).toEqual(["written", "linked for Claude Code", "linked for Antigravity", "linked for Kiro"]);
+  for (const s of SKILLS) for (const f of SKILL_FOLDERS) expect(readFileSync(`${home}/${f}/${s}/SKILL.md`, "utf8")).toContain(`name: ${s}`);
+  // routr-orchestrate is only for the user to start: the documented fields, the same frontmatter everywhere, no setting.
+  const md = readFileSync(`${home}/.kiro/skills/routr-orchestrate/SKILL.md`, "utf8");
+  expect(md).toBe(readFileSync(join(import.meta.dir, "../skills/routr-orchestrate/SKILL.md"), "utf8"));
+  expect(md).toMatch(/^---\r?\nname: routr-orchestrate\r?\ndescription: [^\n]*Use ONLY when the user explicitly invokes \/routr-orchestrate[^\n]*\n(?:[^\n]*\n)*?disable-model-invocation: true\r?\n[\s\S]*?\n---\r?\n/);
+  expect(md).toContain("The work: $ARGUMENTS");
+  expect(readFileSync(`${home}/.agents/skills/routr-orchestrate/agents/openai.yaml`, "utf8").replace(/\r\n/g, "\n")).toBe(
+    'interface:\n  display_name: "routr orchestrate"\n  short_description: "Run this session as the routr orchestrator"\npolicy:\n  allow_implicit_invocation: false\n');
+  expect(existsSync(`${home}/.kiro/prompts`)).toBe(false); // one mechanism: no prompt file
+  expect(installSkill({ home, dryRun: true }).installed.length).toBe(8); // the plan names every place, and writes nothing new
   installSkill({ home });                                  // installing again replaces, never fails
 });
 

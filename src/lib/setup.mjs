@@ -9,7 +9,7 @@ import { ACCOUNT_USE, CONFIG_PATH, loadConfig, SUB_DEFAULTS, UPDATE_CHANNELS } f
 import { LEVELS } from "./questions.mjs";
 import { settingSummary } from "./wording.mjs";
 import { envOff, setTelemetry } from "./telemetry.mjs";
-import { inspect, paint, render, starterConfig } from "./doctor.mjs";
+import { inspect, paint, render, skillsMissing, starterConfig } from "./doctor.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { setKey } from "./key.mjs";
 import { standalone } from "./runtime.mjs";
@@ -174,13 +174,13 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     const levels = found.includes(n) ? await levelsOf(n, models[n] ?? current[n]?.default_model) : null;
     if (levels?.length && !levels.includes(level)) return { ok: false, error: `--effort ${n}=${level}: ${HARNESSES[n].label} takes ${levels.join(", ")}${models[n] ?? current[n]?.default_model ? ` for ${models[n] ?? current[n]?.default_model}` : ""}` };
   }
-  // The skill agents read: missing, or left behind by an older routr. Writing it again is always safe, and it is done
-  // whatever the person chose, since it is not a setting. From a source checkout (0.0.0-dev) a release's skill never
-  // matches, and rewriting it would fight the installed binary.
+  // The skills agents read (routr, and routr-orchestrate): one missing, or left behind by an older routr. Writing them
+  // again is always safe, and it is done whatever the person chose, since it is not a setting. From a source checkout
+  // (0.0.0-dev) a release's skill never matches, and rewriting it would fight the installed binary.
   const skillStep = () => {
     const base = baseVersion(ROUTR_VERSION);
-    if (r.skill.length && !(standalone() && r.skill.some((k) => baseVersion(k.version) !== base))) return false;
-    install(); did.push(`installed the routr skill ${base} for your agents`); return true;
+    if (!skillsMissing(r).length && !(standalone() && r.skill.some((k) => baseVersion(k.version) !== base))) return false;
+    install(); did.push(`installed the routr skills ${base} for your agents`); return true;
   };
   // A person at a terminal gets the guided flow; flags and --yes (an agent) never ask anything.
   let config = null;

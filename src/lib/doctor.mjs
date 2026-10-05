@@ -4,7 +4,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { accountUse, CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
-import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, TAKES_EFFORT } from "./harnesses.mjs";
+import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
 import { signInHint } from "./signin.mjs";
 import { jevModel, KEY_FILES, loadKey, ping } from "./jev.mjs";
 import { JEV_MODEL } from "./questions.mjs";
@@ -45,6 +45,9 @@ export function starterConfig(found, models = {}, ranks = {}) {
     subscriptions: Object.fromEntries(found.map((n) => [n, { ...(TAKES_EFFORT.includes(n) ? { default_effort: "medium" } : {}), ...HARNESSES[n].suggested, ...(models[n] ? { default_model: models[n] } : {}), ...(ranks[n] ? { metered_rank: ranks[n] } : {}) }])) };
 }
 
+// The skills routr installs that are in none of the skills folders (an entry without a name is the routr skill).
+export const skillsMissing = (r) => SKILLS.filter((n) => !r.skill.some((k) => (k.name ?? "routr") === n));
+
 // What is left to do, most important first, each with the command that does it.
 export function nextSteps(r) {
   const steps = [];
@@ -62,7 +65,7 @@ export function nextSteps(r) {
   const cl = r.harnesses.claude;
   if (cl?.installed && cl.usage_reason === NO_WINDOWS_AFTER_ANSWER && !r.config.billing?.claude)
     steps.push(`Claude reports no usage windows, and routr cannot tell why. If this seat has no quota (usage-based Enterprise, an API key), add "billing": "metered" under subscriptions.claude in ${r.config.path} and routr ranks it as billed usage. If it has a quota (routr has not yet seen a Team or Enterprise seat send windows), add "billing": "included", or check again after another turn`);
-  if (!r.skill.length || (!r.from_source && r.skill.some((k) => baseVersion(k.version) !== baseVersion(ROUTR_VERSION)))) steps.push("Install the routr skill that matches this routr: routr skill install");
+  if (skillsMissing(r).length || (!r.from_source && r.skill.some((k) => baseVersion(k.version) !== baseVersion(ROUTR_VERSION)))) steps.push("Install the routr skills that match this routr: routr skill install");
   if (r.telemetry?.needs_attention) steps.push("Telemetry is on but not sending: `routr telemetry status` says why (last_send, daily_send), and `routr telemetry send` sends now");
   if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
   if (!r.herdr.path) steps.push("For orchestration, install herdr (https://herdr.dev). Sizing subagents works without it");
@@ -116,8 +119,9 @@ export async function inspect({ configPath, quiet } = {}) {
   for (const n of found) r.harnesses[n].models = lists[n];
   // The installer writes the skill and the binary together, but a skill copied by hand or left behind by an older
   // install can drift: it may name commands this binary lacks, or miss ones it has.
-  r.skill = SKILL_FOLDERS.map((f) => `${f}/routr`).map((d) => {
-    try { return { where: `~/${d}`, version: readFileSync(join(home(), d, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\n]+)"?/m)?.[1] ?? "unknown" }; } catch { return null; }
+  // Each of routr's skills (the routr skill, and routr-orchestrate) in each folder it is installed to.
+  r.skill = SKILLS.flatMap((name) => SKILL_FOLDERS.map((f) => [name, `${f}/${name}`])).map(([name, d]) => {
+    try { return { name, where: `~/${d}`, version: readFileSync(join(home(), d, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\n]+)"?/m)?.[1] ?? "unknown" }; } catch { return null; }
   }).filter(Boolean);
   // `problems` are settings that are missing or wrong, each with its fix; `notes` are only for information.
   const problems = existsSync(path) ? [...notes] : [], info = []; // no config at all is its own line and next step
@@ -174,8 +178,15 @@ export function render(r) {
   line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: orchestration needs it (https://herdr.dev). Sizing subagents works without it"}`);
   if (r.herdr.path) line(r.herdr.skill, `herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
   const base = baseVersion(ROUTR_VERSION);
-  if (!r.skill.length) line("need", "routr skill not installed for your agents: run `routr skill install`");
-  for (const k of r.skill) line(r.from_source || baseVersion(k.version) === base ? "ok" : "need", `routr skill ${k.where} is ${k.version}${r.from_source || baseVersion(k.version) === base ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
+  // One line per skill and version: the folders it is in, and whether it matches this routr.
+  for (const name of SKILLS) {
+    const mine = r.skill.filter((k) => (k.name ?? "routr") === name);
+    if (!mine.length) line("need", `${name} skill not installed for your agents: run \`routr skill install\``);
+    for (const v of [...new Set(mine.map((k) => k.version))]) {
+      const ok = r.from_source || baseVersion(v) === base, at = mine.filter((k) => k.version === v).map((k) => k.where);
+      line(ok ? "ok" : "need", `${name} skill ${at.join(", ")} ${at.length > 1 ? "are" : "is"} ${v}${ok ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
+    }
+  }
   const any = Object.values(r.harnesses).some((h) => h.installed);
   for (const [n, h] of Object.entries(r.harnesses)) {
     const off = r.config.off?.includes(n);
