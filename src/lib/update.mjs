@@ -2,12 +2,11 @@
 // reinstall the skill so the guides match the command. It runs when asked, and by itself at most once a day in a
 // detached background job (`maybeAutoUpdate`), which `"auto_update": false` turns off. Every swap is checksum-verified,
 // and a run in progress keeps its binary.
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig } from "./config.mjs";
-import { CACHE_DIR, lockIsStale, spawnSelf, standalone, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
+import { CACHE_DIR, lockIsStale, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
 import { forgetConsentUnlessOn, sendRows, telemetryStatus } from "./telemetry.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
@@ -37,7 +36,7 @@ export async function latestVersion(timeoutMs = 4000) {
 
 // `self`, `fetchFn`, `spawn`, and `isStandalone` are seams: a test drives a real swap on a scratch file, with no network.
 export async function update({ checkOnly = false, force = false, base = process.env.ROUTR_DOWNLOAD_BASE,
-  self = process.execPath, fetchFn = fetch, spawn = spawnSync, isStandalone = standalone } = {}) {
+  self = process.execPath, fetchFn = fetch, spawn = startSync, isStandalone = standalone } = {}) {
   const out = { ok: false, current: ROUTR_VERSION, latest: null, updated: false };
   try {
     out.latest = base ? "(from ROUTR_DOWNLOAD_BASE)" : await latestVersion();

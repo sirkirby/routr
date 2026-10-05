@@ -664,8 +664,9 @@ test("launch types each shell's own syntax: Cursor's private config is set and r
   const dir = "C:\\Users\\u\\AppData\\Local\\Temp\\routr-cursor-1";
   // Windows shells only set the variable; herdr then starts Cursor itself, because it cannot see a Cursor a shell started.
   expect(SHELLS.powershell.cursor).toBeUndefined();
-  // This exact line was run on Windows 11: the watcher appeared, and the folder was gone once the shell exited.
-  expect(SHELLS.powershell.cursorEnv(dir)).toBe(`$env:CURSOR_CONFIG_DIR='${dir}'; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ''${dir}'' -Recurse -Force -ErrorAction SilentlyContinue"'; ([wmiclass]'Win32_Process').Create($w) | Out-Null`);
+  // The line without the hidden startup ($si) was run on Windows 11: the watcher appeared, and the folder was gone once
+  // the shell exited. The startup with ShowWindow = 0 is the documented way to hide its console; not yet confirmed there.
+  expect(SHELLS.powershell.cursorEnv(dir)).toBe(`$env:CURSOR_CONFIG_DIR='${dir}'; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ''${dir}'' -Recurse -Force -ErrorAction SilentlyContinue"'; $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $si.ShowWindow = 0; ([wmiclass]'Win32_Process').Create($w, $null, $si) | Out-Null`);
   expect(SHELLS.powershell.cd("C:\\it's here")).toBe("Set-Location -LiteralPath 'C:\\it''s here'");
   expect(SHELLS.cmd.cursorEnv(dir)).toBe(`set "CURSOR_CONFIG_DIR=${dir}"`);
   expect(SHELLS.cmd.cd("C:\\a b")).toBe('cd /d "C:\\a b"');

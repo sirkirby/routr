@@ -1,9 +1,9 @@
 // herdr, as routr uses it: the transport, reading a pane, the shell at a pane's prompt, and what gets typed into that
 // shell. `launch` (the user's panes) and `terminal` (a private session) both build on it, so neither imports the other
 // and an advice command that reads Cursor's usage never loads the launcher.
-import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
+import { start } from "./runtime.mjs";
 
 // A POSIX shell word: plain when it is safe, single-quoted otherwise.
 export const quote = (s) => /^[a-zA-Z0-9_./:=@+-]+$/.test(s) ? s : `'${String(s).replaceAll("'", "'\\''")}'`;
@@ -61,8 +61,11 @@ export const SHELLS = {
     // A watcher removes the folder once the pane's shell is gone, however it went: an exit hook in the shell itself did
     // not fire when herdr closed the pane, and a watcher started as the shell's child made herdr call the pane busy
     // (both seen on Windows 11). Created through WMI, the watcher is nobody's child. The command line is built by
-    // concatenation: a hashtable literal holding it failed to parse at the prompt (also seen).
-    cursorEnv: (dir) => `$env:CURSOR_CONFIG_DIR=${psq(dir)}; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ${psq(dir).replaceAll("'", "''")} -Recurse -Force -ErrorAction SilentlyContinue"'; ([wmiclass]'Win32_Process').Create($w) | Out-Null`,
+    // concatenation: a hashtable literal holding it failed to parse at the prompt (also seen), so it stays one line of
+    // `;`-separated statements. A process WMI creates gets its own console, which showed before `-WindowStyle Hidden`
+    // took effect; a Win32_ProcessStartup with ShowWindow = 0 (SW_HIDE) is the documented way to start it hidden. Not
+    // yet confirmed on Windows 11.
+    cursorEnv: (dir) => `$env:CURSOR_CONFIG_DIR=${psq(dir)}; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ${psq(dir).replaceAll("'", "''")} -Recurse -Force -ErrorAction SilentlyContinue"'; $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $si.ShowWindow = 0; ([wmiclass]'Win32_Process').Create($w, $null, $si) | Out-Null`,
   },
   cmd: {
     cd: (dir) => `cd /d ${cmdq(dir)}`,
@@ -93,7 +96,7 @@ export const promptSettled = (text, previous) => {
 
 export function runHerdr(args, timeout) {
   return new Promise((done, reject) => {
-    const child = spawn("herdr", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = start("herdr", args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "", stderr = "", timedOut = false;
     child.stdout.on("data", (s) => { stdout += s; });
     child.stderr.on("data", (s) => { stderr += s; });

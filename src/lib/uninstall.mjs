@@ -1,12 +1,11 @@
 // `routr uninstall`: remove what the installer and `routr setup` put on this machine. By default the user's own data
 // stays (config, TypeSafe key, ledger), as with a typical uninstall; `--purge` removes that too. A person is shown the
 // plan and asked; an agent or a script must pass `--yes`. Worktrees and herdr panes belong to the user's repos, not to routr.
-import { spawn } from "node:child_process";
 import { copyFileSync, lstatSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { SKILL_FOLDERS } from "./harnesses.mjs";
-import { home as userHome, standalone } from "./runtime.mjs";
+import { home as userHome, standalone, start } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 
 
@@ -67,7 +66,7 @@ export async function uninstall(args, { home = userHome() } = {}) {
         // The name goes into a `cmd` line unquoted, so only a plain one is allowed there; anything else is left for the user.
         if (!/^[\w.-]+$/.test(basename(aside))) throw new Error(`moved aside as ${aside}; delete that file yourself`);
         // Run from the binary's folder with a bare file name: a quoted path does not survive argument quoting on its way to `cmd` (seen: the file stayed).
-        spawn("cmd", ["/c", `ping -n 4 127.0.0.1 >nul & del /f /q ${basename(aside)}`], { cwd: dirname(aside), detached: true, stdio: "ignore", windowsHide: true }).unref();
+        start("cmd", ["/c", `ping -n 4 127.0.0.1 >nul & del /f /q ${basename(aside)}`], { cwd: dirname(aside), detached: true, stdio: "ignore" }).unref();
       } else removePath(x.path);
       removed.push(x.path);
     } catch (e) { failed.push(`${x.path}: ${String(e?.message ?? e).slice(0, 100)}`); }

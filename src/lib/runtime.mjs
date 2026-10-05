@@ -1,7 +1,8 @@
 // Facts about this process and routr's own files, and the small process and file primitives several modules share
 // (an atomic write, a lock, a detached copy of routr, a subprocess read). No imports beyond node: `statusline` loads
-// this on every Claude Code turn.
-import { spawn } from "node:child_process";
+// this on every Claude Code turn. It is the only module that imports node:child_process (a test holds every other file
+// in src/ to that), so every process routr starts gets the same platform defaults from `start` / `startSync`.
+import { spawn, spawnSync } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -52,23 +53,40 @@ export function lockIsStale(file, { alive = (pid) => { try { process.kill(pid, 0
 // A lock whose file was last written `ms` or more before `nowMs`.
 export const olderThan = (ms, nowMs = Date.now()) => (file) => nowMs - statSync(file).mtimeMs >= ms;
 
+// routr's defaults for every process it starts. windowsHide: on Windows a console program started by a process that has
+// no console of its own (a detached background job: the Cursor or Kiro refresh, the updater) gets a NEW console, which
+// Windows 11 opens as a Windows Terminal window: QA saw 20 to 70 windows flash per Cursor refresh, one per herdr poll,
+// before every start came through here. Off Windows the option does nothing. It is forced, never left to the caller.
+export const startOptions = (opts = {}) => ({ ...opts, windowsHide: true });
+// Start a process with those defaults: `start` as node's spawn, `startSync` as spawnSync. `via` is a test seam.
+export const start = (cmd, args, opts, { via = spawn } = {}) => via(cmd, args, startOptions(opts));
+export const startSync = (cmd, args, opts, { via = spawnSync } = {}) => via(cmd, args, startOptions(opts));
+
+// The environment for a harness read (`run`, `probe`): routr's own, without herdr's pane variables (HERDR_ENV,
+// HERDR_SOCKET_PATH, HERDR_PANE_ID, ...). Inside a herdr pane a harness inherits them, and herdr's integration hooks in
+// that harness (e.g. ~/.claude/hooks/herdr-agent-state.sh, which acts only when all three are set) would report
+// routr's few-second read as an agent session in the user's pane. routr's own herdr calls (herdr.mjs runHerdr,
+// terminal.mjs) keep them: herdr needs them to find its session. Windows names are case-insensitive, hence /i.
+export const harnessEnv = (env = process.env) => Object.fromEntries(Object.entries(env).filter(([k]) => !/^HERDR_/i.test(k)));
+
 // Start routr again, detached, with `args`, and carry on without waiting: the binary itself, or `bun <script>` from a
 // source checkout. A spawn that fails later (EACCES, EMFILE) is ignored; one that fails at once returns false.
 export function spawnSelf(args) {
   try {
-    const c = spawn(process.execPath, [...(standalone() ? [] : [process.argv[1]]), ...args], { detached: true, stdio: "ignore", windowsHide: true });
+    const c = start(process.execPath, [...(standalone() ? [] : [process.argv[1]]), ...args], { detached: true, stdio: "ignore" });
     c.on("error", () => {}); c.unref(); return true;
   } catch { return false; }
 }
 
-// Run a harness command read-only and collect stdout; resolve null on any failure or timeout, never throw.
+// Run a harness command read-only, in harnessEnv, and collect stdout; resolve null on any failure or timeout, never
+// throw.
 // `status: true` resolves the exit code instead, for a command whose only answer is on stderr.
 export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, status = false } = {}) {
   return new Promise((resolve) => {
     let out = "", done = false;
     const finish = (v) => { if (done) return; done = true; clearTimeout(timer); try { child.kill(); } catch {} resolve(v); };
     let child;
-    try { child = spawn(cmd, args, { stdio: ["pipe", "pipe", "ignore"], ...(cwd ? { cwd } : {}) }); } catch { return resolve(null); }
+    try { child = start(cmd, args, { stdio: ["pipe", "pipe", "ignore"], env: harnessEnv(), ...(cwd ? { cwd } : {}) }); } catch { return resolve(null); }
     const timer = setTimeout(() => finish(null), timeoutMs);
     child.on("error", () => finish(null));
     child.stdout.on("data", (d) => { out += d; if (until?.(out)) finish(out); });
@@ -77,14 +95,14 @@ export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, status = f
   });
 }
 
-// Run a command and collect everything it says, stdout and stderr together, with its exit code: for a harness's
-// status check, which answers on either stream (measured 2026-09-26: Codex on stderr, Kiro on stdout, Antigravity and
-// Cursor on both). Resolves null when it does not answer in time or cannot start; never throws.
+// Run a command, in harnessEnv, and collect everything it says, stdout and stderr together, with its exit code: for a
+// harness's status check, which answers on either stream (measured 2026-09-26: Codex on stderr, Kiro on stdout,
+// Antigravity and Cursor on both). Resolves null when it does not answer in time or cannot start; never throws.
 export function probe(cmd, args, { timeoutMs = 15000, cwd } = {}) {
   return new Promise((resolve) => {
     let out = "", done = false, child;
     const finish = (v) => { if (done) return; done = true; clearTimeout(timer); try { child.kill(); } catch {} resolve(v); };
-    try { child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true, ...(cwd ? { cwd } : {}) }); } catch { return resolve(null); }
+    try { child = start(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env: harnessEnv(), ...(cwd ? { cwd } : {}) }); } catch { return resolve(null); }
     const timer = setTimeout(() => finish(null), timeoutMs);
     child.on("error", () => finish(null));
     child.stdout.on("data", (d) => { out += d; });
