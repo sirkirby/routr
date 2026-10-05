@@ -438,8 +438,10 @@ test("the `then` of a startup question adopts the agent at once when herdr's liv
   expect(stopped).toMatchObject({ state: "needs_input", needs_input: { pane: "w1:p2", herdr: { state: "blocked", rule: "trust_directory" } } });
   // 2. The orchestrator answers it (herdr pane send-keys w1:p2 enter) and runs `then` at once: herdr's state still says
   // blocked, its explain (the live reading) says idle. The block is stale: the agent is adopted as idle.
-  const again = stopped.needs_input.then.match(/then run routr launch (.*)$/)[1].split(" ");
-  expect(again).toEqual([...codex, "--pane", "w1:p2", "--cwd", process.cwd()]);
+  // The words of `then` are shell-quoted where needed (a Windows path is), so they are checked as text, not split.
+  expect(stopped.needs_input.then).toContain("then run routr launch --kind codex --name review --model gpt-6.1-sol --effort high --task-file ");
+  expect(stopped.needs_input.then).toContain(" --pane w1:p2 --cwd ");
+  const again = [...codex, "--pane", "w1:p2", "--cwd", process.cwd()];
   for (const reads of ["idle", "done"]) {
     const stale = codexPane(["blocked"], [explained(reads, `osc_title_${reads}`)]);
     const r = await launch(again, stale.deps);
