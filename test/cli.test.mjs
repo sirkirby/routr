@@ -457,3 +457,21 @@ test("a flag subagent and dispatch do not take is never advised on as the brief"
   expect(alone2.brief_chars).toBe("-Werror".length);
   expect(alone2.input_notes).toEqual(["-Werror looks like a flag routr subagent does not take; read as the brief"]);
 });
+
+test("a folder inside routr's copy that cannot be read counts as the user's: the copy is left as it is", async () => {
+  // From the review of ef16898: an unreadable folder read as empty, and a reinstall moved the user's files aside.
+  if (process.platform === "win32" || process.getuid?.() === 0) return; // no POSIX modes there; root reads anything
+  const { installSkill, extraFiles } = await import("../src/lib/skill-install.mjs");
+  const { chmodSync } = await import("node:fs");
+  const home = scratch("unreadable"); mkdirSync(`${home}/.claude`);
+  installSkill({ home });
+  const dir = `${home}/.agents/skills/routr-orchestrate`, notes = `${dir}/private-notes`;
+  mkdirSync(notes); writeFileSync(`${notes}/mine.txt`, "the user's"); chmodSync(notes, 0o300);
+  try {
+    expect(extraFiles(dir, "routr-orchestrate")).toEqual(["private-notes/(unreadable)"]);
+    const again = installSkill({ home });
+    expect(again.kept.find((k) => k.where === dir).why).toContain("has files routr didn't write (private-notes/(unreadable))");
+  } finally { chmodSync(notes, 0o700); }
+  expect(readFileSync(`${notes}/mine.txt`, "utf8")).toBe("the user's");    // still where the user put it
+  expect(readdirSync(`${home}/.agents/skills`).filter((n) => n.includes("routr-old"))).toEqual([]);
+});

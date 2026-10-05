@@ -86,10 +86,16 @@ export function missingFiles(skill, dir) {
   const want = [...new Set([...(manifest(dir, skill)?.files ?? []), ...Object.keys(FILES[skill]), MANIFEST])];
   return want.filter((f) => { try { if (!statSync(join(dir, f)).isFile()) return true; accessSync(join(dir, f), constants.R_OK); return false; } catch { return true; } });
 }
-// Every entry in a folder that is not a folder (files, links), as relative paths. Links are listed, never followed.
-const entries = (dir, pre = "") => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() && !e.isSymbolicLink() ? entries(join(dir, e.name), `${pre}${e.name}/`) : [`${pre}${e.name}`]));
+// Every entry in a folder that is not a folder (files, links), as relative paths. Links are listed, never followed. A
+// folder that cannot be read is listed as itself, marked unreadable: what it holds is unknown, so it counts as not
+// routr's and the copy is left as it is (from the review of ef16898: an unreadable folder of the user's read as empty,
+// and a reinstall moved it aside).
+const entries = (dir, pre = "") => {
+  let list; try { list = readdirSync(dir, { withFileTypes: true }); } catch { return [`${pre || "./"}(unreadable)`]; }
+  return list.flatMap((e) => (e.isDirectory() && !e.isSymbolicLink() ? entries(join(dir, e.name), `${pre}${e.name}/`) : [`${pre}${e.name}`]));
+};
 // What is in routr's folder that routr did not write there (a link where a folder was counts: it is not routr's).
-export const extraFiles = (dir, skill) => { const own = new Set([...ownedFiles(dir, skill), MANIFEST].map((f) => f.replace(/\\/g, "/"))); try { return entries(dir).filter((f) => !own.has(f)); } catch { return []; } };
+export const extraFiles = (dir, skill) => { const own = new Set([...ownedFiles(dir, skill), MANIFEST].map((f) => f.replace(/\\/g, "/"))); return entries(dir).filter((f) => !own.has(f)); };
 export const hasExtras = (dir, extras) => `${dir} has files routr didn't write (${extras.join(", ")}): remove them or the folder, then run \`routr skill install\``;
 // Remove routr's files from its folder: each listed file, never through a link; the manifest only once all of them are
 // gone; then each folder left empty, the folder itself only if nothing is left. Returns what stayed (`left`: the
