@@ -8,7 +8,7 @@ import { LEVELS } from "./questions.mjs";
 import { BACK, CANCEL } from "./tui.mjs";
 import { NOTICE } from "./telemetry.mjs";
 import { LEVEL_MEANING, RESERVE } from "./wording.mjs";
-import { accountUse } from "./config.mjs";
+import { accountUse, UPDATE_CHANNELS } from "./config.mjs";
 
 const LEAVE = ""; // "leave the model to the lead agent": no default_model
 const PRESETS = [0, 0.1, 0.2, 0.25, 0.3, 0.5];
@@ -123,6 +123,16 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
     if (Array.isArray(v)) for (const n of candidates) draft[n].enabled = v.includes(n);
     return v;
   };
+  // The update channel: one setting for the whole file, offered from the menu only (a first run keeps stable). A value
+  // routr cannot read counts as stable, as loadConfig reads it.
+  const channelNow = UPDATE_CHANNELS.includes(config?.update_channel) ? config.update_channel : "stable";
+  const askChannel = async () => {
+    const v = await ui.select({ message: "Which releases should routr update to?", initial: answers.channel ?? channelNow, options: [
+      { value: "stable", label: "Stable", hint: "releases only (the default)" },
+      { value: "beta", label: "Beta", hint: "also beta and release-candidate builds; a newer stable release still wins" }] });
+    if (typeof v === "string") answers.channel = v;
+    return v;
+  };
   const extras = async () => {
     if (statusline) { const v = await ui.confirm({ message: "Claude Code reports usage only to its statusline. Set `routr statusline` as Claude's statusline command?", initial: true }); if (v === CANCEL || v === BACK) return v; answers.statusline = v; }
     if (telemetry) {
@@ -148,6 +158,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
     }
     if (answers.statusline) out.push("Claude Code's statusline: set to routr statusline");
     if (answers.telemetry !== undefined) out.push(`telemetry: ${answers.telemetry ? "on" : "off"}`);
+    if (answers.channel && answers.channel !== channelNow) out.push(`update channel: ${channelNow} ${ui.glyphs.arrow} ${answers.channel}`);
     return out;
   };
   // The end of the run: what changed, then the usual way out. Save is the default; nothing is written before it.
@@ -182,13 +193,14 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
   // Run again: what is set, then a menu, until the person writes or leaves.
   const menu = async () => {
     ui.note("Your settings", [...candidates.map((n) => `${HARNESSES[n].label.padEnd(12)} ${current[n] ? describe(n, draft[n]) : "detected, not set up yet"}${signedIn(n) ? "" : ` · ${signInOf(n)}`}`),
-      ...waiting.map((n) => `${HARNESSES[n].label.padEnd(12)} ${signInOf(n)}`)]);
+      ...waiting.map((n) => `${HARNESSES[n].label.padEnd(12)} ${signInOf(n)}`), `${"Updates".padEnd(12)} ${channelNow} channel`]);
     for (;;) {
       const pending = changes().length;
       const v = await ui.select({ message: "What would you like to do?", initial: "one", options: [
         { value: "one", label: "Change one subscription's settings", hint: "model, effort, hardest work, reserve" },
         { value: "choose", label: "Choose which subscriptions routr uses", hint: "turn one on or off" },
         ...(statusline || telemetry ? [{ value: "extras", label: statusline ? "Claude Code's usage statusline" : "Anonymous outcomes (telemetry)" }] : []),
+        { value: "channel", label: "Update channel", hint: `${answers.channel ?? channelNow}: stable releases, or beta builds too` },
         { value: "all", label: "Walk through everything" },
         pending ? { value: "save", label: `Save and exit (${pending} change${pending === 1 ? "" : "s"})` } : { value: "done", label: "Exit" },
         ...(pending ? [{ value: "quit", label: "Exit without saving" }] : [])] });
@@ -199,6 +211,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
       if (v === BACK) { const w = await finish(); if (w === "write") return "write"; if (w === "quit" || w === CANCEL) return CANCEL; continue; }
       if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) for (const n of c.filter((x) => !current[x])) if (await fields(n, fieldsOf(n)) === CANCEL) return CANCEL; continue; }
       if (v === "extras") { if (await extras() === CANCEL) return CANCEL; continue; }
+      if (v === "channel") { if (await askChannel() === CANCEL) return CANCEL; continue; }
       if (v === "all") { const f = await full(); if (f === CANCEL) return CANCEL; if (f === "write") return "write"; continue; }
       // Nested like any settings menu: a subscription, then its settings, each with its value now. Changing one comes
       // back to the same list with the new value; Back (or Esc) goes up one level, to the subscriptions, then the menu.
@@ -228,6 +241,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
   if (outcome === CANCEL) return CANCEL;
   // In the flags' shape, so setup applies them as it applies --model, --effort, --hardest, --reserve, --enable/--disable.
   const out = { models: {}, efforts: {}, hardest: {}, reserves: {}, switches: {}, ranks: {}, uses: {}, ...answers, write: outcome === "write" };
+  if (out.channel === channelNow) delete out.channel; // as --channel: only a change is applied
   for (const n of candidates) {
     const was = current[n] ?? {}, d = draft[n];
     if (d.default_model !== (was.default_model ?? undefined) && d.default_model) out.models[n] = d.default_model;

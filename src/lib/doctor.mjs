@@ -94,7 +94,7 @@ export async function inspect({ configPath, quiet } = {}) {
   const whyNot = (states) => (n) => (states[n] === "yes" ? null : signInHint(HARNESSES[n], states[n]));
   // The release lookup is one short, non-fatal call. Only doctor and `routr update` make it; the advice commands never call home.
   const [latest, usage, key, states, ...models] = await Promise.all([
-    process.env.ROUTR_NO_UPDATE ? null : latestVersion(3000).catch(() => null),
+    process.env.ROUTR_NO_UPDATE ? null : latestVersion(3000, config.update_channel).catch(() => null), // the newest on the user's channel
     // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
     step("usage", statesP.then((st) => readUsage(found, {}, { background: enabledSubscriptions(config), why: whyNot(st) }))), // a turned-off one is never refreshed
     step("the TypeSafe key", keyCheck().then((t) => ({ t }), (e) => ({ e }))),
@@ -200,7 +200,9 @@ export function render(r) {
   line(r.config.exists && !problems.length ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && [...problems, ...notes].length ? `\n   ${[...problems, ...notes].join("\n   ")}` : ""}`);
   line(r.claude_usage_statusline !== STATUSLINE_MISSING, `Claude usage statusline: ${r.claude_usage_statusline}`);
   const au = r.auto_update;
-  line("ok", `automatic updates ${au.on ? `on · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off}`}`);
+  // The channel is shown on or off: `routr update` by hand follows it too.
+  const channel = au.channel === "beta" ? "beta channel (beta and rc releases too; `routr setup --channel stable` leaves it)" : "stable channel";
+  line("ok", `automatic updates ${au.on ? `on · ${channel} · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off} · ${channel}`}`);
   if (r.telemetry) line("ok", r.telemetry.on ? "telemetry on: anonymous outcomes (never text) once a day · `routr share` shows exactly what · `routr telemetry off` stops it"
     : `telemetry off${r.telemetry.why_off.startsWith("not turned on") ? " (the default)" : `: ${r.telemetry.why_off}`} · \`routr telemetry on\` shares anonymous outcomes that help tune routr (docs/telemetry.md)`);
   if (r.telemetry?.on) {

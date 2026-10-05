@@ -84,8 +84,8 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `telemetry on\|off\|status\|send` | Share anonymous outcomes once a day; off unless you turn it on ([details](docs/telemetry.md)). |
 | `feedback "<text>"` | Send the maintainers a note in your own words. |
 | `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
-| `update` | Update to the latest release now (routr also does this by itself in the background, at most once a day). |
-| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--enable`, `--disable`) and reads them first with `--show`. |
+| `update` | Update to the newest release on your update channel now (routr also does this by itself in the background, at most once a day). |
+| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--enable`, `--disable`, `--channel`) and reads them first with `--show`. |
 | `uninstall` | Remove routr: the binary, the skill, the cache, its Claude statusline entry. Keeps your config, key, and ledger; `--purge` removes those too. |
 | `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
@@ -131,6 +131,13 @@ interrupted. `routr update` does it on demand, `routr doctor` shows when it last
 in the config turns it off. Updates also reinstall the bundled agent skill.
 After updating, run `routr setup` to review your settings. See the
 [release notes](https://github.com/sirkirby/routr/releases) for changes and upgrade details.
+
+Updates follow stable releases. For early builds (beta and release candidates, until a newer stable release), choose
+the beta channel; the daily update and `routr update` then follow it. Going back to stable never installs an older
+version by itself (`routr update --force` does, now):
+
+    routr setup --channel beta
+    routr setup --channel stable
 
 To remove it, run `routr uninstall`. It shows what it will remove and asks first. Your config, key, and ledger stay
 for a later reinstall unless you choose otherwise (`--purge`).

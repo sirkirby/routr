@@ -72,3 +72,98 @@ test("routr update reports a real swap as an update and reinstalls the skill (th
   expect(bad.updated).toBe(true); expect(bad.ok).toBe(false); expect(bad.note).toContain("updated to");
   expect(readFileSync(self, "utf8")).toBe("NEW-BINARY");
 });
+
+test("versions compare by semver 2.0 precedence, pre-releases included", async () => {
+  const { compareVersions, newer } = await import("../src/lib/update.mjs");
+  // Each is newer than the one before it.
+  const order = ["0.4.9", "0.5.0-alpha.1", "0.5.0-alpha.beta", "0.5.0-beta", "0.5.0-beta.1", "0.5.0-beta.2", "0.5.0-beta.10", "0.5.0-beta.10.1", "0.5.0-rc.1", "0.5.0", "0.5.1-beta.1", "0.5.1", "0.10.0"];
+  for (let i = 1; i < order.length; i++) {
+    expect([order[i], newer(order[i], order[i - 1])]).toEqual([order[i], true]);
+    expect([order[i], newer(order[i - 1], order[i])]).toEqual([order[i], false]);
+  }
+  expect(compareVersions("v0.5.0-beta.2", "0.5.0-beta.2")).toBe(0);
+  expect(compareVersions("0.5.0+build.7", "0.5.0")).toBe(0);              // build metadata does not count
+  expect(newer("0.5.0-1", "0.5.0-alpha")).toBe(false);                   // numbers rank below words
+  expect(newer("0.1.0", "0.0.0-dev")).toBe(true);                        // a source checkout sees every release as newer
+});
+
+// GitHub's release list, newest first as the API gives it, with a draft and an alpha ahead of everything.
+const RELEASES = [
+  { tag_name: "v0.7.0", draft: true, prerelease: false },
+  { tag_name: "v0.6.0-alpha.1", draft: false, prerelease: true },
+  { tag_name: "v0.6.0-beta.10", draft: false, prerelease: true },
+  { tag_name: "v0.6.0-beta.2", draft: false, prerelease: true },
+  { tag_name: "v0.5.1", draft: false, prerelease: false },
+  { tag_name: "v0.5.1-rc.1", draft: false, prerelease: true },
+  { tag_name: "v0.5.0", draft: false, prerelease: false },
+];
+
+test("each update channel picks its newest release: drafts never, alpha on no channel, stable only releases", async () => {
+  const { pickRelease } = await import("../src/lib/update.mjs");
+  expect(pickRelease(RELEASES, "beta")).toBe("0.6.0-beta.10");
+  expect(pickRelease(RELEASES, "stable")).toBe("0.5.1");
+  expect(pickRelease(RELEASES.slice(4), "beta")).toBe("0.5.1");          // a release overtakes its own rc on beta
+  expect(pickRelease([...RELEASES, { tag_name: "v0.9.0", draft: false, prerelease: true }], "stable")).toBe("0.5.1"); // marked pre-release
+  expect(pickRelease([{ tag_name: "v1.0.0", draft: true }], "beta")).toBeNull();
+  expect(pickRelease(null, "beta")).toBeNull();
+});
+
+// A fake GitHub: the API answers with the release list, a download records its URL and serves a binary that checks out.
+async function fakeGitHub(asked) {
+  const { assetName } = await import("../src/lib/update.mjs");
+  const bin = Buffer.from("NEW-BINARY"), sum = (await import("node:crypto")).createHash("sha256").update(bin).digest("hex");
+  return async (u) => {
+    asked.push(String(u));
+    if (String(u).endsWith("/releases/latest")) return { ok: true, status: 200, json: async () => RELEASES.find((r) => r.tag_name === "v0.5.1") };
+    if (String(u).includes("/releases?per_page=30")) return { ok: true, status: 200, json: async () => RELEASES };
+    return { ok: true, status: 200, arrayBuffer: async () => (String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : bin) };
+  };
+}
+
+test("an update downloads the exact tag it checked, on either channel", async () => {
+  const { assetName, update } = await import("../src/lib/update.mjs");
+  const run = async (channel, current) => {
+    const asked = [], self = join(scratch("upd-tag"), "routr");
+    writeFileSync(self, "OLD");
+    const r = await update({ channel, current, self, base: undefined, fetchFn: await fakeGitHub(asked), spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+    return { r, asked: asked.filter((u) => !u.includes("api.github.com")) };
+  };
+  const beta = await run("beta", "0.5.1");
+  expect(beta.r).toMatchObject({ ok: true, updated: true, latest: "0.6.0-beta.10", channel: "beta" });
+  expect(beta.r.note).toContain("on the beta channel");
+  expect(beta.asked).toEqual([`https://github.com/sirkirby/routr/releases/download/v0.6.0-beta.10/${assetName()}`, "https://github.com/sirkirby/routr/releases/download/v0.6.0-beta.10/SHA256SUMS"]);
+  const stable = await run("stable", "0.5.0");
+  expect(stable.r).toMatchObject({ ok: true, updated: true, latest: "0.5.1" });
+  expect(stable.r.channel).toBeUndefined();
+  expect(stable.asked.every((u) => u.startsWith("https://github.com/sirkirby/routr/releases/download/v0.5.1/"))).toBe(true);
+});
+
+test("going back to stable on a pre-release never downgrades by itself, and --force installs the newest stable", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const self = join(scratch("upd-down"), "routr");
+  writeFileSync(self, "BETA");
+  const opts = async (asked) => ({ channel: "stable", current: "0.6.0-beta.2", self, base: undefined, fetchFn: await fakeGitHub(asked), spawn: () => ({ status: 0, stdout: "0.5.1\n" }), isStandalone: () => true });
+  const asked = [];
+  const kept = await update(await opts(asked));
+  expect(kept).toMatchObject({ ok: true, updated: false, latest: "0.5.1" });
+  expect(kept.note).toBe("routr 0.6.0-beta.2 is a pre-release and the stable channel's newest is 0.5.1: you stay on 0.6.0-beta.2 until a stable release is newer. `routr update --force` installs 0.5.1 now");
+  expect(asked.every((u) => u.includes("api.github.com"))).toBe(true);  // nothing downloaded
+  expect(readFileSync(self, "utf8")).toBe("BETA");
+  const forced = await update({ ...(await opts([])), force: true });
+  expect(forced).toMatchObject({ ok: true, updated: true, now: "0.5.1" });
+  expect(readFileSync(self, "utf8")).toBe("NEW-BINARY");
+  // On beta, the same machine is simply up to date until a newer beta or release.
+  expect((await update({ ...(await opts([])), channel: "beta", current: "0.6.0-beta.10" })).note).toBe("routr is up to date on the beta channel");
+});
+
+test("update_channel defaults to stable, and an unknown value is reported and read as stable", () => {
+  const dir = scratch("channel");
+  const at = (v) => { const f = join(dir, `${JSON.stringify(v)}.json`); writeFileSync(f, JSON.stringify(v === undefined ? {} : { update_channel: v })); return loadConfig(f); };
+  expect(at(undefined).config.update_channel).toBe("stable");
+  expect(at(undefined).notes).toEqual([]);
+  expect(at("beta").config.update_channel).toBe("beta");
+  const bad = at("nightly");
+  expect(bad.config.update_channel).toBe("stable");
+  expect(bad.notes).toEqual(['update_channel: "nightly" is not one of stable, beta, using stable: routr setup --channel stable|beta']);
+  expect(loadConfig("/nonexistent/config.json").config.update_channel).toBe("stable");
+});

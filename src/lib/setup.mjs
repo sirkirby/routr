@@ -3,7 +3,7 @@
 // A person gets questions; an agent passes `--yes` and the choices it settled with the user as flags. Same code, same file.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { ACCOUNT_USE, CONFIG_PATH, loadConfig, SUB_DEFAULTS } from "./config.mjs";
+import { ACCOUNT_USE, CONFIG_PATH, loadConfig, SUB_DEFAULTS, UPDATE_CHANNELS } from "./config.mjs";
 import { LEVELS } from "./questions.mjs";
 import { settingSummary } from "./wording.mjs";
 import { envOff, setTelemetry } from "./telemetry.mjs";
@@ -78,6 +78,20 @@ export function showSettings(path) {
   return { ok: true, config: path, exists: existsSync(path), ...config, ...(notes.length ? { notes } : {}) };
 }
 export const parseReserve = (args) => parsePairs(args, "--reserve", parseShare, "<0..1, or a percent>");
+// `--channel beta|stable`: which releases updates follow. A setting, not an update flag, so the daily update keeps it.
+export function parseChannel(args) {
+  const i = args.indexOf("--channel");
+  if (i < 0) return undefined;
+  if (!UPDATE_CHANNELS.includes(args[i + 1])) throw new Error(`--channel takes ${UPDATE_CHANNELS.join(" or ")}`);
+  return args[i + 1];
+}
+// What setup says after the channel changed. It runs no update and asks GitHub nothing, so it names no version.
+// Nothing moves a pre-release back to stable by itself (update.mjs): a person leaving beta on one is told so.
+export function channelNote(channel, running = ROUTR_VERSION, isStandalone = standalone()) {
+  if (channel === "beta") return "update channel: beta. `routr update` installs the newest beta, rc or stable release now; otherwise the daily update does it";
+  const pre = isStandalone && running.includes("-");
+  return `update channel: stable. ${pre ? `You stay on ${running} until a stable release is newer; \`routr update --force\` installs the newest stable now` : "`routr update` installs the newest stable release now; otherwise the daily update does it"}`;
+}
 
 // Where each newly written pool that reads as metered goes in the ranking. `ask(name, note)` is the terminal question
 // (absent under --yes, where the default stands); an answer starting with "w" means with, anything else after.
@@ -116,15 +130,17 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const interactive = tty && !args.includes("--yes");
   const say = (s) => { if (!args.includes("--json")) print(s); };
   const did = [], skipped = [];
-  let models, ranks, hardest, reserves, efforts, switches, uses;
-  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); } catch (e) { return { ok: false, error: e.message }; }
+  let models, ranks, hardest, reserves, efforts, switches, uses, channel;
+  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); channel = parseChannel(args); } catch (e) { return { ok: false, error: e.message }; }
   // The legacy flag remains a setter; explicit --use wins when both flags name the same account.
   uses = { ...Object.fromEntries(Object.entries(ranks).map(([n, rank]) => [n, rank === "with" ? "normal" : "fallback"])), ...uses };
+  // Whether any setting flag was given, read once here, before a guided run adds its choices to the same maps.
+  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches, ...uses }).length > 0 || channel !== undefined;
   // --show only reads: with a change flag beside it, an agent could take the settings printed for the change made.
-  if (args.includes("--show")) return Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches, ...uses }).length || args.includes("--force")
+  if (args.includes("--show")) return flagged || args.includes("--force")
     ? { ok: false, error: "--show only reads your settings: run the change without it, then --show again to see it" } : showSettings(path);
 
-  const guidedRun = interactive && !Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches, ...uses }).length;
+  const guidedRun = interactive && !flagged;
   // Scripted answers (a test, or a caller with its own line reader) drive the tui's accessible mode: numbered questions.
   const ui = !guidedRun ? null : makeUI ? makeUI() : question ? createUI({ ask: question, accessible: true, output: { write: (t) => print(t.replace(/\n$/, "")) } }) : createUI();
   let r;
@@ -180,7 +196,6 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     install(); did.push(`installed the routr skill ${base} for your agents`); return true;
   };
   // A person at a terminal gets the guided flow; flags and --yes (an agent) never ask anything.
-  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches, ...uses }).length > 0;
   let config = null;
   if (r.config.exists && !args.includes("--force")) { try { config = JSON.parse(readFileSync(path, "utf8")); } catch { return { ok: false, error: `${path} is not valid JSON. Fix it, or rewrite it with: routr setup --force` }; } }
   const claudeFile = join(home(), ".claude/settings.json");
@@ -206,6 +221,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     Object.assign(models, choices.models); Object.assign(efforts, choices.efforts); Object.assign(hardest, choices.hardest);
     Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches); Object.assign(ranks, choices.ranks);
     Object.assign(uses, choices.uses);
+    if (choices.channel) channel = choices.channel;
   }
 
   skillStep();
@@ -223,10 +239,11 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // Fresh metered accounts keep the legacy fallback default until the person chooses normal use.
   let old = null; try { old = JSON.parse(readFileSync(path, "utf8")); } catch {}
   await meteredRanks(fresh.filter((n) => !old?.subscriptions?.[n]?.metered_rank), r.harnesses, ranks, null);
-  // --force rewrites the file from the suggestions, but keeps the person's own choices: telemetry, automatic updates,
-  // and which subscriptions are turned off.
+  // --force rewrites the file from the suggestions, but keeps the person's own choices: telemetry, automatic updates
+  // and their channel, and which subscriptions are turned off.
   if (!config) {
-    config = { ...starterConfig(found, models, ranks), ...(typeof old?.telemetry === "boolean" ? { telemetry: old.telemetry } : {}), ...(typeof old?.auto_update === "boolean" ? { auto_update: old.auto_update } : {}) };
+    config = { ...starterConfig(found, models, ranks), ...(typeof old?.telemetry === "boolean" ? { telemetry: old.telemetry } : {}), ...(typeof old?.auto_update === "boolean" ? { auto_update: old.auto_update } : {}),
+      ...(UPDATE_CHANNELS.includes(old?.update_channel) ? { update_channel: old.update_channel } : {}) };
     for (const [n, s] of Object.entries(old?.subscriptions ?? {})) if (config.subscriptions[n]) {
       if (s?.enabled === false) config.subscriptions[n].enabled = false;
       // A rebuild must not silently change where the person permits routine spending.
@@ -258,6 +275,14 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   for (const [n, on] of Object.entries(switches)) put(n, "enabled", on);
   for (const [n, rank] of Object.entries(ranks)) put(n, "metered_rank", rank);
   for (const [n, use] of Object.entries(uses)) put(n, "use", use);
+  // The update channel is one setting for the whole file. An invalid value reads as stable, so it is replaced either way.
+  // Asking for the channel already in effect writes nothing, unless the file holds a value routr cannot read.
+  const channelWas = UPDATE_CHANNELS.includes(config.update_channel) ? config.update_channel : "stable";
+  const channelMoved = channel !== undefined && channel !== channelWas;
+  if (channelMoved || (channel !== undefined && config.update_channel !== undefined && config.update_channel !== channel)) {
+    if (r.config.exists && !args.includes("--force")) changed.push(`update_channel ${config.update_channel === undefined ? "set to" : `${JSON.stringify(config.update_channel)} →`} ${JSON.stringify(channel)}`);
+    config.update_channel = channel;
+  }
   if (changed.length) did.push(`changed ${changed.join(", ")}`);
   if (!r.config.exists || args.includes("--force") || fresh.length || changed.length) {
     mkdirSync(dirname(path), { recursive: true });
@@ -265,6 +290,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
     did.push(`wrote ${path}${fresh.length ? ` with ${fresh.join(", ")}` : changed.length ? "" : " (no harness found yet: run `routr setup` again after installing one)"}`);
   } else skipped.push(`config ${path} already covers every harness found: kept as it is`);
+  if (channelMoved) did.push(channelNote(channel)); // what happens next; setup itself updates nothing
   skipped.push(...leftOut);
 
   // 2. Claude Code's usage, which it reports only to its statusline. Someone else's statusline is never replaced.
@@ -299,6 +325,6 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   if (args.includes("--json")) return result;
   say(`\n${did.map((d) => `${paint(32, "done")} ${d}`).concat(skipped.map((x) => `${paint(33, "note")} ${x}`)).join("\n")}\n\n${render(after)}`);
   if (!interactive && !args.includes("--yes") && !flagged) say("\nNot a terminal, so nothing was asked: suggestions were used. An agent changes a setting with a flag: routr setup --help lists them.");
-  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour settings are plain JSON at ${path}: ${Object.entries(config.subscriptions).map(([n, x]) => settingSummary(n, x)).join("; ")}. Change one any time: routr setup --yes --model <name>=<id> (or --effort, --hardest, --reserve, --use, --disable), or ask your agent.`);
+  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour settings are plain JSON at ${path}: ${Object.entries(config.subscriptions).map(([n, x]) => settingSummary(n, x)).join("; ")}. Change one any time: routr setup --yes --model <name>=<id> (or --effort, --hardest, --reserve, --use, --disable, --channel), or ask your agent.`);
   return result;
 }

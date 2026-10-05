@@ -118,6 +118,10 @@ the command that fixes it.
 - `sure_at` (0.8), `risk_above` (0.75), `fallback_level` (`standard`): leave at the defaults unless asked.
 - `auto_update` (`true`): routr checks for a new release in the background at most once a day and uses it from the
   next run. Set it to `false` if the user wants to update only by hand with `routr update`.
+- `update_channel` (`stable`): which releases updates install, the daily one and `routr update` alike. `beta` also
+  takes `-beta.N` and `-rc.N` builds, and moves to a stable release once it is the newest. Set it with
+  `routr setup --yes --channel beta|stable`. Going back to stable never installs an older version by itself: the user
+  stays on the pre-release until a stable release is newer, or runs `routr update --force` to take the newest stable now.
 
 ## Changing a setting for the user
 
@@ -141,6 +145,7 @@ can be combined with the others in one run.
 | add a harness installed since | `routr setup --yes` (it adds every harness that is installed and signed in) |
 | use a funded account for everyday work | `routr setup --yes --use codex=normal` |
 | keep an account for fallback | `routr setup --yes --use codex=fallback` |
+| get early builds (beta and release candidates), or stop | `routr setup --yes --channel beta` / `routr setup --yes --channel stable` |
 | share anonymous outcomes, or stop | `routr telemetry on` / `routr telemetry off`: only when the user says so |
 | let Claude Code's usage be read | `routr setup --yes` sets the statusline when there is none (`--no-statusline` leaves it) |
 
