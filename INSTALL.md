@@ -24,7 +24,9 @@ are about to write, and never print the user's API key.
    ```
 
 It downloads the binary for this machine from the latest GitHub release, checks its checksum, puts it at
-`~/.local/bin/routr`, and installs the routr skill to `~/.agents/skills/routr` (linked for Claude Code). If it says
+`~/.local/bin/routr`, and installs the routr skill to `~/.agents/skills/routr`, with `routr-orchestrate` beside it (a skill the user types,
+`/routr-orchestrate <plan>`, to start a session as the orchestrator), each linked into the skills folder of Claude
+Code, Kiro and Antigravity where they are set up. If it says
 `~/.local/bin` is not on the PATH, offer to add it to the user's shell profile, and use the full path meanwhile.
 
 **2. Check.** Run `routr doctor`. It changes nothing. It shows which harnesses are installed and signed in (one that

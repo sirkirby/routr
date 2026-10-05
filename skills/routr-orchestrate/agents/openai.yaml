@@ -1,0 +1,5 @@
+interface:
+  display_name: "routr orchestrate"
+  short_description: "Run this session as the routr orchestrator"
+policy:
+  allow_implicit_invocation: false

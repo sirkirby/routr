@@ -48,9 +48,16 @@ measured questions about a brief or a worker report; code adds live usage; the l
   else can open its sign-in in the user's browser. routr never starts a harness's sign-in; it says what to run.
 - Standard mechanisms only: skills, prompts, the harness's own CLI flags. No dependence on a harness's private
   environment variables or config internals beyond what `references/harnesses.md` records as observed.
-- The code lives in `src/` and compiles into the binary. `skills/routr/` holds exactly what is installed for agents
-  (`SKILL.md` and the guides) and no code.
-- The binary is self-contained: the guides under `skills/routr/` are embedded at build time, and it MUST NOT depend on a repository checkout at run time. It reads the user's harness state read-only
+- The code lives in `src/` and compiles into the binary. `skills/` holds exactly what is installed for agents (the
+  `routr` skill with its guides, and the user-invoked `routr-orchestrate`) and no code. Every skill is installed the
+  same way: written to `~/.agents/skills` and linked into each harness's own skills folder (the registry's `skills`).
+  Install and uninstall touch only what is provably routr's, by structure, never by reading a skill's text: a folder
+  holding routr's manifest `.routr-install.json` (written in the same staged write as the skill, naming it and every
+  file routr wrote), or a link to such a folder in `~/.agents/skills`. Nothing is written or removed through a link.
+  Install leaves routr's folder as it is while it holds a file routr did not write, and says so; uninstall removes only
+  the listed files and reports the rest. Known limit: routr trusts its manifest, so one the user copies into another
+  folder makes routr treat that folder as its own.
+- The binary is self-contained: the files under `skills/` are embedded at build time, and it MUST NOT depend on a repository checkout at run time. It reads the user's harness state read-only
   (usage sources, settings, model lists) and writes only under `~/.config/routr`, `~/.cache/routr`,
   `~/.local/share/routr`, the skill folders on `skill install`, and temporary files it removes (including the private
   herdr session `usage cursor` makes, the empty Kiro session `usage kiro` deletes again, and the private folder each
@@ -89,7 +96,7 @@ For release preparation, publication or verification, read [.agents/skills/routr
 
 Merging to `main` only runs tests. A release happens when a `vX.Y.Z` tag is pushed (`-alpha.N` / `-beta.N` / `-rc.N`
 for a pre-release). The tag is the ONLY place a version is set: `src/lib/version.mjs`, `package.json`, and the
-`version` line of `skills/routr/SKILL.md` stay `0.0.0-dev` in the repository and are stamped from the tag at build time.
+`version` lines of `skills/routr/SKILL.md` and `skills/routr-orchestrate/SKILL.md` stay `0.0.0-dev` in the repository and are stamped from the tag at build time.
 Never commit a real version into them. Reviewed `docs/releases/<tag>.md` supplies upgrade guidance; commit subjects
 supply the generated change list. Write both for a user. Details: `CONTRIBUTING.md`.
 

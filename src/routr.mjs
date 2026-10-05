@@ -60,7 +60,7 @@ const ACT = {
   },
   // The text is an argument, never read from stdin: a pipe left open would hang.
   feedback: async (args) => { const r = await (await import("./lib/telemetry.mjs")).sendFeedback(args.join(" ")); print(r); return r.ok ? 0 : 1; },
-  skill: async (args) => { print((await import("./lib/skill-install.mjs")).installSkill({ dryRun: args.includes("--dry-run") }), 1); return 0; },
+  skill: async (args) => { const r = (await import("./lib/skill-install.mjs")).installSkill({ dryRun: args.includes("--dry-run") }); print(r, 1); return r.ok ? 0 : 1; },
 };
 // Which of those a command line reaches (launch and update are dispatched first, below): `key set` and `skill install`
 // only with their word, and `doctor --fix` is setup.

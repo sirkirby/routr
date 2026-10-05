@@ -1,4 +1,4 @@
-// Release builds only: write the tag's version into the three files that carry one, in the CI workspace, before
+// Release builds only: write the tag's version into the four files that carry one, in the CI workspace, before
 // `bun build --compile` embeds them. In the repository they always read 0.0.0-dev: the git tag is the only place a
 // version is set, so there is nothing to bump before a release and nothing to write back after one.
 // usage: bun scripts/stamp-version.mjs <X.Y.Z[-rc.N]> [root]
@@ -12,7 +12,7 @@ const edits = [
   ["src/lib/version.mjs", /const BASE = "[^"]*";/, `const BASE = "${version}";`],
   ["package.json", /"version":"[^"]*"/, `"version":"${base}"`],
   ["skills/routr/SKILL.md", /^(\s*version:\s*)"[^"]*"/m, `$1"${base}"`],
-];
+  ["skills/routr-orchestrate/SKILL.md", /^(\s*version:\s*)"[^"]*"/m, `$1"${base}"`],];
 for (const [file, re, to] of edits) {
   const path = join(root, file), text = readFileSync(path, "utf8");
   if (!re.test(text)) { console.error(`${file}: no version to stamp`); process.exit(1); }

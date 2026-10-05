@@ -49,7 +49,7 @@ test("doctor reports opted-in telemetry sends in text and JSON and flags failure
 test("doctor's next steps name the command for each thing missing, most important first", async () => {
   const { nextSteps, starterConfig } = await import("../src/lib/doctor.mjs");
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
-  const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true } }, skill: [{ version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
+  const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true } }, skill: [{ version: ROUTR_VERSION.split("-")[0] }, { name: "routr-orchestrate", version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
   expect(nextSteps(base)).toEqual([]);
   // Claude's usage is read through its own /usage: no statusline is ever a step.
   const fresh = nextSteps({ ...base, key: { works: false, found: false }, config: { exists: false, subscriptions: [] } });
@@ -149,7 +149,7 @@ test("routr setup changes a setting on an existing config, fills one that is mis
 
 // setup, driven end to end as a person would: scripted answers, a fake machine, nothing written outside a temp folder.
 // Every question asked is recorded, and a question the scenario did not expect fails it.
-async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], signedOut = [], keyWorks = true, env = {}, efforts = async () => null, models = {}, skill = [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }], usage = {}, print = () => {} } = {}) {
+async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], signedOut = [], keyWorks = true, env = {}, efforts = async () => null, models = {}, skill = [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: "0.0.0-dev" }], usage = {}, print = () => {} } = {}) {
   const { setup } = await import("../src/lib/setup.mjs");
   const dir = scratch("setup-run"), path = join(dir, "config.json");
   if (config) writeFileSync(path, JSON.stringify(config));
@@ -349,15 +349,18 @@ test("the settings are worded once: setup, help, doctor and docs/ranking.md say 
   expect(loadConfig(f).notes).toEqual([]); // 0% is a choice, not a problem
 });
 
-test("routr uninstall keeps the user's data unless purged, unlinks a linked skill, and removes only its own statusline", async () => {
+test("routr uninstall keeps the user's data unless purged, removes only routr's skills (a developer's link stays), and removes only its own statusline", async () => {
   const { uninstallPlan } = await import("../src/lib/uninstall.mjs");
+  const { installSkill } = await import("../src/lib/skill-install.mjs");
   const home = scratch("un");
   const checkout = join(home, "checkout"); mkdirSync(checkout); writeFileSync(join(checkout, "SKILL.md"), "mine");
-  for (const d of [".config/routr", ".local/share/routr", ".cache/routr", ".agents/skills/routr", ".claude/skills", ".kiro/skills/routr"]) mkdirSync(join(home, d), { recursive: true });
+  for (const d of [".config/routr", ".local/share/routr", ".cache/routr", ".claude", ".kiro"]) mkdirSync(join(home, d), { recursive: true });
+  installSkill({ home });
   writeFileSync(join(home, ".config/routr/config.json"), "{}");
   writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ model: "opus", statusLine: { type: "command", command: "/x/routr statusline" } }));
   const linked = process.platform !== "win32";
-  if (linked) (await import("node:fs")).symlinkSync(checkout, join(home, ".claude/skills/routr"), "dir");
+  // A developer's own link into their checkout, where routr's link was: not routr's, so it stays.
+  if (linked) { rmSync(join(home, ".claude/skills/routr"), { recursive: true, force: true }); (await import("node:fs")).symlinkSync(checkout, join(home, ".claude/skills/routr"), "dir"); }
   expect(uninstallPlan({ home }).keep.length).toBe(2);
   expect(uninstallPlan({ home, purge: true }).keep.length).toBe(0);
   const env = cliEnv(home);
@@ -369,7 +372,8 @@ test("routr uninstall keeps the user's data unless purged, unlinks a linked skil
   expect(existsSync(join(home, ".kiro/skills/routr"))).toBe(false);
   expect(existsSync(join(home, ".cache/routr"))).toBe(false);
   expect(existsSync(join(home, ".config/routr/config.json"))).toBe(true);
-  if (linked) expect(readFileSync(join(checkout, "SKILL.md"), "utf8")).toBe("mine");    // the link went, its target did not
+  expect(existsSync(join(home, ".kiro/skills/routr-orchestrate")) || existsSync(join(home, ".agents/skills/routr-orchestrate"))).toBe(false);
+  if (linked) expect(readFileSync(join(home, ".claude/skills/routr/SKILL.md"), "utf8")).toBe("mine"); // the developer's link and its target stay
   expect(JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8"))).toEqual({ model: "opus" });
   expect(Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes", "--purge"], { env }).exitCode).toBe(0);
   expect(existsSync(join(home, ".config/routr"))).toBe(false);
@@ -618,4 +622,75 @@ test("the update channel is a setting: --channel writes it, says what happens ne
   expect(said.join("\n")).toMatch(/update channel: stable \S+ beta/); // the review of what is saved
   expect(menu.saved).toEqual({ ...config, update_channel: "beta" });
   expect(menu.r.did).toContain('changed update_channel set to "beta"');
+});
+
+test("doctor reports both skills with their versions, setup repairs a missing one, and uninstall removes both everywhere", async () => {
+  const { nextSteps, render, skillsMissing } = await import("../src/lib/doctor.mjs");
+  const r = { runtime: "routr 0.0.0-dev (from source)", from_source: true, herdr: { path: "/bin/herdr", inside_session: true, skill: true },
+    skill: [{ name: "routr", where: "~/.agents/skills/routr", version: "0.0.0-dev" }, { name: "routr", where: "~/.kiro/skills/routr", version: "0.0.0-dev" }],
+    harnesses: {}, key: { works: true, model: "jev", ms: 300 }, config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] },
+    auto_update: { on: false, why_off: "running from source" }, telemetry: { on: false, why_off: "not turned on" }, next_steps: [] };
+  expect(skillsMissing(r)).toEqual(["routr-orchestrate"]);
+  expect(render(r)).toContain("routr skill ~/.agents/skills/routr, ~/.kiro/skills/routr are 0.0.0-dev");
+  expect(render(r)).toContain("routr-orchestrate skill not installed for your agents: run `routr skill install`");
+  expect(nextSteps(r)).toContain("Install the routr skills that match this routr: routr skill install");
+  // A person who leaves setup unchanged still gets the missing skill installed (it is not a setting).
+  const kept = await runSetup({ config: { telemetry: false, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } }, found: ["agy"], skill: r.skill, answers: ["5"] });
+  expect(kept.installs).toEqual([1]);
+  expect(kept.r.did).toContain("installed the routr skills 0.0.0 for your agents"); // the base version
+  // The real thing, in a scratch home: both skills in every folder, read by doctor, then removed by uninstall.
+  const { installSkill } = await import("../src/lib/skill-install.mjs");
+  const { SKILL_FOLDERS, SKILLS } = await import("../src/lib/harnesses.mjs");
+  const home = scratch("skills-un"); for (const d of [".claude", ".kiro", ".gemini/config"]) mkdirSync(join(home, d), { recursive: true });
+  installSkill({ home });
+  const env = cliEnv(home, { PATH: home });
+  const doc = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString());
+  expect(doc.skill.map((k) => `${k.name} ${k.where} ${k.version}`)).toEqual(SKILLS.flatMap((s) => SKILL_FOLDERS.map((f) => `${s} ~/${f}/${s} 0.0.0-dev`)));
+  expect(doc.next_steps.join(" ")).not.toContain("skill install");
+  // Every file routr ships is checked, not SKILL.md alone: a copy without its openai.yaml is incomplete, and said.
+  // A folder in place of a file is no file. And a harness set up here without routr's link (its link failed) is a repair.
+  rmSync(join(home, ".agents/skills/routr-orchestrate/agents/openai.yaml")); mkdirSync(join(home, ".agents/skills/routr-orchestrate/agents/openai.yaml"));
+  rmSync(join(home, ".kiro/skills/routr"), { recursive: true, force: true });
+  const partial = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString());
+  expect(partial.skill.find((k) => k.where === "~/.agents/skills/routr-orchestrate").missing).toEqual(["agents/openai.yaml"]);
+  expect(partial.skill_unlinked).toEqual([{ name: "routr", where: join("~", ".kiro/skills/routr"), for: "Kiro" }]);
+  expect(partial.next_steps).toContain("Install the routr skills that match this routr: routr skill install");
+  const text = Bun.spawnSync([process.execPath, SCRIPT, "doctor"], { env }).stdout.toString();
+  expect(text).toContain("routr-orchestrate skill ~/.agents/skills/routr-orchestrate is incomplete (no agents/openai.yaml): run `routr skill install`");
+  expect(text).toContain(`routr skill not linked for Kiro (${join("~", ".kiro/skills/routr")}): run \`routr skill install\``);
+  // The repair it names works: install replaces routr's incomplete copy and links Kiro again.
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "skill", "install"], { env }).exitCode).toBe(0);
+  expect(JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString()).next_steps.join(" ")).not.toContain("skill install");
+  // Uninstall removes only the files routr's manifest lists: a file the user added to routr's folder stays, and is said.
+  mkdirSync(join(home, ".agents/skills/routr/notes")); writeFileSync(join(home, ".agents/skills/routr/notes/mine.md"), "the user's");
+  const un = Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes"], { env });
+  expect(un.exitCode).toBe(0);
+  expect(un.stdout.toString()).toContain(`kept    ${join(home, ".agents/skills/routr/notes/mine.md")} (yours, in routr's skill folder)`);
+  expect(readFileSync(join(home, ".agents/skills/routr/notes/mine.md"), "utf8")).toBe("the user's");
+  expect((await import("node:fs")).readdirSync(join(home, ".agents/skills/routr"))).toEqual(["notes"]); // routr's files and folders gone
+  for (const s of SKILLS) for (const f of SKILL_FOLDERS) if (!(s === "routr" && f === ".agents/skills")) expect(existsSync(join(home, f, s))).toBe(false);
+});
+
+test("from a source checkout, setup never replaces a release's installed skills: it says what to run instead", async () => {
+  const config = { telemetry: false, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } };
+  const release = [{ name: "routr", where: "~/.agents/skills/routr", version: "0.5.0", ours: true, missing: [] }];
+  const x = await runSetup({ config, found: ["agy"], skill: release, args: ["--yes"] }); // routr-orchestrate is missing
+  expect(x.installs).toEqual([]);
+  expect(x.r.skipped.join(" ")).toContain("this routr runs from a source checkout and the installed skills come from a release: run the installed routr's `routr skill install`");
+  // Skills a source build wrote itself (0.0.0-dev), or none at all, it may (re)write.
+  expect((await runSetup({ config, found: ["agy"], skill: [{ ...release[0], version: "0.0.0-dev" }], args: ["--yes"] })).installs).toEqual([1]);
+  expect((await runSetup({ config, found: ["agy"], skill: [], args: ["--yes"] })).installs).toEqual([1]);
+});
+
+test("a skill is filled beside its place and renamed in: a failure leaves the old one whole", async () => {
+  const { staged } = await import("../src/lib/skill-install.mjs");
+  const { readdirSync } = await import("node:fs");
+  const dir = scratch("staged"), dest = join(dir, "routr");
+  staged(dest, (tmp) => { mkdirSync(tmp); writeFileSync(join(tmp, "SKILL.md"), "one"); });
+  expect(() => staged(dest, (tmp) => { mkdirSync(tmp); writeFileSync(join(tmp, "SKILL.md"), "two"); throw new Error("disk full"); })).toThrow("disk full");
+  expect(readFileSync(join(dest, "SKILL.md"), "utf8")).toBe("one");
+  expect(readdirSync(dir)).toEqual(["routr"]); // no half-written folder left beside it
+  staged(dest, (tmp) => { mkdirSync(tmp); writeFileSync(join(tmp, "SKILL.md"), "two"); });
+  expect(readFileSync(join(dest, "SKILL.md"), "utf8")).toBe("two");
+  expect(readdirSync(dir)).toEqual(["routr"]);
 });

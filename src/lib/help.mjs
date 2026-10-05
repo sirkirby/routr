@@ -92,8 +92,8 @@ export const COMMANDS = {
   },
   skill: {
     name: "skill",
-    description: "`routr skill install` writes the routr skill into ~/.agents/skills and links it for Claude Code",
-    args: [{ name: "install", description: "install or update the skill", required: true }],
+    description: "`routr skill install` writes routr's two skills into ~/.agents/skills (read by Codex and Cursor) and links them into the skills folder of each other harness set up here (Claude Code, Kiro, Antigravity): the routr skill, and routr-orchestrate, which you type to start a session as the orchestrator (`/routr-orchestrate <plan>`; `$routr-orchestrate` in Codex). It replaces only routr's own copies: a skill or link of the same name that routr did not write is kept, and listed",
+    args: [{ name: "install", description: "install or update the skills", required: true }],
     flags: [{ name: "--dry-run", description: "show where it would be written", required: false }],
   },
   key: {
@@ -125,7 +125,7 @@ export const COMMANDS = {
   },
   uninstall: {
     name: "uninstall",
-    description: "remove routr from this machine: the binary, the skill, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, key, and ledger unless you say otherwise. Shows the plan and asks first",
+    description: "remove routr from this machine: the binary, both skills (routr and routr-orchestrate) and their links, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, key, and ledger unless you say otherwise. Shows the plan and asks first",
     flags: [
       { name: "--purge", description: "also remove your config, TypeSafe key, and ledger", required: false },
       { name: "--yes", description: "ask nothing (needed when there is no terminal)", required: false },

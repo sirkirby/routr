@@ -86,7 +86,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
 | `update` | Update to the newest release on your update channel now (routr also does this by itself in the background, at most once a day). |
 | `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--enable`, `--disable`, `--channel`) and reads them first with `--show`. |
-| `uninstall` | Remove routr: the binary, the skill, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, key, and ledger; `--purge` removes those too. |
+| `uninstall` | Remove routr: the binary, its two skills, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, key, and ledger; `--purge` removes those too. |
 | `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
 The advice commands write nothing and never block an agent: with no network or no key they still answer, marked as
@@ -108,7 +108,7 @@ Windows (PowerShell):
 irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
 ```
 
-That puts `routr` in `~/.local/bin`, checks the download against the release checksums, and installs the routr skill
+That puts `routr` in `~/.local/bin`, checks the download against the release checksums, and installs routr's skills
 for your agents, and then starts `routr setup` (run it yourself any time; an agent running the installer is not asked
 anything):
 
@@ -128,7 +128,7 @@ a command, and the skill tells it which.
 routr keeps itself current. At most once a day a command starts a background check; a new release is downloaded,
 verified against its checksums, and swapped in, and your next `routr` run uses it. Nothing you are running is
 interrupted. `routr update` does it on demand, `routr doctor` shows when it last checked, and `"auto_update": false`
-in the config turns it off. Updates also reinstall the bundled agent skill.
+in the config turns it off. Updates also reinstall the bundled agent skills.
 After updating, run `routr setup` to review your settings. See the
 [release notes](https://github.com/sirkirby/routr/releases) for changes and upgrade details.
 
@@ -145,6 +145,19 @@ for a later reinstall unless you choose otherwise (`--purge`).
 For orchestration you also need [herdr](https://herdr.dev) and its agent skill
 (`npx skills add herdrdev/herdr --skill herdr -g`); setup offers to install both, and `routr doctor` tells you when
 either is missing. Sizing subagents works without them.
+
+To start an orchestration, open your lead agent in herdr and type your plan after the `routr-orchestrate` skill, which
+routr installs beside the routr skill:
+
+    /routr-orchestrate <your plan or task>
+
+In Codex it is `$routr-orchestrate <your plan>`. The session becomes the routr orchestrator: the agent loads the routr
+skill, runs `routr doctor`, and hands out every piece through routr. It is meant for you to type, not for an agent to
+pick by itself: it carries `disable-model-invocation: true` (Claude Code, Cursor) and Codex's
+`allow_implicit_invocation: false`. Measured 2026-10-05 by asking each harness to list the skills available to it:
+Claude Code, Codex, Cursor (`cursor-agent`) and Antigravity left it out of the list, and Kiro, which documents no such
+setting, listed it, so there its description is the only guard. Anywhere, the same works as a plain
+prompt: "You're an orchestrator; use routr to manage the following work: …".
 
 Something not working? `routr doctor` says what is missing, and [docs/troubleshooting.md](docs/troubleshooting.md)
 covers the rest.
