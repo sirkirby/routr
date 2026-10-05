@@ -53,8 +53,9 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - The binary is self-contained: the guides under `skills/routr/` are embedded at build time, and it MUST NOT depend on a repository checkout at run time. It reads the user's harness state read-only
   (usage sources, settings, model lists) and writes only under `~/.config/routr`, `~/.cache/routr`,
   `~/.local/share/routr`, the skill folders on `skill install`, and temporary files it removes (including the private
-  herdr session `usage cursor` makes, the empty Kiro session `usage kiro` deletes again, and the empty project folder
-  Claude's `/usage` makes for the temp folder, removed only when the read made it). One exception:
+  herdr session `usage cursor` makes, the empty Kiro session `usage kiro` deletes again, and the private folder each
+  Claude `/usage` read runs in, with the empty `~/.claude/projects` folder Claude makes for it, removed after a normal
+  exit; a timed-out read can leave that one empty folder). One exception:
   `uninstall` removes the `statusLine` entry an earlier routr's `setup` set in `~/.claude/settings.json`, after a
   backup, and only when it runs `routr statusline`.
 - No runtime dependencies. `node:` built-ins only, so the same source runs under Bun and compiles for every target.

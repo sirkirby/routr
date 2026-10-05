@@ -5,7 +5,7 @@
 // or `unknown` (nothing readable). Measured 2026-09-22 on a ChatGPT Enterprise seat: no windows at all, only
 // `credits.unlimited: true`, and a plan name of `business`. So the shape is the key, never the plan name.
 import { CLAUDE_SNAPSHOT, home, run } from "./runtime.mjs";
-import { existsSync, readdirSync, readFileSync, realpathSync, rmdirSync, statSync } from "node:fs";
+import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -186,42 +186,51 @@ export const CLAUDE_FRESH_SEC = 5 * 60;
 // carries on with the fallback.
 const CLAUDE_TIMEOUT_MS = 12000;
 // `quiet`: the registry's arguments that keep the user's hooks and MCP servers out of routr's read (harnesses.mjs).
-// `--no-session-persistence` leaves no session file, so it runs in the system temp folder, never the user's project
-// (as Kiro's /usage does).
+// `--no-session-persistence` leaves no session file. It runs in a private folder of its own under the system temp
+// folder, never the user's project (as Kiro's /usage runs in the temp folder).
 export const claudeUsageArgs = (quiet = []) => ["-p", "/usage", "--output-format", "json", "--no-session-persistence", ...quiet];
 const readJson = (file) => { try { return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null; } catch { return null; } };
 
 // Claude still makes `~/.claude/projects/<folder>/memory`, empty, for the folder it ran in (measured 2.1.289: the
 // folder is the path with every character but a letter or digit turned into `-`, macOS's /var resolved to
-// /private/var). That is Claude's own naming, so the cleanup is tolerant: it looks at the folders the path and its
-// real path would give, and removes one only if this read made it (absent before) and it holds an empty `memory` and
-// nothing else. rmdir, never a recursive remove: a folder that is not empty stays.
+// /private/var). So each read runs in a folder routr has just made (`routr-claude-XXXXXX` under the temp folder):
+// the project folder Claude names after it belongs to this read alone, not inferred from "absent before". It is
+// removed only after Claude exited normally (after a timeout routr's kill may land before Claude's last write), only
+// as real folders (a symlink or, on Windows, a junction, which lstat reports as a symlink, is never followed), and
+// only with rmdir, so a folder that is not empty stays. The naming is Claude's own: a folder named otherwise is
+// simply not found, and any surprise leaves things as they are.
 const claudeProjectsDir = () => join(home(), ".claude/projects");
 export const claudeProjectFolders = (cwd, projects = claudeProjectsDir()) => {
   let real = cwd; try { real = realpathSync(cwd); } catch {}
   return [...new Set([cwd, real].map((x) => join(projects, x.replace(/[^A-Za-z0-9]/g, "-"))))];
 };
-function removeIfOurs(folder) {
-  try {
-    if (readdirSync(folder).join() !== "memory" || readdirSync(join(folder, "memory")).length) return;
-    rmdirSync(join(folder, "memory")); rmdirSync(folder);
-  } catch {}
+// rmdir a real, empty folder; anything else (missing, a link, a file, not empty) is left, and says false.
+const removeEmpty = (dir) => { try { const st = lstatSync(dir); if (st.isSymbolicLink() || !st.isDirectory() || readdirSync(dir).length) return false; rmdirSync(dir); return true; } catch { return false; } };
+function removeProjectFolder(folder) {
+  try { if (lstatSync(folder).isSymbolicLink()) return; } catch { return; }
+  removeEmpty(join(folder, "memory"));
+  removeEmpty(folder);
 }
 
-// Seams: `file` the statusline snapshot, `nowSec` the clock, `exec` runtime's run, `cwd` where Claude runs,
-// `projects` Claude's projects folder. It is only called once readUsage's sign-in gate says Claude is signed in. That
+// Seams: `file` the statusline snapshot, `nowSec` the clock, `exec` runtime's run, `tmp` the folder that holds
+// each read's private folder, `projects` Claude's projects folder. It is only called once readUsage's sign-in gate says Claude is signed in. That
 // answer is kept up to 6 hours (signin.mjs, as for every harness), so one read may follow a sign-out; Claude's `-p`
 // does not open a browser sign-in.
-export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT, nowSec = now(), exec = run, cwd = tmpdir(), projects = claudeProjectsDir() } = {}) {
+export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT, nowSec = now(), exec = run, tmp = tmpdir(), projects = claudeProjectsDir() } = {}) {
   const snap = readJson(file);
   const fromSnap = snap ? claudeSnapshot(snap, nowSec) : null;
   // A snapshot from the future (a clock set back) is not fresh: its age says nothing.
   const age = fromSnap?.ageSec;
   if (fromSnap?.headroom != null && Number.isFinite(age) && age >= 0 && age < CLAUDE_FRESH_SEC) return fromSnap;
-  const made = claudeProjectFolders(cwd, projects).filter((f) => !existsSync(f));
-  let out;
-  try { out = await exec("claude", claudeUsageArgs(quiet), { cwd, timeoutMs: CLAUDE_TIMEOUT_MS }); }
-  finally { made.forEach(removeIfOurs); } // also after a timeout: Claude may have made it before it was stopped
+  let cwd = null, out;
+  try { cwd = mkdtempSync(join(tmp, "routr-claude-")); } catch {} // none: run in the temp folder itself, clean nothing
+  try { out = await exec("claude", claudeUsageArgs(quiet), { cwd: cwd ?? tmp, timeoutMs: CLAUDE_TIMEOUT_MS }); }
+  finally {
+    // run() answers null on a timeout (it kills Claude and does not wait), an error, or no output: the project folder
+    // is then left, as Claude may still be writing it; a timed-out read can leave one empty folder.
+    if (cwd && out != null) claudeProjectFolders(cwd, projects).forEach(removeProjectFolder);
+    if (cwd) removeEmpty(cwd);
+  }
   let why, answered = false;
   if (out == null) why = `\`claude -p /usage\` did not answer in ${CLAUDE_TIMEOUT_MS / 1000} s`;
   else {

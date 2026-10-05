@@ -1,7 +1,7 @@
 // usage readers: Claude's statusline, Codex, Cursor's screen, Kiro's /usage, the background snapshots, and `routr usage`
 import { expect, test } from "bun:test";
-import { join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { tmpdir } from "node:os";
 import { claudeProjectFolders, claudeSnapshot, codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, parseClaudeReset, parseClaudeUsage, readClaude, summarize } from "../src/lib/usage.mjs";
@@ -140,7 +140,9 @@ test("Claude: a recent statusline snapshot is used as it is; otherwise its own /
   // Older: read live, with exactly these arguments, in the system temp folder.
   writeFileSync(file, JSON.stringify({ ts: OCT5 - 600, rate_limits: rl, answered: true }));
   const fresh = await read({ exec: exec(claudeAnswer(CLAUDE_USAGE)) });
-  expect(calls).toEqual([{ cmd: "claude", args: ["-p", "/usage", "--output-format", "json", "--no-session-persistence", "--settings", '{"disableAllHooks":true}', "--strict-mcp-config"], opts: { cwd: tmpdir(), timeoutMs: 12000 } }]);
+  expect(calls.map(({ cmd, args, opts }) => ({ cmd, args, timeoutMs: opts.timeoutMs }))).toEqual([{ cmd: "claude", args: ["-p", "/usage", "--output-format", "json", "--no-session-persistence", "--settings", '{"disableAllHooks":true}', "--strict-mcp-config"], timeoutMs: 12000 }]);
+  expect(dirname(calls[0].opts.cwd)).toBe(tmpdir()); expect(basename(calls[0].opts.cwd)).toMatch(/^routr-claude-/); // a private folder of its own
+  expect(existsSync(calls[0].opts.cwd)).toBe(false);                                                                  // removed after the read
   expect(fresh).toMatchObject({ pool: "claude", source: "claude /usage", ageSec: 0, class: "included" });
   expect(fresh.headroom).toBeCloseTo(0.1);
   expect(fresh.windows.map((w) => w.name)).toEqual(["five_hour", "seven_day"]);
@@ -153,32 +155,37 @@ test("Claude: a recent statusline snapshot is used as it is; otherwise its own /
   expect((await read({ exec: exec(claudeAnswer(CLAUDE_USAGE)) })).source).toBe("claude /usage"); expect(calls.length).toBe(2);
 });
 
-test("Claude's read removes the empty project folder it made for the temp folder, and nothing else", async () => {
-  const home = scratch("claude-home"), projects = join(home, ".claude", "projects"), cwd = scratch("claude-cwd");
-  const [folder] = claudeProjectFolders(cwd, projects).slice(-1); // the real path's: what Claude names
-  expect(folder).toBe(join(projects, realpathSync(cwd).replace(/[^A-Za-z0-9]/g, "-")));
-  // What Claude does (measured): an empty memory folder under the project folder named for where it ran.
-  const claude = (extra) => async () => { mkdirSync(join(folder, "memory"), { recursive: true }); extra?.(); return claudeAnswer(CLAUDE_USAGE); };
-  const read = (exec) => readClaude({ file: join(home, "none.json"), nowSec: OCT5, exec, cwd, projects });
-  expect((await read(claude())).source).toBe("claude /usage");
-  expect(existsSync(folder)).toBe(false);                                               // made by this read: removed
-  expect(existsSync(projects)).toBe(true);                                              // Claude's own folder stays
-  await read(async () => { mkdirSync(join(folder, "memory"), { recursive: true }); return null; }); // timed out after making it
-  expect(existsSync(folder)).toBe(false);
-  await read(claude(() => writeFileSync(join(folder, "memory", "note.md"), "x")));      // something was written: kept
-  expect(existsSync(join(folder, "memory", "note.md"))).toBe(true);
-  rmSync(folder, { recursive: true });
-  await read(claude(() => writeFileSync(join(folder, "s.jsonl"), "{}")));                // a session file beside it: kept
-  expect(existsSync(join(folder, "s.jsonl"))).toBe(true);
-  rmSync(folder, { recursive: true });
-  mkdirSync(join(folder, "memory"), { recursive: true });                                // there before the read: kept
+test("Claude's read runs in a private folder of its own and removes only what Claude made for it, after a normal exit", async () => {
+  const home = scratch("claude-home"), projects = join(home, ".claude", "projects"), tmp = scratch("claude-tmp");
+  // What Claude does (measured): an empty memory folder under the project folder named for the folder it ran in.
+  const folderOf = (cwd) => join(projects, realpathSync(cwd).replace(/[^A-Za-z0-9]/g, "-"));
+  const claude = (then, answer = claudeAnswer(CLAUDE_USAGE)) => async (cmd, args, { cwd }) => { const f = folderOf(cwd); expect(claudeProjectFolders(cwd, projects)).toContain(f); mkdirSync(join(f, "memory"), { recursive: true }); then?.(f, cwd); return answer; };
+  const read = (exec) => readClaude({ file: join(home, "none.json"), nowSec: OCT5, exec, tmp, projects });
+  const left = () => readdirSync(tmp);
+  let seen;
+  expect((await read(claude((f) => { seen = f; }))).source).toBe("claude /usage");
+  expect([existsSync(seen), left()]).toEqual([false, []]);                    // the project folder and the private folder: gone
+  expect(existsSync(projects)).toBe(true);                                    // Claude's own folder stays
+  // Another read's or the user's project folder, made meanwhile under another name: never touched.
+  const other = join(projects, "-private-tmp"); mkdirSync(join(other, "memory"), { recursive: true });
   await read(claude());
-  expect(existsSync(join(folder, "memory"))).toBe(true);
-  // A folder named some other way is not found, and nothing is removed.
-  rmSync(folder, { recursive: true });
-  const other = join(projects, "named-otherwise");
-  await read(async () => { mkdirSync(join(other, "memory"), { recursive: true }); return claudeAnswer(CLAUDE_USAGE); });
   expect(existsSync(join(other, "memory"))).toBe(true);
+  // Anything written there: kept (rmdir only removes what is empty).
+  await read(claude((f) => writeFileSync(join(f, "memory", "note.md"), "x")));
+  expect(readdirSync(projects).some((n) => existsSync(join(projects, n, "memory", "note.md")))).toBe(true);
+  await read(claude((f) => writeFileSync(join(f, "s.jsonl"), "{}")));
+  expect(readdirSync(projects).some((n) => existsSync(join(projects, n, "s.jsonl")))).toBe(true);
+  // A project folder that is a symlink (a junction on Windows) is not followed: the empty memory it points at stays.
+  const elsewhere = scratch("elsewhere"); mkdirSync(join(elsewhere, "memory"));
+  await read(async (cmd, args, { cwd }) => { symlinkSync(elsewhere, folderOf(cwd), process.platform === "win32" ? "junction" : "dir"); return claudeAnswer(CLAUDE_USAGE); });
+  expect(existsSync(join(elsewhere, "memory"))).toBe(true);
+  // Timed out (or no answer): Claude may still be writing, so its project folder stays; the empty private folder goes.
+  let timedOut;
+  await read(claude((f) => { timedOut = f; }, null));
+  expect(existsSync(join(timedOut, "memory"))).toBe(true); expect(left()).toEqual([]);
+  // A private folder Claude wrote into is not removed either.
+  await read(claude((f, cwd) => writeFileSync(join(cwd, "x"), "")));
+  expect(left().length).toBe(1);
 });
 
 test("Claude's live read fails open: the old snapshot however old, else the assumed headroom, and the note says why", async () => {
