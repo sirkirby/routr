@@ -92,7 +92,7 @@ export function channelNote(channel, running = ROUTR_VERSION, isStandalone = sta
   const later = auto ? "; otherwise the daily update does it" : " (automatic updates are off)";
   if (channel === "beta") return `update channel: beta. \`routr update\` installs the newest beta, rc or stable release now${later}`;
   const pre = isStandalone && running.includes("-");
-  return `update channel: stable. ${pre ? `You stay on ${running} until a stable release is newer; \`routr update --force\` installs the newest stable now` : `\`routr update\` installs the newest stable release now${later}`}`;
+  return `update channel: stable. ${pre ? `You stay on ${running} until a stable release is newer; \`routr update --force\` installs the newest stable now${auto ? "" : later}` : `\`routr update\` installs the newest stable release now${later}`}`;
 }
 
 // Where each newly written pool that reads as metered goes in the ranking. `ask(name, note)` is the terminal question

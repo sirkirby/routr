@@ -67,7 +67,8 @@ export function pickRelease(releases, channel = "stable") {
 
 // The newest version on the channel. Stable asks for GitHub's latest release, as it always has, and takes it only when
 // its tag is a stable version (a release marked latest by mistake is not offered). Beta reads the newest 100 releases,
-// GitHub's largest page: many release cycles, so the newest beta, rc or release is on it unless 100 alphas came after.
+// GitHub's largest page, and picks from what is on it: a beta, rc or release older than the newest 100 releases is not
+// seen. That is many release cycles here.
 export async function latestVersion(timeoutMs = 4000, channel = "stable", fetchFn = fetch) {
   const get = async (path) => {
     const r = await fetchFn(`https://api.github.com/repos/${REPO}/${path}`, { headers: { accept: "application/vnd.github+json", "user-agent": "routr" }, signal: AbortSignal.timeout(timeoutMs) });
