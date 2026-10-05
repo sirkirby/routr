@@ -13,7 +13,7 @@ import { home, resolveCommand, standalone } from "./runtime.mjs";
 import { autoUpdateStatus } from "./update.mjs";
 import { dailyTelemetrySend, hoursAgo, lastTelemetrySend, pendingCount, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
-import { extraFiles, hasExtras, linkedAncestor, linkedWhy, missingFiles, owner, skillPlaces } from "./skill-install.mjs";
+import { extraFiles, hasExtras, missingFiles, NOT_OURS, notOursWhy, owner, skillPlaces } from "./skill-install.mjs";
 
 // Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows. On Windows it is runtime.mjs's
 // resolveCommand, the rule start() follows: a harness doctor calls found is one routr can start (PATH in order,
@@ -80,7 +80,7 @@ export function nextSteps(r) {
   if (skillsMissing(r).length || skillsIncomplete(r).length || skillsStale(r).length) steps.push("Install the routr skills that match this routr: routr skill install");
   // A folder of the same name that routr did not write is never replaced: the user moves it, or keeps theirs.
   for (const k of r.skill.filter((x) => x.ours === false && x.where.endsWith(`.agents/skills/${x.name}`))) steps.push(k.why
-    ? `routr installs no ${k.name} skill at ${k.where}: ${k.why}. Make that folder a real one, then run routr skill install`
+    ? `routr installs no ${k.name} skill at ${k.where}: ${k.why}. Rename or remove it, then run routr skill install`
     : `${k.where} is not routr's, so routr installs no ${k.name} skill there: rename or remove it, then run routr skill install`);
   // routr's folder holding files routr did not write is left as it is by install: the person clears it first.
   for (const k of r.skill.filter((x) => x.extra?.length)) steps.push(hasExtras(k.where, k.extra));
@@ -139,18 +139,19 @@ export async function inspect({ configPath, quiet } = {}) {
   // Each of routr's skills (the routr skill, and routr-orchestrate) in each folder it is installed to: whether that copy
   // is routr's (skill-install.mjs, `owner`), its version, and any file routr ships that it lacks.
   r.skill = SKILLS.flatMap((name) => SKILL_FOLDERS.map((f) => [name, `${f}/${name}`])).map(([name, d]) => {
-    const path = join(home(), d), state = owner(home(), name, path), above = linkedAncestor(home(), path);
-    // A place under a linked folder is said even when empty: install leaves it, so "run routr skill install" cannot help.
-    if (state === "absent" && !above) return null;
+    const path = join(home(), d), state = owner(home(), name, path);
+    if (state === "absent") return null;
     let version = "unknown"; try { version = readFileSync(join(path, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\r\n]+)"?/m)?.[1] ?? "unknown"; } catch {}
     const real = state === "ours" && lstatSync(path).isDirectory(); // a link is checked through the folder it points at
+    // A reason only where a linked folder is what blocks it: a pre-manifest routr folder routr will not adopt there.
+    const why = state === "theirs" ? notOursWhy(home(), name, path) : NOT_OURS;
     return { name, where: `~/${d}`, version, ours: state === "ours", missing: state === "ours" ? missingFiles(name, path) : [], extra: real ? extraFiles(path, name) : [],
-      ...(above ? { why: linkedWhy(above.replace(home(), "~")) } : {}) };
+      ...(why !== NOT_OURS ? { why: why.replace(home(), "~") } : {}) };
   }).filter(Boolean);
   // Each harness set up here should have routr's link (or copy) of each skill whose shared copy is routr's: one that
   // is absent (its link failed, or was removed) is a repair. A folder there that is not routr's is reported above.
   const places = skillPlaces(home());
-  r.skill_unlinked = places.filter((p) => p.label && p.set && p.state === "absent" && !p.above && places.some((s) => s.skill === p.skill && !s.label && s.state === "ours"))
+  r.skill_unlinked = places.filter((p) => p.label && p.set && p.state === "absent" && places.some((s) => s.skill === p.skill && !s.label && s.state === "ours"))
     .map((p) => ({ name: p.skill, where: p.path.replace(home(), "~"), for: p.label }));
   // `problems` are settings that are missing or wrong, each with its fix; `notes` are only for information.
   const problems = existsSync(path) ? [...notes] : [], info = []; // no config at all is its own line and next step

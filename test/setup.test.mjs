@@ -699,13 +699,15 @@ test("the shared copy of each skill is required on its own: a harness copy does 
   expect(Bun.spawnSync([process.execPath, SCRIPT, "skill", "install"], { env }).exitCode).toBe(0);
   expect(JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString()).next_steps.join(" ")).not.toContain("skill install");
   if (process.platform === "win32") return;
-  // A shared folder that is a link: installing cannot help, so doctor says why instead of asking for an install.
-  const dev = scratch("shared-linked"), checkout = join(dev, "checkout"); mkdirSync(checkout); mkdirSync(join(dev, ".agents"));
+  // ~/.agents/skills linked into a checkout with a pre-manifest routr skill: that one is not missing (installing cannot
+  // adopt it; doctor says why), while routr-orchestrate, absent there, is (installing creates it).
+  const dev = scratch("shared-linked"), checkout = join(dev, "checkout"); mkdirSync(join(dev, ".agents"));
+  cpSync(join(import.meta.dir, "../skills"), checkout, { recursive: true }); rmSync(join(checkout, "routr-orchestrate"), { recursive: true });
   symlinkSync(checkout, join(dev, ".agents/skills"), "dir");
   const d = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env: cliEnv(dev, { PATH: dev }) }).stdout.toString());
-  expect(skillsMissing(d)).toEqual([]);
-  expect(d.next_steps).not.toContain("Install the routr skills that match this routr: routr skill install");
-  expect(d.next_steps).toContain("routr installs no routr skill at ~/.agents/skills/routr: ~/.agents/skills is a link: routr writes, links and removes nothing through it, so this is left as it is. Make that folder a real one, then run routr skill install");
+  expect(skillsMissing(d)).toEqual(["routr-orchestrate"]);
+  expect(d.next_steps).toContain("Install the routr skills that match this routr: routr skill install");
+  expect(d.next_steps).toContain("routr installs no routr skill at ~/.agents/skills/routr: not routr's: left as it is: it has no routr manifest and ~/.agents/skills is a link, so routr never adopts it (a checkout's copy, say). Rename or remove it, then run routr skill install");
 });
 
 test("from a source checkout, setup never replaces a release's installed skills: it says what to run instead", async () => {

@@ -52,10 +52,12 @@ const legacy = (dir, skill) => {
   try { return new RegExp(`^name:\\s*${skill}\\s*$`, "m").test(readFileSync(join(dir, "SKILL.md"), "utf8").match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? ""); } catch { return false; }
 };
 // The first folder between the user's home (not home itself) and `path` (not `path` itself) that is a link, or null.
-// From the final review: owner() looked only at the skill folder and linkAbove() only inside it, so with
-// ~/.agents/skills itself a link into a developer's checkout holding the legacy routr skill, install took the checkout's
-// folder for routr's, overwrote an uncommitted guide there, wrote a manifest into it, and uninstall planned to remove it.
-// A place under a linked folder is never routr's, whatever it holds: routr writes, links and removes nothing there.
+// From the final review: with ~/.agents/skills itself a link into a developer's checkout holding a routr skill with no
+// manifest, the legacy rule took the checkout's folder for routr's: install overwrote an uncommitted guide there, wrote
+// a manifest into it, and uninstall planned to remove it. So the legacy rule never applies below a linked folder. A
+// linked folder alone disqualifies nothing else (the maintainer's call: ~/.claude or ~/.kiro linked into a dotfiles
+// repo is common, and refusing it would silently drop routr's skills there): routr may create its folder or link where
+// nothing is, and update or remove a folder carrying its valid manifest, wherever that folder physically lives.
 export function linkedAncestor(home, path) {
   const rel = relative(home, path);
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
@@ -66,22 +68,28 @@ export function linkedAncestor(home, path) {
   }
   return null;
 }
-export const linkedWhy = (above) => `${above} is a link: routr writes, links and removes nothing through it, so this is left as it is`;
-// "absent", "ours", or "theirs" for the thing at `path` that would be `skill`. Under a linked folder it is never "ours".
+// "absent", "ours", or "theirs" for the thing at `path` that would be `skill`.
 export function owner(home, skill, path) {
   let st; try { st = lstatSync(path); } catch { return "absent"; }
-  if (linkedAncestor(home, path)) return "theirs";
   const shared = sharedPath(home, skill);
   if (st.isSymbolicLink()) {
     if (path === shared) return "theirs"; // routr never makes its shared copy a link
     try { return resolve(dirname(path), readlinkSync(path)) === shared && owner(home, skill, shared) === "ours" ? "ours" : "theirs"; } catch { return "theirs"; }
   }
   if (!st.isDirectory()) return "theirs";
-  // The legacy rule fails closed: only where there is no manifest at all. One that is invalid, a link, or another
-  // skill's makes the folder someone else's.
-  return manifest(path, skill) || (!present(join(path, MANIFEST)) && legacy(path, skill)) ? "ours" : "theirs";
+  // The legacy rule fails closed: only where there is no manifest at all, and never below a linked folder
+  // (linkedAncestor). A manifest that is invalid, a link, or another skill's makes the folder someone else's.
+  return manifest(path, skill) || grandfathered(home, skill, path) ? "ours" : "theirs";
 }
 const present = (p) => { try { lstatSync(p); return true; } catch { return false; } };
+const grandfathered = (home, skill, path) => !present(join(path, MANIFEST)) && !linkedAncestor(home, path) && legacy(path, skill);
+// Why a place that is not routr's is left: the general reason, or, for a pre-manifest routr folder reached through a
+// linked folder (the final review's case), that link.
+export function notOursWhy(home, skill, path) {
+  const above = linkedAncestor(home, path);
+  try { if (above && lstatSync(path).isDirectory() && !present(join(path, MANIFEST)) && legacy(path, skill)) return `${NOT_OURS}: it has no routr manifest and ${above} is a link, so routr never adopts it (a checkout's copy, say)`; } catch {}
+  return NOT_OURS;
+}
 // The files routr wrote in an owned folder: its manifest's list, or (before manifests) what this routr ships. The second
 // only for the grandfathered legacy folder (no manifest at all, and the legacy rule holds). From the final review: a
 // folder with no manifest, swapped in while uninstall's prompt waited, had its SKILL.md and agents/openai.yaml deleted
@@ -140,7 +148,7 @@ export function skillPlaces(home = userHome()) {
   return SKILLS.flatMap((skill) => [
     ...Object.entries(LINKED).map(([label, rel]) => ({ skill, label, path: join(home, rel, skill), set: existsSync(dirname(join(home, rel))) })),
     { skill, label: null, path: sharedPath(home, skill), set: true },
-  ].map((p) => { const above = linkedAncestor(home, p.path); return { ...p, state: owner(home, skill, p.path), ...(above ? { above } : {}) }; }));
+  ].map((p) => { const state = owner(home, skill, p.path); return { ...p, state, ...(state === "theirs" ? { why: notOursWhy(home, skill, p.path) } : {}) }; }));
 }
 export const NOT_OURS = "not routr's: left as it is";
 
@@ -165,9 +173,7 @@ export function installSkill({ home = userHome(), dryRun = false } = {}) {
   const done = [], kept = [], failed = [];
   for (const skill of SKILLS) {
     const places = skillPlaces(home).filter((p) => p.skill === skill), shared = places.at(-1);
-    // First, absent or not: under a linked folder nothing is written, not even a new folder (linkedAncestor).
-    if (shared.above) { kept.push({ skill, where: shared.path, why: linkedWhy(shared.above) }); continue; } // nothing to link to
-    if (shared.state === "theirs") { kept.push({ skill, where: shared.path, why: NOT_OURS }); continue; } // nothing to link to
+    if (shared.state === "theirs") { kept.push({ skill, where: shared.path, why: shared.why }); continue; } // nothing to link to
     const extra = shared.state === "ours" ? extrasIn(shared.path, skill) : [];
     if (extra.length) { kept.push({ skill, where: shared.path, why: hasExtras(shared.path, extra) }); continue; }
     const receipt = JSON.stringify({ skill, version: ROUTR_VERSION, files: Object.keys(FILES[skill]) }, null, 1) + "\n";
@@ -184,8 +190,7 @@ export function installSkill({ home = userHome(), dryRun = false } = {}) {
     } catch (e) { failed.push({ skill, where: shared.path, error: String(e?.message ?? e).slice(0, 160) }); continue; }
     // Read each harness's place again now that routr's shared copy is in place: a link to it is routr's only from here.
     for (const p of places.slice(0, -1).filter((x) => x.set).map((x) => (dryRun ? x : { ...x, state: owner(home, skill, x.path) }))) {
-      if (p.above) { kept.push({ skill, where: p.path, why: linkedWhy(p.above) }); continue; }
-      if (p.state === "theirs") { kept.push({ skill, where: p.path, why: NOT_OURS }); continue; }
+      if (p.state === "theirs") { kept.push({ skill, where: p.path, why: notOursWhy(home, skill, p.path) }); continue; }
       const more = p.state === "ours" ? extrasIn(p.path, skill) : [];
       if (more.length) { kept.push({ skill, where: p.path, why: hasExtras(p.path, more) }); continue; }
       if (dryRun) { done.push({ skill, where: p.path, how: `for ${p.label}` }); continue; }
