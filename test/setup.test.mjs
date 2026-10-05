@@ -49,7 +49,7 @@ test("doctor reports opted-in telemetry sends in text and JSON and flags failure
 test("doctor's next steps name the command for each thing missing, most important first", async () => {
   const { nextSteps, starterConfig } = await import("../src/lib/doctor.mjs");
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
-  const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true } }, skill: [{ version: ROUTR_VERSION.split("-")[0] }, { name: "routr-orchestrate", version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
+  const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true } }, skill: [{ where: "~/.agents/skills/routr", version: ROUTR_VERSION.split("-")[0] }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
   expect(nextSteps(base)).toEqual([]);
   // Claude's usage is read through its own /usage: no statusline is ever a step.
   const fresh = nextSteps({ ...base, key: { works: false, found: false }, config: { exists: false, subscriptions: [] } });
@@ -676,6 +676,36 @@ test("doctor reports both skills with their versions, setup repairs a missing on
   expect(readFileSync(join(home, ".agents/skills/routr/notes/mine.md"), "utf8")).toBe("the user's");
   expect((await import("node:fs")).readdirSync(join(home, ".agents/skills/routr"))).toEqual(["notes"]); // routr's files and folders gone
   for (const s of SKILLS) for (const f of SKILL_FOLDERS) if (!(s === "routr" && f === ".agents/skills")) expect(existsSync(join(home, f, s))).toBe(false);
+});
+
+test("the shared copy of each skill is required on its own: a harness copy does not stand in for a deleted ~/.agents/skills one", async () => {
+  const { skillsMissing } = await import("../src/lib/doctor.mjs");
+  const { installSkill } = await import("../src/lib/skill-install.mjs");
+  const { cpSync, symlinkSync } = await import("node:fs");
+  const home = scratch("shared-gone"), env = cliEnv(home, { PATH: home }); mkdirSync(join(home, ".claude"));
+  installSkill({ home });
+  // Claude's is a copy (as on Windows), so it survives when the shared copy, the one Codex and Cursor read, is deleted.
+  const claude = join(home, ".claude/skills/routr-orchestrate"), shared = join(home, ".agents/skills/routr-orchestrate");
+  rmSync(claude); cpSync(shared, claude, { recursive: true }); rmSync(shared, { recursive: true });
+  const doc = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString());
+  expect(doc.skill.filter((k) => k.name === "routr-orchestrate").map((k) => [k.where, k.ours])).toEqual([["~/.claude/skills/routr-orchestrate", true]]);
+  expect(skillsMissing(doc)).toEqual(["routr-orchestrate"]);
+  expect(doc.next_steps).toContain("Install the routr skills that match this routr: routr skill install");
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "doctor"], { env }).stdout.toString())
+    .toContain("routr-orchestrate skill missing from ~/.agents/skills/routr-orchestrate, the copy Codex and Cursor read: run `routr skill install`");
+  // setup's repair sees it too, and runs the install.
+  const config = { telemetry: false, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } };
+  expect((await runSetup({ config, found: ["agy"], skill: doc.skill, args: ["--yes"] })).installs).toEqual([1]);
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "skill", "install"], { env }).exitCode).toBe(0);
+  expect(JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString()).next_steps.join(" ")).not.toContain("skill install");
+  if (process.platform === "win32") return;
+  // A shared folder that is a link: installing cannot help, so doctor says why instead of asking for an install.
+  const dev = scratch("shared-linked"), checkout = join(dev, "checkout"); mkdirSync(checkout); mkdirSync(join(dev, ".agents"));
+  symlinkSync(checkout, join(dev, ".agents/skills"), "dir");
+  const d = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env: cliEnv(dev, { PATH: dev }) }).stdout.toString());
+  expect(skillsMissing(d)).toEqual([]);
+  expect(d.next_steps).not.toContain("Install the routr skills that match this routr: routr skill install");
+  expect(d.next_steps).toContain("routr installs no routr skill at ~/.agents/skills/routr: ~/.agents/skills is a link: routr writes, links and removes nothing through it, so this is left as it is. Make that folder a real one, then run routr skill install");
 });
 
 test("from a source checkout, setup never replaces a release's installed skills: it says what to run instead", async () => {
