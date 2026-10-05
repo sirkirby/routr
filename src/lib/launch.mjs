@@ -405,14 +405,19 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       }
       stop = await awaitReady(text); if (stop) return stop;
       step("ready", true, "herdr reports the agent ready for input");
-    } else {
-      // The name the orchestrator will use. Not waited on: an adopted agent was read idle already, and a rename that
-      // fails or runs out of time costs only the name.
-      let renamed = null; try { renamed = await call(["agent", "rename", out.pane, o.name], true); } catch {}
-      if (!renamed?.ok) out.warnings.push(`Could not rename the adopted agent to ${o.name}: address it by its pane, ${out.pane}`);
     }
     out.state = "ready"; out.ok = true;
-    if (prompt) { stop = await submitPrompt(); if (stop) return stop; }
+    if (prompt) stop = await submitPrompt();
+    // The name the orchestrator will use for an adopted agent, given once the task is in (whatever herdr then reports),
+    // so a rename that hangs cannot take the submission's time (from the verification of d47051e: it used all of
+    // --timeout, and the task was never sent). Its own short allowance, like explain's; a failure costs only the name.
+    if (adopted) {
+      const a = ["agent", "rename", out.pane, o.name];
+      logCommand(out.command, command(a));
+      let renamed = null; try { renamed = await run(a, 2000); } catch {}
+      if (!renamed?.ok) out.warnings.push(`Could not rename the adopted agent to ${o.name}: address it by its pane, ${out.pane}`);
+    }
+    if (stop) return stop;
   } catch (e) {
     out.ok = false; out.state = "failed"; step("failed", false, String(e?.message ?? e));
     // The harness may have exited with its own complaint (a model id it does not accept, a login it wants). That

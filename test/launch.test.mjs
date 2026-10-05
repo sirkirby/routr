@@ -461,6 +461,22 @@ test("the `then` of a startup question adopts the agent at once when herdr's liv
   expect(blocked.calls.some((a) => ["prompt", "send-keys", "rename", "wait"].includes(a[1]))).toBe(false);
 });
 
+// From the verification of d47051e: an adopted agent's rename ran before the task with all of --timeout, and one that
+// hung left no time to submit it (failed, nothing sent). The rename now follows the submission, on its own allowance.
+test("an adopted agent's rename that hangs costs only the name: the task is sent first", async () => {
+  const f = fakeHerdr({ kind: "codex", reply: async (a, ms) => {
+    if (a[1] === "rename") { await f.deps.sleep(ms); return herdrError("timeout"); } // uses everything it is given
+    if (a[1] === "prompt") return herdrOK({});
+    if (a[1] === "get" && a[2] === "w1:p2") return herdrOK({ agent: { agent: "codex", agent_status: "idle", interactive_ready: true, cwd: process.cwd() } });
+  } });
+  const r = await launch([...adoptArgs, "--timeout", "5000"], f.deps);
+  expect(r).toMatchObject({ ok: true, state: "prompted" });
+  expect(r.warnings.join(" ")).toContain("Could not rename the adopted agent to review: address it by its pane, w1:p2");
+  const order = f.calls.map((a) => a[1]);
+  expect(order.filter((c) => c === "prompt")).toHaveLength(1);
+  expect(order.indexOf("rename")).toBeGreaterThan(order.indexOf("prompt"));
+});
+
 // From the reviews of this change: waiting on an agent launch did not start (unknown, or working, to idle) could hand a
 // busy worker a second task, since one wait can see it work and finish. An adopted agent is decided from one reading.
 test("an adopted agent that herdr does not read idle is refused from one reading, never waited on", async () => {
