@@ -19,6 +19,10 @@
 //   auth: how to tell it is signed in (signin.mjs): `check` is its own status command, which never starts a sign-in,
 //     `signedIn(out, code)` reads the answer (stdout and stderr together), `signIn` says how the user signs in.
 //     Measured signed in and signed out, 2026-09-26; each parser matches the text both ways, not the exit code alone.
+//   quiet: the harness's own arguments that keep the user's lifecycle hooks (and MCP servers) out of routr's own read
+//     of it. Only Claude Code has them. None found for agy or kiro; Codex's `-c features.hooks=false` is unverified, so
+//     it is left out. Where there is none the user's hooks run as configured, which is intended: a tool that records
+//     each session (Myco, say) recording routr's read is not a fault.
 //   suggested: the settings setup offers for it. usage: `read` runs on every call and must be fast; `check` takes a
 //     fresh reading now and prints it raw (`routr usage <name>`). Cursor's and Kiro's readers bring herdr's terminal and
 //     their snapshot rules with them, so they load when first read: help, --version, and every command that reads no
@@ -59,7 +63,13 @@ export const HARNESSES = {
     // a trusted folder went straight to its prompt.
     startup: "Claude Code asks to trust a folder it has not been told to trust; a worktree counts as its repository. Once the user has trusted the repository in Claude (run `claude` in it and choose Yes), no worker in its worktrees is asked.",
     suggested: { hardest_work: "strong", reserve: 0.25 },
-    usage: { read: readClaude } },
+    // routr's own read starts Claude with the user's settings, so a gateway or env set there still applies, but with
+    // their hooks and MCP servers off. Measured 2.1.289, 2026-10-05: without the setting the user's SessionStart and
+    // SessionEnd hooks ran (seen in --debug-file), with it none did; `--setting-sources=project` also stops them but
+    // drops the user's settings. `--strict-mcp-config` with no --mcp-config starts none of their MCP servers, which
+    // took the read from 7.1-8.8 s to 4.4-5.2 s wall. `--bare` is no use: it skips the keychain and shows no numbers.
+    quiet: ["--settings", '{"disableAllHooks":true}', "--strict-mcp-config"],
+    usage: { read: (o) => readClaude({ ...o, quiet: HARNESSES.claude.quiet }) } },
   codex: { label: "Codex", executable: "codex", installAs: "Codex",
     // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
     // "Update available" just after herdr reported it ready, and the Enter that submitted the task chose "Update now".

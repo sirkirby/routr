@@ -47,14 +47,16 @@ test("doctor reports opted-in telemetry sends in text and JSON and flags failure
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 test("doctor's next steps name the command for each thing missing, most important first", async () => {
-  const { nextSteps, starterConfig, STATUSLINE_MISSING } = await import("../src/lib/doctor.mjs");
+  const { nextSteps, starterConfig } = await import("../src/lib/doctor.mjs");
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
-  const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true } }, claude_usage_statusline: "installed", skill: [{ version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
+  const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true } }, skill: [{ version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
   expect(nextSteps(base)).toEqual([]);
-  const fresh = nextSteps({ ...base, key: { works: false, found: false }, config: { exists: false, subscriptions: [] }, claude_usage_statusline: STATUSLINE_MISSING });
+  // Claude's usage is read through its own /usage: no statusline is ever a step.
+  const fresh = nextSteps({ ...base, key: { works: false, found: false }, config: { exists: false, subscriptions: [] } });
   expect(fresh[0]).toContain("routr key set");
   expect(fresh[1]).toContain("routr setup");
-  expect(fresh.length).toBe(3);
+  expect(fresh.length).toBe(2);
+  expect(fresh.join(" ")).not.toContain("statusline");
   expect(nextSteps({ ...base, harnesses: { claude: { installed: true, signed_in: true }, codex: { installed: true, signed_in: true } } })[0]).toContain("codex");
   // Signed out: not offered to set up, and a configured one says how to sign in again.
   expect(nextSteps({ ...base, harnesses: { claude: { installed: true, signed_in: true }, codex: { installed: true, signed_in: false, sign_in: "not signed in: run `codex login`" } } })).toEqual([]);
@@ -88,13 +90,8 @@ test("doctor's next steps name the command for each thing missing, most importan
   expect(await meteredRanks(["codex"], hs, {}, null)).toEqual({ codex: "after" });
 });
 
-test("setup never replaces a statusline the user already has", async () => {
-  const { statuslinePlan, parseModels } = await import("../src/lib/setup.mjs");
-  expect(statuslinePlan(null, "/b/routr statusline")).toEqual({ action: "write", settings: { statusLine: { type: "command", command: "/b/routr statusline" } } });
-  expect(statuslinePlan('{"model":"opus"}', "/b/routr statusline").settings.model).toBe("opus");
-  expect(statuslinePlan('{"statusLine":{"command":"~/mine.sh"}}', "x").action).toBe("skip");
-  expect(statuslinePlan('{"statusLine":{"command":"/b/routr statusline"}}', "x").action).toBe("none");
-  expect(statuslinePlan("{not json", "x").action).toBe("skip");
+test("--model takes repeatable subscription=id pairs", async () => {
+  const { parseModels } = await import("../src/lib/setup.mjs");
   expect(parseModels(["--yes", "--model", "claude=sonnet", "--model", "codex=m"])).toEqual({ claude: "sonnet", codex: "m" });
   expect(() => parseModels(["--model", "gpt=4"])).toThrow();
 });
@@ -152,7 +149,7 @@ test("routr setup changes a setting on an existing config, fills one that is mis
 
 // setup, driven end to end as a person would: scripted answers, a fake machine, nothing written outside a temp folder.
 // Every question asked is recorded, and a question the scenario did not expect fails it.
-async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], signedOut = [], keyWorks = true, env = {}, efforts = async () => null, models = {}, statusline = "not needed", skill = [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }], usage = {}, print = () => {} } = {}) {
+async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], signedOut = [], keyWorks = true, env = {}, efforts = async () => null, models = {}, skill = [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }], usage = {}, print = () => {} } = {}) {
   const { setup } = await import("../src/lib/setup.mjs");
   const dir = scratch("setup-run"), path = join(dir, "config.json");
   if (config) writeFileSync(path, JSON.stringify(config));
@@ -161,7 +158,7 @@ async function runSetup({ config, args = [], answers = [], found = ["agy", "curs
     const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
     return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy", "kiro"].map((n) => [n, { installed: found.includes(n) || signedOut.includes(n), signed_in: found.includes(n), ...(signedOut.includes(n) ? { sign_in: `not signed in: run \`${n}-cli login\`` } : {}), models: models[n] ?? [], usage_class: usage[n] ?? "included", usage_note: usage[n] === "metered" ? "metered: unlimited credits" : undefined }])),
       config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}), off: Object.keys(saved?.subscriptions ?? {}).filter((n) => saved.subscriptions[n].enabled === false) }, skill,
-      claude_usage_statusline: statusline, key: { works: keyWorks }, next_steps: [] };
+      key: { works: keyWorks }, next_steps: [] };
   };
   const queue = [...answers];
   const question = async (q) => { asked.push(q.trim()); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); };
@@ -409,17 +406,15 @@ test("every setting can be changed by flag, so an agent can do it for the user: 
   expect((await run(["--enable", "nope"])).r.error).toContain("--enable takes a subscription name");
 });
 
-test("setup, guided: offers to set Claude's usage statusline, and sets it only on yes", async () => {
+test("setup, guided: asks nothing about Claude's statusline and never writes Claude Code's settings", async () => {
   const settings = join(process.env.HOME, ".claude/settings.json");
   rmSync(settings, { force: true });
-  // Claude only: model (leave), effort (none listed), hardest, reserve; then the statusline (Enter: yes), telemetry, Save.
-  const yes = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", answers: ["", "", "", "", "", "", "n", ""] });
-  expect(yes.asked.some((a) => a.startsWith("Claude Code reports usage only to its statusline"))).toBe(true);
-  expect(JSON.parse(readFileSync(settings, "utf8")).statusLine.command).toMatch(/routr statusline$/);
-  rmSync(settings, { force: true });
-  const no = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", answers: ["", "", "", "", "", "n", "n", ""] });
+  // Claude only: choose, model (leave), hardest, reserve, use; then telemetry, Save. No statusline question.
+  const x = await runSetup({ found: ["claude"], answers: ["", "", "", "", "", "n", ""] });
+  expect(x.r.ok).toBe(true); expect(x.left).toBe(0);
+  expect(x.asked.some((a) => /statusline/i.test(a))).toBe(false);
   expect(existsSync(settings)).toBe(false);
-  expect(no.r.skipped.join(" ")).toContain("Claude statusline left alone");
+  expect([...x.r.did, ...x.r.skipped].join(" ")).not.toMatch(/statusline/i);
 });
 
 test("setup, run again: Esc at the menu with changes not saved offers the same way out, so nothing is lost by accident", async () => {
@@ -535,12 +530,19 @@ test("guided account-use selection pins the inferred default on existing account
   expect(untouched.saved).toEqual(config);
 });
 
-test("--no-statusline leaves Claude Code's settings alone, even when routr's statusline is missing", async () => {
+test("setup --yes never writes Claude Code's settings, and --no-statusline is still accepted and does nothing", async () => {
   const settings = join(process.env.HOME, ".claude/settings.json");
   rmSync(settings, { force: true });
-  const x = await runSetup({ found: ["claude"], statusline: "missing: without it Claude usage is assumed, not read", args: ["--yes", "--no-statusline"] });
-  expect(x.r.ok).toBe(true);
-  expect(existsSync(settings)).toBe(false);
+  for (const args of [["--yes"], ["--yes", "--no-statusline"]]) {
+    const x = await runSetup({ found: ["claude"], args });
+    expect(x.r.ok).toBe(true); expect(x.saved.subscriptions.claude).toBeDefined();
+    expect(existsSync(settings)).toBe(false);
+  }
+  // A settings file the user has is left exactly as it was, statusline or none.
+  const mine = JSON.stringify({ model: "opus" });
+  mkdirSync(dirname(settings), { recursive: true }); writeFileSync(settings, mine);
+  await runSetup({ found: ["claude"], args: ["--yes", "--force"] });
+  expect(readFileSync(settings, "utf8")).toBe(mine); expect(existsSync(`${settings}.bak-before-routr`)).toBe(false);
 });
 
 test("from the verification pass: a model change on the screen shows the effort reset before saving, and --show refuses --force", async () => {
@@ -560,17 +562,18 @@ test("doctor's text says each harness's state in words: signed in, signed out, t
   const r = {
     runtime: "routr 0.0.0-dev (from source)", from_source: true, herdr: { path: "/bin/herdr", inside_session: true, skill: true }, skill: [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }],
     harnesses: {
-      claude: { command: "claude", installed: true, signed_in: true, usage: "live: 60% left (statusline, 5s old)", models: ["haiku", "sonnet"] },
+      claude: { command: "claude", installed: true, signed_in: true, usage: "live: 60% left (claude /usage, 0s old)", usage_source: "claude /usage", models: ["haiku", "sonnet"] },
       codex: { command: "codex", installed: true, signed_in: false, sign_in: "not signed in: run `codex login`" },
       cursor: { command: "cursor-agent", installed: true, signed_in: true, usage: "live: 90% left", models: many },
       agy: { command: "agy", installed: false, off_path: "/Users/x/.local/bin/agy" },
       kiro: { command: "kiro-cli", installed: true, signed_in: true, usage: "live: 100% left" },
     },
     key: { works: true, model: "jev", ms: 300 }, config: { path: "/c.json", exists: true, subscriptions: ["claude", "codex", "cursor", "kiro"], off: ["kiro"], problems: [], notes: [] },
-    claude_usage_statusline: "installed", auto_update: { on: false, why_off: "running from source" }, telemetry: { on: false, why_off: "not turned on" }, next_steps: [],
+    auto_update: { on: false, why_off: "running from source" }, telemetry: { on: false, why_off: "not turned on" }, next_steps: [],
   };
   const text = render(r);
-  expect(text).toContain("claude  `claude` found · usage live: 60% left");
+  expect(text).toContain("claude  `claude` found · usage live: 60% left (claude /usage, 0s old)"); // where the reading came from
+  expect(text).not.toMatch(/statusline/i);
   expect(text).toContain("codex   `codex` found, but not signed in: run `codex login`. routr leaves it out until then");
   expect(text).toContain("… (30 in all; run `cursor-agent models` for the rest)");
   expect(text).toContain("agy     `agy` is installed at /Users/x/.local/bin/agy but not on PATH");

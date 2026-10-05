@@ -33,7 +33,7 @@ key works, each signed-in harness's current model list (for Claude Code, its ali
 
 **3. Set up.** Read `~/.agents/skills/routr/references/setup.md` and follow it with the user: the TypeSafe API key
 (they create one at https://console.typesafe.ai/keys and store it themselves with `routr key set`, so it never
-passes through you), the config and the Claude usage statusline with `routr setup --yes --model <subscription>=<id> --reserve <subscription>=<share> --use <subscription>=normal ...`
+passes through you), and the config with `routr setup --yes --model <subscription>=<id> --reserve <subscription>=<share> --use <subscription>=normal ...`
 (a default model and effort, the hardest work, reserve and normal/fallback account use per subscription, settled with the user; never edit the file by
 hand), and, if they want orchestration, herdr and herdr's agent skill. A user who would rather choose on screen can
 run `routr setup` in their own terminal instead.

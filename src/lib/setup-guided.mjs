@@ -21,7 +21,7 @@ export const describe = (n, s) => (s.enabled === false ? "off (settings kept)"
 
 // `r` is doctor's inspection, `config` the file as it is (null on a first run). `efforts(n, model)` lists a harness's
 // levels for a model. Returns the choices, or CANCEL when the person quits without writing.
-export async function guided({ ui, r, config, efforts, statusline = false, telemetry = false }) {
+export async function guided({ ui, r, config, efforts, telemetry = false }) {
   const current = config?.subscriptions ?? {};
   const signedIn = (n) => r.harnesses[n]?.installed && r.harnesses[n]?.signed_in;
   const candidates = Object.keys(HARNESSES).filter((n) => signedIn(n) || current[n]);
@@ -134,7 +134,6 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
     return v;
   };
   const extras = async () => {
-    if (statusline) { const v = await ui.confirm({ message: "Claude Code reports usage only to its statusline. Set `routr statusline` as Claude's statusline command?", initial: true }); if (v === CANCEL || v === BACK) return v; answers.statusline = v; }
     if (telemetry) {
       ui.line(NOTICE, { dim: true });
       const v = await ui.confirm({ message: "Share anonymous outcomes once a day?", initial: false });
@@ -156,7 +155,6 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
         if (a !== b) out.push(`${HARNESSES[n].label}: ${label} ${k === "reserve" ? pct(a ?? 0) : a ?? "none"} ${ui.glyphs.arrow} ${k === "reserve" ? pct(b ?? 0) : b ?? "none"}`);
       }
     }
-    if (answers.statusline) out.push("Claude Code's statusline: set to routr statusline");
     if (answers.telemetry !== undefined) out.push(`telemetry: ${answers.telemetry ? "on" : "off"}`);
     if (answers.channel && answers.channel !== channelNow) out.push(`update channel: ${channelNow} ${ui.glyphs.arrow} ${answers.channel}`);
     return out;
@@ -199,7 +197,7 @@ export async function guided({ ui, r, config, efforts, statusline = false, telem
       const v = await ui.select({ message: "What would you like to do?", initial: "one", options: [
         { value: "one", label: "Change one subscription's settings", hint: "model, effort, hardest work, reserve" },
         { value: "choose", label: "Choose which subscriptions routr uses", hint: "turn one on or off" },
-        ...(statusline || telemetry ? [{ value: "extras", label: statusline ? "Claude Code's usage statusline" : "Anonymous outcomes (telemetry)" }] : []),
+        ...(telemetry ? [{ value: "extras", label: "Anonymous outcomes (telemetry)" }] : []),
         { value: "channel", label: "Update channel", hint: `${answers.channel ?? channelNow}: stable releases, or beta builds too` },
         { value: "all", label: "Walk through everything" },
         pending ? { value: "save", label: `Save and exit (${pending} change${pending === 1 ? "" : "s"})` } : { value: "done", label: "Exit" },

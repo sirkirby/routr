@@ -1,17 +1,18 @@
-// `routr setup`: does what `routr doctor` says is missing. It writes the config for the harnesses found, points Claude
-// Code's statusline at `routr statusline`, and (only for a person at a terminal) asks for the TypeSafe key.
+// `routr setup`: does what `routr doctor` says is missing. It writes the config for the harnesses found and (only for
+// a person at a terminal) asks for the TypeSafe key. It leaves Claude Code's settings alone: Claude's usage is read
+// through its own `/usage` (usage.mjs), so routr no longer needs Claude's statusline slot. `--no-statusline` is
+// still accepted, and does nothing, for scripts written for an older routr.
 // A person gets questions; an agent passes `--yes` and the choices it settled with the user as flags. Same code, same file.
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { ACCOUNT_USE, CONFIG_PATH, loadConfig, SUB_DEFAULTS, UPDATE_CHANNELS } from "./config.mjs";
 import { LEVELS } from "./questions.mjs";
 import { settingSummary } from "./wording.mjs";
 import { envOff, setTelemetry } from "./telemetry.mjs";
-import { inspect, paint, render, starterConfig, which } from "./doctor.mjs";
+import { inspect, paint, render, starterConfig } from "./doctor.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { setKey } from "./key.mjs";
-import { home, standalone } from "./runtime.mjs";
-import { isOurStatusline } from "./statusline.mjs";
+import { standalone } from "./runtime.mjs";
 import { installSkill } from "./skill-install.mjs";
 import { guided } from "./setup-guided.mjs";
 import { CANCEL, createUI } from "./tui.mjs";
@@ -105,22 +106,6 @@ export async function meteredRanks(fresh, harnesses, ranks, ask) {
   return ranks;
 }
 
-// What to do with Claude Code's settings. Someone else's statusline is never replaced.
-export function statuslinePlan(settingsText, command) {
-  let settings = {};
-  if (settingsText != null && settingsText.trim()) { try { settings = JSON.parse(settingsText); } catch { return { action: "skip", why: "~/.claude/settings.json is not valid JSON; left alone" }; } }
-  const current = settings.statusLine?.command;
-  if (isOurStatusline(current)) return { action: "none", why: "already set" };
-  if (current) return { action: "skip", why: `you already have a statusline (${current}). Keep it, and have it pass its input to \`routr statusline\` for the snapshot: see the setup guide` };
-  return { action: "write", settings: { ...settings, statusLine: { type: "command", command } } };
-}
-
-// The command Claude Code will run on every turn: a full path, because Claude's PATH is not the shell's.
-function statuslineCommand() {
-  const bin = standalone() ? process.execPath : which("routr") ?? "routr";
-  return `${/\s/.test(bin) ? `"${bin}"` : bin} statusline`;
-}
-
 // `deps` are seams so a test can drive a whole run, questions and all, without a terminal, the machine's harnesses, the
 // network, or the user's own files: what is installed (`inspect`), the person's answers (`question`, read line by line
 // in the tui's accessible mode, or `ui`, a ready-made tui), each harness's effort levels (`efforts`), and each step that
@@ -200,9 +185,6 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // A person at a terminal gets the guided flow; flags and --yes (an agent) never ask anything.
   let config = null;
   if (r.config.exists && !args.includes("--force")) { try { config = JSON.parse(readFileSync(path, "utf8")); } catch { return { ok: false, error: `${path} is not valid JSON. Fix it, or rewrite it with: routr setup --force` }; } }
-  const claudeFile = join(home(), ".claude/settings.json");
-  const statuslineOffer = found.includes("claude") && !args.includes("--no-statusline") && r.claude_usage_statusline.startsWith("missing")
-    ? statuslinePlan(existsSync(claudeFile) ? readFileSync(claudeFile, "utf8") : null, statuslineCommand()) : null;
   let telemetryAsked = false;
   try { telemetryAsked = "telemetry" in JSON.parse(readFileSync(path, "utf8")); } catch {}
   let choices = null;
@@ -213,7 +195,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
       const k = await key();
       (k.ok ? did : skipped).push(k.ok ? `saved the TypeSafe key to ${k.file}${k.works ? " and it works" : `: ${k.error}`}` : `TypeSafe key not saved: ${k.error}. Run \`routr key set\` when you have it`);
     }
-    choices = await guided({ ui, r, config, efforts: levelsOf, statusline: statuslineOffer?.action === "write", telemetry: !telemetryAsked && !envOff(env) });
+    choices = await guided({ ui, r, config, efforts: levelsOf, telemetry: !telemetryAsked && !envOff(env) });
     if (choices === CANCEL) { ui.cancel("Setup stopped: nothing was written."); ui.close(); return { ok: false, cancelled: true, error: "setup stopped: nothing was written", did, skipped }; }
     if (!choices.write) {
       if (skillStep()) ui.note("Done", did);
@@ -295,16 +277,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   if (channelMoved) did.push(channelNote(channel, ROUTR_VERSION, standalone(), config.auto_update !== false)); // what happens next; setup itself updates nothing
   skipped.push(...leftOut);
 
-  // 2. Claude Code's usage, which it reports only to its statusline. Someone else's statusline is never replaced.
-  if (statuslineOffer && (choices ? choices.statusline === true : true)) {
-    if (statuslineOffer.action === "write") {
-      mkdirSync(dirname(claudeFile), { recursive: true });
-      if (existsSync(claudeFile)) copyFileSync(claudeFile, `${claudeFile}.bak-before-routr`);
-      writeFileSync(claudeFile, JSON.stringify(statuslineOffer.settings, null, 2) + "\n");
-      did.push("set Claude Code's statusline to `routr statusline`: usage is read after your next Claude Code turn");
-    } else if (statuslineOffer.action !== "none") skipped.push(`Claude statusline: ${statuslineOffer.why ?? "left alone"}`);
-  } else if (statuslineOffer?.action === "write" && choices) skipped.push("Claude statusline left alone: Claude's usage is assumed, not read, until it is set (routr setup, menu: Claude Code's usage statusline)");
-  // 3. Telemetry: off unless a person says yes. Asked once, default no; an agent's run never turns it on.
+  // 2. Telemetry: off unless a person says yes. Asked once, default no; an agent's run never turns it on.
   if (!telemetryAsked && !envOff(env)) {
     if (choices?.telemetry !== undefined) {
       shareOn(choices.telemetry, path);

@@ -1,9 +1,10 @@
 // usage readers: Claude's statusline, Codex, Cursor's screen, Kiro's /usage, the background snapshots, and `routr usage`
 import { expect, test } from "bun:test";
-import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
-import { claudeSnapshot, codexSnapshot, monthMinutes } from "../src/lib/usage.mjs";
+import { tmpdir } from "node:os";
+import { claudeProjectFolders, claudeSnapshot, codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, parseClaudeReset, parseClaudeUsage, readClaude, summarize } from "../src/lib/usage.mjs";
 import { KIRO_BY_HAND, kiroUsage, parseKiroUsage, readKiro, refreshKiro } from "../src/lib/kiro-usage.mjs";
 import { HARNESSES, readUsage } from "../src/lib/harnesses.mjs";
 import { olderThan, takeLock } from "../src/lib/runtime.mjs";
@@ -62,6 +63,187 @@ test("the statusline writes every render and keeps the last windows seen; absenc
   expect(at({ ts: t, model: "m", rate_limits: rl })).toMatchObject({ class: "included" });      // a snapshot from an older routr
   const gw = snapshotFrom({ rate_limits: { spend_limit: { used_percentage: 130, resets_at: t + 86400 } } }, null, t);
   expect(at(gw)).toMatchObject({ class: "capped", headroom: 0 }); expect(at(gw).windows[0]).toMatchObject({ name: "spend_limit", usedPct: 100, windowMin: null });
+});
+
+// `claude -p /usage --output-format json` on a Max plan, Claude Code 2.1.289, 2026-10-05 (the `result` text, verbatim
+// up to the local breakdown, which is cut short here).
+const CLAUDE_USAGE = `You are currently using your subscription to power your Claude Code usage
+
+Current session: 1% used · resets Oct 5 at 3:59pm (America/Detroit)
+Current week (all models): 90% used · resets Oct 5 at 9:59pm (America/Detroit)
+Current week (Fable): 0% used · resets Oct 5 at 10pm (America/Detroit)
+
+What's contributing to your limits usage?
+Approximate, based on local sessions on this machine — does not include other devices or claude.ai.`;
+const OCT5 = Date.UTC(2026, 9, 5, 17, 35) / 1000; // 1:35pm in Detroit, when it was read
+const utc = (...a) => Date.UTC(...a) / 1000;
+const claudeAnswer = (result, over = {}) => JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 0, total_cost_usd: 0, result, ...over });
+
+test("Claude's /usage text: the session and all-models week are the statusline's windows; a model's own week is counted, never named", () => {
+  const p = parseClaudeUsage(CLAUDE_USAGE, OCT5);
+  expect(p.windows).toEqual([
+    { name: "five_hour", usedPct: 1, windowMin: 300, resetsAt: utc(2026, 9, 5, 19, 59) },
+    { name: "seven_day", usedPct: 90, windowMin: 10080, resetsAt: utc(2026, 9, 6, 1, 59) }]);
+  expect(p.note).toBe("plus 1 model-specific weekly limit (highest 0% used), not ranked on");
+  expect(p.note).not.toContain("Fable");
+  // A reset that does not read exactly so is left unset, and said; the window still counts.
+  const odd = parseClaudeUsage("Current week (all models): 40% used · resets next Tuesday", OCT5);
+  expect(odd.windows).toEqual([{ name: "seven_day", usedPct: 40, windowMin: 10080, resetsAt: null }]);
+  expect(odd.note).toContain("reset time not read for seven_day");
+  expect(parseClaudeUsage("Current week (Opus): 80% used\nCurrent week (Sonnet): 95% used", OCT5)).toEqual({ windows: [], note: "plus 2 model-specific weekly limits (highest 95% used), not ranked on" });
+  expect(parseClaudeUsage("You are using an API key", OCT5)).toEqual({ windows: [], note: undefined });
+});
+
+test("Claude's reset times read in their own zone, across DST, midnight and noon, and the year that makes sense", () => {
+  expect(parseClaudeReset("Oct 5 at 4pm (America/Detroit)", OCT5)).toBe(utc(2026, 9, 5, 20));
+  expect(parseClaudeReset("Oct 5 at 10pm (America/Los_Angeles)", OCT5)).toBe(utc(2026, 9, 6, 5));
+  expect(parseClaudeReset("Oct 5 at 3:05pm (America/Detroit)", OCT5)).toBe(utc(2026, 9, 5, 19, 5));
+  expect(parseClaudeReset("Oct 6 at 12am (America/Detroit)", OCT5)).toBe(utc(2026, 9, 6, 4));   // midnight
+  expect(parseClaudeReset("Oct 6 at 12pm (America/Detroit)", OCT5)).toBe(utc(2026, 9, 6, 16));  // noon
+  // US daylight time ends Nov 1 2026 and starts Mar 14 2027: the offset is the one at that wall time.
+  expect(parseClaudeReset("Oct 31 at 3pm (America/Detroit)", OCT5)).toBe(utc(2026, 9, 31, 19));
+  expect(parseClaudeReset("Nov 1 at 3pm (America/Detroit)", OCT5)).toBe(utc(2026, 10, 1, 20));
+  const mar = utc(2027, 2, 10);
+  expect(parseClaudeReset("Mar 13 at 3pm (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 13, 23));
+  expect(parseClaudeReset("Mar 14 at 3pm (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 14, 22));
+  expect(parseClaudeReset("Mar 14 at 1:30am (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 14, 9, 30));
+  expect(parseClaudeReset("Mar 14 at 3:30am (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 14, 10, 30));
+  // The hour a clock skips does not exist: unread, never moved an hour. The hour it repeats takes the later instant,
+  // so a window is not rolled over (headroom invented) before its reset: here the earlier one has already passed.
+  expect(parseClaudeReset("Mar 14 at 2:30am (America/Los_Angeles)", mar)).toBeNull();
+  expect(parseClaudeReset("Nov 1 at 1:30am (America/Detroit)", utc(2026, 10, 1, 6))).toBe(utc(2026, 10, 1, 6, 30));
+  const full = parseClaudeUsage("Current session: 100% used · resets Nov 1 at 1:30am (America/Detroit)", utc(2026, 10, 1, 6));
+  expect(summarize({ pool: "claude", source: "t", ts: utc(2026, 10, 1, 6), windows: full.windows, nowSec: utc(2026, 10, 1, 6) }).headroom).toBe(0);
+  // No year is shown: the nearest of last, this and next year's. December's "Jan 1" is next year's; just after New
+  // Year, last night's reset is last year's; yesterday's stays yesterday (and its window rolls over), never next year.
+  expect(parseClaudeReset("Jan 1 at 12am (America/Detroit)", utc(2026, 11, 31, 20))).toBe(utc(2027, 0, 1, 5));
+  expect(parseClaudeReset("Dec 31 at 11pm (America/Detroit)", utc(2027, 0, 1, 6))).toBe(utc(2027, 0, 1, 4));
+  expect(parseClaudeReset("Oct 4 at 12pm (America/Detroit)", utc(2026, 9, 5, 17))).toBe(utc(2026, 9, 4, 16));
+  // Further from now than the window and a day: not this window's reset.
+  expect(parseClaudeReset("Oct 9 at 4pm (America/Detroit)", OCT5, 300 * 60 + 86400)).toBeNull();
+  expect(parseClaudeReset("Oct 9 at 4pm (America/Detroit)", OCT5, 10080 * 60 + 86400)).toBe(utc(2026, 9, 9, 20));
+  expect(parseClaudeUsage("Current session: 5% used · resets Oct 9 at 4pm (America/Detroit)", OCT5).windows[0].resetsAt).toBeNull();
+  for (const bad of ["", "soon", "Oct 5 at 4pm", "Oct 5 at 13pm (America/Detroit)", "Oct 5 at 4:75pm (America/Detroit)", "Feb 30 at 4pm (America/Detroit)", "Foo 5 at 4pm (America/Detroit)", "Oct 5 at 4pm (Not/AZone)", "Oct 5 at 4pm (America/Detroit) extra", null])
+    expect([bad, parseClaudeReset(bad, OCT5)]).toEqual([bad, null]);
+});
+
+test("Claude: a recent statusline snapshot is used as it is; otherwise its own /usage is read, hooks and MCP servers off, from the temp folder", async () => {
+  const dir = scratch("claude-usage"), file = join(dir, "claude-usage.json");
+  const rl = { five_hour: { used_percentage: 20, resets_at: OCT5 + 3600 }, seven_day: { used_percentage: 30, resets_at: OCT5 + 86400 } };
+  const calls = [];
+  const exec = (answer) => async (cmd, args, opts) => { calls.push({ cmd, args, opts }); return answer; };
+  const read = (o) => HARNESSES.claude.usage.read({ file, nowSec: OCT5, ...o }); // the registry's read: its own quiet arguments
+  // Under five minutes old: the snapshot, and Claude is not started.
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 60, rate_limits: rl, answered: true }));
+  expect(await read({ exec: exec(claudeAnswer(CLAUDE_USAGE)) })).toMatchObject({ source: "statusline", headroom: 0.7, ageSec: 60 });
+  expect(calls).toEqual([]);
+  // Older: read live, with exactly these arguments, in the system temp folder.
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 600, rate_limits: rl, answered: true }));
+  const fresh = await read({ exec: exec(claudeAnswer(CLAUDE_USAGE)) });
+  expect(calls.map(({ cmd, args, opts }) => ({ cmd, args, timeoutMs: opts.timeoutMs }))).toEqual([{ cmd: "claude", args: ["-p", "/usage", "--output-format", "json", "--no-session-persistence", "--settings", '{"disableAllHooks":true}', "--strict-mcp-config"], timeoutMs: 12000 }]);
+  expect(dirname(calls[0].opts.cwd)).toBe(tmpdir()); expect(basename(calls[0].opts.cwd)).toMatch(/^routr-claude-/); // a private folder of its own
+  expect(existsSync(calls[0].opts.cwd)).toBe(false);                                                                  // removed after the read
+  expect(fresh).toMatchObject({ pool: "claude", source: "claude /usage", ageSec: 0, class: "included" });
+  expect(fresh.headroom).toBeCloseTo(0.1);
+  expect(fresh.windows.map((w) => w.name)).toEqual(["five_hour", "seven_day"]);
+  // A snapshot with no windows yet is no reason to skip the live read.
+  calls.length = 0;
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 5, rate_limits: null, answered: false, seen: null }));
+  expect((await read({ exec: exec(claudeAnswer(CLAUDE_USAGE)) })).source).toBe("claude /usage"); expect(calls.length).toBe(1);
+  // Nor is one stamped in the future (a clock set back): its age says nothing.
+  writeFileSync(file, JSON.stringify({ ts: OCT5 + 120, rate_limits: rl, answered: true }));
+  expect((await read({ exec: exec(claudeAnswer(CLAUDE_USAGE)) })).source).toBe("claude /usage"); expect(calls.length).toBe(2);
+});
+
+test("Claude's read runs in a private folder of its own and removes only what Claude made for it, after a normal exit", async () => {
+  const home = scratch("claude-home"), projects = join(home, ".claude", "projects"), tmp = scratch("claude-tmp");
+  // What Claude does (measured): an empty memory folder under the project folder named for the folder it ran in.
+  const folderOf = (cwd) => join(projects, realpathSync(cwd).replace(/[^A-Za-z0-9]/g, "-"));
+  const claude = (then, answer = claudeAnswer(CLAUDE_USAGE)) => async (cmd, args, { cwd }) => { const f = folderOf(cwd); expect(claudeProjectFolders(cwd, projects)).toContain(f); mkdirSync(join(f, "memory"), { recursive: true }); then?.(f, cwd); return answer; };
+  const read = (exec) => readClaude({ file: join(home, "none.json"), nowSec: OCT5, exec, tmp, projects });
+  const left = () => readdirSync(tmp);
+  let seen;
+  expect((await read(claude((f) => { seen = f; }))).source).toBe("claude /usage");
+  expect([existsSync(seen), left()]).toEqual([false, []]);                    // the project folder and the private folder: gone
+  expect(existsSync(projects)).toBe(true);                                    // Claude's own folder stays
+  // Another read's or the user's project folder, made meanwhile under another name: never touched.
+  const other = join(projects, "-private-tmp"); mkdirSync(join(other, "memory"), { recursive: true });
+  await read(claude());
+  expect(existsSync(join(other, "memory"))).toBe(true);
+  // Anything written there: kept (rmdir only removes what is empty).
+  await read(claude((f) => writeFileSync(join(f, "memory", "note.md"), "x")));
+  expect(readdirSync(projects).some((n) => existsSync(join(projects, n, "memory", "note.md")))).toBe(true);
+  await read(claude((f) => writeFileSync(join(f, "s.jsonl"), "{}")));
+  expect(readdirSync(projects).some((n) => existsSync(join(projects, n, "s.jsonl")))).toBe(true);
+  // A project folder that is a symlink (a junction on Windows) is not followed: the empty memory it points at stays.
+  const elsewhere = scratch("elsewhere"); mkdirSync(join(elsewhere, "memory"));
+  await read(async (cmd, args, { cwd }) => { symlinkSync(elsewhere, folderOf(cwd), process.platform === "win32" ? "junction" : "dir"); return claudeAnswer(CLAUDE_USAGE); });
+  expect(existsSync(join(elsewhere, "memory"))).toBe(true);
+  // Timed out (or no answer): Claude may still be writing, so its project folder stays; the empty private folder goes.
+  let timedOut;
+  await read(claude((f) => { timedOut = f; }, null));
+  expect(existsSync(join(timedOut, "memory"))).toBe(true); expect(left()).toEqual([]);
+  // A private folder Claude wrote into is not removed either.
+  await read(claude((f, cwd) => writeFileSync(join(cwd, "x"), "")));
+  expect(left().length).toBe(1);
+});
+
+test("Claude's cleanup is fixed before the read: a private folder swapped for a link meanwhile steers it nowhere", async () => {
+  const home = scratch("claude-swap"), projects = join(home, ".claude", "projects"), tmp = scratch("claude-swap-tmp");
+  const folderOf = (dir) => join(projects, realpathSync(dir).replace(/[^A-Za-z0-9]/g, "-"));
+  const victim = scratch("victim"); mkdirSync(join(folderOf(victim), "memory"), { recursive: true }); // someone else's, empty
+  let ours;
+  await readClaude({ file: join(home, "none.json"), nowSec: OCT5, tmp, projects, exec: async (cmd, args, { cwd }) => {
+    ours = folderOf(cwd); mkdirSync(join(ours, "memory"), { recursive: true });
+    rmdirSync(cwd); symlinkSync(victim, cwd, process.platform === "win32" ? "junction" : "dir"); // swapped during the read
+    return claudeAnswer(CLAUDE_USAGE);
+  } });
+  expect(existsSync(join(folderOf(victim), "memory"))).toBe(true); // never followed to the victim's project folder
+  expect(existsSync(join(ours, "memory"))).toBe(true);             // not the folder routr made any more: nothing touched
+});
+
+test("no private folder, no read: Claude is not started in the shared temp folder", async () => {
+  const dir = scratch("claude-nodir"), file = join(dir, "claude-usage.json"), tmp = join(dir, "missing", "deeper");
+  let started = false;
+  const read = (f) => readClaude({ file: f, nowSec: OCT5, tmp, exec: async () => { started = true; return claudeAnswer(CLAUDE_USAGE); } });
+  const none = await read(join(dir, "none.json"));
+  expect(started).toBe(false);
+  expect(none).toMatchObject({ headroom: null, class: "unknown" }); expect(none.note).toContain("could not make a private folder"); expect(none.note).toContain("assumed headroom");
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 3600, rate_limits: { seven_day: { used_percentage: 40, resets_at: OCT5 + 86400 } }, answered: true }));
+  const old = await read(file);
+  expect(started).toBe(false);
+  expect(old).toMatchObject({ source: "statusline", headroom: 0.6 }); expect(old.note).toContain("this is the statusline's last reading");
+});
+
+test("Claude's live read fails open: the old snapshot however old, else the assumed headroom, and the note says why", async () => {
+  const dir = scratch("claude-fallback"), file = join(dir, "claude-usage.json"), missing = join(dir, "none.json");
+  const rl = { seven_day: { used_percentage: 40, resets_at: OCT5 + 86400 } };
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 3 * 3600, rate_limits: rl, answered: true }));
+  const read = (exec, f = file) => readClaude({ file: f, nowSec: OCT5, exec: async () => exec });
+  const old = await read(null); // timed out, or no claude
+  expect(old).toMatchObject({ source: "statusline", headroom: 0.6, ageSec: 3 * 3600 });
+  expect(old.note).toBe("`claude -p /usage` did not answer in 12 s: this is the statusline's last reading");
+  expect((await read("not json")).note).toContain("did not answer as expected: this is the statusline's last reading");
+  expect((await read(claudeAnswer("x", { is_error: true }))).note).toContain("did not answer as expected");
+  const nothing = await read(null, missing);
+  expect(nothing).toMatchObject({ source: "claude /usage", headroom: null, class: "unknown" });
+  expect(nothing.note).toBe("`claude -p /usage` did not answer in 12 s; using the assumed headroom");
+  // It answered, and showed no windows: the seat may have no quota; doctor's step keys on the reason.
+  const bare = await read(claudeAnswer("You are using an API key"), missing);
+  expect(bare).toMatchObject({ headroom: null, class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER }); expect(bare.note).toContain('billing: "metered"');
+  // A snapshot saying Claude sent no windows after a prompt keeps its reason when the live read fails.
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 3 * 3600, rate_limits: null, answered: true, seen: null }));
+  expect((await read(null)).reason).toBe(NO_WINDOWS_AFTER_ANSWER);
+});
+
+test("no model name from Claude's /usage reaches routr usage's output", async () => {
+  const dir = scratch("claude-names");
+  const sources = { claude: { read: () => readClaude({ file: join(dir, "none.json"), exec: async () => claudeAnswer(CLAUDE_USAGE) }) } };
+  const c = cfg({ subscriptions: { claude: cfg().subscriptions.claude } });
+  const out = await usageCommand([], c, {}, { read: (names, given, o) => readUsage(names, given, { ...o, why: async () => null }), sources });
+  expect(out.ok).toBe(true); expect(out.ranked[0]).toMatchObject({ subscription: "claude", usage: "live" });
+  expect(JSON.stringify(out)).toContain("model-specific weekly limit");
+  expect(JSON.stringify(out)).not.toContain("Fable");
 });
 
 test("metered capacity stays unknown while legacy settings determine normal or fallback use", () => {

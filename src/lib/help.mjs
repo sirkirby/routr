@@ -27,7 +27,7 @@ export const COMMANDS = {
   },
   usage: {
     name: "usage",
-    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing of yours. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session, and `routr usage kiro` runs Kiro's /usage now and deletes the empty session it leaves (routr otherwise does both in the background about once per working session)",
+    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing of yours. Claude Code's is read from its own /usage (hooks and MCP servers off), or from `routr statusline`'s snapshot when one is under 5 minutes old. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session, and `routr usage kiro` runs Kiro's /usage now and deletes the empty session it leaves (routr otherwise does both in the background about once per working session)",
     args: [{ name: "[<subscription>]", description: "only this one; for cursor or kiro, read its /usage now (cursor needs herdr installed)", required: false }],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
@@ -87,7 +87,7 @@ export const COMMANDS = {
   },
   statusline: {
     name: "statusline",
-    description: "Claude Code's statusline command: prints model and usage, and saves the usage snapshot routr reads",
+    description: "a statusline command for Claude Code, optional: prints model and usage, and saves a usage snapshot routr uses while it is under 5 minutes old (routr reads Claude's own /usage otherwise). Setup no longer sets it",
     flags: [],
   },
   skill: {
@@ -104,7 +104,7 @@ export const COMMANDS = {
   },
   setup: {
     name: "setup",
-    description: "do what doctor says is missing: write your settings for the harnesses found, set Claude's usage statusline, ask for the key. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting",
+    description: "do what doctor says is missing: write your settings for the harnesses found and ask for the key. It leaves Claude Code's settings alone. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting",
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
       { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list (Claude Code also takes a model's full name, which it does not list); repeatable. Also changes it on an existing config", required: false, repeatable: true },
@@ -117,7 +117,7 @@ export const COMMANDS = {
       { name: "--disable", arg: "<subscription>", description: "turn a subscription off: routr gives it no work, and it keeps its settings; repeatable", required: false, repeatable: true },
       { name: "--channel", arg: "stable|beta", description: "which releases updates install: stable (the default), or beta for beta and release-candidate builds too (a newer stable release still wins). Read by `routr update` and the daily update; nothing moves you back to an older stable by itself", required: false },
       { name: "--show", arg: null, description: "print your settings as routr reads them, and change nothing (asks no harness)", required: false },
-      { name: "--no-statusline", description: "leave Claude Code's settings alone", required: false },
+      { name: "--no-statusline", description: "does nothing: setup no longer sets Claude's statusline (accepted for older scripts)", required: false },
       { name: "--force", description: "rewrite an existing config (the old one is kept as config.json.bak)", required: false },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--json", arg: null, description: "output JSON instead of text", required: false, default: false },
@@ -125,7 +125,7 @@ export const COMMANDS = {
   },
   uninstall: {
     name: "uninstall",
-    description: "remove routr from this machine: the binary, the skill, the cache, and its Claude statusline entry. Keeps your config, key, and ledger unless you say otherwise. Shows the plan and asks first",
+    description: "remove routr from this machine: the binary, the skill, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, key, and ledger unless you say otherwise. Shows the plan and asks first",
     flags: [
       { name: "--purge", description: "also remove your config, TypeSafe key, and ledger", required: false },
       { name: "--yes", description: "ask nothing (needed when there is no terminal)", required: false },

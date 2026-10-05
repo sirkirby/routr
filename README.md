@@ -86,7 +86,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
 | `update` | Update to the newest release on your update channel now (routr also does this by itself in the background, at most once a day). |
 | `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--enable`, `--disable`, `--channel`) and reads them first with `--show`. |
-| `uninstall` | Remove routr: the binary, the skill, the cache, its Claude statusline entry. Keeps your config, key, and ledger; `--purge` removes those too. |
+| `uninstall` | Remove routr: the binary, the skill, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, key, and ledger; `--purge` removes those too. |
 | `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
 The advice commands write nothing and never block an agent: with no network or no key they still answer, marked as
@@ -164,10 +164,11 @@ goes stale when models change.
   `billing` names the kind when the harness cannot show it.
 - `prefer`: your standing preference per kind of work, for example `"review": "strong"`.
 
-Usage is read live for Claude Code (through `routr statusline`, set up as Claude's statusline command), Codex, and
-Antigravity. Cursor's and Kiro's are read in the background about once per working session, since they take seconds. A seat with no quota reports no windows: measured on a
+Usage is read live for Claude Code (from its own `/usage`, with your hooks and MCP servers off for that read; it
+costs no tokens), Codex, and Antigravity. routr does not need Claude's statusline; if you run `routr statusline` there
+anyway, a snapshot under 5 minutes old is used instead of starting Claude. Cursor's and Kiro's are read in the background about once per working session, since they take seconds. A seat with no quota reports no windows: measured on a
 ChatGPT Enterprise seat, which routr detects and calls `metered`; for Claude the class is your `billing` setting,
-because the statusline sends nothing to tell a seat with no quota from a plan routr has not seen. A metered seat gets
+because Claude shows nothing to tell a seat with no quota from a plan routr has not seen. A metered seat gets
 no headroom number and is a normal or fallback candidate by your setting. A cap the vendor enforces is read as one
 more window (Codex: from its protocol, not yet observed on a seat).
 
