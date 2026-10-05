@@ -4,7 +4,7 @@
 // `"auto_update": false` turns off. Every swap is checksum-verified, and a run in progress keeps its binary.
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { loadConfig } from "./config.mjs";
 import { CACHE_DIR, lockIsStale, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
 import { forgetConsentUnlessOn, hoursAgo, sendRows, telemetryStatus } from "./telemetry.mjs";
@@ -90,6 +90,35 @@ export async function latestVersion(timeoutMs = 4000, channel = "stable", fetchF
 export const downloadBase = (version) => `https://github.com/${REPO}/releases/download/v${String(version).replace(/^v/, "")}`;
 const isPre = (v) => String(v).includes("-");
 
+// The version of the binary now at `self`, asked of it (`--version`), or null when it gives none. From the final review:
+// the update compared against the running process's version, so an older detached update overwrote a newer one a
+// person had installed by hand meanwhile; the swap now compares against what is actually there.
+export function installedVersion(self, spawn = startSync) {
+  try { const v = String(spawn(self, ["--version"], { encoding: "utf8", timeout: 15000 })?.stdout ?? "").trim(); return /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(v) ? v.replace(/^v/, "") : null; }
+  catch { return null; }
+}
+
+// What `routr skill install` (the new binary's, which prints its result as JSON) did, from that JSON rather than its
+// exit status alone. From the final review: skills it kept (not routr's, or holding files routr did not write) were
+// reported as reinstalled. Installed, kept and failed are each said, with what to do about a kept one.
+export function skillOutcome(res) {
+  let j = null; try { j = JSON.parse(String(res?.stdout ?? "")); } catch {}
+  if (!j || typeof j !== "object") return { skill_reinstalled: res?.status === 0 };
+  const kept = (j.kept ?? []).map((k) => ({ where: k.where, why: k.why })), failed = (j.failed ?? []).map((f) => ({ where: f.where, error: f.error }));
+  return { skill_reinstalled: res.status === 0 && !kept.length && !failed.length,
+    skill: { installed: (j.installed ?? []).map((x) => x.where), kept, failed },
+    ...(kept.length ? { skill_repair: `routr's skills were not reinstalled at ${kept.map((k) => `${k.where} (${k.why})`).join("; ")}. Move or clear each, then run \`routr skill install\`` } : {}) };
+}
+
+// Manual `routr update` takes the same lock as the daily job (backgroundUpdate), so the two never swap at once. From
+// the final review: the manual path bypassed the lock. A look (--check) swaps nothing and takes none. `lock` is a seam.
+export async function lockedUpdate(opts = {}, { lock = LOCK(), run = update } = {}) {
+  if (opts.checkOnly) return run(opts);
+  try { mkdirSync(dirname(lock), { recursive: true }); } catch {}
+  if (!takeLock(lock, (f) => lockIsStale(f))) return { ok: false, updated: false, error: `another routr update is running (${lock}): nothing was changed. Try again once it finishes` };
+  try { return await run(opts); } finally { rmSync(lock, { force: true }); }
+}
+
 // `self`, `fetchFn`, `spawn`, `isStandalone` and `current` are seams: a test drives a real swap on a scratch file, with no
 // network. The channel is the user's setting (`update_channel`), never a flag: a flag would be lost at the next
 // automatic update, which reads the setting too.
@@ -118,6 +147,13 @@ export async function update({ checkOnly = false, force = false, base = process.
     const want = sums.split("\n").map((l) => l.trim().split(/\s+/)).find((p) => p[1] === asset)?.[0];
     const got = createHash("sha256").update(bin).digest("hex");
     if (!want || want !== got) throw new Error(`checksum mismatch for ${asset}; nothing was changed`);
+    // Last thing before the swap: never replace a binary that is already this release or newer (installedVersion).
+    // ROUTR_DOWNLOAD_BASE names no version to compare, so it is not asked there.
+    if (!base && !force) {
+      const there = installedVersion(self, spawn);
+      if (there && !newer(out.latest, there)) return { ...out, ok: true, installed: there,
+        note: `the routr at ${self} is already ${there}${there === out.latest ? "" : `, newer than ${out.latest}`} (installed since this run started): not replaced. \`routr update --force\` installs ${out.latest}` };
+    }
 
     swapBinary(self, bin);
     // From here on the new binary is in place: whatever happens next, the result must say so (0.1.14 to 0.1.16 threw
@@ -125,8 +161,9 @@ export async function update({ checkOnly = false, force = false, base = process.
     out.updated = true;
     const v = spawn(self, ["--version"], { encoding: "utf8" });
     out.now = (v.stdout ?? "").trim() || null;
-    const skill = spawn(self, ["skill", "install"], { encoding: "utf8" });
-    return { ...out, ok: true, updated: true, skill_reinstalled: skill.status === 0, note: `updated ${current} → ${out.now ?? out.latest}${on}` };
+    const skill = skillOutcome(spawn(self, ["skill", "install"], { encoding: "utf8" }));
+    const s = skill.skill, said = s && (s.kept.length || s.failed.length) ? ` · skills: ${s.installed.length} installed, ${s.kept.length} kept, ${s.failed.length} failed${s.kept.length ? " (skill_repair says what to do)" : ""}` : "";
+    return { ...out, ok: true, updated: true, ...skill, note: `updated ${current} → ${out.now ?? out.latest}${on}${said}` };
   } catch (e) {
     // Say what is true: after a failed swap the old binary was put back, unless that failed too; after a successful
     // swap the update happened even if a later step failed.
@@ -186,8 +223,10 @@ export function maybeAutoUpdate(config, { isStandalone = standalone, spawn = spa
 // What the daily job writes to UPDATE_LOG after its check: the result, and the newest release it saw on which channel, so
 // doctor can say an update is waiting without asking GitHub itself (a command never makes the updater's network call).
 // `latest` is kept only when it is a release version (not ROUTR_DOWNLOAD_BASE's placeholder).
+// After a swap it also keeps what the skill reinstall did (skillOutcome), the repair for a kept skill included.
 export const updateRecord = (r, channel, at = new Date().toISOString()) =>
-  ({ at, ok: r.ok, updated: r.updated, note: r.note, error: r.error ?? null, latest: CHANNEL_TAGS.beta.test(String(r.latest ?? "")) ? r.latest : null, channel: channel ?? "stable" });
+  ({ at, ok: r.ok, updated: r.updated, note: r.note, error: r.error ?? null, latest: CHANNEL_TAGS.beta.test(String(r.latest ?? "")) ? r.latest : null, channel: channel ?? "stable",
+    ...(r.skill_reinstalled !== undefined ? { skill_reinstalled: r.skill_reinstalled } : {}), ...(r.skill ? { skill: r.skill } : {}), ...(r.skill_repair ? { skill_repair: r.skill_repair } : {}) });
 
 // `run` is a seam: a test drives the job with a fake update, and no network.
 export async function backgroundUpdate({ run = update } = {}) {

@@ -73,6 +73,61 @@ test("routr update reports a real swap as an update and reinstalls the skill (th
   expect(readFileSync(self, "utf8")).toBe("NEW-BINARY");
 });
 
+test("routr update by hand takes the daily job's lock; a look (--check) needs none", async () => {
+  const { lockedUpdate } = await import("../src/lib/update.mjs");
+  const lock = join(scratch("ulock"), "update.lock");
+  writeFileSync(lock, String(process.pid));                               // the daily job, alive, mid-update
+  let ran = 0; const run = async () => { ran++; return { ok: true }; };
+  const held = await lockedUpdate({}, { lock, run });
+  expect(held).toMatchObject({ ok: false, updated: false }); expect(held.error).toContain("another routr update is running");
+  expect(ran).toBe(0);
+  expect(readFileSync(lock, "utf8")).toBe(String(process.pid));           // not taken over, not removed
+  expect(await lockedUpdate({ checkOnly: true }, { lock, run })).toEqual({ ok: true });
+  rmSync(lock);
+  expect(await lockedUpdate({}, { lock, run: async () => ({ ok: existsSync(lock) }) })).toEqual({ ok: true }); // held while it runs
+  expect(existsSync(lock)).toBe(false);                                   // and let go after
+});
+
+test("an update never replaces a binary that is already as new as the download, unless forced", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const run = async (there, force = false) => {
+    const self = join(scratch("upd-there"), "routr"); writeFileSync(self, "WHAT A MANUAL UPDATE PUT THERE");
+    const r = await update({ channel: "stable", current: "0.5.0", self, base: undefined, force, fetchFn: await fakeGitHub([]),
+      spawn: (f, a) => ({ status: 0, stdout: a[0] === "--version" ? `${there}\n` : "" }), isStandalone: () => true });
+    return { r, bin: readFileSync(self, "utf8") };
+  };
+  // An older daily job (this process is 0.5.0, GitHub's newest 0.5.1) finds 0.5.2 installed by hand meanwhile: kept.
+  const newerThere = await run("0.5.2");
+  expect(newerThere.r).toMatchObject({ ok: true, updated: false, installed: "0.5.2" });
+  expect(newerThere.r.note).toContain("is already 0.5.2, newer than 0.5.1");
+  expect(newerThere.bin).toBe("WHAT A MANUAL UPDATE PUT THERE");
+  expect((await run("0.5.1")).bin).toBe("WHAT A MANUAL UPDATE PUT THERE");  // the same release: nothing to do
+  expect((await run("0.5.0")).bin).toBe("NEW-BINARY");                     // older there: replaced
+  expect((await run("garbled")).bin).toBe("NEW-BINARY");                   // no version to compare: replaced, as before
+  expect((await run("0.5.2", true)).bin).toBe("NEW-BINARY");               // --force installs it anyway
+});
+
+test("an update reports which skills were reinstalled, kept and failed, from the installer's JSON, and logs it", async () => {
+  const { update, updateRecord } = await import("../src/lib/update.mjs");
+  const self = join(scratch("upd-skill"), "routr"); writeFileSync(self, "OLD");
+  const keptWhy = "/h/.claude/skills/routr has files routr didn't write (mine.md): remove them or the folder, then run `routr skill install`";
+  const installer = { ok: true, installed: [{ skill: "routr", where: "/h/.agents/skills/routr", how: "written" }], kept: [{ skill: "routr", where: "/h/.claude/skills/routr", why: keptWhy }] };
+  const r = await update({ channel: "stable", current: "0.5.0", self, base: undefined, fetchFn: await fakeGitHub([]),
+    spawn: (f, a) => ({ status: 0, stdout: a[0] === "--version" ? "" : JSON.stringify(installer, null, 1) }), isStandalone: () => true });
+  expect(r).toMatchObject({ ok: true, updated: true, skill_reinstalled: false,
+    skill: { installed: ["/h/.agents/skills/routr"], kept: [{ where: "/h/.claude/skills/routr", why: keptWhy }], failed: [] } });
+  expect(r.skill_repair).toContain(`/h/.claude/skills/routr (${keptWhy})`);
+  expect(r.note).toContain("skills: 1 installed, 1 kept, 0 failed");
+  const logged = updateRecord(r, "stable");
+  expect(logged).toMatchObject({ skill_reinstalled: false, skill: r.skill, skill_repair: r.skill_repair });
+  // Everything installed: reinstalled, nothing to repair.
+  writeFileSync(self, "OLD");
+  const all = await update({ channel: "stable", current: "0.5.0", self, base: undefined, fetchFn: await fakeGitHub([]),
+    spawn: (f, a) => ({ status: 0, stdout: a[0] === "--version" ? "" : JSON.stringify({ ok: true, installed: installer.installed }) }), isStandalone: () => true });
+  expect(all).toMatchObject({ skill_reinstalled: true, skill: { kept: [], failed: [] } });
+  expect(all.skill_repair).toBeUndefined();
+});
+
 test("versions compare by semver 2.0 precedence, pre-releases included", async () => {
   const { compareVersions, newer } = await import("../src/lib/update.mjs");
   // Each is newer than the one before it.
@@ -154,7 +209,9 @@ test("on beta, the official release replaces its own last beta", async () => {
   const list = [{ tag_name: "v1.1.0", draft: false, prerelease: false }, { tag_name: "v1.1.0-beta.10", draft: false, prerelease: true }];
   const github = await fakeGitHub(asked);
   const fetchFn = async (u) => (String(u).includes("/releases?per_page=100") ? { ok: true, status: 200, json: async () => list } : github(u));
-  const r = await update({ channel: "beta", current: "1.1.0-beta.10", self, base: undefined, fetchFn, spawn: () => ({ status: 0, stdout: "1.1.0\n" }), isStandalone: () => true });
+  // `--version` answers for the binary at `self`: the beta before the swap, the release after it.
+  const spawn = () => ({ status: 0, stdout: readFileSync(self, "utf8") === "BETA" ? "1.1.0-beta.10\n" : "1.1.0\n" });
+  const r = await update({ channel: "beta", current: "1.1.0-beta.10", self, base: undefined, fetchFn, spawn, isStandalone: () => true });
   expect(r).toMatchObject({ ok: true, updated: true, latest: "1.1.0", now: "1.1.0", channel: "beta" });
   expect(asked.filter((u) => !u.includes("api.github.com")).every((u) => u.includes("/releases/download/v1.1.0/"))).toBe(true);
 });
