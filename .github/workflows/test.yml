@@ -1,6 +1,6 @@
 name: test
 on:
-  push: { branches: [main, windows-cmd-shims] }
+  push: { branches: [main] }
   pull_request:
 jobs:
   test:
