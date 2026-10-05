@@ -131,8 +131,10 @@ object describing what it did.
   asking whether to load a file. Ask the user for anything that is not yours to answer: a password or other secret, a
   sign-in, a folder you did not create, anything that cannot be undone. Then run `then`: before the task was sent it
   is the same `routr launch` with `--pane <pane>`, which carries on from the shell, or adopts the agent already
-  running there and sends it the task. It adopts only an idle agent of the kind you asked for, in `--cwd`, and keeps
-  the model and effort it is running. A task you gave inline with `--task` is never printed: give it again.
+  running there and sends it the task. You can run it as soon as you have answered: an agent still starting, or one
+  herdr has not yet re-read past the question, is waited for by herdr's state within `--timeout`. It adopts only an
+  agent of the kind you asked for, in `--cwd`, that is not working, and keeps the model and effort it is running. A
+  task you gave inline with `--task` is never printed: give it again.
 - `prompted` means the worker took the prompt and started, not that it finished. Waiting for the work is step 4.
 - launch sends the task once, and herdr's own state says whether the worker took it. When herdr sees no activity at
   first ("the prompt stalled": a harness still starting, a slow connection), launch waits for the agent to start

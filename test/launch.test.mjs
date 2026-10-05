@@ -404,6 +404,63 @@ test("--pane adopts only an idle agent of the kind asked for, in --cwd; anything
   expect(cursor.calls.filter((a) => a[1] === "rename")).toHaveLength(1);
 });
 
+// Seen 2026-10-05 (Codex, herdr rules 2026.10.01.1): the orchestrator answered Codex's folder trust and ran `then` at
+// once. herdr's `agent get` still said blocked while `agent explain` already read idle (osc_title_idle), and launch
+// reported a ready agent as "waiting at a question". herdr is replayed here by its lifecycle state alone: `gets` is
+// what `agent get` says, in order (the last one repeats), `explains` what `agent explain` reads.
+const codexTrust = "> You are in /private/tmp/work\n  Do you trust the contents of this directory?\n› 1. Yes, continue\n  2. No, quit";
+const explained = (state, rule) => ({ ok: true, data: { agent: "codex", state, matched_rule: rule ? { id: rule } : null, manifest_version: "2026.10.01.1" } });
+const codexPane = (gets, explains, extra = {}) => {
+  let prompted = false;
+  const next = (list) => (list.length > 1 ? list.shift() : list[0]);
+  return fakeHerdr({ kind: "codex", ...extra, reply: (a) => {
+    if (a[1] === "prompt") { prompted = true; return herdrOK({}); }
+    if (a[1] === "get" && a[2] === "w1:p2") { const s = prompted ? "working" : next(gets); return herdrOK({ agent: { agent: "codex", agent_status: s, cwd: process.cwd(), interactive_ready: s === "idle" } }); }
+    if (a[1] === "explain") return next(explains);
+  } });
+};
+
+test("the `then` of a startup question adopts the agent once herdr reads it past the question, and waits while it starts", async () => {
+  const dir = scratch("adopt-ready"), task = join(dir, "task.md");
+  writeFileSync(task, "Review the parser for hidden state.\n");
+  const codex = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--effort", "high", "--task-file", task];
+  // 1. The first launch stops at the trust question: herdr reads it blocked, by trust_directory.
+  const first = fakeHerdr({ kind: "codex", trust: codexTrust, notReady: true, reply: (a) => (a[1] === "explain" ? explained("blocked", "trust_directory") : undefined) });
+  const stopped = await launch(codex, first.deps);
+  expect(stopped).toMatchObject({ state: "needs_input", needs_input: { pane: "w1:p2", herdr: { state: "blocked", rule: "trust_directory" } } });
+  // 2. The orchestrator answers it (herdr pane send-keys w1:p2 enter) and runs `then` at once: herdr's state still says
+  // blocked, its explain reads idle; then herdr reads the agent unknown while Codex starts, then idle.
+  const again = stopped.needs_input.then.match(/then run routr launch (.*)$/)[1].split(" ");
+  expect(again).toEqual([...codex, "--pane", "w1:p2", "--cwd", process.cwd()]);
+  const racing = codexPane(["blocked", "unknown", "unknown", "idle"], [explained("idle", "osc_title_idle")]);
+  const r = await launch(again, racing.deps);
+  expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w1:p2", needs_input: null });
+  expect(r.steps.map((s) => s.step)).toEqual(["adopt", "ready", "prompt"]);
+  expect(racing.calls.some((a) => ["start", "run", "send-keys"].includes(a[1]))).toBe(false); // no second agent, no key pressed
+  // Adopting an agent herdr reads idle goes straight on; one it reads unknown (still starting) is waited for.
+  for (const gets of [["idle"], ["unknown", "unknown", "idle"]]) {
+    const f = codexPane(gets, [explained("blocked", "trust_directory")]);
+    const x = await launch(again, f.deps);
+    expect(x).toMatchObject({ state: "prompted" });
+    expect(x.steps.map((s) => s.step)).toEqual(["adopt", "ready", "prompt"]);
+    expect(f.calls.some((a) => a[1] === "explain")).toBe(false);
+  }
+  // Still blocked, by both readings: the question goes back, with herdr's rule, and nothing is sent.
+  const blocked = codexPane(["blocked"], [explained("blocked", "trust_directory")]);
+  const b = await launch(again, blocked.deps);
+  expect(b).toMatchObject({ state: "needs_input", needs_input: { herdr: { state: "blocked", rule: "trust_directory", rules: "2026.10.01.1" } } });
+  expect(b.needs_input.why).toContain("herdr reads it as trust_directory");
+  expect(blocked.calls.some((a) => ["prompt", "send-keys", "rename"].includes(a[1]))).toBe(false);
+  // The two readings disagree until the time is up: the block herdr's state holds is reported, not a timeout, and the
+  // rule of the state explain read is never given as the question's.
+  const stuck = codexPane(["blocked"], [explained("idle", "osc_title_idle")]);
+  const s = await launch([...again, "--timeout", "3000"], stuck.deps);
+  expect(s).toMatchObject({ state: "needs_input", needs_input: { herdr: { state: "blocked", explained: "idle" } } });
+  expect(s.needs_input.herdr.rule).toBeUndefined();
+  expect(s.needs_input.why).not.toContain("reads it as osc_title_idle");
+  expect(stuck.calls.some((a) => a[1] === "prompt")).toBe(false);
+});
+
 test("a settled shell in the wrong directory is reported rather than started", async () => {
   const f = fakeHerdr({ reply: (a) => a[1] === "process-info" ? shellInfo([{ pid: 1, cwd: "/" }]) : undefined });
   const r = await launch(launchArgs, f.deps);
