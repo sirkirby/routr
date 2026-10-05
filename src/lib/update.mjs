@@ -1,7 +1,7 @@
-// `routr update`: replace this binary with the latest release, verified against the release's checksums, then
-// reinstall the skill so the guides match the command. It runs when asked, and by itself at most once a day in a
-// detached background job (`maybeAutoUpdate`), which `"auto_update": false` turns off. Every swap is checksum-verified,
-// and a run in progress keeps its binary.
+// `routr update`: replace this binary with the newest release on the user's update channel (`update_channel`: stable,
+// or beta), verified against the release's checksums, then reinstall the skill so the guides match the command. It runs
+// when asked, and by itself at most once a day in a detached background job (`maybeAutoUpdate`), which
+// `"auto_update": false` turns off. Every swap is checksum-verified, and a run in progress keeps its binary.
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,35 +20,99 @@ export function assetName(platform = process.platform, arch = process.arch) {
   return `routr-${os}-${arch === "arm64" ? "arm64" : "x64"}`;
 }
 
-// 1 when a is newer than b. Pre-releases (-rc.1) sort below their release; only stable releases are offered.
-export function newer(a, b) {
-  const parse = (v) => { const [core, pre] = String(v).replace(/^v/, "").split("-"); return { n: core.split(".").map(Number), pre: pre ?? null }; };
+// Semver 2.0 precedence, -1/0/1: the numeric core first; a release ranks above its own pre-releases; then the
+// pre-release identifiers one by one, numbers numerically and below words, words by ASCII order (alpha < beta < rc),
+// and a shorter set below a longer one that starts the same. Build metadata (+...) does not count. The first version
+// compared any two pre-releases as equal, so 0.5.0-beta.2 never replaced 0.5.0-beta.1.
+export function compareVersions(a, b) {
+  const parse = (v) => {
+    const s = String(v).trim().replace(/^v/, "").split("+")[0], i = s.indexOf("-"); // the first hyphen only: "rc-2" is one identifier
+    return { n: (i < 0 ? s : s.slice(0, i)).split(".").map((x) => (Number.isFinite(Number(x)) ? Number(x) : 0)), pre: i < 0 ? [] : s.slice(i + 1).split(".") };
+  };
   const x = parse(a), y = parse(b);
-  for (let i = 0; i < 3; i++) if ((x.n[i] ?? 0) !== (y.n[i] ?? 0)) return (x.n[i] ?? 0) > (y.n[i] ?? 0);
-  return x.pre === null && y.pre !== null;
+  for (let i = 0; i < 3; i++) if ((x.n[i] ?? 0) !== (y.n[i] ?? 0)) return (x.n[i] ?? 0) > (y.n[i] ?? 0) ? 1 : -1;
+  if (!x.pre.length || !y.pre.length) return x.pre.length === y.pre.length ? 0 : x.pre.length ? -1 : 1;
+  const num = (t) => /^\d+$/.test(t);
+  for (let i = 0; i < Math.min(x.pre.length, y.pre.length); i++) {
+    const p = x.pre[i], q = y.pre[i];
+    if (p === q) continue;
+    if (num(p) && num(q)) return Number(p) > Number(q) ? 1 : -1;
+    if (num(p) !== num(q)) return num(p) ? -1 : 1;
+    return p > q ? 1 : -1;
+  }
+  return Math.sign(x.pre.length - y.pre.length);
+}
+// True when a is newer than b.
+export const newer = (a, b) => compareVersions(a, b) > 0;
+
+// Which releases each update channel follows, by tag. Stable: releases only. Beta: also -beta.N and -rc.N, so a
+// beta user moves to a stable release as soon as it is the newest. Alpha is on no channel: a maintainer installs one
+// by naming it in ROUTR_VERSION for the install script.
+// Strict semver numbers (no leading zeros), so a mistyped tag such as v1.01.0 is on no channel.
+const N = String.raw`(?:0|[1-9]\d*)`;
+export const CHANNEL_TAGS = { stable: new RegExp(`^v?${N}\\.${N}\\.${N}$`), beta: new RegExp(`^v?${N}\\.${N}\\.${N}(?:-(?:beta|rc)\\.${N})?$`) };
+// The newest release on a channel from GitHub's release list, or null. Drafts never count, and the stable channel
+// also skips anything GitHub marks as a pre-release whatever its tag says.
+export function pickRelease(releases, channel = "stable") {
+  const tags = CHANNEL_TAGS[channel] ?? CHANNEL_TAGS.stable;
+  let best = null;
+  for (const r of Array.isArray(releases) ? releases : []) {
+    const tag = String(r?.tag_name ?? "");
+    if (r?.draft || !tags.test(tag) || (channel !== "beta" && r?.prerelease)) continue;
+    const v = tag.replace(/^v/, "");
+    if (!best || newer(v, best)) best = v;
+  }
+  return best;
 }
 
-export async function latestVersion(timeoutMs = 4000) {
-  const r = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, { headers: { accept: "application/vnd.github+json", "user-agent": "routr" }, signal: AbortSignal.timeout(timeoutMs) });
-  if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
-  return String((await r.json()).tag_name ?? "").replace(/^v/, "");
+// The newest version on the channel. Stable asks for GitHub's latest release, as it always has, and takes it only when
+// its tag is a stable version (a release marked latest by mistake is not offered). Beta reads the newest 100 releases,
+// GitHub's largest page, and picks from what is on it: a beta, rc or release older than the newest 100 releases is not
+// seen. That is many release cycles here.
+export async function latestVersion(timeoutMs = 4000, channel = "stable", fetchFn = fetch) {
+  const get = async (path) => {
+    const r = await fetchFn(`https://api.github.com/repos/${REPO}/${path}`, { headers: { accept: "application/vnd.github+json", "user-agent": "routr" }, signal: AbortSignal.timeout(timeoutMs) });
+    if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
+    return r.json();
+  };
+  if (channel !== "beta") {
+    const tag = String((await get("releases/latest")).tag_name ?? "");
+    if (!CHANNEL_TAGS.stable.test(tag)) throw new Error(`GitHub's latest release ${tag || "(none)"} is not a stable version`);
+    return tag.replace(/^v/, "");
+  }
+  const v = pickRelease(await get("releases?per_page=100"), "beta");
+  if (!v) throw new Error("GitHub listed no release on the beta channel");
+  return v;
 }
 
-// `self`, `fetchFn`, `spawn`, and `isStandalone` are seams: a test drives a real swap on a scratch file, with no network.
+// Every channel downloads by the exact tag it checked, never `latest/download`: the binary and SHA256SUMS fetched are
+// those of the version compared, even when a release is published between the check and the download.
+export const downloadBase = (version) => `https://github.com/${REPO}/releases/download/v${String(version).replace(/^v/, "")}`;
+const isPre = (v) => String(v).includes("-");
+
+// `self`, `fetchFn`, `spawn`, `isStandalone` and `current` are seams: a test drives a real swap on a scratch file, with no
+// network. The channel is the user's setting (`update_channel`), never a flag: a flag would be lost at the next
+// automatic update, which reads the setting too.
 export async function update({ checkOnly = false, force = false, base = process.env.ROUTR_DOWNLOAD_BASE,
-  self = process.execPath, fetchFn = fetch, spawn = startSync, isStandalone = standalone } = {}) {
-  const out = { ok: false, current: ROUTR_VERSION, latest: null, updated: false };
+  self = process.execPath, fetchFn = fetch, spawn = startSync, isStandalone = standalone, current = ROUTR_VERSION,
+  channel = loadConfig().config.update_channel } = {}) {
+  const out = { ok: false, current, latest: null, updated: false, ...(channel === "beta" ? { channel } : {}) };
+  const on = channel === "beta" ? " on the beta channel" : "";
   try {
-    out.latest = base ? "(from ROUTR_DOWNLOAD_BASE)" : await latestVersion();
+    out.latest = base ? "(from ROUTR_DOWNLOAD_BASE)" : await latestVersion(4000, channel, fetchFn);
     // A source checkout reads 0.0.0-dev, so every release looks newer; it is updated with git, never by this.
-    if (!base && !isStandalone()) return { ...out, ok: true, note: `this routr runs from a source checkout: update it with \`git pull\` (latest release: ${out.latest})` };
-    const available = base ? true : newer(out.latest, ROUTR_VERSION);
-    if (!available && !force) return { ...out, ok: true, note: "routr is up to date" };
-    if (checkOnly) return { ...out, ok: true, available: true, note: `${out.latest} is available: run \`routr update\`` };
+    if (!base && !isStandalone()) return { ...out, ok: true, note: `this routr runs from a source checkout: update it with \`git pull\` (latest release${on}: ${out.latest})` };
+    const available = base ? true : newer(out.latest, current);
+    // Never a downgrade by itself: someone on 0.5.0-beta.2 who goes back to stable keeps it until a stable release is
+    // newer. --force installs the channel's newest now, older or not.
+    if (!available && !force) return { ...out, ok: true, note: isPre(current) && channel !== "beta" && out.latest !== current
+      ? `routr ${current} is a pre-release and the stable channel's newest is ${out.latest}: you stay on ${current} until a stable release is newer. \`routr update --force\` installs ${out.latest} now`
+      : `routr is up to date${on}` };
+    if (checkOnly) return { ...out, ok: true, available: true, note: `${out.latest} is available${on}: run \`routr update\`` };
     if (!isStandalone()) return { ...out, ok: true, available: true, note: "this routr runs from a source checkout: update it with `git pull`" };
     const asset = assetName();
     if (!asset) throw new Error(`no release build for ${process.platform}/${process.arch}`);
-    const from = base ?? `https://github.com/${REPO}/releases/latest/download`;
+    const from = base ?? downloadBase(out.latest);
     const get = async (name) => { const r = await fetchFn(`${from}/${name}`, { redirect: "follow", signal: AbortSignal.timeout(120000) }); if (!r.ok) throw new Error(`download of ${name} failed (${r.status})`); return Buffer.from(await r.arrayBuffer()); };
     const [bin, sums] = [await get(asset), (await get("SHA256SUMS")).toString("utf8")];
     const want = sums.split("\n").map((l) => l.trim().split(/\s+/)).find((p) => p[1] === asset)?.[0];
@@ -62,7 +126,7 @@ export async function update({ checkOnly = false, force = false, base = process.
     const v = spawn(self, ["--version"], { encoding: "utf8" });
     out.now = (v.stdout ?? "").trim() || null;
     const skill = spawn(self, ["skill", "install"], { encoding: "utf8" });
-    return { ...out, ok: true, updated: true, skill_reinstalled: skill.status === 0, note: `updated ${ROUTR_VERSION} → ${out.now ?? out.latest}` };
+    return { ...out, ok: true, updated: true, skill_reinstalled: skill.status === 0, note: `updated ${current} → ${out.now ?? out.latest}${on}` };
   } catch (e) {
     // Say what is true: after a failed swap the old binary was put back, unless that failed too; after a successful
     // swap the update happened even if a later step failed.
@@ -124,7 +188,7 @@ export async function backgroundUpdate() {
     forgetConsentUnlessOn(config);
     if (telemetryStatus(config).on) { const t = await sendRows().catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) })); writeFileSync(TELEMETRY_LOG(), JSON.stringify({ at: new Date().toISOString(), ...t }) + "\n"); }
     if (!updatesOn(config)) return;
-    const r = await update({});
+    const r = await update({ channel: config.update_channel });
     writeFileSync(UPDATE_LOG(), JSON.stringify({ at: new Date().toISOString(), ok: r.ok, updated: r.updated, note: r.note, error: r.error ?? null }) + "\n");
   } finally { rmSync(LOCK(), { force: true }); }
 }
@@ -134,5 +198,5 @@ export function autoUpdateStatus(config) {
   let checked = null, last = null;
   try { checked = Math.round((Date.now() - statSync(UPDATE_STAMP()).mtimeMs) / 3600000); } catch {}
   try { last = JSON.parse(readFileSync(UPDATE_LOG(), "utf8")); } catch {}
-  return { on, why_off: on ? null : !standalone() ? "running from source" : "turned off (auto_update: false, or ROUTR_NO_UPDATE)", checked_hours_ago: checked, last };
+  return { on, channel: config?.update_channel ?? "stable", why_off: on ? null : !standalone() ? "running from source" : "turned off (auto_update: false, or ROUTR_NO_UPDATE)", checked_hours_ago: checked, last };
 }

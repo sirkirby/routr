@@ -29,6 +29,10 @@ routr updates itself in the background, at most once a day, and the new version 
 looks. To stop automatic updates, set `"auto_update": false` in `~/.config/routr/config.json`. Versions before
 0.1.7 do not update themselves: run the install command once more.
 
+Both follow your update channel, which `routr doctor` shows: stable releases, unless you chose beta builds with
+`routr setup --channel beta`. Back on stable after a beta, routr stays on that beta until a stable release is newer;
+`routr update --force` installs the newest stable now.
+
 After updating, run `routr setup` to review settings and check the
 [release notes](https://github.com/sirkirby/routr/releases) for specific upgrade steps.
 If an agent still follows an older guide after the update, ask it to

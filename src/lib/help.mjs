@@ -79,10 +79,10 @@ export const COMMANDS = {
   },
   update: {
     name: "update",
-    description: "replace this routr with the latest release now (checksum verified) and reinstall the skill. routr also does this by itself in the background at most once a day; \"auto_update\": false in the config turns that off",
+    description: "replace this routr with the newest release on your update channel now (checksum verified) and reinstall the skill. routr also does this by itself in the background at most once a day; \"auto_update\": false in the config turns that off. The channel is a setting, stable unless you choose beta: routr setup --channel beta|stable",
     flags: [
       { name: "--check", description: "only say whether a newer release exists", required: false },
-      { name: "--force", description: "reinstall the latest release even if this one is current", required: false },
+      { name: "--force", description: "install the channel's newest release even if this one is current or newer (back to stable from a beta)", required: false },
     ],
   },
   statusline: {
@@ -115,6 +115,7 @@ export const COMMANDS = {
       { name: "--effort", arg: "<subscription>=<level>", description: "your everyday effort there, one of the levels the harness takes for that model (Kiro: auto leaves it to the model); repeatable", required: false, repeatable: true },
       { name: "--enable", arg: "<subscription>", description: "let routr hand work to this subscription again (it kept its settings while off); repeatable", required: false, repeatable: true },
       { name: "--disable", arg: "<subscription>", description: "turn a subscription off: routr gives it no work, and it keeps its settings; repeatable", required: false, repeatable: true },
+      { name: "--channel", arg: "stable|beta", description: "which releases updates install: stable (the default), or beta for beta and release-candidate builds too (a newer stable release still wins). Read by `routr update` and the daily update; nothing moves you back to an older stable by itself", required: false },
       { name: "--show", arg: null, description: "print your settings as routr reads them, and change nothing (asks no harness)", required: false },
       { name: "--no-statusline", description: "leave Claude Code's settings alone", required: false },
       { name: "--force", description: "rewrite an existing config (the old one is kept as config.json.bak)", required: false },

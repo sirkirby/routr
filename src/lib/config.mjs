@@ -12,12 +12,14 @@ export const DEFAULTS = {
   risk_above: 0.75,            // high_blast_radius probability that gets called out as high risk
   prefer: { research: "strong", review: "strong" }, // your preference per kind of work; shown to the agent as advice, never forced
   auto_update: true,           // check for a new release at most once a day, in the background; applied on the next run
+  update_channel: "stable",    // which releases updates follow: "stable", or "beta" (also -beta.N and -rc.N; never alpha)
   telemetry: false,            // opt-in: share anonymous outcomes (never text) once a day to help tune routr; docs/telemetry.md
   subscriptions: {},
 };
 // `billing` fills a gap when the harness reports no capacity; a measured cap always counts.
 // `use` is independent of billing. Absent it, keep the legacy metered after/with preference without inventing capacity.
 // `enabled: false` turns a subscription off without forgetting its settings: routr gives it no work until it is on again.
+export const UPDATE_CHANNELS = ["stable", "beta"];
 export const SUB_DEFAULTS = { enabled: true, hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after", use: null };
 const BILLING = ["included", "metered"], METERED_RANK = ["after", "with"];
 export const ACCOUNT_USE = ["normal", "fallback"];
@@ -38,7 +40,9 @@ export function loadConfig(path = CONFIG_PATH) {
   // a full one) is reported and replaced by the default.
   const share = (v, fallback, where) => { if (v === undefined) return fallback; if (typeof v === "number" && v >= 0 && v <= 1) return v; notes.push(`${where}: ${JSON.stringify(v)} is not a number from 0 to 1, using ${fallback}`); return fallback; };
   const num = (k) => share(raw[k], DEFAULTS[k], k);
-  const config = { fallback_level: isLevel(raw.fallback_level) ? raw.fallback_level : DEFAULTS.fallback_level, sure_at: num("sure_at"), risk_above: num("risk_above"), auto_update: raw.auto_update !== false, telemetry: raw.telemetry === true, prefer: {}, subscriptions: {} };
+  const config = { fallback_level: isLevel(raw.fallback_level) ? raw.fallback_level : DEFAULTS.fallback_level, sure_at: num("sure_at"), risk_above: num("risk_above"), auto_update: raw.auto_update !== false, update_channel: DEFAULTS.update_channel, telemetry: raw.telemetry === true, prefer: {}, subscriptions: {} };
+  if (UPDATE_CHANNELS.includes(raw.update_channel)) config.update_channel = raw.update_channel;
+  else if (raw.update_channel !== undefined) notes.push(`update_channel: ${JSON.stringify(raw.update_channel)} is not one of ${UPDATE_CHANNELS.join(", ")}, using stable: routr setup --channel stable|beta`);
   for (const [k, v] of Object.entries(raw.prefer ?? DEFAULTS.prefer)) isLevel(v) ? (config.prefer[k] = v) : notes.push(`prefer.${k}: "${v}" is not a level, ignored`);
   for (const [name, s] of Object.entries(raw.subscriptions ?? {})) {
     // The two settings that decide where work may go are the user's: a missing or invalid one is a problem to fix, and
