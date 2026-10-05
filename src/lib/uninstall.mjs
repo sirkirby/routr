@@ -1,31 +1,32 @@
 // `routr uninstall`: remove what the installer and `routr setup` put on this machine. By default the user's own data
 // stays (config, TypeSafe key, ledger), as with a typical uninstall; `--purge` removes that too. A person is shown the
 // plan and asked; an agent or a script must pass `--yes`. Worktrees and herdr panes belong to the user's repos, not to routr.
-import { copyFileSync, lstatSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { SKILL_FOLDERS, SKILLS } from "./harnesses.mjs";
+import { NOT_OURS, removePath, skillPlaces } from "./skill-install.mjs";
 import { home as userHome, standalone, start } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 
 
 // What would be removed, as data: a test can check the plan without touching a disk.
 export function uninstallPlan({ home = userHome(), purge = false, binary = null } = {}) {
-  const remove = [], keep = [];
+  const remove = [], keep = [], notOurs = [];
   if (binary) remove.push({ path: binary, what: "the routr binary" });
-  // Each of routr's skills: each harness's link first, then the folder the links point at.
-  for (const skill of SKILLS) for (const f of [...SKILL_FOLDERS.slice(1), SKILL_FOLDERS[0]]) remove.push({ path: join(home, f, skill), what: `the ${skill} skill` });
+  // Each of routr's skills: each harness's link first, then the folder the links point at. Only routr's own: a link to
+  // anything but routr's copy, or a folder of the same name routr did not write, stays (skill-install.mjs, `owner`).
+  for (const p of skillPlaces(home)) {
+    if (p.state === "ours") remove.push({ path: p.path, what: `the ${p.skill} skill` });
+    else if (p.state === "theirs") notOurs.push({ path: p.path, what: NOT_OURS });
+  }
   remove.push({ path: join(home, ".cache/routr"), what: "cache: the usage snapshots and the update log" });
   const data = [{ path: join(home, ".config/routr"), what: "your config and TypeSafe key" }, { path: join(home, ".local/share/routr"), what: "your ledger" }];
   (purge ? remove : keep).push(...data);
   const present = (l) => l.filter((x) => { try { lstatSync(x.path); return true; } catch { return false; } });
   let statusline = false;
   try { statusline = isOurStatusline(JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8")).statusLine?.command); } catch {}
-  return { remove: present(remove), keep: present(keep), statusline };
+  return { remove: present(remove), keep: present(keep), not_ours: notOurs, statusline };
 }
-
-// A link is unlinked, never followed: a developer's skill folder is a link into their checkout.
-function removePath(p) { if (lstatSync(p).isSymbolicLink()) unlinkSync(p); else rmSync(p, { recursive: true, force: true }); }
 
 export async function uninstall(args, { home = userHome() } = {}) {
   const json = args.includes("--json"), dry = args.includes("--dry-run");
@@ -38,14 +39,14 @@ export async function uninstall(args, { home = userHome() } = {}) {
   let plan = uninstallPlan({ home, purge, binary: standalone() ? process.execPath : null });
   if (interactive) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
-    const show = (p) => { say("\nThis removes:"); for (const x of p.remove) say(`  ${x.path}   (${x.what})`); if (p.statusline) say("  the `routr statusline` entry in ~/.claude/settings.json (a backup is kept)"); if (p.keep.length) { say("and keeps:"); for (const x of p.keep) say(`  ${x.path}   (${x.what})`); } };
+    const show = (p) => { say("\nThis removes:"); for (const x of p.remove) say(`  ${x.path}   (${x.what})`); if (p.statusline) say("  the `routr statusline` entry in ~/.claude/settings.json (a backup is kept)"); if (p.keep.length || p.not_ours.length) { say("and keeps:"); for (const x of [...p.keep, ...p.not_ours]) say(`  ${x.path}   (${x.what})`); } };
     if (!purge && plan.keep.length && /^y/i.test((await rl.question("Also remove your config, TypeSafe key, and ledger? [y/N] ")).trim())) { purge = true; plan = uninstallPlan({ home, purge, binary: standalone() ? process.execPath : null }); }
     show(plan);
     const go = /^y/i.test((await rl.question("\nUninstall routr? [y/N] ")).trim());
     rl.close();
     if (!go) return { ok: true, removed: [], note: "nothing was removed" };
   }
-  if (dry) return { ok: true, dry_run: true, would_remove: plan.remove.map((x) => x.path), would_keep: plan.keep.map((x) => x.path), statusline: plan.statusline };
+  if (dry) return { ok: true, dry_run: true, would_remove: plan.remove.map((x) => x.path), would_keep: plan.keep.map((x) => x.path), not_ours: plan.not_ours.map((x) => x.path), statusline: plan.statusline };
 
   const removed = [], failed = [];
   if (plan.statusline) try {
@@ -71,9 +72,10 @@ export async function uninstall(args, { home = userHome() } = {}) {
       removed.push(x.path);
     } catch (e) { failed.push(`${x.path}: ${String(e?.message ?? e).slice(0, 100)}`); }
   }
-  const result = { ok: !failed.length, removed, kept: plan.keep.map((x) => x.path), ...(failed.length ? { failed } : {}) };
+  const result = { ok: !failed.length, removed, kept: plan.keep.map((x) => x.path), ...(plan.not_ours.length ? { not_ours: plan.not_ours.map((x) => x.path) } : {}), ...(failed.length ? { failed } : {}) };
   for (const p of removed) say(`removed ${p}`);
   for (const p of result.kept) say(`kept    ${p}`);
+  for (const p of result.not_ours ?? []) say(`kept    ${p} (${NOT_OURS})`);
   for (const f of failed) say(`FAILED  ${f}`);
   if (!failed.length) say(`\nroutr is uninstalled.${result.kept.length ? " Your config, key, and ledger are still there for a reinstall; `--purge` removes them." : ""}`);
   return result;

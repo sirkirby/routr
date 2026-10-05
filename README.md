@@ -153,9 +153,10 @@ routr installs beside the routr skill:
 
 In Codex it is `$routr-orchestrate <your plan>`. The session becomes the routr orchestrator: the agent loads the routr
 skill, runs `routr doctor`, and hands out every piece through routr. It is meant for you to type, not for an agent to
-pick by itself: Claude Code and Cursor are told so by its `disable-model-invocation: true`, and Codex by its
-`allow_implicit_invocation: false`, as their docs describe; Kiro and Antigravity document no such setting, so there its
-description is the only guard. routr has not measured how each harness treats it. Anywhere, the same works as a plain
+pick by itself: it carries `disable-model-invocation: true` (Claude Code, Cursor) and Codex's
+`allow_implicit_invocation: false`. Measured 2026-10-05 by asking each harness to list the skills available to it:
+Claude Code, Codex, Cursor (`cursor-agent`) and Antigravity left it out of the list, and Kiro, which documents no such
+setting, listed it, so there its description is the only guard. Anywhere, the same works as a plain
 prompt: "You're an orchestrator; use routr to manage the following work: …".
 
 Something not working? `routr doctor` says what is missing, and [docs/troubleshooting.md](docs/troubleshooting.md)

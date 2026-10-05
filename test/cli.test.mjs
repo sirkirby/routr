@@ -175,8 +175,8 @@ test("routr skill install writes both skills and links each into every harness f
   expect(existsSync(`${home}/.agents/skills/routr/references/worker.md`)).toBe(true);
   for (const s of SKILLS) for (const f of SKILL_FOLDERS.slice(0, 2)) expect(readFileSync(`${home}/${f}/${s}/SKILL.md`, "utf8")).toContain(`name: ${s}`);
   expect(existsSync(`${home}/.kiro`) || existsSync(`${home}/.gemini`)).toBe(false); // neither is set up here: nothing made for them
-  // Kiro (reads only ~/.kiro/skills, measured) and Antigravity (its documented user folder) once they are set up.
-  mkdirSync(`${home}/.kiro`); mkdirSync(`${home}/.gemini/antigravity-cli`, { recursive: true });
+  // Kiro (reads only ~/.kiro/skills, measured) and Antigravity (~/.gemini/config/skills, measured) once they are set up.
+  mkdirSync(`${home}/.kiro`); mkdirSync(`${home}/.gemini/config`, { recursive: true });
   const all = installSkill({ home });
   expect(all.installed.filter((x) => x.skill === "routr-orchestrate").map((x) => x.how.replace("copied", "linked"))).toEqual(["written", "linked for Claude Code", "linked for Antigravity", "linked for Kiro"]);
   for (const s of SKILLS) for (const f of SKILL_FOLDERS) expect(readFileSync(`${home}/${f}/${s}/SKILL.md`, "utf8")).toContain(`name: ${s}`);
@@ -189,7 +189,60 @@ test("routr skill install writes both skills and links each into every harness f
     'interface:\n  display_name: "routr orchestrate"\n  short_description: "Run this session as the routr orchestrator"\npolicy:\n  allow_implicit_invocation: false\n');
   expect(existsSync(`${home}/.kiro/prompts`)).toBe(false); // one mechanism: no prompt file
   expect(installSkill({ home, dryRun: true }).installed.length).toBe(8); // the plan names every place, and writes nothing new
-  installSkill({ home });                                  // installing again replaces, never fails
+  expect(installSkill({ home }).ok).toBe(true);            // installing again replaces routr's own, never fails
+  expect(readdirSync(`${home}/.agents/skills`).sort()).toEqual(SKILLS); // no staging folder left behind
+});
+
+test("routr touches only its own skills: a same-named skill, a folder behind someone else's link, and a developer's link are kept", async () => {
+  const { installSkill, owner } = await import("../src/lib/skill-install.mjs");
+  const { uninstallPlan } = await import("../src/lib/uninstall.mjs");
+  const { cpSync, existsSync, lstatSync, readlinkSync, symlinkSync } = await import("node:fs");
+  const links = process.platform !== "win32";
+  const home = scratch("own"); for (const d of [".claude", ".kiro", ".agents/skills/routr-orchestrate"]) mkdirSync(`${home}/${d}`, { recursive: true });
+  // The user's own skill of the same name in the shared folder: not written over, nothing linked to it, and said.
+  writeFileSync(`${home}/.agents/skills/routr-orchestrate/SKILL.md`, "---\nname: routr-orchestrate\ndescription: mine\n---\nmine\n");
+  // In a harness folder: the user's own folder of that name.
+  mkdirSync(`${home}/.kiro/skills/routr`, { recursive: true }); writeFileSync(`${home}/.kiro/skills/routr/SKILL.md`, "---\nname: routr\n---\nmine\n");
+  const r = installSkill({ home });
+  expect(r.kept.map((k) => k.where)).toEqual([join(home, ".kiro/skills/routr"), join(home, ".agents/skills/routr-orchestrate")]);
+  expect(r.kept.every((k) => k.why === "not routr's: left as it is")).toBe(true);
+  expect(readFileSync(`${home}/.agents/skills/routr-orchestrate/SKILL.md`, "utf8")).toContain("mine");
+  expect(existsSync(`${home}/.claude/skills/routr-orchestrate`)).toBe(false);
+  expect(readFileSync(`${home}/.kiro/skills/routr/SKILL.md`, "utf8")).toContain("mine");
+  expect(readFileSync(`${home}/.claude/skills/routr/SKILL.md`, "utf8")).toContain("installed-by: routr"); // the rest is installed
+  // Uninstall removes routr's and keeps the user's, and says so.
+  const plan = uninstallPlan({ home });
+  expect(plan.not_ours.map((x) => x.path)).toEqual([join(home, ".kiro/skills/routr"), join(home, ".agents/skills/routr-orchestrate")]);
+  expect(plan.remove.map((x) => x.path)).toContain(join(home, ".agents/skills/routr"));
+  expect(plan.remove.map((x) => x.path)).not.toContain(join(home, ".kiro/skills/routr"));
+  // A copy routr made (the Windows branch) is routr's by its mark, and is replaced whole; a routr skill written before
+  // the mark is routr's by its guides.
+  const copy = scratch("own-copy"); mkdirSync(`${copy}/.claude/skills`, { recursive: true });
+  installSkill({ home: copy });
+  rmSync(`${copy}/.claude/skills/routr`, { recursive: true, force: true }); cpSync(`${copy}/.agents/skills/routr`, `${copy}/.claude/skills/routr`, { recursive: true });
+  writeFileSync(`${copy}/.claude/skills/routr/stale.md`, "left by an older copy");
+  expect(owner(copy, "routr", `${copy}/.claude/skills/routr`)).toBe("ours");
+  installSkill({ home: copy });
+  expect(existsSync(`${copy}/.claude/skills/routr/stale.md`)).toBe(false);
+  writeFileSync(`${copy}/.agents/skills/routr/SKILL.md`, "---\nname: routr\nmetadata:\n  version: \"0.4.2\"\n---\n"); // an 0.4.2 install: no mark
+  expect(owner(copy, "routr", `${copy}/.agents/skills/routr`)).toBe("ours");
+  rmSync(`${copy}/.agents/skills/routr/references`, { recursive: true }); // without routr's guides, a skill named routr is not provably routr's
+  expect(owner(copy, "routr", `${copy}/.agents/skills/routr`)).toBe("theirs");
+  if (!links) return;
+  // The shared folder is itself a link (a maintainer's, into a checkout): never written through, and nothing linked to it.
+  const dev = scratch("own-dev"), checkout = join(dev, "checkout"); mkdirSync(checkout); writeFileSync(join(checkout, "SKILL.md"), "---\nname: routr\n---\nthe checkout\n");
+  mkdirSync(`${dev}/.agents/skills`, { recursive: true }); mkdirSync(`${dev}/.claude`); symlinkSync(checkout, `${dev}/.agents/skills/routr`, "dir");
+  const d = installSkill({ home: dev });
+  expect(d.kept.map((k) => k.where)).toContain(join(dev, ".agents/skills/routr"));
+  expect(readdirSync(checkout)).toEqual(["SKILL.md"]);
+  expect(readFileSync(join(checkout, "SKILL.md"), "utf8")).toContain("the checkout");
+  expect(existsSync(`${dev}/.claude/skills/routr`)).toBe(false);
+  // A harness link to anything but routr's copy is someone's own: kept by install and uninstall; one to routr's copy is routr's.
+  rmSync(`${dev}/.claude/skills/routr-orchestrate`); symlinkSync(checkout, `${dev}/.claude/skills/routr-orchestrate`, "dir"); // in place of routr's link
+  rmSync(`${dev}/.agents/skills/routr`); installSkill({ home: dev });
+  expect(readlinkSync(`${dev}/.claude/skills/routr-orchestrate`)).toBe(checkout);
+  expect(lstatSync(`${dev}/.claude/skills/routr`).isSymbolicLink() && readlinkSync(`${dev}/.claude/skills/routr`)).toBe(join(dev, ".agents/skills/routr"));
+  expect(uninstallPlan({ home: dev }).not_ours.map((x) => x.path)).toEqual([join(dev, ".claude/skills/routr-orchestrate")]);
 });
 
 test("routr key set stores a piped key owner-only, never prints it, and refuses junk", () => {

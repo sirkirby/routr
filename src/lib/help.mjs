@@ -92,7 +92,7 @@ export const COMMANDS = {
   },
   skill: {
     name: "skill",
-    description: "`routr skill install` writes routr's two skills into ~/.agents/skills (read by Codex and Cursor) and links them into the skills folder of each other harness set up here (Claude Code, Kiro, Antigravity): the routr skill, and routr-orchestrate, which you type to start a session as the orchestrator (`/routr-orchestrate <plan>`; `$routr-orchestrate` in Codex)",
+    description: "`routr skill install` writes routr's two skills into ~/.agents/skills (read by Codex and Cursor) and links them into the skills folder of each other harness set up here (Claude Code, Kiro, Antigravity): the routr skill, and routr-orchestrate, which you type to start a session as the orchestrator (`/routr-orchestrate <plan>`; `$routr-orchestrate` in Codex). It replaces only routr's own copies: a skill or link of the same name that routr did not write is kept, and listed",
     args: [{ name: "install", description: "install or update the skills", required: true }],
     flags: [{ name: "--dry-run", description: "show where it would be written", required: false }],
   },

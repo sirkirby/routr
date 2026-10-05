@@ -51,6 +51,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - The code lives in `src/` and compiles into the binary. `skills/` holds exactly what is installed for agents (the
   `routr` skill with its guides, and the user-invoked `routr-orchestrate`) and no code. Every skill is installed the
   same way: written to `~/.agents/skills` and linked into each harness's own skills folder (the registry's `skills`).
+  Install and uninstall touch only what is provably routr's (a SKILL.md marked `installed-by: routr`, or a link to
+  routr's shared copy); anything else of the same name is kept and reported, and no link is followed.
 - The binary is self-contained: the files under `skills/` are embedded at build time, and it MUST NOT depend on a repository checkout at run time. It reads the user's harness state read-only
   (usage sources, settings, model lists) and writes only under `~/.config/routr`, `~/.cache/routr`,
   `~/.local/share/routr`, the skill folders on `skill install`, and temporary files it removes (including the private
