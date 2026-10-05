@@ -661,8 +661,14 @@ test("doctor reports both skills with their versions, setup repairs a missing on
   // The repair it names works: install replaces routr's incomplete copy and links Kiro again.
   expect(Bun.spawnSync([process.execPath, SCRIPT, "skill", "install"], { env }).exitCode).toBe(0);
   expect(JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString()).next_steps.join(" ")).not.toContain("skill install");
-  expect(Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes"], { env }).exitCode).toBe(0);
-  for (const s of SKILLS) for (const f of SKILL_FOLDERS) expect(existsSync(join(home, f, s))).toBe(false);
+  // Uninstall removes only the files routr's manifest lists: a file the user added to routr's folder stays, and is said.
+  mkdirSync(join(home, ".agents/skills/routr/notes")); writeFileSync(join(home, ".agents/skills/routr/notes/mine.md"), "the user's");
+  const un = Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes"], { env });
+  expect(un.exitCode).toBe(0);
+  expect(un.stdout.toString()).toContain(`kept    ${join(home, ".agents/skills/routr/notes/mine.md")} (yours, in routr's skill folder)`);
+  expect(readFileSync(join(home, ".agents/skills/routr/notes/mine.md"), "utf8")).toBe("the user's");
+  expect((await import("node:fs")).readdirSync(join(home, ".agents/skills/routr"))).toEqual(["notes"]); // routr's files and folders gone
+  for (const s of SKILLS) for (const f of SKILL_FOLDERS) if (!(s === "routr" && f === ".agents/skills")) expect(existsSync(join(home, f, s))).toBe(false);
 });
 
 test("from a source checkout, setup never replaces a release's installed skills: it says what to run instead", async () => {

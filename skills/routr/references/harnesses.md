@@ -73,11 +73,12 @@ harness. A native `.exe` install starts as before.
 `routr skill install` installs both of routr's skills the same way: `routr`, and `routr-orchestrate` (the user types
 `/routr-orchestrate <plan>` to make a session the orchestrator). Each is written once to `~/.agents/skills/<name>` and
 linked (copied on Windows) into each harness's own skills folder, the registry's `skills`, when the folder above it
-exists. It writes, replaces and removes only routr's own: a folder whose `SKILL.md` frontmatter carries
-`installed-by: routr` under `metadata` (or, written by routr before that mark, a `routr` skill with its guides), or a
-link to such a folder in `~/.agents/skills`.
-A skill of the same name the user put there, or a link of theirs (into a checkout, say), is kept, never followed, and
-named in the output. One canonical copy, linked into each agent's folder with its frontmatter unchanged, is the layout the `skills`
+exists. It writes, replaces and removes only routr's own, known by structure, never by a skill's text: a folder holding
+routr's manifest `.routr-install.json` (the skill's name, routr's version, and every file routr wrote there, written
+with the skill in one staged step), or a link to such a folder in `~/.agents/skills`. A `routr` folder from before
+manifests (with its guides) counts once and gets one at the next install. A skill of the same name the user put there,
+or a link of theirs (into a checkout, say), is kept, never followed, and named in the output; a file the user added
+inside routr's folder survives a reinstall and an uninstall, which removes only the files the manifest lists. One canonical copy, linked into each agent's folder with its frontmatter unchanged, is the layout the `skills`
 npm CLI uses. `routr-orchestrate` should run only when the user types it. Where a harness documents a field for that,
 the skill carries it; elsewhere its description ("Use ONLY when the user explicitly invokes /routr-orchestrate …") is
 the only guard. routr adds none in the text. The pair of `disable-model-invocation: true` in `SKILL.md` and Codex's

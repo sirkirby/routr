@@ -194,7 +194,7 @@ test("routr skill install writes both skills and links each into every harness f
 });
 
 test("routr touches only its own skills: a same-named skill, a folder behind someone else's link, and a developer's link are kept", async () => {
-  const { installSkill, owner } = await import("../src/lib/skill-install.mjs");
+  const { FILES, installSkill, owner } = await import("../src/lib/skill-install.mjs");
   const { uninstallPlan } = await import("../src/lib/uninstall.mjs");
   const { cpSync, existsSync, lstatSync, readlinkSync, symlinkSync } = await import("node:fs");
   const links = process.platform !== "win32";
@@ -209,25 +209,38 @@ test("routr touches only its own skills: a same-named skill, a folder behind som
   expect(readFileSync(`${home}/.agents/skills/routr-orchestrate/SKILL.md`, "utf8")).toContain("mine");
   expect(existsSync(`${home}/.claude/skills/routr-orchestrate`)).toBe(false);
   expect(readFileSync(`${home}/.kiro/skills/routr/SKILL.md`, "utf8")).toContain("mine");
-  expect(readFileSync(`${home}/.claude/skills/routr/SKILL.md`, "utf8")).toContain("installed-by: routr"); // the rest is installed
+  // The rest is installed, each folder with routr's manifest: the skill, this routr's version, every file it wrote.
+  expect(JSON.parse(readFileSync(`${home}/.claude/skills/routr/.routr-install.json`, "utf8"))).toEqual({ skill: "routr", version: "0.0.0-dev", files: Object.keys(FILES.routr) });
   // Uninstall removes routr's and keeps the user's, and says so.
   const plan = uninstallPlan({ home });
   expect(plan.not_ours.map((x) => x.path)).toEqual([join(home, ".kiro/skills/routr"), join(home, ".agents/skills/routr-orchestrate")]);
   expect(plan.remove.map((x) => x.path)).toContain(join(home, ".agents/skills/routr"));
   expect(plan.remove.map((x) => x.path)).not.toContain(join(home, ".kiro/skills/routr"));
-  // A copy routr made (the Windows branch) is routr's by its mark, and is replaced whole; a routr skill written before
-  // the mark is routr's by its guides.
-  const copy = scratch("own-copy"); mkdirSync(`${copy}/.claude/skills`, { recursive: true });
+  // A copy routr made (the Windows branch) carries the manifest and is routr's; replaced, it stays a copy, a file routr
+  // listed in an older manifest goes, and a file the user added stays, said.
+  const copy = scratch("own-copy"), c = `${copy}/.claude/skills/routr`; mkdirSync(`${copy}/.claude/skills`, { recursive: true });
   installSkill({ home: copy });
-  rmSync(`${copy}/.claude/skills/routr`, { recursive: true, force: true }); cpSync(`${copy}/.agents/skills/routr`, `${copy}/.claude/skills/routr`, { recursive: true });
-  writeFileSync(`${copy}/.claude/skills/routr/stale.md`, "left by an older copy");
-  expect(owner(copy, "routr", `${copy}/.claude/skills/routr`)).toBe("ours");
+  rmSync(c, { recursive: true, force: true }); cpSync(`${copy}/.agents/skills/routr`, c, { recursive: true });
+  writeFileSync(`${c}/stale.md`, "a file an older routr shipped");
+  writeFileSync(`${c}/.routr-install.json`, JSON.stringify({ skill: "routr", version: "0.4.9", files: [...Object.keys(FILES.routr), "stale.md"] }));
+  writeFileSync(`${c}/mine.md`, "the user's");
+  expect(owner(copy, "routr", c)).toBe("ours");
+  const again = installSkill({ home: copy });
+  expect(lstatSync(c).isSymbolicLink()).toBe(false);
+  expect(existsSync(`${c}/stale.md`)).toBe(false);
+  expect(readFileSync(`${c}/mine.md`, "utf8")).toBe("the user's");
+  expect(again.kept).toEqual([{ skill: "routr", where: join(c, "mine.md"), why: "yours, in routr's folder: kept" }]);
+  const copied = scratch("own-copy-foreign"); mkdirSync(`${copied}/.claude/skills/routr`, { recursive: true });
+  cpSync(join(import.meta.dir, "../skills/routr"), `${copied}/.claude/skills/routr`, { recursive: true }); // routr's text, copied by hand: no manifest
+  expect(owner(copied, "routr", `${copied}/.claude/skills/routr`)).toBe("ours"); // a routr skill with its guides: the legacy rule
+  rmSync(`${copied}/.claude/skills/routr/references`, { recursive: true });
+  expect(owner(copied, "routr", `${copied}/.claude/skills/routr`)).toBe("theirs"); // without its guides, not provably routr's
+  // A routr folder from before manifests (0.4.x: SKILL.md and its guides) is routr's once, and gets its manifest.
+  const old = `${copy}/.agents/skills/routr`;
+  rmSync(`${old}/.routr-install.json`); writeFileSync(`${old}/SKILL.md`, "---\nname: routr\nmetadata:\n  version: \"0.4.2\"\n---\n");
+  expect(owner(copy, "routr", old)).toBe("ours");
   installSkill({ home: copy });
-  expect(existsSync(`${copy}/.claude/skills/routr/stale.md`)).toBe(false);
-  writeFileSync(`${copy}/.agents/skills/routr/SKILL.md`, "---\nname: routr\nmetadata:\n  version: \"0.4.2\"\n---\n"); // an 0.4.2 install: no mark
-  expect(owner(copy, "routr", `${copy}/.agents/skills/routr`)).toBe("ours");
-  rmSync(`${copy}/.agents/skills/routr/references`, { recursive: true }); // without routr's guides, a skill named routr is not provably routr's
-  expect(owner(copy, "routr", `${copy}/.agents/skills/routr`)).toBe("theirs");
+  expect(JSON.parse(readFileSync(`${old}/.routr-install.json`, "utf8")).skill).toBe("routr");
   if (!links) return;
   // The shared folder is itself a link (a maintainer's, into a checkout): never written through, and nothing linked to it.
   const dev = scratch("own-dev"), checkout = join(dev, "checkout"); mkdirSync(checkout); writeFileSync(join(checkout, "SKILL.md"), "---\nname: routr\n---\nthe checkout\n");
@@ -245,22 +258,28 @@ test("routr touches only its own skills: a same-named skill, a folder behind som
   expect(uninstallPlan({ home: dev }).not_ours.map((x) => x.path)).toEqual([join(dev, ".claude/skills/routr-orchestrate")]);
 });
 
-test("routr's mark counts only in the frontmatter's metadata, and a link through someone else's shared link is not routr's", async () => {
-  const { frontmatter, installSkill, owner } = await import("../src/lib/skill-install.mjs");
+test("ownership is structural: no text in a skill grants it, only routr's manifest; a link through someone else's shared link is not routr's", async () => {
+  const { installSkill, manifest, MANIFEST, owner } = await import("../src/lib/skill-install.mjs");
   const { uninstallPlan } = await import("../src/lib/uninstall.mjs");
   const { existsSync, symlinkSync } = await import("node:fs");
-  expect(frontmatter("---\nname: routr\nmetadata:\n  version: \"1\"\n  installed-by: routr\n---\nbody\n")).toEqual({ name: "routr", marked: true });
-  expect(frontmatter("---\r\nname: routr\r\nmetadata:\r\n  installed-by: routr\r\n---\r\n")).toEqual({ name: "routr", marked: true }); // a Windows checkout
-  expect(frontmatter("---\nname: routr\ninstalled-by: routr\n---\n").marked).toBe(false);           // not under metadata
-  expect(frontmatter("---\nname: routr\nmetadata:\n  version: \"1\"\nother:\n  installed-by: routr\n---\n").marked).toBe(false);
-  expect(frontmatter("no frontmatter\nname: routr\n  installed-by: routr\n")).toEqual({ name: null, marked: false });
-  // The user's own routr-orchestrate whose body shows routr's mark as an example: kept by install and by uninstall.
-  const home = scratch("mark"); mkdirSync(`${home}/.agents/skills/routr-orchestrate`, { recursive: true });
-  const mine = "---\nname: routr-orchestrate\ndescription: mine\n---\nAn example:\n\n    metadata:\n      installed-by: routr\n";
-  writeFileSync(`${home}/.agents/skills/routr-orchestrate/SKILL.md`, mine);
-  expect(owner(home, "routr-orchestrate", `${home}/.agents/skills/routr-orchestrate`)).toBe("theirs");
+  const home = scratch("mark"), dir = `${home}/.agents/skills/routr-orchestrate`; mkdirSync(`${dir}/notes`, { recursive: true });
+  // routr's old marker in every YAML shape a parser could be fooled by (a block scalar, a nested mapping, the body): none counts.
+  for (const md of [
+    "---\nname: routr-orchestrate\nmetadata:\n  note: |\n    installed-by: routr\n---\nmine\n",
+    "---\nname: routr-orchestrate\nmetadata:\n  example:\n    installed-by: routr\n---\nmine\n",
+    "---\nname: routr-orchestrate\nmetadata:\n  installed-by: routr\n---\nmine\n",
+    "---\nname: routr-orchestrate\ndescription: mine\n---\nAn example:\n\n    metadata:\n      installed-by: routr\n",
+  ]) { writeFileSync(`${dir}/SKILL.md`, md); expect(owner(home, "routr-orchestrate", dir)).toBe("theirs"); }
+  // Nor does a manifest that is not routr's: another skill's, a folder, unparseable, or one reaching outside the folder.
+  for (const m of [JSON.stringify({ skill: "routr", files: [] }), "not json", JSON.stringify({ skill: "routr-orchestrate", files: ["../../../.ssh/id_ed25519"] }), JSON.stringify({ skill: "routr-orchestrate", files: ["/etc/hosts"] })]) {
+    writeFileSync(`${dir}/${MANIFEST}`, m); expect(manifest(dir, "routr-orchestrate")).toBeNull(); expect(owner(home, "routr-orchestrate", dir)).toBe("theirs");
+  }
+  rmSync(`${dir}/${MANIFEST}`); mkdirSync(`${dir}/${MANIFEST}`); expect(owner(home, "routr-orchestrate", dir)).toBe("theirs"); rmSync(`${dir}/${MANIFEST}`, { recursive: true });
+  writeFileSync(`${dir}/notes/personal.md`, "my notes");
+  const mine = readFileSync(`${dir}/SKILL.md`, "utf8");
   installSkill({ home });
-  expect(readFileSync(`${home}/.agents/skills/routr-orchestrate/SKILL.md`, "utf8")).toBe(mine);
+  expect(readFileSync(`${dir}/SKILL.md`, "utf8")).toBe(mine);
+  expect(readFileSync(`${dir}/notes/personal.md`, "utf8")).toBe("my notes");
   expect(uninstallPlan({ home }).remove.map((x) => x.path)).not.toContain(join(home, ".agents/skills/routr-orchestrate"));
   if (process.platform === "win32") return;
   // A developer links the shared folder to a checkout (even one carrying routr's mark), and Claude's to the shared one:

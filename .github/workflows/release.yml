@@ -83,6 +83,8 @@ jobs:
           grep -q "version: \"${V%%-*}\"" "$H/.agents/skills/routr-orchestrate/SKILL.md"
           grep -q "version: \"${V%%-*}\"" "$H/.kiro/skills/routr-orchestrate/SKILL.md"
           grep -q "allow_implicit_invocation: false" "$H/.agents/skills/routr-orchestrate/agents/openai.yaml"
+          # routr's manifest, which makes the folder routr's: it names the full version.
+          grep -q "\"version\": \"$V\"" "$H/.agents/skills/routr-orchestrate/.routr-install.json"
       - uses: actions/upload-artifact@v4
         with:
           name: routr-${{ matrix.target }}
@@ -161,6 +163,8 @@ jobs:
           grep -q "version: \"${V%%-*}\"" "$H/.agents/skills/routr-orchestrate/SKILL.md"
           grep -q "version: \"${V%%-*}\"" "$H/.kiro/skills/routr-orchestrate/SKILL.md"
           grep -q "allow_implicit_invocation: false" "$H/.agents/skills/routr-orchestrate/agents/openai.yaml"
+          # routr's manifest, which makes the folder routr's: it names the full version.
+          grep -q "\"version\": \"$V\"" "$H/.agents/skills/routr-orchestrate/.routr-install.json"
       - name: Notarize with Apple
         env:
           MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}

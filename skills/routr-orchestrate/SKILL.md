@@ -5,7 +5,6 @@ disable-model-invocation: true
 argument-hint: "<the plan or task to orchestrate>"
 metadata:
   version: "0.0.0-dev"
-  installed-by: routr
 ---
 
 # Orchestrate this work with routr
