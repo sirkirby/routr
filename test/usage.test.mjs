@@ -1,7 +1,7 @@
 // usage readers: Claude's statusline, Codex, Cursor's screen, Kiro's /usage, the background snapshots, and `routr usage`
 import { expect, test } from "bun:test";
 import { basename, dirname, join } from "node:path";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { tmpdir } from "node:os";
 import { claudeProjectFolders, claudeSnapshot, codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, parseClaudeReset, parseClaudeUsage, readClaude, summarize } from "../src/lib/usage.mjs";
@@ -186,6 +186,33 @@ test("Claude's read runs in a private folder of its own and removes only what Cl
   // A private folder Claude wrote into is not removed either.
   await read(claude((f, cwd) => writeFileSync(join(cwd, "x"), "")));
   expect(left().length).toBe(1);
+});
+
+test("Claude's cleanup is fixed before the read: a private folder swapped for a link meanwhile steers it nowhere", async () => {
+  const home = scratch("claude-swap"), projects = join(home, ".claude", "projects"), tmp = scratch("claude-swap-tmp");
+  const folderOf = (dir) => join(projects, realpathSync(dir).replace(/[^A-Za-z0-9]/g, "-"));
+  const victim = scratch("victim"); mkdirSync(join(folderOf(victim), "memory"), { recursive: true }); // someone else's, empty
+  let ours;
+  await readClaude({ file: join(home, "none.json"), nowSec: OCT5, tmp, projects, exec: async (cmd, args, { cwd }) => {
+    ours = folderOf(cwd); mkdirSync(join(ours, "memory"), { recursive: true });
+    rmdirSync(cwd); symlinkSync(victim, cwd, process.platform === "win32" ? "junction" : "dir"); // swapped during the read
+    return claudeAnswer(CLAUDE_USAGE);
+  } });
+  expect(existsSync(join(folderOf(victim), "memory"))).toBe(true); // never followed to the victim's project folder
+  expect(existsSync(join(ours, "memory"))).toBe(true);             // not the folder routr made any more: nothing touched
+});
+
+test("no private folder, no read: Claude is not started in the shared temp folder", async () => {
+  const dir = scratch("claude-nodir"), file = join(dir, "claude-usage.json"), tmp = join(dir, "missing", "deeper");
+  let started = false;
+  const read = (f) => readClaude({ file: f, nowSec: OCT5, tmp, exec: async () => { started = true; return claudeAnswer(CLAUDE_USAGE); } });
+  const none = await read(join(dir, "none.json"));
+  expect(started).toBe(false);
+  expect(none).toMatchObject({ headroom: null, class: "unknown" }); expect(none.note).toContain("could not make a private folder"); expect(none.note).toContain("assumed headroom");
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 3600, rate_limits: { seven_day: { used_percentage: 40, resets_at: OCT5 + 86400 } }, answered: true }));
+  const old = await read(file);
+  expect(started).toBe(false);
+  expect(old).toMatchObject({ source: "statusline", headroom: 0.6 }); expect(old.note).toContain("this is the statusline's last reading");
 });
 
 test("Claude's live read fails open: the old snapshot however old, else the assumed headroom, and the note says why", async () => {

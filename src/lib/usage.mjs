@@ -197,8 +197,8 @@ const readJson = (file) => { try { return existsSync(file) ? JSON.parse(readFile
 // the project folder Claude names after it belongs to this read alone, not inferred from "absent before". It is
 // removed only after Claude exited normally (after a timeout routr's kill may land before Claude's last write), only
 // as real folders (a symlink or, on Windows, a junction, which lstat reports as a symlink, is never followed), and
-// only with rmdir, so a folder that is not empty stays. The naming is Claude's own: a folder named otherwise is
-// simply not found, and any surprise leaves things as they are.
+// only with rmdir, so a folder that is not empty stays, and only while the private folder is still the one routr made.
+// The naming is Claude's own: a folder named otherwise is simply not found, and any surprise leaves things as they are.
 const claudeProjectsDir = () => join(home(), ".claude/projects");
 export const claudeProjectFolders = (cwd, projects = claudeProjectsDir()) => {
   let real = cwd; try { real = realpathSync(cwd); } catch {}
@@ -222,18 +222,28 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT, nowSec = 
   // A snapshot from the future (a clock set back) is not fresh: its age says nothing.
   const age = fromSnap?.ageSec;
   if (fromSnap?.headroom != null && Number.isFinite(age) && age >= 0 && age < CLAUDE_FRESH_SEC) return fromSnap;
-  let cwd = null, out;
-  try { cwd = mkdtempSync(join(tmp, "routr-claude-")); } catch {} // none: run in the temp folder itself, clean nothing
-  try { out = await exec("claude", claudeUsageArgs(quiet), { cwd: cwd ?? tmp, timeoutMs: CLAUDE_TIMEOUT_MS }); }
-  finally {
-    // run() answers null on a timeout (it kills Claude and does not wait), an error, or no output: the project folder
-    // is then left, as Claude may still be writing it; a timed-out read can leave one empty folder.
-    if (cwd && out != null) claudeProjectFolders(cwd, projects).forEach(removeProjectFolder);
-    if (cwd) removeEmpty(cwd);
-  }
-  let why, answered = false;
-  if (out == null) why = `\`claude -p /usage\` did not answer in ${CLAUDE_TIMEOUT_MS / 1000} s`;
+  // The private folder, its identity, and the folders to clean, all fixed BEFORE Claude runs: nothing done after the
+  // read is worked out from a path someone could have swapped for a link meanwhile. No private folder, no read:
+  // Claude in the shared temp folder would leave a project folder routr could not call its own.
+  let priv = null;
+  try {
+    const cwd = mkdtempSync(join(tmp, "routr-claude-")), st = lstatSync(cwd);
+    priv = { cwd, dev: st.dev, ino: st.ino, targets: claudeProjectFolders(cwd, projects) };
+  } catch {}
+  // Still the folder routr made: a real folder, the same device and inode as when it was made.
+  const same = () => { try { const st = lstatSync(priv.cwd); return !st.isSymbolicLink() && st.isDirectory() && st.dev === priv.dev && st.ino === priv.ino; } catch { return false; } };
+  let why, answered = false, out = null;
+  if (!priv) why = "routr could not make a private folder in the temp folder to run `claude -p /usage` in, so Claude was not asked";
   else {
+    try { out = await exec("claude", claudeUsageArgs(quiet), { cwd: priv.cwd, timeoutMs: CLAUDE_TIMEOUT_MS }); }
+    finally {
+      // run() answers null on a timeout (it kills Claude and does not wait), an error, or no output: the project
+      // folder is then left, as Claude may still be writing it; a timed-out read can leave one empty folder.
+      if (same()) { if (out != null) priv.targets.forEach(removeProjectFolder); removeEmpty(priv.cwd); }
+    }
+  }
+  if (priv && out == null) why = `\`claude -p /usage\` did not answer in ${CLAUDE_TIMEOUT_MS / 1000} s`;
+  else if (priv) {
     let o = null; try { o = JSON.parse(out); } catch {}
     if (typeof o?.result !== "string" || o.is_error) why = "`claude -p /usage` did not answer as expected";
     else {
