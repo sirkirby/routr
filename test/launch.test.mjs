@@ -375,17 +375,20 @@ test("from the review of #48: an agent of another kind in a pane launch did not 
 
 test("--pane adopts only an idle agent of the kind asked for, in --cwd; anything else goes back with the screen", async () => {
   const here = process.cwd();
-  const occupying = (agent, extra = {}) => fakeHerdr({ reply: (a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", interactive_ready: true, cwd: here, ...agent } }) : undefined), ...extra });
+  // An adopted agent is not waited on, so the fake's own "ready" stage (set by a wait) never comes: the prompt is taken here.
+  const taking = (reply) => (a) => (a[1] === "prompt" ? herdrOK({}) : reply(a));
+  const occupying = (agent, extra = {}) => fakeHerdr({ reply: taking((a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", interactive_ready: true, cwd: here, ...agent } }) : undefined)), ...extra });
   const args = [...launchArgs, "--pane", "w1:p9", "--cwd", here, "--task", "Task"];
   // The `then` of a launch that stopped at a startup question: the agent is running, idle, the question answered.
   const adopt = occupying({});
   const r = await launch(args, adopt.deps);
   expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w1:p9" });
   expect(r.steps.map((st) => st.step)).toContain("adopt");
-  expect(adopt.calls.some((a) => ["start", "run", "send-keys"].includes(a[1]))).toBe(false); // no shell, no second agent
+  expect(adopt.calls.some((a) => ["start", "run", "send-keys", "wait"].includes(a[1]))).toBe(false); // no shell, no second agent, no wait
   // From the review of #48: another kind, another folder, a working or a blocked agent are never sent the task.
   for (const [agent, why] of [[{ agent: "codex" }, "The pane runs codex, not claude"], [{ cwd: SCRATCH }, `works in ${SCRATCH}`],
-    [{ agent_status: "working" }, "is working, not waiting for a task"], [{ agent_status: "blocked" }, "is waiting at a question"]]) {
+    [{ agent_status: "working" }, "is working, not waiting for a task"], [{ agent_status: "blocked" }, "is waiting at a question"],
+    [{ agent_status: "idle", interactive_ready: false }, "is idle but not ready for input, not waiting for a task"]]) {
     const f = occupying(agent);
     const x = await launch(args, f.deps);
     expect([why, x.state]).toEqual([why, "needs_input"]);
@@ -393,12 +396,12 @@ test("--pane adopts only an idle agent of the kind asked for, in --cwd; anything
     expect(f.calls.some((a) => ["start", "prompt", "send-keys", "rename"].includes(a[1]))).toBe(false);
   }
   // A rename that fails is said, with the pane to address instead.
-  const unnamed = fakeHerdr({ reply: (a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", cwd: here } }) : a[1] === "rename" ? herdrError("name_taken") : undefined) });
+  const unnamed = fakeHerdr({ reply: taking((a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", cwd: here } }) : a[1] === "rename" ? herdrError("name_taken") : undefined)) });
   const u = await launch(args, unnamed.deps);
   expect(u.state).toBe("prompted");
   expect(u.warnings.join(" ")).toContain("address it by its pane, w1:p9");
   // Cursor too: its later rename (for one launch started) is not repeated for an adopted agent.
-  const cursor = fakeHerdr({ kind: "cursor", reply: (a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "cursor", agent_status: "idle", cwd: here } }) : a[1] === "rename" ? herdrError("name_taken") : undefined) });
+  const cursor = fakeHerdr({ kind: "cursor", reply: taking((a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "cursor", agent_status: "idle", cwd: here } }) : a[1] === "rename" ? herdrError("name_taken") : undefined)) });
   const c = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--pane", "w1:p9", "--cwd", here, "--task", "Task"], cursor.deps);
   expect(c.state).toBe("prompted");
   expect(cursor.calls.filter((a) => a[1] === "rename")).toHaveLength(1);
@@ -410,21 +413,22 @@ test("--pane adopts only an idle agent of the kind asked for, in --cwd; anything
 // what `agent get` says, in order (the last one repeats), `explains` what `agent explain` reads.
 const codexTrust = "> You are in /private/tmp/work\n  Do you trust the contents of this directory?\n› 1. Yes, continue\n  2. No, quit";
 const explained = (state, rule) => ({ ok: true, data: { agent: "codex", state, matched_rule: rule ? { id: rule } : null, manifest_version: "2026.10.01.1" } });
-// `cost`: what each herdr command takes on the fake clock; `waits`: the state `agent wait` reports, when it reports one.
-const codexPane = (gets, explains, { cost = 0, waits = null } = {}) => {
+// `cost`: what each herdr command takes on the fake clock; `reads`: what a pane read answers, when not the screen.
+const codexPane = (gets, explains, { cost = 0, reads } = {}) => {
   let prompted = false;
   const next = (list) => (list.length > 1 ? list.shift() : list[0]);
   const f = fakeHerdr({ kind: "codex", reply: async (a) => {
     if (cost) await f.deps.sleep(cost);
     if (a[1] === "prompt") { prompted = true; return herdrOK({}); }
     if (a[1] === "get" && a[2] === "w1:p2") { const s = prompted ? "working" : next(gets); return herdrOK({ agent: { agent: "codex", agent_status: s, cwd: process.cwd(), interactive_ready: s === "idle" } }); }
-    if (a[1] === "wait" && waits) return herdrOK({ agent: { agent: "codex", agent_status: next(waits) } });
     if (a[1] === "explain") return next(explains);
+    if (a[1] === "read" && reads) return reads;
   } });
   return f;
 };
+const adoptArgs = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task", "--pane", "w1:p2", "--cwd", process.cwd()];
 
-test("the `then` of a startup question adopts the agent once herdr reads it past the question, and waits while it starts", async () => {
+test("the `then` of a startup question adopts the agent at once when herdr's live reading is idle, and never waits on it", async () => {
   const dir = scratch("adopt-ready"), task = join(dir, "task.md");
   writeFileSync(task, "Review the parser for hidden state.\n");
   const codex = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--effort", "high", "--task-file", task];
@@ -433,69 +437,64 @@ test("the `then` of a startup question adopts the agent once herdr reads it past
   const stopped = await launch(codex, first.deps);
   expect(stopped).toMatchObject({ state: "needs_input", needs_input: { pane: "w1:p2", herdr: { state: "blocked", rule: "trust_directory" } } });
   // 2. The orchestrator answers it (herdr pane send-keys w1:p2 enter) and runs `then` at once: herdr's state still says
-  // blocked, its explain reads idle; then herdr reads the agent unknown while Codex starts, then idle.
+  // blocked, its explain (the live reading) says idle. The block is stale: the agent is adopted as idle.
   const again = stopped.needs_input.then.match(/then run routr launch (.*)$/)[1].split(" ");
   expect(again).toEqual([...codex, "--pane", "w1:p2", "--cwd", process.cwd()]);
-  const racing = codexPane(["blocked", "unknown", "unknown", "idle"], [explained("idle", "osc_title_idle")]);
-  const r = await launch(again, racing.deps);
-  expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w1:p2", needs_input: null });
-  expect(r.steps.map((s) => s.step)).toEqual(["adopt", "ready", "prompt"]);
-  expect(racing.calls.some((a) => ["start", "run", "send-keys"].includes(a[1]))).toBe(false); // no second agent, no key pressed
-  // Adopting an agent herdr reads idle goes straight on; one it reads unknown (still starting) is waited for.
-  for (const gets of [["idle"], ["unknown", "unknown", "idle"]]) {
-    const f = codexPane(gets, [explained("blocked", "trust_directory")]);
-    const x = await launch(again, f.deps);
-    expect(x).toMatchObject({ state: "prompted" });
-    expect(x.steps.map((s) => s.step)).toEqual(["adopt", "ready", "prompt"]);
-    expect(f.calls.some((a) => a[1] === "explain")).toBe(false);
+  for (const reads of ["idle", "done"]) {
+    const stale = codexPane(["blocked"], [explained(reads, `osc_title_${reads}`)]);
+    const r = await launch(again, stale.deps);
+    expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w1:p2", needs_input: null });
+    expect(r.steps.map((s) => s.step)).toEqual(["explain", "adopt", "prompt"]);
+    expect(stale.calls.filter((a) => a[1] === "get")).toHaveLength(2); // the one reading, and the prompt's outcome
+    expect(stale.calls.some((a) => ["wait", "start", "run", "send-keys"].includes(a[1]))).toBe(false); // nothing waited on, no key pressed
   }
-  // Still blocked, by both readings: the question goes back, with herdr's rule, and nothing is sent.
+  // herdr reads it idle outright: no explain, no wait.
+  const idle = codexPane(["idle"], [explained("blocked", "trust_directory")]);
+  const i = await launch(again, idle.deps);
+  expect(i.steps.map((s) => s.step)).toEqual(["adopt", "prompt"]);
+  expect(idle.calls.some((a) => ["explain", "wait"].includes(a[1]))).toBe(false);
+  // Still blocked by both readings: the question goes back, with herdr's rule, and nothing is sent.
   const blocked = codexPane(["blocked"], [explained("blocked", "trust_directory")]);
   const b = await launch(again, blocked.deps);
   expect(b).toMatchObject({ state: "needs_input", needs_input: { herdr: { state: "blocked", rule: "trust_directory", rules: "2026.10.01.1" } } });
   expect(b.needs_input.why).toContain("herdr reads it as trust_directory");
-  expect(blocked.calls.some((a) => ["prompt", "send-keys", "rename"].includes(a[1]))).toBe(false);
-  // The two readings disagree until the time is up: the block herdr's state holds is reported, not a timeout, and the
-  // rule of the state explain read is never given as the question's.
-  const stuck = codexPane(["blocked"], [explained("idle", "osc_title_idle")]);
-  const s = await launch([...again, "--timeout", "3000"], stuck.deps);
-  expect(s).toMatchObject({ state: "needs_input", needs_input: { herdr: { state: "blocked", explained: "idle" } } });
-  expect(s.needs_input.herdr.rule).toBeUndefined();
-  expect(s.needs_input.why).not.toContain("reads it as osc_title_idle");
-  expect(stuck.calls.some((a) => a[1] === "prompt")).toBe(false);
+  expect(blocked.calls.some((a) => ["prompt", "send-keys", "rename", "wait"].includes(a[1]))).toBe(false);
 });
 
-// From the review of f8a30f9: an adopted agent read as working, by get, wait or explain, at any point before the prompt,
-// was waited out until idle and sent this task on top of its own. Only blocked -> idle and unknown -> idle are waited for.
-test("an adopted agent herdr reads as working at any point before the prompt is never waited out or sent the task", async () => {
-  const again = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task", "--pane", "w1:p2", "--cwd", process.cwd()];
-  for (const [what, f] of [
-    ["get: unknown, then working", codexPane(["unknown", "working", "idle"], [explained("idle", "osc_title_idle")])],
-    ["get: blocked, explain: working", codexPane(["blocked", "working", "idle"], [explained("working", "osc_title_working")])],
-    ["get: blocked (explain idle), then working", codexPane(["blocked", "working", "idle"], [explained("idle", "osc_title_idle")])],
-    ["wait: working", codexPane(["unknown", "unknown", "idle"], [explained("idle")], { waits: ["working"] })]]) {
-    const r = await launch(again, f.deps);
-    expect([what, r.state]).toEqual([what, "needs_input"]);
-    expect(r.needs_input.why).toContain("is working, not waiting for a task");
+// From the reviews of this change: waiting on an agent launch did not start (unknown, or working, to idle) could hand a
+// busy worker a second task, since one wait can see it work and finish. An adopted agent is decided from one reading.
+test("an adopted agent that herdr does not read idle is refused from one reading, never waited on", async () => {
+  for (const [gets, explains, state] of [[["unknown", "idle"], [explained("idle")], "unknown"], [["working", "idle"], [explained("idle")], "working"],
+    [["blocked", "idle"], [explained("working", "osc_title_working")], "working"], [["blocked", "idle"], [explained("unknown")], "unknown"]]) {
+    const f = codexPane(gets, explains);
+    const r = await launch(adoptArgs, f.deps);
+    expect([gets[0], state, r.state]).toEqual([gets[0], state, "needs_input"]);
+    expect(r.needs_input.why).toContain(`is ${state}, not waiting for a task`);
     expect(r.needs_input.then).toContain("herdr agent wait w1:p2 --until idle");
-    expect(f.calls.some((a) => ["prompt", "send-keys"].includes(a[1]))).toBe(false);
+    expect(f.calls.some((a) => ["wait", "prompt", "send-keys", "rename"].includes(a[1]))).toBe(false);
   }
-  // An agent launch started itself has no task yet: herdr reading it working while it starts is waited through.
-  let started = false;
-  const ours = fakeHerdr({ kind: "codex", reply: (a) => {
-    if (a[1] === "start") { started = true; return herdrOK({}); }
-    if (a[1] === "get" && started) return herdrOK({ agent: { agent: "codex", agent_status: ours.calls.filter((c) => c[1] === "get").length < 3 ? "working" : "idle", interactive_ready: true } });
-  } });
-  expect(await launch(["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task"], ours.deps)).toMatchObject({ state: "prompted" });
+  // The screen is extra: a read that fails or runs out of time leaves it out, and the refusal stands.
+  const slow = codexPane(["working"], [explained("idle")], { reads: herdrError("timeout") });
+  const s = await launch(adoptArgs, slow.deps);
+  expect(s).toMatchObject({ state: "needs_input", needs_input: { screen: null } });
+  expect(s.needs_input.why).toContain("is working, not waiting for a task");
 });
 
-// From the review of f8a30f9: with each herdr command taking time, the deadline ran out inside a call while get said
-// blocked and explain said idle, and launch returned failed ("Launch readiness timeout") instead of the block.
-test("herdr's two readings disagreeing until the deadline end in needs_input, wherever the time runs out", async () => {
-  const again = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task", "--pane", "w1:p2", "--cwd", process.cwd()];
-  for (const cost of [0, 100, 170, 333]) for (const timeout of [3000, 3200, 3333]) {
+// An agent launch started itself has no task yet, so its start is waited through: a stale block (get blocked, explain
+// idle) is not a question, and if the two readings still disagree when the time runs out, wherever it runs out (from
+// the review of f8a30f9: inside a call, with each command taking time), the block is reported, not a timeout.
+test("for an agent launch started, a stale block is waited through, and a disagreement at the deadline is needs_input", async () => {
+  const codex = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task"];
+  for (const gets of [["blocked", "idle"], ["working", "working", "idle"]]) {
+    const f = codexPane(gets, [explained("idle", "osc_title_idle")]);
+    const r = await launch(codex, f.deps);
+    expect(r).toMatchObject({ state: "prompted" });
+    expect(r.steps.map((s) => s.step)).toEqual(["split", "shell_ready", "start", "ready", "prompt"]);
+  }
+  // Long enough for the start (about ten commands) to finish at the highest cost; the loop's end then falls anywhere.
+  for (const cost of [0, 100, 170, 333]) for (const timeout of [6000, 6200, 6333, 7111]) {
     const f = codexPane(["blocked"], [explained("idle", "osc_title_idle")], { cost });
-    const r = await launch([...again, "--timeout", String(timeout)], f.deps);
+    const r = await launch([...codex, "--timeout", String(timeout)], f.deps);
     expect([cost, timeout, r.state]).toEqual([cost, timeout, "needs_input"]);
     expect(r.needs_input.herdr).toEqual({ state: "blocked", explained: "idle", rules: "2026.10.01.1" });
     expect(r.needs_input.why).toContain("its rules read the screen as idle by osc_title_idle");
@@ -503,7 +502,10 @@ test("herdr's two readings disagreeing until the deadline end in needs_input, wh
   }
   // A timeout with no disagreement as the last reading is still a timeout.
   const slow = codexPane(["blocked", "unknown"], [explained("idle", "osc_title_idle")], { cost: 100 });
-  expect(await launch([...again, "--timeout", "3200"], slow.deps)).toMatchObject({ state: "failed" });
+  const late = await launch([...codex, "--timeout", "6200"], slow.deps);
+  expect(late).toMatchObject({ state: "failed" });
+  expect(slow.calls.some((a) => a[1] === "explain")).toBe(true); // it did see the disagreement, then herdr moved on
+  expect(late.steps.at(-1).detail).toContain("Launch readiness timeout");
 });
 
 test("a settled shell in the wrong directory is reported rather than started", async () => {

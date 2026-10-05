@@ -125,19 +125,20 @@ object describing what it did.
 - **`needs_input` is yours to decide.** Something in the pane waits for an answer routr does not give: a shell's own
   question, a harness's startup question, a worker that has not started. `needs_input` holds `why`, the `screen`
   (what the pane shows; withheld once the task was sent, since it then shows the brief: read the pane yourself),
-  `pane`, `herdr` (its reading: the state and the rule `herdr agent explain` matched; when herdr's state still said
-  `blocked` but explain read the screen as another state until the timeout, `explained` holds that state and `rule` is
-  left out, since that rule is not the question's), a `note` from what routr knows
+  `pane`, `herdr` (its reading: the state and the rule `herdr agent explain` matched; when a worker launch started
+  still read `blocked` but explain read its screen as another state until the timeout, `explained` holds that state
+  and `rule` is left out, since that rule is not the question's), a `note` from what routr knows
   about that harness, and `then`: how to carry on. Answer what is within the task's scope yourself, with
   `herdr pane send-keys <pane> <keys>`: a question your own launch raised, a folder you created, the user's shell
   asking whether to load a file. Ask the user for anything that is not yours to answer: a password or other secret, a
   sign-in, a folder you did not create, anything that cannot be undone. Then run `then`: before the task was sent it
   is the same `routr launch` with `--pane <pane>`, which carries on from the shell, or adopts the agent already
-  running there and sends it the task. You can run it as soon as you have answered: an agent still starting, or one
-  herdr has not yet re-read past the question, is waited for by herdr's state within `--timeout`. It adopts only an
-  agent of the kind you asked for, in `--cwd`, and keeps the model and effort it is running. One herdr reads as
-  working at any point before the prompt has work of its own and comes back as `needs_input`, never waited out. A
-  task you gave inline with `--task` is never printed: give it again.
+  running there and sends it the task. It adopts only an idle agent of the kind you asked for, in `--cwd`, and keeps
+  the model and effort it is running; it never waits on an agent it did not start, since one it waited for could have
+  work of its own. Running `then` right after you answer works when herdr already reads the agent idle (launch checks
+  herdr's live reading, so a `blocked` state herdr has not yet updated does not stop it). Otherwise it comes back as
+  `needs_input` (the agent is starting or working): wait until it is idle (`herdr agent wait <pane> --until idle`)
+  and run it again. A task you gave inline with `--task` is never printed: give it again.
 - `prompted` means the worker took the prompt and started, not that it finished. Waiting for the work is step 4.
 - launch sends the task once, and herdr's own state says whether the worker took it. When herdr sees no activity at
   first ("the prompt stalled": a harness still starting, a slow connection), launch waits for the agent to start
