@@ -2,7 +2,7 @@
 // run on Windows only (CI's windows-latest); the pure parts are tested everywhere in runtime.test.mjs.
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { probe, resolveCommand, run } from "../src/lib/runtime.mjs";
 import { npmShim, scratch } from "./helpers.mjs";
@@ -37,3 +37,31 @@ test.skipIf(process.platform !== "win32")("Windows only: run and probe start a .
     expect(JSON.parse(out.stdout)).toEqual([JSON.stringify(ARGS), JSON.stringify(ARGS)]);
   } finally { process.env.PATH = saved; }
 }, 180000);
+
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } };
+test.skipIf(process.platform !== "win32")("Windows only: a timeout stops the CLI a .cmd started, not just the cmd.exe above it", async () => {
+  const dir = scratch("shim-kill"), saved = process.env.PATH, pidFile = join(dir, "pid");
+  writeFileSync(join(dir, "hang.js"), "require('fs').writeFileSync(process.argv[2], String(process.pid)); setInterval(() => {}, 1000);\n");
+  writeFileSync(join(dir, "hang.cmd"), `@"${process.execPath}" "%~dp0hang.js" %*\r\n`);
+  process.env.PATH = `${dir};${saved}`;
+  try {
+    expect(await run("hang", [pidFile], { timeoutMs: 4000 })).toBeNull();
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(pid).toBeGreaterThan(0);
+    const until = Date.now() + 10000;
+    while (alive(pid) && Date.now() < until) await Bun.sleep(200);
+    expect(alive(pid)).toBe(false);
+  } finally { process.env.PATH = saved; }
+}, 30000);
+
+test.skipIf(process.platform !== "win32")("Windows only: a relative PATH entry is found in the child's folder, not routr's", async () => {
+  const dir = scratch("shim-cwd"), saved = process.env.PATH;
+  mkdirSync(join(dir, "tools"));
+  writeFileSync(join(dir, "echo.js"), ECHO);
+  writeFileSync(join(dir, "tools", "rel.cmd"), `@"${process.execPath}" "%~dp0..\\echo.js" %*\r\n`);
+  process.env.PATH = `tools;${saved}`;
+  try {
+    expect(await run("rel", ["a b"], { cwd: dir, timeoutMs: 20000 })).toBe(JSON.stringify(["a b"]));
+    expect(await run("rel", ["a b"], { timeoutMs: 20000 })).toBeNull(); // routr's own folder has no tools\rel.cmd
+  } finally { process.env.PATH = saved; }
+}, 60000);

@@ -62,7 +62,7 @@ export const startOptions = (opts = {}) => ({ ...opts, windowsHide: true });
 // Windows as below. `via` and `platform` are test seams.
 const prepare = (cmd, args = [], opts = {}, platform = process.platform) => {
   if (platform !== "win32") return [cmd, args, startOptions(opts)];
-  const w = windowsCommand(cmd, args, { env: opts.env ?? process.env });
+  const w = windowsCommand(cmd, args, { env: opts.env ?? process.env, cwd: opts.cwd ?? process.cwd() });
   return [w.cmd, w.args, startOptions(w.verbatim ? { ...opts, windowsVerbatimArguments: true } : opts)];
 };
 export const start = (cmd, args, opts, { via = spawn, platform } = {}) => via(...prepare(cmd, args, opts, platform));
@@ -75,11 +75,14 @@ export const startSync = (cmd, args, opts, { via = spawnSync, platform } = {}) =
 // installed; `cmd.exe /d /s /c` with windowsVerbatimArguments started the same file. So, before every start:
 //   - a bare name is looked up in PATH with PATHEXT (case-insensitive), a name with an extension or a folder as given;
 //     the current folder is not searched first, as cmd would (a planted `codex.cmd` in a work tree is the classic hijack);
+//     a relative PATH entry or command is taken from the folder the child starts in (its `cwd`), and what is started
+//     is always the absolute path that was checked;
 //   - `.exe`/`.com` start directly;
 //   - npm's own shim starts `node` on its script directly, the node the shim would pick (its folder's node.exe, else
-//     node on PATH): no shell, no quoting, and a timeout's kill reaches the CLI itself, not just a cmd.exe above it;
+//     node on PATH): no shell and no quoting;
 //   - any other `.cmd`/`.bat` starts through `cmd.exe /d /s /c` with every argument quoted for cmd (cmdLine below).
-// A name not found is passed on unchanged, so the start fails as it did (ENOENT, or Bun's own error).
+// A name not found is passed on unchanged, so the start fails as it did (ENOENT, or Bun's own error). Through cmd.exe
+// or node the CLI runs one or more processes below the child routr holds, so a timeout stops the tree (stop, below).
 const RUNNABLE = [".com", ".exe", ".bat", ".cmd"];
 const isFile = (p) => { try { return statSync(p).isFile(); } catch { return false; } };
 const readSmall = (p) => { try { return statSync(p).size < 65536 ? readFileSync(p, "utf8") : ""; } catch { return ""; } };
@@ -87,9 +90,9 @@ const envGet = (env, name) => { const k = Object.keys(env).find((key) => key.toL
 
 // The file a shell would start for `cmd`, or null. Only extensions both PATHEXT and CreateProcess-or-cmd can start count:
 // PATHEXT also lists .JS and .VBS, which cmd would hand to Windows Script Host (an npm shim strips .JS for that reason).
-export function resolveCommand(cmd, { env = process.env, exists = isFile } = {}) {
+export function resolveCommand(cmd, { env = process.env, cwd = process.cwd(), exists = isFile } = {}) {
   const exts = (envGet(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").map((e) => e.trim().toLowerCase()).filter((e) => RUNNABLE.includes(e));
-  const tries = (base) => [...(win32.extname(base) ? [base] : []), ...exts.map((e) => base + e)].find(exists) ?? null;
+  const tries = (base) => { base = win32.resolve(cwd, base); return [...(win32.extname(base) ? [base] : []), ...exts.map((e) => base + e)].find(exists) ?? null; };
   if (/[\\/]/.test(cmd) || /^[a-z]:/i.test(cmd)) return tries(cmd);
   for (const dir of String(envGet(env, "PATH") ?? "").split(";").map((d) => d.trim().replace(/^"(.*)"$/, "$1"))) {
     const hit = dir && tries(win32.join(dir, cmd));
@@ -98,26 +101,39 @@ export function resolveCommand(cmd, { env = process.env, exists = isFile } = {})
   return null;
 }
 
-// npm's cmd-shim, as npm 7 to 11 write it for a `#!/usr/bin/env node` bin (cmd-shim 4 to 9; 9.0.2 checked line by
-// line): it sets dp0 to its own folder, picks `%dp0%\node.exe` or `node`, and runs `"%_prog%"  "%dp0%\<script>" %*`.
-// Returns the script, relative to the shim's folder, or null for anything else: a shebang with arguments or variables
-// (`env -S X=1 node`), another program than node, pnpm's shim (it also sets NODE_PATH), an older or edited file. Those
+// npm's cmd-shim for a `#!/usr/bin/env node` bin, matched whole and in order: the form cmd-shim 7.0.0 and 8.0.0 write
+// (PATHEXT set inside the ELSE) and 9.0.2's (set on the run line), each read from its source. Only the script path may
+// differ; blank lines and indentation are ignored. The shim sets dp0 to its own folder, picks `%dp0%\node.exe` or
+// `node`, and runs `"%_prog%"  "%dp0%\<script>" %*`. Returns that script, relative to the shim's folder, or null for
+// anything else: a line added, moved or repeated (an `exit /b` before the run line would never reach it), a shebang
+// with arguments or variables, another program than node, pnpm's shim (it also sets NODE_PATH), an older form. Those
 // go through cmd.exe, which runs them exactly as written.
+const SHIM_HEAD = ["@ECHO off", "GOTO start", ":find_dp0", "SET dp0=%~dp0", "EXIT /b", ":start", "SETLOCAL", "CALL :find_dp0",
+  'IF EXIST "%dp0%\\node.exe" (', 'SET "_prog=%dp0%\\node.exe"', ") ELSE (", 'SET "_prog=node"'];
+const SHIM_RUN = "endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & ";
+const NPM_SHIMS = [
+  [...SHIM_HEAD, "SET PATHEXT=%PATHEXT:;.JS;=;%", ")", `${SHIM_RUN}"%_prog%"  "%dp0%\\<script>" %*`],
+  [...SHIM_HEAD, ")", `${SHIM_RUN}set PATHEXT=%PATHEXT:;.JS;=;% & "%_prog%"  "%dp0%\\<script>" %*`],
+];
 export function npmShimScript(text) {
   const lines = String(text).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-  const known = /^(@?echo off|goto start|:find_dp0|set dp0=%~dp0|exit \/b|exit \/b %errorlevel%|:start|setlocal|endlocal|call :find_dp0|if exist "%dp0%\\node\.exe" \(|set "_prog=%dp0%\\node\.exe"|\) else \(|set "_prog=node"|set pathext=%pathext:;\.js;=;%|\))$/i;
-  const runLine = /^(?:endLocal & goto #_undefined_# 2>NUL \|\| title %COMSPEC% & )?(?:set PATHEXT=%PATHEXT:;\.JS;=;% & )?"%_prog%" +"%dp0%\\([^"%]+)" %\*$/i;
-  const runs = lines.filter((l) => !known.test(l));
-  const script = runs.length === 1 ? runs[0].match(runLine)?.[1] : null;
-  return script && lines.some((l) => /^set "_prog=node"$/i.test(l)) && lines.some((l) => /^set dp0=%~dp0$/i.test(l)) ? script : null;
+  for (const form of NPM_SHIMS) {
+    if (lines.length !== form.length || form.some((l, i) => i < form.length - 1 && lines[i] !== l)) continue;
+    const [before, after] = form.at(-1).split("<script>"), last = lines.at(-1);
+    const script = last.startsWith(before) && last.endsWith(after) ? last.slice(before.length, last.length - after.length) : "";
+    if (/^[^"%]+$/.test(script)) return script;
+  }
+  return null;
 }
 
 // cmd.exe's own parse, then the C runtime's argv parse in the program it starts (cross-spawn's rules, which Node's docs
 // point to): each argument is quoted for the C runtime (backslashes doubled before a quote and at the end), then every
 // cmd metacharacter, the quotes included, is escaped with ^. Twice: a shim hands its arguments on with %*, and cmd parses
 // that expanded line again, so one escape would leave `a"&b` able to run `b` (cross-spawn escapes npm shims twice for
-// the same reason). Every .cmd a CLI installs forwards %* that way (npm, pnpm, yarn, scoop). A line break cannot cross
-// cmd at all, so such an argument is refused rather than cut.
+// the same reason). Every .cmd a CLI installs forwards %* that way (npm, pnpm, yarn, scoop). That assumes exactly one
+// such re-parse: a wrapper that CALLs another batch file with %*, or turns on delayed expansion, parses again, and that
+// is not measured (the carets would be off by one pass). A line break cannot cross cmd at all, so such an argument is
+// refused rather than cut.
 const CMD_META = /([()\][%!^"`<>&|;, *?])/g;
 export const cmdArg = (arg) => {
   const s = String(arg);
@@ -127,16 +143,34 @@ export const cmdArg = (arg) => {
 export const cmdLine = (file, args) => [file.replace(CMD_META, "^$1"), ...args.map(cmdArg)].join(" ");
 
 // What to start for `cmd args` on Windows: { cmd, args, verbatim } (verbatim: hand the line to cmd.exe as it is).
-export function windowsCommand(cmd, args = [], { env = process.env, exists = isFile, read = readSmall, depth = 0 } = {}) {
-  const file = resolveCommand(cmd, { env, exists });
+export function windowsCommand(cmd, args = [], { env = process.env, cwd = process.cwd(), exists = isFile, read = readSmall, depth = 0 } = {}) {
+  const file = resolveCommand(cmd, { env, cwd, exists });
   if (!file || !/\.(cmd|bat)$/i.test(file)) return { cmd: file ?? cmd, args };
   const script = npmShimScript(read(file)), dir = win32.dirname(file);
   if (script && depth < 2 && exists(win32.join(dir, script))) {
     const local = win32.join(dir, "node.exe");
-    return windowsCommand(exists(local) ? local : "node", [win32.join(dir, script), ...args], { env, exists, read, depth: depth + 1 });
+    return windowsCommand(exists(local) ? local : "node", [win32.join(dir, script), ...args], { env, cwd, exists, read, depth: depth + 1 });
   }
   const comspec = envGet(env, "ComSpec") || win32.join(envGet(env, "SystemRoot") || "C:\\Windows", "System32", "cmd.exe");
   return { cmd: comspec, args: ["/d", "/s", "/c", `"${cmdLine(file, args)}"`], verbatim: true };
+}
+
+// Stop a child routr no longer waits for (a timeout, or `until` has its answer), and on Windows all it started: a .cmd
+// runs the CLI under cmd.exe, and an npm shim's node may start the CLI's own binary, so killing the child alone would
+// leave the CLI running. `taskkill /T /F` walks the tree by parent id, so it runs while the child is still there, and
+// never for a child that has exited (its pid may belong to another process by then). If taskkill cannot start, the
+// child alone is killed, as before. Off Windows, and for herdr (runHerdr: one herdr.exe, and a tree kill could reach a
+// herdr server it started, the user's session), only the child is killed.
+export function stop(child, { platform = process.platform, via } = {}) {
+  if (!child || child.exitCode != null || child.signalCode != null) return;
+  if (platform === "win32" && child.pid) {
+    try {
+      start("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" }, { ...(via ? { via } : {}), platform })
+        .on("error", () => { try { child.kill(); } catch {} });
+      return;
+    } catch {}
+  }
+  try { child.kill(); } catch {}
 }
 
 // The environment for a harness read (`run`, `probe`): routr's own, without herdr's pane variables (HERDR_ENV,
@@ -160,12 +194,13 @@ export function spawnSelf(args) {
 // `status: true` resolves the exit code instead, for a command whose only answer is on stderr.
 export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, status = false } = {}) {
   return new Promise((resolve) => {
-    let out = "", done = false;
-    const finish = (v) => { if (done) return; done = true; clearTimeout(timer); try { child.kill(); } catch {} resolve(v); };
+    let out = "", done = false, exited = false;
+    const finish = (v) => { if (done) return; done = true; clearTimeout(timer); if (!exited) stop(child); resolve(v); };
     let child;
     try { child = start(cmd, args, { stdio: ["pipe", "pipe", "ignore"], env: harnessEnv(), ...(cwd ? { cwd } : {}) }); } catch { return resolve(null); }
     const timer = setTimeout(() => finish(null), timeoutMs);
     child.on("error", () => finish(null));
+    child.on("exit", () => { exited = true; });
     child.stdout.on("data", (d) => { out += d; if (until?.(out)) finish(out); });
     child.on("close", (code) => finish(status ? code : out || null));
     if (input) child.stdin.write(input); else child.stdin.end();
@@ -177,11 +212,12 @@ export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, status = f
 // Antigravity and Cursor on both). Resolves null when it does not answer in time or cannot start; never throws.
 export function probe(cmd, args, { timeoutMs = 15000, cwd } = {}) {
   return new Promise((resolve) => {
-    let out = "", done = false, child;
-    const finish = (v) => { if (done) return; done = true; clearTimeout(timer); try { child.kill(); } catch {} resolve(v); };
+    let out = "", done = false, exited = false, child;
+    const finish = (v) => { if (done) return; done = true; clearTimeout(timer); if (!exited) stop(child); resolve(v); };
     try { child = start(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env: harnessEnv(), ...(cwd ? { cwd } : {}) }); } catch { return resolve(null); }
     const timer = setTimeout(() => finish(null), timeoutMs);
     child.on("error", () => finish(null));
+    child.on("exit", () => { exited = true; });
     child.stdout.on("data", (d) => { out += d; });
     child.stderr.on("data", (d) => { out += d; });
     child.on("close", (code) => finish({ out, code }));

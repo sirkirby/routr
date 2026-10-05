@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { cmdArg, cmdLine, harnessEnv, npmShimScript, probe, resolveCommand, run, start, startOptions, startSync, windowsCommand } from "../src/lib/runtime.mjs";
+import { cmdArg, cmdLine, harnessEnv, npmShimScript, probe, resolveCommand, run, start, startOptions, startSync, stop, windowsCommand } from "../src/lib/runtime.mjs";
 import { npmShim } from "./helpers.mjs";
 
 // The ordinary ways of reaching node's process API, or Bun's: a static import, require, or a literal dynamic import,
@@ -71,28 +71,54 @@ const NPM = "C:\\Users\\u\\AppData\\Roaming\\npm", NODE = "C:\\Program Files\\no
 
 test("a command resolves as cmd would: PATH in order, PATHEXT in order and any case, an explicit extension or folder as given", () => {
   const { exists } = winFs({ [`${NPM}\\codex`]: "#!/bin/sh", [`${NPM}\\codex.ps1`]: "", [`${NPM}\\CODEX.CMD`]: "", [NODE]: "", "C:\\first\\tool.exe": "", [`${NPM}\\tool.cmd`]: "",
-    [`${NPM}\\only.js`]: "", "D:\\x\\app.EXE": "", "D:/x/run.bat": "" });
-  const r = (cmd, env = WIN_ENV) => resolveCommand(cmd, { env, exists });
+    [`${NPM}\\only.js`]: "", "D:\\x\\app.EXE": "", "D:\\x\\run.bat": "" });
+  const r = (cmd, env = WIN_ENV) => resolveCommand(cmd, { env, cwd: "C:\\work", exists });
   expect(r("codex")).toBe(`${NPM}\\codex.cmd`); // not npm's extensionless sh twin, nor its .ps1
   expect(r("Codex.cmd")).toBe(`${NPM}\\Codex.cmd`);
   expect(r("node")).toBe(NODE); // a quoted PATH entry
   expect(r("tool")).toBe("C:\\first\\tool.exe"); // the first folder wins over a later .cmd
   expect(r("only")).toBeNull(); // .JS is in PATHEXT, but cmd would hand it to Windows Script Host
   expect(r("D:\\x\\app")).toBe("D:\\x\\app.exe");
-  expect(r("D:/x/run.bat")).toBe("D:/x/run.bat");
+  expect(r("D:/x/run.bat")).toBe("D:\\x\\run.bat");
   expect(r("D:\\x\\missing")).toBeNull();
   expect(r("codex", { PATH: NPM })).toBe(`${NPM}\\codex.cmd`); // no PATHEXT: cmd's own default
   expect(r("codex", { PATH: NPM, PATHEXT: ".EXE" })).toBeNull();
 });
 
+test("a relative PATH entry or command is looked up in the child's folder, and the answer is always absolute", () => {
+  // The same names exist under routr's folder (C:\routr) and the child's (C:\work): only the child's may be chosen.
+  const { exists } = winFs({ "C:\\routr\\tools\\h.cmd": "", "C:\\work\\tools\\h.cmd": "", "C:\\routr\\bin\\x.exe": "", "C:\\work\\bin\\x.exe": "" });
+  const r = (cmd, cwd) => resolveCommand(cmd, { env: { PATH: "tools;C:\\none" }, cwd, exists });
+  expect(r("h", "C:\\work")).toBe("C:\\work\\tools\\h.cmd");
+  expect(r("h", "C:\\routr")).toBe("C:\\routr\\tools\\h.cmd");
+  expect(r(".\\bin\\x", "C:\\work")).toBe("C:\\work\\bin\\x.exe");
+  expect(r("bin/x.exe", "C:\\work")).toBe("C:\\work\\bin\\x.exe");
+  expect(r("h", "C:\\elsewhere")).toBeNull();
+  // An npm shim found through a relative entry starts node on its script by absolute path.
+  const files = winFs({ "C:\\work\\tools\\h.cmd": npmShim("node_modules\\h\\h.js"), "C:\\work\\tools\\node_modules\\h\\h.js": "", [NODE]: "" });
+  expect(windowsCommand("h", ["a"], { env: { PATH: `tools;C:\\Program Files\\nodejs` }, cwd: "C:\\work", ...files }))
+    .toEqual({ cmd: NODE, args: ["C:\\work\\tools\\node_modules\\h\\h.js", "a"] });
+});
+
 test("npm's cmd shim is recognised in each form npm has written, and nothing else is", () => {
   const script = "node_modules\\@openai\\codex\\bin\\codex.js";
   expect(npmShimScript(npmShim(script))).toBe(script); // cmd-shim 9.0.2 (npm 11), as generated
-  // cmd-shim 5 and 6: the PATHEXT line inside the ELSE, not on the run line.
-  expect(npmShimScript(npmShim(script).replace(' SET "_prog=node"\r\n', ' SET "_prog=node"\r\n  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n').replace("set PATHEXT=%PATHEXT:;.JS;=;% & ", ""))).toBe(script);
-  // cmd-shim 4 (npm 7): the subroutine at the end, a plain run line.
+  // cmd-shim 7.0.0 and 8.0.0: the PATHEXT line inside the ELSE, not on the run line.
+  const v8 = npmShim(script).replace(' SET "_prog=node"\r\n', ' SET "_prog=node"\r\n  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n').replace("set PATHEXT=%PATHEXT:;.JS;=;% & ", "");
+  expect(npmShimScript(v8)).toBe(script);
+  expect(npmShimScript(npmShim("..\\x\\cli.js"))).toBe("..\\x\\cli.js");
+  // Matched whole and in order: a line added (an exit before the run line), moved, repeated or missing is not npm's.
+  const lines = npmShim(script).split("\r\n"), at = lines.findIndex((l) => l.startsWith("endLocal"));
+  const edit = (f) => { const l = [...lines]; f(l); return l.join("\r\n"); };
+  expect(npmShimScript(edit((l) => l.splice(at, 0, "exit /b")))).toBeNull();
+  expect(npmShimScript(edit((l) => l.splice(at, 0, "EXIT /b")))).toBeNull(); // a line the template has, in the wrong place
+  expect(npmShimScript(edit((l) => { [l[1], l[2]] = [l[2], l[1]]; }))).toBeNull(); // reordered
+  expect(npmShimScript(edit((l) => l.splice(at, 0, l[at])))).toBeNull(); // the run line twice
+  expect(npmShimScript(edit((l) => l.splice(6, 1)))).toBeNull(); // SETLOCAL dropped
+  expect(npmShimScript(v8.replace("SET PATHEXT", "SET PATHEXT=x\r\nSET PATHEXT"))).toBeNull();
+  // The older form (cmd-shim 4.0: run line, ENDLOCAL, subroutine last) is not matched: cmd.exe runs it.
   const v4 = '@ECHO off\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\nIF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n) ELSE (\r\n  SET "_prog=node"\r\n  SET PATHEXT=%PATHEXT:;.JS;=;%\r\n)\r\n\r\n"%_prog%"  "%dp0%\\..\\x\\cli.js" %*\r\nENDLOCAL\r\nEXIT /b %errorlevel%\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n';
-  expect(npmShimScript(v4)).toBe("..\\x\\cli.js");
+  expect(npmShimScript(v4)).toBeNull();
   // A shebang with arguments or variables, another program, pnpm's shim, a hand-written file: cmd.exe runs those.
   expect(npmShimScript(npmShim(script).replace('"%_prog%"  "', '"%_prog%" --no-warnings "'))).toBeNull();
   expect(npmShimScript(npmShim(script).replace("CALL :find_dp0\r\n", "CALL :find_dp0\r\n@SET NODE_OPTIONS=--x\r\n"))).toBeNull();
@@ -117,7 +143,7 @@ test("an argument for cmd.exe is quoted for the C runtime, then every cmd metach
 
 test("on Windows an npm shim starts node on its script, any other .cmd goes through cmd.exe, an .exe starts as it is", () => {
   const shim = npmShim("node_modules\\@openai\\codex\\bin\\codex.js"), js = `${NPM}\\node_modules\\@openai\\codex\\bin\\codex.js`;
-  const w = (cmd, args, files) => windowsCommand(cmd, args, { env: WIN_ENV, ...winFs(files) });
+  const w = (cmd, args, files) => windowsCommand(cmd, args, { env: WIN_ENV, cwd: "C:\\work", ...winFs(files) });
   const base = { [`${NPM}\\codex.cmd`]: shim, [NODE]: "" };
   expect(w("codex", ["login", "status"], { ...base, [js]: "" })).toEqual({ cmd: NODE, args: [js, "login", "status"] });
   // The shim's own node.exe first, as the shim would.
@@ -137,4 +163,24 @@ test("start on Windows passes a command it cannot find on unchanged, console sti
   const seen = [];
   start("routr-no-such-command", ["a"], { stdio: "ignore" }, { via: (...a) => seen.push(a), platform: "win32" });
   expect(seen).toEqual([["routr-no-such-command", ["a"], { stdio: "ignore", windowsHide: true }]]);
+});
+
+test("stopping a child on Windows kills its whole tree with taskkill, never a child that has exited; elsewhere the child alone", () => {
+  const child = (over = {}) => { const c = { pid: 4242, exitCode: null, signalCode: null, killed: 0, kill() { c.killed++; }, ...over }; return c; };
+  const seen = [], via = (...a) => { seen.push(a); return { on: () => {} }; };
+  const running = child();
+  stop(running, { platform: "win32", via });
+  expect(seen.map(([cmd, args, opts]) => [cmd.replace(/^.*[\\/]/, "").replace(/\.exe$/i, "").toLowerCase(), args, opts])).toEqual([["taskkill", ["/PID", "4242", "/T", "/F"], { stdio: "ignore", windowsHide: true }]]);
+  expect(running.killed).toBe(0); // the tree walk needs the child alive
+  // taskkill failing to start: the child alone, as before.
+  const lone = child();
+  stop(lone, { platform: "win32", via: () => { throw new Error("EPERM"); } });
+  expect(lone.killed).toBe(1);
+  // A child that has exited may have handed its pid on: nothing is killed.
+  seen.length = 0;
+  for (const c of [child({ exitCode: 0 }), child({ signalCode: "SIGTERM" })]) { stop(c, { platform: "win32", via }); expect(c.killed).toBe(0); }
+  expect(seen).toEqual([]);
+  const posix = child();
+  stop(posix, { platform: "linux", via });
+  expect([posix.killed, seen]).toEqual([1, []]);
 });

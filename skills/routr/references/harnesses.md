@@ -42,7 +42,8 @@ bare name and by full path alike, so its sign-in check never answered and the ha
 resolves each command through PATH and PATHEXT as cmd would, starts npm's own shim as `node <its script>` directly,
 and runs any other `.cmd` through `cmd.exe /d /s /c` with each argument escaped for cmd; arguments with spaces, quotes,
 `% & ^ | < > ( ) !` and Claude's `{"disableAllHooks":true}` arrive intact (CI test, from `bun test` and from a compiled
-binary). Not yet run against a real npm install of any harness. A native `.exe` install starts as before.
+binary), and a timeout stops the CLI under cmd.exe too (`taskkill /T`). Not yet run against a real npm install of any
+harness. A native `.exe` install starts as before.
 
 ## Rules that hold for every harness
 
