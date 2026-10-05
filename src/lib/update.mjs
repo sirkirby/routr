@@ -7,7 +7,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, sta
 import { join } from "node:path";
 import { loadConfig } from "./config.mjs";
 import { CACHE_DIR, lockIsStale, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
-import { forgetConsentUnlessOn, sendRows, telemetryStatus } from "./telemetry.mjs";
+import { forgetConsentUnlessOn, hoursAgo, sendRows, telemetryStatus } from "./telemetry.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 const REPO = "sirkirby/routr";
@@ -163,7 +163,12 @@ const DAY = 24 * 60 * 60 * 1000;
 
 export const dueForCheck = (lastCheckMs, nowMs = Date.now()) => !Number.isFinite(lastCheckMs) || nowMs - lastCheckMs > DAY;
 
-const updatesOn = (config) => config?.auto_update !== false && !process.env.ROUTR_NO_UPDATE;
+// Why automatic updates are off, or null when they are on: the one answer doctor, setup's channel note and the daily job
+// all use. A source checkout is updated with git, never by the job (it starts only from a release binary).
+export const updatesOff = (config, { isStandalone = standalone, env = process.env } = {}) =>
+  !isStandalone() ? "running from source" : env.ROUTR_NO_UPDATE ? "ROUTR_NO_UPDATE is set" : config?.auto_update === false ? "auto_update is false in your config" : null;
+// The job runs only from a release binary (maybeAutoUpdate checks that first), so it asks the rest.
+const updatesOn = (config) => !updatesOff(config, { isStandalone: () => true });
 
 // The daily job: the update check and the telemetry send share one detached process and one stamp.
 // `isStandalone` and `spawn` are seams, so a test can check which runs start without a release binary.
@@ -178,7 +183,14 @@ export function maybeAutoUpdate(config, { isStandalone = standalone, spawn = spa
   } catch { return false; } // updating must never get in the way of the command that was asked for
 }
 
-export async function backgroundUpdate() {
+// What the daily job writes to UPDATE_LOG after its check: the result, and the newest release it saw on which channel, so
+// doctor can say an update is waiting without asking GitHub itself (a command never makes the updater's network call).
+// `latest` is kept only when it is a release version (not ROUTR_DOWNLOAD_BASE's placeholder).
+export const updateRecord = (r, channel, at = new Date().toISOString()) =>
+  ({ at, ok: r.ok, updated: r.updated, note: r.note, error: r.error ?? null, latest: CHANNEL_TAGS.beta.test(String(r.latest ?? "")) ? r.latest : null, channel: channel ?? "stable" });
+
+// `run` is a seam: a test drives the job with a fake update, and no network.
+export async function backgroundUpdate({ run = update } = {}) {
   mkdirSync(CACHE(), { recursive: true });
   if (!takeLock(LOCK(), (f) => lockIsStale(f))) return; // one updater at a time
   try {
@@ -188,15 +200,23 @@ export async function backgroundUpdate() {
     forgetConsentUnlessOn(config);
     if (telemetryStatus(config).on) { const t = await sendRows().catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) })); writeFileSync(TELEMETRY_LOG(), JSON.stringify({ at: new Date().toISOString(), ...t }) + "\n"); }
     if (!updatesOn(config)) return;
-    const r = await update({ channel: config.update_channel });
-    writeFileSync(UPDATE_LOG(), JSON.stringify({ at: new Date().toISOString(), ok: r.ok, updated: r.updated, note: r.note, error: r.error ?? null }) + "\n");
+    const r = await run({ channel: config.update_channel });
+    writeFileSync(UPDATE_LOG(), JSON.stringify(updateRecord(r, config.update_channel)) + "\n");
   } finally { rmSync(LOCK(), { force: true }); }
 }
 
-export function autoUpdateStatus(config) {
-  const on = standalone() && updatesOn(config);
+// Whether automatic updates are on and why not, when the daily job last checked, its last result, and the update it saw
+// waiting. Read from the job's own files only: doctor (and setup, which runs its inspection) never asks GitHub. A release
+// is offered only when the job saw it on the channel the user is on now (after a switch the old record says nothing)
+// and it is newer than this binary. With updates off the record is no longer refreshed, so nothing is offered and the
+// person is told how to look by hand. `isStandalone`, `env`, `now`, `current`, `log` and `stamp` are test seams.
+export function autoUpdateStatus(config, { isStandalone = standalone, env = process.env, now = Date.now(), current = ROUTR_VERSION, log = UPDATE_LOG(), stamp = UPDATE_STAMP() } = {}) {
+  const why_off = updatesOff(config, { isStandalone, env }), on = !why_off, channel = config?.update_channel ?? "stable";
   let checked = null, last = null;
-  try { checked = Math.round((Date.now() - statSync(UPDATE_STAMP()).mtimeMs) / 3600000); } catch {}
-  try { last = JSON.parse(readFileSync(UPDATE_LOG(), "utf8")); } catch {}
-  return { on, channel: config?.update_channel ?? "stable", why_off: on ? null : !standalone() ? "running from source" : "turned off (auto_update: false, or ROUTR_NO_UPDATE)", checked_hours_ago: checked, last };
+  try { checked = Math.round((now - statSync(stamp).mtimeMs) / 3600000); } catch {}
+  try { last = JSON.parse(readFileSync(log, "utf8")); } catch {}
+  const waiting = on && CHANNEL_TAGS.beta.test(String(last?.latest ?? "")) && last.channel === channel && newer(last.latest, current);
+  return { on, channel, why_off, checked_hours_ago: checked, last,
+    available: waiting ? { version: last.latest, seen_hours_ago: hoursAgo(last.at, now) } : null,
+    ...(on ? {} : { check_by_hand: "routr update --check" }) };
 }

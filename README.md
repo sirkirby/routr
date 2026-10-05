@@ -127,8 +127,8 @@ a command, and the skill tells it which.
 
 routr keeps itself current. At most once a day a command starts a background check; a new release is downloaded,
 verified against its checksums, and swapped in, and your next `routr` run uses it. Nothing you are running is
-interrupted. `routr update` does it on demand, `routr doctor` shows when it last checked, and `"auto_update": false`
-in the config turns it off. Updates also reinstall the bundled agent skills.
+interrupted. `routr update` does it on demand, `routr doctor` shows when it last checked and any newer release that
+check saw (doctor makes no network call of its own), and `"auto_update": false` in the config turns it off. Updates also reinstall the bundled agent skills.
 After updating, run `routr setup` to review your settings. See the
 [release notes](https://github.com/sirkirby/routr/releases) for changes and upgrade details.
 

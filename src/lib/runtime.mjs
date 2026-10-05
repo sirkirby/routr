@@ -90,11 +90,13 @@ const envGet = (env, name) => { const k = Object.keys(env).find((key) => key.toL
 
 // The file a shell would start for `cmd`, or null. Only extensions both PATHEXT and CreateProcess-or-cmd can start count:
 // PATHEXT also lists .JS and .VBS, which cmd would hand to Windows Script Host (an npm shim strips .JS for that reason).
-export function resolveCommand(cmd, { env = process.env, cwd = process.cwd(), exists = isFile } = {}) {
+// doctor finds harnesses with this too, so what it reports found is what start() can start. `path` replaces PATH's
+// folders (doctor's look in the usual install folders that are not on PATH).
+export function resolveCommand(cmd, { env = process.env, cwd = process.cwd(), exists = isFile, path = envGet(env, "PATH") } = {}) {
   const exts = (envGet(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";").map((e) => e.trim().toLowerCase()).filter((e) => RUNNABLE.includes(e));
   const tries = (base) => { base = win32.resolve(cwd, base); return [...(win32.extname(base) ? [base] : []), ...exts.map((e) => base + e)].find(exists) ?? null; };
   if (/[\\/]/.test(cmd) || /^[a-z]:/i.test(cmd)) return tries(cmd);
-  for (const dir of String(envGet(env, "PATH") ?? "").split(";").map((d) => d.trim().replace(/^"(.*)"$/, "$1"))) {
+  for (const dir of String(path ?? "").split(";").map((d) => d.trim().replace(/^"(.*)"$/, "$1"))) {
     const hit = dir && tries(win32.join(dir, cmd));
     if (hit) return hit;
   }

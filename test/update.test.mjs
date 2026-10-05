@@ -1,7 +1,7 @@
 // update.mjs: releases, the binary swap, and the daily check
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { SCRATCH, scratch } from "./helpers.mjs";
 
@@ -188,4 +188,89 @@ test("update_channel defaults to stable, and an unknown value is reported and re
   expect(bad.config.update_channel).toBe("stable");
   expect(bad.notes).toEqual(['update_channel: "nightly" is not one of stable, beta, using stable: routr setup --channel stable|beta']);
   expect(loadConfig("/nonexistent/config.json").config.update_channel).toBe("stable");
+});
+
+// Doctor says an update is waiting from what the daily job saw, never by asking GitHub itself (AGENTS.md: a command
+// makes no network call for the updater). The job's record and doctor's reading of it, with a fake cache.
+test("the daily job records the newest release it saw and on which channel, and a placeholder version is not kept", async () => {
+  const { updateRecord } = await import("../src/lib/update.mjs");
+  const at = "2026-10-05T00:00:00.000Z";
+  expect(updateRecord({ ok: false, updated: false, latest: "0.6.0", note: "Nothing was changed.", error: "checksum mismatch" }, "beta", at))
+    .toEqual({ at, ok: false, updated: false, note: "Nothing was changed.", error: "checksum mismatch", latest: "0.6.0", channel: "beta" });
+  expect(updateRecord({ ok: true, updated: true, latest: "(from ROUTR_DOWNLOAD_BASE)" }, undefined, at)).toMatchObject({ latest: null, channel: "stable", error: null });
+});
+
+test("the background job writes that record to update.log, with a fake update and no network", async () => {
+  const { backgroundUpdate, UPDATE_LOG } = await import("../src/lib/update.mjs");
+  const { UPDATE_STAMP } = await import("../src/lib/runtime.mjs");
+  const before = process.env.ROUTR_NO_UPDATE;
+  delete process.env.ROUTR_NO_UPDATE;
+  const asked = [];
+  try {
+    await backgroundUpdate({ run: async (o) => { asked.push(o); return { ok: true, updated: false, latest: "0.7.0", note: "0.7.0 is available" }; } });
+    expect(asked).toEqual([{ channel: "stable" }]);
+    expect(JSON.parse(readFileSync(UPDATE_LOG(), "utf8"))).toMatchObject({ ok: true, updated: false, latest: "0.7.0", channel: "stable", error: null });
+  } finally {
+    process.env.ROUTR_NO_UPDATE = before;
+    rmSync(UPDATE_LOG(), { force: true }); rmSync(UPDATE_STAMP(), { force: true }); // other tests see no check
+  }
+});
+
+test("doctor offers a release the daily job saw only on the user's channel, newer than this binary, with its age", async () => {
+  const { autoUpdateStatus } = await import("../src/lib/update.mjs");
+  const dir = scratch("update-log"), log = join(dir, "update.log"), stamp = join(dir, "update-check");
+  const now = Date.parse("2026-10-05T12:00:00.000Z");
+  const seen = (latest, channel, at = "2026-10-05T09:00:00.000Z") => writeFileSync(log, JSON.stringify({ at, ok: true, updated: false, note: "", error: null, latest, channel }) + "\n");
+  const status = (config = {}, over = {}) => autoUpdateStatus({ update_channel: "stable", ...config }, { isStandalone: () => true, env: {}, now, current: "0.5.0", log, stamp, ...over });
+  seen("0.6.0", "stable");
+  expect(status()).toMatchObject({ on: true, why_off: null, available: { version: "0.6.0", seen_hours_ago: 3 } });
+  expect(status().check_by_hand).toBeUndefined();
+  expect(status({ update_channel: "beta" }).available).toBeNull();   // seen for another channel: says nothing about this one
+  seen("0.6.0-beta.1", "beta");
+  expect(status({ update_channel: "beta" }).available).toEqual({ version: "0.6.0-beta.1", seen_hours_ago: 3 });
+  expect(status().available).toBeNull();
+  seen("0.5.0", "stable");
+  expect(status().available).toBeNull();                              // the same version: nothing waiting
+  seen("0.4.9", "stable");
+  expect(status().available).toBeNull();                              // older: never offered
+  seen("0.6.0", undefined);
+  expect(status().available).toBeNull();                              // a record from before the channel was kept
+  rmSync(log);
+  expect(status()).toMatchObject({ on: true, last: null, available: null, checked_hours_ago: null }); // no cache at all
+  // Updates off: the record is no longer refreshed, so nothing is offered; doctor names the reason and the way to look.
+  seen("0.6.0", "stable");
+  expect(status({ auto_update: false })).toMatchObject({ on: false, why_off: "auto_update is false in your config", available: null, check_by_hand: "routr update --check" });
+  expect(status({}, { env: { ROUTR_NO_UPDATE: "1" } })).toMatchObject({ on: false, why_off: "ROUTR_NO_UPDATE is set", available: null, check_by_hand: "routr update --check" });
+  expect(status({}, { isStandalone: () => false })).toMatchObject({ on: false, why_off: "running from source", available: null, check_by_hand: "routr update --check" });
+});
+
+test("doctor shows the waiting release with its age, and with updates off the command that looks by hand", async () => {
+  const { nextSteps, render } = await import("../src/lib/doctor.mjs");
+  const r = { runtime: "routr 0.5.0 (standalone binary)", herdr: { path: "/bin/herdr", inside_session: true, skill: true }, skill: [], harnesses: {},
+    key: { works: true, model: "jev", ms: 300 }, config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] },
+    auto_update: { on: true, channel: "stable", checked_hours_ago: 3, last: null }, update_available: "0.6.0", update_seen_hours_ago: 3, next_steps: [] };
+  expect(render(r)).toContain("routr 0.5.0 (standalone binary) · 0.6.0 is available, seen 3 h ago: run `routr update`");
+  expect(nextSteps(r)).toContain("Update to 0.6.0: routr update");
+  const off = { ...r, update_available: undefined, update_seen_hours_ago: undefined, auto_update: { on: false, channel: "stable", why_off: "ROUTR_NO_UPDATE is set", check_by_hand: "routr update --check" } };
+  expect(render(off)).toContain("automatic updates off: ROUTR_NO_UPDATE is set · stable channel · `routr update --check` looks for a newer release");
+  expect(render(off)).not.toContain("is available");
+});
+
+test("doctor's inspection makes no network call for updates: fetch is never called, with automatic updates on", async () => {
+  const { inspect } = await import("../src/lib/doctor.mjs");
+  const before = { fetch: globalThis.fetch, PATH: process.env.PATH, NO: process.env.ROUTR_NO_UPDATE, KEY: process.env.TYPESAFE_API_KEY };
+  const calls = [];
+  globalThis.fetch = async (u) => { calls.push(String(u)); throw new Error("no network in this test"); };
+  process.env.PATH = scratch("empty-path"); // no harness is found, so none is started
+  delete process.env.ROUTR_NO_UPDATE; delete process.env.TYPESAFE_API_KEY; // no key: the key's test call is not made either
+  try {
+    const r = await inspect({ configPath: join(scratch("doctor-cfg"), "config.json"), quiet: true });
+    expect(calls).toEqual([]); // before, doctor asked GitHub for the latest release on every run
+    expect(r.key).toMatchObject({ found: false, works: false });
+    expect(r.update_available).toBeUndefined();
+    expect(r.next_steps.length).toBeGreaterThan(0);
+  } finally {
+    globalThis.fetch = before.fetch; process.env.PATH = before.PATH; process.env.ROUTR_NO_UPDATE = before.NO;
+    if (before.KEY === undefined) delete process.env.TYPESAFE_API_KEY; else process.env.TYPESAFE_API_KEY = before.KEY;
+  }
 });

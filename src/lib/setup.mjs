@@ -13,6 +13,7 @@ import { inspect, paint, render, skillsIncomplete, skillsMissing, starterConfig 
 import { HARNESSES } from "./harnesses.mjs";
 import { setKey } from "./key.mjs";
 import { standalone } from "./runtime.mjs";
+import { updatesOff } from "./update.mjs";
 import { installSkill } from "./skill-install.mjs";
 import { guided } from "./setup-guided.mjs";
 import { CANCEL, createUI } from "./tui.mjs";
@@ -88,9 +89,11 @@ export function parseChannel(args) {
 }
 // What setup says after the channel changed. It runs no update and asks GitHub nothing, so it names no version.
 // Nothing moves a pre-release back to stable by itself (update.mjs): a person leaving beta on one is told so.
-// With automatic updates off, only `routr update` moves it, and the note says so.
-export function channelNote(channel, running = ROUTR_VERSION, isStandalone = standalone(), auto = true) {
-  const later = auto ? "; otherwise the daily update does it" : " (automatic updates are off)";
+// With automatic updates off, only `routr update` moves it, and the note says why they are off: `off` is updatesOff's
+// answer (update.mjs, the one doctor shows too), null when they are on. Reading only the config said "the daily update
+// does it" under ROUTR_NO_UPDATE and from a source checkout, where no daily update runs.
+export function channelNote(channel, running = ROUTR_VERSION, isStandalone = standalone(), off = null) {
+  const auto = !off, later = auto ? "; otherwise the daily update does it" : ` (automatic updates are off: ${off})`;
   if (channel === "beta") return `update channel: beta. \`routr update\` installs the newest beta, rc or stable release now${later}`;
   const pre = isStandalone && running.includes("-");
   return `update channel: stable. ${pre ? `You stay on ${running} until a stable release is newer; \`routr update --force\` installs the newest stable now${auto ? "" : later}` : `\`routr update\` installs the newest stable release now${later}`}`;
@@ -111,7 +114,7 @@ export async function meteredRanks(fresh, harnesses, ranks, ask) {
 // in the tui's accessible mode, or `ui`, a ready-made tui), each harness's effort levels (`efforts`), and each step that
 // writes outside the config (the skill, the telemetry state, the key).
 export async function setup(args, { inspect: look = inspect, question, interactive: tty = Boolean(process.stdin.isTTY), env = process.env,
-  install = installSkill, share: shareOn = setTelemetry, key = setKey, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI } = {}) {
+  install = installSkill, share: shareOn = setTelemetry, key = setKey, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI, isStandalone = standalone } = {}) {
   const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   const path = flag("--config") ?? CONFIG_PATH;
   const interactive = tty && !args.includes("--yes");
@@ -181,8 +184,8 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const skillStep = () => {
     const base = baseVersion(ROUTR_VERSION), ours = r.skill.filter((k) => k.ours !== false);
     const gaps = [...skillsMissing(r).map((n) => `${n} is missing`), ...skillsIncomplete(r).map((k) => `${k.where} lacks ${k.missing.join(", ")}`)];
-    if (!gaps.length && !(standalone() && ours.some((k) => baseVersion(k.version) !== base))) return false;
-    if (!standalone() && ours.some((k) => baseVersion(k.version) !== base)) {
+    if (!gaps.length && !(isStandalone() && ours.some((k) => baseVersion(k.version) !== base))) return false;
+    if (!isStandalone() && ours.some((k) => baseVersion(k.version) !== base)) {
       skipped.push(`routr's skills need repair (${gaps.join("; ")}), but this routr runs from a source checkout and the installed skills come from a release: run the installed routr's \`routr skill install\` (usually ~/.local/bin/routr skill install)`);
       return false;
     }
@@ -288,7 +291,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
     did.push(`wrote ${path}${fresh.length ? ` with ${fresh.join(", ")}` : changed.length ? "" : " (no harness found yet: run `routr setup` again after installing one)"}`);
   } else skipped.push(`config ${path} already covers every harness found: kept as it is`);
-  if (channelMoved) did.push(channelNote(channel, ROUTR_VERSION, standalone(), config.auto_update !== false)); // what happens next; setup itself updates nothing
+  if (channelMoved) did.push(channelNote(channel, ROUTR_VERSION, isStandalone(), updatesOff(config, { isStandalone, env }))); // what happens next; setup itself updates nothing
   skipped.push(...leftOut);
 
   // 2. Telemetry: off unless a person says yes. Asked once, default no; an agent's run never turns it on.

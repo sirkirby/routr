@@ -116,7 +116,8 @@ the command that fixes it.
   `test_writing`, `docs`), for example `"research": "strong"`. Shown to agents as advice, never forced.
 - `sure_at` (0.8), `risk_above` (0.75), `fallback_level` (`standard`): leave at the defaults unless asked.
 - `auto_update` (`true`): routr checks for a new release in the background at most once a day and uses it from the
-  next run. Set it to `false` if the user wants to update only by hand with `routr update`.
+  next run. Set it to `false` if the user wants to update only by hand with `routr update`. `routr doctor` reports a
+  newer release only from that daily check (it asks GitHub nothing itself); with it off, `routr update --check` looks.
 - `update_channel` (`stable`): which releases updates install, the daily one and `routr update` alike. `beta` also
   takes `-beta.N` and `-rc.N` builds, and moves to a stable release once it is the newest. Set it with
   `routr setup --yes --channel beta|stable`. Going back to stable never installs an older version by itself: the user

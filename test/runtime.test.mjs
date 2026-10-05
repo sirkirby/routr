@@ -100,6 +100,35 @@ test("a relative PATH entry or command is looked up in the child's folder, and t
     .toEqual({ cmd: NODE, args: ["C:\\work\\tools\\node_modules\\h\\h.js", "a"] });
 });
 
+test("doctor finds a harness by the rule start() uses on Windows, so what it calls found is what routr can start", async () => {
+  const { offPath, which } = await import("../src/lib/doctor.mjs");
+  const { exists } = winFs({ [`${NPM}\\codex`]: "#!/bin/sh", [`${NPM}\\codex.cmd`]: "", [`${NPM}\\only.js`]: "", [`${NPM}\\vb.vbs`]: "", "C:\\work\\kiro-cli.exe": "",
+    "C:\\first\\agy.exe": "", [`${NPM}\\agy.cmd`]: "", "C:\\Users\\u\\.local\\bin\\claude.exe": "", "C:\\Users\\u\\.local\\bin\\gem.js": "" });
+  const w = (cmd, env = WIN_ENV) => which(cmd, { platform: "win32", env, cwd: "C:\\work", exists });
+  for (const cmd of ["codex", "only", "vb", "kiro-cli", "agy"]) expect(w(cmd)).toBe(resolveCommand(cmd, { env: WIN_ENV, cwd: "C:\\work", exists }));
+  expect(w("codex")).toBe(`${NPM}\\codex.cmd`); // never npm's extensionless sh twin
+  expect(w("only")).toBeNull(); // .JS and .VBS are in PATHEXT, but start() would not run them, so they are not found
+  expect(w("vb")).toBeNull();
+  expect(w("kiro-cli")).toBeNull(); // the current folder is not searched first (or at all), as start() does not
+  expect(w("agy")).toBe("C:\\first\\agy.exe"); // PATH in order
+  expect(w("codex", { PATH: NPM, PATHEXT: ".EXE" })).toBeNull(); // PATHEXT decides, as for start()
+  // Off PATH, in the usual install folders: the same rule.
+  expect(offPath("claude", { platform: "win32", dirHome: "C:\\Users\\u", env: WIN_ENV, exists })).toBe("C:\\Users\\u\\.local\\bin\\claude.exe");
+  expect(offPath("gem", { platform: "win32", dirHome: "C:\\Users\\u", env: WIN_ENV, exists })).toBeNull();
+});
+
+test.skipIf(process.platform === "win32")("off Windows, doctor's which is a plain PATH search, unchanged", async () => {
+  const { offPath, which } = await import("../src/lib/doctor.mjs");
+  const files = new Set(["/a/codex", "/b/codex", "/b/kiro-cli", "/h/.local/bin/agy", "/opt/homebrew/bin/herdr"]);
+  const exists = (p) => files.has(p);
+  const w = (cmd) => which(cmd, { platform: "darwin", env: { PATH: "/a::/b" }, exists });
+  expect(w("codex")).toBe("/a/codex");
+  expect(w("kiro-cli")).toBe("/b/kiro-cli");
+  expect(w("agy")).toBeNull();
+  expect(offPath("agy", { platform: "darwin", dirHome: "/h", exists })).toBe("/h/.local/bin/agy");
+  expect(offPath("herdr", { platform: "linux", dirHome: "/h", exists })).toBe("/opt/homebrew/bin/herdr");
+});
+
 test("npm's cmd shim is recognised in each form npm has written, and nothing else is", () => {
   const script = "node_modules\\@openai\\codex\\bin\\codex.js";
   expect(npmShimScript(npmShim(script))).toBe(script); // cmd-shim 9.0.2 (npm 11), as generated
