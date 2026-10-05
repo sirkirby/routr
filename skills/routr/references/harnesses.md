@@ -36,6 +36,15 @@ waits for a code, and any Kiro `chat` command opens Kiro's.
 Each takes 0.3 to 3.4 s. The answer is kept in `~/.cache/routr/signed-in.json` (signed in: 6 hours; not: 10 minutes),
 so a dispatch rarely pays for it; doctor and setup always ask again.
 
+**Windows, npm installs (measured on GitHub's windows-latest, 2026-10-05, Bun 1.4.2).** A harness CLI installed with
+npm is a `.cmd` shim (`%APPDATA%\npm\codex.cmd`). Started without a shell, as routr starts everything, it failed by
+bare name and by full path alike, so its sign-in check never answered and the harness was never used. routr now
+resolves each command through PATH and PATHEXT as cmd would, starts npm's own shim as `node <its script>` directly,
+and runs any other `.cmd` through `cmd.exe /d /s /c` with each argument escaped for cmd; arguments with spaces, quotes,
+`% & ^ | < > ( ) !` and Claude's `{"disableAllHooks":true}` arrive intact (CI test, from `bun test` and from a compiled
+binary), and a timeout stops the CLI under cmd.exe too (`taskkill /T`). Not yet run against a real npm install of any
+harness. A native `.exe` install starts as before.
+
 ## Rules that hold for every harness
 
 0. **Read a new pane before typing into it.** The user's shell may ask its own question first (measured: a dotenv
@@ -126,10 +135,8 @@ to own Claude's single statusline slot. The read, run in the system temp folder:
 - A statusline snapshot under 5 minutes old (`routr statusline`, for a user who runs it) is used instead of the read.
   Five minutes is a judgment, not a measurement.
 - Windows: routr starts `claude` as it starts every harness CLI, with no shell, hidden, and without herdr's pane
-  variables. Claude Code's native installer puts `claude.exe` on PATH, which starts that way. An npm install leaves a
-  `claude.cmd` shim, which Node does not start without a shell; whether the compiled binary (Bun) does is not
-  verified. Codex, Antigravity, Kiro and Cursor are started the same way, so such a shim fails alike for each, and
-  the read falls back. Not run on Windows yet.
+  variables. Claude Code's native installer puts `claude.exe` on PATH, which starts that way; an npm install's
+  `claude.cmd` is started as the Windows note under "Is it signed in?" says. The read itself is not run on Windows yet.
 
 Statusline fields routr relies on (when a user runs `routr statusline`), all in the statusline docs (code.claude.com/docs/en/statusline): `rate_limits.*.used_percentage`
 and `resets_at` (a window is dropped once `resets_at` passes); `prompt_cache` appears after the session's first API

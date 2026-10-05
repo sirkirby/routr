@@ -60,8 +60,9 @@ measured questions about a brief or a worker report; code adds live usage; the l
   backup, and only when it runs `routr statusline`.
 - No runtime dependencies. `node:` built-ins only, so the same source runs under Bun and compiles for every target.
 - Works on macOS, Linux, and Windows: no shelling out to `sh`, no Unix-only paths in product code. Every process
-  routr starts directly goes through `src/lib/runtime.mjs`, which hides its console on Windows and gives harness reads
-  an environment without herdr's pane variables.
+  routr starts directly goes through `src/lib/runtime.mjs`, which hides its console on Windows, gives harness reads
+  an environment without herdr's pane variables, and on Windows resolves a command as the shell would, starting an
+  npm `.cmd` shim's script directly.
 - Never print, log, or store a secret or the text of a brief. The ledger stores a hash and a length.
 - Telemetry is OFF unless the person turns it on (`routr telemetry on`, or yes to setup's question, default no). An
   agent never turns it on for them. It sends ledger rows with no text of any kind, only from the detached daily job or
