@@ -92,10 +92,10 @@ export const HARNESSES = {
     models: () => lines("cursor-agent", ["models"], /^\s*([a-z0-9][\w.-]+) - /i),
     suggested: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 },
     usage: { read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor({ ...o, ready: ready("cursor") }) } },
-  // Skills: the user folder its docs name (antigravity.google/docs/skills); it does not read ~/.agents/skills (only a
-  // workspace's .agents/skills). Documented, not yet measured: the guide bundled with agy 1.2.17 names ~/.gemini/config/
-  // as its global root instead (references/harnesses.md).
-  agy: { label: "Antigravity", executable: "agy", installAs: "Antigravity (agy)", skills: ".gemini/antigravity-cli/skills",
+  // Skills: measured 2026-10-05 on agy 1.2.17: asked to list its skills, it named one placed in ~/.gemini/config/skills
+  // and none of those in ~/.gemini/antigravity-cli/skills (the folder its web docs name) or ~/.agents/skills (it reads
+  // only a workspace's .agents/skills). Its bundled guide and its binary name ~/.gemini/config/skills too.
+  agy: { label: "Antigravity", executable: "agy", installAs: "Antigravity (agy)", skills: ".gemini/config/skills",
     permissions: ["--dangerously-skip-permissions"], model: "--model", list: "agy models", dirFlag: "--add-dir",
     noEffort: "agy encodes effort in --model; omit --effort (agy 1.2.11 refuses one that disagrees with the id)",
     // No status command. `agy models` says "Please sign in to view available models" (exit 1) when signed out, and never

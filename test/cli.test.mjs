@@ -167,7 +167,7 @@ test("routr skill install writes both skills and links each into every harness f
   // Every file under skills/ is installed: the folder holds exactly what ships.
   const tree = (d, pre = "") => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? tree(join(d, e.name), `${pre}${e.name}/`) : [`${pre}${e.name}`]));
   for (const s of SKILLS) expect(tree(join(import.meta.dir, "../skills", s)).sort()).toEqual(Object.keys(FILES[s]).sort());
-  expect(SKILL_FOLDERS).toEqual([".agents/skills", ".claude/skills", ".gemini/antigravity-cli/skills", ".kiro/skills"]);
+  expect(SKILL_FOLDERS).toEqual([".agents/skills", ".claude/skills", ".gemini/config/skills", ".kiro/skills"]);
 
   const home = scratch("skill"); mkdirSync(`${home}/.claude`);
   const r = installSkill({ home });

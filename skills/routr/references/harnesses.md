@@ -86,15 +86,20 @@ the only guard. routr adds none in the text. The pair of `disable-model-invocati
 | Codex | `~/.agents/skills` (it reads the shared folder) | `$routr-orchestrate <plan>` | documented field: `agents/openai.yaml`, `policy: allow_implicit_invocation: false` (explicit `$name` still works, https://learn.chatgpt.com/docs/build-skills) |
 | Cursor | `~/.agents/skills` (it also reads `~/.cursor/skills`) | `/routr-orchestrate <plan>` | documented field: `disable-model-invocation: true` (https://cursor.com/docs/context/skills; the page describes the editor, not `cursor-agent`) |
 | Kiro | `~/.kiro/skills` (linked; it reads no other, measured) | `/routr-orchestrate <plan>`; `$ARGUMENTS` "currently CLI-only" (https://kiro.dev/docs/skills/) | description only: its docs name no field that keeps the model from choosing a skill |
-| Antigravity | `~/.gemini/antigravity-cli/skills` (linked when `~/.gemini/antigravity-cli` exists). Documented, not yet measured | `/routr-orchestrate` (its docs: a skill becomes a slash command in the TUI) | description only: its docs list only `name` and `description` (https://antigravity.google/docs/skills) |
+| Antigravity | `~/.gemini/config/skills` (linked when `~/.gemini/config` exists). Measured, see below | `/routr-orchestrate` (its docs: a skill becomes a slash command in the TUI) | its docs list only `name` and `description` (https://antigravity.google/docs/skills), but measured: agy 1.2.17 left `routr-orchestrate` out of its model's skill list (undocumented, so it may change) |
 
-Antigravity's folder is not settled. Its web docs name `~/.gemini/antigravity-cli/skills/<skill>/` for the user and
-`.agents/skills/` in a workspace (so `~/.agents/skills` is not read). The customizations guide bundled with agy 1.2.17
-(`~/.gemini/antigravity-cli/builtin/skills/agy-customizations/SKILL.md`, read 2026-10-05) names `~/.gemini/config/`
-as the global discovery root instead, and its plugin guide speaks of a skill "at `~/.gemini/config/skills/foo/`".
-The agy 1.2.17 binary itself contains `~/.gemini/config/skills/<name>/SKILL.md` (its workflow migration writes
-skills there) and no `antigravity-cli/skills` string at all. routr follows the web docs until a live check says which
-agy reads; that check should try `~/.gemini/config/skills` too.
+Antigravity's folder, measured 2026-10-05 on agy 1.2.17: asked (in `agy -p`) to list the skills available to it, it
+named a probe skill placed in `~/.gemini/config/skills` and none of those linked into `~/.gemini/antigravity-cli/skills`,
+the folder its web docs name (https://antigravity.google/docs/skills), or `~/.agents/skills` (its docs: only a
+workspace's `.agents/skills`). The customizations guide bundled with agy and its binary also name
+`~/.gemini/config/skills`. routr links its skills there.
+
+Model visibility, measured the same day by asking each harness (print mode, no tools) to list the skills available to
+it, with both skills installed: `routr-orchestrate` was absent from Claude Code's, Codex's and Cursor's (`cursor-agent`)
+lists and present in Kiro's, as the guards above say; Antigravity (once linked into `~/.gemini/config/skills`) listed
+`routr` and not `routr-orchestrate`, so it honours `disable-model-invocation` without documenting it. `routr` was present
+in every list. Matt Pocock's user-only
+skills behaved the same way (absent from Codex's list, present in Kiro's).
 
 Where `/routr-orchestrate` is missing, the user can say the same in a prompt: "You're an orchestrator; use routr to
 manage the following work: …".
