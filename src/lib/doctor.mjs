@@ -9,10 +9,9 @@ import { signInHint } from "./signin.mjs";
 import { jevModel, KEY_FILES, loadKey, ping } from "./jev.mjs";
 import { JEV_MODEL } from "./questions.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
-import { CLAUDE_SNAPSHOT, home, standalone } from "./runtime.mjs";
+import { home, standalone } from "./runtime.mjs";
 import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
 import { dailyTelemetrySend, hoursAgo, lastTelemetrySend, pendingCount, telemetryState, telemetryStatus } from "./telemetry.mjs";
-import { isOurStatusline } from "./statusline.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 
 // Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows.
@@ -46,8 +45,6 @@ export function starterConfig(found, models = {}, ranks = {}) {
     subscriptions: Object.fromEntries(found.map((n) => [n, { ...(TAKES_EFFORT.includes(n) ? { default_effort: "medium" } : {}), ...HARNESSES[n].suggested, ...(models[n] ? { default_model: models[n] } : {}), ...(ranks[n] ? { metered_rank: ranks[n] } : {}) }])) };
 }
 
-export const STATUSLINE_MISSING = "missing: without it Claude usage is assumed, not read";
-
 // What is left to do, most important first, each with the command that does it.
 export function nextSteps(r) {
   const steps = [];
@@ -59,12 +56,12 @@ export function nextSteps(r) {
   // A subscription the user set up whose harness is signed out gets no work until they sign in again.
   for (const n of r.config.subscriptions ?? []) if (!r.config.off?.includes(n) && r.harnesses[n]?.installed && !r.harnesses[n].signed_in) steps.push(`${HARNESSES[n].label} is set up in routr but gets no work: ${r.harnesses[n].sign_in}`);
   if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push(`Install and log in to at least one harness: ${KINDS.slice(0, -1).map((n) => HARNESSES[n].installAs).join(", ")}, or ${HARNESSES[KINDS.at(-1)].installAs}`);
-  if (r.claude_usage_statusline === STATUSLINE_MISSING) steps.push("Let routr read Claude Code's usage (sets Claude's statusline command): routr setup");
-  // Claude answered a prompt and still sent no windows: a seat with no quota, or a plan routr has not seen send them.
+  // Claude showed no windows (its /usage, or its statusline after a prompt): a seat with no quota, or a plan routr has
+  // not seen send them.
   // routr does not guess which; the user says, either way, and the step clears.
   const cl = r.harnesses.claude;
   if (cl?.installed && cl.usage_reason === NO_WINDOWS_AFTER_ANSWER && !r.config.billing?.claude)
-    steps.push(`Claude answered a prompt but reported no usage windows, and routr cannot tell why. If this seat has no quota (usage-based Enterprise, an API key), add "billing": "metered" under subscriptions.claude in ${r.config.path} and routr ranks it as billed usage. If it has a quota (routr has not yet seen a Team or Enterprise seat send windows), add "billing": "included", or check again after another turn`);
+    steps.push(`Claude reports no usage windows, and routr cannot tell why. If this seat has no quota (usage-based Enterprise, an API key), add "billing": "metered" under subscriptions.claude in ${r.config.path} and routr ranks it as billed usage. If it has a quota (routr has not yet seen a Team or Enterprise seat send windows), add "billing": "included", or check again after another turn`);
   if (!r.skill.length || (!r.from_source && r.skill.some((k) => baseVersion(k.version) !== baseVersion(ROUTR_VERSION)))) steps.push("Install the routr skill that matches this routr: routr skill install");
   if (r.telemetry?.needs_attention) steps.push("Telemetry is on but not sending: `routr telemetry status` says why (last_send, daily_send), and `routr telemetry send` sends now");
   if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
@@ -104,14 +101,14 @@ export async function inspect({ configPath, quiet } = {}) {
   if (latest && standalone() && newer(latest, ROUTR_VERSION)) r.update_available = latest; // a source checkout is not updated
   // How a reading reads in one line: a number, a billed seat's note, or why there is none.
   const said = (u) => (u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)`
-    : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note}`);
+    : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note} (${u.source})`);
   for (const n of KINDS) {
     const command = HARNESSES[n].executable;
     if (!found.includes(n)) { r.harnesses[n] = { command, installed: false, off_path: offPath(command), usage: null }; continue; }
     const u = usage.find((x) => x.pool === n);
     const signed = states[n] === "yes";
     r.harnesses[n] = { command, installed: true, off_path: null, signed_in: signed, ...(signed ? {} : { sign_in: signInHint(HARNESSES[n], states[n]) }),
-      usage: said(u), usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) };
+      usage: said(u), usage_source: u.source, usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) };
   }
   if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; }
   else { r.key.found ??= false; r.key.works = false; r.key.error = String(key.e?.message ?? key.e).slice(0, 160); r.key.where = `set TYPESAFE_API_KEY, or put TYPESAFE_API_KEY=... in ${KEY_FILES[0]}`; }
@@ -139,11 +136,6 @@ export async function inspect({ configPath, quiet } = {}) {
     if (!sub.default_model) info.push(`subscriptions.${n}: no default_model set; the orchestrator will pick from the harness's live list`);
     else if (lists[n]?.length && !lists[n].includes(sub.default_model) && !HARNESSES[n]?.openList) problems.push(`subscriptions.${n}.default_model "${sub.default_model}" is not in the harness's current model list: routr setup --model ${n}=<id>`);
   }
-  // Configured but no snapshot yet is not a failure: Claude writes the first snapshot on its next turn.
-  let wired = false;
-  try { wired = isOurStatusline(JSON.parse(readFileSync(join(home(), ".claude/settings.json"), "utf8")).statusLine?.command); } catch {}
-  r.claude_usage_statusline = existsSync(CLAUDE_SNAPSHOT) ? "installed" : !found.includes("claude") ? "not needed"
-    : wired ? "configured: the first snapshot appears after the next Claude Code turn" : STATUSLINE_MISSING;
   if (!r.config.exists) r.starter_config = starterConfig(found);
   r.auto_update = autoUpdateStatus(config);
   r.telemetry = telemetryStatus(config);
@@ -198,7 +190,6 @@ export function render(r) {
   }
   line(r.key.works ? "ok" : "need", `TypeSafe key ${r.key.works ? `works (${r.key.model}${jevModel() !== JEV_MODEL ? `, asked as ${jevModel()} by ROUTR_JEV_MODEL` : ""}, ${r.key.ms} ms)` : `${r.key.found ? "found but failed" : "missing"}: ${r.key.error}`}`);
   line(r.config.exists && !problems.length ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && [...problems, ...notes].length ? `\n   ${[...problems, ...notes].join("\n   ")}` : ""}`);
-  line(r.claude_usage_statusline !== STATUSLINE_MISSING, `Claude usage statusline: ${r.claude_usage_statusline}`);
   const au = r.auto_update;
   // The channel is shown on or off: `routr update` by hand follows it too.
   const channel = au.channel === "beta" ? "beta channel (beta and rc releases too; `routr setup --channel stable` leaves it)" : "stable channel";

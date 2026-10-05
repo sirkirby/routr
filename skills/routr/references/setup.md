@@ -26,7 +26,7 @@ the TypeSafe key works, and whether a config exists. A harness that is installed
 levels; one already on can still be turned off. Setup shows the command to run beside it (greyed when it cannot be
 chosen), `setup --yes` notes each one it did not add ("<name> left out: …"), doctor names the command, and routr never
 starts a sign-in itself. Lines marked `!!` need fixing, and it ends with a numbered list of what to
-do next. `routr setup` does the writing (steps 3 and 4). A person can run it alone in a terminal and answer its
+do next. `routr setup` does the writing (step 3). A person can run it alone in a terminal and answer its
 questions; you run it with `--yes` and the choices you settled with the user. `routr doctor --fix` is the same
 command. It is safe to run again: it fills in what is missing (a skill left behind by an older routr, a harness
 installed since) and leaves the rest alone.
@@ -72,8 +72,7 @@ Ctrl+C stops without writing. `ACCESSIBLE=1` asks the same questions as numbered
 to a user who would rather click through than tell you each setting; you cannot drive it yourself, because it needs a
 terminal.
 
-It writes `~/.config/routr/config.json` for the harnesses found and sets the Claude statusline (step 4;
-`--no-statusline` leaves it). A subscription with no `--model` gets no default, and the orchestrator picks from the
+It writes `~/.config/routr/config.json` for the harnesses found, and nothing of Claude Code's (step 4). A subscription with no `--model` gets no default, and the orchestrator picks from the
 live list; one with no `--hardest` or `--reserve` gets the suggestion. An existing config is kept: setup adds
 harnesses found since, fills a missing `hardest_work` or `reserve`, and applies any flag given, leaving everything
 else alone; `--force` rewrites it (the old file is kept as `config.json.bak`). **To change a setting later**, run
@@ -103,9 +102,9 @@ the command that fixes it.
     Metered remaining budget stays unknown, even with legacy `metered_rank: "with"`. `routr usage` shows each reading.
   - `billing`: `included` or `metered`, only when the harness cannot show which it is. A Codex Enterprise seat on
     flexible pricing is detected (measured: no windows, unlimited credits). Claude is never detected: a plan with no
-    quota (usage-based Enterprise, an API key) sends the statusline no windows, and so may a plan routr has not seen
+    quota (usage-based Enterprise, an API key) is expected to show no usage windows (not yet observed), and so may a plan routr has not seen
     yet, so the advice says "no usage windows" and leaves the class to you. `routr doctor` lists it as a next step
-    when Claude has answered a prompt and still sent no windows. Set `"billing": "metered"` for such a Claude seat
+    when Claude has shown no windows. Set `"billing": "metered"` for such a Claude seat
     by hand; `"billing": "included"` says the seat has a quota and clears the same step. Leave it out otherwise.
   - `use`: `normal` or `fallback`, independent of billing. Normal accounts are considered for suitable model/effort
     options before comparing headroom. Fallback is considered when none suitably takes the task. This preference
@@ -147,7 +146,6 @@ can be combined with the others in one run.
 | keep an account for fallback | `routr setup --yes --use codex=fallback` |
 | get early builds (beta and release candidates), or stop | `routr setup --yes --channel beta` / `routr setup --yes --channel stable` |
 | share anonymous outcomes, or stop | `routr telemetry on` / `routr telemetry off`: only when the user says so |
-| let Claude Code's usage be read | `routr setup --yes` sets the statusline when there is none (`--no-statusline` leaves it) |
 
 A flag that routr cannot apply fails with the reason and changes nothing: a model the harness does not list (Claude Code excepted), an effort
 it does not take for that model, a harness that is not signed in (the error says what to run). A subscription turned
@@ -155,17 +153,13 @@ off keeps every setting and gets no work, in dispatch or launch, until it is on 
 
 ## 4. Claude usage (only if Claude Code is a subscription)
 
-Claude Code reports usage only to its statusline. `routr statusline` is a statusline command: it prints the model and
-usage there and saves each snapshot to `~/.cache/routr/claude-usage.json`, which routr reads. If the user agrees,
-`routr setup` sets it when Claude Code has no statusline yet (the old settings are kept as
-`settings.json.bak-before-routr`); it never replaces a statusline the user already has. By hand, it is
-
-    "statusLine": { "type": "command", "command": "<full path to routr> statusline" }
-
-in `~/.claude/settings.json`. Use the full path (`~/.local/bin/routr`, written out), because Claude's PATH may not
-include it. If the user already has a statusline, keep theirs and have it call `routr statusline` for the snapshot,
-or ask them which they prefer. The first snapshot appears after the next Claude Code turn. Codex and Antigravity are
-read from the harness directly and need nothing; Cursor's usage is read from its `/usage` screen in a private herdr session, in the background: herdr must be installed.
+Nothing to set up. routr reads Claude's usage from Claude's own `/usage` in each call (`claude -p /usage`: no tokens,
+about 4 to 5 s, run in the system temp folder with the user's hooks and MCP servers off for that read and their other
+settings kept). It never needs Claude's statusline, and setup does not touch `~/.claude/settings.json`.
+`routr statusline` still works as a statusline command for a user who wants it (it prints the model and usage and
+saves a snapshot); routr uses that snapshot instead of starting Claude while it is under 5 minutes old. Do not
+suggest replacing a statusline the user already has. Codex and Antigravity are also read from the harness directly
+and need nothing; Cursor's usage is read from its `/usage` screen in a private herdr session, in the background: herdr must be installed.
 Kiro's is read from its own `/usage` command in the background and needs nothing either; routr deletes the empty Kiro
 session each reading leaves. `routr skill install` links the skill into `~/.kiro/skills`, the only folder Kiro reads.
 

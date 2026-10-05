@@ -3,7 +3,8 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
-import { claudeSnapshot, codexSnapshot, monthMinutes } from "../src/lib/usage.mjs";
+import { tmpdir } from "node:os";
+import { claudeSnapshot, codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, parseClaudeReset, parseClaudeUsage, readClaude } from "../src/lib/usage.mjs";
 import { KIRO_BY_HAND, kiroUsage, parseKiroUsage, readKiro, refreshKiro } from "../src/lib/kiro-usage.mjs";
 import { HARNESSES, readUsage } from "../src/lib/harnesses.mjs";
 import { olderThan, takeLock } from "../src/lib/runtime.mjs";
@@ -62,6 +63,110 @@ test("the statusline writes every render and keeps the last windows seen; absenc
   expect(at({ ts: t, model: "m", rate_limits: rl })).toMatchObject({ class: "included" });      // a snapshot from an older routr
   const gw = snapshotFrom({ rate_limits: { spend_limit: { used_percentage: 130, resets_at: t + 86400 } } }, null, t);
   expect(at(gw)).toMatchObject({ class: "capped", headroom: 0 }); expect(at(gw).windows[0]).toMatchObject({ name: "spend_limit", usedPct: 100, windowMin: null });
+});
+
+// `claude -p /usage --output-format json` on a Max plan, Claude Code 2.1.289, 2026-10-05 (the `result` text, verbatim
+// up to the local breakdown, which is cut short here).
+const CLAUDE_USAGE = `You are currently using your subscription to power your Claude Code usage
+
+Current session: 1% used · resets Oct 5 at 3:59pm (America/Detroit)
+Current week (all models): 90% used · resets Oct 5 at 9:59pm (America/Detroit)
+Current week (Fable): 0% used · resets Oct 5 at 10pm (America/Detroit)
+
+What's contributing to your limits usage?
+Approximate, based on local sessions on this machine — does not include other devices or claude.ai.`;
+const OCT5 = Date.UTC(2026, 9, 5, 17, 35) / 1000; // 1:35pm in Detroit, when it was read
+const utc = (...a) => Date.UTC(...a) / 1000;
+const claudeAnswer = (result, over = {}) => JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 0, total_cost_usd: 0, result, ...over });
+
+test("Claude's /usage text: the session and all-models week are the statusline's windows; a model's own week is counted, never named", () => {
+  const p = parseClaudeUsage(CLAUDE_USAGE, OCT5);
+  expect(p.windows).toEqual([
+    { name: "five_hour", usedPct: 1, windowMin: 300, resetsAt: utc(2026, 9, 5, 19, 59) },
+    { name: "seven_day", usedPct: 90, windowMin: 10080, resetsAt: utc(2026, 9, 6, 1, 59) }]);
+  expect(p.note).toBe("plus 1 model-specific weekly limit (highest 0% used), not ranked on");
+  expect(p.note).not.toContain("Fable");
+  // A reset that does not read exactly so is left unset, and said; the window still counts.
+  const odd = parseClaudeUsage("Current week (all models): 40% used · resets next Tuesday", OCT5);
+  expect(odd.windows).toEqual([{ name: "seven_day", usedPct: 40, windowMin: 10080, resetsAt: null }]);
+  expect(odd.note).toContain("reset time not read for seven_day");
+  expect(parseClaudeUsage("Current week (Opus): 80% used\nCurrent week (Sonnet): 95% used", OCT5)).toEqual({ windows: [], note: "plus 2 model-specific weekly limits (highest 95% used), not ranked on" });
+  expect(parseClaudeUsage("You are using an API key", OCT5)).toEqual({ windows: [], note: undefined });
+});
+
+test("Claude's reset times read in their own zone, across DST, midnight and noon, and the year that makes sense", () => {
+  expect(parseClaudeReset("Oct 5 at 4pm (America/Detroit)", OCT5)).toBe(utc(2026, 9, 5, 20));
+  expect(parseClaudeReset("Oct 5 at 10pm (America/Los_Angeles)", OCT5)).toBe(utc(2026, 9, 6, 5));
+  expect(parseClaudeReset("Oct 5 at 3:05pm (America/Detroit)", OCT5)).toBe(utc(2026, 9, 5, 19, 5));
+  expect(parseClaudeReset("Oct 6 at 12am (America/Detroit)", OCT5)).toBe(utc(2026, 9, 6, 4));   // midnight
+  expect(parseClaudeReset("Oct 6 at 12pm (America/Detroit)", OCT5)).toBe(utc(2026, 9, 6, 16));  // noon
+  // US daylight time ends Nov 1 2026 and starts Mar 14 2027: the offset is the one at that wall time.
+  expect(parseClaudeReset("Oct 31 at 3pm (America/Detroit)", OCT5)).toBe(utc(2026, 9, 31, 19));
+  expect(parseClaudeReset("Nov 1 at 3pm (America/Detroit)", OCT5)).toBe(utc(2026, 10, 1, 20));
+  const mar = utc(2027, 2, 10);
+  expect(parseClaudeReset("Mar 13 at 3pm (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 13, 23));
+  expect(parseClaudeReset("Mar 14 at 3pm (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 14, 22));
+  expect(parseClaudeReset("Mar 14 at 1:30am (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 14, 9, 30));
+  expect(parseClaudeReset("Mar 14 at 3:30am (America/Los_Angeles)", mar)).toBe(utc(2027, 2, 14, 10, 30));
+  // No year is shown: December's "Jan 1" is next year's; just after New Year, last night's reset is last year's.
+  expect(parseClaudeReset("Jan 1 at 12am (America/Detroit)", utc(2026, 11, 31, 20))).toBe(utc(2027, 0, 1, 5));
+  expect(parseClaudeReset("Dec 31 at 11pm (America/Detroit)", utc(2027, 0, 1, 6))).toBe(utc(2027, 0, 1, 4));
+  for (const bad of ["", "soon", "Oct 5 at 4pm", "Oct 5 at 13pm (America/Detroit)", "Oct 5 at 4:75pm (America/Detroit)", "Feb 30 at 4pm (America/Detroit)", "Foo 5 at 4pm (America/Detroit)", "Oct 5 at 4pm (Not/AZone)", "Oct 5 at 4pm (America/Detroit) extra", null])
+    expect([bad, parseClaudeReset(bad, OCT5)]).toEqual([bad, null]);
+});
+
+test("Claude: a recent statusline snapshot is used as it is; otherwise its own /usage is read, hooks and MCP servers off, from the temp folder", async () => {
+  const dir = scratch("claude-usage"), file = join(dir, "claude-usage.json");
+  const rl = { five_hour: { used_percentage: 20, resets_at: OCT5 + 3600 }, seven_day: { used_percentage: 30, resets_at: OCT5 + 86400 } };
+  const calls = [];
+  const exec = (answer) => async (cmd, args, opts) => { calls.push({ cmd, args, opts }); return answer; };
+  const read = (o) => HARNESSES.claude.usage.read({ file, nowSec: OCT5, ...o }); // the registry's read: its own quiet arguments
+  // Under five minutes old: the snapshot, and Claude is not started.
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 60, rate_limits: rl, answered: true }));
+  expect(await read({ exec: exec(claudeAnswer(CLAUDE_USAGE)) })).toMatchObject({ source: "statusline", headroom: 0.7, ageSec: 60 });
+  expect(calls).toEqual([]);
+  // Older: read live, with exactly these arguments, in the system temp folder.
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 600, rate_limits: rl, answered: true }));
+  const fresh = await read({ exec: exec(claudeAnswer(CLAUDE_USAGE)) });
+  expect(calls).toEqual([{ cmd: "claude", args: ["-p", "/usage", "--output-format", "json", "--no-session-persistence", "--settings", '{"disableAllHooks":true}', "--strict-mcp-config"], opts: { cwd: tmpdir(), timeoutMs: 12000 } }]);
+  expect(fresh).toMatchObject({ pool: "claude", source: "claude /usage", ageSec: 0, class: "included" });
+  expect(fresh.headroom).toBeCloseTo(0.1);
+  expect(fresh.windows.map((w) => w.name)).toEqual(["five_hour", "seven_day"]);
+  // A snapshot with no windows yet is no reason to skip the live read.
+  calls.length = 0;
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 5, rate_limits: null, answered: false, seen: null }));
+  expect((await read({ exec: exec(claudeAnswer(CLAUDE_USAGE)) })).source).toBe("claude /usage"); expect(calls.length).toBe(1);
+});
+
+test("Claude's live read fails open: the old snapshot however old, else the assumed headroom, and the note says why", async () => {
+  const dir = scratch("claude-fallback"), file = join(dir, "claude-usage.json"), missing = join(dir, "none.json");
+  const rl = { seven_day: { used_percentage: 40, resets_at: OCT5 + 86400 } };
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 3 * 3600, rate_limits: rl, answered: true }));
+  const read = (exec, f = file) => readClaude({ file: f, nowSec: OCT5, exec: async () => exec });
+  const old = await read(null); // timed out, or no claude
+  expect(old).toMatchObject({ source: "statusline", headroom: 0.6, ageSec: 3 * 3600 });
+  expect(old.note).toBe("`claude -p /usage` did not answer in 12 s: this is the statusline's last reading");
+  expect((await read("not json")).note).toContain("did not answer as expected: this is the statusline's last reading");
+  expect((await read(claudeAnswer("x", { is_error: true }))).note).toContain("did not answer as expected");
+  const nothing = await read(null, missing);
+  expect(nothing).toMatchObject({ source: "claude /usage", headroom: null, class: "unknown" });
+  expect(nothing.note).toBe("`claude -p /usage` did not answer in 12 s; using the assumed headroom");
+  // It answered, and showed no windows: the seat may have no quota; doctor's step keys on the reason.
+  const bare = await read(claudeAnswer("You are using an API key"), missing);
+  expect(bare).toMatchObject({ headroom: null, class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER }); expect(bare.note).toContain('billing: "metered"');
+  // A snapshot saying Claude sent no windows after a prompt keeps its reason when the live read fails.
+  writeFileSync(file, JSON.stringify({ ts: OCT5 - 3 * 3600, rate_limits: null, answered: true, seen: null }));
+  expect((await read(null)).reason).toBe(NO_WINDOWS_AFTER_ANSWER);
+});
+
+test("no model name from Claude's /usage reaches routr usage's output", async () => {
+  const dir = scratch("claude-names");
+  const sources = { claude: { read: () => readClaude({ file: join(dir, "none.json"), exec: async () => claudeAnswer(CLAUDE_USAGE) }) } };
+  const c = cfg({ subscriptions: { claude: cfg().subscriptions.claude } });
+  const out = await usageCommand([], c, {}, { read: (names, given, o) => readUsage(names, given, { ...o, why: async () => null }), sources });
+  expect(out.ok).toBe(true); expect(out.ranked[0]).toMatchObject({ subscription: "claude", usage: "live" });
+  expect(JSON.stringify(out)).toContain("model-specific weekly limit");
+  expect(JSON.stringify(out)).not.toContain("Fable");
 });
 
 test("metered capacity stays unknown while legacy settings determine normal or fallback use", () => {

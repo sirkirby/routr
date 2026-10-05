@@ -1,7 +1,7 @@
 # Troubleshooting
 
 Start with `routr doctor`. It changes nothing and says what is missing: the key, the config, a harness that is not on
-your PATH, herdr or its skill, the Claude usage statusline.
+your PATH, herdr or its skill. Each harness's usage line names where the reading came from.
 
 ## `routr: command not found`
 
@@ -46,8 +46,15 @@ but only with your fallback level.
 
 ## Claude's usage shows as "assumed"
 
-Claude Code reports usage only to its statusline. Run `routr setup`, or set `routr statusline` as Claude's statusline command by hand (the setup
-guide does this with you); the first reading appears after the next Claude Code turn.
+routr reads Claude's usage by running `claude -p /usage` (no tokens, about 4 to 5 s) in the system temp folder. The
+usage note says why that failed: `claude` is not on routr's PATH, it did not answer in 12 s, or its answer showed no
+usage windows (a seat with no quota: set `billing` for claude in the config). Run the same command yourself to see
+what Claude says:
+
+    claude -p /usage --output-format json --no-session-persistence --settings '{"disableAllHooks":true}' --strict-mcp-config
+
+When it fails, routr uses the last `routr statusline` snapshot if there is one, however old (its age is shown), and
+the assumed headroom otherwise. You do not need `routr statusline`; setup no longer sets it.
 
 ## A subscription is left out: "not signed in"
 

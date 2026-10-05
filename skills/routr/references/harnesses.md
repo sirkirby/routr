@@ -68,14 +68,59 @@ routr classes each pool from the shape of what the harness reports, never from a
 | Codex on a subscription (Pro login, 2026-09-22, CLI 0.155.1) | `primary` weekly window with `usedPercent`, `secondary` null, `credits.hasCredits: false` | `included` |
 | Codex on a ChatGPT Enterprise seat with flexible pricing (2026-09-22, CLI 0.155.1) | `primary` and `secondary` **null**, `credits: { hasCredits: true, unlimited: true }`, `individualLimit: null`, `planType: "business"` on an Enterprise contract | `metered` |
 | Codex with a member credit limit set by the workspace owner (claimed: the protocol's `individualLimit { limit, used, remainingPercent, resetsAt }`, not yet read from a seat) | the cap as one more window, its period from `resetsAt` | `capped` |
-| Claude Code on Pro or Max (measured) | statusline `rate_limits.five_hour` and `seven_day` | `included` |
-| Claude Code on Team or seat-based Enterprise (not observed; the statusline docs list only Pro and Max as sending `rate_limits`, one public report shows them on Team) | unknown until measured | `included` if windows arrive; otherwise `unknown`, and the user sets `billing` |
-| Claude Code on usage-based Enterprise, or on an API key (claimed: the docs say `rate_limits` is sent only for plans with a quota) | no `rate_limits` at all, even after a response | `unknown` with a note; the user sets `billing: "metered"`. Absence is not read as "no quota" because a Team seat may also send none |
+| Claude Code on Pro or Max (measured) | `/usage`: "Current session" and "Current week (all models)" (read as `five_hour` and `seven_day`); statusline `rate_limits.five_hour` and `seven_day` | `included` |
+| Claude Code on Team or seat-based Enterprise (not observed; the statusline docs list only Pro and Max as sending `rate_limits`, one public report shows them on Team; `/usage` not observed there either) | unknown until measured | `included` if windows arrive; otherwise `unknown`, and the user sets `billing` |
+| Claude Code on usage-based Enterprise, or on an API key (claimed: the docs say `rate_limits` is sent only for plans with a quota; what `/usage` prints there is not observed) | no `rate_limits` at all, even after a response; `/usage` lines unknown | `unknown` with a note; the user sets `billing: "metered"`. Absence is not read as "no quota" because a Team seat may also send none |
 | Claude Code behind a Claude apps gateway with spend limits (claimed: docs) | `rate_limits.spend_limit`, `used_percentage` may pass 100 | `capped` |
 | Kiro on a Free plan (measured 2026-09-26, Kiro CLI 2.24.1) | `/usage`: "Estimated Usage \| resets on 2026-10-01 \| KIRO FREE", "Credits (0.00 of 50 covered in plan), 0.0%": one monthly pool that every model draws on at its own rate. Takes ~10 s and 0 credits, and leaves an empty saved session. The figure is an estimate that lagged a 0.10-credit turn | `included` |
 | Kiro on a paid plan with overage on (not observed) | unknown: any line beyond the credits line is kept in the reading's note, never parsed | `included` until measured |
 
-Statusline fields routr relies on, all in the statusline docs (code.claude.com/docs/en/statusline): `rate_limits.*.used_percentage`
+## Claude Code's usage, read through its CLI (measured 2026-10-05, Claude Code 2.1.289, macOS, Max plan)
+
+routr reads Claude's usage the way it reads Antigravity's and Kiro's: through Claude's own command, so it never needs
+to own Claude's single statusline slot. The read, run in the system temp folder:
+
+    claude -p /usage --output-format json --no-session-persistence --settings '{"disableAllHooks":true}' --strict-mcp-config
+
+- It answers locally: `"local_command":"usage"`, `num_turns: 0`, `total_cost_usd: 0`. The `result` text:
+
+      You are currently using your subscription to power your Claude Code usage
+
+      Current session: 1% used · resets Oct 5 at 3:59pm (America/Detroit)
+      Current week (all models): 90% used · resets Oct 5 at 9:59pm (America/Detroit)
+      Current week (Fable): 0% used · resets Oct 5 at 10pm (America/Detroit)
+
+      What's contributing to your limits usage?
+      … (a breakdown of local sessions follows)
+
+  routr reads "Current session" as `five_hour` (300 min) and "Current week (all models)" as `seven_day` (10080 min),
+  the statusline's names. A week scoped to one model is counted in the note ("plus 1 model-specific weekly limit"),
+  never named and never ranked on: routr's advice carries no model names. The first line and the breakdown are not
+  read. Reset times seen: "Oct 5 at 4pm", "Oct 5 at 3:59pm", "Oct 5 at 10pm", always with an IANA zone in
+  parentheses; routr converts them with the zone's own offset at that time, and leaves one it cannot read unset.
+- Hooks: without `--settings '{"disableAllHooks":true}'` the user's SessionStart and SessionEnd hooks ran (seen in
+  `--debug-file`); with it none ran, and the user's other settings still applied. `--setting-sources=project` also
+  stops them but drops the user's settings (a gateway or env set there), so routr does not use it.
+- MCP servers: without `--strict-mcp-config` Claude connected to every MCP server the user has (about ten here, some
+  over the network) before answering; with it, none (`--debug-file`).
+- Time, wall clock, on a machine with a load average of 9 to 14 from other agents: 6.8 and 7.1 s with hooks and MCP
+  servers on (2 reads), 7.1 to 8.8 s with hooks off alone (5), 4.4 to 5.2 s with both off (5, three of them through
+  routr's own reader). Claude reports 1.8 to 2.4 s of that (`duration_ms`). Not measured on an idle machine, on Linux,
+  or on Windows. None of 18 reads hung; routr gives it 12 s, once.
+- The numbers agree with the statusline's: at the same minute, 4% session and 91% week from `/usage`, 4% and 90% in the
+  last statusline snapshot (a few minutes older), with identical reset times.
+- `--bare` shows no subscription numbers (it skips the keychain): unusable.
+- `--no-session-persistence` leaves no session file. Claude still makes an empty
+  `~/.claude/projects/<folder>/memory` for the folder it runs in, so routr always runs it in the same one.
+- A statusline snapshot under 5 minutes old (`routr statusline`, for a user who runs it) is used instead of the read.
+  Five minutes is a judgment, not a measurement.
+- Windows: routr starts `claude` as it starts every harness CLI, with no shell, hidden, and without herdr's pane
+  variables. Claude Code's native installer puts `claude.exe` on PATH, which starts that way. An npm install leaves a
+  `claude.cmd` shim, which Node does not start without a shell; whether the compiled binary (Bun) does is not
+  verified. Codex, Antigravity, Kiro and Cursor are started the same way, so such a shim fails alike for each, and
+  the read falls back. Not run on Windows yet.
+
+Statusline fields routr relies on (when a user runs `routr statusline`), all in the statusline docs (code.claude.com/docs/en/statusline): `rate_limits.*.used_percentage`
 and `resets_at` (a window is dropped once `resets_at` passes); `prompt_cache` appears after the session's first API
 response (v2.1.251+); `context_window.current_usage` is null before the first API call and after `/compact`. The last
 two only tell the reader whether "no windows" came before or after a response, which changes its note, not its class.

@@ -1,6 +1,7 @@
-// `routr statusline`: Claude Code's statusline command. Claude reports subscription usage ONLY to its statusline, so
-// this prints the model and usage there and saves each snapshot to ~/.cache/routr/claude-usage.json, which the usage
-// reader picks up. It must never fail or print an error: a broken statusline is visible in every Claude session.
+// `routr statusline`: an optional statusline command for Claude Code. It prints the model and usage there and saves
+// each snapshot to ~/.cache/routr/claude-usage.json, which the usage reader uses while it is recent; otherwise the
+// reader asks Claude's own `/usage` (usage.mjs), so setup no longer sets it. It keeps working for anyone who has it.
+// It must never fail or print an error: a broken statusline is visible in every Claude session.
 import { readFileSync } from "node:fs";
 import { CLAUDE_SNAPSHOT, writeJsonAtomic } from "./runtime.mjs";
 

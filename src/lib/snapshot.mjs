@@ -8,7 +8,7 @@ const now = () => Date.now() / 1000;
 
 // Cursor shows usage only in its own /usage screen, which takes seconds to read (a private herdr session, Cursor, the
 // panel: 4 to 5 s measured), too slow for a call that answers in 300 ms. Kiro's /usage answers in ~10 s and leaves a
-// session behind that takes ~8 s more to delete (measured 2026-09-26). So both are read like Claude's: a snapshot every
+// session behind that takes ~8 s more to delete (measured 2026-09-26). So both are read as a snapshot every
 // call reads in milliseconds, with its age shown, and a fresh reading taken in the BACKGROUND about once per working
 // session: when the last try is over 4 hours old, the call starts a detached `routr usage <name>` and does not wait.
 // Both are monthly pools and burn slowly, so a reading hours old routes the same (the maintainer's call, 2026-09-25).

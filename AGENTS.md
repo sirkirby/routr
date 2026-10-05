@@ -35,8 +35,10 @@ measured questions about a brief or a worker report; code adds live usage; the l
   The updater verifies the release checksum, swaps the binary in place, and reinstalls the skill; a run in progress
   keeps its binary. It follows the user's `update_channel` (stable, or beta: also `-beta.N` and `-rc.N`, never alpha) and
   never downgrades by itself. `"auto_update": false` turns it off. Never from a source checkout, never from `statusline`.
-- Every call reads each usage source's newest reading and shows its age. Claude's is the statusline's snapshot; Codex
-  and Antigravity are read in the call (1 to 9 s, beside Jev). Cursor's own screen takes seconds more and starts
+- Every call reads each usage source's newest reading and shows its age. Claude's is read in the call from its own
+  `/usage`, hooks and MCP servers off; a statusline snapshot under 5 minutes old is used instead when one exists. Claude, Codex and
+  Antigravity are read in the call (1 to 9 s, beside Jev). routr never has to own a harness feature (a statusline
+  slot, a hook) to get its usage: it asks the harness's own CLI. Cursor's own screen takes seconds more and starts
   Cursor, and Kiro's `/usage` takes ~10 s plus its cleanup, so their readings are snapshots: when the last try is over
   4 hours old, a call starts a detached `routr usage cursor` (or `kiro`) to refresh it and carries on, as it does for the updater (unlike the updater, also from a
   source checkout: it swaps nothing). How usage is ranked:
@@ -52,8 +54,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
   (usage sources, settings, model lists) and writes only under `~/.config/routr`, `~/.cache/routr`,
   `~/.local/share/routr`, the skill folders on `skill install`, and temporary files it removes (including the private
   herdr session `usage cursor` makes, and the empty Kiro session `usage kiro` deletes again). One exception:
-  `setup` sets `statusLine` in `~/.claude/settings.json` when there is none, after a backup, and never replaces one; `uninstall` removes that
-  entry again, and only that entry.
+  `uninstall` removes the `statusLine` entry an earlier routr's `setup` set in `~/.claude/settings.json`, after a
+  backup, and only when it runs `routr statusline`.
 - No runtime dependencies. `node:` built-ins only, so the same source runs under Bun and compiles for every target.
 - Works on macOS, Linux, and Windows: no shelling out to `sh`, no Unix-only paths in product code. Every process
   routr starts directly goes through `src/lib/runtime.mjs`, which hides its console on Windows and gives harness reads
