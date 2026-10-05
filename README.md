@@ -133,7 +133,7 @@ After updating, run `routr setup` to review your settings. See the
 [release notes](https://github.com/sirkirby/routr/releases) for changes and upgrade details.
 
 Updates follow stable releases. For early builds, choose the beta channel: the daily update and `routr update` then
-follow betas and release candidates as well, and move you to each stable release once it ships. Going back to stable
+follow betas and release candidates as well, and move you to a stable release once it is newer than your beta. Going back to stable
 keeps your beta until a stable release passes it; `routr update --force` switches now:
 
     routr setup --channel beta

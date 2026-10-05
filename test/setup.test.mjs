@@ -596,6 +596,7 @@ test("the update channel is a setting: --channel writes it, says what happens ne
   expect(back.saved.update_channel).toBe("stable");
   expect(back.r.did).toContain('changed update_channel "beta" → "stable"');
   // Leaving beta on a pre-release binary: no update runs, and the words say what does not happen by itself.
+  expect(channelNote("beta", "0.5.1", true, false)).toBe("update channel: beta. `routr update` installs the newest beta, rc or stable release now (automatic updates are off)");
   expect(channelNote("stable", "0.6.0-beta.2", true)).toBe("update channel: stable. You stay on 0.6.0-beta.2 until a stable release is newer; `routr update --force` installs the newest stable now");
   // --force rebuilds the file and keeps the channel; --show refuses a change beside it; a bad value changes nothing.
   expect((await runSetup({ config: beta.saved, found: ["agy"], args: ["--yes", "--force"] })).saved.update_channel).toBe("beta");

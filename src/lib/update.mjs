@@ -48,7 +48,9 @@ export const newer = (a, b) => compareVersions(a, b) > 0;
 // Which releases each update channel follows, by tag. Stable: releases only. Beta: also -beta.N and -rc.N, so a
 // beta user moves to a stable release as soon as it is the newest. Alpha is on no channel: a maintainer installs one
 // by naming it in ROUTR_VERSION for the install script.
-export const CHANNEL_TAGS = { stable: /^v?\d+\.\d+\.\d+$/, beta: /^v?\d+\.\d+\.\d+(?:-(?:beta|rc)\.\d+)?$/ };
+// Strict semver numbers (no leading zeros), so a mistyped tag such as v1.01.0 is on no channel.
+const N = String.raw`(?:0|[1-9]\d*)`;
+export const CHANNEL_TAGS = { stable: new RegExp(`^v?${N}\\.${N}\\.${N}$`), beta: new RegExp(`^v?${N}\\.${N}\\.${N}(?:-(?:beta|rc)\\.${N})?$`) };
 // The newest release on a channel from GitHub's release list, or null. Drafts never count, and the stable channel
 // also skips anything GitHub marks as a pre-release whatever its tag says.
 export function pickRelease(releases, channel = "stable") {
@@ -63,16 +65,21 @@ export function pickRelease(releases, channel = "stable") {
   return best;
 }
 
-// The newest version on the channel. Stable asks for GitHub's latest release, as it always has; beta reads the last
-// 30 releases (the newest pre-releases and releases, far more than one release cycle).
+// The newest version on the channel. Stable asks for GitHub's latest release, as it always has, and takes it only when
+// its tag is a stable version (a release marked latest by mistake is not offered). Beta reads the newest 100 releases,
+// GitHub's largest page: many release cycles, so the newest beta, rc or release is on it unless 100 alphas came after.
 export async function latestVersion(timeoutMs = 4000, channel = "stable", fetchFn = fetch) {
   const get = async (path) => {
     const r = await fetchFn(`https://api.github.com/repos/${REPO}/${path}`, { headers: { accept: "application/vnd.github+json", "user-agent": "routr" }, signal: AbortSignal.timeout(timeoutMs) });
     if (!r.ok) throw new Error(`GitHub answered ${r.status}`);
     return r.json();
   };
-  if (channel !== "beta") return String((await get("releases/latest")).tag_name ?? "").replace(/^v/, "");
-  const v = pickRelease(await get("releases?per_page=30"), "beta");
+  if (channel !== "beta") {
+    const tag = String((await get("releases/latest")).tag_name ?? "");
+    if (!CHANNEL_TAGS.stable.test(tag)) throw new Error(`GitHub's latest release ${tag || "(none)"} is not a stable version`);
+    return tag.replace(/^v/, "");
+  }
+  const v = pickRelease(await get("releases?per_page=100"), "beta");
   if (!v) throw new Error("GitHub listed no release on the beta channel");
   return v;
 }

@@ -112,8 +112,8 @@ fails without them rather than ship an ad-hoc binary), and creates the GitHub
 release with checksums, install commands, the reviewed version-specific notes, and a "What's Changed" list of the
 commit subjects since the previous stable tag. Write commit subjects a user can read: they become that list. Pre-releases are marked as such
 and are never "latest", so the install scripts ignore them unless `ROUTR_VERSION` names one. But a `-beta.N` or `-rc.N`
-release reaches every user on the beta update channel (`"update_channel": "beta"`) within a day, through the
-automatic update: publishing one is shipping to them, so it gets the same review and notes as a release. An `-alpha.N`
+release reaches users on the beta update channel (`"update_channel": "beta"`) through the automatic update, at the
+first routr command after their daily check (unless they turned automatic updates off): publishing one is shipping to them, so it gets the same review and notes as a release. An `-alpha.N`
 reaches no channel; it is installed only by naming it in `ROUTR_VERSION`. The guides are embedded
 in the binary (`routr skill install`), so a guide change ships with the next release.
 

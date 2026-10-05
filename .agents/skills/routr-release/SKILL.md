@@ -17,7 +17,7 @@ and verification. Do not turn skill creation or documentation work into a new re
 1. Refresh the worktree status, PR head and base, remote tags, and latest GitHub releases. Establish the exact
    changes being released and the requested version increment. Choose an unused tag above the latest relevant
    release; account for existing prereleases. Source version fields stay `0.0.0-dev`. A `-beta.N` or `-rc.N` tag
-   reaches beta-channel users automatically within a day: treat publishing one as shipping to them. Only `-alpha.N`
+   reaches beta-channel users through the automatic update, typically within a day: treat publishing one as shipping to them. Only `-alpha.N`
    stays off every channel (installed by naming it in `ROUTR_VERSION`).
 2. Read the release-note authoring requirements in CONTRIBUTING.md. Prepare `docs/releases/<exact-tag>.md`
    in a PR before tagging, including for prereleases. Cover the final release scope, user-visible behavior,

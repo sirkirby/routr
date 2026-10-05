@@ -106,6 +106,15 @@ test("each update channel picks its newest release: drafts never, alpha on no ch
   expect(pickRelease([...RELEASES, { tag_name: "v0.9.0", draft: false, prerelease: true }], "stable")).toBe("0.5.1"); // marked pre-release
   expect(pickRelease([{ tag_name: "v1.0.0", draft: true }], "beta")).toBeNull();
   expect(pickRelease(null, "beta")).toBeNull();
+  // Strict semver numbers: a mistyped tag is on no channel, so it never outranks a real one.
+  expect(pickRelease([{ tag_name: "v1.1.0-beta.1" }, { tag_name: "v1.01.0-beta.2" }, { tag_name: "v1.1.0-beta.03" }], "beta")).toBe("1.1.0-beta.1");
+});
+
+test("stable takes GitHub's latest release only when its tag is a stable version", async () => {
+  const { latestVersion } = await import("../src/lib/update.mjs");
+  const answer = (tag) => async () => ({ ok: true, status: 200, json: async () => ({ tag_name: tag }) });
+  expect(await latestVersion(1000, "stable", answer("v0.5.1"))).toBe("0.5.1");
+  await expect(latestVersion(1000, "stable", answer("v2.0.0-alpha.1"))).rejects.toThrow("is not a stable version");
 });
 
 // A fake GitHub: the API answers with the release list, a download records its URL and serves a binary that checks out.
@@ -115,7 +124,7 @@ async function fakeGitHub(asked) {
   return async (u) => {
     asked.push(String(u));
     if (String(u).endsWith("/releases/latest")) return { ok: true, status: 200, json: async () => RELEASES.find((r) => r.tag_name === "v0.5.1") };
-    if (String(u).includes("/releases?per_page=30")) return { ok: true, status: 200, json: async () => RELEASES };
+    if (String(u).includes("/releases?per_page=100")) return { ok: true, status: 200, json: async () => RELEASES };
     return { ok: true, status: 200, arrayBuffer: async () => (String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : bin) };
   };
 }
@@ -144,7 +153,7 @@ test("on beta, the official release replaces its own last beta", async () => {
   writeFileSync(self, "BETA");
   const list = [{ tag_name: "v1.1.0", draft: false, prerelease: false }, { tag_name: "v1.1.0-beta.10", draft: false, prerelease: true }];
   const github = await fakeGitHub(asked);
-  const fetchFn = async (u) => (String(u).includes("/releases?per_page=30") ? { ok: true, status: 200, json: async () => list } : github(u));
+  const fetchFn = async (u) => (String(u).includes("/releases?per_page=100") ? { ok: true, status: 200, json: async () => list } : github(u));
   const r = await update({ channel: "beta", current: "1.1.0-beta.10", self, base: undefined, fetchFn, spawn: () => ({ status: 0, stdout: "1.1.0\n" }), isStandalone: () => true });
   expect(r).toMatchObject({ ok: true, updated: true, latest: "1.1.0", now: "1.1.0", channel: "beta" });
   expect(asked.filter((u) => !u.includes("api.github.com")).every((u) => u.includes("/releases/download/v1.1.0/"))).toBe(true);

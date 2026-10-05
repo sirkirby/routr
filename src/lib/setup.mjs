@@ -87,10 +87,12 @@ export function parseChannel(args) {
 }
 // What setup says after the channel changed. It runs no update and asks GitHub nothing, so it names no version.
 // Nothing moves a pre-release back to stable by itself (update.mjs): a person leaving beta on one is told so.
-export function channelNote(channel, running = ROUTR_VERSION, isStandalone = standalone()) {
-  if (channel === "beta") return "update channel: beta. `routr update` installs the newest beta, rc or stable release now; otherwise the daily update does it";
+// With automatic updates off, only `routr update` moves it, and the note says so.
+export function channelNote(channel, running = ROUTR_VERSION, isStandalone = standalone(), auto = true) {
+  const later = auto ? "; otherwise the daily update does it" : " (automatic updates are off)";
+  if (channel === "beta") return `update channel: beta. \`routr update\` installs the newest beta, rc or stable release now${later}`;
   const pre = isStandalone && running.includes("-");
-  return `update channel: stable. ${pre ? `You stay on ${running} until a stable release is newer; \`routr update --force\` installs the newest stable now` : "`routr update` installs the newest stable release now; otherwise the daily update does it"}`;
+  return `update channel: stable. ${pre ? `You stay on ${running} until a stable release is newer; \`routr update --force\` installs the newest stable now` : `\`routr update\` installs the newest stable release now${later}`}`;
 }
 
 // Where each newly written pool that reads as metered goes in the ranking. `ask(name, note)` is the terminal question
@@ -290,7 +292,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
     did.push(`wrote ${path}${fresh.length ? ` with ${fresh.join(", ")}` : changed.length ? "" : " (no harness found yet: run `routr setup` again after installing one)"}`);
   } else skipped.push(`config ${path} already covers every harness found: kept as it is`);
-  if (channelMoved) did.push(channelNote(channel)); // what happens next; setup itself updates nothing
+  if (channelMoved) did.push(channelNote(channel, ROUTR_VERSION, standalone(), config.auto_update !== false)); // what happens next; setup itself updates nothing
   skipped.push(...leftOut);
 
   // 2. Claude Code's usage, which it reports only to its statusline. Someone else's statusline is never replaced.
