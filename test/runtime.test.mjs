@@ -4,7 +4,9 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { harnessEnv, probe, run, start, startOptions, startSync } from "../src/lib/runtime.mjs";
 
-// Any way of reaching node's process API, or Bun's: a static import, require, or a dynamic import, with or without node:.
+// The ordinary ways of reaching node's process API, or Bun's: a static import, require, or a literal dynamic import,
+// with or without node:. A text scan, not a parser: a computed import or `Bun["spawn"]` would get past it, and a comment
+// naming Bun.spawn trips it. It guards against the ordinary mistake; review covers the rest.
 const STARTS_PROCESSES = /["'`](?:node:)?child_process["'`]|\bBun\.spawn(?:Sync)?\b/;
 
 test("only runtime.mjs starts processes: no other file in src/ imports child_process or calls Bun.spawn", () => {
