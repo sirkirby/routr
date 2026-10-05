@@ -182,33 +182,61 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       step("shell_ready", true, `Interactive ${shell} shell in ${r.cwd}`); return null;
     };
     // --pane may name a pane where the agent asked for is already running (the `then` of an earlier launch that stopped
-    // at its startup question): launch adopts it, waits for it to be ready, and sends the task. A pane running another
-    // agent is refused; a pane with no agent goes through the shell as before.
+    // at its startup question): launch adopts it and sends the task. A pane running another agent is refused; a pane
+    // with no agent goes through the shell as before.
     // What herdr makes of the question the agent stopped at: its rule and the version of its rules for this harness,
-    // plus what the registry knows about that harness's startup questions. The block is already confirmed, so this
-    // extra reading gets its own short allowance and can never turn needs_input into failed (from the review of #47).
-    const blockedAtStart = async (h, text) => {
+    // plus what the registry knows about that harness's startup questions. This extra reading gets its own short
+    // allowance and can never turn needs_input into failed (from the review of #47).
+    // `agent get` gives herdr's last state, `agent explain` reads the screen now, and right after a question is answered
+    // the two can disagree. Seen 2026-10-05 (Codex, rules 2026.10.01.1): the orchestrator answered Codex's folder trust
+    // and ran `then` at once; get still said blocked, explain said idle (osc_title_idle), and launch reported a ready
+    // agent as "waiting at a question", naming the idle rule as the question. So a block counts only when explain reads
+    // it blocked too (or cannot be read).
+    const explain = async () => {
       const a = ["agent", "explain", out.pane, "--json"];
       logCommand(out.command, command(a));
       let x = null; try { x = (await run(a, 2000)).data; } catch {}
-      const rule = x?.matched_rule?.id ?? x?.result?.matched_rule?.id, rules = x?.manifest_version ?? x?.result?.manifest_version;
-      return needsInput(`${h.label} is waiting at a question before it can start${rule ? ` (herdr reads it as ${rule}${rules ? `, rules ${rules}` : ""})` : ""}.`, text,
-        { herdr: { state: "blocked", ...(rule ? { rule } : {}), ...(rules ? { rules } : {}) }, ...(h.startup ? { note: h.startup } : {}) });
+      return { reads: x?.state ?? x?.result?.state, rule: x?.matched_rule?.id ?? x?.result?.matched_rule?.id, rules: x?.manifest_version ?? x?.result?.manifest_version };
+    };
+    const blockedAtStart = (h, text, { reads, rule, rules } = {}) => {
+      const disagreed = typeof reads === "string" && reads !== "blocked";
+      // A rule matched for another state is not the question's reason, so it is not given as one.
+      const reading = disagreed ? ` (herdr's state says blocked, but its rules read the screen as ${reads}${rule ? ` by ${rule}` : ""}${rules ? `, rules ${rules}` : ""})`
+        : rule ? ` (herdr reads it as ${rule}${rules ? `, rules ${rules}` : ""})` : "";
+      return needsInput(`${h.label} is waiting at a question before it can start${reading}.`, text,
+        { herdr: { state: "blocked", ...(rule && !disagreed ? { rule } : {}), ...(disagreed ? { explained: reads } : {}), ...(rules ? { rules } : {}) }, ...(h.startup ? { note: h.startup } : {}) });
     };
     // Only an idle agent of that kind, in that folder, is adopted (from the review of #48): one elsewhere would get a
-    // task meant for --cwd, and a working one would get a second task when it finished. Anything else is handed back.
-    let adopted = false;
+    // task meant for --cwd, and a working one would get a second task when it finished. launch never waits on an agent
+    // it did not start, and decides from one reading, now: herdr's `agent wait` can see such an agent work and finish
+    // inside one wait (it matches idle, done, and blocked), and so can any later read, so waiting for one read unknown
+    // or working to become idle could hand a busy worker a second task (from the reviews of this change). A refusal
+    // costs the orchestrator one more run of `then`. The screen on a refusal is extra: a read that fails or runs out of
+    // time leaves it out rather than turning the refusal into failed.
+    let adopted = false, stop = null;
     if (o.pane) {
       const occupant = (await call(["agent", "get", out.pane], true)).data?.result?.agent;
       if (occupant?.agent) {
+        const screen = async () => { try { return await readPane(); } catch { return null; } };
         const other = { then: "Choose another pane, or leave --pane off" };
-        if (occupant.agent !== o.kind) return needsInput(`The pane runs ${occupant.agent}, not ${o.kind}`, await readPane(), other);
+        const notWaiting = async (state) => needsInput(`The ${o.kind} in the pane is ${state}, not waiting for a task`, await screen(), { then: `Wait until it is idle (herdr agent wait ${out.pane} --until idle), then run the same launch again` });
+        if (occupant.agent !== o.kind) return needsInput(`The pane runs ${occupant.agent}, not ${o.kind}`, await screen(), other);
         const where = occupant.foreground_cwd ?? occupant.cwd;
         const same = (() => { try { return realpathSync(where) === realpathSync(out.cwd); } catch { return false; } })();
-        if (!same) return needsInput(`The ${o.kind} in the pane works in ${where ?? "a folder herdr does not report"}, not ${out.cwd}`, await readPane(), other);
-        if (occupant.agent_status === "blocked") return blockedAtStart(HARNESSES[o.kind], await readPane());
-        if (!["idle", "done"].includes(occupant.agent_status)) return needsInput(`The ${o.kind} in the pane is ${occupant.agent_status ?? "in an unknown state"}, not waiting for a task`, await readPane(), { then: `Wait until it is idle (herdr agent wait ${out.pane} --until idle), then run the same launch again` });
-        adopted = true; step("adopt", true, `${o.kind} is already running in ${out.pane}, idle, in ${out.cwd}: launch sends it the task (its model and effort are the ones it runs; not changed)`);
+        if (!same) return needsInput(`The ${o.kind} in the pane works in ${where ?? "a folder herdr does not report"}, not ${out.cwd}`, await screen(), other);
+        let status = occupant.agent_status ?? "in a state herdr does not report";
+        if (status === "blocked") {
+          // herdr's state may be stale (above): its live reading decides, once. Idle (or done) is a block already answered.
+          const x = await explain();
+          if (x.reads === "blocked" || typeof x.reads !== "string") return blockedAtStart(HARNESSES[o.kind], await screen(), x);
+          if (!["idle", "done"].includes(x.reads)) return notWaiting(x.reads);
+          step("explain", true, `herdr's state said blocked, but its rules read the screen as ${x.reads}${x.rule ? ` by ${x.rule}` : ""}: the question was answered`);
+          status = x.reads;
+        }
+        if (!["idle", "done"].includes(status)) return notWaiting(status);
+        // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
+        if (occupant.interactive_ready === false && occupant.agent_status !== "blocked") return notWaiting(`${status} but not ready for input`);
+        adopted = true; step("adopt", true, `${o.kind} is already running in ${out.pane}, ${status}, in ${out.cwd}: launch sends it the task (its model and effort are the ones it runs; not changed)`);
       }
     }
     // A harness that runs its default model on an id it does not know, without a word (Kiro), is checked against its
@@ -264,7 +292,6 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       step("split", true, `Created ${out.pane}, ${direction}`);
     }
     // A pane we split already opened in --cwd; one adopted from the caller must be checked before we type `cd`.
-    let stop = null;
     if (o.pane && !adopted) {
       stop = await shellReady(); if (stop) return stop;
       // Only when the shell is elsewhere: a `cd` runs the shell's directory hooks again, and a hook that asks (a dotenv
@@ -283,26 +310,39 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     // a harness asks at startup: it passes each harness's own flags so none is asked (the registry), and when one is
     // asked anyway herdr reports the agent blocked, and the orchestrator gets herdr's reading of it and the screen.
     // (Screen patterns for trust dialogs broke with harness releases: Claude Code 2.1.284 reversed its options and
-    // dropped their numbers, 2026-09-28.) Returns null when ready, or what needs a person.
+    // dropped their numbers, 2026-09-28.) Returns null when ready, or what needs a person. Only for an agent this launch
+    // started: it has no task of its own, so waiting through its start cannot hand it a second one. A blocked state
+    // whose explain reads another state is herdr catching up (above), so the wait goes on; if the two still disagree
+    // when the time runs out, inside a call or between calls, the block is reported from the readings already taken.
     const awaitReady = async (text) => {
       const h = HARNESSES[o.kind];
+      const left = () => { try { return remaining(); } catch { return 0; } };
+      let disagreed = null; // { text, reading } while herdr's state says blocked and its explain reads another state
       for (;;) {
-        const waited = await call(["agent", "wait", out.pane, "--timeout", String(Math.min(1000, remaining()))], true);
-        if (!waited.ok && !["timeout", "agent_not_found", "agent_not_ready"].includes(waited.data?.error?.code)) throw new Error(waited.data?.error?.message ?? "Agent wait failed");
-        text = await readPane();
-        const got = await call(["agent", "get", out.pane], true);
-        if (!got.ok && got.data?.error?.code !== "agent_not_found") throw new Error(got.data?.error?.message ?? "Agent inspection failed");
-        const agent = got.data?.result?.agent;
-        // Close only a pane this launch made: one passed in with --pane may hold someone else's work (from the review of #48).
-        if (agent && agent.agent !== o.kind) return needsInput(`The pane runs ${agent.agent}, not ${o.kind}`, text, { then: createdPane ? `Close the pane this launch made (herdr pane close ${out.pane}) and launch again` : "Leave that pane; choose another, or leave --pane off" });
-        if (agent?.agent_status === "blocked") return blockedAtStart(h, text);
-        // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
-        if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) break;
-        await pause();
+        try {
+          const waited = await call(["agent", "wait", out.pane, "--timeout", String(Math.min(1000, remaining()))], true);
+          if (!waited.ok && !["timeout", "agent_not_found", "agent_not_ready"].includes(waited.data?.error?.code)) throw new Error(waited.data?.error?.message ?? "Agent wait failed");
+          text = await readPane();
+          const got = await call(["agent", "get", out.pane], true);
+          if (!got.ok && got.data?.error?.code !== "agent_not_found") throw new Error(got.data?.error?.message ?? "Agent inspection failed");
+          const agent = got.data?.result?.agent;
+          // Close only a pane this launch made: one passed in with --pane may hold someone else's work (from the review of #48).
+          if (agent && agent.agent !== o.kind) return needsInput(`The pane runs ${agent.agent}, not ${o.kind}`, text, { then: createdPane ? `Close the pane this launch made (herdr pane close ${out.pane}) and launch again` : "Leave that pane; choose another, or leave --pane off" });
+          if (agent?.agent_status === "blocked") {
+            const x = await explain();
+            if (x.reads === "blocked" || typeof x.reads !== "string") return blockedAtStart(h, text, x);
+            disagreed = { text, reading: x };
+          } else if (agent) disagreed = null; // herdr's state has moved on: no disagreement left to report
+          // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
+          if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) break;
+          await pause();
+        } catch (e) {
+          if (disagreed && left() <= 0) return blockedAtStart(h, disagreed.text, disagreed.reading);
+          throw e;
+        }
       }
-      // pane-run: herdr did not get the name. Not for an adopted agent: that one was renamed already, tolerantly (from the
-      // verification of #48: a second, strict rename failed the launch it had just warned about).
-      if (o.kind === "cursor" && SHELLS[shell].cursor && !adopted) await call(["agent", "rename", out.pane, o.name]);
+      // pane-run: herdr did not get the name.
+      if (o.kind === "cursor" && SHELLS[shell].cursor) await call(["agent", "rename", out.pane, o.name]);
       return null;
     };
     // Submit the task once and let herdr say whether the worker took it. herdr sends the text and Enter as one
@@ -363,14 +403,21 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       if (!started.ok && !["agent_not_ready", "timeout"].includes(startError)) {
         throw new Error(started.data?.error?.message ?? "Agent start failed");
       }
-    } else {
-      const renamed = await call(["agent", "rename", out.pane, o.name], true); // the name the orchestrator will use
-      if (!renamed.ok) out.warnings.push(`Could not rename the adopted agent to ${o.name}: address it by its pane, ${out.pane}`);
+      stop = await awaitReady(text); if (stop) return stop;
+      step("ready", true, "herdr reports the agent ready for input");
     }
-    stop = await awaitReady(text); if (stop) return stop;
-    step("ready", true, "herdr reports the agent ready for input");
     out.state = "ready"; out.ok = true;
-    if (prompt) { stop = await submitPrompt(); if (stop) return stop; }
+    if (prompt) stop = await submitPrompt();
+    // The name the orchestrator will use for an adopted agent, given once the task is in (whatever herdr then reports),
+    // so a rename that hangs cannot take the submission's time (from the verification of d47051e: it used all of
+    // --timeout, and the task was never sent). Its own short allowance, like explain's; a failure costs only the name.
+    if (adopted) {
+      const a = ["agent", "rename", out.pane, o.name];
+      logCommand(out.command, command(a));
+      let renamed = null; try { renamed = await run(a, 2000); } catch {}
+      if (!renamed?.ok) out.warnings.push(`Could not rename the adopted agent to ${o.name}: address it by its pane, ${out.pane}`);
+    }
+    if (stop) return stop;
   } catch (e) {
     out.ok = false; out.state = "failed"; step("failed", false, String(e?.message ?? e));
     // The harness may have exited with its own complaint (a model id it does not accept, a login it wants). That
