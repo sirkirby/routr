@@ -138,6 +138,18 @@ test("an update downloads the exact tag it checked, on either channel", async ()
   expect(stable.asked.every((u) => u.startsWith("https://github.com/sirkirby/routr/releases/download/v0.5.1/"))).toBe(true);
 });
 
+test("on beta, the official release replaces its own last beta", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const asked = [], self = join(scratch("upd-release"), "routr");
+  writeFileSync(self, "BETA");
+  const list = [{ tag_name: "v1.1.0", draft: false, prerelease: false }, { tag_name: "v1.1.0-beta.10", draft: false, prerelease: true }];
+  const github = await fakeGitHub(asked);
+  const fetchFn = async (u) => (String(u).includes("/releases?per_page=30") ? { ok: true, status: 200, json: async () => list } : github(u));
+  const r = await update({ channel: "beta", current: "1.1.0-beta.10", self, base: undefined, fetchFn, spawn: () => ({ status: 0, stdout: "1.1.0\n" }), isStandalone: () => true });
+  expect(r).toMatchObject({ ok: true, updated: true, latest: "1.1.0", now: "1.1.0", channel: "beta" });
+  expect(asked.filter((u) => !u.includes("api.github.com")).every((u) => u.includes("/releases/download/v1.1.0/"))).toBe(true);
+});
+
 test("going back to stable on a pre-release never downgrades by itself, and --force installs the newest stable", async () => {
   const { update } = await import("../src/lib/update.mjs");
   const self = join(scratch("upd-down"), "routr");

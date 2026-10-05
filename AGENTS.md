@@ -33,7 +33,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - Updates are automatic but never in the way: at most once a day a command may start a DETACHED updater and carry
   on. The command itself MUST NOT wait for it, make a network call for it, or change its own output because of it.
   The updater verifies the release checksum, swaps the binary in place, and reinstalls the skill; a run in progress
-  keeps its binary. `"auto_update": false` turns it off. Never from a source checkout, never from `statusline`.
+  keeps its binary. It follows the user's `update_channel` (stable, or beta: also `-beta.N` and `-rc.N`, never alpha) and
+  never downgrades by itself. `"auto_update": false` turns it off. Never from a source checkout, never from `statusline`.
 - Every call reads each usage source's newest reading and shows its age. Claude's is the statusline's snapshot; Codex
   and Antigravity are read in the call (1 to 9 s, beside Jev). Cursor's own screen takes seconds more and starts
   Cursor, and Kiro's `/usage` takes ~10 s plus its cleanup, so their readings are snapshots: when the last try is over
