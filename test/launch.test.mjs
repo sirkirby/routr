@@ -4,7 +4,8 @@ import { isAbsolute, join } from "node:path";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { plan } from "../src/lib/harnesses.mjs";
 import { composePrompt, launch, parseLaunchArgs, WORKER_GUIDE } from "../src/lib/launch.mjs";
-import { paneText, promptSettled, quote, shellPrompt } from "../src/lib/herdr.mjs";
+import { paneText, promptSettled, quote, runHerdr, shellPrompt } from "../src/lib/herdr.mjs";
+import { EventEmitter } from "node:events";
 import { herdrError, herdrOK, SCRATCH, scratch, SCRIPT, shellInfo } from "./helpers.mjs";
 test("launch plans use each harness's measured permissions and model syntax", () => {
   expect(plan({ kind: "claude", model: "sonnet", effort: "medium" }).argv)
@@ -526,6 +527,38 @@ test("for an agent launch started, a stale block is waited through, and a disagr
   expect(late.steps.at(-1).detail).toContain("Launch readiness timeout");
 });
 
+// From the final review: the saved disagreement (get blocked, explain idle) was cleared only when an agent was read, so
+// an agent that then vanished left it standing, and the deadline reported a block nobody saw any more as needs_input.
+test("an agent that vanishes after a stale block lets the readiness timeout fail, not report the old block", async () => {
+  const codex = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task", "--timeout", "6000"];
+  let gets = 0;
+  const f = fakeHerdr({ kind: "codex", reply: async (a) => {
+    if (a[1] === "get" && a[2] === "w1:p2") return ++gets === 1 ? herdrOK({ agent: { agent: "codex", agent_status: "blocked", cwd: process.cwd() } }) : herdrError("agent_not_found");
+    if (a[1] === "explain") return explained("idle", "osc_title_idle");
+  } });
+  const r = await launch(codex, f.deps);
+  expect(f.calls.some((a) => a[1] === "explain")).toBe(true); // the disagreement was seen
+  expect(r).toMatchObject({ state: "failed", needs_input: null });
+  expect(r.steps.at(-1).detail).toContain("Launch readiness timeout");
+});
+
+// From the final review: an adopted agent was renamed after its task even when the outcome read found another agent
+// in the pane (or none), so the name could go to someone else's agent. The rename now needs the identity confirmed.
+test("an adopted agent is not renamed when the outcome read cannot confirm it is the agent prompted", async () => {
+  for (const after of [herdrOK({ agent: { agent: "claude", agent_status: "working", cwd: process.cwd() } }), herdrOK({})]) {
+    let prompted = false;
+    const f = fakeHerdr({ kind: "codex", reply: async (a) => {
+      if (a[1] === "prompt") { prompted = true; return herdrOK({}); }
+      if (a[1] === "get" && a[2] === "w1:p2") return prompted ? after : herdrOK({ agent: { agent: "codex", agent_status: "idle", interactive_ready: true, cwd: process.cwd() } });
+    } });
+    const r = await launch(adoptArgs, f.deps);
+    expect(r).toMatchObject({ state: "needs_input" });
+    expect(r.needs_input.why).toContain("Cannot confirm the prompted agent's identity");
+    expect(f.calls.filter((a) => a[1] === "prompt")).toHaveLength(1);
+    expect(f.calls.some((a) => a[1] === "rename")).toBe(false);
+  }
+});
+
 test("a settled shell in the wrong directory is reported rather than started", async () => {
   const f = fakeHerdr({ reply: (a) => a[1] === "process-info" ? shellInfo([{ pid: 1, cwd: "/" }]) : undefined });
   const r = await launch(launchArgs, f.deps);
@@ -751,6 +784,22 @@ unixOnly("transport timeouts return a timeout code, even if the subprocess print
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout.toString())).toMatchObject({ ok: false, data: { error: { code: "timeout" } } });
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+// From the final review: runHerdr answered only on `close`, so a client that held its pipes after the kill (on Windows
+// herdr behind cmd.exe, where the kill reaches cmd.exe alone) kept the call pending past its timeout. The timeout now
+// answers by itself; only the child is killed (never its tree: it may have started the user's herdr server).
+test("a herdr call answers at its timeout even when the killed client never closes its pipes", async () => {
+  const child = new EventEmitter(), pipe = () => Object.assign(new EventEmitter(), { destroyed: false, destroy() { this.destroyed = true; } });
+  Object.assign(child, { stdout: pipe(), stderr: pipe(), signals: [], unrefd: false, kill(sig) { child.signals.push(sig); }, unref() { child.unrefd = true; } });
+  const seen = [];
+  const call = runHerdr(["agent", "get", "w1:p2"], 50, { via: (...a) => { seen.push(a); child.stdout.emit("data", '{"result":{}}'); return child; } });
+  const r = await Promise.race([call, Bun.sleep(1000).then(() => "still pending")]);
+  expect(r).toEqual({ ok: false, data: { error: { code: "timeout", message: "Herdr command timed out" } } });
+  expect(seen.map(([cmd]) => cmd)).toEqual(["herdr"]);
+  expect([child.signals, child.stdout.destroyed, child.stderr.destroyed, child.unrefd]).toEqual([["SIGKILL"], true, true, true]);
+  child.emit("close", 0); // a late close changes nothing
+  expect(await call).toMatchObject({ ok: false, data: { error: { code: "timeout" } } });
 });
 
 test("launch --copy is repeatable, needs --worktree, and refuses paths outside the repository", async () => {
