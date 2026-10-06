@@ -2,38 +2,38 @@
 // the TypeSafe key, and the config, and ends with the commands that fix what is missing. It writes nothing:
 // `routr setup` (lib/setup.mjs) does, from the same inspection.
 import { existsSync, lstatSync, readFileSync } from "node:fs";
-import { delimiter, join } from "node:path";
+import { delimiter, join, win32 } from "node:path";
 import { accountUse, CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
 import { signInHint } from "./signin.mjs";
 import { jevModel, KEY_FILES, loadKey, ping } from "./jev.mjs";
 import { JEV_MODEL } from "./questions.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
-import { home, standalone } from "./runtime.mjs";
-import { autoUpdateStatus, latestVersion, newer } from "./update.mjs";
+import { home, resolveCommand, standalone } from "./runtime.mjs";
+import { autoUpdateStatus } from "./update.mjs";
 import { dailyTelemetrySend, hoursAgo, lastTelemetrySend, pendingCount, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 import { extraFiles, hasExtras, missingFiles, owner, skillPlaces } from "./skill-install.mjs";
 
-// Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows.
-export function which(cmd) {
-  const exts = process.platform === "win32" ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
-  for (const dir of (process.env.PATH ?? "").split(delimiter)) for (const ext of exts) {
-    const p = join(dir, cmd + ext);
-    if (dir && existsSync(p)) return p;
+// Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows. On Windows it is runtime.mjs's
+// resolveCommand, the rule start() follows: a harness doctor calls found is one routr can start (PATH in order,
+// PATHEXT's .com/.exe/.bat/.cmd only, never the current folder first). Raw PATHEXT also lists .JS and .VBS, so doctor
+// once called a harness found that routr could not start. `platform`, `env`, `cwd` and `exists` are test seams.
+export function which(cmd, { platform = process.platform, env = process.env, cwd = process.cwd(), exists, path } = {}) {
+  if (platform === "win32") return resolveCommand(cmd, { env, cwd, ...(exists ? { exists } : {}), ...(path !== undefined ? { path } : {}) });
+  for (const dir of (path ?? env.PATH ?? "").split(delimiter)) {
+    const p = join(dir, cmd);
+    if (dir && (exists ?? existsSync)(p)) return p;
   }
   return null;
 }
 
 // Installed but not on this process's PATH (seen on a fresh Mac: ~/.local/bin is only added by the interactive shell).
-function offPath(cmd) {
-  const dirHome = home(), win = process.platform === "win32";
-  const exts = win ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";") : [""];
-  for (const dir of [join(dirHome, ".local/bin"), join(dirHome, ".bun/bin"), join(dirHome, "bin"), ...(win ? [] : ["/opt/homebrew/bin", "/usr/local/bin"])]) for (const ext of exts) {
-    const p = join(dir, cmd + ext);
-    if (existsSync(p)) return p;
-  }
-  return null;
+// The same lookup as `which`, in the usual install folders instead of PATH.
+export function offPath(cmd, { platform = process.platform, dirHome = home(), ...seams } = {}) {
+  const win = platform === "win32", at = (d) => (win ? win32.join(dirHome, d) : join(dirHome, d));
+  const dirs = [at(".local/bin"), at(".bun/bin"), at("bin"), ...(win ? [] : ["/opt/homebrew/bin", "/usr/local/bin"])];
+  return which(cmd, { platform, ...seams, path: dirs.join(win ? ";" : delimiter) });
 }
 
 const MODELS_SHOWN = 12;
@@ -90,7 +90,7 @@ export async function inspect({ configPath, quiet } = {}) {
   const r = { from_source: !standalone(), runtime: `routr ${ROUTR_VERSION} (${standalone() ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, herdr: { path: which("herdr") ?? offPath("herdr"), inside_session: process.env.HERDR_ENV === "1",
     // The orchestrator guide leans on herdr's own skill for pane and agent commands; routr does not bundle it.
     skill: [".agents/skills/herdr", ".claude/skills/herdr"].some((d) => existsSync(join(home(), d, "SKILL.md"))) }, harnesses: {}, key: {}, config: {}, starter_config: null };
-  // Every check that waits on something else (the release lookup, each harness, the key's test call) runs at once:
+  // Every check that waits on something else (each harness, the key's test call) runs at once:
   // one after another, a logged-out harness that is slow to answer made doctor sit silent for most of a minute.
   // A person at a terminal sees each one finish, on stderr so the report and `--json` stay clean.
   const found = KINDS.filter((n) => which(HARNESSES[n].executable));
@@ -104,16 +104,15 @@ export async function inspect({ configPath, quiet } = {}) {
   // One that is not gets no model list and no usage read, since either could open its sign-in in the browser.
   const statesP = Promise.all(found.map((n) => step(`${n}'s sign-in`, signIn(n, { fresh: true })))).then((s) => Object.fromEntries(found.map((n, i) => [n, s[i]])));
   const whyNot = (states) => (n) => (states[n] === "yes" ? null : signInHint(HARNESSES[n], states[n]));
-  // The release lookup is one short, non-fatal call. Only doctor and `routr update` make it; the advice commands never call home.
-  const [latest, usage, key, states, ...models] = await Promise.all([
-    process.env.ROUTR_NO_UPDATE ? null : latestVersion(3000, config.update_channel).catch(() => null), // the newest on the user's channel
+  // No release lookup here: doctor is an advice command, and a command never makes the updater's network call. Whether a
+  // newer release is waiting comes from what the daily job saw (autoUpdateStatus, below); `routr update --check` asks.
+  const [usage, key, states, ...models] = await Promise.all([
     // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
     step("usage", statesP.then((st) => readUsage(found, {}, { background: enabledSubscriptions(config), why: whyNot(st) }))), // a turned-off one is never refreshed
     step("the TypeSafe key", keyCheck().then((t) => ({ t }), (e) => ({ e }))),
     statesP,
     ...found.map((n) => statesP.then((st) => (st[n] !== "yes" ? null : step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))))),
   ]);
-  if (latest && standalone() && newer(latest, ROUTR_VERSION)) r.update_available = latest; // a source checkout is not updated
   // How a reading reads in one line: a number, a billed seat's note, or why there is none.
   const said = (u) => (u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)`
     : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note} (${u.source})`);
@@ -164,6 +163,8 @@ export async function inspect({ configPath, quiet } = {}) {
   }
   if (!r.config.exists) r.starter_config = starterConfig(found);
   r.auto_update = autoUpdateStatus(config);
+  // A newer release the daily job saw on this channel, and how long ago (none from a source checkout, or with updates off).
+  if (r.auto_update.available) { r.update_available = r.auto_update.available.version; r.update_seen_hours_ago = r.auto_update.available.seen_hours_ago; }
   r.telemetry = telemetryStatus(config);
   if (r.telemetry.on) {
     // Only what happened since the current yes counts: a send before it (then off, then on again) says nothing now.
@@ -196,7 +197,8 @@ export function render(r) {
   const mark = (state) => (state === true || state === "ok" ? paint(32, "ok ") : state === "need" ? paint("1;31", "!! ") : paint(33, "-- "));
   const line = (state, text) => out.push(mark(state) + (state === "need" ? paint(31, text) : text));
   const { notes, problems = [] } = r.config;
-  line(!r.update_available, `${r.runtime}${r.update_available ? ` · ${r.update_available} is available: run \`routr update\`` : ""}`);
+  const seen = r.update_seen_hours_ago == null ? "" : `, seen ${r.update_seen_hours_ago} h ago`;
+  line(!r.update_available, `${r.runtime}${r.update_available ? ` · ${r.update_available} is available${seen}: run \`routr update\`` : ""}`);
   line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: orchestration needs it (https://herdr.dev). Sizing subagents works without it"}`);
   if (r.herdr.path) line(r.herdr.skill, `herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
   const base = baseVersion(ROUTR_VERSION);
@@ -231,7 +233,7 @@ export function render(r) {
   const au = r.auto_update;
   // The channel is shown on or off: `routr update` by hand follows it too.
   const channel = au.channel === "beta" ? "beta channel (beta and rc releases too; `routr setup --channel stable` leaves it)" : "stable channel";
-  line("ok", `automatic updates ${au.on ? `on · ${channel} · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off} · ${channel}`}`);
+  line("ok", `automatic updates ${au.on ? `on · ${channel} · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off} · ${channel} · \`${au.check_by_hand ?? "routr update --check"}\` looks for a newer release`}`);
   if (r.telemetry) line("ok", r.telemetry.on ? "telemetry on: anonymous outcomes (never text) once a day · `routr share` shows exactly what · `routr telemetry off` stops it"
     : `telemetry off${r.telemetry.why_off.startsWith("not turned on") ? " (the default)" : `: ${r.telemetry.why_off}`} · \`routr telemetry on\` shares anonymous outcomes that help tune routr (docs/telemetry.md)`);
   if (r.telemetry?.on) {

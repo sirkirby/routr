@@ -25,8 +25,10 @@ xattr -d com.apple.quarantine ~/.local/bin/routr
 ## Updates
 
 routr updates itself in the background, at most once a day, and the new version takes effect on your next run.
-`routr doctor` shows when it last checked and the result. `routr update` updates now; `routr update --check` only
-looks. To stop automatic updates, set `"auto_update": false` in `~/.config/routr/config.json`. Versions before
+`routr doctor` shows when it last checked, the result, and a newer release that check saw on your channel; doctor
+itself asks GitHub nothing. `routr update` updates now; `routr update --check` only looks. To stop automatic updates,
+set `"auto_update": false` in `~/.config/routr/config.json`; doctor then reminds you that `routr update --check`
+looks by hand. Versions before
 0.1.7 do not update themselves: run the install command once more.
 
 Both follow your update channel, which `routr doctor` shows: stable releases, unless you chose beta builds with

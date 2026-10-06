@@ -149,7 +149,7 @@ test("routr setup changes a setting on an existing config, fills one that is mis
 
 // setup, driven end to end as a person would: scripted answers, a fake machine, nothing written outside a temp folder.
 // Every question asked is recorded, and a question the scenario did not expect fails it.
-async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], signedOut = [], keyWorks = true, env = {}, efforts = async () => null, models = {}, skill = [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: "0.0.0-dev" }], usage = {}, print = () => {} } = {}) {
+async function runSetup({ config, args = [], answers = [], found = ["agy", "cursor"], signedOut = [], keyWorks = true, env = {}, efforts = async () => null, models = {}, skill = [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: "0.0.0-dev" }], usage = {}, print = () => {}, isStandalone } = {}) {
   const { setup } = await import("../src/lib/setup.mjs");
   const dir = scratch("setup-run"), path = join(dir, "config.json");
   if (config) writeFileSync(path, JSON.stringify(config));
@@ -163,7 +163,7 @@ async function runSetup({ config, args = [], answers = [], found = ["agy", "curs
   const queue = [...answers];
   const question = async (q) => { asked.push(q.trim()); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); };
   const r = await setup(["--config", path, "--json", ...args], { inspect, question, interactive: true, env,
-    install: () => installs.push(1), share: (on) => shared.push(on), key: async () => { keys.push(1); return { ok: false, error: "none given" }; }, print, efforts });
+    install: () => installs.push(1), share: (on) => shared.push(on), key: async () => { keys.push(1); return { ok: false, error: "none given" }; }, print, efforts, ...(isStandalone ? { isStandalone } : {}) });
   const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
   return { r, asked, saved, shared, installs, keys, left: queue.length };
 }
@@ -593,18 +593,25 @@ test("doctor's text says each harness's state in words: signed in, signed out, t
 test("the update channel is a setting: --channel writes it, says what happens next, and the menu changes it too", async () => {
   const { channelNote, parseChannel } = await import("../src/lib/setup.mjs");
   const config = { telemetry: false, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } };
-  const beta = await runSetup({ config, found: ["agy"], args: ["--yes", "--channel", "beta"] });
+  const beta = await runSetup({ config, found: ["agy"], args: ["--yes", "--channel", "beta"], isStandalone: () => true });
   expect(beta.saved).toEqual({ ...config, update_channel: "beta" });
   expect(beta.r.did).toContain('changed update_channel set to "beta"');
   expect(beta.r.did).toContain("update channel: beta. `routr update` installs the newest beta, rc or stable release now; otherwise the daily update does it");
+  // No daily update runs under ROUTR_NO_UPDATE, from a source checkout, or with auto_update false: the note says which,
+  // with the same words doctor uses (updatesOff), never "the daily update does it".
+  const note = async (over) => (await runSetup({ config: over.config ?? config, found: ["agy"], args: ["--yes", "--channel", "beta"], ...over })).r.did.find((d) => d.startsWith("update channel"));
+  const offNote = (why) => `update channel: beta. \`routr update\` installs the newest beta, rc or stable release now (automatic updates are off: ${why})`;
+  expect(await note({ isStandalone: () => true, env: { ROUTR_NO_UPDATE: "1" } })).toBe(offNote("ROUTR_NO_UPDATE is set"));
+  expect(await note({})).toBe(offNote("running from source")); // the tests run from source
+  expect(await note({ isStandalone: () => true, config: { ...config, auto_update: false } })).toBe(offNote("auto_update is false in your config"));
   // Asking for the channel already in effect writes nothing; back to stable is a change, said as one.
   expect((await runSetup({ config, found: ["agy"], args: ["--yes", "--channel", "stable"] })).saved).toEqual(config);
   const back = await runSetup({ config: beta.saved, found: ["agy"], args: ["--yes", "--channel", "stable"] });
   expect(back.saved.update_channel).toBe("stable");
   expect(back.r.did).toContain('changed update_channel "beta" → "stable"');
   // Leaving beta on a pre-release binary: no update runs, and the words say what does not happen by itself.
-  expect(channelNote("beta", "0.5.1", true, false)).toBe("update channel: beta. `routr update` installs the newest beta, rc or stable release now (automatic updates are off)");
-  expect(channelNote("stable", "1.2.0-beta.1", true, false)).toBe("update channel: stable. You stay on 1.2.0-beta.1 until a stable release is newer; `routr update --force` installs the newest stable now (automatic updates are off)");
+  expect(channelNote("beta", "0.5.1", true, "auto_update is false in your config")).toBe("update channel: beta. `routr update` installs the newest beta, rc or stable release now (automatic updates are off: auto_update is false in your config)");
+  expect(channelNote("stable", "1.2.0-beta.1", true, "ROUTR_NO_UPDATE is set")).toBe("update channel: stable. You stay on 1.2.0-beta.1 until a stable release is newer; `routr update --force` installs the newest stable now (automatic updates are off: ROUTR_NO_UPDATE is set)");
   expect(channelNote("stable", "0.6.0-beta.2", true)).toBe("update channel: stable. You stay on 0.6.0-beta.2 until a stable release is newer; `routr update --force` installs the newest stable now");
   // --force rebuilds the file and keeps the channel; --show refuses a change beside it; a bad value changes nothing.
   expect((await runSetup({ config: beta.saved, found: ["agy"], args: ["--yes", "--force"] })).saved.update_channel).toBe("beta");
