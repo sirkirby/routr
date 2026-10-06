@@ -686,7 +686,7 @@ test("the shared copy of each skill is required on its own: a harness copy does 
   installSkill({ home });
   // Claude's is a copy (as on Windows), so it survives when the shared copy, the one Codex and Cursor read, is deleted.
   const claude = join(home, ".claude/skills/routr-orchestrate"), shared = join(home, ".agents/skills/routr-orchestrate");
-  rmSync(claude); cpSync(shared, claude, { recursive: true }); rmSync(shared, { recursive: true });
+  rmSync(claude, { recursive: true, force: true }); cpSync(shared, claude, { recursive: true }); rmSync(shared, { recursive: true }); // a link here, already a copy on Windows
   const doc = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString());
   expect(doc.skill.filter((k) => k.name === "routr-orchestrate").map((k) => [k.where, k.ours])).toEqual([["~/.claude/skills/routr-orchestrate", true]]);
   expect(skillsMissing(doc)).toEqual(["routr-orchestrate"]);
