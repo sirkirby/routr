@@ -13,7 +13,7 @@ import { home, resolveCommand, standalone } from "./runtime.mjs";
 import { autoUpdateStatus } from "./update.mjs";
 import { dailyTelemetrySend, hoursAgo, lastTelemetrySend, pendingCount, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
-import { extraFiles, hasExtras, missingFiles, owner, skillPlaces } from "./skill-install.mjs";
+import { extraFiles, hasExtras, missingFiles, NOT_OURS, notOursWhy, owner, skillPlaces } from "./skill-install.mjs";
 
 // Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows. On Windows it is runtime.mjs's
 // resolveCommand, the rule start() follows: a harness doctor calls found is one routr can start (PATH in order,
@@ -48,8 +48,12 @@ export function starterConfig(found, models = {}, ranks = {}) {
 
 // routr's own copies of its skills (an entry without a name is the routr skill; one not marked `ours: false` is routr's).
 const mine = (r) => r.skill.filter((k) => k.ours !== false);
-// The skills routr installs of which no copy of routr's is in any skills folder.
-export const skillsMissing = (r) => SKILLS.filter((n) => !mine(r).some((k) => (k.name ?? "routr") === n));
+// The skills routr installs whose shared copy (~/.agents/skills/<name>, which Codex and Cursor read) is not there. Each
+// is required on its own: from the final review, any harness copy of routr's satisfied this check, so a deleted shared
+// copy went unreported while Claude's survived. A shared place holding something not routr's is not missing (installing
+// cannot fix it): it has its own line and next step.
+export const SHARED_AT = (n) => `~/.agents/skills/${n}`;
+export const skillsMissing = (r) => SKILLS.filter((n) => !r.skill.some((k) => (k.name ?? "routr") === n && k.where === SHARED_AT(n)));
 // routr's copies that lack one of the files it ships (a SKILL.md with no openai.yaml, say), and harness folders set up
 // here that lack routr's link to one of its skills.
 export const skillsIncomplete = (r) => [...mine(r).filter((k) => k.missing?.length), ...(r.skill_unlinked ?? []).map((u) => ({ ...u, missing: [`the link for ${u.for}`] }))];
@@ -75,7 +79,9 @@ export function nextSteps(r) {
     steps.push(`Claude reports no usage windows, and routr cannot tell why. If this seat has no quota (usage-based Enterprise, an API key), add "billing": "metered" under subscriptions.claude in ${r.config.path} and routr ranks it as billed usage. If it has a quota (routr has not yet seen a Team or Enterprise seat send windows), add "billing": "included", or check again after another turn`);
   if (skillsMissing(r).length || skillsIncomplete(r).length || skillsStale(r).length) steps.push("Install the routr skills that match this routr: routr skill install");
   // A folder of the same name that routr did not write is never replaced: the user moves it, or keeps theirs.
-  for (const k of r.skill.filter((x) => x.ours === false && x.where.endsWith(`.agents/skills/${x.name}`))) steps.push(`${k.where} is not routr's, so routr installs no ${k.name} skill there: rename or remove it, then run routr skill install`);
+  for (const k of r.skill.filter((x) => x.ours === false && x.where.endsWith(`.agents/skills/${x.name}`))) steps.push(k.why
+    ? `routr installs no ${k.name} skill at ${k.where}: ${k.why}. Rename or remove it, then run routr skill install`
+    : `${k.where} is not routr's, so routr installs no ${k.name} skill there: rename or remove it, then run routr skill install`);
   // routr's folder holding files routr did not write is left as it is by install: the person clears it first.
   for (const k of r.skill.filter((x) => x.extra?.length)) steps.push(hasExtras(k.where, k.extra));
   if (r.telemetry?.needs_attention) steps.push("Telemetry is on but not sending: `routr telemetry status` says why (last_send, daily_send), and `routr telemetry send` sends now");
@@ -137,7 +143,10 @@ export async function inspect({ configPath, quiet } = {}) {
     if (state === "absent") return null;
     let version = "unknown"; try { version = readFileSync(join(path, "SKILL.md"), "utf8").match(/^\s*version:\s*"?([^"\r\n]+)"?/m)?.[1] ?? "unknown"; } catch {}
     const real = state === "ours" && lstatSync(path).isDirectory(); // a link is checked through the folder it points at
-    return { name, where: `~/${d}`, version, ours: state === "ours", missing: state === "ours" ? missingFiles(name, path) : [], extra: real ? extraFiles(path, name) : [] };
+    // A reason only where a linked folder is what blocks it: a pre-manifest routr folder routr will not adopt there.
+    const why = state === "theirs" ? notOursWhy(home(), name, path) : NOT_OURS;
+    return { name, where: `~/${d}`, version, ours: state === "ours", missing: state === "ours" ? missingFiles(name, path) : [], extra: real ? extraFiles(path, name) : [],
+      ...(why !== NOT_OURS ? { why: why.replace(home(), "~") } : {}) };
   }).filter(Boolean);
   // Each harness set up here should have routr's link (or copy) of each skill whose shared copy is routr's: one that
   // is absent (its link failed, or was removed) is a repair. A folder there that is not routr's is reported above.
@@ -207,6 +216,8 @@ export function render(r) {
   for (const name of SKILLS) {
     const all = r.skill.filter((k) => (k.name ?? "routr") === name), ours = all.filter((k) => k.ours !== false);
     if (!ours.length) line("need", `${name} skill not installed for your agents: run \`routr skill install\``);
+    // The shared copy on its own (skillsMissing): Codex and Cursor read only that one, whatever else is installed.
+    else if (skillsMissing(r).includes(name)) line("need", `${name} skill missing from ${SHARED_AT(name)}, the copy Codex and Cursor read: run \`routr skill install\``);
     for (const v of [...new Set(ours.map((k) => k.version))]) {
       const ok = r.from_source || baseVersion(v) === base, at = ours.filter((k) => k.version === v).map((k) => k.where);
       line(ok ? "ok" : "need", `${name} skill ${at.join(", ")} ${at.length > 1 ? "are" : "is"} ${v}${ok ? "" : ` but this routr is ${base}: run \`routr skill install\`, or upgrade routr, so the guides and the command agree`}`);
@@ -214,7 +225,7 @@ export function render(r) {
     for (const k of ours.filter((x) => x.missing?.length)) line("need", `${name} skill ${k.where} is incomplete (no ${k.missing.join(", ")}): run \`routr skill install\``);
     for (const u of (r.skill_unlinked ?? []).filter((x) => x.name === name)) line("need", `${name} skill not linked for ${u.for} (${u.where}): run \`routr skill install\``);
     for (const k of ours.filter((x) => x.extra?.length)) line("need", hasExtras(k.where, k.extra));
-    for (const k of all.filter((x) => x.ours === false)) line("absent", `${k.where} is not routr's: routr leaves it as it is`);
+    for (const k of all.filter((x) => x.ours === false)) line("absent", k.why ? `${k.where}: ${k.why}` : `${k.where} is not routr's: routr leaves it as it is`);
   }
   const any = Object.values(r.harnesses).some((h) => h.installed);
   for (const [n, h] of Object.entries(r.harnesses)) {

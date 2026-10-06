@@ -76,7 +76,9 @@ linked (copied on Windows) into each harness's own skills folder, the registry's
 exists. It writes, replaces and removes only routr's own, known by structure, never by a skill's text: a folder holding
 routr's manifest `.routr-install.json` (the skill's name, routr's version, and every file routr wrote there, written
 with the skill in one staged step), or a link to such a folder in `~/.agents/skills`. A `routr` folder from before
-manifests (with its guides, and no manifest of any kind) counts once and gets one at the next install. A skill of the
+manifests (with its guides, and no manifest of any kind) counts once and gets one at the next install, unless a folder
+above it is a link (`~/.agents/skills` linked into a checkout, say): there it is never adopted. A linked folder above
+is otherwise fine (`~/.claude` in a dotfiles repo): routr's folder is known by its manifest wherever it lives. A skill of the
 same name the user put there, or a link of theirs (into a checkout, say), is kept, never followed, and named in the
 output; nothing is written or removed through a link inside a skill folder. While routr's folder holds a file routr did
 not write, `routr skill install` leaves it as it is and says what to remove (doctor too); uninstall removes only the

@@ -36,7 +36,8 @@ const ACT = {
   update: async (args) => {
     const u = await import("./lib/update.mjs");
     if (args.includes("--background")) { await u.backgroundUpdate(); return 0; }
-    const r = await u.update({ checkOnly: args.includes("--check"), force: args.includes("--force") }); print(r); return r.ok ? 0 : 1;
+    // By hand under the daily job's lock too (lockedUpdate): never two swaps at once.
+    const r = await u.lockedUpdate({ checkOnly: args.includes("--check"), force: args.includes("--force") }); print(r); return r.ok ? 0 : 1;
   },
   key: async (args) => { const r = await (await import("./lib/key.mjs")).setKey({ verify: !args.includes("--no-verify") }); print(r); return r.ok ? 0 : 1; },
   uninstall: async (args) => {
