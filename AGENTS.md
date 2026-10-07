@@ -28,8 +28,9 @@ measured questions about a brief or a worker report; code adds live usage; the l
   still prints usable output and exits 0. Only `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`,
   `feedback`, `launch`, `cleanup`, `usage cursor`, and `usage kiro` act, and each says so. `launch` drives panes in the user's herdr session;
   `cleanup` removes a worker's worktree (through herdr, or git when no workspace is open) or closes its pane, never
-  while anything runs there, never with `--force`, and never one holding uncommitted changes, files the worker made, or
-  a commit no branch holds; it deletes a branch only when asked and `git branch -d` agrees it is merged;
+  while anything runs there or it cannot tell, never with `--force`, and never one holding uncommitted changes, files
+  the worker made, files git is told not to check, or a commit no branch or tag holds (ignored files go with it, as
+  with `git worktree remove`); it deletes a branch only when asked and `git branch -d` agrees it is merged;
   `usage cursor` drives only a private headless herdr session it makes and removes, never the user's own, and keeps
   the reading in `~/.cache/routr`. `usage kiro` runs Kiro's own `/usage` in the system temp folder and deletes the
   empty session that leaves with Kiro's own `--delete-session`, and keeps the reading in `~/.cache/routr`.

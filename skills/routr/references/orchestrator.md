@@ -67,7 +67,7 @@ splits a pane beside you.
 A worktree's branch starts at the checkout's current commit. Work that builds on another worker's branch (stacked
 work), or a reviewer of one branch or commit, gets `--base <ref>` as well: the branch, tag or commit id to start
 from. Use it rather than making the worktree yourself with herdr or git: a worktree made outside routr comes with no
-cleanup command, and in one user's repository 14 such worktrees had been left behind.
+cleanup command in a launch result to finish it with.
 
 Workers run without a human, so their permissions must cover the scope of the task, and the task must stay inside
 that scope. They also run on the user's machine, in front of the user: do not brief an experiment that pops system
@@ -246,8 +246,8 @@ When you finish a long run, mention `routr assess`, and that `routr feedback "<t
 
 A worker that writes commits its work on its own branch inside its worktree (tell it so in the task) and never pushes.
 Every worker is finished with `routr cleanup`, the command in its launch result, once you have verified its work
-and it has nothing left to do. Do not close a worker's pane instead: a worktree's pane is its workspace's only pane,
-closing it closes the workspace, and the worktree is then left on disk where herdr no longer removes it.
+and it has nothing left to do. Do not close a worker's pane instead: a worktree's workspace normally has that one
+pane, closing it closes the workspace, and the worktree is then left on disk where herdr no longer removes it.
 
     routr cleanup --cwd <repo> --worktree <branch> [--delete-branch] [--dry-run]
     routr cleanup --pane <pane>          # a worker launched without --worktree
@@ -255,10 +255,13 @@ closing it closes the workspace, and the worktree is then left on disk where her
 - If the user asked for the work to land, merge the worker's branch into the branch the user is on, run the project's
   checks again on the merged result, and then run cleanup with `--delete-branch`.
 - Otherwise run cleanup without it: the branch stays. Tell the user where it is and what your check showed.
-- cleanup removes nothing that holds work, and refuses while anything still runs there: uncommitted changes, files
-  the worker made that it did not commit, a commit no branch holds. Files you copied in with `--copy` and that are
-  unchanged go with the worktree. Its `refused` says why and what to do; never discard a worker's changes to get past
-  it, and never push. Work that failed your check stays where it is until the user decides.
+- cleanup refuses while the worker's agent is working or waiting at a question, or a command runs in its pane. It
+  also refuses while the worktree holds uncommitted changes, files the worker made and did not commit, files git is
+  told not to check, or a commit that no branch or tag holds. Files you copied in with `--copy` and that are unchanged
+  go with the worktree, and so does everything git ignores (build output, `node_modules`, a copied `.env`), as with
+  `git worktree remove`: tell a worker to commit anything it must keep.
+  Its `refused` says why and what to do; never discard a worker's changes to get past it, and never push. Work that
+  failed your check stays where it is until the user decides.
 - `--delete-branch` deletes a branch only when git agrees it is merged; otherwise it is kept and `warnings` says so.
 - `routr cleanup --cwd <repo>` with no worker named lists every worktree of the repository and whether cleanup can
   remove it. Run it before you finish, and remove what your session left behind.

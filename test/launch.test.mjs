@@ -815,7 +815,7 @@ test("launch --base starts the worktree's branch at that commit, and every launc
   const base = ["--kind", "codex", "--name", "w", "--model", "m"];
   expect(parseLaunchArgs([...base, "--worktree", "review-x", "--base", "main~2"]).base).toBe("main~2");
   expect(() => parseLaunchArgs([...base, "--base", "main"])).toThrow("goes with --worktree");
-  for (const bad of ["--upload-pack=x", "-x", "a..b", "a b", "main:x"]) expect(() => parseLaunchArgs([...base, "--worktree", "b", "--base", bad])).toThrow();
+  for (const bad of ["--upload-pack=x", "-x", "a..b", "a b", "main:x", "HEAD^@", "HEAD^-1", "HEAD^!"]) expect(() => parseLaunchArgs([...base, "--worktree", "b", "--base", bad])).toThrow();
   const plan = await launch([...base, "--cwd", process.cwd(), "--worktree", "stacked", "--base", "feat/one", "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); } });
   expect(plan.planned_command[0]).toBe(`herdr worktree create --cwd ${quote(process.cwd())} --branch stacked --base feat/one --no-focus`);
   // A worktree launch: herdr gets --base as given, and the result names the one command that finishes the worker.

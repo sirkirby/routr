@@ -60,13 +60,13 @@ export const COMMANDS = {
   },
   cleanup: {
     name: "cleanup",
-    description: "finish a worker: remove the worktree `launch --worktree` made (closing its workspace), or close the pane launch split. The way to end every worker: closing a worktree's pane leaves the worktree behind. Refuses while anything runs there, and never removes uncommitted changes, files the worker made, or a commit no branch holds; files copied in with --copy and left unchanged go with it. Keeps the branch unless --delete-branch. With no worker named, lists the repo's worktrees and what it would do with each",
+    description: "finish a worker: remove the worktree `launch --worktree` made (closing its workspace), or close the pane launch split. The way to end every worker: closing a worktree's pane leaves the worktree behind. Refuses while anything runs there, and never removes uncommitted changes, files the worker made, or a commit no branch or tag holds; files copied in with --copy and left unchanged go with it, and so do files git ignores. Keeps the branch unless --delete-branch. With no worker named, lists the repo's worktrees and what it would do with each",
     flags: [
       { name: "--cwd", arg: "<repo>", description: "the repository (the main checkout or any of its worktrees)", required: false, default: "." },
-      { name: "--worktree", arg: "<branch>", description: "the worker's worktree, by the branch given to launch --worktree", required: false },
+      { name: "--worktree", arg: "<branch>", description: "the worker's worktree, by the branch given to launch --worktree (name one worker: --worktree, --path, or --pane)", required: false },
       { name: "--path", arg: "<path>", description: "the worker's worktree, by its folder (one on no branch, or made by hand)", required: false },
-      { name: "--pane", arg: "<id>", description: "a worker launched without --worktree: close its pane (a worktree's only pane is refused, with the command that removes the worktree)", required: false },
-      { name: "--delete-branch", arg: null, description: "also delete the worktree's branch, once its work has landed: git deletes it only when it is merged", required: false, default: false },
+      { name: "--pane", arg: "<id>", description: "a worker launched without --worktree: close its pane (a worktree's only pane is refused, with the command that removes the worktree). Takes no --cwd", required: false },
+      { name: "--delete-branch", arg: null, description: "also delete the worktree's branch, once its work has landed: git deletes it only when it is merged (with --worktree or --path)", required: false, default: false },
       { name: "--dry-run", arg: null, description: "check and say what it would do; change nothing", required: false, default: false },
     ],
   },
