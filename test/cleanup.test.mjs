@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { cleanup, dropCopy, parseCleanupArgs, parseStatus, parseWorktreeHeads, sameFile } from "../src/lib/cleanup.mjs";
+import { cleanup, dropCopy, linkedWorktree, parseCleanupArgs, parseStatus, parseWorktreeHeads, sameFile } from "../src/lib/cleanup.mjs";
 import { herdrError, herdrOK, scratch } from "./helpers.mjs";
 
 test("cleanup names one worker, by branch, folder, or pane; --delete-branch only for a worktree", () => {
@@ -35,7 +35,7 @@ function fake({ worktrees = [], panes = {}, processes = {}, status = {}, flags =
   const calls = [], gits = [];
   const source = "/repo";
   const deps = {
-    env: { HERDR_PANE_ID: "w1:p1" },
+    env: { HERDR_PANE_ID: "w1:p1" }, linked: () => true, // the tests below that use real folders give it its real test
     run: async (a) => {
       calls.push(a);
       if (a[0] === "worktree" && a[1] === "list") return herdrOK({ source: { source_checkout_path: source }, worktrees: [{ branch: "main", path: source, is_linked_worktree: false, open_workspace_id: "w1" }, ...worktrees] });
@@ -101,7 +101,8 @@ test("files copied in at launch and left unchanged go with the worktree; a chang
   const root = scratch("copies"), repo = join(root, "repo"), w = join(root, "w");
   for (const d of [repo, w, join(repo, "fx"), join(w, "fx")]) mkdirSync(d, { recursive: true });
   for (const d of [repo, w]) { writeFileSync(join(d, "fx", "data.json"), "{}"); writeFileSync(join(d, ".env.test"), "A=1"); }
-  const f = fake({ worktrees: [wt("copied", { path: w })], status: { [w]: "?? fx/data.json\0?? .env.test\0" } });
+  mkdirSync(join(repo, ".git")); writeFileSync(join(w, ".git"), `gitdir: ${join(repo, ".git", "worktrees", "w")}\n`);
+  const f = fake({ worktrees: [wt("copied", { path: w })], status: { [w]: "?? fx/data.json\0?? .env.test\0" } }); f.deps.linked = linkedWorktree;
   f.deps.run = ((run) => async (a) => (a[1] === "list" && a[0] === "worktree" ? herdrOK({ source: { source_checkout_path: repo }, worktrees: [wt("copied", { path: w })] }) : run(a)))(f.deps.run);
   const plan = await cleanup(["--cwd", repo, "--worktree", "copied", "--dry-run"], f.deps);
   expect(plan).toMatchObject({ ok: true, state: "planned" }); expect(existsSync(join(w, ".env.test"))).toBe(true);
@@ -208,11 +209,12 @@ test("a copy changed, or a worktree swapped for a link to the main checkout, whi
   for (const swap of [false, true]) {
     const root = scratch("mid"), repo = join(root, "repo"), w = join(root, "w");
     for (const d of [repo, w]) { mkdirSync(d, { recursive: true }); writeFileSync(join(d, "notes.txt"), "same"); }
+    mkdirSync(join(repo, ".git")); writeFileSync(join(w, ".git"), `gitdir: ${join(repo, ".git", "worktrees", "w")}\n`);
     const during = { "for-each-ref": () => {
       if (!swap) return writeFileSync(join(w, "notes.txt"), "the worker's own words");
       renameSync(w, `${w}-real`); symlinkSync(repo, w);
     } };
-    const f = fake({ worktrees: [wt("mid", { path: w })], status: { [w]: "?? notes.txt\0" }, during });
+    const f = fake({ worktrees: [wt("mid", { path: w })], status: { [w]: "?? notes.txt\0" }, during }); f.deps.linked = linkedWorktree;
     f.deps.run = ((run) => async (a) => (a[0] === "worktree" && a[1] === "list" ? herdrOK({ source: { source_checkout_path: repo }, worktrees: [wt("mid", { path: w })] }) : run(a)))(f.deps.run);
     expect(await cleanup(["--cwd", repo, "--worktree", "mid"], f.deps)).toMatchObject({ ok: false, state: "refused" });
     expect(readFileSync(join(repo, "notes.txt"), "utf8")).toBe("same");
@@ -233,4 +235,28 @@ test("a commit made, or a worker started, after the check stops the removal; so 
   broken.deps.run = ((run) => async (a) => (a[0] === "pane" && a[1] === "list" ? herdrOK({ panes: [{ agent_status: "idle" }] }) : run(a)))(broken.deps.run);
   expect(await cleanup(["--cwd", "/repo", "--worktree", "x"], broken.deps)).toMatchObject({ ok: false, state: "failed" });
   expect(broken.calls.some((a) => a[1] === "remove")).toBe(false);
+});
+
+// From the review of 31f9ddf: the swap made before cleanup fixed where the worktree is.
+test("a worktree swapped for a link to the main checkout before cleanup looks at it is not taken for the worktree", async () => {
+  const root = scratch("early"), repo = join(root, "repo"), w = join(root, "w");
+  for (const d of [repo, w]) { mkdirSync(d, { recursive: true }); writeFileSync(join(d, "notes.txt"), "same"); }
+  mkdirSync(join(repo, ".git")); writeFileSync(join(w, ".git"), `gitdir: ${join(repo, ".git", "worktrees", "w")}\n`);
+  expect([linkedWorktree(w, repo), linkedWorktree(repo, repo), linkedWorktree(join(root, "none"), repo)]).toEqual([true, false, false]);
+  const f = fake({ worktrees: [wt("early", { path: w })], status: { [w]: "?? notes.txt\0", [repo]: "?? notes.txt\0" } }); f.deps.linked = linkedWorktree;
+  f.deps.run = ((run) => async (a) => {
+    if (a[0] === "worktree" && a[1] === "list") { renameSync(w, `${w}-real`); symlinkSync(repo, w); return herdrOK({ source: { source_checkout_path: repo }, worktrees: [wt("early", { path: w })] }); }
+    return run(a);
+  })(f.deps.run);
+  expect((await cleanup(["--cwd", repo, "--worktree", "early"], f.deps)).refused.why).toContain("not a linked worktree");
+  expect(readFileSync(join(repo, "notes.txt"), "utf8")).toBe("same");
+  expect(f.gits).toHaveLength(0);
+});
+
+test("the panes are read last: a worker started while the commit is compared again is still seen", async () => {
+  let started = false;
+  const f = fake({ worktrees: [wt("x", { open_workspace_id: "w5" })], panes: () => ({ w5: [idle("w5:p1", started ? "working" : "idle")] }),
+    commit: (dir, n) => { if (n > 1) started = true; return `h${dir}`; } });
+  expect((await cleanup(["--cwd", "/repo", "--worktree", "x"], f.deps)).refused.why).toContain("working");
+  expect(f.calls.some((a) => a[1] === "remove")).toBe(false);
 });

@@ -10,9 +10,9 @@
 // agrees it is merged). Files git ignores go with the folder, as `git worktree remove` does: checking them would
 // refuse nearly every worktree (node_modules, build output), so the guide tells the lead. Nothing runs in it either:
 // herdr's remove closes the workspace and stops whatever is running there without asking (measured: a `sleep` in the
-// pane was killed). Neither herdr nor git has a remove-if-unchanged, so right before the removal the panes are read
-// again and the commit is compared with the one checked: a worker started, or a commit made, inside that last call is
-// the limit this narrows and does not close (from the reviews of b32617a and 980f1b2).
+// pane was killed). Neither herdr nor git has a remove-if-unchanged, so right before the removal the commit is compared
+// with the one checked and then the panes are read again, last: a commit made after that comparison, or a worker
+// started after that read, is the limit this narrows and does not close (from the reviews of b32617a, 980f1b2, 31f9ddf).
 import { lstatSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { BRANCH, quote, runHerdr } from "./herdr.mjs";
@@ -76,6 +76,16 @@ export function dropCopy(root, source, rel, rootReal = real(root)) {
   rmSync(target, { force: true }); return true;
 }
 
+// A linked worktree's folder holds a `.git` file pointing into the repository's worktrees; the main checkout holds the
+// `.git` folder itself.
+export function linkedWorktree(rootReal, source) {
+  try {
+    if (rootReal === real(source)) return false;
+    const git = join(rootReal, ".git");
+    return lstatSync(git).isFile() && /^gitdir:.*[\\/]worktrees[\\/][^\\/]+\s*$/m.test(readFileSync(git, "utf8"));
+  } catch { return false; }
+}
+
 // `git worktree list --porcelain`: each worktree's path and the commit git recorded for it.
 export function parseWorktreeHeads(text) {
   const heads = new Map();
@@ -86,8 +96,9 @@ export function parseWorktreeHeads(text) {
   return heads;
 }
 
-// `run` is one herdr command and `git(dir, args)` one git command ({ out, err, code }, or null): test seams.
-export async function cleanup(args, { run = runHerdr, git = gitIn, env = process.env } = {}) {
+// `run` is one herdr command, `git(dir, args)` one git command ({ out, err, code }, or null), and `linked` the
+// linked-worktree test: seams for tests.
+export async function cleanup(args, { run = runHerdr, git = gitIn, env = process.env, linked = linkedWorktree } = {}) {
   const out = { ok: false, state: "failed", cwd: null, command: [], steps: [], warnings: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
   const herdr = async (a, tolerate = false) => {
@@ -140,6 +151,11 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
 
   // What stands between a worktree and its removal. Returns { why, then } or { copies } (untracked exact copies).
   const check = async (w, source) => {
+    // Where the worktree is, fixed before anything else is awaited, and shown to be a linked worktree and not the main
+    // checkout: a folder swapped for a link to the main checkout would otherwise be checked, and its copies removed,
+    // as the worker's (from the review of 31f9ddf).
+    const rootReal = w.is_prunable ? null : real(w.path);
+    if (rootReal && !linked(rootReal, source)) return { why: `${w.path} is not a linked worktree of ${source}`, then: `Look at it yourself (git -C ${quote(source)} worktree list)` };
     if (w.open_workspace_id) { const b = await busyIn(w.open_workspace_id); if (b) return b; }
     if (w.is_prunable) {
       // Its folder is gone. git still records the commit it was on, and removing the record loses that commit unless
@@ -149,7 +165,7 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
       if (!sha || !(await held(source, sha))) return unheld(w, source, sha);
       return { copies: [] };
     }
-    const rootReal = real(w.path), head = await headOf(w.path);
+    const head = await headOf(w.path);
     if (!head) return { why: `git could not read the commit ${w.path} is on`, then: `Look at it yourself (git -C ${quote(w.path)} status)` };
     const st = await gitRun(w.path, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
     if (st?.code !== 0) return { why: `git could not read the state of ${w.path}`, then: `Look at it yourself (git -C ${quote(w.path)} status)` };
@@ -232,9 +248,9 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
       if (!dropCopy(w.path, source, rel, c.rootReal)) return refuse(`${rel} in ${w.path} changed, or is reached through a link, since cleanup checked it`, `Look at it, then run cleanup again`);
     }
     if (c.copies.length) step("copies", true, `Removed ${c.copies.length} unchanged file${c.copies.length > 1 ? "s" : ""} copied in at launch`);
-    // The last look before the removal, as late as it can be: what runs there, and the commit it is on.
-    if (w.open_workspace_id) { const b = await busyIn(w.open_workspace_id); if (b) return refuse(b.why, b.then); }
+    // The last looks before the removal: the commit it is on, then what runs there, read last of all.
     if (c.head && (await headOf(w.path)) !== c.head) return refuse(`${w.path} moved to another commit since cleanup checked it`, "Run cleanup again");
+    if (w.open_workspace_id) { const b = await busyIn(w.open_workspace_id); if (b) return refuse(b.why, b.then); }
     // Never --force: if anything changed since the check, herdr and git refuse and the worktree stays.
     if (w.open_workspace_id) {
       const r = await herdr(["worktree", "remove", "--workspace", w.open_workspace_id], true);
