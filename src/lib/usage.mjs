@@ -66,7 +66,7 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
 // or a plan that sends none) is served the last windows seen, however old: `ageSec` says how old, and a lapsed window
 // rolls over to empty, as before. Absence is NOT read as "no quota": the statusline docs list only Pro and Max as
 // sending `rate_limits` (yet a Team seat's `/usage` shows the same windows: the plan does not change it), and a plan
-// with no quota is the user's `billing: "metered"` to say.
+// with no quota is the user's `billing: "metered"` to say, unless Claude's sign-in status says so (an API key: readUsage).
 // The one `reason` a Claude reading carries, so doctor keys on it and not on the wording of the note.
 export const NO_WINDOWS_AFTER_ANSWER = "no_windows_after_answer";
 export function claudeSnapshot(s, nowSec = now()) {
@@ -76,7 +76,7 @@ export function claudeSnapshot(s, nowSec = now()) {
   if (!ws.length && s.seen) { ws = toWs(s.seen.rate_limits); ts = s.seen.ts; }
   if (ws.length) return summarize({ pool: "claude", source: "statusline", ts, windows: ws, cls: ws.some((w) => w.name === "spend_limit") ? "capped" : "included", nowSec });
   return summarize({ pool: "claude", source: "statusline", ts: s.ts, note: s.answered
-    ? "Claude reports no usage windows for this seat. A plan with no quota (usage-based Enterprise, an API key) sends none: if that is this seat, set `billing: \"metered\"` for claude in the config"
+    ? "Claude reports no usage windows for this seat. A plan with no quota (usage-based Enterprise) sends none: if that is this seat, set `billing: \"metered\"` for claude in the config"
     : "no windows yet: Claude reports usage after its first response of a session", nowSec, reason: s.answered ? NO_WINDOWS_AFTER_ANSWER : undefined });
 }
 
@@ -116,8 +116,9 @@ export function readCodex() {
 // The session and all-models lines take the statusline's window names, so ranking, reserves and doctor treat both
 // sources alike. A weekly line scoped to one model is counted in the note and never named: routr's advice carries no
 // model names (AGENTS.md), and the router does not choose models. Anything else (the line about the subscription,
-// the local breakdown that follows) is left out. The same lines on Max and Team (measured); a seat billed per token is
-// unobserved.
+// the local breakdown that follows) is left out. The same lines on Max and Team (measured). An API key login shows only a
+// session cost summary and no windows (measured 2026-10-07), as a subscription without its credentials does: its class
+// comes from `claude auth status` instead (harnesses.mjs, `claudeBilling`).
 const CLAUDE_LINES = { "session": { name: "five_hour", windowMin: 300 }, "week (all models)": { name: "seven_day", windowMin: 10080 } };
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
@@ -262,7 +263,7 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT, nowSec = 
   // before a switch to an API key or a metered seat would rank the previous subscription's windows, exhausted ones
   // included (from the final review); the snapshot is only for a live read that failed.
   if (answered) return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: NO_WINDOWS_AFTER_ANSWER,
-    note: `${why}. A plan with no quota (usage-based Enterprise, an API key) shows none: if that is this seat, set \`billing: "metered"\` for claude in the config` });
+    note: `${why}. A plan with no quota (usage-based Enterprise) shows none: if that is this seat, set \`billing: "metered"\` for claude in the config` });
   // The statusline's reading however old (its age is shown), as before this reader existed; else nothing, and why.
   if (fromSnap?.headroom != null) return { ...fromSnap, note: [fromSnap.note, `${why}: this is the statusline's last reading`].filter(Boolean).join("; ") };
   // A snapshot that says Claude sent no windows after a response keeps saying so: doctor's step keys on it.

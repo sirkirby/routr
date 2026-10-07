@@ -73,10 +73,11 @@ export function nextSteps(r) {
   if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push(`Install and log in to at least one harness: ${KINDS.slice(0, -1).map((n) => HARNESSES[n].installAs).join(", ")}, or ${HARNESSES[KINDS.at(-1)].installAs}`);
   // Claude showed no windows (its /usage, or its statusline after a prompt): a seat with no quota, or a plan routr has
   // not seen send them.
-  // routr does not guess which; the user says, either way, and the step clears.
+  // routr does not guess which; the user says, either way, and the step clears. Nor is there anything to ask when
+  // Claude's sign-in status already said how it bills (an API key login: `usage_billing`, readUsage).
   const cl = r.harnesses.claude;
-  if (cl?.installed && cl.usage_reason === NO_WINDOWS_AFTER_ANSWER && !r.config.billing?.claude)
-    steps.push(`Claude reports no usage windows, and routr cannot tell why. If this seat has no quota (usage-based Enterprise, an API key), add "billing": "metered" under subscriptions.claude in ${r.config.path} and routr ranks it as billed usage. If it has a quota (routr has not yet seen a Team or Enterprise seat send windows), add "billing": "included", or check again after another turn`);
+  if (cl?.installed && cl.usage_reason === NO_WINDOWS_AFTER_ANSWER && !cl.usage_billing && !r.config.billing?.claude)
+    steps.push(`Claude reports no usage windows, and routr cannot tell why. If this seat has no quota (usage-based Enterprise), add "billing": "metered" under subscriptions.claude in ${r.config.path} and routr ranks it as billed usage. If it has a quota (routr has not yet seen an Enterprise seat send windows), add "billing": "included", or check again after another turn`);
   if (skillsMissing(r).length || skillsIncomplete(r).length || skillsStale(r).length) steps.push("Install the routr skills that match this routr: routr skill install");
   // A folder of the same name that routr did not write is never replaced: the user moves it, or keeps theirs.
   for (const k of r.skill.filter((x) => x.ours === false && x.where.endsWith(`.agents/skills/${x.name}`))) steps.push(k.why
@@ -128,7 +129,9 @@ export async function inspect({ configPath, quiet } = {}) {
     const u = usage.find((x) => x.pool === n);
     const signed = states[n] === "yes";
     r.harnesses[n] = { command, installed: true, off_path: null, signed_in: signed, ...(signed ? {} : { sign_in: signInHint(HARNESSES[n], states[n]) }),
-      usage: said(u), usage_source: u.source, usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}) };
+      usage: said(u), usage_source: u.source, usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}),
+      // The billing its own sign-in status stated, and where it was read: shown as the usage line (said, above).
+      ...(u.billing ? { usage_billing: u.billing } : {}) };
   }
   if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; }
   else { r.key.found ??= false; r.key.works = false; r.key.error = String(key.e?.message ?? key.e).slice(0, 160); r.key.where = `set TYPESAFE_API_KEY, or put TYPESAFE_API_KEY=... in ${KEY_FILES[0]}`; }

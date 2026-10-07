@@ -616,6 +616,79 @@ test("the sign-in answer is kept: signed in for hours, signed out for minutes, a
   expect(await signInState("kiro", kiro, o(null, T + 7 * 3600 + 12 * 60, { fresh: true }))).toBe("no answer"); // fresh always asks
   expect(asked).toHaveLength(4);
 });
+// `claude auth status`, measured 2026-10-07 (macOS): an API key login and a Max login. The email, organisation and ids
+// are made up here, and must never reach the cache.
+const AUTH_API_KEY = JSON.stringify({ loggedIn: true, authMethod: "api_key", apiProvider: "firstParty", apiKeySource: "ANTHROPIC_API_KEY", analyticsDisabled: false }, null, 2);
+const AUTH_MAX = JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty", email: "someone@example.com", orgId: "00000000-0000-0000-0000-000000000000", orgName: "Example Org", subscriptionType: "max" }, null, 2);
+test("Claude's sign-in status says how it bills: an API key is metered, a subscription leaves it to the windows", () => {
+  const billing = HARNESSES.claude.auth.billing;
+  expect(billing(AUTH_API_KEY, 0)).toMatchObject({ billing: "metered" }); expect(billing(AUTH_API_KEY, 0).why).toContain("API key");
+  expect(billing(AUTH_MAX, 0)).toBeNull();
+  // A cloud provider is billed per token (its docs: claimed); a gateway's spend limit arrives as a window, so it is not.
+  expect(billing(JSON.stringify({ loggedIn: true, authMethod: "third_party", apiProvider: "bedrock" }), 0)).toMatchObject({ billing: "metered" });
+  expect(billing(JSON.stringify({ loggedIn: true, authMethod: "third_party", apiProvider: "bedrock" }), 0).why).toContain("bedrock");
+  expect(billing(JSON.stringify({ loggedIn: true, authMethod: "third_party", apiProvider: "evil <x>" }), 0).why).toContain("a cloud provider");
+  expect(billing(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "gateway" }), 0)).toBeNull();
+  expect(billing(JSON.stringify({ loggedIn: true, authMethod: "api_key_helper", apiProvider: "firstParty" }), 0)).toMatchObject({ billing: "metered" });
+  // Unreadable, signed out, or anything else: no reading, nothing guessed.
+  for (const out of ["", "not json", "{", '{"loggedIn": false, "authMethod": "api_key"}', "null", "[1]", '"api_key"', '{"loggedIn": true, "authMethod": "oauth_token"}'])
+    expect([out, billing(out, 0)]).toEqual([out, null]);
+  expect(billing("warning: something\n" + AUTH_API_KEY, 0)).toMatchObject({ billing: "metered" }); // stderr before the JSON
+  // Every other harness: none, so nothing changes for them.
+  expect(Object.keys(HARNESSES).filter((n) => HARNESSES[n].auth.billing)).toEqual(["claude"]);
+});
+test("the billing reading is kept with the sign-in answer, the same lifetime, and only its class and reason", async () => {
+  const { billingFromSignIn, signInState } = await import("../src/lib/signin.mjs");
+  const file = join(scratch("signin-billing"), "signed-in.json"), T = 1_800_000_000, name = "claude-fixture"; // not "claude": other tests read that name
+  const o = (out, nowSec, extra = {}) => ({ file, nowSec, ask: async () => (out == null ? null : { out, code: 0 }), ...extra });
+  expect(await signInState(name, HARNESSES.claude, o(AUTH_API_KEY, T))).toBe("yes");
+  expect(billingFromSignIn(name)).toMatchObject({ billing: "metered" });
+  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: T, state: "yes", billing: { billing: "metered", why: billingFromSignIn(name).why } });
+  expect(await signInState(name, HARNESSES.claude, o(null, T + 5 * 3600))).toBe("yes"); // kept: not asked, still metered
+  expect(billingFromSignIn(name)).toMatchObject({ billing: "metered" });
+  // A subscription login: no reading, and none of what the status printed about the account is kept.
+  expect(await signInState(name, HARNESSES.claude, o(AUTH_MAX, T + 7 * 3600))).toBe("yes");
+  expect(billingFromSignIn(name)).toBeNull();
+  const kept = readFileSync(file, "utf8");
+  expect(JSON.parse(kept)[name]).toEqual({ ts: T + 7 * 3600, state: "yes" });
+  for (const leak of ["someone@example.com", "Example Org", "00000000-0000", "max", "orgId", "email"]) expect(kept).not.toContain(leak);
+  // A reader that throws is no reading, never a failed sign-in check.
+  expect(await signInState(name, { ...HARNESSES.claude, auth: { ...HARNESSES.claude.auth, billing: () => { throw new Error("x"); } } }, o(AUTH_API_KEY, T, { fresh: true }))).toBe("yes");
+  expect(billingFromSignIn(name)).toBeNull();
+});
+test("an API-key Claude with no windows ranks as metered, with no doctor step asking for billing; the user's billing still wins", async () => {
+  const dir = scratch("claude-apikey");
+  // What the API key's /usage printed (2026-10-07): a cost summary, no windows.
+  const costOnly = claudeAnswer("Total cost: $0.0000\nTotal duration (API): 0s\nUsage: 0 input, 0 output, 0 cache read, 0 cache write");
+  const sources = { claude: { read: () => readClaude({ file: join(dir, "none.json"), nowSec: OCT5, exec: async () => costOnly }) } };
+  const read = (b) => readUsage(["claude"], {}, { sources, why: async () => null, billing: () => b });
+  const [plain] = await read(null);
+  expect(plain).toMatchObject({ class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER }); // without the auth reading: as before
+  const [u] = await read(HARNESSES.claude.auth.billing(AUTH_API_KEY, 0));
+  expect(u).toMatchObject({ class: "metered", headroom: null, source: "claude auth status", billing: { billing: "metered", source: "claude auth status" } });
+  expect(u.reason).toBeUndefined(); expect(u.note).toContain("API key"); expect(u.note).not.toContain("set `billing");
+  const c = cfg({ subscriptions: { claude: cfg().subscriptions.claude } });
+  expect(rankSubscriptions("standard", [u], c).ranked[0]).toMatchObject({ subscription: "claude", class: "metered", usage: "metered", usable: null });
+  // The user's `billing: "included"` wins over the auth reading: the assumed headroom, as for any seat without windows.
+  const mine = rankSubscriptions("standard", [u], cfg({ subscriptions: { claude: { ...cfg().subscriptions.claude, billing: "included" } } })).ranked[0];
+  expect(mine).toMatchObject({ class: "included", usage: "assumed", use: "normal" });
+  // doctor: the usage line names the billing and where it was read, and no step asks for `billing`.
+  const { nextSteps } = await import("../src/lib/doctor.mjs");
+  const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
+  const v = ROUTR_VERSION.split("-")[0];
+  const r = (h) => ({ key: { works: true }, config: { exists: true, subscriptions: ["claude"], path: "config.json" }, herdr: { path: "/x", skill: true },
+    skill: [{ where: "~/.agents/skills/routr", version: v }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: v }],
+    harnesses: { claude: { installed: true, signed_in: true, usage_class: h.class, usage_note: h.note, ...(h.reason ? { usage_reason: h.reason } : {}), ...(h.billing ? { usage_billing: h.billing } : {}) } } });
+  expect(nextSteps(r(plain)).join(" ")).toContain('"billing": "metered"');
+  expect(nextSteps(r(u))).toEqual([]);
+});
+test("windows that arrive while the sign-in status says metered are kept, and the disagreement is noted", async () => {
+  const sources = { claude: { read: async () => live("claude", 0.6) } };
+  const [u] = await readUsage(["claude"], {}, { sources, why: async () => null, billing: () => HARNESSES.claude.auth.billing(AUTH_API_KEY, 0) });
+  expect(u).toMatchObject({ headroom: 0.6 }); expect(u.class).not.toBe("metered"); expect(u.billing).toBeUndefined();
+  expect(u.note).toContain("yet usage windows arrived: ranked on the windows");
+  expect(rankSubscriptions("standard", [u], cfg()).ranked.find((x) => x.subscription === "claude")).toMatchObject({ usage: "live", class: "included" });
+});
 test("a harness that is not signed in is never read, and dispatch leaves it out and says how to sign in", async () => {
   const reads = [];
   const sources = { codex: { read: async () => { reads.push("codex"); return live("codex", 0.8); } }, cursor: { read: async () => { reads.push("cursor"); return live("cursor", 0.9); } } };

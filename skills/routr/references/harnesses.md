@@ -36,6 +36,27 @@ waits for a code, and any Kiro `chat` command opens Kiro's.
 Each takes 0.3 to 3.4 s. The answer is kept in `~/.cache/routr/signed-in.json` (signed in: 6 hours; not: 10 minutes),
 so a dispatch rarely pays for it; doctor and setup always ask again.
 
+**What the same answer says about billing (Claude Code, measured 2026-10-07, macOS).** `claude auth status` prints
+JSON, and how the login is billed is in it:
+
+| Login | `claude auth status` | routr reads it as |
+|---|---|---|
+| A subscription (Max) | `"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty", "subscriptionType": "max"`, plus the email and organisation | nothing: the usage windows decide, as before |
+| An API key (`ANTHROPIC_API_KEY`, empty `CLAUDE_CONFIG_DIR`) | `"loggedIn": true, "authMethod": "api_key", "apiProvider": "firstParty", "apiKeySource": "ANTHROPIC_API_KEY"`, no `subscriptionType` | `metered`: billed per token |
+| An API key from `apiKeyHelper` (read from Claude Code 2.1.293's code, not measured) | `"authMethod": "api_key_helper"` | `metered` |
+| Through a cloud provider (read from its code; billed per token by the provider per its docs, not measured) | `"apiProvider"`: `bedrock`, `vertex`, `foundry`, … | `metered` |
+| Through a Claude apps gateway (read from its code) | `"apiProvider": "gateway"` | nothing: its spend limit arrives as a window (`capped`) |
+| Usage-based Enterprise (not observed) | unknown | nothing: the user's `billing` |
+
+This matters because `/usage` alone cannot tell. With the API key, `claude -p /usage --output-format json` answered
+locally ($0, 0 turns) with only a session cost summary ("Total cost: $0.0000 … Usage: 0 input, 0 output …"): no
+quota windows and no "using your subscription" line. A subscription login printed the same when its credentials were
+not available (`--bare`, 2026-10-05). routr keeps only the class and a fixed reason with the sign-in answer, never
+the email, organisation or ids. A metered reading settles a Claude reading that brought no windows (no doctor step
+asking for `billing`); windows that do arrive are still ranked, with the disagreement noted. The user's own `billing`
+wins over it. The other harnesses' status answers say nothing about billing; Codex's metered seat shows in its usage
+shape instead (below).
+
 **Windows, npm installs (measured on GitHub's windows-latest, 2026-10-05, Bun 1.4.2).** A harness CLI installed with
 npm is a `.cmd` shim (`%APPDATA%\npm\codex.cmd`). Started without a shell, as routr starts everything, it failed by
 bare name and by full path alike, so its sign-in check never answered and the harness was never used. routr now
@@ -124,7 +145,8 @@ routr classes each pool from the shape of what the harness reports, never from a
 | Codex on a ChatGPT Enterprise seat with flexible pricing (2026-09-22, CLI 0.155.1) | `primary` and `secondary` **null**, `credits: { hasCredits: true, unlimited: true }`, `individualLimit: null`, `planType: "business"` on an Enterprise contract | `metered` |
 | Codex with a member credit limit set by the workspace owner (claimed: the protocol's `individualLimit { limit, used, remainingPercent, resetsAt }`, not yet read from a seat) | the cap as one more window, its period from `resetsAt` | `capped` |
 | Claude Code on a seat with quota windows: Pro, Max, Team (measured: the plan does not change what `/usage` prints) | `/usage`: "Current session" and "Current week (all models)" (read as `five_hour` and `seven_day`); statusline `rate_limits.five_hour` and `seven_day` | `included` |
-| Claude Code on usage-based Enterprise, or on an API key (claimed: the docs say `rate_limits` is sent only for plans with a quota; what `/usage` prints there is not observed) | no `rate_limits` at all, even after a response; `/usage` lines unknown | `unknown` with a note; the user sets `billing: "metered"`. Absence is not read as "no quota": a seat-based Enterprise plan is not observed and may also send none |
+| Claude Code on an API key (measured 2026-10-07) | `/usage`: a session cost summary, no windows; `claude auth status`: `"authMethod": "api_key"` | `metered`, from the auth status (above) |
+| Claude Code on usage-based Enterprise (claimed: the docs say `rate_limits` is sent only for plans with a quota; what `/usage` and `claude auth status` print there is not observed) | no `rate_limits` at all, even after a response; `/usage` lines unknown | `unknown` with a note; the user sets `billing: "metered"`. Absence is not read as "no quota": a seat-based Enterprise plan is not observed and may also send none |
 | Claude Code behind a Claude apps gateway with spend limits (claimed: docs) | `rate_limits.spend_limit`, `used_percentage` may pass 100 | `capped` |
 | Kiro on a Free plan (measured 2026-09-26, Kiro CLI 2.24.1) | `/usage`: "Estimated Usage \| resets on 2026-10-01 \| KIRO FREE", "Credits (0.00 of 50 covered in plan), 0.0%": one monthly pool that every model draws on at its own rate. Takes ~10 s and 0 credits, and leaves an empty saved session. The figure is an estimate that lagged a 0.10-credit turn | `included` |
 | Kiro on a paid plan with overage on (not observed) | unknown: any line beyond the credits line is kept in the reading's note, never parsed | `included` until measured |

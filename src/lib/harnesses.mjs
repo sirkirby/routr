@@ -20,6 +20,12 @@
 //   auth: how to tell it is signed in (signin.mjs): `check` is its own status command, which never starts a sign-in,
 //     `signedIn(out, code)` reads the answer (stdout and stderr together), `signIn` says how the user signs in.
 //     Measured signed in and signed out, 2026-09-26; each parser matches the text both ways, not the exit code alone.
+//     `billing(out, code)`, optional: what that same answer says about billing: `{ billing: "metered", why }` when
+//     it states per-token billing, else null (the usage windows decide, as before). No further call: it is read from
+//     the answer routr already asks for, kept with the sign-in answer (signin.mjs), and it settles a reading that
+//     brought no windows, never one that did, nor the user's own `billing` (readUsage below, pick.mjs). Only Claude
+//     has one: Codex's metered seat already shows in its usage shape (usage.mjs), and the other status answers say
+//     nothing about billing (measured 2026-09-26).
 //   quiet: the harness's own arguments that keep the user's lifecycle hooks (and MCP servers) out of routr's own read
 //     of it. Only Claude Code has them. None found for agy or kiro; Codex's `-c features.hooks=false` is unverified, so
 //     it is left out. Where there is none the user's hooks run as configured, which is intended: a tool that records
@@ -29,7 +35,7 @@
 //     their snapshot rules with them, so they load when first read: help, --version, and every command that reads no
 //     usage stay light. (Literal import paths, so the compiled binary still bundles them.)
 import { run } from "./runtime.mjs";
-import { signInHint, signInState } from "./signin.mjs";
+import { billingFromSignIn, signInHint, signInState } from "./signin.mjs";
 import { readAgy, readClaude, readCodexLive, summarize } from "./usage.mjs";
 
 // The levels a help text lists after its --effort flag: "(low, medium, high, xhigh, max)", as Claude Code and Kiro print them.
@@ -51,11 +57,34 @@ let codexModels = null;
 const readCodexModels = () => (codexModels ??= run("codex", ["debug", "models"], { timeoutMs: 15000 }).then((out) => { try { const o = JSON.parse(out); return o.models ?? o; } catch { return null; } }));
 const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 20000 })) ?? "").split("\n").map((l) => l.match(pattern)?.[1]).filter(Boolean);
 
+// What `claude auth status` says about billing (Claude's `auth.billing`). Measured 2026-10-07 (Claude Code, macOS): an
+// API key login prints `"authMethod": "api_key"`, `"apiProvider": "firstParty"` and no subscriptionType, and its
+// `/usage` then shows only a session cost summary, no windows: the same as a subscription login whose credentials were
+// not available (`--bare`, 2026-10-05). So `/usage` alone cannot tell per-token billing from missing credentials, and
+// authMethod can. A subscription login prints `"authMethod": "claude.ai"` and a subscriptionType: windows decide.
+// Read from Claude Code's own code (2.1.293), not measured: `api_key_helper` is an API key from the user's
+// apiKeyHelper; an apiProvider other than `firstParty` (bedrock, vertex, foundry, …) is a cloud provider's account,
+// billed per token by that provider (its docs); `gateway` is a Claude apps gateway, whose spend limit arrives as a
+// window (capped, usage.mjs), so it is left to the windows. Only the class and a fixed reason leave this function,
+// never the email, organisation or ids the same answer carries. Anything unreadable is null: nothing is guessed.
+export function claudeBilling(out) {
+  const text = String(out ?? "");
+  let o = null;
+  try { o = JSON.parse(text); } catch { try { o = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch {} }
+  if (!o || typeof o !== "object" || o.loggedIn !== true) return null;
+  const provider = o.apiProvider ?? "firstParty";
+  if (provider === "gateway") return null;
+  if (provider !== "firstParty") return { billing: "metered", why: `Claude Code runs through ${typeof provider === "string" && /^[A-Za-z]{1,32}$/.test(provider) ? provider : "a cloud provider"}, billed per token by that provider (from its docs, not measured)` };
+  if (o.authMethod === "api_key") return { billing: "metered", why: "signed in with an API key, billed per token" };
+  if (o.authMethod === "api_key_helper") return { billing: "metered", why: "signed in with an API key from apiKeyHelper, billed per token (not measured)" };
+  return null;
+}
+
 export const HARNESSES = {
   claude: { label: "Claude Code", executable: "claude", installAs: "Claude Code", skills: ".claude/skills",
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
     // `"loggedIn": false` and exit 1 when signed out.
-    auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`" },
+    auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`", billing: (out) => claudeBilling(out) },
     // Its help names the latest aliases (fable, opus, sonnet on 2.1.283); its help says `--model` also takes a model's full name.
     models: async () => modelsInHelp(await readClaudeHelp()), openList: true,
     efforts: async () => effortsInHelp(await readClaudeHelp()),
@@ -168,15 +197,31 @@ export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usag
 // `given` holds headroom the caller read itself (0..1); it wins over any reading.
 // `background` names the subscriptions whose reader may start a background refresh (default: all asked for).
 // `why(name)`: null when it is signed in, or why not. One that is not is never read (its reading could open a sign-in),
-// and dispatch leaves it out (pick.mjs).
-export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null) } = {}) {
+// and dispatch leaves it out (pick.mjs). `billing(name)`: what its sign-in answer said about billing (signin.mjs, kept
+// beside `why`'s answer), or null.
+export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFromSignIn } = {}) {
   return Promise.all(names.map(async (name) => {
     // Signed in first: a number the caller read cannot put work on a harness that cannot take it (launch refuses it).
     const not = await why(name);
     if (not) return { ...summarize({ pool: name, source: "sign-in check", note: not }), signedIn: false };
     if (typeof given[name] === "number") return { pool: name, source: "given by caller", given: true, ageSec: 0, windows: [], headroom: Math.min(1, Math.max(0, given[name])) };
     const src = sources[name];
-    if (!src?.read) return summarize({ pool: name, source: "none", note: "no usage source: read it yourself and pass --headroom " + name + "=<share left, 0.9 or 90%>" });
-    try { return await src.read({ background: background.includes(name) }); } catch (e) { return summarize({ pool: name, source: "unreadable", note: `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}` }); }
+    let u;
+    if (!src?.read) u = summarize({ pool: name, source: "none", note: "no usage source: read it yourself and pass --headroom " + name + "=<share left, 0.9 or 90%>" });
+    else try { u = await src.read({ background: background.includes(name) }); } catch (e) { u = summarize({ pool: name, source: "unreadable", note: `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}` }); }
+    return withBilling(name, u, billing(name));
   }));
+}
+
+// A reading, settled by what the harness's own status said about billing (`auth.billing`). With no windows it is that
+// class, the status command its source, and the reason its note: an API-key Claude is `metered` instead of "no
+// windows, set billing yourself" (measured 2026-10-07: its /usage cannot tell). Windows that did arrive are kept, and
+// the disagreement is noted, not resolved by a guess. The user's own `billing` still wins over this (pick.mjs).
+export function withBilling(name, u, b) {
+  if (b?.billing !== "metered" || !u) return u;
+  const from = HARNESSES[name] ? `${HARNESSES[name].executable} ${HARNESSES[name].auth.check.join(" ")}` : "sign-in check";
+  if (u.headroom != null) return { ...u, note: [u.note, `\`${from}\` says ${b.why}, yet usage windows arrived: ranked on the windows`].filter(Boolean).join("; ") };
+  const rest = { ...u };
+  delete rest.reason; // the "no windows" reason asks the user to set billing, which is now known
+  return { ...rest, source: from, class: "metered", billing: { billing: "metered", why: b.why, source: from }, note: `metered: ${b.why}` };
 }
