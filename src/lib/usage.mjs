@@ -65,7 +65,8 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
 // gateway) is a cap whose used share can pass 100, clamped here. A render with no windows (a session's first renders,
 // or a plan that sends none) is served the last windows seen, however old: `ageSec` says how old, and a lapsed window
 // rolls over to empty, as before. Absence is NOT read as "no quota": the statusline docs list only Pro and Max as
-// sending `rate_limits`, a Team seat is unobserved, and a plan with no quota is the user's `billing: "metered"` to say.
+// sending `rate_limits` (yet a Team seat's `/usage` shows the same windows: the plan does not change it), and a plan
+// with no quota is the user's `billing: "metered"` to say.
 // The one `reason` a Claude reading carries, so doctor keys on it and not on the wording of the note.
 export const NO_WINDOWS_AFTER_ANSWER = "no_windows_after_answer";
 export function claudeSnapshot(s, nowSec = now()) {
@@ -115,7 +116,8 @@ export function readCodex() {
 // The session and all-models lines take the statusline's window names, so ranking, reserves and doctor treat both
 // sources alike. A weekly line scoped to one model is counted in the note and never named: routr's advice carries no
 // model names (AGENTS.md), and the router does not choose models. Anything else (the line about the subscription,
-// the local breakdown that follows) is left out: unobserved on Team, Enterprise and API-key seats.
+// the local breakdown that follows) is left out. The same lines on Max and Team (measured); a seat billed per token is
+// unobserved.
 const CLAUDE_LINES = { "session": { name: "five_hour", windowMin: 300 }, "week (all models)": { name: "seven_day", windowMin: 10080 } };
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
