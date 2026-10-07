@@ -20,7 +20,8 @@ export function rankSubscriptions(level, usage, c) {
     const u = usage.find((p) => p.pool === name);
     const live = u?.headroom != null;
     // The class is the shape the harness reported (usage.mjs), or the user's `billing` when the harness cannot show it.
-    // A number the caller read itself (`--headroom`) is a window and outranks both.
+    // A number the caller read itself (`--headroom`) is a window and outranks both. With no windows, the user's
+    // `billing` wins over what the harness's sign-in status said (an API-key Claude reads `metered`: readUsage).
     const cls = live ? (u.given ? "included" : u.class === "capped" ? "capped" : "included") : s.billing ?? u?.class ?? "unknown";
     const r2 = (x) => Math.round(x * 100) / 100, nowSec = (c.now ?? Date.now()) / 1000;
     const base = { subscription: name, class: cls, use: accountUse(s, s.billing ?? u?.class ?? cls), reserve: s.reserve, ...(s.default_model ? { your_default: s.default_model + (s.default_effort ? ` @ ${s.default_effort}` : "") } : {}) };

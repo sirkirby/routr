@@ -101,11 +101,13 @@ the command that fixes it.
     background about once per working session (the first time during setup). The advice marks the rest `assumed`.
     Metered remaining budget stays unknown, even with legacy `metered_rank: "with"`. `routr usage` shows each reading.
   - `billing`: `included` or `metered`, only when the harness cannot show which it is. A Codex Enterprise seat on
-    flexible pricing is detected (measured: no windows, unlimited credits). Claude is never detected: a plan with no
-    quota (usage-based Enterprise, an API key) is expected to show no usage windows (not yet observed), and so may a plan routr has not seen
-    yet, so the advice says "no usage windows" and leaves the class to you. `routr doctor` lists it as a next step
-    when Claude has shown no windows. Set `"billing": "metered"` for such a Claude seat
-    by hand; `"billing": "included"` says the seat has a quota and clears the same step. Leave it out otherwise.
+    flexible pricing is detected (measured: no windows, unlimited credits). So is Claude signed in with an API key,
+    from `claude auth status` (measured: `"authMethod": "api_key"`), and Claude through a cloud provider such as
+    Bedrock or Vertex (from Claude Code's docs, not measured): both read as `metered`. Any other Claude seat that
+    shows no usage windows (usage-based Enterprise is expected to, not yet observed, and so may a plan routr has not
+    seen) is left to you: the advice says "no usage windows", and `routr doctor` lists it as a next step. Set
+    `"billing": "metered"` for such a Claude seat by hand; `"billing": "included"` says the seat has a quota and clears
+    the same step. Your setting wins over what routr detected, while no windows arrive. Leave it out otherwise.
   - `use`: `normal` or `fallback`, independent of billing. Normal accounts are considered for suitable model/effort
     options before comparing headroom. Fallback is considered when none suitably takes the task. This preference
     does not infer or enforce a shared prepaid balance or personal allowance. Set it with `--use name=normal|fallback`.
