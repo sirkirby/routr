@@ -96,6 +96,18 @@ test("Claude's /usage text: the session and all-models week are the statusline's
   expect(parseClaudeUsage("You are using an API key", OCT5)).toEqual({ windows: [], note: undefined });
 });
 
+// A Team seat's `claude -p /usage` result, verbatim but for the breakdown that follows (measured 2026-10-07): the same lines
+// as Max, so the same windows. The interactive panel lays the same numbers out differently; routr never reads the panel.
+const TEAM_USAGE = "You are currently using your subscription to power your Claude Code usage\n\nCurrent session: 22% used · resets Oct 7 at 5:19pm (America/Detroit)\nCurrent week (all models): 2% used · resets Oct 14 at 3:59pm (America/Detroit)\nCurrent week (Fable): 0% used · resets Oct 14 at 4pm (America/Detroit)\n\nWhat's contributing to your limits usage?\nLast 24h · 1503 requests · 9 sessions\n  Top skills: /routr 1%";
+
+test("a Team seat's /usage reads as Max's does: session and week windows, the model's own week counted, never named", () => {
+  const p = parseClaudeUsage(TEAM_USAGE, Date.UTC(2026, 9, 7, 21, 11) / 1000);
+  expect(p.windows).toEqual([
+    { name: "five_hour", usedPct: 22, windowMin: 300, resetsAt: endOf(2026, 9, 7, 21, 19) },
+    { name: "seven_day", usedPct: 2, windowMin: 10080, resetsAt: endOf(2026, 9, 14, 19, 59) }]);
+  expect(p.note).toBe("plus 1 model-specific weekly limit (highest 0% used), not ranked on");
+});
+
 test("Claude's reset times read in their own zone, across DST, midnight and noon, and the year that makes sense", () => {
   expect(parseClaudeReset("Oct 5 at 4pm (America/Detroit)", OCT5)).toBe(endOf(2026, 9, 5, 20));
   expect(parseClaudeReset("Oct 5 at 10pm (America/Los_Angeles)", OCT5)).toBe(endOf(2026, 9, 6, 5));
