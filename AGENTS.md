@@ -26,7 +26,10 @@ measured questions about a brief or a worker report; code adds live usage; the l
   user's (`doctor --fix` is `setup` under another name); the only thing they may start is one of routr's detached
   background jobs below (the updater, Cursor's and Kiro's usage refresh), which write only under `~/.cache/routr`. They fail open: any error
   still prints usable output and exits 0. Only `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`,
-  `feedback`, `launch`, `usage cursor`, and `usage kiro` act, and each says so. `launch` drives panes in the user's herdr session;
+  `feedback`, `launch`, `cleanup`, `usage cursor`, and `usage kiro` act, and each says so. `launch` drives panes in the user's herdr session;
+  `cleanup` removes a worker's worktree (through herdr, or git when no workspace is open) or closes its pane, never
+  while anything runs there, never with `--force`, and never one holding uncommitted changes, files the worker made, or
+  a commit no branch holds; it deletes a branch only when asked and `git branch -d` agrees it is merged;
   `usage cursor` drives only a private headless herdr session it makes and removes, never the user's own, and keeps
   the reading in `~/.cache/routr`. `usage kiro` runs Kiro's own `/usage` in the system temp folder and deletes the
   empty session that leaves with Kiro's own `--delete-session`, and keeps the reading in `~/.cache/routr`.
@@ -61,7 +64,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
   folder makes routr treat that folder as its own.
 - The binary is self-contained: the files under `skills/` are embedded at build time, and it MUST NOT depend on a repository checkout at run time. It reads the user's harness state read-only
   (usage sources, settings, model lists) and writes only under `~/.config/routr`, `~/.cache/routr`,
-  `~/.local/share/routr`, the skill folders on `skill install`, and temporary files it removes (including the private
+  `~/.local/share/routr`, the skill folders on `skill install`, the files `launch --copy` copies into a worker's
+  worktree (which `cleanup` removes again only while they are unchanged), and temporary files it removes (including the private
   herdr session `usage cursor` makes, the empty Kiro session `usage kiro` deletes again, and the private folder each
   Claude `/usage` read runs in, with the empty `~/.claude/projects` folder Claude makes for it, removed after a normal
   exit; a timed-out read can leave that one empty folder). One exception:

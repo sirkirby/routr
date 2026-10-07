@@ -77,7 +77,8 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `subagent "<brief>"` | An agent is about to spawn a subagent: facts, level, worth-a-worker. |
 | `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus normal/fallback candidates and a capacity ranking. Give it the exact task the worker will get (`routr dispatch < task.md > advice.json`); `launch --advice advice.json` warns when they differ. `--headroom <name>=0.9` (or `90%`) overrides a reading. |
 | `usage [cursor\|kiro]` | Each subscription's usage, candidates and capacity ranking, with no brief. `usage cursor` or `usage kiro` reads that one now. |
-| `launch` | Start one worker in its own git worktree, nested under the repo in herdr: flags, model syntax, shell prompts, startup questions reported (never answered), readiness, prompt. `--dry-run` shows the plan. |
+| `launch` | Start one worker in its own git worktree, nested under the repo in herdr (`--base` starts it from another branch or commit): flags, model syntax, shell prompts, startup questions reported (never answered), readiness, prompt. `--dry-run` shows the plan. |
+| `cleanup` | Finish a worker: remove its worktree and workspace (or close its pane), never while anything runs there or anything in it is uncommitted. Keeps the branch unless `--delete-branch` and it is merged. With no worker named, lists the repo's worktrees. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
 | `record`, `assess` | Write one ledger line; read the ledger back as advice about your own settings. |
 | `share` | Write exactly what telemetry sends to a file you can read. Sends nothing. |

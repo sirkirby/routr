@@ -16,7 +16,7 @@ commit subject and, at the next tag, a line in the release notes: write it for a
   `docs/evidence.md`, or says plainly that it is not yet measured.
 - **Standard mechanisms only**: skills, prompts, hooks. No dependence on a harness's private environment variables.
 - **The advice commands stay side-effect free and fail open.** Only `record` writes to routr's state; only `launch`
-  acts on panes.
+  and `cleanup` act on panes and worktrees.
 
 ## Changing a question
 

@@ -48,6 +48,7 @@ export const COMMANDS = {
       { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch warns when it was given on a different text than this task", required: false },
       { name: "--pane", arg: "<id>", description: "existing herdr pane to run in: at a shell prompt, or with an idle agent of --kind already running in --cwd (it is adopted, keeps its model and effort, and is sent the task; one not idle yet is never waited on: run the launch again once it is)", required: false },
       { name: "--worktree", arg: "<branch>", description: "give the worker its own git worktree, opened as a workspace nested under the repo (the rule for workers)", required: false },
+      { name: "--base", arg: "<ref>", description: "the commit the worktree's new branch starts from: a branch, tag, or commit id (stacked work, a reviewer of one commit; with --worktree)", required: false, default: "the checkout's HEAD" },
       { name: "--copy", arg: "<path>", description: "copy an untracked file or folder from the repo into the worktree (repeatable; with --worktree)", required: false, repeatable: true },
       { name: "--direction", arg: "<right|down>", description: "split direction", required: false, default: "right if wide else down" },
       { name: "--task", arg: "<text>", description: "task prompt string (mutually exclusive with --task-file)", required: false },
@@ -55,6 +56,18 @@ export const COMMANDS = {
       { name: "--trust", arg: "<ask|auto>", description: "no longer used: routr answers no startup question (accepted so older launch lines still work)", required: false, default: "ask" },
       { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds", required: false, default: 120000 },
       { name: "--dry-run", arg: null, description: "plan commands without executing or writing files", required: false, default: false },
+    ],
+  },
+  cleanup: {
+    name: "cleanup",
+    description: "finish a worker: remove the worktree `launch --worktree` made (closing its workspace), or close the pane launch split. The way to end every worker: closing a worktree's pane leaves the worktree behind. Refuses while anything runs there, and never removes uncommitted changes, files the worker made, or a commit no branch holds; files copied in with --copy and left unchanged go with it. Keeps the branch unless --delete-branch. With no worker named, lists the repo's worktrees and what it would do with each",
+    flags: [
+      { name: "--cwd", arg: "<repo>", description: "the repository (the main checkout or any of its worktrees)", required: false, default: "." },
+      { name: "--worktree", arg: "<branch>", description: "the worker's worktree, by the branch given to launch --worktree", required: false },
+      { name: "--path", arg: "<path>", description: "the worker's worktree, by its folder (one on no branch, or made by hand)", required: false },
+      { name: "--pane", arg: "<id>", description: "a worker launched without --worktree: close its pane (a worktree's only pane is refused, with the command that removes the worktree)", required: false },
+      { name: "--delete-branch", arg: null, description: "also delete the worktree's branch, once its work has landed: git deletes it only when it is merged", required: false, default: false },
+      { name: "--dry-run", arg: null, description: "check and say what it would do; change nothing", required: false, default: false },
     ],
   },
   share: {

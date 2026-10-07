@@ -33,6 +33,7 @@ const { loadConfig } = await import("./lib/config.mjs");
 // The commands that act, each given its own arguments as typed. Each returns the exit code.
 const ACT = {
   launch: async (args) => { const r = await (await import("./lib/launch.mjs")).launch(args); print(r); return r.ok ? 0 : 1; },
+  cleanup: async (args) => { const r = await (await import("./lib/cleanup.mjs")).cleanup(args); print(r); return r.ok ? 0 : 1; },
   update: async (args) => {
     const u = await import("./lib/update.mjs");
     if (args.includes("--background")) { await u.backgroundUpdate(); return 0; }

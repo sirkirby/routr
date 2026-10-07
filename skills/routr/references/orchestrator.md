@@ -64,6 +64,11 @@ launcher copies it across. Never copy a file holding secrets unless the task nee
 folder only when the user has never trusted the repository in Claude (run `claude` in it once and choose Yes). Outside a git repository there is nothing to nest under: leave `--worktree` off and the launcher
 splits a pane beside you.
 
+A worktree's branch starts at the checkout's current commit. Work that builds on another worker's branch (stacked
+work), or a reviewer of one branch or commit, gets `--base <ref>` as well: the branch, tag or commit id to start
+from. Use it rather than making the worktree yourself with herdr or git: a worktree made outside routr comes with no
+cleanup command, and in one user's repository 14 such worktrees had been left behind.
+
 Workers run without a human, so their permissions must cover the scope of the task, and the task must stay inside
 that scope. They also run on the user's machine, in front of the user: do not brief an experiment that pops system
 dialogs (running a quarantined binary, touching the keychain, asking for a system permission) without telling the
@@ -98,8 +103,8 @@ startup), waits until the agent is ready, wraps your task in the opening and clo
 object describing what it did.
 
     routr launch --kind <claude|codex|cursor|agy|kiro> --name <agent-name> \
-        --cwd <repo> --worktree <branch> --model <id> [--effort <level>] --task-file <path> [--rules-file <path>] \
-        --advice <file> [--dry-run]
+        --cwd <repo> --worktree <branch> [--base <ref>] --model <id> [--effort <level>] --task-file <path> \
+        [--rules-file <path>] --advice <file> [--dry-run]
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
   `--effort` where the harness takes it separately. On Antigravity the model id already carries it, and routr says so
@@ -121,7 +126,8 @@ object describing what it did.
   nothing.
 - `--dry-run` prints the plan and changes nothing. Use it to see the flags before spending anything.
 - Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_input`, or `failed`.
-  `warnings` holds anything it wants you to look at. `steps` says what it did, in order.
+  `warnings` holds anything it wants you to look at. `steps` says what it did, in order. `cleanup` is the command
+  that finishes this worker (step 6); keep it with the worker, including one whose launch failed.
 - **`needs_input` is yours to decide.** Something in the pane waits for an answer routr does not give: a shell's own
   question, a harness's startup question, a worker that has not started. `needs_input` holds `why`, the `screen`
   (what the pane shows; withheld once the task was sent, since it then shows the brief: read the pane yourself),
@@ -150,7 +156,7 @@ object describing what it did.
 `references/harnesses.md` records what each harness does and what goes wrong with it. Read it when a launch surprises
 you, when you are choosing a model, or when you launch by hand. The by-hand sequence is what `routr launch` performs:
 
-1. `herdr worktree create --cwd <repo> --branch <name> --no-focus`, and take the root pane it returns.
+1. `herdr worktree create --cwd <repo> --branch <name> [--base <ref>] --no-focus`, and take the root pane it returns.
 2. Read the pane; wait for a clean shell prompt before typing (see `harnesses.md` rule 0).
 3. `herdr agent start <name> --kind <kind> --pane <id> -- <permissive flags>`.
 4. **Read the pane after every start**, whatever state herdr reports. A startup question may be showing: herdr
@@ -160,8 +166,8 @@ you, when you are choosing a model, or when you launch by hand. The by-hand sequ
    (`herdr notification show`). The default answer can be "No, exit": read the options before sending keys.
 5. `herdr agent prompt <name> "<text>" --wait`.
 
-When the worker is finished and verified, close the pane you created. Never reuse a pane for another worker: keys
-sent while an agent is exiting land in the wrong place.
+A worker launched by hand is finished the same way as any other, with `routr cleanup` (step 6). Never reuse a pane
+for another worker: keys sent while an agent is exiting land in the wrong place.
 
 ## 4. Judge, send back, escalate
 
@@ -239,13 +245,23 @@ When you finish a long run, mention `routr assess`, and that `routr feedback "<t
 ## 6. Integrate and clean up
 
 A worker that writes commits its work on its own branch inside its worktree (tell it so in the task) and never pushes.
-After you have verified a piece of work:
+Every worker is finished with `routr cleanup`, the command in its launch result, once you have verified its work
+and it has nothing left to do. Do not close a worker's pane instead: a worktree's pane is its workspace's only pane,
+closing it closes the workspace, and the worktree is then left on disk where herdr no longer removes it.
+
+    routr cleanup --cwd <repo> --worktree <branch> [--delete-branch] [--dry-run]
+    routr cleanup --pane <pane>          # a worker launched without --worktree
 
 - If the user asked for the work to land, merge the worker's branch into the branch the user is on, run the project's
-  checks again on the merged result, and then remove the worktree (`herdr worktree remove`) and delete the branch.
-- Otherwise leave the branch, tell the user where it is and what your check showed, and remove only the worktree.
-- Never remove a worktree that holds changes which are neither committed on a branch nor merged, and never push.
-  Work that failed your check stays where it is until the user decides.
+  checks again on the merged result, and then run cleanup with `--delete-branch`.
+- Otherwise run cleanup without it: the branch stays. Tell the user where it is and what your check showed.
+- cleanup removes nothing that holds work, and refuses while anything still runs there: uncommitted changes, files
+  the worker made that it did not commit, a commit no branch holds. Files you copied in with `--copy` and that are
+  unchanged go with the worktree. Its `refused` says why and what to do; never discard a worker's changes to get past
+  it, and never push. Work that failed your check stays where it is until the user decides.
+- `--delete-branch` deletes a branch only when git agrees it is merged; otherwise it is kept and `warnings` says so.
+- `routr cleanup --cwd <repo>` with no worker named lists every worktree of the repository and whether cleanup can
+  remove it. Run it before you finish, and remove what your session left behind.
 
 Finish by telling the user, per piece of work: what was done, on which subscription and model, your check, and where
 the result is.

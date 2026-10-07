@@ -7,7 +7,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync }
 import { COMMANDS, DESCRIPTION, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "../src/lib/help.mjs";
 import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 test("help table covers every command the CLI dispatches", () => {
-  const dispatched = ["subagent", "dispatch", "launch", "usage", "doctor", "setup", "uninstall", "check", "record", "assess", "share", "update", "statusline", "skill", "key", "telemetry", "feedback"];
+  const dispatched = ["subagent", "dispatch", "launch", "cleanup", "usage", "doctor", "setup", "uninstall", "check", "record", "assess", "share", "update", "statusline", "skill", "key", "telemetry", "feedback"];
   expect(Object.keys(COMMANDS).sort()).toEqual(dispatched.sort());
 
   // Every command has a valid description, non-empty synopsis, and flags/args

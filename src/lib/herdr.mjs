@@ -5,6 +5,9 @@ import { realpathSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 import { start } from "./runtime.mjs";
 
+// A branch name launch gives `herdr worktree create`, and cleanup finds a worktree by.
+export const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,80}$/;
+
 // A POSIX shell word: plain when it is safe, single-quoted otherwise.
 export const quote = (s) => /^[a-zA-Z0-9_./:=@+-]+$/.test(s) ? s : `'${String(s).replaceAll("'", "'\\''")}'`;
 

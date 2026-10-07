@@ -811,6 +811,26 @@ test("launch --copy is repeatable, needs --worktree, and refuses paths outside t
   expect(() => parseLaunchArgs([...base, "--worktree", "b", "--copy", "/etc/passwd"])).toThrow("inside the repository");
 });
 
+test("launch --base starts the worktree's branch at that commit, and every launch says how to clean it up", async () => {
+  const base = ["--kind", "codex", "--name", "w", "--model", "m"];
+  expect(parseLaunchArgs([...base, "--worktree", "review-x", "--base", "main~2"]).base).toBe("main~2");
+  expect(() => parseLaunchArgs([...base, "--base", "main"])).toThrow("goes with --worktree");
+  for (const bad of ["--upload-pack=x", "-x", "a..b", "a b", "main:x"]) expect(() => parseLaunchArgs([...base, "--worktree", "b", "--base", bad])).toThrow();
+  const plan = await launch([...base, "--cwd", process.cwd(), "--worktree", "stacked", "--base", "feat/one", "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); } });
+  expect(plan.planned_command[0]).toBe(`herdr worktree create --cwd ${quote(process.cwd())} --branch stacked --base feat/one --no-focus`);
+  // A worktree launch: herdr gets --base as given, and the result names the one command that finishes the worker.
+  const f = fakeHerdr({ reply: (a) => a[0] === "worktree" ? herdrOK({ root_pane: { pane_id: "w5:p1" }, worktree: { path: process.cwd() }, workspace: { workspace_id: "w5" } }) : undefined });
+  const r = await launch([...launchArgs, "--cwd", "/", "--worktree", "stacked", "--base", "feat/one"], f.deps);
+  expect(f.calls[0]).toEqual(["worktree", "create", "--cwd", "/", "--branch", "stacked", "--base", "feat/one", "--no-focus"]);
+  expect(r).toMatchObject({ ok: true, pane: "w5:p1", worktree: { branch: "stacked", base: "feat/one", path: process.cwd(), workspace: "w5" }, cleanup: "routr cleanup --cwd / --worktree stacked" });
+  // A split pane is closed by cleanup; a relaunch into a pane gets the pane's line (cleanup redirects a worktree's own).
+  expect((await launch(launchArgs, fakeHerdr().deps)).cleanup).toBe("routr cleanup --pane w1:p2");
+  const kept = await launch(launchArgs, fakeHerdr({ reply: (a) => a[1] === "start" ? herdrError("boom") : undefined }).deps);
+  expect(kept).toMatchObject({ state: "failed", cleanup: "routr cleanup --pane w1:p2" }); // a start was tried: the pane stays
+  const closed = await launch(launchArgs, fakeHerdr({ reply: (a) => a[1] === "process-info" ? herdrError("boom") : undefined }).deps);
+  expect(closed.steps.map((s) => s.step)).toContain("cleanup_pane"); expect(closed.cleanup).toBeUndefined(); // closed by launch
+});
+
 test("Windows shell prompts count as ready; a bare continuation prompt still does not", () => {
   for (const text of ["PS C:\\Users\\chris>", "PS C:\\Users\\chris\\AppData\\Local\\Temp\\routr-wintest> ", "C:\\Users\\chris>", "Windows PowerShell\nCopyright (C) Microsoft\n\nPS D:\\work\\my repo>"])
     expect(shellPrompt(text)).toBe("ready");

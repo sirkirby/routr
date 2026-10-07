@@ -33,9 +33,13 @@ there is none, ask for it and stop.
   spawn a subagent. Do not skip it for work that looks small: routr's `worker` field says when to do it yourself.
 - If the plan leaves a decision that is the user's, ask before launching (routr's `worker` field flags this too).
   Otherwise proceed.
+- Every worker starts with `routr launch --worktree <branch>` (`--base <ref>` to start it from another branch or
+  commit) and ends with `routr cleanup`, the command in its launch result. Do not make, close or remove a
+  worker's worktree or pane with herdr or git yourself: closing its pane leaves its worktree behind.
 - Plan, verify and integrate yourself; hand out the pieces.
 - One line to the user per launch and one per result, as the orchestrator guide says.
 - Record each worker with `routr record` once you have verified its result.
+- Before you finish, `routr cleanup --cwd <repo>` lists the worktrees still there; remove the ones your session left.
 - This holds until the user says otherwise.
 
 Begin by restating the work in a few lines and how you will split it, then carry on.
