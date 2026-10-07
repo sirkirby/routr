@@ -7,7 +7,7 @@ import { loadConfig } from "./config.mjs";
 import { HARNESSES, kindError, notReady, plan } from "./harnesses.mjs";
 import { briefSha } from "./ledger.mjs";
 import { OFF } from "./wording.mjs";
-import { clean, deadline, paneText, paneView, quote, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
+import { BRANCH, clean, deadline, paneText, paneView, quote, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
 import { home } from "./runtime.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
@@ -39,7 +39,7 @@ export function logCommand(log, text) {
 
 export function parseLaunchArgs(args) {
   const o = { trust: "ask", timeout: 120000, dryRun: false };
-  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "direction", "task", "task-file", "rules-file", "trust", "timeout", "advice"];
+  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "trust", "timeout", "advice"];
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
@@ -58,8 +58,11 @@ export function parseLaunchArgs(args) {
   if (!Object.hasOwn(HARNESSES, o.kind)) throw kindError();
   if (o.worktree && o.pane) throw new Error("--worktree creates its own pane; do not pass --pane with it");
   if (o.copy && !o.worktree) throw new Error("--copy only makes sense with --worktree");
+  if (o.base && !o.worktree) throw new Error("--base goes with --worktree: it is the commit the worktree's branch starts from");
   for (const c of o.copy ?? []) if (isAbsolute(c) || c.split(/[\\/]/).includes("..")) throw new Error("--copy takes paths inside the repository, relative to --cwd");
-  if (o.worktree && !/^[A-Za-z0-9][A-Za-z0-9._\/-]{0,80}$/.test(o.worktree)) throw new Error("--worktree must be a plain branch name");
+  if (o.worktree && !BRANCH.test(o.worktree)) throw new Error("--worktree must be a plain branch name");
+  // A branch, tag, commit, or one relative to them (main~2, HEAD^): never an option or a range (a..b, HEAD^@, HEAD^-1).
+  if (o.base && (!/^[A-Za-z0-9][A-Za-z0-9._\/@^~-]{0,200}$/.test(o.base) || o.base.includes("..") || /\^[-@!]/.test(o.base))) throw new Error("--base must name one commit: a branch, tag, or commit id");
   if (!/^[a-z][a-z0-9_-]{0,31}$/.test(o.name ?? "")) throw new Error("--name must match [a-z][a-z0-9_-]{0,31}");
   if (!["ask", "auto"].includes(o.trust)) throw new Error("--trust must be ask or auto");
   if (o.direction && !["right", "down"].includes(o.direction)) throw new Error("--direction must be right or down");
@@ -101,7 +104,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       if (!out.pane) return null;
       const keep = [];
       for (let i = 0; i < args.length; i++) {
-        if (["--worktree", "--direction", "--pane", "--cwd", "--trust", "--copy", "--task"].includes(args[i])) { i++; continue; }
+        if (["--worktree", "--base", "--direction", "--pane", "--cwd", "--trust", "--copy", "--task"].includes(args[i])) { i++; continue; }
         keep.push(args[i]);
       }
       const again = ["routr", "launch", ...keep, "--pane", out.pane, "--cwd", out.cwd].map(quote).join(" ");
@@ -135,10 +138,11 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       : ["agent", "start", o.name, "--kind", o.kind, "--pane", pane, "--timeout", String(timeout), "--", ...p.argv];
     const promptArgs = (pane, timeout) => ["agent", "prompt", pane, prompt, "--wait", "--until", "working",
       "--until", "idle", "--until", "done", "--until", "blocked", "--timeout", String(timeout)];
+    const worktreeArgs = () => ["worktree", "create", "--cwd", out.cwd, "--branch", o.worktree, ...(o.base ? ["--base", o.base] : []), "--no-focus"];
     if (o.dryRun) {
       const pane = o.pane ?? "<new-pane>";
       out.planned_command = [
-        ...(o.worktree ? [command(["worktree", "create", "--cwd", out.cwd, "--branch", o.worktree, "--no-focus"])] : []),
+        ...(o.worktree ? [command(worktreeArgs())] : []),
         ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(["pane", "split", "--current", "--direction", o.direction ?? "<right-if-wide-else-down>", "--cwd", out.cwd, "--no-focus"])] : []),
         command(["pane", "read", pane, "--source", "visible"]),
         command(["pane", "process-info", "--pane", pane]),
@@ -259,14 +263,17 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     if (!out.pane && o.worktree) {
       // The rule for workers: each gets its own git worktree. herdr opens it as a workspace NESTED under the repository
       // in the sidebar, so the lead's tab stays clean and even a read-only worker cannot touch the main checkout.
-      const r = await call(["worktree", "create", "--cwd", out.cwd, "--branch", o.worktree, "--no-focus"]);
+      // --base starts its branch at another commit (stacked work, a reviewer of one commit); herdr takes it as is.
+      const r = await call(worktreeArgs());
       const w = r.data?.result;
       if (!r.ok || typeof w?.root_pane?.pane_id !== "string" || typeof w?.worktree?.path !== "string") {
         throw new Error(`Could not create worktree ${o.worktree}: ${r.data?.error?.message ?? r.data?.error?.code ?? "unexpected Herdr response"}`);
       }
       out.pane = w.root_pane.pane_id; out.cwd = w.worktree.path;
-      out.worktree = { branch: o.worktree, path: w.worktree.path, workspace: w.workspace?.workspace_id ?? null };
-      step("worktree", true, `Created ${out.cwd} on branch ${o.worktree}, workspace ${out.worktree.workspace}, pane ${out.pane}`);
+      out.worktree = { branch: o.worktree, ...(o.base ? { base: o.base } : {}), path: w.worktree.path, workspace: w.workspace?.workspace_id ?? null };
+      // How this worker is finished: never by closing its pane, which closes the workspace and leaves the worktree.
+      out.cleanup = ["routr", "cleanup", "--cwd", repoCwd, "--worktree", o.worktree].map(quote).join(" ");
+      step("worktree", true, `Created ${out.cwd} on branch ${o.worktree}${o.base ? ` from ${o.base}` : ""}, workspace ${out.worktree.workspace}, pane ${out.pane}`);
       // A worktree holds tracked files only. --copy brings named untracked files or folders (a local config, test data)
       // across from the main checkout, at the same relative path.
       for (const rel of o.copy ?? []) {
@@ -291,6 +298,8 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       createdPane = true;
       step("split", true, `Created ${out.pane}, ${direction}`);
     }
+    // A pane given with --pane may be a worktree's own: cleanup then says to clean up the worktree instead.
+    out.cleanup ??= `routr cleanup --pane ${quote(out.pane)}`;
     // A pane we split already opened in --cwd; one adopted from the caller must be checked before we type `cd`.
     if (o.pane && !adopted) {
       stop = await shellReady(); if (stop) return stop;
@@ -444,7 +453,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       try {
         const closed = await run(a, 1000);
         step("cleanup_pane", closed.ok, closed.ok ? `Closed unused pane ${out.pane}` : "Could not close unused pane");
-        if (closed.ok) createdPane = false;
+        if (closed.ok) { createdPane = false; delete out.cleanup; }
       } catch (e) { step("cleanup_pane", false, String(e?.message ?? e)); }
     }
     if (configDir && !startAttempted) {

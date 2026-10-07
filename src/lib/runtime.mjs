@@ -254,16 +254,17 @@ export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, status = f
 // Run a command, in harnessEnv, and collect everything it says, stdout and stderr together, with its exit code: for a
 // harness's status check, which answers on either stream (measured 2026-09-26: Codex on stderr, Kiro on stdout,
 // Antigravity and Cursor on both). Resolves null when it does not answer in time or cannot start; never throws.
-export function probe(cmd, args, { timeoutMs = 15000, cwd } = {}) {
+// `separate: true` keeps stderr out of `out`, in `err`: for output that is parsed (cleanup's `git status -z`).
+export function probe(cmd, args, { timeoutMs = 15000, cwd, separate = false } = {}) {
   return new Promise((resolve) => {
-    let out = "", done = false, exited = false, child;
+    let out = "", err = "", done = false, exited = false, child;
     const finish = (v) => { if (done) return; done = true; clearTimeout(timer); if (!exited) stop(child); resolve(v); };
     try { child = start(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env: harnessEnv(), ...(cwd ? { cwd } : {}) }); } catch { return resolve(null); }
     const timer = setTimeout(() => finish(null), timeoutMs);
     child.on("error", () => finish(null));
     child.on("exit", () => { exited = true; });
     child.stdout.on("data", (d) => { out += d; });
-    child.stderr.on("data", (d) => { out += d; });
-    child.on("close", (code) => finish({ out, code }));
+    child.stderr.on("data", (d) => { if (separate) err += d; else out += d; });
+    child.on("close", (code) => finish(separate ? { out, err, code } : { out, code }));
   });
 }
