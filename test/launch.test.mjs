@@ -1,6 +1,6 @@
 // launch.mjs, herdr.mjs, harnesses.mjs: starting a worker in a herdr pane
 import { expect, test } from "bun:test";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { plan } from "../src/lib/harnesses.mjs";
 import { composePrompt, launch, parseLaunchArgs, WORKER_GUIDE } from "../src/lib/launch.mjs";
@@ -821,8 +821,8 @@ test("launch --base starts the worktree's branch at that commit, and every launc
   // A worktree launch: herdr gets --base as given, and the result names the one command that finishes the worker.
   const f = fakeHerdr({ reply: (a) => a[0] === "worktree" ? herdrOK({ root_pane: { pane_id: "w5:p1" }, worktree: { path: process.cwd() }, workspace: { workspace_id: "w5" } }) : undefined });
   const r = await launch([...launchArgs, "--cwd", "/", "--worktree", "stacked", "--base", "feat/one"], f.deps);
-  expect(f.calls[0]).toEqual(["worktree", "create", "--cwd", "/", "--branch", "stacked", "--base", "feat/one", "--no-focus"]);
-  expect(r).toMatchObject({ ok: true, pane: "w5:p1", worktree: { branch: "stacked", base: "feat/one", path: process.cwd(), workspace: "w5" }, cleanup: "routr cleanup --cwd / --worktree stacked" });
+  expect(f.calls[0]).toEqual(["worktree", "create", "--cwd", resolve("/"), "--branch", "stacked", "--base", "feat/one", "--no-focus"]);
+  expect(r).toMatchObject({ ok: true, pane: "w5:p1", worktree: { branch: "stacked", base: "feat/one", path: process.cwd(), workspace: "w5" }, cleanup: `routr cleanup --cwd ${quote(resolve("/"))} --worktree stacked` });
   // A split pane is closed by cleanup; a relaunch into a pane gets the pane's line (cleanup redirects a worktree's own).
   expect((await launch(launchArgs, fakeHerdr().deps)).cleanup).toBe("routr cleanup --pane w1:p2");
   const kept = await launch(launchArgs, fakeHerdr({ reply: (a) => a[1] === "start" ? herdrError("boom") : undefined }).deps);

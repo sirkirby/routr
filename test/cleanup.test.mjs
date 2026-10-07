@@ -1,7 +1,8 @@
 // cleanup.mjs: finishing a worker, its worktree or its pane, without losing anything in it
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { quote } from "../src/lib/herdr.mjs";
 import { cleanup, dropCopy, linkedWorktree, parseCleanupArgs, parseStatus, parseWorktreeHeads, sameFile } from "../src/lib/cleanup.mjs";
 import { herdrError, herdrOK, scratch } from "./helpers.mjs";
 
@@ -133,7 +134,7 @@ test("with no worker named, cleanup lists every worktree and what it would do, a
   const r = await cleanup(["--cwd", "/repo"], f.deps);
   expect(r).toMatchObject({ ok: true, state: "listed" });
   expect(r.worktrees.map((w) => [w.branch, w.removable])).toEqual([["done", true], ["dirty", false], ["gone", true]]);
-  expect(r.then).toContain("routr cleanup --cwd /repo --path <path>");
+  expect(r.then).toContain(`routr cleanup --cwd ${quote(resolve("/repo"))} --path <path>`);
   expect(f.calls.some((a) => ["remove", "close"].includes(a[1]))).toBe(false);
   expect(f.gits.some((g) => (g[1] === "worktree" && g[2] === "remove") || g[1] === "branch")).toBe(false);
 });
