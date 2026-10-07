@@ -1,7 +1,7 @@
 // update.mjs: releases, the binary swap, and the daily check
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { SCRATCH, scratch } from "./helpers.mjs";
 
@@ -59,7 +59,7 @@ test("routr update reports a real swap as an update and reinstalls the skill (th
   const fresh = Buffer.from("NEW-BINARY");
   const sum = (await import("node:crypto")).createHash("sha256").update(fresh).digest("hex");
   const { assetName } = await import("../src/lib/update.mjs");
-  const fetchFn = async (u) => ({ ok: true, status: 200, arrayBuffer: async () => (String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : fresh) });
+  const fetchFn = async (u) => served(String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : fresh);
   const calls = [];
   const spawn = (file, args) => { calls.push([file, args[0]]); return { status: 0, stdout: args[0] === "--version" ? "9.9.9\n" : "" }; };
   const r = await update({ base: "http://fake.invalid/r", self, fetchFn, spawn, isStandalone: () => true });
@@ -180,9 +180,110 @@ async function fakeGitHub(asked) {
     asked.push(String(u));
     if (String(u).endsWith("/releases/latest")) return { ok: true, status: 200, json: async () => RELEASES.find((r) => r.tag_name === "v0.5.1") };
     if (String(u).includes("/releases?per_page=100")) return { ok: true, status: 200, json: async () => RELEASES };
-    return { ok: true, status: 200, arrayBuffer: async () => (String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : bin) };
+    return served(String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : bin);
   };
 }
+
+// A download as fetch answers it: a body stream, and no way to buffer it whole (the update must stream, never call
+// arrayBuffer() on a 59 to 82 MB binary). `chunks` is a list of buffers, sent `every` ms apart; `stopAfter` sends that
+// many and then nothing more, ever.
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+function served(bin, { every = 0, chunks = null, stopAfter = Infinity, buffered = [] } = {}) {
+  const parts = chunks ?? [bin];
+  let i = 0;
+  const body = new ReadableStream({
+    async pull(c) {
+      if (i >= stopAfter) return new Promise(() => {}); // the link goes quiet
+      if (every) await wait(every);
+      if (i >= parts.length) return c.close();
+      c.enqueue(new Uint8Array(parts[i++]));
+    },
+  });
+  const whole = (how) => async () => { buffered.push(how); throw new Error(`the update buffered a download with ${how}()`); };
+  return { ok: true, status: 200, body, arrayBuffer: whole("arrayBuffer"), text: whole("text"), json: whole("json"), blob: whole("blob"), bytes: whole("bytes") };
+}
+
+// A release whose binary arrives in `n` chunks, `every` ms apart, and a fetch that serves it (SHA256SUMS at once).
+async function slowRelease(n, every, over = {}) {
+  const { assetName } = await import("../src/lib/update.mjs");
+  const chunks = Array.from({ length: n }, (_, k) => Buffer.from(`chunk-${k};`)), bin = Buffer.concat(chunks);
+  const sum = over.sum ?? (await import("node:crypto")).createHash("sha256").update(bin).digest("hex");
+  const buffered = [];
+  const fetchFn = async (u) => (String(u).endsWith("SHA256SUMS") ? served(Buffer.from(`${sum}  ${assetName()}\n`), { buffered })
+    : served(bin, { chunks, every, buffered, stopAfter: over.stopAfter }));
+  return { bin, fetchFn, buffered };
+}
+
+test("a slow but steady download succeeds, however long it takes in all, and never holds the binary in memory", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const dir = scratch("upd-slow"), self = join(dir, "routr"); writeFileSync(self, "OLD");
+  // 20 chunks 50 ms apart: 1 s in all, five times the 200 ms stall limit. The old total timeout of that size failed it.
+  const { bin, fetchFn, buffered } = await slowRelease(20, 50);
+  const t0 = Date.now();
+  const r = await update({ base: "http://fake.invalid/r", self, fetchFn, stallMs: 200, spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+  expect(Date.now() - t0).toBeGreaterThanOrEqual(900);
+  expect(r).toMatchObject({ ok: true, updated: true });
+  expect(readFileSync(self)).toEqual(bin);
+  expect(buffered).toEqual([]);
+  expect(readdirSync(dir).sort()).toEqual(["routr"]);                    // no .download, .new or .old left
+});
+
+test("a download that stops sending fails as a stall, and leaves the old binary and no temporary file", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const dir = scratch("upd-stall"), self = join(dir, "routr"); writeFileSync(self, "OLD");
+  const { fetchFn } = await slowRelease(20, 20, { stopAfter: 3 });
+  const r = await update({ base: "http://fake.invalid/r", self, fetchFn, stallMs: 200, spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+  expect(r).toMatchObject({ ok: false, updated: false });
+  expect(r.error).toBe(`the download of ${(await import("../src/lib/update.mjs")).assetName()} stalled: no data for 200 ms`);
+  expect(r.note).toContain("Nothing was changed");
+  expect(readFileSync(self, "utf8")).toBe("OLD");
+  expect(readdirSync(dir)).toEqual(["routr"]);
+  // A server that never answers at all is a stall too; the default limits read as a person would say them.
+  const { DOWNLOAD_STALL_MS, DOWNLOAD_MAX_MS, streamDownload } = await import("../src/lib/update.mjs");
+  expect([DOWNLOAD_STALL_MS, DOWNLOAD_MAX_MS]).toEqual([30_000, 1_800_000]);
+  await expect(streamDownload("http://fake.invalid/x", "x", () => {}, { fetchFn: () => new Promise(() => {}), stallMs: 100 })).rejects.toThrow("the download of x stalled: no data for 100 ms");
+});
+
+test("a download still trickling at the backstop is stopped, and says it was the backstop", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const dir = scratch("upd-max"), self = join(dir, "routr"); writeFileSync(self, "OLD");
+  const { fetchFn } = await slowRelease(1000, 20);                     // never stalls, would take 20 s
+  const r = await update({ base: "http://fake.invalid/r", self, fetchFn, stallMs: 200, maxMs: 300, spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+  expect(r).toMatchObject({ ok: false, updated: false });
+  expect(r.error).toContain("was still going after 300 ms, so it was stopped");
+  expect(r.error).not.toContain("stalled");
+  expect(readFileSync(self, "utf8")).toBe("OLD");
+  expect(readdirSync(dir)).toEqual(["routr"]);
+});
+
+test("a checksum mismatch after a streamed download changes nothing", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const dir = scratch("upd-sum"), self = join(dir, "routr"); writeFileSync(self, "OLD");
+  const { fetchFn } = await slowRelease(5, 5, { sum: "0".repeat(64) });
+  const r = await update({ base: "http://fake.invalid/r", self, fetchFn, spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+  expect(r).toMatchObject({ ok: false, updated: false });
+  expect(r.error).toContain("checksum mismatch");
+  expect(readFileSync(self, "utf8")).toBe("OLD");
+  expect(readdirSync(dir)).toEqual(["routr"]);
+});
+
+test("an update that finds a newer binary already in place removes its download", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const dir = scratch("upd-there-tmp"), self = join(dir, "routr"); writeFileSync(self, "MANUAL");
+  const r = await update({ channel: "stable", current: "0.5.0", self, base: undefined, fetchFn: await fakeGitHub([]),
+    spawn: () => ({ status: 0, stdout: "0.5.2\n" }), isStandalone: () => true });
+  expect(r).toMatchObject({ ok: true, updated: false, installed: "0.5.2" });
+  expect(readdirSync(dir)).toEqual(["routr"]);
+});
+
+test("a binary swap can move a downloaded file into place", async () => {
+  const { swapBinary } = await import("../src/lib/update.mjs");
+  const dir = scratch("swap-file"), self = join(dir, "routr");
+  writeFileSync(self, "old"); writeFileSync(`${self}.download`, "new");
+  swapBinary(self, `${self}.download`);
+  expect(readFileSync(self, "utf8")).toBe("new");
+  expect(readdirSync(dir)).toEqual(["routr"]);
+});
 
 test("an update downloads the exact tag it checked, on either channel", async () => {
   const { assetName, update } = await import("../src/lib/update.mjs");
