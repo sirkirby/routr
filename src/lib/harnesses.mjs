@@ -63,21 +63,24 @@ const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 
 // not available (`--bare`, 2026-10-05). So `/usage` alone cannot tell per-token billing from missing credentials, and
 // authMethod can. A subscription login prints `"authMethod": "claude.ai"` and a subscriptionType: windows decide.
 // Read from Claude Code's own code (2.1.293), not measured: `api_key_helper` is an API key from the user's
-// apiKeyHelper; an apiProvider other than `firstParty` (bedrock, vertex, foundry, …) is a cloud provider's account,
-// billed per token by that provider (its docs); `gateway` is a Claude apps gateway, whose spend limit arrives as a
-// window (capped, usage.mjs), so it is left to the windows. Only the class and a fixed reason leave this function,
-// never the email, organisation or ids the same answer carries. Anything unreadable is null: nothing is guessed.
+// apiKeyHelper; the apiProvider values its code sets for a cloud provider (below) are that provider's account, billed
+// per token by it (its docs); `gateway` is a Claude apps gateway, whose spend limit arrives as a window (capped,
+// usage.mjs), so it is left to the windows. Both are allow-lists: any other value, or one that is not a string, is
+// null (from the review: an unknown provider once counted as metered, its raw text in the reason). Every reason is a
+// fixed string from these tables, never text from the answer, which also carries the email, organisation and ids.
+const CLAUDE_CLOUD = new Set(["bedrock", "vertex", "foundry", "anthropicAws", "anthropicGoogleCloud", "mantle"]);
+const CLAUDE_CLOUD_WHY = "Claude Code runs through a cloud provider's account, billed per token by that provider (from its docs, not measured)";
+const CLAUDE_KEY_WHY = { api_key: "signed in with an API key, billed per token", api_key_helper: "signed in with an API key from apiKeyHelper, billed per token (not measured)" };
 export function claudeBilling(out) {
   const text = String(out ?? "");
   let o = null;
   try { o = JSON.parse(text); } catch { try { o = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch {} }
   if (!o || typeof o !== "object" || o.loggedIn !== true) return null;
-  const provider = o.apiProvider ?? "firstParty";
-  if (provider === "gateway") return null;
-  if (provider !== "firstParty") return { billing: "metered", why: `Claude Code runs through ${typeof provider === "string" && /^[A-Za-z]{1,32}$/.test(provider) ? provider : "a cloud provider"}, billed per token by that provider (from its docs, not measured)` };
-  if (o.authMethod === "api_key") return { billing: "metered", why: "signed in with an API key, billed per token" };
-  if (o.authMethod === "api_key_helper") return { billing: "metered", why: "signed in with an API key from apiKeyHelper, billed per token (not measured)" };
-  return null;
+  const provider = o.apiProvider ?? "firstParty"; // every measured answer names it; an older one without it is first-party
+  if (typeof provider !== "string") return null;
+  if (CLAUDE_CLOUD.has(provider)) return { billing: "metered", why: CLAUDE_CLOUD_WHY };
+  if (provider !== "firstParty" || typeof o.authMethod !== "string" || !Object.hasOwn(CLAUDE_KEY_WHY, o.authMethod)) return null;
+  return { billing: "metered", why: CLAUDE_KEY_WHY[o.authMethod] };
 }
 
 export const HARNESSES = {
@@ -199,7 +202,7 @@ export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usag
 // `why(name)`: null when it is signed in, or why not. One that is not is never read (its reading could open a sign-in),
 // and dispatch leaves it out (pick.mjs). `billing(name)`: what its sign-in answer said about billing (signin.mjs, kept
 // beside `why`'s answer), or null.
-export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFromSignIn } = {}) {
+export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFor } = {}) {
   return Promise.all(names.map(async (name) => {
     // Signed in first: a number the caller read cannot put work on a harness that cannot take it (launch refuses it).
     const not = await why(name);
@@ -209,8 +212,19 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
     let u;
     if (!src?.read) u = summarize({ pool: name, source: "none", note: "no usage source: read it yourself and pass --headroom " + name + "=<share left, 0.9 or 90%>" });
     else try { u = await src.read({ background: background.includes(name) }); } catch (e) { u = summarize({ pool: name, source: "unreadable", note: `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}` }); }
-    return withBilling(name, u, billing(name));
+    // The billing reading settles only a reading without windows, and then it must be today's: a sign-in kept for
+    // 6 hours can predate a switch between a subscription and an API key (from the review: a switch an hour in still
+    // ranked the old way). So in exactly that case the status check runs again now. With windows there is no call.
+    return withBilling(name, u, await billing(name, { fresh: u?.headroom == null }));
   }));
+}
+
+// What the harness's sign-in status says about billing: the kept answer, or with `fresh` its status check run again
+// now, bypassing the cache and updating it (signin.mjs, the same probe and timeout). Only a harness with an
+// `auth.billing` reader is asked again. `harness` and the rest are signin.mjs's seams, for tests.
+export async function billingFor(name, { fresh = false, harness = HARNESSES[name], ...o } = {}) {
+  if (fresh && harness?.auth?.billing) await signInState(name, harness, { ...o, fresh: true });
+  return billingFromSignIn(name);
 }
 
 // A reading, settled by what the harness's own status said about billing (`auth.billing`). With no windows it is that

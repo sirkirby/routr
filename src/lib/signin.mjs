@@ -15,7 +15,8 @@ const KEEP_SEC = { true: 6 * 3600, false: 10 * 60 };
 const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return {}; } };
 
 // What the same answer said about billing (the registry's `auth.billing`), kept beside the state with the same
-// lifetime: an API key login is billed per token for as long as it stays signed in that way. Only the class and the
+// lifetime. Where it decides a class (a reading without windows), readUsage asks again first (`billingFor`, fresh):
+// a login switched within the 6 hours must not keep the old class. Only the class and the
 // reader's fixed reason are kept, never anything else the status printed (Claude's carries the email, organisation and
 // ids). A reader that throws, or answers anything else, is no reading.
 const billingOf = (b) => (b?.billing === "metered" && typeof b.why === "string" ? { billing: "metered", why: b.why.slice(0, 200) } : null);

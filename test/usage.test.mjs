@@ -625,10 +625,17 @@ test("Claude's sign-in status says how it bills: an API key is metered, a subscr
   expect(billing(AUTH_API_KEY, 0)).toMatchObject({ billing: "metered" }); expect(billing(AUTH_API_KEY, 0).why).toContain("API key");
   expect(billing(AUTH_MAX, 0)).toBeNull();
   // A cloud provider is billed per token (its docs: claimed); a gateway's spend limit arrives as a window, so it is not.
-  expect(billing(JSON.stringify({ loggedIn: true, authMethod: "third_party", apiProvider: "bedrock" }), 0)).toMatchObject({ billing: "metered" });
-  expect(billing(JSON.stringify({ loggedIn: true, authMethod: "third_party", apiProvider: "bedrock" }), 0).why).toContain("bedrock");
-  expect(billing(JSON.stringify({ loggedIn: true, authMethod: "third_party", apiProvider: "evil <x>" }), 0).why).toContain("a cloud provider");
+  for (const p of ["bedrock", "vertex", "foundry", "anthropicAws", "anthropicGoogleCloud", "mantle"])
+    expect([p, billing(JSON.stringify({ loggedIn: true, authMethod: "third_party", apiProvider: p }), 0)?.billing]).toEqual([p, "metered"]);
   expect(billing(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "gateway" }), 0)).toBeNull();
+  // From the review: only the providers and auth methods Claude Code's code sets count; anything else, or anything
+  // not a string, is no reading, and no reason carries text from the answer.
+  for (const p of ["FixtureCompany", "evil <x>", "", false, 42, {}, [], ["bedrock"], null])
+    expect([p, billing(JSON.stringify({ loggedIn: true, authMethod: "api_key", apiProvider: p }), 0)]).toEqual([p, p === null ? billing(AUTH_API_KEY, 0) : null]);
+  for (const m of ["API_KEY", "api_key ", "toString", "__proto__", 1, {}, ["api_key"]])
+    expect([m, billing(JSON.stringify({ loggedIn: true, authMethod: m, apiProvider: "firstParty" }), 0)]).toEqual([m, null]);
+  const reasons = new Set(["bedrock", "vertex"].map((p) => billing(JSON.stringify({ loggedIn: true, apiProvider: p }), 0).why));
+  expect(reasons.size).toBe(1); expect([...reasons][0]).not.toContain("bedrock");
   expect(billing(JSON.stringify({ loggedIn: true, authMethod: "api_key_helper", apiProvider: "firstParty" }), 0)).toMatchObject({ billing: "metered" });
   // Unreadable, signed out, or anything else: no reading, nothing guessed.
   for (const out of ["", "not json", "{", '{"loggedIn": false, "authMethod": "api_key"}', "null", "[1]", '"api_key"', '{"loggedIn": true, "authMethod": "oauth_token"}'])
@@ -688,6 +695,35 @@ test("windows that arrive while the sign-in status says metered are kept, and th
   expect(u).toMatchObject({ headroom: 0.6 }); expect(u.class).not.toBe("metered"); expect(u.billing).toBeUndefined();
   expect(u.note).toContain("yet usage windows arrived: ranked on the windows");
   expect(rankSubscriptions("standard", [u], cfg()).ranked.find((x) => x.subscription === "claude")).toMatchObject({ usage: "live", class: "included" });
+});
+test("a login switched within the sign-in cache's 6 hours: a reading without windows asks the status again, one with windows does not", async () => {
+  const { signInState } = await import("../src/lib/signin.mjs");
+  const { billingFor } = await import("../src/lib/harnesses.mjs");
+  const file = join(scratch("signin-switch"), "signed-in.json"), T = 1_800_000_000, name = "claude-switch"; // not "claude": other tests read that name
+  const asked = [];
+  const ask = (out) => async (cmd, args) => { asked.push([cmd, ...args]); return { out, code: 0 }; };
+  const seams = (out, nowSec) => ({ harness: HARNESSES.claude, file, nowSec, ask: ask(out) });
+  const noWindows = { [name]: { read: async () => summarize({ pool: name, source: "claude /usage", reason: NO_WINDOWS_AFTER_ANSWER, note: "no windows" }) } };
+  const withWindows = { [name]: { read: async () => live(name, 0.6) } };
+  const read = (sources, out, nowSec) => readUsage([name], {}, { sources, why: async () => null, billing: (n, o) => billingFor(n, { ...o, ...seams(out, nowSec) }) });
+  // Signed in with a subscription and kept; an hour later the login is an API key, and /usage shows no windows.
+  await signInState(name, HARNESSES.claude, { file, nowSec: T, ask: ask(AUTH_MAX) });
+  asked.length = 0;
+  const [toKey] = await read(noWindows, AUTH_API_KEY, T + 3600);
+  expect(asked).toEqual([["claude", "auth", "status"]]);
+  expect(toKey).toMatchObject({ class: "metered", note: "metered: signed in with an API key, billed per token" }); expect(toKey.reason).toBeUndefined();
+  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toMatchObject({ ts: T + 3600, state: "yes", billing: { billing: "metered" } }); // the cache now says so too
+  // And back: an hour later a subscription again, its windows not read this time: no longer metered.
+  const [toSub] = await read(noWindows, AUTH_MAX, T + 7200);
+  expect(toSub).toMatchObject({ class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER });
+  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: T + 7200, state: "yes" });
+  // Windows arrived: they decide, and the status is not asked again.
+  asked.length = 0;
+  const [w] = await read(withWindows, AUTH_API_KEY, T + 7300);
+  expect(asked).toEqual([]); expect(w).toMatchObject({ headroom: 0.6 }); expect(w.class).not.toBe("metered");
+  // A harness without a billing reader is never asked again either.
+  expect(await billingFor("codex-switch", { fresh: true, harness: HARNESSES.codex, file, nowSec: T, ask: ask("Logged in using ChatGPT\n") })).toBeNull();
+  expect(asked).toEqual([]);
 });
 test("a harness that is not signed in is never read, and dispatch leaves it out and says how to sign in", async () => {
   const reads = [];

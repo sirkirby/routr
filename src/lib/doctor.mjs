@@ -5,7 +5,7 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { delimiter, join, win32 } from "node:path";
 import { accountUse, CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
-import { signInHint } from "./signin.mjs";
+import { billingFromSignIn, signInHint } from "./signin.mjs";
 import { jevModel, KEY_FILES, loadKey, ping } from "./jev.mjs";
 import { JEV_MODEL } from "./questions.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
@@ -115,7 +115,8 @@ export async function inspect({ configPath, quiet } = {}) {
   // newer release is waiting comes from what the daily job saw (autoUpdateStatus, below); `routr update --check` asks.
   const [usage, key, states, ...models] = await Promise.all([
     // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
-    step("usage", statesP.then((st) => readUsage(found, {}, { background: enabledSubscriptions(config), why: whyNot(st) }))), // a turned-off one is never refreshed
+    // Its sign-in answers were just asked afresh, so their billing readings are today's: no second status check.
+    step("usage", statesP.then((st) => readUsage(found, {}, { background: enabledSubscriptions(config), why: whyNot(st), billing: (n) => billingFromSignIn(n) }))), // a turned-off one is never refreshed
     step("the TypeSafe key", keyCheck().then((t) => ({ t }), (e) => ({ e }))),
     statesP,
     ...found.map((n) => statesP.then((st) => (st[n] !== "yes" ? null : step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))))),
