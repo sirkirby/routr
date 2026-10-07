@@ -2,9 +2,9 @@
 // or beta), verified against the release's checksums, then reinstall the skill so the guides match the command. It runs
 // when asked, and by itself at most once a day in a detached background job (`maybeAutoUpdate`), which
 // `"auto_update": false` turns off. Every swap is checksum-verified, and a run in progress keeps its binary.
-import { createHash } from "node:crypto";
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { loadConfig } from "./config.mjs";
 import { CACHE_DIR, lockIsStale, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
 import { forgetConsentUnlessOn, hoursAgo, sendRows, telemetryStatus } from "./telemetry.mjs";
@@ -102,25 +102,32 @@ const span = (ms) => (ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : ms >= 10
 
 // Fetch `url` and hand each chunk of its body to `onChunk` as it arrives: nothing holds the whole binary in memory (the
 // old download buffered it with arrayBuffer()). The stall timer restarts with every chunk and also covers the wait for
-// the server's answer; the backstop runs from the start. Either one aborts the request and says which it was. Each read
-// races the abort, so a body that ignores the signal is stopped too. `fetchFn` is the seam a test drives with a fake stream.
+// the server's answer; the backstop runs from the start. Either one aborts the request through its signal (fetch then
+// rejects, or a body read fails) and cancels the body (a pending read then ends), and the error says which it was.
+// No read is raced against a long-lived promise: from review, in Bun 1.3.13 every read raced against one shared abort
+// promise stayed attached to it, so an 80 x 1 MiB transfer kept all 80 chunks (RSS +72 MB between chunk 10 and 80).
+// `fetchFn` is the seam a test drives with a fake stream; like fetch, it must honour the signal.
 export async function streamDownload(url, name, onChunk, { fetchFn = fetch, stallMs = DOWNLOAD_STALL_MS, maxMs = DOWNLOAD_MAX_MS } = {}) {
   const ac = new AbortController();
-  let failure = null, fail = () => {}, stall = null, reader = null;
-  const aborted = new Promise((_, reject) => { fail = reject; });
-  aborted.catch(() => {});
-  const stop = (msg) => { if (failure) return; failure = new Error(msg); fail(failure); ac.abort(failure); };
+  let failure = null, stall = null, reader = null;
+  const stop = (msg) => {
+    if (failure) return;
+    failure = new Error(msg); ac.abort(failure);
+    try { reader?.cancel(failure).catch(() => {}); } catch {}
+  };
   const arm = () => { clearTimeout(stall); stall = setTimeout(() => stop(`the download of ${name} stalled: no data for ${span(stallMs)}`), stallMs); };
   const backstop = setTimeout(() => stop(`the download of ${name} was still going after ${span(maxMs)}, so it was stopped`), maxMs);
   try {
     arm();
-    const r = await Promise.race([fetchFn(url, { redirect: "follow", signal: ac.signal }), aborted]);
+    const r = await fetchFn(url, { redirect: "follow", signal: ac.signal });
+    if (failure) throw failure;
     if (!r.ok) throw new Error(`download of ${name} failed (${r.status})`);
     if (!r.body) return; // no body: the checksum decides
     reader = r.body.getReader();
     for (;;) {
       arm();
-      const { done, value } = await Promise.race([reader.read(), aborted]);
+      const { done, value } = await reader.read();
+      if (failure) throw failure; // a cancelled read ends as `done`: that is the stall or the backstop, not the end
       if (done) return;
       if (value?.length) onChunk(value);
     }
@@ -130,13 +137,40 @@ export async function streamDownload(url, name, onChunk, { fetchFn = fetch, stal
   } finally { clearTimeout(stall); clearTimeout(backstop); }
 }
 
-// Stream the release binary into `file` (created or truncated), hashing as it goes, and return its sha256 hex. The
-// caller removes `file` on every way out that does not swap it into place.
-export async function downloadTo(url, name, file, opts = {}) {
-  const hash = createHash("sha256"), fd = openSync(file, "w");
-  try { await streamDownload(url, name, (chunk) => { hash.update(chunk); writeSync(fd, chunk); }, opts); }
-  finally { closeSync(fd); }
+// Stream the release binary into `file`, hashing as it goes, and return its sha256 hex. `file` is created exclusively
+// ("wx" fails on any existing path, a link included): from review, opening a fixed `${self}.download` with "w" followed
+// a link to the binary itself and overwrote it on a checksum mismatch that then said "Nothing was changed". Every byte
+// of a chunk is written before the next (writeSync may write fewer than asked; from review, a short write under a
+// 4-byte file size limit installed a truncated binary that passed, because the whole chunk was hashed), and only the
+// bytes written are hashed. `write` (writeSync) is the seam a test drives with partial writes.
+export async function downloadTo(url, name, file, { write = writeSync, ...opts } = {}) {
+  const hash = createHash("sha256"), fd = openSync(file, "wx"); // from here on `file` is this call's own
+  const put = (chunk) => {
+    for (let off = 0; off < chunk.length;) {
+      const n = write(fd, chunk, off, chunk.length - off);
+      if (!(n > 0)) throw new Error(`writing the download of ${name} made no progress (is the disk full?)`);
+      hash.update(chunk.subarray(off, off + n)); off += n;
+    }
+  };
+  try { await streamDownload(url, name, put, opts); }
+  catch (e) { try { closeSync(fd); } catch {} try { rmSync(file, { force: true }); } catch {} throw e; }
+  closeSync(fd);
   return hash.digest("hex");
+}
+
+// Each run stages its download under its own name beside `self`; a run killed mid-download leaves its file behind.
+// `sweepStaging` removes those, and only those: exactly this pattern beside `self`, and only regular files (lstat: a
+// link is never followed or removed). It runs under the update lock (lockedUpdate, backgroundUpdate), so no other
+// update is writing one.
+const stagingName = (self) => `${self}.download-${process.pid}-${randomBytes(4).toString("hex")}`;
+export function sweepStaging(self) {
+  const base = basename(self).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), mine = new RegExp(`^${base}\\.download-\\d+-[0-9a-f]{8}$`);
+  let names = []; try { names = readdirSync(dirname(self)); } catch { return; }
+  for (const n of names) {
+    if (!mine.test(n)) continue;
+    const p = join(dirname(self), n);
+    try { if (lstatSync(p).isFile()) rmSync(p, { force: true }); } catch {}
+  }
 }
 
 // The version of the binary now at `self`, asked of it (`--version`), or null when it gives none. From the final review:
@@ -170,12 +204,16 @@ export async function lockedUpdate(opts = {}, { lock = LOCK(), run = update } = 
 
 // `self`, `fetchFn`, `spawn`, `isStandalone` and `current` are seams: a test drives a real swap on a scratch file, with no
 // network. The channel is the user's setting (`update_channel`), never a flag: a flag would be lost at the next
-// automatic update, which reads the setting too. `stallMs` and `maxMs` are seams too, so a test runs a slow download fast.
+// automatic update, which reads the setting too. `stallMs`, `maxMs` and `write` are seams too, so a test runs a slow
+// download fast and a short write without a full disk.
 export async function update({ checkOnly = false, force = false, base = process.env.ROUTR_DOWNLOAD_BASE,
   self = process.execPath, fetchFn = fetch, spawn = startSync, isStandalone = standalone, current = ROUTR_VERSION,
-  channel = loadConfig().config.update_channel, stallMs = DOWNLOAD_STALL_MS, maxMs = DOWNLOAD_MAX_MS } = {}) {
+  channel = loadConfig().config.update_channel, stallMs = DOWNLOAD_STALL_MS, maxMs = DOWNLOAD_MAX_MS, write = writeSync } = {}) {
   const out = { ok: false, current, latest: null, updated: false, ...(channel === "beta" ? { channel } : {}) };
   const on = channel === "beta" ? " on the beta channel" : "";
+  // A look (--check) takes no lock, so it touches nothing; every other run holds the update lock (lockedUpdate,
+  // backgroundUpdate) and first clears what a killed run left, whatever it then finds to do.
+  if (!checkOnly) sweepStaging(self);
   try {
     out.latest = base ? "(from ROUTR_DOWNLOAD_BASE)" : await latestVersion(4000, channel, fetchFn);
     // A source checkout reads 0.0.0-dev, so every release looks newer; it is updated with git, never by this.
@@ -191,11 +229,14 @@ export async function update({ checkOnly = false, force = false, base = process.
     const asset = assetName();
     if (!asset) throw new Error(`no release build for ${process.platform}/${process.arch}`);
     const from = base ?? downloadBase(out.latest), dl = { fetchFn, stallMs, maxMs };
-    // The binary streams to a file beside `self` (the same folder, so the swap is a rename), removed on every way out
-    // that does not move it into place.
-    const tmp = `${self}.download`;
+    // The binary streams to a file of this run's own beside `self` (the same folder, so the swap is a rename).
+    // downloadTo removes it when the download fails; from then on it is removed on every way out that does not move it
+    // into place. Only that exact path is ever removed: never one this run did not create.
+    const tmp = stagingName(self);
+    let staged = false;
     try {
-      const got = await downloadTo(`${from}/${asset}`, asset, tmp, dl);
+      const got = await downloadTo(`${from}/${asset}`, asset, tmp, { ...dl, write });
+      staged = true;
       const parts = []; await streamDownload(`${from}/SHA256SUMS`, "SHA256SUMS", (c) => parts.push(Buffer.from(c)), dl);
       const want = Buffer.concat(parts).toString("utf8").split("\n").map((l) => l.trim().split(/\s+/)).find((p) => p[1] === asset)?.[0];
       if (!want || want !== got) throw new Error(`checksum mismatch for ${asset}; nothing was changed`);
@@ -207,7 +248,7 @@ export async function update({ checkOnly = false, force = false, base = process.
           note: `the routr at ${self} is already ${there}${there === out.latest ? "" : `, newer than ${out.latest}`} (installed since this run started): not replaced. \`routr update --force\` installs ${out.latest}` };
       }
       swapBinary(self, tmp);
-    } finally { try { rmSync(tmp, { force: true }); } catch {} }
+    } finally { if (staged) try { rmSync(tmp, { force: true }); } catch {} }
     // From here on the new binary is in place: whatever happens next, the result must say so (0.1.14 to 0.1.16 threw
     // on an undeclared name here and reported "Nothing was changed" after every successful update).
     out.updated = true;
@@ -234,7 +275,8 @@ export { lockIsStale }; // lives in runtime.mjs now, beside takeLock, so telemet
 
 // Put `bin` where `self` is: a Buffer, or the path of a downloaded file, which is moved (not copied) to `${self}.new`.
 // A running binary can be renamed on every system, but on Windows it cannot be overwritten, so it is moved aside first.
-// If the new file cannot be moved in, the old one goes back: never leave no binary.
+// If the new file cannot be moved in, the old one goes back: never leave no binary. Known limit: a process killed
+// between the two renames leaves the old binary at `${self}.old` and nothing at `self`; the install command puts one back.
 export function swapBinary(self, bin, { rename = renameSync } = {}) {
   const fresh = `${self}.new`, old = `${self}.old`;
   if (typeof bin === "string") renameSync(bin, fresh); else writeFileSync(fresh, bin);
