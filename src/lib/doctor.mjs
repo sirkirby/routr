@@ -116,7 +116,7 @@ export async function inspect({ configPath, quiet } = {}) {
   const [usage, key, states, ...models] = await Promise.all([
     // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
     // Its sign-in answers were just asked afresh, so their billing readings are today's: no second status check.
-    step("usage", statesP.then((st) => readUsage(found, {}, { background: enabledSubscriptions(config), why: whyNot(st), billing: (n) => billingFromSignIn(n) }))), // a turned-off one is never refreshed
+    step("usage", statesP.then((st) => readUsage(found, {}, { background: enabledSubscriptions(config), why: whyNot(st), billing: (n) => ({ billing: billingFromSignIn(n), not: null }) }))), // a turned-off one is never refreshed
     step("the TypeSafe key", keyCheck().then((t) => ({ t }), (e) => ({ e }))),
     statesP,
     ...found.map((n) => statesP.then((st) => (st[n] !== "yes" ? null : step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))))),

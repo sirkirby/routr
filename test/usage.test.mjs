@@ -630,11 +630,19 @@ test("Claude's sign-in status says how it bills: an API key is metered, a subscr
   expect(billing(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "gateway" }), 0)).toBeNull();
   // From the review: only the providers and auth methods Claude Code's code sets count; anything else, or anything
   // not a string, is no reading, and no reason carries text from the answer.
+  // An explicit null provider is not an absent one (from the second review): no reading. Absent is first-party.
   for (const p of ["FixtureCompany", "evil <x>", "", false, 42, {}, [], ["bedrock"], null])
-    expect([p, billing(JSON.stringify({ loggedIn: true, authMethod: "api_key", apiProvider: p }), 0)]).toEqual([p, p === null ? billing(AUTH_API_KEY, 0) : null]);
-  for (const m of ["API_KEY", "api_key ", "toString", "__proto__", 1, {}, ["api_key"]])
-    expect([m, billing(JSON.stringify({ loggedIn: true, authMethod: m, apiProvider: "firstParty" }), 0)]).toEqual([m, null]);
-  const reasons = new Set(["bedrock", "vertex"].map((p) => billing(JSON.stringify({ loggedIn: true, apiProvider: p }), 0).why));
+    expect([p, billing(JSON.stringify({ loggedIn: true, authMethod: "api_key", apiProvider: p }), 0)]).toEqual([p, null]);
+  expect(billing(JSON.stringify({ loggedIn: true, authMethod: "api_key" }), 0)).toMatchObject({ billing: "metered" });
+  // authMethod is checked first, beside a first-party AND a cloud provider: unknown, missing, or not a string is no
+  // reading; and a cloud provider counts only beside `third_party`, which Claude Code's code always sets with one.
+  for (const m of ["API_KEY", "api_key ", "toString", "__proto__", "hasOwnProperty", "", 1, true, {}, ["api_key"], null, undefined])
+    for (const p of ["firstParty", "bedrock", "vertex", undefined])
+      expect([m, p, billing(JSON.stringify({ loggedIn: true, authMethod: m, apiProvider: p }), 0)]).toEqual([m, p, null]);
+  for (const m of ["api_key", "claude.ai", "none", "oauth_token", "api_key_helper"])
+    expect([m, billing(JSON.stringify({ loggedIn: true, authMethod: m, apiProvider: "bedrock" }), 0)]).toEqual([m, null]);
+  expect(billing(JSON.stringify({ loggedIn: true, authMethod: "third_party", apiProvider: "firstParty" }), 0)).toBeNull();
+  const reasons = new Set(["bedrock", "vertex"].map((p) => billing(JSON.stringify({ loggedIn: true, authMethod: "third_party", apiProvider: p }), 0).why));
   expect(reasons.size).toBe(1); expect([...reasons][0]).not.toContain("bedrock");
   expect(billing(JSON.stringify({ loggedIn: true, authMethod: "api_key_helper", apiProvider: "firstParty" }), 0)).toMatchObject({ billing: "metered" });
   // Unreadable, signed out, or anything else: no reading, nothing guessed.
@@ -668,7 +676,7 @@ test("an API-key Claude with no windows ranks as metered, with no doctor step as
   // What the API key's /usage printed (2026-10-07): a cost summary, no windows.
   const costOnly = claudeAnswer("Total cost: $0.0000\nTotal duration (API): 0s\nUsage: 0 input, 0 output, 0 cache read, 0 cache write");
   const sources = { claude: { read: () => readClaude({ file: join(dir, "none.json"), nowSec: OCT5, exec: async () => costOnly }) } };
-  const read = (b) => readUsage(["claude"], {}, { sources, why: async () => null, billing: () => b });
+  const read = (b) => readUsage(["claude"], {}, { sources, why: async () => null, billing: () => ({ billing: b, not: null }) });
   const [plain] = await read(null);
   expect(plain).toMatchObject({ class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER }); // without the auth reading: as before
   const [u] = await read(HARNESSES.claude.auth.billing(AUTH_API_KEY, 0));
@@ -691,7 +699,7 @@ test("an API-key Claude with no windows ranks as metered, with no doctor step as
 });
 test("windows that arrive while the sign-in status says metered are kept, and the disagreement is noted", async () => {
   const sources = { claude: { read: async () => live("claude", 0.6) } };
-  const [u] = await readUsage(["claude"], {}, { sources, why: async () => null, billing: () => HARNESSES.claude.auth.billing(AUTH_API_KEY, 0) });
+  const [u] = await readUsage(["claude"], {}, { sources, why: async () => null, billing: () => ({ billing: HARNESSES.claude.auth.billing(AUTH_API_KEY, 0), not: null }) });
   expect(u).toMatchObject({ headroom: 0.6 }); expect(u.class).not.toBe("metered"); expect(u.billing).toBeUndefined();
   expect(u.note).toContain("yet usage windows arrived: ranked on the windows");
   expect(rankSubscriptions("standard", [u], cfg()).ranked.find((x) => x.subscription === "claude")).toMatchObject({ usage: "live", class: "included" });
@@ -722,8 +730,23 @@ test("a login switched within the sign-in cache's 6 hours: a reading without win
   const [w] = await read(withWindows, AUTH_API_KEY, T + 7300);
   expect(asked).toEqual([]); expect(w).toMatchObject({ headroom: 0.6 }); expect(w.class).not.toBe("metered");
   // A harness without a billing reader is never asked again either.
-  expect(await billingFor("codex-switch", { fresh: true, harness: HARNESSES.codex, file, nowSec: T, ask: ask("Logged in using ChatGPT\n") })).toBeNull();
+  expect(await billingFor("codex-switch", { fresh: true, harness: HARNESSES.codex, file, nowSec: T, ask: ask("Logged in using ChatGPT\n") })).toEqual({ billing: null, not: null });
   expect(asked).toEqual([]);
+});
+test("the fresh status check is a sign-in check: signed out or no answer now leaves the harness out of this call", async () => {
+  const { signInState } = await import("../src/lib/signin.mjs");
+  const { billingFor } = await import("../src/lib/harnesses.mjs");
+  const file = join(scratch("signin-out"), "signed-in.json"), T = 1_800_000_000, name = "claude-out";
+  const noWindows = { [name]: { read: async () => summarize({ pool: name, source: "claude /usage", reason: NO_WINDOWS_AFTER_ANSWER, note: "no windows" }) } };
+  const c = cfg({ subscriptions: { [name]: cfg().subscriptions.claude } });
+  for (const [answer, hint] of [[{ out: '{\n  "loggedIn": false,\n  "authMethod": "none"\n}', code: 1 }, "not signed in: run `claude auth login`"], [null, "did not answer its sign-in check"]]) {
+    await signInState(name, HARNESSES.claude, { file, nowSec: T, ask: async () => ({ out: AUTH_MAX, code: 0 }) }); // kept: signed in
+    const [u] = await readUsage([name], {}, { sources: noWindows, why: async () => null, billing: (n, o) => billingFor(n, { ...o, harness: HARNESSES.claude, file, nowSec: T + 3600, ask: async () => answer }) });
+    expect(u).toMatchObject({ signedIn: false, headroom: null }); expect(u.note).toContain(hint);
+    const r = rankSubscriptions("standard", [u], c);
+    expect(r.ranked).toEqual([]); expect(r.excluded).toEqual([{ subscription: name, reason: u.note }]);
+    expect(JSON.parse(readFileSync(file, "utf8"))[name].state).toBe(answer ? "no" : "no answer");
+  }
 });
 test("a harness that is not signed in is never read, and dispatch leaves it out and says how to sign in", async () => {
   const reads = [];

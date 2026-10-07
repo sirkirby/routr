@@ -68,6 +68,11 @@ const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 
 // usage.mjs), so it is left to the windows. Both are allow-lists: any other value, or one that is not a string, is
 // null (from the review: an unknown provider once counted as metered, its raw text in the reason). Every reason is a
 // fixed string from these tables, never text from the answer, which also carries the email, organisation and ids.
+// Its code always sets authMethod, to one of CLAUDE_AUTH (initialised to "none"), and with a cloud provider always to
+// `third_party`; so authMethod is checked first, and a cloud provider counts only beside `third_party`. Only an ABSENT
+// apiProvider is first-party (an older answer); an explicit null or any non-string is no reading (from the review:
+// `null` once read as first-party, and a cloud provider once counted whatever authMethod said).
+const CLAUDE_AUTH = new Set(["none", "third_party", "claude.ai", "api_key_helper", "oauth_token", "api_key"]);
 const CLAUDE_CLOUD = new Set(["bedrock", "vertex", "foundry", "anthropicAws", "anthropicGoogleCloud", "mantle"]);
 const CLAUDE_CLOUD_WHY = "Claude Code runs through a cloud provider's account, billed per token by that provider (from its docs, not measured)";
 const CLAUDE_KEY_WHY = { api_key: "signed in with an API key, billed per token", api_key_helper: "signed in with an API key from apiKeyHelper, billed per token (not measured)" };
@@ -75,12 +80,14 @@ export function claudeBilling(out) {
   const text = String(out ?? "");
   let o = null;
   try { o = JSON.parse(text); } catch { try { o = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch {} }
-  if (!o || typeof o !== "object" || o.loggedIn !== true) return null;
-  const provider = o.apiProvider ?? "firstParty"; // every measured answer names it; an older one without it is first-party
+  if (!o || typeof o !== "object" || Array.isArray(o) || o.loggedIn !== true) return null;
+  const auth = o.authMethod;
+  if (typeof auth !== "string" || !CLAUDE_AUTH.has(auth)) return null;
+  const provider = Object.hasOwn(o, "apiProvider") ? o.apiProvider : "firstParty";
   if (typeof provider !== "string") return null;
-  if (CLAUDE_CLOUD.has(provider)) return { billing: "metered", why: CLAUDE_CLOUD_WHY };
-  if (provider !== "firstParty" || typeof o.authMethod !== "string" || !Object.hasOwn(CLAUDE_KEY_WHY, o.authMethod)) return null;
-  return { billing: "metered", why: CLAUDE_KEY_WHY[o.authMethod] };
+  if (CLAUDE_CLOUD.has(provider)) return auth === "third_party" ? { billing: "metered", why: CLAUDE_CLOUD_WHY } : null;
+  if (provider !== "firstParty" || !Object.hasOwn(CLAUDE_KEY_WHY, auth)) return null;
+  return { billing: "metered", why: CLAUDE_KEY_WHY[auth] };
 }
 
 export const HARNESSES = {
@@ -200,13 +207,15 @@ export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usag
 // `given` holds headroom the caller read itself (0..1); it wins over any reading.
 // `background` names the subscriptions whose reader may start a background refresh (default: all asked for).
 // `why(name)`: null when it is signed in, or why not. One that is not is never read (its reading could open a sign-in),
-// and dispatch leaves it out (pick.mjs). `billing(name)`: what its sign-in answer said about billing (signin.mjs, kept
-// beside `why`'s answer), or null.
+// and dispatch leaves it out (pick.mjs). `billing(name, { fresh })`: `{ billing, not }`, what its sign-in answer said
+// about billing (signin.mjs, kept beside `why`'s answer) or null, and, when it was asked again, why it is not signed
+// in now (null when it is).
 export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFor } = {}) {
+  const signedOut = (name, note) => ({ ...summarize({ pool: name, source: "sign-in check", note }), signedIn: false });
   return Promise.all(names.map(async (name) => {
     // Signed in first: a number the caller read cannot put work on a harness that cannot take it (launch refuses it).
     const not = await why(name);
-    if (not) return { ...summarize({ pool: name, source: "sign-in check", note: not }), signedIn: false };
+    if (not) return signedOut(name, not);
     if (typeof given[name] === "number") return { pool: name, source: "given by caller", given: true, ageSec: 0, windows: [], headroom: Math.min(1, Math.max(0, given[name])) };
     const src = sources[name];
     let u;
@@ -215,16 +224,24 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
     // The billing reading settles only a reading without windows, and then it must be today's: a sign-in kept for
     // 6 hours can predate a switch between a subscription and an API key (from the review: a switch an hour in still
     // ranked the old way). So in exactly that case the status check runs again now. With windows there is no call.
-    return withBilling(name, u, await billing(name, { fresh: u?.headroom == null }));
+    // That check is a sign-in check too: unless it answers signed in, this call leaves the harness out, as any
+    // signed-out one (from the review: a fresh "loggedIn": false still left it a candidate on assumed headroom).
+    const b = await billing(name, { fresh: u?.headroom == null });
+    if (b?.not) return signedOut(name, b.not);
+    return withBilling(name, u, b?.billing);
   }));
 }
 
 // What the harness's sign-in status says about billing: the kept answer, or with `fresh` its status check run again
 // now, bypassing the cache and updating it (signin.mjs, the same probe and timeout). Only a harness with an
-// `auth.billing` reader is asked again. `harness` and the rest are signin.mjs's seams, for tests.
+// `auth.billing` reader is asked again; when that answer is not "signed in", `not` says why (signInHint) and there is
+// no billing reading. `harness` and the rest are signin.mjs's seams, for tests.
 export async function billingFor(name, { fresh = false, harness = HARNESSES[name], ...o } = {}) {
-  if (fresh && harness?.auth?.billing) await signInState(name, harness, { ...o, fresh: true });
-  return billingFromSignIn(name);
+  if (fresh && harness?.auth?.billing) {
+    const state = await signInState(name, harness, { ...o, fresh: true });
+    if (state !== "yes") return { billing: null, not: signInHint(harness, state) };
+  }
+  return { billing: billingFromSignIn(name), not: null };
 }
 
 // A reading, settled by what the harness's own status said about billing (`auth.billing`). With no windows it is that

@@ -47,7 +47,7 @@ JSON, and how the login is billed is in it:
 | Through a cloud provider (read from its code; billed per token by the provider per its docs, not measured) | `"apiProvider"`: `bedrock`, `vertex`, `foundry`, `anthropicAws`, `anthropicGoogleCloud`, `mantle` | `metered` |
 | Through a Claude apps gateway (read from its code) | `"apiProvider": "gateway"` | nothing: its spend limit arrives as a window (`capped`) |
 | Usage-based Enterprise (not observed) | unknown | nothing: the user's `billing` |
-| Any other provider or auth method, or a value that is not a string | | nothing: only the values above count |
+| Any other provider or auth method, a cloud provider beside any authMethod but `third_party` (its code always sets that one with a provider), an explicit `null`, or a value that is not a string | | nothing: only the values above count |
 
 This matters because `/usage` alone cannot tell. With the API key, `claude -p /usage --output-format json` answered
 locally ($0, 0 turns) with only a session cost summary ("Total cost: $0.0000 … Usage: 0 input, 0 output …"): no
@@ -55,7 +55,7 @@ quota windows and no "using your subscription" line. A subscription login printe
 not available (`--bare`, 2026-10-05). routr keeps only the class and a fixed reason of its own with the sign-in
 answer, never the email, organisation or ids. A metered reading settles a Claude reading that brought no windows (no
 doctor step asking for `billing`); in exactly that case routr runs `claude auth status` again first, so a login
-switched since the kept answer counts now. Windows that do arrive are ranked without that second check, and a kept
+switched since the kept answer counts now, and one that no longer answers signed in is left out of that call. Windows that do arrive are ranked without that second check, and a kept
 metered reading beside them is only noted. The user's own `billing`
 wins over it. The other harnesses' status answers say nothing about billing; Codex's metered seat shows in its usage
 shape instead (below).
