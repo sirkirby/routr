@@ -1,6 +1,6 @@
 // cleanup.mjs: finishing a worker, its worktree or its pane, without losing anything in it
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanup, dropCopy, parseCleanupArgs, parseStatus, parseWorktreeHeads, sameFile } from "../src/lib/cleanup.mjs";
 import { herdrError, herdrOK, scratch } from "./helpers.mjs";
@@ -29,7 +29,9 @@ test("a copy is the same bytes, or the same link; anything else is not", () => {
 // `processes` per pane, for one with no agent (null: herdr cannot say); git answers from `status` and `flags` (ls-files
 // -v) per worktree path, `orphaned` (worktree paths, or recorded commits, no ref holds), `heads` (git's recorded commit
 // per path), and `merged` (branches -d may delete).
-function fake({ worktrees = [], panes = {}, processes = {}, status = {}, flags = {}, orphaned = [], heads = {}, merged = [], removeFails = null } = {}) {
+// A worktree's commit is "h" + its path, unless `commit(dir, n)` (n: the how-manieth read) says otherwise.
+function fake({ worktrees = [], panes = {}, processes = {}, status = {}, flags = {}, orphaned = [], heads = {}, merged = [], removeFails = null, commit = (dir) => `h${dir}`, during = {} } = {}) {
+  const reads = {};
   const calls = [], gits = [];
   const source = "/repo";
   const deps = {
@@ -51,8 +53,10 @@ function fake({ worktrees = [], panes = {}, processes = {}, status = {}, flags =
     git: async (dir, a) => {
       gits.push([dir, ...a]);
       if (a[0] === "status") return { out: status[dir] ?? "", err: "", code: 0 };
+      if (a[0] === "rev-parse") { reads[dir] = (reads[dir] ?? 0) + 1; return { out: `${commit(dir, reads[dir])}\n`, err: "", code: 0 }; }
+      await during[a[0]]?.(dir);
       if (a[0] === "ls-files") return { out: flags[dir] ?? "H a.txt\0", err: "", code: 0 };
-      if (a[0] === "for-each-ref") return { out: orphaned.includes(a[2] === "HEAD" ? dir : a[2]) ? "" : "refs/heads/x\n", err: "", code: 0 };
+      if (a[0] === "for-each-ref") return { out: orphaned.some((o) => a[2] === o || a[2] === `h${o}`) ? "" : "refs/heads/x\n", err: "", code: 0 };
       if (a[0] === "worktree" && a[1] === "list") return { out: Object.entries(heads).map(([p, h]) => `worktree ${p}\nHEAD ${h}\ndetached\nprunable gitdir file points to non-existent location\n`).join("\n"), err: "", code: 0 };
       if (a[0] === "worktree" && a[1] === "remove") return { out: "", err: "", code: 0 };
       if (a[0] === "branch") return merged.includes(a[2]) ? { out: "Deleted", err: "", code: 0 } : { out: "", err: `error: the branch '${a[2]}' is not fully merged\nhint: run git branch -D`, code: 1 };
@@ -197,4 +201,36 @@ test("a copy is removed only through no link, and only while it is still the cop
 test("git's worktree records: each path with its commit", () => {
   expect(parseWorktreeHeads("worktree /r\nHEAD aaa\nbranch refs/heads/main\n\nworktree /w/x y\nHEAD bbb\ndetached\nprunable gitdir file points to non-existent location\n"))
     .toEqual(new Map([["/r", "aaa"], ["/w/x y", "bbb"]]));
+});
+
+// From the review of 980f1b2: changes made while cleanup runs, between its check and its removal.
+test("a copy changed, or a worktree swapped for a link to the main checkout, while cleanup runs removes nothing of either", async () => {
+  for (const swap of [false, true]) {
+    const root = scratch("mid"), repo = join(root, "repo"), w = join(root, "w");
+    for (const d of [repo, w]) { mkdirSync(d, { recursive: true }); writeFileSync(join(d, "notes.txt"), "same"); }
+    const during = { "for-each-ref": () => {
+      if (!swap) return writeFileSync(join(w, "notes.txt"), "the worker's own words");
+      renameSync(w, `${w}-real`); symlinkSync(repo, w);
+    } };
+    const f = fake({ worktrees: [wt("mid", { path: w })], status: { [w]: "?? notes.txt\0" }, during });
+    f.deps.run = ((run) => async (a) => (a[0] === "worktree" && a[1] === "list" ? herdrOK({ source: { source_checkout_path: repo }, worktrees: [wt("mid", { path: w })] }) : run(a)))(f.deps.run);
+    expect(await cleanup(["--cwd", repo, "--worktree", "mid"], f.deps)).toMatchObject({ ok: false, state: "refused" });
+    expect(readFileSync(join(repo, "notes.txt"), "utf8")).toBe("same");
+    expect(readFileSync(join(swap ? `${w}-real` : w, "notes.txt"), "utf8")).toBe(swap ? "same" : "the worker's own words");
+    expect(f.gits.some((g) => g[1] === "worktree" && g[2] === "remove")).toBe(false);
+  }
+});
+
+test("a commit made, or a worker started, after the check stops the removal; so does a pane list herdr did not give whole", async () => {
+  const moved = fake({ worktrees: [wt("x")], commit: (dir, n) => `h${dir}${n > 1 ? "-new" : ""}` });
+  expect((await cleanup(["--cwd", "/repo", "--worktree", "x"], moved.deps)).refused.why).toContain("another commit");
+  expect(moved.gits.some((g) => g[1] === "worktree" && g[2] === "remove")).toBe(false);
+  let reads = 0;
+  const started = fake({ panes: () => ({ w1: [{ ...idle("w1:p2", ++reads > 1 ? "working" : "done"), workspace_id: "w1" }] }) });
+  expect((await cleanup(["--pane", "w1:p2"], started.deps)).refused.why).toContain("working");
+  expect(started.calls.some((a) => a[1] === "close")).toBe(false);
+  const broken = fake({ worktrees: [wt("x", { open_workspace_id: "w5" })] });
+  broken.deps.run = ((run) => async (a) => (a[0] === "pane" && a[1] === "list" ? herdrOK({ panes: [{ agent_status: "idle" }] }) : run(a)))(broken.deps.run);
+  expect(await cleanup(["--cwd", "/repo", "--worktree", "x"], broken.deps)).toMatchObject({ ok: false, state: "failed" });
+  expect(broken.calls.some((a) => a[1] === "remove")).toBe(false);
 });
