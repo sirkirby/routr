@@ -1,7 +1,7 @@
 // update.mjs: releases, the binary swap, and the daily check
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { SCRATCH, scratch } from "./helpers.mjs";
 
@@ -59,7 +59,7 @@ test("routr update reports a real swap as an update and reinstalls the skill (th
   const fresh = Buffer.from("NEW-BINARY");
   const sum = (await import("node:crypto")).createHash("sha256").update(fresh).digest("hex");
   const { assetName } = await import("../src/lib/update.mjs");
-  const fetchFn = async (u) => ({ ok: true, status: 200, arrayBuffer: async () => (String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : fresh) });
+  const fetchFn = async (u) => served(String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : fresh);
   const calls = [];
   const spawn = (file, args) => { calls.push([file, args[0]]); return { status: 0, stdout: args[0] === "--version" ? "9.9.9\n" : "" }; };
   const r = await update({ base: "http://fake.invalid/r", self, fetchFn, spawn, isStandalone: () => true });
@@ -180,9 +180,210 @@ async function fakeGitHub(asked) {
     asked.push(String(u));
     if (String(u).endsWith("/releases/latest")) return { ok: true, status: 200, json: async () => RELEASES.find((r) => r.tag_name === "v0.5.1") };
     if (String(u).includes("/releases?per_page=100")) return { ok: true, status: 200, json: async () => RELEASES };
-    return { ok: true, status: 200, arrayBuffer: async () => (String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : bin) };
+    return served(String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : bin);
   };
 }
+
+// A download as fetch answers it: a body stream, and no way to buffer it whole (the update must stream, never call
+// arrayBuffer() on a 59 to 82 MB binary). `chunks` is a list of buffers, sent `every` ms apart; `stopAfter` sends that
+// many and then nothing more, ever.
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+function served(bin, { every = 0, chunks = null, stopAfter = Infinity, buffered = [] } = {}) {
+  const parts = chunks ?? [bin];
+  let i = 0;
+  const body = new ReadableStream({
+    async pull(c) {
+      if (i >= stopAfter) return new Promise(() => {}); // the link goes quiet
+      if (every) await wait(every);
+      if (i >= parts.length) return c.close();
+      c.enqueue(new Uint8Array(parts[i++]));
+    },
+  });
+  const whole = (how) => async () => { buffered.push(how); throw new Error(`the update buffered a download with ${how}()`); };
+  return { ok: true, status: 200, body, arrayBuffer: whole("arrayBuffer"), text: whole("text"), json: whole("json"), blob: whole("blob"), bytes: whole("bytes") };
+}
+
+// A release whose binary arrives in `n` chunks, `every` ms apart, and a fetch that serves it (SHA256SUMS at once).
+async function slowRelease(n, every, over = {}) {
+  const { assetName } = await import("../src/lib/update.mjs");
+  const chunks = Array.from({ length: n }, (_, k) => Buffer.from(`chunk-${k};`)), bin = Buffer.concat(chunks);
+  const sum = over.sum ?? (await import("node:crypto")).createHash("sha256").update(bin).digest("hex");
+  const buffered = [];
+  const fetchFn = async (u) => (String(u).endsWith("SHA256SUMS") ? served(Buffer.from(`${sum}  ${assetName()}\n`), { buffered })
+    : served(bin, { chunks, every, buffered, stopAfter: over.stopAfter }));
+  return { bin, fetchFn, buffered };
+}
+
+test("a slow but steady download succeeds, however long it takes in all, and never holds the binary in memory", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const dir = scratch("upd-slow"), self = join(dir, "routr"); writeFileSync(self, "OLD");
+  // 20 chunks 50 ms apart: 1 s in all, five times the 200 ms stall limit. The old total timeout of that size failed it.
+  const { bin, fetchFn, buffered } = await slowRelease(20, 50);
+  const t0 = Date.now();
+  const r = await update({ base: "http://fake.invalid/r", self, fetchFn, stallMs: 200, spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+  expect(Date.now() - t0).toBeGreaterThanOrEqual(900);
+  expect(r).toMatchObject({ ok: true, updated: true });
+  expect(readFileSync(self)).toEqual(bin);
+  expect(buffered).toEqual([]);
+  expect(readdirSync(dir).sort()).toEqual(["routr"]);                    // no .download, .new or .old left
+});
+
+test("a download that stops sending fails as a stall, and leaves the old binary and no temporary file", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const dir = scratch("upd-stall"), self = join(dir, "routr"); writeFileSync(self, "OLD");
+  const { fetchFn } = await slowRelease(20, 20, { stopAfter: 3 });
+  const r = await update({ base: "http://fake.invalid/r", self, fetchFn, stallMs: 200, spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+  expect(r).toMatchObject({ ok: false, updated: false });
+  expect(r.error).toBe(`the download of ${(await import("../src/lib/update.mjs")).assetName()} stalled: no data for 200 ms`);
+  expect(r.note).toContain("Nothing was changed");
+  expect(readFileSync(self, "utf8")).toBe("OLD");
+  expect(readdirSync(dir)).toEqual(["routr"]);
+  // A server that never answers at all is a stall too; the default limits read as a person would say them.
+  const { DOWNLOAD_STALL_MS, DOWNLOAD_MAX_MS, streamDownload } = await import("../src/lib/update.mjs");
+  expect([DOWNLOAD_STALL_MS, DOWNLOAD_MAX_MS]).toEqual([30_000, 1_800_000]);
+  const silent = (u, { signal }) => new Promise((_, reject) => signal.addEventListener("abort", () => reject(new Error("aborted")))); // as fetch does
+  await expect(streamDownload("http://fake.invalid/x", "x", () => {}, { fetchFn: silent, stallMs: 100 })).rejects.toThrow("the download of x stalled: no data for 100 ms");
+});
+
+// From review: each read raced against one shared abort promise stayed attached to it, so Bun kept every chunk until the
+// download ended (80 x 1 MiB: RSS +72 MB between chunk 10 and 80; with the fix +23 MB, as a bare read loop does).
+// Counted exactly here: weak references to the chunks already handled, after a full collection.
+test("a streamed download lets go of each chunk once it is written", async () => {
+  const { streamDownload } = await import("../src/lib/update.mjs");
+  const N = 200, refs = [];
+  let i = 0;
+  const body = new ReadableStream({ pull(c) { if (i++ >= N) return c.close(); c.enqueue(new Uint8Array(1024).fill(i & 255)); } });
+  let alive = null;
+  await streamDownload("http://fake.invalid/x", "x", (chunk) => {
+    refs.push(new WeakRef(chunk));
+    if (refs.length === N) { Bun.gc(true); alive = refs.slice(0, N - 20).filter((r) => r.deref()).length; }
+  }, { fetchFn: async () => ({ ok: true, status: 200, body }) });
+  expect(alive).toBeLessThan(20); // the old race kept all 180
+});
+
+test("a download still trickling at the backstop is stopped, and says it was the backstop", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const dir = scratch("upd-max"), self = join(dir, "routr"); writeFileSync(self, "OLD");
+  const { fetchFn } = await slowRelease(1000, 20);                     // never stalls, would take 20 s
+  const r = await update({ base: "http://fake.invalid/r", self, fetchFn, stallMs: 200, maxMs: 300, spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+  expect(r).toMatchObject({ ok: false, updated: false });
+  expect(r.error).toContain("was still going after 300 ms, so it was stopped");
+  expect(r.error).not.toContain("stalled");
+  expect(readFileSync(self, "utf8")).toBe("OLD");
+  expect(readdirSync(dir)).toEqual(["routr"]);
+});
+
+test("a checksum mismatch after a streamed download changes nothing", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const dir = scratch("upd-sum"), self = join(dir, "routr"); writeFileSync(self, "OLD");
+  const { fetchFn } = await slowRelease(5, 5, { sum: "0".repeat(64) });
+  const r = await update({ base: "http://fake.invalid/r", self, fetchFn, spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+  expect(r).toMatchObject({ ok: false, updated: false });
+  expect(r.error).toContain("checksum mismatch");
+  expect(readFileSync(self, "utf8")).toBe("OLD");
+  expect(readdirSync(dir)).toEqual(["routr"]);
+});
+
+test("an update that finds a newer binary already in place removes its download", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const dir = scratch("upd-there-tmp"), self = join(dir, "routr"); writeFileSync(self, "MANUAL");
+  const r = await update({ channel: "stable", current: "0.5.0", self, base: undefined, fetchFn: await fakeGitHub([]),
+    spawn: () => ({ status: 0, stdout: "0.5.2\n" }), isStandalone: () => true });
+  expect(r).toMatchObject({ ok: true, updated: false, installed: "0.5.2" });
+  expect(readdirSync(dir)).toEqual(["routr"]);
+});
+
+// From review: a fixed `${self}.download` opened with "w" followed a link to the binary itself, so a checksum mismatch
+// overwrote it and said "Nothing was changed", and a match installed a link to itself; an unrelated file there was
+// overwritten and removed. Each run now stages under its own name, created exclusively.
+test("an update never writes through or removes a file it did not create beside the binary", async () => {
+  const { downloadTo, update } = await import("../src/lib/update.mjs");
+  const { lstatSync, symlinkSync } = await import("node:fs");
+  const links = process.platform !== "win32"; // a file link needs privileges on Windows
+  const run = async (sum) => {
+    const dir = scratch("upd-link"), self = join(dir, "routr"); writeFileSync(self, "OLD");
+    if (links) symlinkSync(self, `${self}.download`); else writeFileSync(`${self}.download`, "SOMEONE ELSE'S");
+    writeFileSync(join(dir, "notes.download"), "MINE");
+    const { fetchFn, bin } = await slowRelease(3, 0, sum ? { sum } : {});
+    const r = await update({ base: "http://fake.invalid/r", self, fetchFn, spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+    return { r, dir, self, bin };
+  };
+  const bad = await run("0".repeat(64));
+  expect(bad.r).toMatchObject({ ok: false, updated: false });
+  expect(readFileSync(bad.self, "utf8")).toBe("OLD");                     // not written through the link
+  expect(readdirSync(bad.dir).sort()).toEqual(["notes.download", "routr", "routr.download"]);
+  const good = await run();
+  expect(good.r).toMatchObject({ ok: true, updated: true });
+  expect(lstatSync(good.self).isSymbolicLink()).toBe(false);
+  expect(readFileSync(good.self)).toEqual(good.bin);
+  expect(readFileSync(join(good.dir, "notes.download"), "utf8")).toBe("MINE");
+  expect(readdirSync(good.dir).sort()).toEqual(["notes.download", "routr", "routr.download"]);
+  if (!links) expect(readFileSync(`${good.self}.download`, "utf8")).toBe("SOMEONE ELSE'S");
+  // The staging file is created exclusively: an existing path, a link included, is refused and left as it was.
+  const dir = scratch("dl-excl"), target = join(dir, "target"), there = join(dir, "there");
+  writeFileSync(target, "KEEP"); writeFileSync(there, "THERE");
+  const { fetchFn } = await slowRelease(2, 0);
+  await expect(downloadTo("http://fake.invalid/r/x", "x", there, { fetchFn })).rejects.toThrow();
+  expect(readFileSync(there, "utf8")).toBe("THERE");
+  if (links) {
+    symlinkSync(target, join(dir, "link"));
+    await expect(downloadTo("http://fake.invalid/r/x", "x", join(dir, "link"), { fetchFn })).rejects.toThrow();
+    expect(readFileSync(target, "utf8")).toBe("KEEP");
+  }
+});
+
+// From review: writeSync's count was ignored, so a short write (a real 4-byte file size limit) left a truncated binary
+// whose hash was taken from the whole chunk: it passed the checksum and was installed.
+test("a download writes every byte, hashes only what was written, and fails when a write makes no progress", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const { writeSync } = await import("node:fs");
+  const dir = scratch("upd-short"), self = join(dir, "routr"); writeFileSync(self, "OLD");
+  const { fetchFn, bin } = await slowRelease(4, 0);
+  const sizes = [];
+  const short = (fd, buf, off, len) => { sizes.push(Math.min(len, 3)); return writeSync(fd, buf, off, Math.min(len, 3)); }; // 3 bytes at a time
+  const r = await update({ base: "http://fake.invalid/r", self, fetchFn, write: short, spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+  expect(r).toMatchObject({ ok: true, updated: true });
+  expect(readFileSync(self)).toEqual(bin);
+  expect(sizes.every((n) => n <= 3) && sizes.length > bin.length / 3 - 1).toBe(true);
+  writeFileSync(self, "OLD");
+  const full = await update({ base: "http://fake.invalid/r", self, fetchFn: (await slowRelease(4, 0)).fetchFn, write: () => 0,
+    spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+  expect(full).toMatchObject({ ok: false, updated: false });
+  expect(full.error).toContain("made no progress");
+  expect(readFileSync(self, "utf8")).toBe("OLD");
+  expect(readdirSync(dir)).toEqual(["routr"]);
+});
+
+// From review: a run killed mid-download left its staging file for good. The next run under the lock clears those, and
+// nothing else: only regular files named exactly as routr names them, beside this binary.
+test("an update clears staging files a killed run left, and nothing else; a look (--check) touches nothing", async () => {
+  const { update } = await import("../src/lib/update.mjs");
+  const { mkdirSync, symlinkSync } = await import("node:fs");
+  const links = process.platform !== "win32";
+  const dir = scratch("upd-sweep"), self = join(dir, "routr"); writeFileSync(self, "OLD");
+  const stale = join(dir, "routr.download-123-deadbeef");
+  const keep = ["routr.download", "routr.download-1-xyz", "routr.download-1-deadbeef0", "other.download-1-aaaaaaaa", "routr.download-2-aaaaaaaa", "target", ...(links ? ["routr.download-9-0123abcd"] : [])];
+  for (const n of keep) if (n !== "routr.download-2-aaaaaaaa" && n !== "routr.download-9-0123abcd") writeFileSync(join(dir, n), n);
+  mkdirSync(join(dir, "routr.download-2-aaaaaaaa"));                       // a folder is not a staging file
+  if (links) symlinkSync(join(dir, "target"), join(dir, "routr.download-9-0123abcd"));
+  const opts = async (checkOnly) => ({ checkOnly, channel: "stable", current: "0.5.1", self, base: undefined, fetchFn: await fakeGitHub([]), spawn: () => ({ status: 0, stdout: "" }), isStandalone: () => true });
+  writeFileSync(stale, "PARTIAL");
+  expect((await update(await opts(true))).note).toBe("routr is up to date");
+  expect(existsSync(stale)).toBe(true);                                    // a look takes no lock, so it removes nothing
+  expect((await update(await opts(false))).note).toBe("routr is up to date"); // cleared even when there is nothing to do
+  expect(existsSync(stale)).toBe(false);
+  expect(readdirSync(dir).sort()).toEqual(["routr", ...keep].sort());
+  expect(readFileSync(join(dir, "target"), "utf8")).toBe("target");
+});
+
+test("a binary swap can move a downloaded file into place", async () => {
+  const { swapBinary } = await import("../src/lib/update.mjs");
+  const dir = scratch("swap-file"), self = join(dir, "routr");
+  writeFileSync(self, "old"); writeFileSync(`${self}.download`, "new");
+  swapBinary(self, `${self}.download`);
+  expect(readFileSync(self, "utf8")).toBe("new");
+  expect(readdirSync(dir)).toEqual(["routr"]);
+});
 
 test("an update downloads the exact tag it checked, on either channel", async () => {
   const { assetName, update } = await import("../src/lib/update.mjs");
