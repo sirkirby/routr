@@ -113,7 +113,11 @@ export const HARNESSES = {
   codex: { label: "Codex", executable: "codex", installAs: "Codex",
     // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
     // "Update available" just after herdr reported it ready, and the Enter that submitted the task chose "Update now".
-    permissions: ["--yolo", "-c", "check_for_update_on_startup=false"], model: "-m", effort: "-c", effortValue: (level) => `model_reasoning_effort=${level}`, list: "codex debug models",
+    // `--dangerously-bypass-hook-trust`: a hook Codex has not seen trusted (a changed ~/.codex/hooks.json, a repository's
+    // own .codex/hooks.json) opens "Hooks need review" at startup, which herdr reads as idle, so the task's Enter chose
+    // "Review hooks" and launch reported a worker that never got it (0.160.0 and 0.161.0, herdr rules 2026.10.01.1,
+    // 2026-10-08). With the flag Codex starts at its input box. In every release checked, 0.135.0 to 0.161.0.
+    permissions: ["--yolo", "--dangerously-bypass-hook-trust", "-c", "check_for_update_on_startup=false"], model: "-m", effort: "-c", effortValue: (level) => `model_reasoning_effort=${level}`, list: "codex debug models",
     // "Logged in using ChatGPT" / "Not logged in" (exit 1), both on stderr.
     auth: { check: ["login", "status"], signedIn: (out, code) => code === 0 && /^\s*Logged in\b/m.test(out), signIn: "run `codex login`" },
     // Only the models Codex lists (visibility "list"); each carries its own levels (gpt-5.5 stops at xhigh, measured).
