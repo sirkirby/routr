@@ -11,7 +11,7 @@ test("launch plans use each harness's measured permissions and model syntax", ()
   expect(plan({ kind: "claude", model: "sonnet", effort: "medium" }).argv)
     .toEqual(["--dangerously-skip-permissions", "--model", "sonnet", "--effort", "medium"]);
   expect(plan({ kind: "codex", model: "gpt-5.6-sol", effort: "high" }).argv)
-    .toEqual(["--yolo", "-c", "check_for_update_on_startup=false", "-m", "gpt-5.6-sol", "-c", "model_reasoning_effort=high"]);
+    .toEqual(["--yolo", "--dangerously-bypass-hook-trust", "-c", "check_for_update_on_startup=false", "-m", "gpt-5.6-sol", "-c", "model_reasoning_effort=high"]);
   expect(plan({ kind: "cursor", model: "composer-2.5", cursorConfigDir: "/private/config" }))
     .toMatchObject({ executable: "cursor-agent", argv: ["--yolo", "--trust", "--model", "composer-2.5"], env: { CURSOR_CONFIG_DIR: "/private/config" } });
   expect(plan({ kind: "agy", model: "gemini-3.8-flash-low", cwd: "/work" }).argv)
@@ -437,6 +437,7 @@ test("the `then` of a startup question adopts the agent at once when herdr's liv
   const first = fakeHerdr({ kind: "codex", trust: codexTrust, notReady: true, reply: (a) => (a[1] === "explain" ? explained("blocked", "trust_directory") : undefined) });
   const stopped = await launch(codex, first.deps);
   expect(stopped).toMatchObject({ state: "needs_input", needs_input: { pane: "w1:p2", herdr: { state: "blocked", rule: "trust_directory" } } });
+  expect(stopped.needs_input.note).toContain("trusted the repository in Codex"); // Codex's own way to be asked no more
   // 2. The orchestrator answers it (herdr pane send-keys w1:p2 enter) and runs `then` at once: herdr's state still says
   // blocked, its explain (the live reading) says idle. The block is stale: the agent is adopted as idle.
   // The words of `then` are shell-quoted where needed (a Windows path is), so they are checked as text, not split.
