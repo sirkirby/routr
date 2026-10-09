@@ -122,7 +122,8 @@ object describing what it did.
   With no task (no `--task-file` or `--task`) there is nothing to compare, and no `advice` field.
 - routr answers no question: not the user's shell (its plugins and startup files ask their own), not a harness at
   startup. It passes each harness's own flags so none is asked (Cursor `--trust`, Kiro `--trust-tools=*`, Codex
-  `--dangerously-bypass-hook-trust`; Codex and Claude Code still ask to trust a folder outside a trusted one), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is still accepted and does
+  `--dangerously-bypass-hook-trust` for its hooks review; Codex and Claude Code still ask to trust a folder outside a
+  trusted one), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is still accepted and does
   nothing.
 - `--dry-run` prints the plan and changes nothing. Use it to see the flags before spending anything.
 - Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_input`, or `failed`.
