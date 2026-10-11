@@ -8,8 +8,9 @@ measured questions about a brief or a worker report; code adds live usage; the l
 ## Non-goals
 
 - routr is NOT the judge. It advises; no code rule overrides the lead agent or the user's settings.
-- It MUST NOT encode how good or how expensive any model is: no model names in advice, no cost formulas, no weights
-  that go stale at the next model release. What varies by user is a plain setting in `~/.config/routr/config.json`.
+- It MUST NOT encode how good or how expensive any model the work goes to is: no model names in advice, no cost
+  formulas, no weights that go stale at the next model release. routr's own decision models are its instrument: what
+  each was measured to do is in `docs/evidence.md`, with a date, and their prices nowhere else. What varies by user is a plain setting in `~/.config/routr/config.json`.
 - It does not estimate or manage context, proxy model traffic, or hold provider API keys. Workers are the harness
   CLIs the user already has installed and logged in.
 - It is not a published package or a marketplace plugin. There is ONE install path: the install scripts, which

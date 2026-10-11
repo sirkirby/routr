@@ -36,16 +36,17 @@ installed since) and leaves the rest alone.
 A small decision model reads each brief and report. Ask the user which one, and say what each needs and how it did on
 routr's tests (`docs/evidence.md`, "Decision models"):
 
-- **TypeSafe's Jev** (the default): the most accurate of the three on routr's tests (83 of 104 levels right). Needs a
+- **TypeSafe's Jev** (the default): reads the level most accurately on routr's tests (83 of 104 right). Needs a
   TypeSafe API key; a call costs a small fraction of a cent. They create one at https://console.typesafe.ai/keys
   (TypeSafe's quick start shows the step: https://docs.typesafe.ai/introduction/quickstart).
 - **Cloudflare's Clef on Workers AI** (`cloudflare`): for someone who already has a Cloudflare account, or whose
   organisation does. 72 of 104 levels right, more often too high than too low. Needs a Cloudflare API token with
-  Account › Workers AI › Read (https://dash.cloudflare.com/profile/api-tokens) and their account ID. Workers AI's free
+  Workers AI Read and Edit, as Cloudflare's "Workers AI" token template sets (https://dash.cloudflare.com/profile/api-tokens), and their account ID. Workers AI's free
   daily allowance covers about 200 briefs a day. `cloudflare:clef-flash` is cheaper but reads levels too low more often.
-- **Clef Flash on their own machine through Ollama** (`ollama`): free, and nothing leaves the machine. Apple Silicon
-  only for now: Ollama 0.35 or later, then `ollama pull clef-flash:9b-mxfp8` (12 GB). 5-7 s a brief, and 70 of 104
-  levels right, more often too low. Never pull the model for them without asking: it is a 12 GB download.
+- **Clef Flash on their own machine through Ollama** (`ollama`): free, and nothing leaves the machine. Ollama 0.35 or
+  later, then the build `routr doctor` names: `clef-flash:9b-mxfp8` on Apple Silicon (12 GB, 5-7 s a brief on an M4
+  Max), `clef-flash:9b-q8_0` elsewhere (11 GB; its speed was measured only on a Mac). 70 to 72 of 104 levels right,
+  more often too low. Never pull a model for them without asking: it is a download of more than 10 GB.
 
 Then set it: `routr setup --yes --decision <typesafe|cloudflare|ollama>` (or `cloudflare:clef-flash`).
 
@@ -128,7 +129,8 @@ the command that fixes it.
     `--use` wins if both flags are given. Actual observed caps remain windows, including with a billing override.
 - `prefer`: the user's standing preference per kind of work (`implement`, `debug`, `refactor`, `review`, `research`,
   `test_writing`, `docs`), for example `"research": "strong"`. Shown to agents as advice, never forced.
-- `sure_at` (0.8), `risk_above` (0.75), `fallback_level` (`standard`): leave at the defaults unless asked.
+- `sure_at` (unset: the decision model's own measured bar; Jev's is 0.8), `risk_above` (0.75), `fallback_level`
+  (`standard`): leave at the defaults unless asked. A `sure_at` set by hand applies to every decision model.
 - `auto_update` (`true`): routr checks for a new release in the background at most once a day and uses it from the
   next run. Set it to `false` if the user wants to update only by hand with `routr update`. `routr doctor` reports a
   newer release only from that daily check (it asks GitHub nothing itself); with it off, `routr update --check` looks.

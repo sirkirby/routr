@@ -349,3 +349,40 @@ test("the commands telemetry status names as starting the daily job are the ones
   const started = readFileSync(join(import.meta.dir, "../src/routr.mjs"), "utf8").match(/if \((\[[^\]]+\])\.includes\(mode\)\)[^\n]*maybeAutoUpdate/);
   expect(JSON.parse(started[1])).toEqual(DAILY_STARTERS);
 });
+
+test("from the core review: each provider finding stays fixed", async () => {
+  const { ask, readSecretsFile, secretsFor, writeSecrets } = await import("../src/lib/systemone.mjs");
+  const { decisionTarget, ollamaHost } = await import("../src/lib/providers.mjs");
+  const { loadConfig } = await import("../src/lib/config.mjs");
+  const { toEntry } = await import("../src/lib/ledger.mjs");
+  const { parsePiped } = await import("../src/lib/key.mjs");
+  const dir = scratch("core-review");
+  // 1. A provider or model named after an object property is not a provider: the default, a note, and advice still answers.
+  for (const name of ["constructor", "__proto__", "toString"]) {
+    const p = join(dir, `${name}.json`); writeFileSync(p, JSON.stringify({ decision: { provider: name, model: name } }));
+    const { config, notes } = loadConfig(p);
+    expect(config.decision).toEqual({ provider: "typesafe", model: null }); expect(notes.join(" ")).toContain("decision.provider");
+    expect(decisionTarget({ decision: { provider: "cloudflare", model: name } }, {}).model).toBe("clef");
+  }
+  // 2. A name set twice keeps one line, the new value: the stale one below can no longer win.
+  const file = join(dir, "env");
+  writeFileSync(file, "TYPESAFE_API_KEY=old_one_1234567890\n# keep me\nTYPESAFE_API_KEY=old_two_1234567890\n");
+  writeSecrets({ TYPESAFE_API_KEY: "new_key_1234567890" }, file);
+  expect(readFileSync(file, "utf8")).toBe("TYPESAFE_API_KEY=new_key_1234567890\n# keep me\n");
+  expect(readSecretsFile(file).TYPESAFE_API_KEY).toBe("new_key_1234567890");
+  // 3. OLLAMA_HOST is read as Ollama reads it.
+  expect(ollamaHost({ OLLAMA_HOST: "http://127.0.0.1:11500/" })).toBe("http://127.0.0.1:11500");
+  expect(ollamaHost({ OLLAMA_HOST: "https://ollama.example.com" })).toBe("https://ollama.example.com:443");
+  expect(ollamaHost({ OLLAMA_HOST: "0.0.0.0" })).toBe("http://0.0.0.0:11434");
+  expect(ollamaHost({})).toBe("http://127.0.0.1:11434");
+  // 4. A key in the environment is used even when the saved file cannot be read (a folder stands in for an unreadable file).
+  mkdirSync(join(dir, "unreadable"));
+  expect(secretsFor("typesafe", { env: { TYPESAFE_API_KEY: "env_key_1234567890" }, file: join(dir, "unreadable") })).toEqual({ TYPESAFE_API_KEY: "env_key_1234567890" });
+  const r = await ask({}, {}, { env: { TYPESAFE_API_KEY: "env_key_1234567890" }, file: join(dir, "unreadable"), fetchFn: async () => Response.json({ model: "jev-1.13.0", answers: {} }) });
+  expect(r.model).toBe("jev-1.13.0");
+  // 5. Piped values may mix NAME=value and bare lines.
+  expect(parsePiped("CLOUDFLARE_API_TOKEN=tok_1234567890ab\n0123456789abcdef0123456789abcdef\n", [{ name: "CLOUDFLARE_API_TOKEN" }, { name: "CLOUDFLARE_ACCOUNT_ID" }]))
+    .toEqual({ CLOUDFLARE_API_TOKEN: "tok_1234567890ab", CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef" });
+  // 6. Advice saved by an older routr (jev_model) keeps the model that answered when it is recorded now.
+  expect(toEntry({ id: "z", level: "basic", sure: true, facts: {}, jev_model: "jev-1.13.0" }, {})).toMatchObject({ provider: "typesafe", decision_model: "jev-1.13.0" });
+});

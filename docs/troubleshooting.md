@@ -44,13 +44,13 @@ reread the installed routr skill and its orchestration guide, or start a new ses
 
 routr could not reach its decision model: there is no key, the key is wrong, there is no network, or (with Ollama)
 Ollama is not running or the model is not pulled. `routr doctor` shows which, and the command that fixes it: a key is
-stored with `routr key set` (TypeSafe's from https://console.typesafe.ai/keys; Cloudflare's token, with Account ›
-Workers AI › Read, and account ID), and a local model is fetched with `ollama pull <the tag doctor names>`. routr keeps
+stored with `routr key set` (TypeSafe's from https://console.typesafe.ai/keys; Cloudflare's token, with
+Workers AI Read and Edit, as Cloudflare's "Workers AI" token template sets, and account ID), and a local model is fetched with `ollama pull <the tag doctor names>`. routr keeps
 answering without one, but only with your fallback level.
 
 A Cloudflare token in your shell (`CLOUDFLARE_API_TOKEN`, as wrangler uses) wins over the one `routr key set` saved.
-If doctor says the key was refused, that token may lack the Workers AI permission: unset it for routr, or give it
-Account › Workers AI › Read.
+If doctor says the key was refused, that token may lack the Workers AI permissions: unset it for routr, or give it
+Workers AI Read and Edit.
 
 With Ollama, the first brief after the model was unloaded waits for it to load (5 to 17 s for Clef Flash on an M4
 Max); routr keeps it loaded for 15 minutes after each brief.

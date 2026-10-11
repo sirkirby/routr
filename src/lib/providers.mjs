@@ -17,12 +17,16 @@ import { join } from "node:path";
 
 export const SECRETS_FILE = join(home(), ".config/routr/env");
 
-// Ollama's own variable for where its server listens (`ollama serve` reads it): a host, host:port, or a URL.
+// Ollama's own variable for where its server listens (`ollama serve` reads it), read the way Ollama's own client reads
+// it (envconfig.Host): a bare host or host:port is http on 11434; a URL with a scheme and no port takes the scheme's own
+// (80, 443); a path is kept. From the core review: http://127.0.0.1:11500/ was turned into an invalid URL.
 export function ollamaHost(env = process.env) {
-  const h = (env.OLLAMA_HOST ?? "").trim();
-  if (!h) return "http://127.0.0.1:11434";
-  const url = /^https?:\/\//.test(h) ? h : `http://${h}`;
-  return /:\d+$/.test(url.replace(/^https?:\/\//, "")) ? url.replace(/\/+$/, "") : `${url.replace(/\/+$/, "")}:11434`;
+  const raw = (env.OLLAMA_HOST ?? "").trim();
+  const [scheme, rest] = raw.includes("://") ? raw.split(/:\/\/(.*)/s) : ["http", raw];
+  const port = !raw.includes("://") ? "11434" : scheme === "https" ? "443" : "80";
+  const slash = rest.indexOf("/"), hostport = slash < 0 ? rest : rest.slice(0, slash), path = slash < 0 ? "" : rest.slice(slash).replace(/\/+$/, "");
+  const m = hostport.match(/^(\[[^\]]+\]|[^:]*)(?::(\d+))?$/);
+  return `${scheme}://${m?.[1] || "127.0.0.1"}:${m?.[2] ?? port}${path}`;
 }
 
 export const PROVIDERS = {
@@ -38,18 +42,20 @@ export const PROVIDERS = {
     models: {
       // P23, P32 and docs/evidence.md were all measured on this version.
       "jev-1.13.0": { sure_at: 0.8, torn: { right: 29, of: 36, low: 7, high: 0 },
-        hint: "needs a TypeSafe API key · the most accurate on routr's tests: 83 of 104 levels right" },
+        hint: "needs a TypeSafe API key · reads the level most accurately on routr's tests: 83 of 104 right" },
     },
   },
   cloudflare: {
     label: "Cloudflare Workers AI",
     // wrangler's own names, so a person or a CI that already has them set needs nothing more.
     secrets: [
-      { name: "CLOUDFLARE_API_TOKEN", label: "Cloudflare API token (Account › Workers AI › Read)", hidden: true },
+      { name: "CLOUDFLARE_API_TOKEN", label: "Cloudflare API token (Workers AI Read and Edit)", hidden: true },
       { name: "CLOUDFLARE_ACCOUNT_ID", label: "Cloudflare account ID", hidden: false, shape: /^[0-9a-f]{32}$/ },
     ],
     keysUrl: "https://dash.cloudflare.com/profile/api-tokens",
-    get: "Create an API token with Account › Workers AI › Read at https://dash.cloudflare.com/profile/api-tokens, then run: routr key set cloudflare (it also asks for your account ID)",
+    // Cloudflare's Workers AI REST guide asks for Read and Edit (its "Workers AI" token template); the maintainer's runs
+    // used a wrangler login, so Read alone is not confirmed.
+    get: "Create an API token from the \"Workers AI\" template (Workers AI Read and Edit) at https://dash.cloudflare.com/profile/api-tokens, then run: routr key set cloudflare (it also asks for your account ID)",
     request: (model, s) => ({ url: `https://api.cloudflare.com/client/v4/accounts/${s.CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/cloudflare/${model}`, headers: { Authorization: `Bearer ${s.CLOUDFLARE_API_TOKEN}` } }),
     // The REST API wraps the System One answer: { success, errors: [{ code, message }], messages, result }.
     unwrap: (j) => {
@@ -63,10 +69,10 @@ export const PROVIDERS = {
     models: {
       // Reads levels high more often than Jev (26 of 104 over, 6 under), the cheaper direction to be wrong in.
       clef: { sure_at: 0.7, torn: { right: 26, of: 36, low: 5, high: 5 },
-        hint: "your Cloudflare account (the free daily allowance covers about 450,000 input tokens) · 72 of 104 levels right, more often too high" },
+        hint: "your Cloudflare account; Workers AI has a free daily allowance · 72 of 104 levels right, more often too high" },
       // Reads levels low (18 of 104 under): offered for its price and speed, not as the default.
       "clef-flash": { sure_at: 0.5, torn: { right: 23, of: 36, low: 13, high: 0 },
-        hint: "your Cloudflare account, about a sixth of Clef's price · 74 of 104 levels right, more often too low" },
+        hint: "your Cloudflare account, faster and cheaper than Clef · 74 of 104 levels right, more often too low" },
     },
   },
   ollama: {
@@ -95,12 +101,20 @@ export const PROVIDERS = {
       // Measured as clef-flash:latest on a Mac, which is this build (same answers, 2026-10-11). Reads levels low (22 of
       // 104 under; on the 36 real runs, 17 one level low).
       "clef-flash:9b-mxfp8": { runs: "apple-silicon", digest: "bc72638064ee", sure_at: 0.6, torn: { right: 19, of: 36, low: 17, high: 0 },
-        hint: "free, on this Mac (12 GB, 5-7 s a brief) · 70 of 104 levels right, more often too low" },
+        hint: "free, on this Mac (12 GB, several seconds a brief) · 70 of 104 levels right, more often too low" },
+      // The GGUF build, which Ollama runs on every platform (llama.cpp). Measured on a Mac: 72 of 104, 20 under; on the
+      // 36 real runs, 15 one level low. Its speed was measured only there (about 5 s a brief, M4 Max).
+      "clef-flash:9b-q8_0": { digest: "2aa4d39fd93b", sure_at: 0.6, torn: { right: 21, of: 36, low: 15, high: 0 },
+        hint: "free, on this machine (11 GB, several seconds a brief) · 72 of 104 levels right, more often too low" },
     },
   },
 };
 
 export const PROVIDER_NAMES = Object.keys(PROVIDERS);
+// Names come from a config file, a flag, or the environment: only the registry's own entries count ("constructor" and
+// "__proto__" are properties of every object, from the core review).
+export const isProvider = (p) => typeof p === "string" && Object.hasOwn(PROVIDERS, p);
+export const isModel = (p, m) => isProvider(p) && typeof m === "string" && Object.hasOwn(PROVIDERS[p].models, m);
 export const DEFAULT_PROVIDER = "typesafe";
 const appleSilicon = (platform = process.platform, arch = process.arch) => platform === "darwin" && arch === "arm64";
 // The models a provider offers on this machine, its default first: an MLX build only on Apple Silicon.
@@ -115,14 +129,14 @@ export const KNOWN_MODELS = PROVIDER_NAMES.flatMap((p) => Object.keys(PROVIDERS[
 // model that has no profile yet. An unmeasured model reads with its provider's default profile, and says so.
 export function decisionTarget(config, env = process.env) {
   const d = config?.decision ?? {};
-  let provider = PROVIDERS[d.provider] ? d.provider : DEFAULT_PROVIDER;
-  let model = d.model && PROVIDERS[provider].models[d.model] ? d.model : defaultModel(provider);
+  let provider = isProvider(d.provider) ? d.provider : DEFAULT_PROVIDER;
+  let model = isModel(provider, d.model) ? d.model : defaultModel(provider);
   const override = env.ROUTR_DECISION_MODEL?.trim();
   if (override) {
-    const at = override.indexOf(":"), named = at > 0 && PROVIDERS[override.slice(0, at)];
+    const at = override.indexOf(":"), named = at > 0 && isProvider(override.slice(0, at));
     if (named) { provider = override.slice(0, at); model = override.slice(at + 1) || defaultModel(provider); }
     else model = override;
   }
-  const measured = PROVIDERS[provider].models[model];
+  const measured = isModel(provider, model) ? PROVIDERS[provider].models[model] : null;
   return { provider, model, profile: measured ?? PROVIDERS[provider].models[defaultModel(provider)] ?? null, measured: Boolean(measured), overridden: Boolean(override) };
 }

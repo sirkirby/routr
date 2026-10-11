@@ -20,22 +20,30 @@ export function readSecretsFile(file = SECRETS_FILE) {
 
 // The values a provider needs, read per call (never at import: a missing one is a catchable error, nothing stale is
 // kept). Throws with what to do when one is missing.
+// The file is read only when the environment does not supply everything: an unreadable file must not block a key
+// given in the environment (from the core review; the old TypeSafe client read the environment first too).
 export function secretsFor(provider, { env = process.env, file = SECRETS_FILE } = {}) {
-  const P = PROVIDERS[provider], saved = P.secrets.length ? readSecretsFile(file) : {}, out = {};
+  const P = PROVIDERS[provider], out = {};
+  let saved = null;
   for (const s of P.secrets) {
-    const v = env[s.name] || [s.name, ...(s.aliases ?? [])].map((n) => saved[n]).find(Boolean);
+    const v = env[s.name] || [s.name, ...(s.aliases ?? [])].map((n) => (saved ??= readSecretsFile(file))[n]).find(Boolean);
     if (!v) throw new Error(`no ${s.label}: run routr key set ${provider} (or set ${s.name})`);
     out[s.name] = v;
   }
   return out;
 }
 
-// Merges into the file: the other lines (another provider's key, a comment) stay as they were.
+// Merges into the file: the other lines (another provider's key, a comment) stay as they were. A name set more than
+// once keeps one line, the new value in the first one's place: readSecretsFile takes the last, so a stale duplicate left
+// below would win (from the core review).
 export function writeSecrets(values, file = SECRETS_FILE) {
-  const lines = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter((l, i, a) => l !== "" || i < a.length - 1) : [];
+  let lines = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter((l, i, a) => l !== "" || i < a.length - 1) : [];
+  const nameOf = (l) => l.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*=/)?.[1];
   for (const [name, value] of Object.entries(values)) {
-    const at = lines.findIndex((l) => l.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*=/)?.[1] === name);
-    if (at >= 0) lines[at] = `${name}=${value}`; else lines.push(`${name}=${value}`);
+    const at = lines.findIndex((l) => nameOf(l) === name);
+    if (at < 0) { lines.push(`${name}=${value}`); continue; }
+    lines = lines.filter((l, i) => i <= at || nameOf(l) !== name);
+    lines[at] = `${name}=${value}`;
   }
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, lines.join("\n") + "\n", { mode: 0o600 });

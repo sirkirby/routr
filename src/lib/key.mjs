@@ -1,7 +1,7 @@
 // `routr key set [typesafe|cloudflare]`: store what a decision provider needs without it passing through an agent's
 // transcript. The USER runs this in their own terminal; a secret is typed with no echo (or piped in) and merged into
 // ~/.config/routr/env, owner-only, beside any other provider's. Ollama needs nothing: it runs on this machine.
-import { PROVIDER_NAMES, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
+import { isProvider, PROVIDER_NAMES, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 import { ping, writeSecrets } from "./systemone.mjs";
 
 export const KEYS_URL = PROVIDERS.typesafe.keysUrl;
@@ -27,13 +27,14 @@ function readTyped(prompt, hidden) {
 
 const readStdin = () => new Promise((resolve) => { let s = ""; process.stdin.setEncoding("utf8"); process.stdin.on("data", (d) => (s += d)); process.stdin.on("end", () => resolve(s)); });
 
-// Piped in: one value per line, in the order asked, each bare or as NAME=value.
+// Piped in: one value per line, each as NAME=value or bare. Bare lines fill, in order, the values not given by name.
 export function parsePiped(text, secrets) {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean), out = {};
-  secrets.forEach((s, i) => {
+  const bare = lines.filter((l) => !/^[A-Za-z_][A-Za-z0-9_-]*=/.test(l));
+  for (const s of secrets) {
     const named = lines.find((l) => l.startsWith(`${s.name}=`));
-    out[s.name] = (named ? named.slice(s.name.length + 1) : lines.filter((l) => !/^[A-Z_]+=/.test(l))[i] ?? "").replace(/^["']|["']$/g, "");
-  });
+    out[s.name] = (named ? named.slice(s.name.length + 1) : bare.shift() ?? "").replace(/^["']|["']$/g, "");
+  }
   return out;
 }
 
@@ -43,7 +44,7 @@ export function checkValue(s, v) {
 }
 
 export async function setKey({ provider = "typesafe", file = SECRETS_FILE, verify = true } = {}) {
-  const P = PROVIDERS[provider];
+  const P = isProvider(provider) ? PROVIDERS[provider] : null;
   if (!P) return { ok: false, error: `no provider "${provider}": routr key set ${PROVIDER_NAMES.filter((n) => PROVIDERS[n].secrets.length).join("|")}` };
   if (!P.secrets.length) return { ok: true, provider, note: `${P.label} needs no key: it runs on this machine. To use it: routr setup --decision ${provider}` };
   const values = {};

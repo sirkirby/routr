@@ -367,7 +367,7 @@ test("doctor names the decision model, its provider, and the fix that provider n
   expect(render(r({ provider: "cloudflare", label: "Cloudflare Workers AI", asked: "clef", model: "clef", works: true, ms: 577, measured: true, unversioned: true }))).toContain("Cloudflare does not version this name");
   expect(render(r({ provider: "typesafe", label: "TypeSafe", asked: "jev-preview", model: "jev-1.14.0", works: true, ms: 300, measured: false }))).toContain("jev-1.14.0, asked as jev-preview answers (300 ms) · not a model routr has measured");
   // Each provider's own fix, first among the next steps.
-  expect(nextSteps(r({ provider: "cloudflare", works: false, found: false, error: "no token" }))[0]).toContain("Add your Cloudflare Workers AI key. Create an API token with Account › Workers AI › Read");
+  expect(nextSteps(r({ provider: "cloudflare", works: false, found: false, error: "no token" }))[0]).toContain("Add your Cloudflare Workers AI key. Create an API token from the \"Workers AI\" template");
   expect(nextSteps(r({ provider: "typesafe", works: false, found: true, error: "TypeSafe 401" }))[0]).toContain("The TypeSafe key was found but the test call failed (TypeSafe 401)");
   expect(nextSteps(r({ provider: "ollama", local: true, works: false, error: "Ollama (local) is not running at http://127.0.0.1:11434" }))[0]).toBe("Make the local decision model answer: Ollama (local) is not running at http://127.0.0.1:11434");
   const stale = nextSteps(r({ provider: "ollama", local: true, works: true, note: "clef-flash:9b-mxfp8 here is build 0123456789ab, not bc72638064ee, the one routr measured" }));

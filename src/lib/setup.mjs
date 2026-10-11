@@ -16,7 +16,7 @@ import { standalone } from "./runtime.mjs";
 import { updatesOff } from "./update.mjs";
 import { installSkill } from "./skill-install.mjs";
 import { askDecision, decisionLabel, guided } from "./setup-guided.mjs";
-import { decisionTarget, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
+import { decisionTarget, isModel, isProvider, modelsHere, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
 import { secretsFor } from "./systemone.mjs";
 import { CANCEL, createUI } from "./tui.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
@@ -95,10 +95,12 @@ export function parseDecision(args) {
   const i = args.indexOf("--decision");
   if (i < 0) return undefined;
   const v = args[i + 1] ?? "", at = v.indexOf(":"), provider = at < 0 ? v : v.slice(0, at), model = at < 0 ? null : v.slice(at + 1);
-  if (!PROVIDERS[provider]) throw new Error(`--decision takes <provider>[:<model>], with one of: ${PROVIDER_NAMES.join(", ")}`);
-  const models = Object.keys(PROVIDERS[provider].models);
-  if (model && !models.includes(model)) throw new Error(`--decision ${v}: routr has measured ${models.join(", ")} on ${provider}`);
-  return { provider, model: model ?? decisionTarget({ decision: { provider } }, {}).model };
+  if (!isProvider(provider)) throw new Error(`--decision takes <provider>[:<model>], with one of: ${PROVIDER_NAMES.join(", ")}`);
+  const models = Object.keys(PROVIDERS[provider].models), here = modelsHere(provider);
+  if (model && !isModel(provider, model)) throw new Error(`--decision ${v}: routr has measured ${models.join(", ")} on ${provider}`);
+  // A build this machine cannot run (an MLX model off Apple Silicon) is refused, not written (from the docs review).
+  if (model ? !here.includes(model) : !here.length) throw new Error(`--decision ${v}: ${model ?? `no model routr has measured on ${provider}`} ${model ? "does not run" : "runs"} on this machine${models.length ? ` (${models.map((m) => `${m}: ${PROVIDERS[provider].models[m].runs ?? "any platform"}`).join(", ")})` : ""}`);
+  return { provider, model: model ?? here[0] };
 }
 // What setup says after the channel changed. It runs no update and asks GitHub nothing, so it names no version.
 // Nothing moves a pre-release back to stable by itself (update.mjs): a person leaving beta on one is told so.

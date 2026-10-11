@@ -111,7 +111,7 @@ export const COMMANDS = {
   },
   key: {
     name: "key",
-    description: "`routr key set [typesafe|cloudflare]` stores what your decision model's provider needs (TypeSafe: an API key; Cloudflare: an API token with Workers AI Read, and your account ID): typed with no echo (or piped in, one per line), saved owner-only beside any other provider's, then tested. With no provider, the one your settings use. Ollama needs no key",
+    description: "`routr key set [typesafe|cloudflare]` stores what your decision model's provider needs (TypeSafe: an API key; Cloudflare: an API token with Workers AI Read and Edit, and your account ID): typed with no echo (or piped in, one per line), saved owner-only beside any other provider's, then tested. With no provider, the one your settings use. Ollama needs no key",
     args: [{ name: "set", description: "store it in ~/.config/routr/env", required: true }, { name: "typesafe|cloudflare", description: "the provider (default: the one your settings use)", required: false }],
     flags: [{ name: "--no-verify", description: "skip the test call", required: false }],
   },
@@ -129,7 +129,7 @@ export const COMMANDS = {
       { name: "--enable", arg: "<subscription>", description: "let routr hand work to this subscription again (it kept its settings while off); repeatable", required: false, repeatable: true },
       { name: "--disable", arg: "<subscription>", description: "turn a subscription off: routr gives it no work, and it keeps its settings; repeatable", required: false, repeatable: true },
       { name: "--channel", arg: "stable|beta", description: "which releases updates install: stable (the default), or beta for beta and release-candidate builds too (a newer stable release still wins). Read by `routr update` and the daily update; nothing moves you back to an older stable by itself", required: false },
-      { name: "--decision", arg: "<provider>[:<model>]", description: "which decision model reads each brief: typesafe (Jev, the default), cloudflare (Clef on your Cloudflare account; clef-flash is cheaper), or ollama (Clef on this machine, free). Only models routr has measured (docs/evidence.md); the key is set apart, by the person, with routr key set", required: false },
+      { name: "--decision", arg: "<provider>[:<model>]", description: "which decision model reads each brief: typesafe (Jev, the default), cloudflare (Clef on your Cloudflare account; cloudflare:clef-flash is cheaper), or ollama (Clef Flash on this machine, free). Only models routr has measured (docs/evidence.md); the key is set apart, by the person, with routr key set", required: false },
       { name: "--show", arg: null, description: "print your settings as routr reads them, and change nothing (asks no harness)", required: false },
       { name: "--no-statusline", description: "does nothing: setup no longer sets Claude's statusline (accepted for older scripts)", required: false },
       { name: "--force", description: "rewrite an existing config (the old one is kept as config.json.bak)", required: false },
@@ -209,7 +209,7 @@ export function formatCommandSynopsis(cmd) {
   }
   if (cmd.args) {
     for (const arg of cmd.args) {
-      parts.push(arg.name);
+      parts.push(arg.required === false && !arg.name.startsWith("[") ? `[${arg.name}]` : arg.name); // an optional word is bracketed, as a flag is
     }
   }
   return parts.join(" ");

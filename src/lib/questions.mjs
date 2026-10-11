@@ -17,7 +17,7 @@ export const MEANING = {
 // The decision models these questions are asked of, each pinned with the thresholds measured on it, are in
 // providers.mjs. Answers, and the thresholds tuned on them (0.2/0.8, sure_at, how a torn level is read), belong to a
 // model, so a model is offered only after the maintainers' gate has run the saved items on it beside Jev
-// (CONTRIBUTING.md, "Moving to a new decision model"). ROUTR_DECISION_MODEL overrides it for that gate and for trying a
+// (CONTRIBUTING.md, "Moving to a new model or version"). ROUTR_DECISION_MODEL overrides it for that gate and for trying a
 // preview on real work; it is not a user setting.
 
 
