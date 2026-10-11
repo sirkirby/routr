@@ -51,7 +51,7 @@ routr's tests (`docs/evidence.md`, "Decision models"):
 Then set it: `routr setup --yes --decision <typesafe|cloudflare|ollama>` (or `cloudflare:clef-flash`).
 
 A key is stored by the user **themselves**, so it never passes through this conversation. Ask them to run, in their
-own terminal (in Claude Code they can type `! routr key set`):
+own terminal (in Claude Code they can type `! routr key set <provider>`):
 
     routr key set typesafe        # or: routr key set cloudflare (it asks for the token, then the account ID)
 
@@ -162,7 +162,7 @@ can be combined with the others in one run.
 | use a funded account for everyday work | `routr setup --yes --use codex=normal` |
 | keep an account for fallback | `routr setup --yes --use codex=fallback` |
 | get early builds (beta and release candidates), or stop | `routr setup --yes --channel beta` / `routr setup --yes --channel stable` |
-| use another decision model | `routr setup --yes --decision cloudflare` (or `typesafe`, `ollama`, `cloudflare:clef-flash`); then the user stores its key with `routr key set <provider>` in their own terminal (Ollama needs none) |
+| use another decision model | `routr setup --yes --decision cloudflare` (or `typesafe`, `ollama`, `cloudflare:clef-flash`); then the user stores its key with `routr key set <provider>` in their own terminal. Ollama needs none, but its model must be pulled: setup's note says when it is not, and the pull is the user's to agree to |
 | share anonymous outcomes, or stop | `routr telemetry on` / `routr telemetry off`: only when the user says so |
 
 A flag that routr cannot apply fails with the reason and changes nothing: a model the harness does not list (Claude Code excepted), an effort

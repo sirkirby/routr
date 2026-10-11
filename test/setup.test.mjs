@@ -359,6 +359,38 @@ test("the decision model: --decision writes it, a key is the person's to set, an
   expect((await runSetup({ config, found: ["agy"], args: ["--yes", "--decision", "cloudflare"] })).r.skipped.join(" ")).toContain("the user runs routr key set cloudflare in their own terminal");
 });
 
+test("from the setup review: each decision-model finding stays fixed", async () => {
+  const cf = { telemetry: false, decision: { provider: "cloudflare" }, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } };
+  // The provider that failed, then another model on it: its key is asked once, not twice.
+  const x = await runSetup({ config: cf, found: ["agy"], keyWorks: false, answers: ["3", "6"] }); // Clef Flash; then Save on the menu
+  expect(x.keys).toEqual([1]);
+  expect(x.saved.decision).toEqual({ provider: "cloudflare", model: "clef-flash" });
+  // Leaving without saving after a key was typed says the settings were not changed, not that nothing was written.
+  const savedKey = async () => ({ ok: true, file: "/k/env", works: true });
+  const { setup } = await import("../src/lib/setup.mjs");
+  const dir = scratch("stop"), path = join(dir, "config.json"); writeFileSync(path, JSON.stringify(cf));
+  const queue = ["3", "7"]; // Clef Flash; then Exit without saving (the menu has a pending change)
+  const inspect = async () => ({ harnesses: { agy: { installed: true, signed_in: true, models: [] } }, config: { path, exists: true, subscriptions: ["agy"], off: [] }, skill: [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: "0.0.0-dev" }], key: { provider: "cloudflare", works: false }, next_steps: [] });
+  const stop = await setup(["--config", path, "--json"], { inspect, question: async () => queue.shift() ?? "", interactive: true, env: {}, install: () => {}, share: () => {}, key: savedKey, hasKey: () => false, print: () => {} });
+  expect(stop).toMatchObject({ ok: false, cancelled: true });
+  expect(stop.error).toContain("your settings were not changed (saved the Cloudflare Workers AI key to /k/env and it works)");
+  // "cloudflare:" is the provider's default model, never an empty one.
+  expect((await runSetup({ config: cf, found: ["agy"], args: ["--yes", "--decision", "typesafe:"] })).saved.decision).toEqual({ provider: "typesafe", model: null });
+  // --force keeps a sure_at the person set; 0.8, an older setup's default, is dropped and said.
+  expect((await runSetup({ config: { ...cf, sure_at: 0.9 }, found: ["agy"], args: ["--yes", "--force"] })).saved.sure_at).toBe(0.9);
+  const dropped = await runSetup({ config: { ...cf, sure_at: 0.8 }, found: ["agy"], args: ["--yes", "--force"] });
+  expect(dropped.saved.sure_at).toBeUndefined(); expect(dropped.r.did.join(" ")).toContain("dropped sure_at 0.8");
+  // An agent choosing Ollama is told whether the model is pulled, from Ollama's own list.
+  const server = Bun.serve({ port: 0, fetch: () => Response.json({ models: [{ name: "gemma4:26b", model: "gemma4:26b", digest: "x" }] }) });
+  try {
+    const local = await runSetup({ config: cf, found: ["agy"], args: ["--yes", "--decision", "ollama:clef-flash:9b-q8_0"], env: { OLLAMA_HOST: `127.0.0.1:${server.port}` } });
+    expect(local.saved.decision).toEqual({ provider: "ollama", model: "clef-flash:9b-q8_0" });
+    expect(local.r.skipped.join(" ")).toContain("clef-flash:9b-q8_0 is not pulled yet: run ollama pull clef-flash:9b-q8_0 (a download of more than 10 GB: ask the user first)");
+  } finally { server.stop(true); }
+  const down = await runSetup({ config: cf, found: ["agy"], args: ["--yes", "--decision", "ollama:clef-flash:9b-q8_0"], env: { OLLAMA_HOST: "127.0.0.1:9" } });
+  expect(down.r.skipped.join(" ")).toContain("Ollama is not running at http://127.0.0.1:9");
+});
+
 test("doctor names the decision model, its provider, and the fix that provider needs", async () => {
   const { nextSteps, render } = await import("../src/lib/doctor.mjs");
   const r = (key) => ({ runtime: "routr 0.0.0-dev (from source)", from_source: true, herdr: { path: "/bin/herdr", skill: true }, skill: [], harnesses: {}, key,

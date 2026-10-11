@@ -49,10 +49,10 @@ export async function setKey({ provider = "typesafe", file = SECRETS_FILE, verif
   if (!P.secrets.length) return { ok: true, provider, note: `${P.label} needs no key: it runs on this machine. To use it: routr setup --decision ${provider}` };
   const values = {};
   if (process.stdin.isTTY) {
-    console.error(`${P.label}: ${P.get}. Nothing typed for a secret is shown.`);
+    console.error(`${P.label}: ${P.get}. A secret is not shown as you type it${P.secrets.some((s) => !s.hidden) ? ` (the ${P.secrets.filter((s) => !s.hidden).map((s) => s.label).join(", ")} is)` : ""}.`);
     for (const s of P.secrets) values[s.name] = (await readTyped(`${s.label}: `, s.hidden)).trim().replace(new RegExp(`^${s.name}=`), "").replace(/^["']|["']$/g, "");
   } else Object.assign(values, parsePiped(await readStdin(), P.secrets));
-  for (const s of P.secrets) { const bad = checkValue(s, values[s.name] ?? ""); if (bad) return { ok: false, provider, error: `${bad}; nothing was written` }; }
+  for (const s of P.secrets) { const bad = checkValue(s, values[s.name] ?? ""); if (bad) return { ok: false, provider, error: `${bad}; nothing was written` }; if (s.lower) values[s.name] = values[s.name].toLowerCase(); }
   writeSecrets(values, file);
   const out = { ok: true, provider, file, works: null };
   if (verify) {

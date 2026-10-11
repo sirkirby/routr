@@ -111,7 +111,7 @@ export const COMMANDS = {
   },
   key: {
     name: "key",
-    description: "`routr key set [typesafe|cloudflare]` stores what your decision model's provider needs (TypeSafe: an API key; Cloudflare: an API token with Workers AI Read and Edit, and your account ID): typed with no echo (or piped in, one per line), saved owner-only beside any other provider's, then tested. With no provider, the one your settings use. Ollama needs no key",
+    description: "`routr key set [typesafe|cloudflare]` stores what your decision model's provider needs (TypeSafe: an API key; Cloudflare: an API token with Workers AI Read and Edit, and your account ID): a secret is typed with no echo (the account ID is shown), or piped in one per line; saved owner-only beside any other provider's, then tested. With no provider, the one your settings use. Ollama needs no key",
     args: [{ name: "set", description: "store it in ~/.config/routr/env", required: true }, { name: "typesafe|cloudflare", description: "the provider (default: the one your settings use)", required: false }],
     flags: [{ name: "--no-verify", description: "skip the test call", required: false }],
   },

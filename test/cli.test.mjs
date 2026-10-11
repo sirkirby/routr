@@ -589,3 +589,10 @@ test("a folder inside routr's copy that cannot be read counts as the user's: the
   expect(readFileSync(`${notes}/mine.txt`, "utf8")).toBe("the user's");    // still where the user put it
   expect(readdirSync(`${home}/.agents/skills`).filter((n) => n.includes("routr-old"))).toEqual([]);
 });
+
+test("from the setup review: a Cloudflare account ID in capitals is taken, and saved in lower case", () => {
+  const home = scratch("key-upper"), env = cliEnv(home);
+  const r = Bun.spawnSync(["bun", SCRIPT, "key", "set", "cloudflare", "--no-verify"], { env, stdin: Buffer.from("cf_test_0123456789abcdef\n0123456789ABCDEF0123456789ABCDEF\n") });
+  expect(r.exitCode).toBe(0);
+  expect(readFileSync(join(home, ".config/routr/env"), "utf8")).toContain("CLOUDFLARE_ACCOUNT_ID=0123456789abcdef0123456789abcdef\n");
+});

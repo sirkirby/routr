@@ -50,7 +50,7 @@ export const PROVIDERS = {
     // wrangler's own names, so a person or a CI that already has them set needs nothing more.
     secrets: [
       { name: "CLOUDFLARE_API_TOKEN", label: "Cloudflare API token (Workers AI Read and Edit)", hidden: true },
-      { name: "CLOUDFLARE_ACCOUNT_ID", label: "Cloudflare account ID", hidden: false, shape: /^[0-9a-f]{32}$/ },
+      { name: "CLOUDFLARE_ACCOUNT_ID", label: "Cloudflare account ID", hidden: false, shape: /^[0-9a-f]{32}$/i, lower: true },
     ],
     keysUrl: "https://dash.cloudflare.com/profile/api-tokens",
     // Cloudflare's Workers AI REST guide asks for Read and Edit (its "Workers AI" token template); the maintainer's runs
@@ -91,6 +91,13 @@ export const PROVIDERS = {
     // Speed on an M4 Max (2026-10-11, the shipped questions, a new brief each time, model loaded): Clef Flash as MLX
     // 5-7 s, as GGUF about 5 s; Clef 27B as MLX 13-26 s, as GGUF about 20 s. Every request carries routr's ~1,950
     // tokens of questions, so even a short brief costs that. Clef 27B is not offered here: too slow to advise in.
+    // Whether it can answer, without asking it anything: the server is up and the model is pulled. Null when ready,
+    // otherwise what to do. Setup says it instead of a generic "install, then pull" (seen in a real terminal).
+    ready: async (model, env = process.env) => {
+      const tags = await fetch(`${ollamaHost(env)}/api/tags`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).catch(() => null);
+      if (!tags) return `Ollama is not running at ${ollamaHost(env)}: install Ollama 0.35 or later (https://ollama.com) and start it, then run: ollama pull ${model}`;
+      return tags.models?.some((x) => x.name === model || x.model === model) ? null : `${model} is not pulled yet: run ollama pull ${model}`;
+    },
     check: async (model, profile, env = process.env) => {
       if (!profile?.digest) return null;
       const res = await fetch(`${ollamaHost(env)}/api/tags`, { signal: AbortSignal.timeout(3000) });

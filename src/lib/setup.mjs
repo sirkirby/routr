@@ -94,7 +94,7 @@ export function parseChannel(args) {
 export function parseDecision(args) {
   const i = args.indexOf("--decision");
   if (i < 0) return undefined;
-  const v = args[i + 1] ?? "", at = v.indexOf(":"), provider = at < 0 ? v : v.slice(0, at), model = at < 0 ? null : v.slice(at + 1);
+  const v = args[i + 1] ?? "", at = v.indexOf(":"), provider = at < 0 ? v : v.slice(0, at), model = at < 0 ? null : v.slice(at + 1) || null; // "cloudflare:" is the default model
   if (!isProvider(provider)) throw new Error(`--decision takes <provider>[:<model>], with one of: ${PROVIDER_NAMES.join(", ")}`);
   const models = Object.keys(PROVIDERS[provider].models), here = modelsHere(provider);
   if (model && !isModel(provider, model)) throw new Error(`--decision ${v}: routr has measured ${models.join(", ")} on ${provider}`);
@@ -220,10 +220,17 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   let telemetryAsked = false;
   try { telemetryAsked = "telemetry" in JSON.parse(readFileSync(path, "utf8")); } catch {}
   let choices = null;
-  // A provider's key, typed by the person (never passed by an agent), when the provider chosen has none yet.
+  // A provider's key, typed by the person (never passed by an agent), when the provider chosen has none yet; for a local
+  // one, whether it is ready. Once per provider in a run: a model changed on the same provider asks nothing again.
+  const handled = new Set();
+  // Stopping before the review writes no settings; a key typed on the way was saved when it was typed, and is said.
+  const stopped = () => { const kept = did.filter((d) => d.startsWith("saved the")); const said = `setup stopped: your settings were not changed${kept.length ? ` (${kept.join("; ")})` : ", and nothing was written"}`;
+    ui.cancel(said[0].toUpperCase() + said.slice(1) + "."); ui.close(); return { ok: false, cancelled: true, error: said, did, skipped }; };
   const keyFor = async (provider) => {
     const P = PROVIDERS[provider];
-    if (P.local) { ui.note(P.label, [`Runs on this machine: no key. ${P.get(decisionTarget({ decision }, {}).model)}`]); return; }
+    if (handled.has(provider)) return;
+    handled.add(provider);
+    if (P.local) { const not = await P.ready(decision.model, env); ui.note(P.label, [not ? `Runs on this machine: no key. ${not}` : `${decision.model} is pulled and Ollama is running: nothing more to do.`]); return; }
     // The provider doctor just tried and found failing is asked again even with a key saved (one revoked, or mistyped).
     if (!(provider === (r.key.provider ?? "typesafe") && !r.key.works) && hasKey(provider)) return;
     ui.note(`${P.label} key`, [`routr asks the decision model about each piece of work: it needs your ${P.label} key.`, P.get]);
@@ -235,11 +242,11 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     if (!r.key.works) {
       ui.note("Decision model", ["routr asks a small decision model about each piece of work. TypeSafe's Jev needs a TypeSafe key;", "Cloudflare's Clef runs on your Cloudflare account, or free on this machine through Ollama."]);
       const d = await askDecision(ui, decisionTarget(config ? loadConfig(path).config : null, {}));
-      if (d === CANCEL) { ui.cancel("Setup stopped: nothing was written."); ui.close(); return { ok: false, cancelled: true, error: "setup stopped: nothing was written", did, skipped }; }
+      if (d === CANCEL) { return stopped(); }
       if (d?.provider) { decision = d; await keyFor(d.provider); }
     }
     choices = await guided({ ui, r, config, efforts: levelsOf, telemetry: !telemetryAsked && !envOff(env), decided: decision ?? null });
-    if (choices === CANCEL) { ui.cancel("Setup stopped: nothing was written."); ui.close(); return { ok: false, cancelled: true, error: "setup stopped: nothing was written", did, skipped }; }
+    if (choices === CANCEL) { return stopped(); }
     if (!choices.write) {
       if (skillStep()) { if (did.length) ui.note("Done", did); if (skillFailures.length) ui.note("Failed", skillFailures); }
       ui.outro("Your settings did not change."); ui.close();
@@ -271,7 +278,10 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // and their channel, the decision model, and which subscriptions are turned off.
   if (!config) {
     config = { ...starterConfig(found, models, ranks), ...(typeof old?.telemetry === "boolean" ? { telemetry: old.telemetry } : {}), ...(typeof old?.auto_update === "boolean" ? { auto_update: old.auto_update } : {}),
-      ...(UPDATE_CHANNELS.includes(old?.update_channel) ? { update_channel: old.update_channel } : {}), ...(old?.decision ? { decision: old.decision } : {}) };
+      ...(UPDATE_CHANNELS.includes(old?.update_channel) ? { update_channel: old.update_channel } : {}), ...(old?.decision ? { decision: old.decision } : {}),
+      // A sure_at the person set is theirs; 0.8 was Jev's, written by an older setup, and now follows the model.
+      ...(typeof old?.sure_at === "number" && old.sure_at !== 0.8 ? { sure_at: old.sure_at } : {}) };
+    if (old?.sure_at === 0.8) did.push("dropped sure_at 0.8, an older setup's default: it now follows the decision model");
     for (const [n, s] of Object.entries(old?.subscriptions ?? {})) if (config.subscriptions[n]) {
       if (s?.enabled === false) config.subscriptions[n].enabled = false;
       // A rebuild must not silently change where the person permits routine spending.
@@ -321,6 +331,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
       config.decision = { provider: decision.provider, model };
       if (config.sure_at === 0.8) { delete config.sure_at; changed.push("sure_at 0.8 removed: it now follows the decision model"); }
       if (!ui && !PROVIDERS[decision.provider].local && !hasKey(decision.provider)) skipped.push(`${PROVIDERS[decision.provider].label} needs its key: the user runs routr key set ${decision.provider} in their own terminal`);
+      if (!ui && PROVIDERS[decision.provider].local) { const not = await PROVIDERS[decision.provider].ready(decision.model, env); if (not) skipped.push(`${PROVIDERS[decision.provider].label}: ${not} (a download of more than 10 GB: ask the user first)`); }
     }
   }
   if (changed.length) did.push(`changed ${changed.join(", ")}`);

@@ -207,7 +207,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   // Run again: what is set, then a menu, until the person writes or leaves.
   const menu = async () => {
     ui.note("Your settings", [...candidates.map((n) => `${HARNESSES[n].label.padEnd(12)} ${current[n] ? describe(n, draft[n]) : "detected, not set up yet"}${signedIn(n) ? "" : ` · ${signInOf(n)}`}`),
-      ...waiting.map((n) => `${HARNESSES[n].label.padEnd(12)} ${signInOf(n)}`), `${"Decisions".padEnd(12)} ${decisionLabel(decisionNow)}`, `${"Updates".padEnd(12)} ${channelNow} channel`]);
+      ...waiting.map((n) => `${HARNESSES[n].label.padEnd(12)} ${signInOf(n)}`), `${"Decisions".padEnd(12)} ${decisionLabel(answers.decision ?? decisionNow)}${answers.decision && decisionLabel(answers.decision) !== decisionLabel(decisionNow) ? " (not saved yet)" : ""}`, `${"Updates".padEnd(12)} ${channelNow} channel`]);
     for (;;) {
       const pending = changes().length;
       const v = await ui.select({ message: "What would you like to do?", initial: "one", options: [
