@@ -55,7 +55,7 @@ Workers AI Read.
 With Ollama, the first brief after the model was unloaded waits for it to load (5 to 17 s for Clef Flash on an M4
 Max, about 5 s on an NVIDIA laptop GPU); routr keeps it loaded for 15 minutes after each brief. `Clef: non-finite
 logit` means the Ollama is too old (0.40.0 fails this way on Windows): update it to 0.40.1 or later. A brief that times
-out every time may be running on the CPU (`ollama ps` says): it took about 35 s on a fast laptop CPU, and routr waits
+out every time may be running on the CPU (`ollama ps` says): it took 36-41 s on a fast laptop CPU, and routr waits
 30 s.
 
 ## Claude's usage shows as "assumed"

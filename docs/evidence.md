@@ -84,11 +84,12 @@ for Ollama, a new brief each time with the model loaded.
   Ollama's `latest` is a different build on a Mac (MLX) than elsewhere (GGUF), so routr asks an exact tag, and
   `routr doctor` says when the build you pulled is not the one measured.
 - **Local speed.** On an M4 Max, Clef 27B through Ollama took 13-26 s per brief (MLX) and about 20 s (GGUF), too slow
-  to advise in, so routr does not offer it locally. Clef Flash (GGUF) on the RTX 5090 laptop GPU took about 0.8 s for a
-  whole `routr subagent` call, and about 35 s a brief on the same laptop's CPU alone (Core Ultra 9 275HX), longer than
-  routr waits (30 s): a local model needs a GPU or Apple Silicon. Ollama 0.40.0 could not run Clef on Windows at all
-  (`Clef: non-finite logit`, GPU and CPU); 0.40.3 could, so routr asks for 0.40.1, whose notes name the fix. Every request carries routr's questions, about 1,950 input tokens,
-  so even a short brief costs that much.
+  to advise in, so routr does not offer it locally. Every request carries routr's questions, about 1,950 input tokens,
+  so even a short brief costs that much. On Windows (2026-10-11, Ollama 0.40.3), Clef Flash (GGUF) on an RTX 5090
+  laptop GPU took about 0.8 s for a whole `routr subagent` call; on the same laptop's CPU alone (Core Ultra 9 275HX) it
+  took 36-41 s a brief, longer than routr waits (30 s), so a local model needs a GPU or Apple Silicon. Ollama 0.40.0
+  could not run Clef there at all (`Clef: non-finite logit`, on the GPU and the CPU); 0.40.3 could, so routr asks for
+  0.40.1, whose release notes name the fix.
 - **Price.** Clef bills input tokens only. Workers AI's free daily allowance (10,000 neurons) covers about 450,000
   Clef input tokens or 2.9 million Clef Flash input tokens: at about 2,000 tokens a brief, roughly 200 briefs a day on
   Clef, more on Flash. Above that, Cloudflare's Workers Paid plan ($5 a month) bills by use

@@ -107,7 +107,7 @@ export const PROVIDERS = {
     // 5-7 s, as GGUF about 5 s; Clef 27B as MLX 13-26 s, as GGUF about 20 s. Every request carries routr's ~1,950
     // tokens of questions, so even a short brief costs that. Clef 27B is not offered here: too slow to advise in.
     // Clef Flash as GGUF on Windows (2026-10-11, Ollama 0.40.3, RTX 5090 laptop GPU): about 0.8 s a brief, loading
-    // 4.8 s; on that laptop's CPU alone (Core Ultra 9 275HX) about 35 s, past deadlineMs: it needs a GPU or Apple Silicon.
+    // 4.8 s; on that laptop's CPU alone (Core Ultra 9 275HX) 36-41 s, past deadlineMs: it needs a GPU or Apple Silicon.
     // Whether it can answer, without asking it anything: the server is up and the model is pulled. Null when ready,
     // otherwise what to do. Setup says it instead of a generic "install, then pull" (seen in a real terminal).
     ready: async (model, env = process.env) => {
