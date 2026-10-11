@@ -1020,7 +1020,8 @@ test("from 2026-10-11: a task that never arrived is sent again by launch, adopti
   expect(r.state).toBe("needs_input");
   expect(r.needs_input.then).toContain("send it with routr launch");
   expect(r.needs_input.then).toContain("--pane w1:p2");
-  expect(r.needs_input.then).toContain(`--task-file ${task}`);
-  expect(r.needs_input.then).toContain(`--cwd ${process.cwd()}`);
+  const { quote } = await import("../src/lib/herdr.mjs");
+  expect(r.needs_input.then).toContain(`--task-file ${quote(task)}`); // quoted as the shell needs it (Windows paths too)
+  expect(r.needs_input.then).toContain(`--cwd ${quote(process.cwd())}`);
   expect(r.needs_input.then).not.toContain("herdr agent prompt");
 });
