@@ -41,11 +41,12 @@ routr's tests (`docs/evidence.md`, "Decision models"):
   (TypeSafe's quick start shows the step: https://docs.typesafe.ai/introduction/quickstart).
 - **Cloudflare's Clef on Workers AI** (`cloudflare`): for someone who already has a Cloudflare account, or whose
   organisation does. 72 of 104 levels right, more often too high than too low. Needs a Cloudflare API token with
-  Workers AI Read and Edit, as Cloudflare's "Workers AI" token template sets (https://dash.cloudflare.com/profile/api-tokens), and their account ID. Workers AI's free
+  Workers AI Read, the only permission routr needs (https://dash.cloudflare.com/profile/api-tokens), and their account ID. Workers AI's free
   daily allowance covers about 200 briefs a day. `cloudflare:clef-flash`, a smaller model, reads levels too low more often.
-- **Clef Flash on their own machine through Ollama** (`ollama`): free, and nothing leaves the machine. Ollama 0.35 or
+- **Clef Flash on their own machine through Ollama** (`ollama`): free, and nothing leaves the machine. Ollama 0.40.1 or
   later, then the build `routr doctor` names: `clef-flash:9b-mxfp8` on Apple Silicon (12 GB, 5-7 s a brief on an M4
-  Max), `clef-flash:9b-q8_0` elsewhere (11 GB; its speed was measured only on a Mac). 70 to 72 of 104 levels right,
+  Max), `clef-flash:9b-q8_0` elsewhere (11 GB; under a second on an NVIDIA laptop GPU). It needs a GPU or Apple
+  Silicon: on a CPU alone a brief takes longer than routr waits. 70 to 72 of 104 levels right,
   more often too low. Never pull a model for them without asking: it is a download of more than 10 GB.
 
 Then set it: `routr setup --yes --decision <typesafe|cloudflare|ollama>` (or `cloudflare:clef-flash`).

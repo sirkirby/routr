@@ -233,6 +233,9 @@ test("one client asks every provider: its endpoint, its key, its envelope, and c
   await expect(ask({}, {}, { config: { decision: { provider: "cloudflare" } }, env: {}, file: join(dir, "none"), fetchFn })).rejects.toThrow("routr key set cloudflare");
   const notPulled = async () => new Response('{"error":"model not found, try pulling it first"}', { status: 404 });
   await expect(ask({}, {}, { config: { decision: { provider: "ollama" } }, env: {}, fetchFn: notPulled })).rejects.toThrow("ollama pull");
+  // Ollama 0.40.0 on Windows answered every Clef request this way (2026-10-11): say to update, not the raw error.
+  const nanLogit = async () => new Response(JSON.stringify({ error: JSON.stringify({ error: { code: 500, message: "Clef: non-finite logit" } }) }), { status: 500 });
+  await expect(ask({}, {}, { config: { decision: { provider: "ollama" } }, env: {}, fetchFn: nanLogit, deadlineMs: 2000 })).rejects.toThrow("update Ollama to 0.40.1 or later");
   const down = async () => { throw new TypeError("fetch failed"); };
   await expect(ask({}, {}, { config: { decision: { provider: "ollama" } }, env: {}, fetchFn: down })).rejects.toThrow("is not running");
   // The formulas, on the cases TypeSafe documents: an even split is 0, one certain option is 1.
@@ -375,6 +378,14 @@ test("from the core review: each provider finding stays fixed", async () => {
   expect(ollamaHost({ OLLAMA_HOST: "https://ollama.example.com" })).toBe("https://ollama.example.com:443");
   expect(ollamaHost({ OLLAMA_HOST: "0.0.0.0" })).toBe("http://0.0.0.0:11434");
   expect(ollamaHost({})).toBe("http://127.0.0.1:11434");
+  // The oldest Ollama that runs Clef: a pre-release of a newer one counts as that one, and a source build (0.0.0) is not judged.
+  const { olderThan, ollamaTooOld } = await import("../src/lib/providers.mjs");
+  expect(["0.40.0", "0.35.1", "0.9.9"].map((v) => olderThan(v, "0.40.1"))).toEqual([true, true, true]);
+  expect(["0.40.1", "0.40.3", "0.41.0-rc1", "1.0.0", "0.40.10"].map((v) => olderThan(v, "0.40.1"))).toEqual([false, false, false, false, false]);
+  for (const [version, said] of [["0.40.0", "Ollama 0.40.0 is running; Clef needs 0.40.1 or later: update Ollama (https://ollama.com) and restart it"], ["0.40.3", null], ["0.0.0", null]]) {
+    const server = Bun.serve({ port: 0, fetch: () => Response.json({ version }) });
+    try { expect(await ollamaTooOld({ OLLAMA_HOST: `127.0.0.1:${server.port}` })).toBe(said); } finally { server.stop(true); }
+  }
   // 4. A key in the environment is used even when the saved file cannot be read (a folder stands in for an unreadable file).
   mkdirSync(join(dir, "unreadable"));
   expect(secretsFor("typesafe", { env: { TYPESAFE_API_KEY: "env_key_1234567890" }, file: join(dir, "unreadable") })).toEqual({ TYPESAFE_API_KEY: "env_key_1234567890" });

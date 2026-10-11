@@ -3,7 +3,7 @@
 // exact answers, latency and tokens.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { decisionTarget, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
+import { decisionTarget, OLLAMA_MIN, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 
 // ---------------------------------------------------------------- secrets
 // One owner-only file of NAME=value lines outside any project, so workers in worktrees and other folders find it too.
@@ -91,7 +91,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Turns a failure into what the person can do about it; the message stays short (it ends up in a fallback note).
 function why(P, t, status, text) {
   if (P.local && status === 404) return `${P.label}: ${t.model} is not pulled. ${P.get(t.model)}`;
-  if (P.local && /does not support decision/.test(text)) return `${P.label}: ${t.model} is not a decision model, or this Ollama is older than 0.35. ${P.get(t.model)}`;
+  if (P.local && /does not support decision/.test(text)) return `${P.label}: ${t.model} is not a decision model, or this Ollama is older than ${OLLAMA_MIN}. ${P.get(t.model)}`;
+  if (P.local && /non-finite logit/.test(text)) return `${P.label}: this Ollama cannot run ${t.model} (Ollama 0.40.0 fails this way): update Ollama to ${OLLAMA_MIN} or later and restart it`;
   if (status === 401 || status === 403) return `${P.label} ${status}: the key was refused. ${typeof P.get === "function" ? P.get(t.model) : P.get}`;
   return `${P.label} ${status}: ${text.slice(0, 200)}`;
 }

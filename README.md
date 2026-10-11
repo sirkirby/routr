@@ -126,10 +126,11 @@ never shown); run again, its menu's "Decision model" changes it:
 - **TypeSafe's Jev** (the default, and the one that reads the level most accurately on routr's tests): an
   [API key](https://console.typesafe.ai/keys).
 - **Cloudflare's Clef** on Workers AI: an [API token](https://dash.cloudflare.com/profile/api-tokens) with
-  Workers AI Read and Edit, as Cloudflare's "Workers AI" token template sets, and your account ID. Workers AI's free daily allowance covers about 200 briefs a day.
-- **Clef Flash on your own machine**, free: [Ollama](https://ollama.com) 0.35 or later and
+  Workers AI Read (the only permission routr needs), and your account ID. Workers AI's free daily allowance covers about 200 briefs a day.
+- **Clef Flash on your own machine**, free: [Ollama](https://ollama.com) 0.40.1 or later and
   `ollama pull clef-flash:9b-mxfp8` on Apple Silicon (12 GB; 5-7 s a brief on an M4 Max), or
-  `ollama pull clef-flash:9b-q8_0` elsewhere (11 GB; its speed was measured only on a Mac, about 5 s).
+  `ollama pull clef-flash:9b-q8_0` elsewhere (11 GB; under a second on an NVIDIA RTX 5090 laptop GPU). It needs a GPU
+  or Apple Silicon: on a laptop CPU alone a brief took about 35 s, longer than routr waits.
 
 Clef reads the level of work less accurately than Jev on routr's tests ([the numbers](docs/evidence.md#decision-models));
 `routr setup --decision <provider>` switches any time. Then it finds the harnesses that are installed and signed in, and lets you choose which ones routr may use and each
