@@ -359,6 +359,10 @@ test("the decision model: --decision writes it, a key is the person's to set, an
   expect((await runSetup({ config, found: ["agy"], args: ["--yes", "--decision", "cloudflare"] })).r.skipped.join(" ")).toContain("the user runs routr key set cloudflare in their own terminal");
 });
 
+// The decision models setup offers on this machine, in its order: "<provider>:<model>".
+const { PROVIDER_NAMES: PN, modelsHere: MH } = await import("../src/lib/providers.mjs");
+const PROVIDER_ORDER = PN.flatMap((p) => MH(p).map((m) => `${p}:${m}`));
+
 test("from the setup review: each decision-model finding stays fixed", async () => {
   const cf = { telemetry: false, decision: { provider: "cloudflare" }, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } };
   // The provider that failed, then another model on it: its key is asked once, not twice.
@@ -387,6 +391,17 @@ test("from the setup review: each decision-model finding stays fixed", async () 
     expect(local.saved.decision).toEqual({ provider: "ollama", model: "clef-flash:9b-q8_0" });
     expect(local.r.skipped.join(" ")).toContain("clef-flash:9b-q8_0 is not pulled yet: run ollama pull clef-flash:9b-q8_0 (a download of more than 10 GB: ask the user first)");
   } finally { server.stop(true); }
+  // In a guided run, each local model chosen is checked, not only the first (from the verification pass).
+  const server2 = Bun.serve({ port: 0, fetch: () => Response.json({ models: [{ name: "clef-flash:9b-q8_0", model: "clef-flash:9b-q8_0", digest: "x" }] }) });
+  try {
+    const said = [];
+    const gguf = PROVIDER_ORDER.indexOf("ollama:clef-flash:9b-q8_0") + 1, other = PROVIDER_ORDER.indexOf("ollama:clef-flash:9b-mxfp8") + 1;
+    if (other > 0) { // Apple Silicon offers both builds: pick the unpulled MLX one first, then the pulled GGUF one from the menu
+      await runSetup({ config: cf, found: ["agy"], keyWorks: false, env: { OLLAMA_HOST: `127.0.0.1:${server2.port}` }, answers: [String(other), "4", String(gguf), "6"], print: (t) => said.push(t) });
+      expect(said.join("\n")).toContain("clef-flash:9b-mxfp8 is not pulled yet");
+      expect(said.join("\n")).toContain("clef-flash:9b-q8_0 is pulled and Ollama is running");
+    }
+  } finally { server2.stop(true); }
   const down = await runSetup({ config: cf, found: ["agy"], args: ["--yes", "--decision", "ollama:clef-flash:9b-q8_0"], env: { OLLAMA_HOST: "127.0.0.1:9" } });
   expect(down.r.skipped.join(" ")).toContain("Ollama is not running at http://127.0.0.1:9");
 });

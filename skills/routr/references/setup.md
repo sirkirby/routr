@@ -42,7 +42,7 @@ routr's tests (`docs/evidence.md`, "Decision models"):
 - **Cloudflare's Clef on Workers AI** (`cloudflare`): for someone who already has a Cloudflare account, or whose
   organisation does. 72 of 104 levels right, more often too high than too low. Needs a Cloudflare API token with
   Workers AI Read and Edit, as Cloudflare's "Workers AI" token template sets (https://dash.cloudflare.com/profile/api-tokens), and their account ID. Workers AI's free
-  daily allowance covers about 200 briefs a day. `cloudflare:clef-flash` is cheaper but reads levels too low more often.
+  daily allowance covers about 200 briefs a day. `cloudflare:clef-flash`, a smaller model, reads levels too low more often.
 - **Clef Flash on their own machine through Ollama** (`ollama`): free, and nothing leaves the machine. Ollama 0.35 or
   later, then the build `routr doctor` names: `clef-flash:9b-mxfp8` on Apple Silicon (12 GB, 5-7 s a brief on an M4
   Max), `clef-flash:9b-q8_0` elsewhere (11 GB; its speed was measured only on a Mac). 70 to 72 of 104 levels right,

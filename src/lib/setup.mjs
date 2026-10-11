@@ -228,8 +228,9 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     ui.cancel(said[0].toUpperCase() + said.slice(1) + "."); ui.close(); return { ok: false, cancelled: true, error: said, did, skipped }; };
   const keyFor = async (provider) => {
     const P = PROVIDERS[provider];
-    if (handled.has(provider)) return;
-    handled.add(provider);
+    const once = P.local ? `${provider}:${decision.model}` : provider; // a key per provider; a local model's readiness per model
+    if (handled.has(once)) return;
+    handled.add(once);
     if (P.local) { const not = await P.ready(decision.model, env); ui.note(P.label, [not ? `Runs on this machine: no key. ${not}` : `${decision.model} is pulled and Ollama is running: nothing more to do.`]); return; }
     // The provider doctor just tried and found failing is asked again even with a key saved (one revoked, or mistyped).
     if (!(provider === (r.key.provider ?? "typesafe") && !r.key.works) && hasKey(provider)) return;
@@ -281,7 +282,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
       ...(UPDATE_CHANNELS.includes(old?.update_channel) ? { update_channel: old.update_channel } : {}), ...(old?.decision ? { decision: old.decision } : {}),
       // A sure_at the person set is theirs; 0.8 was Jev's, written by an older setup, and now follows the model.
       ...(typeof old?.sure_at === "number" && old.sure_at !== 0.8 ? { sure_at: old.sure_at } : {}) };
-    if (old?.sure_at === 0.8) did.push("dropped sure_at 0.8, an older setup's default: it now follows the decision model");
+    if (old?.sure_at === 0.8) did.push(`dropped sure_at 0.8, an older setup's default: it now follows the decision model (if you chose 0.8 yourself, put "sure_at": 0.8 back in ${path})`);
     for (const [n, s] of Object.entries(old?.subscriptions ?? {})) if (config.subscriptions[n]) {
       if (s?.enabled === false) config.subscriptions[n].enabled = false;
       // A rebuild must not silently change where the person permits routine spending.

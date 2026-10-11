@@ -72,7 +72,7 @@ export const PROVIDERS = {
         hint: "your Cloudflare account; Workers AI has a free daily allowance · 72 of 104 levels right, more often too high" },
       // Reads levels low (18 of 104 under): offered for its price and speed, not as the default.
       "clef-flash": { sure_at: 0.5, torn: { right: 23, of: 36, low: 13, high: 0 },
-        hint: "your Cloudflare account, faster and cheaper than Clef · 74 of 104 levels right, more often too low" },
+        hint: "your Cloudflare account, a smaller and faster Clef · 74 of 104 levels right, more often too low" },
     },
   },
   ollama: {
