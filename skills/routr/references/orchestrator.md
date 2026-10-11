@@ -152,7 +152,10 @@ object describing what it did.
   (`steps` then holds `prompt_wait`) and never sends the task again or presses a key for it: herdr's rule is that a
   stalled prompt may still have arrived. If the agent has not started by the end of the timeout, the result is
   `needs_input`, and its `then` says: do not launch it again; read the pane; press Enter if the task sits unsent in
-  the input box (`herdr agent send-keys <pane> enter`), and send it with `herdr agent prompt` only if it never arrived.
+  the input box (`herdr agent send-keys <pane> enter`); and if the box is empty and the agent never started, the task
+  never arrived: run the `routr launch … --pane <pane>` command `then` gives, which wraps and sends it again. Never
+  send it with a bare `herdr agent prompt`: launch wrapped it (the opening, your rules, the closing line), and a bare
+  prompt would arrive without them.
 
 `references/harnesses.md` records what each harness does and what goes wrong with it. Read it when a launch surprises
 you, when you are choosing a model, or when you launch by hand. The by-hand sequence is what `routr launch` performs:
@@ -176,11 +179,18 @@ You are the judge. Rework is normal: a worker often patches the symptom instead 
 is how that gets caught. Workers use the skills and conventions the user has set up in their harness; judge the
 result against the project's own standards, not just the brief.
 
-- Wait with `herdr agent wait`, then read the tail of the pane. (A `wait-output` regex must be anchored to the whole
-  line, `'^\W*VERDICT: (done|partial|blocked)\s*$'`, or it matches the echo of your own launch prompt. herdr has
-  reported an Antigravity worker `idle` four seconds into work it was still doing.) `blocked` means the agent is
-  showing an approval or question: read it, answer it if it is within the task's scope, otherwise ask the user
-  (`herdr notification show`).
+- Wait with `herdr agent wait <pane> --until done --until idle --until blocked --timeout <ms>`, then read the tail of
+  the pane. (A `wait-output` regex must be anchored to the whole line, `'^\W*VERDICT: (done|partial|blocked)\s*$'`,
+  or it matches the echo of your own launch prompt. herdr has reported an Antigravity worker `idle` four seconds into
+  work it was still doing.) `blocked` means the agent is showing an approval or question: read it, answer it if it is
+  within the task's scope, otherwise ask the user (`herdr notification show`).
+- **Never wait without a timeout, and look at a worker that has been working a long time.** Workers are told not to
+  ask, but one sometimes does, in its harness's own question box, and herdr does not always read that as `blocked`:
+  on 2026-10-11 a Codex worker's question sat under its still-running "Working (29m …)" timer (background terminals
+  kept it going), herdr read the pane as `working`, and the question waited for an answer no one gave. When a wait
+  times out, or a worker has been working far longer than its task should take, read the last lines of its pane
+  (`herdr agent read <pane> --lines 30`). A question there is yours to answer as you would a `blocked` one; the answer
+  goes in with `herdr agent send-keys`, not a new prompt.
 - Get the worker's FULL report (Claude's headless `result` field is only its last message), save it, and take a
   first read: `routr check --brief <file> --report <file>`. It flags, in a second or less (several on a local model) and the same way every time, a
   report that names no verification, skips part of the brief, admits gaps, reads as a symptom patch, or strays out

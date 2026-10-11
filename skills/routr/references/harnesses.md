@@ -85,12 +85,24 @@ harness. A native `.exe` install starts as before.
    (herdr's own rule; Codex holds one until it has finished starting, measured 2026-09-28): wait with `herdr agent wait
    <agent> --until working --until blocked`, then read the pane, and never send it a second time. Screen patterns for
    the state of an input box break with each harness release; herdr's lifecycle state is what `routr launch` relies on.
+   A task that provably never arrived (the input box empty, the agent never started, its session holding no message:
+   Claude in a new worktree, 2026-10-11, under load) is sent again with `routr launch --pane`, never a bare prompt.
+   `routr launch` waits for two ready readings 1.5 s apart before it sends, and waits through a moment in which herdr
+   sees no agent (`agent_not_running`, seen once with Cursor under load) before it calls a start failed.
 2. Verify outcomes yourself; status fields and exit codes lie (see the table).
 3. Read usage and the models actually used from transcripts or session files, not from the agent's own account.
 4. Before a batch, launch one unit and watch its first minutes. A batch nobody watched once burned its budget on
    invalid runs.
 5. Where the harness offers a budget cap per run, set one.
 6. One worktree per worker that writes. Keep a worker's directory away from repositories whose hooks should not fire.
+7. **A worker's own question box can read as working.** Codex's ask-the-user box (a text box or options above
+   `enter submit   ^] skip   ⇧→ main prompt`, or folded to `? 1 question · 15s … ⇧← to answer`) sets its terminal
+   title to "Action Required", which herdr reads as `blocked` (measured 2026-10-11, gpt-6.1-sol). With background
+   terminals running the screen still shows "Working (29m 33s …)", and herdr's rules 2026.10.01.1 read the screen as
+   `working`: a question can wait unseen. The worker guide forbids these tools; the orchestrator guide says to look at
+   a long-working worker. herdr's rules are herdr's to fix (`herdr agent explain --file <screen> --agent codex` shows
+   its reading); a local override in `~/.config/herdr/agent-detection/codex.toml` replaces the whole manifest and
+   shadows every later update from herdr, so it is a stopgap, removed once herdr's own rules read the box.
 
 ## Where routr's skills go, and `/routr-orchestrate` (vendors' docs, and measured 2026-10-05 where marked)
 
