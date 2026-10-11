@@ -29,6 +29,22 @@ export function ollamaHost(env = process.env) {
   return `${scheme}://${m?.[1] || "127.0.0.1"}:${m?.[2] ?? port}${path}`;
 }
 
+// The oldest Ollama that runs Clef Flash: 0.40.0 answered every request on Windows with "Clef: non-finite logit", on
+// the GPU and on the CPU, and 0.40.3 answered (2026-10-11, RTX 5090 laptop); 0.40.1's notes name the fix (ollama#18777).
+export const OLLAMA_MIN = "0.40.1";
+// A pre-release comes before its release: 0.40.1-rc1 is older than 0.40.1 (from the review), 0.41.0-rc1 is not.
+export const olderThan = (v, min) => {
+  const [core, pre] = String(v).split(/-(.*)/s), a = core.split(".").map((x) => parseInt(x, 10)), b = min.split(".").map(Number);
+  for (let i = 0; i < b.length; i++) { const x = Number.isNaN(a[i]) ? 0 : a[i] ?? 0; if (x !== b[i]) return x < b[i]; }
+  return Boolean(pre);
+};
+// What to do when the running Ollama is older than OLLAMA_MIN; null when it is new enough or does not say (a build from
+// source reports 0.0.0).
+export async function ollamaTooOld(env = process.env) {
+  const v = await fetch(`${ollamaHost(env)}/api/version`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).then((j) => j?.version).catch(() => null);
+  return typeof v === "string" && /^\d/.test(v) && !v.startsWith("0.0.0") && olderThan(v, OLLAMA_MIN) ? `Ollama ${v} is running; Clef needs ${OLLAMA_MIN} or later: update Ollama (https://ollama.com) and restart it` : null;
+}
+
 export const PROVIDERS = {
   typesafe: {
     label: "TypeSafe",
@@ -49,13 +65,13 @@ export const PROVIDERS = {
     label: "Cloudflare Workers AI",
     // wrangler's own names, so a person or a CI that already has them set needs nothing more.
     secrets: [
-      { name: "CLOUDFLARE_API_TOKEN", label: "Cloudflare API token (Workers AI Read and Edit)", hidden: true },
+      { name: "CLOUDFLARE_API_TOKEN", label: "Cloudflare API token (Workers AI Read)", hidden: true },
       { name: "CLOUDFLARE_ACCOUNT_ID", label: "Cloudflare account ID", hidden: false, shape: /^[0-9a-f]{32}$/i, lower: true },
     ],
     keysUrl: "https://dash.cloudflare.com/profile/api-tokens",
-    // Cloudflare's Workers AI REST guide asks for Read and Edit (its "Workers AI" token template); the maintainer's runs
-    // used a wrangler login, so Read alone is not confirmed.
-    get: "Create an API token from the \"Workers AI\" template (Workers AI Read and Edit) at https://dash.cloudflare.com/profile/api-tokens, then run: routr key set cloudflare (it also asks for your account ID)",
+    // Read is enough: a token with only Account > Workers AI > Read ran key set, setup, doctor and both models
+    // (2026-10-11). Cloudflare's "Workers AI" token template also adds Edit, which routr never needs.
+    get: "Create an API token with Workers AI Read (Account > Workers AI > Read) at https://dash.cloudflare.com/profile/api-tokens, then run: routr key set cloudflare (it also asks for your account ID)",
     request: (model, s) => ({ url: `https://api.cloudflare.com/client/v4/accounts/${s.CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/cloudflare/${model}`, headers: { Authorization: `Bearer ${s.CLOUDFLARE_API_TOKEN}` } }),
     // The REST API wraps the System One answer: { success, errors: [{ code, message }], messages, result }.
     unwrap: (j) => {
@@ -78,7 +94,7 @@ export const PROVIDERS = {
   ollama: {
     label: "Ollama (local)",
     secrets: [],
-    get: (model) => `Install Ollama 0.35 or later (https://ollama.com), then run: ollama pull ${model}`,
+    get: (model) => `Install Ollama ${OLLAMA_MIN} or later (https://ollama.com), then run: ollama pull ${model}`,
     // keep_alive is Ollama's own field: the model stays loaded between briefs, so only the first call of a session waits
     // for it to load (Clef Flash: 5 to 17 s on an M4 Max, measured).
     request: (model, s, env) => ({ url: `${ollamaHost(env)}/v1/systemone`, headers: {}, body: { keep_alive: "15m" } }),
@@ -91,11 +107,19 @@ export const PROVIDERS = {
     // Speed on an M4 Max (2026-10-11, the shipped questions, a new brief each time, model loaded): Clef Flash as MLX
     // 5-7 s, as GGUF about 5 s; Clef 27B as MLX 13-26 s, as GGUF about 20 s. Every request carries routr's ~1,950
     // tokens of questions, so even a short brief costs that. Clef 27B is not offered here: too slow to advise in.
+    // Clef Flash as GGUF on Windows (2026-10-11, Ollama 0.40.3, RTX 5090 laptop GPU): about 0.8 s a brief, loading
+    // 4.8 s; on that laptop's CPU alone (Core Ultra 9 275HX) 36-41 s, past deadlineMs: it needs a GPU or Apple Silicon.
     // Whether it can answer, without asking it anything: the server is up and the model is pulled. Null when ready,
     // otherwise what to do. Setup says it instead of a generic "install, then pull" (seen in a real terminal).
     ready: async (model, env = process.env) => {
-      const tags = await fetch(`${ollamaHost(env)}/api/tags`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).catch(() => null);
-      if (!tags) return `Ollama is not running at ${ollamaHost(env)}: install Ollama 0.35 or later (https://ollama.com) and start it, then run: ollama pull ${model}`;
+      // Both asked at once, so a slow version answer adds no wait of its own (from the review). A version Ollama does not
+      // give is not held against it: the request itself then says what is wrong.
+      const [tags, old] = await Promise.all([
+        fetch(`${ollamaHost(env)}/api/tags`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).catch(() => null),
+        ollamaTooOld(env),
+      ]);
+      if (!tags) return `Ollama is not running at ${ollamaHost(env)}: install Ollama ${OLLAMA_MIN} or later (https://ollama.com) and start it, then run: ollama pull ${model}`;
+      if (old) return old;
       return tags.models?.some((x) => x.name === model || x.model === model) ? null : `${model} is not pulled yet: run ollama pull ${model}`;
     },
     check: async (model, profile, env = process.env) => {
@@ -110,9 +134,10 @@ export const PROVIDERS = {
       "clef-flash:9b-mxfp8": { runs: "apple-silicon", digest: "bc72638064ee", sure_at: 0.6, torn: { right: 19, of: 36, low: 17, high: 0 },
         hint: "free, on this Mac (12 GB, several seconds a brief) · 70 of 104 levels right, more often too low" },
       // The GGUF build, which Ollama runs on every platform (llama.cpp). Measured on a Mac: 72 of 104, 20 under; on the
-      // 36 real runs, 15 one level low. Its speed was measured only there (about 5 s a brief, M4 Max).
+      // 36 real runs, 15 one level low. On Windows with an NVIDIA GPU its answers were the Mac's to within 0.018 on every
+      // probability of 5 briefs, with no answer or level changed (2026-10-11).
       "clef-flash:9b-q8_0": { digest: "2aa4d39fd93b", sure_at: 0.6, torn: { right: 21, of: 36, low: 15, high: 0 },
-        hint: "free, on this machine (11 GB, several seconds a brief) · 72 of 104 levels right, more often too low" },
+        hint: "free, on this machine with a GPU (11 GB, under a second to about 5 s a brief) · 72 of 104 levels right, more often too low" },
     },
   },
 };

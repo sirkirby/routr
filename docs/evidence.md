@@ -60,7 +60,9 @@ routr's shipped questions (r5, c1). Those questions were worded and tuned on Jev
 | `sure_at` | 0.8 | 0.7 | 0.5 | 0.6 | 0.6 |
 
 Jev's ranges are from the four runs it took part in. The MLX build (`clef-flash:9b-mxfp8`) runs only on Apple Silicon;
-the GGUF build (`clef-flash:9b-q8_0`) runs on every platform, and was measured on a Mac. Times are the gate's means from the maintainer's network, and,
+the GGUF build (`clef-flash:9b-q8_0`) runs on every platform, and was measured on a Mac. On Windows (Ollama 0.40.3, an
+NVIDIA RTX 5090 laptop GPU) the same build's answers to 5 briefs matched the Mac's to within 0.018 on every
+probability, with no answer or level changed. Times are the gate's means from the maintainer's network, and,
 for Ollama, a new brief each time with the model loaded.
 
 - **Which way each is wrong.** Clef reads the level too high more often than Jev, the cheaper direction to be wrong
@@ -83,7 +85,11 @@ for Ollama, a new brief each time with the model loaded.
   `routr doctor` says when the build you pulled is not the one measured.
 - **Local speed.** On an M4 Max, Clef 27B through Ollama took 13-26 s per brief (MLX) and about 20 s (GGUF), too slow
   to advise in, so routr does not offer it locally. Every request carries routr's questions, about 1,950 input tokens,
-  so even a short brief costs that much.
+  so even a short brief costs that much. On Windows (2026-10-11, Ollama 0.40.3), Clef Flash (GGUF) on an RTX 5090
+  laptop GPU took about 0.8 s for a whole `routr subagent` call; on the same laptop's CPU alone (Core Ultra 9 275HX) it
+  took 36-41 s a brief, longer than routr waits (30 s), so a local model needs a GPU or Apple Silicon. Ollama 0.40.0
+  could not run Clef there at all (`Clef: non-finite logit`, on the GPU and the CPU); 0.40.3 could, so routr asks for
+  0.40.1, whose release notes name the fix.
 - **Price.** Clef bills input tokens only. Workers AI's free daily allowance (10,000 neurons) covers about 450,000
   Clef input tokens or 2.9 million Clef Flash input tokens: at about 2,000 tokens a brief, roughly 200 briefs a day on
   Clef, more on Flash. Above that, Cloudflare's Workers Paid plan ($5 a month) bills by use
