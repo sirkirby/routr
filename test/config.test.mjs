@@ -36,3 +36,20 @@ test("a hardest_work that is not a level is quoted the way a bad reserve is, wha
   expect(HARDEST.invalid("x", { a: 1 })).not.toContain("[object Object]");
   expect(RESERVE.invalid("x", "lots")).toContain('"lots"');
 });
+
+test("the decision model is a setting: a provider routr knows and a model it has measured there, else the default and a note", () => {
+  const at = (decision, extra = {}) => { const p = join(SCRATCH, `decision-${Math.random()}.json`); writeFileSync(p, JSON.stringify({ ...extra, ...(decision === undefined ? {} : { decision }) })); return loadConfig(p); };
+  expect(at(undefined).config.decision).toEqual({ provider: "typesafe", model: null });
+  expect(at({ provider: "cloudflare" }).config.decision).toEqual({ provider: "cloudflare", model: null });
+  expect(at({ provider: "cloudflare", model: "clef-flash" }).config.decision).toEqual({ provider: "cloudflare", model: "clef-flash" });
+  const unknown = at({ provider: "openrouter" });
+  expect(unknown.config.decision).toEqual({ provider: "typesafe", model: null });
+  expect(unknown.notes.join(" ")).toContain('decision.provider: "openrouter" is not one of typesafe, cloudflare, ollama');
+  const unmeasured = at({ provider: "cloudflare", model: "clef-omni" });
+  expect(unmeasured.config.decision).toEqual({ provider: "cloudflare", model: null });
+  expect(unmeasured.notes.join(" ")).toContain('"clef-omni" is not one routr has measured on cloudflare');
+  // sure_at follows the model unless the person sets one.
+  expect(DEFAULTS.sure_at).toBeNull();
+  expect(at(undefined).config.sure_at).toBeNull();
+  expect(at(undefined, { sure_at: 0.9 }).config.sure_at).toBe(0.9);
+});

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // routr: quick, calibrated advice for an agent that is about to hand out work. The commands, their flags, and every
 // help text are in one table, src/lib/help.mjs: `routr --help` prints it.
-// Jev (TypeSafe System One) judges the WORK in ~300 ms; routr adds usage and ranks by arithmetic (docs/ranking.md);
+// A System One decision model (TypeSafe's Jev, or Cloudflare's Clef: providers.mjs) judges the WORK in well under a second; routr adds usage and ranks by arithmetic (docs/ranking.md);
 // the agent that asked makes the decision. Never names a model.
 // Advice writes nothing of the user's and fails open; launch reports failures as JSON and exits nonzero.
 // Each command's code is loaded only when that command runs: `statusline` runs on every Claude Code turn.
@@ -40,7 +40,12 @@ const ACT = {
     // By hand under the daily job's lock too (lockedUpdate): never two swaps at once.
     const r = await u.lockedUpdate({ checkOnly: args.includes("--check"), force: args.includes("--force") }); print(r); return r.ok ? 0 : 1;
   },
-  key: async (args) => { const r = await (await import("./lib/key.mjs")).setKey({ verify: !args.includes("--no-verify") }); print(r); return r.ok ? 0 : 1; },
+  // `routr key set [typesafe|cloudflare]`: the provider named, or the one the config asks.
+  key: async (args) => {
+    const ci = args.indexOf("--config"), named = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--config" && a !== "set")[0];
+    const r = await (await import("./lib/key.mjs")).setKey({ provider: named ?? loadConfig(ci >= 0 ? args[ci + 1] : undefined).config.decision.provider, verify: !args.includes("--no-verify") });
+    print(r); return r.ok ? 0 : 1;
+  },
   uninstall: async (args) => {
     const r = await (await import("./lib/uninstall.mjs")).uninstall(args);
     if (args.includes("--json")) print(r, 1); else if (r.error) console.error(r.error); else if (r.dry_run) print(r, 1); else if (r.note) console.log(r.note);
@@ -98,7 +103,7 @@ if (["subagent", "dispatch", "check", "record", "assess", "share", "doctor", "us
 
 const commands = () => import("./lib/commands.mjs");
 const ADVISE = {
-  check: async () => print(await (await commands()).checkCommand({ brief: take("--brief"), report: take("--report") })),
+  check: async () => print(await (await commands()).checkCommand({ brief: take("--brief"), report: take("--report") }, { config: loaded().config })),
   assess: async () => console.log((await commands()).assessCommand({ ledger: take("--ledger") }, loaded().config)),
   share: async () => console.log((await commands()).shareCommand({ ledger: take("--ledger"), out: take("--out") }, loaded().config)),
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]

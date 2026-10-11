@@ -27,23 +27,42 @@ the same items. Narrow, literal questions about what a text states do well; ques
 take do not (see the evidence). TypeSafe's own agent skill (https://docs.typesafe.ai/agent-skill) is useful when you
 design or debug a question. Users of routr do not need it: routr calls the API itself.
 
-## Moving to a new Jev version
+## Decision models and their pins
 
-routr asks an exact Jev version (`JEV_MODEL` in `src/lib/questions.mjs`), never an alias, because every result in
-`docs/evidence.md` and every threshold routr applies was measured on that version. The pin is meant to move: TypeSafe
-improves Jev often, and routr should run on the newest version that does at least as well.
+routr asks one decision model per brief, from one of the providers in `src/lib/providers.mjs` (TypeSafe, Cloudflare
+Workers AI, Ollama). Everything that differs between providers lives there: the endpoint, the key, the envelope around
+the answer, and what "ready" means. `src/lib/systemone.mjs` is the one client, and it puts every provider's
+`confidence` on TypeSafe's scale, so the rest of routr reads them all the same way.
+
+A model is offered only with a profile measured on the saved items behind the evidence: its `sure_at` (the lowest bar
+from 0.5 to 0.8 at which its level, when sure, is right at least as often as Jev's at 0.8) and the record its torn note
+quotes (right, low and high on the 36 real tasks). Each is pinned as exactly as its provider allows: Jev by version,
+never an alias; an Ollama model by an explicit tag and the digest that was measured (`latest` is a different build per
+platform). Cloudflare's names are not versioned, which `docs/evidence.md` says, so its models are re-run through the
+gate rather than pinned.
+
+### Moving to a new model or version
+
+The pin is meant to move: TypeSafe improves Jev often, Cloudflare ships new Clef models, and routr should run on the
+newest one that does at least as well.
 
 1. The maintainers' workbench watches `jev-latest` and `jev-preview` daily and flags a version that differs from the pin.
-2. The candidate is run side by side with the pinned version on the saved items behind the evidence (labelled briefs,
+2. The candidate is run side by side with the pinned Jev on the saved items behind the evidence (labelled briefs,
    worker reports, reviewer reports, repeated readings), and each question is compared: exact, under- and
-   over-rating, how decisive the answers are, and stability. A candidate that does worse on any question is not taken
-   until that question is re-worded or the regression is understood.
-3. A version that passes moves the pin in a pull request that names the gate's result, updates `docs/evidence.md`, and
-   ships in the next release. A preview is tested but not pinned until it becomes the official release.
+   over-rating, how decisive the answers are, and stability. The gate takes any provider:
+   `--candidate jev-preview`, `--candidate cloudflare:clef`, `--candidate ollama:<tag>`. For a new Jev version, a
+   candidate that does worse on any question is not taken until that question is re-worded or the regression is
+   understood. A new model on another provider is offered beside Jev, not instead of it, with its own column in
+   `docs/evidence.md` and its profile measured from the same run.
+3. A model that is taken lands in a pull request that names the gate's result, adds or moves its profile in
+   `src/lib/providers.mjs`, updates `docs/evidence.md`, and ships in the next release. A preview is tested but not
+   pinned until it becomes the official release.
 
-`ROUTR_JEV_MODEL=<version or alias>` runs routr on another version without a release, for the gate and for trying a
-preview on real work. Every ledger row records the version that answered (`jev_model`), so real outcomes can be compared
-across versions.
+`ROUTR_DECISION_MODEL=<model>` (on the configured provider) or `<provider>:<model>` runs routr on another model without
+a release, for the gate and for trying one on real work; a model with no profile is read with its provider's default
+profile, and doctor says it is not measured. Every ledger row records the provider and the model that answered
+(`provider`, `decision_model`; rows from before providers have `jev_model`), so real outcomes can be compared across
+models.
 
 ## Changing what telemetry sends
 

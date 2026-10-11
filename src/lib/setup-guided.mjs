@@ -9,11 +9,23 @@ import { BACK, CANCEL } from "./tui.mjs";
 import { NOTICE } from "./telemetry.mjs";
 import { LEVEL_MEANING, RESERVE } from "./wording.mjs";
 import { accountUse, UPDATE_CHANNELS } from "./config.mjs";
+import { decisionTarget, modelsHere, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
 
 const LEAVE = ""; // "leave the model to the lead agent": no default_model
 const PRESETS = [0, 0.1, 0.2, 0.25, 0.3, 0.5];
 const pct = (x) => `${Math.round(x * 100)}%`;
 const FIELDS = { model: "Everyday model", effort: "Everyday effort", hardest: "Hardest work", reserve: "Reserve", use: "Account use" };
+
+// Which decision model reads each brief: every model routr has measured that runs on this machine, with what it needs
+// and how it did on routr's own items (providers.mjs, `hint`). Returns { provider, model }, BACK or CANCEL.
+export const decisionLabel = (d) => `${PROVIDERS[d.provider].label} · ${d.model}`;
+export async function askDecision(ui, now) {
+  const options = PROVIDER_NAMES.flatMap((p) => modelsHere(p).map((m) => ({ value: `${p}\u0000${m}`, label: `${PROVIDERS[p].label} · ${m}`, hint: PROVIDERS[p].models[m].hint })));
+  const v = await ui.select({ message: `Which decision model reads each brief? ${ui.style.dim("(routr asks it about every piece of work)")}`, initial: `${now.provider}\u0000${now.model}`, options });
+  if (typeof v !== "string") return v;
+  const [provider, model] = v.split("\u0000");
+  return { provider, model };
+}
 
 // One line per subscription: what it runs and what it takes.
 export const describe = (n, s) => (s.enabled === false ? "off (settings kept)"
@@ -21,7 +33,7 @@ export const describe = (n, s) => (s.enabled === false ? "off (settings kept)"
 
 // `r` is doctor's inspection, `config` the file as it is (null on a first run). `efforts(n, model)` lists a harness's
 // levels for a model. Returns the choices, or CANCEL when the person quits without writing.
-export async function guided({ ui, r, config, efforts, telemetry = false }) {
+export async function guided({ ui, r, config, efforts, telemetry = false, decided = null }) {
   const current = config?.subscriptions ?? {};
   const signedIn = (n) => r.harnesses[n]?.installed && r.harnesses[n]?.signed_in;
   const candidates = Object.keys(HARNESSES).filter((n) => signedIn(n) || current[n]);
@@ -126,6 +138,9 @@ export async function guided({ ui, r, config, efforts, telemetry = false }) {
   // The update channel: one setting for the whole file, offered from the menu only (a first run keeps stable). A value
   // routr cannot read counts as stable, as loadConfig reads it.
   const channelNow = UPDATE_CHANNELS.includes(config?.update_channel) ? config.update_channel : "stable";
+  // The decision model in effect now, as loadConfig reads it (a first run's choice was made before the key: `decided`).
+  const decisionNow = (({ provider, model }) => ({ provider, model }))(decisionTarget(config, {}));
+  if (decided) answers.decision = decided;
   const askChannel = async () => {
     const v = await ui.select({ message: "Which releases should routr update to?", initial: answers.channel ?? channelNow, options: [
       { value: "stable", label: "Stable", hint: "releases only (the default)" },
@@ -157,6 +172,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false }) {
     }
     if (answers.telemetry !== undefined) out.push(`telemetry: ${answers.telemetry ? "on" : "off"}`);
     if (answers.channel && answers.channel !== channelNow) out.push(`update channel: ${channelNow} ${ui.glyphs.arrow} ${answers.channel}`);
+    if (answers.decision && decisionLabel(answers.decision) !== decisionLabel(decisionNow)) out.push(`decision model: ${decisionLabel(decisionNow)} ${ui.glyphs.arrow} ${decisionLabel(answers.decision)}`);
     return out;
   };
   // The end of the run: what changed, then the usual way out. Save is the default; nothing is written before it.
@@ -191,7 +207,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false }) {
   // Run again: what is set, then a menu, until the person writes or leaves.
   const menu = async () => {
     ui.note("Your settings", [...candidates.map((n) => `${HARNESSES[n].label.padEnd(12)} ${current[n] ? describe(n, draft[n]) : "detected, not set up yet"}${signedIn(n) ? "" : ` · ${signInOf(n)}`}`),
-      ...waiting.map((n) => `${HARNESSES[n].label.padEnd(12)} ${signInOf(n)}`), `${"Updates".padEnd(12)} ${channelNow} channel`]);
+      ...waiting.map((n) => `${HARNESSES[n].label.padEnd(12)} ${signInOf(n)}`), `${"Decisions".padEnd(12)} ${decisionLabel(decisionNow)}`, `${"Updates".padEnd(12)} ${channelNow} channel`]);
     for (;;) {
       const pending = changes().length;
       const v = await ui.select({ message: "What would you like to do?", initial: "one", options: [
@@ -199,6 +215,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false }) {
         { value: "choose", label: "Choose which subscriptions routr uses", hint: "turn one on or off" },
         ...(telemetry ? [{ value: "extras", label: "Anonymous outcomes (telemetry)" }] : []),
         { value: "channel", label: "Update channel", hint: `${answers.channel ?? channelNow}: stable releases, or beta builds too` },
+        { value: "decision", label: "Decision model", hint: decisionLabel(answers.decision ?? decisionNow) },
         { value: "all", label: "Walk through everything" },
         pending ? { value: "save", label: `Save and exit (${pending} change${pending === 1 ? "" : "s"})` } : { value: "done", label: "Exit" },
         ...(pending ? [{ value: "quit", label: "Exit without saving" }] : [])] });
@@ -210,6 +227,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false }) {
       if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) for (const n of c.filter((x) => !current[x])) if (await fields(n, fieldsOf(n)) === CANCEL) return CANCEL; continue; }
       if (v === "extras") { if (await extras() === CANCEL) return CANCEL; continue; }
       if (v === "channel") { if (await askChannel() === CANCEL) return CANCEL; continue; }
+      if (v === "decision") { const d = await askDecision(ui, answers.decision ?? decisionNow); if (d === CANCEL) return CANCEL; if (d?.provider) answers.decision = d; continue; }
       if (v === "all") { const f = await full(); if (f === CANCEL) return CANCEL; if (f === "write") return "write"; continue; }
       // Nested like any settings menu: a subscription, then its settings, each with its value now. Changing one comes
       // back to the same list with the new value; Back (or Esc) goes up one level, to the subscriptions, then the menu.
@@ -240,6 +258,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false }) {
   // In the flags' shape, so setup applies them as it applies --model, --effort, --hardest, --reserve, --enable/--disable.
   const out = { models: {}, efforts: {}, hardest: {}, reserves: {}, switches: {}, ranks: {}, uses: {}, ...answers, write: outcome === "write" };
   if (out.channel === channelNow) delete out.channel; // as --channel: only a change is applied
+  if (out.decision && decisionLabel(out.decision) === decisionLabel(decisionNow)) delete out.decision; // as --decision
   for (const n of candidates) {
     const was = current[n] ?? {}, d = draft[n];
     if (d.default_model !== (was.default_model ?? undefined) && d.default_model) out.models[n] = d.default_model;

@@ -3,9 +3,9 @@
 When your orchestrator, the agent handing work out to workers, is about to launch one, it asks `routr dispatch`.
 Three parties take part:
 
-- **Jev judges the work.** A small, fast model reads the brief and says how demanding the work is (`basic`,
-  `standard`, or `strong`), what kind of work it is, and whether the brief is ready to send. Jev knows nothing about
-  your subscriptions or their usage.
+- **The decision model judges the work.** A small, fast model (TypeSafe's Jev, or Cloudflare's Clef if you chose it)
+  reads the brief and says how demanding the work is (`basic`, `standard`, or `strong`), what kind of work it is, and
+  whether the brief is ready to send. It knows nothing about your subscriptions or their usage.
 - **routr lists candidates and capacity.** Your account-use settings decide which accounts are normal or fallback
   candidates. Separately, routr ranks the capacity it can read or that you have told it to assume.
   This is plain arithmetic on your usage and your settings: no model, the same inputs always give the same answer.
@@ -44,7 +44,7 @@ invalid, with the command that fixes it.
 
 - **`hardest_work`**: the most demanding level of work you are willing to send there.
 
-  | Level | What Jev means by it |
+  | Level | What the decision model means by it |
   |---|---|
   | `basic` | rote or well-specified work; a small, fast model is enough |
   | `standard` | the worker must find something out or choose an approach |
@@ -138,7 +138,7 @@ A and D are candidates; the lead may select D for task fit even though its remai
 
 - **Which model.** routr never names or compares models, and knows no prices, so nothing in it goes out of date when
   models change.
-- **How big the work is.** routr ranks by room left, not by whether a large task fits in it. Jev's level says
+- **How big the work is.** routr ranks by room left, not by whether a large task fits in it. The level says
   something about size; the orchestrator judges the rest.
 - **The decision.** routr advises; the orchestrator chooses.
 

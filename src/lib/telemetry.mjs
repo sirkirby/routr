@@ -1,7 +1,7 @@
 // Telemetry: OFF unless the person turns it on (docs/telemetry.md). When on, once a day routr sends its maintainers the
 // ledger rows written since the last send, so its questions are tuned on real work instead of the maintainers' own.
 // A row is what `routr share` writes to a file you can read: what routr read from each brief (probabilities, level),
-// the Jev version, what was chosen (subscription, model, effort, level), and how it turned out. Never the brief or any
+// the decision model and its provider, what was chosen (subscription, model, effort, level), and how it turned out. Never the brief or any
 // other text, notes, project names, paths, ids of the ledger, hashes of briefs, or usage numbers. Every field is built
 // below from an exact list or a narrow shape; the endpoint refuses long strings as a backstop (routr-lab/service).
 // On with `routr telemetry on` (setup asks a person once, default no). Kept off by ROUTR_TELEMETRY=0, DO_NOT_TRACK=1, CI,
@@ -12,7 +12,8 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { dirname, join } from "node:path";
 import { CONFIG_PATH } from "./config.mjs";
 import { HARNESSES } from "./harnesses.mjs";
-import { LEDGER_PATH, read } from "./ledger.mjs";
+import { decisionOf, LEDGER_PATH, read } from "./ledger.mjs";
+import { KNOWN_MODELS, PROVIDER_NAMES } from "./providers.mjs";
 import { FACTS, questions } from "./questions.mjs";
 import { lockIsStale, standalone, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
@@ -97,6 +98,8 @@ const LEVELS3 = ["basic", "standard", "strong"];
 const WORK_TYPES = Object.keys(questions.work_type.criteria);
 const SUBSCRIPTIONS = Object.keys(HARNESSES);                            // routr keys a subscription by its harness
 const questionSet = shaped(/^[rc]\d{1,3}$/), jevVersion = shaped(/^jev-\d+(\.\d+){0,3}$/);
+// A decision model is one routr offers (providers.mjs), or a Jev version the maintainers tried; anything else is "other".
+const decisionModel = (v) => (v == null || v === "" ? null : KNOWN_MODELS.includes(v) ? v : jevVersion(v));
 export const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "auto", "default"]; // what the harnesses take, and "default" (seen in real rows)
 // A model name is the one field no list can check (routr holds no model knowledge, and reading the harnesses' lists
 // would mean running them in the background). It must LOOK like one; a slug an agent passes as a model is sent as
@@ -111,8 +114,9 @@ export function telemetryRows(entries, install) {
     const a = e.advised;
     return {
       row_key: createHash("sha256").update(`${install}|${e.ts}|${e.id}`).digest("hex").slice(0, 32),
-      v: 2, day: /^\d{4}-\d{2}-\d{2}/.test(String(e.ts)) ? String(e.ts).slice(0, 10) : null,
-      mode: pick(e.mode, ["subagent", "dispatch"]), question_set: questionSet(e.question_set), jev_model: jevVersion(e.jev_model), brief_chars: num(e.brief_chars),
+      v: 3, day: /^\d{4}-\d{2}-\d{2}/.test(String(e.ts)) ? String(e.ts).slice(0, 10) : null,
+      mode: pick(e.mode, ["subagent", "dispatch"]), question_set: questionSet(e.question_set),
+      provider: pick(decisionOf(e).provider, PROVIDER_NAMES), decision_model: decisionModel(decisionOf(e).decision_model), brief_chars: num(e.brief_chars),
       advised: { level: pick(a.level, LEVELS3), sure: !!a.sure, between: Array.isArray(a.between) ? a.between.map((l) => pick(l, LEVELS3)) : null,
         work_type: pick(a.work_type, WORK_TYPES), high_risk: !!a.high_risk, fallback: !!a.fallback,
         facts: Object.fromEntries(Object.entries(a.facts ?? {}).filter(([k, p]) => k in FACTS && Number.isFinite(p))) },

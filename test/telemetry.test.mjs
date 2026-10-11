@@ -57,17 +57,19 @@ test("shared rows carry what tuning needs and nothing that identifies the user o
   const text = JSON.stringify(shareRows([row()]));
   for (const secret of ["abc12345", "deadbeefcafe", "billing", "acme", "10:11", "big-model", "small-model", "usable"]) expect(text).not.toContain(secret);
   const [r] = shareRows([row()]);
-  expect(r).toMatchObject({ v: 1, day: "2026-09-21", advised: { level: "standard", facts: { approach_open: 0.9 } }, chose: { subscription: "codex", level: "standard" }, outcome: { attempts: 1 }, subagents: [{ advised: "basic" }] });
+  expect(r).toMatchObject({ v: 2, day: "2026-09-21", advised: { level: "standard", facts: { approach_open: 0.9 } }, chose: { subscription: "codex", level: "standard" }, outcome: { attempts: 1 }, subagents: [{ advised: "basic" }] });
   expect(JSON.stringify(shareRows([row()], { withModels: true }))).toContain("big-model");
 });
 
-test("the Jev version that answered travels from the advice into the ledger and the shared rows", async () => {
+test("the decision model that answered, and its provider, travel from the advice into the ledger and the shared rows", async () => {
   const { toEntry, shareRows } = await import("../src/lib/ledger.mjs");
-  const e = toEntry({ id: "x", level: "basic", sure: true, facts: {}, question_set: "r4", jev_model: "jev-9.9.9" }, { verdict: "done", check: "pass" });
-  expect(e.jev_model).toBe("jev-9.9.9");
-  expect(shareRows([e])[0].jev_model).toBe("jev-9.9.9");                   // routr's model, not the user's: it identifies nothing
-  expect(toEntry({ id: "y", level: "basic", sure: false, facts: {}, fallback: true }, {}).jev_model).toBeNull(); // fallback advice: Jev never answered
-  expect(shareRows([row()])[0].jev_model).toBeNull();                         // rows written before the field existed
+  const e = toEntry({ id: "x", level: "basic", sure: true, facts: {}, question_set: "r5", provider: "cloudflare", decision_model: "clef" }, { verdict: "done", check: "pass" });
+  expect(e).toMatchObject({ provider: "cloudflare", decision_model: "clef" });
+  expect(shareRows([e])[0]).toMatchObject({ provider: "cloudflare", decision_model: "clef" }); // routr's instrument, not the user's: it identifies nothing
+  const down = toEntry({ id: "y", level: "basic", sure: false, facts: {}, fallback: true, provider: "ollama" }, {});
+  expect(down).toMatchObject({ provider: "ollama", decision_model: null });       // fallback: the model never answered, and which one was down is kept
+  expect(shareRows([row({ jev_model: "jev-1.13.0" })])[0]).toMatchObject({ provider: "typesafe", decision_model: "jev-1.13.0" }); // a row from before providers
+  expect(shareRows([row()])[0]).toMatchObject({ provider: null, decision_model: null }); // rows written before either field existed
 });
 
 test("telemetry rows carry what tuning needs, never text or anything that points back at the user's work", async () => {
@@ -75,7 +77,7 @@ test("telemetry rows carry what tuning needs, never text or anything that points
   const [r] = telemetryRows([row({ jev_model: "jev-1.13.0" })], "install-a");
   const text = JSON.stringify(r);
   for (const secret of ["abc12345", "deadbeefcafe", "billing", "acme", "10:11", "usable", "count files"]) expect(text).not.toContain(secret);
-  expect(r).toMatchObject({ day: "2026-09-21", jev_model: "jev-1.13.0", chose: { model: "big-model" }, outcome: { seconds: 60 }, subagents: [{ advised: "basic", model: "small-model" }] });
+  expect(r).toMatchObject({ v: 3, day: "2026-09-21", provider: "typesafe", decision_model: "jev-1.13.0", chose: { model: "big-model" }, outcome: { seconds: 60 }, subagents: [{ advised: "basic", model: "small-model" }] });
   // Anything typed by hand is cut to a known value or a short name before it can leave the machine.
   const [h] = telemetryRows([row({ chose: { subscription: "codex", model: "sonnet, since the acme repo's Stripe key handling is subtle", effort: "high", level: "extreme" },
     outcome: { verdict: "done: fixed the acme migration", check: "pass", attempts: 1 }, subagents: [{ subtask: "x", advised: "strong", model: "sonnet because billing is hard" }] })], "install-a");
@@ -91,6 +93,11 @@ test("telemetry rows carry what tuning needs, never text or anything that points
     subagents: [{ advised: "strong", model: "/Users/chris/acme-payments/src/billing.ts" }, { advised: "basic", model: "sk-proj-AbCdEfGhIjKlMnOpQrStUv" }] })], "install-a");
   expect(JSON.stringify(p)).not.toMatch(/acme|Users|ghp_|sk-proj|@|https/);
   expect(p.advised.facts).toEqual({ approach_open: 0.9 });
+  // A decision model is one routr offers, or a Jev version; a provider is one of routr's. Anything else is "other".
+  const [m] = telemetryRows([row({ provider: "acme-ai-gateway", decision_model: "/Users/chris/models/acme-finetune.gguf" })], "i");
+  expect(m).toMatchObject({ provider: "other", decision_model: "other" });
+  for (const [provider, model] of [["cloudflare", "clef"], ["cloudflare", "clef-flash"], ["typesafe", "jev-1.14.0"]])
+    expect(telemetryRows([row({ provider, decision_model: model })], "i")[0]).toMatchObject({ provider, decision_model: model });
   for (const m of ["gpt-5.6-terra", "claude-opus-5-5[1m]", "cursor-grok-4.6-high", "gemini-3.8-flash-medium", "opus"])
     expect(telemetryRows([row({ chose: { subscription: "codex", model: m, effort: "xhigh", level: "strong" } })], "i")[0].chose).toEqual({ subscription: "codex", model: m, effort: "xhigh", level: "strong" });
   expect(telemetryRows([row({ chose: { subscription: "agy", model: "x", effort: "default", level: "basic" } })], "i")[0].chose.effort).toBe("default"); // seen in a real row
@@ -178,26 +185,61 @@ test("feedback sends what the person wrote, and nothing when there is nothing to
   expect(sent[0].text).toBe("the cursor usage read failed twice");
 });
 
-test("Jev is asked for the pinned version unless ROUTR_JEV_MODEL names another", async () => {
-  const { JEV_MODEL } = await import("../src/lib/questions.mjs");
-  const { ask, jevModel } = await import("../src/lib/jev.mjs");
-  expect(JEV_MODEL).toMatch(/^jev-\d+\.\d+\.\d+$/);                          // an exact version, never an alias that moves under the evidence
-  const saved = { env: process.env.ROUTR_JEV_MODEL, key: process.env.TYPESAFE_API_KEY, fetch: globalThis.fetch };
-  const sent = [];
-  globalThis.fetch = async (_url, init) => { sent.push(JSON.parse(init.body).model); return new Response(JSON.stringify({ model: "jev-x", answers: {} })); };
-  process.env.TYPESAFE_API_KEY = "test-key";
-  try {
-    delete process.env.ROUTR_JEV_MODEL;
-    expect(jevModel()).toBe(JEV_MODEL);
-    await ask({}, {});
-    process.env.ROUTR_JEV_MODEL = " jev-preview ";
-    expect(jevModel()).toBe("jev-preview");
-    await ask({}, {});
-    expect(sent).toEqual([JEV_MODEL, "jev-preview"]);
-  } finally {
-    globalThis.fetch = saved.fetch;
-    for (const [k, v] of [["ROUTR_JEV_MODEL", saved.env], ["TYPESAFE_API_KEY", saved.key]]) v == null ? delete process.env[k] : (process.env[k] = v);
+test("each provider's decision model is pinned to an exact build, and ROUTR_DECISION_MODEL names another for the gate", async () => {
+  const { decisionTarget, PROVIDERS } = await import("../src/lib/providers.mjs");
+  expect(decisionTarget(null, {})).toMatchObject({ provider: "typesafe", model: "jev-1.13.0", measured: true });
+  expect(Object.keys(PROVIDERS.typesafe.models).every((m) => /^jev-\d+\.\d+\.\d+$/.test(m))).toBe(true); // an exact version, never an alias that moves under the evidence
+  expect(Object.keys(PROVIDERS.ollama.models).every((m) => /:/.test(m) && !/:latest$/.test(m))).toBe(true);    // an explicit tag: latest is a different build per platform
+  for (const p of Object.values(PROVIDERS)) for (const prof of Object.values(p.models)) {
+    expect(prof.sure_at).toBeGreaterThan(0); expect(prof.torn.right + prof.torn.low + prof.torn.high).toBe(prof.torn.of); // every offered model carries its measured profile
   }
+  expect(decisionTarget({ decision: { provider: "cloudflare" } }, {})).toMatchObject({ provider: "cloudflare", model: "clef" });
+  expect(decisionTarget({ decision: { provider: "cloudflare", model: "clef-flash" } }, {}).profile).toBe(PROVIDERS.cloudflare.models["clef-flash"]);
+  expect(decisionTarget(null, { ROUTR_DECISION_MODEL: " jev-preview " })).toMatchObject({ provider: "typesafe", model: "jev-preview", measured: false, profile: PROVIDERS.typesafe.models["jev-1.13.0"] });
+  expect(decisionTarget(null, { ROUTR_DECISION_MODEL: "cloudflare:clef-flash" })).toMatchObject({ provider: "cloudflare", model: "clef-flash", measured: true });
+});
+
+test("one client asks every provider: its endpoint, its key, its envelope, and confidence on TypeSafe's scale", async () => {
+  const { ask, confidence } = await import("../src/lib/systemone.mjs");
+  const dir = scratch("providers"), file = join(dir, "env");
+  writeFileSync(file, "# routr\nTYPESAFE_API_KEY=ts_test_1234567890\nCLOUDFLARE_API_TOKEN=cf_test_1234567890\nCLOUDFLARE_ACCOUNT_ID=0123456789abcdef0123456789abcdef\n");
+  const level = { type: "score", score: 0.92, probabilities: { 0: 0.08, 1: 0.92, 2: 0 }, confidence: 0.75 }; // entropy's reading of a 0.92/0.08 split
+  const sent = [];
+  const fetchFn = async (url, init) => {
+    sent.push({ url, auth: init.headers.Authorization, body: JSON.parse(init.body) });
+    const answer = { model: JSON.parse(init.body).model, answers: { level, t: { type: "noul", noul: 0.9 } }, usage: { input_tokens: 10 } };
+    return Response.json(url.includes("cloudflare") ? { success: true, errors: [], messages: [], result: answer } : answer);
+  };
+  const jev = await ask({}, {}, { env: {}, file, fetchFn });
+  expect(sent[0]).toMatchObject({ url: "https://api.typesafe.ai/v1/systemone", auth: "Bearer ts_test_1234567890", body: { model: "jev-1.13.0" } });
+  expect(jev).toMatchObject({ provider: "typesafe", model: "jev-1.13.0" });
+  expect(jev.answers.level.confidence).toBe(0.75);                                // TypeSafe's own confidence is kept as sent
+  const cf = await ask({}, {}, { config: { decision: { provider: "cloudflare" } }, env: {}, file, fetchFn });
+  expect(sent[1]).toMatchObject({ url: "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/@cf/cloudflare/clef", auth: "Bearer cf_test_1234567890", body: { model: "clef" } });
+  expect(cf).toMatchObject({ provider: "cloudflare", model: "clef" });             // the envelope is unwrapped
+  expect(cf.answers.level.confidence).toBeCloseTo(0.88, 2);                        // recomputed on TypeSafe's scale
+  expect(cf.answers.level.provider_confidence).toBe(0.75);
+  expect(cf.answers.t).toEqual({ type: "noul", noul: 0.9 });
+  const env = { CLOUDFLARE_API_TOKEN: "cf_env_1234567890" };                      // an environment variable wins over the file
+  await ask({}, {}, { config: { decision: { provider: "cloudflare" } }, env, file, fetchFn });
+  expect(sent[2].auth).toBe("Bearer cf_env_1234567890");
+  const local = await ask({}, {}, { config: { decision: { provider: "ollama" } }, env: { OLLAMA_HOST: "0.0.0.0:11500" }, file: join(dir, "none"), fetchFn });
+  expect(sent[3].url).toBe("http://0.0.0.0:11500/v1/systemone");
+  expect(sent[3].body).toMatchObject({ keep_alive: "15m" }); expect(sent[3].auth).toBeUndefined();
+  expect(local.provider).toBe("ollama");
+  // Cloudflare's errors, a missing key, and a model Ollama has not pulled each say what to do.
+  const refuse = async () => Response.json({ success: false, errors: [{ code: 5006, message: "Bad input" }], result: {} });
+  await expect(ask({}, {}, { config: { decision: { provider: "cloudflare" } }, env: {}, file, fetchFn: refuse })).rejects.toThrow("Cloudflare: 5006 Bad input");
+  await expect(ask({}, {}, { config: { decision: { provider: "cloudflare" } }, env: {}, file: join(dir, "none"), fetchFn })).rejects.toThrow("routr key set cloudflare");
+  const notPulled = async () => new Response('{"error":"model not found, try pulling it first"}', { status: 404 });
+  await expect(ask({}, {}, { config: { decision: { provider: "ollama" } }, env: {}, fetchFn: notPulled })).rejects.toThrow("ollama pull");
+  const down = async () => { throw new TypeError("fetch failed"); };
+  await expect(ask({}, {}, { config: { decision: { provider: "ollama" } }, env: {}, fetchFn: down })).rejects.toThrow("is not running");
+  // The formulas, on the cases TypeSafe documents: an even split is 0, one certain option is 1.
+  expect(confidence("choice", { a: 0.5, b: 0.5 })).toBe(0);
+  expect(confidence("choice", { a: 1, b: 0, c: 0 })).toBe(1);
+  expect(confidence("score", { 0: 0.5, 1: 0.5, 2: 0 })).toBeCloseTo(0.25, 5);
+  expect(confidence("score", { 0: 1 / 3, 1: 1 / 3, 2: 1 / 3 })).toBe(0);
 });
 
 // ---- Telemetry: data must not be LOST either. Leak tests above check that text cannot get out; these check that real
@@ -244,7 +286,7 @@ test("routr share says what will really happen to the rows, in each state", asyn
 test("docs/telemetry.md lists every field a sent row carries", async () => {
   const { telemetryRows } = await import("../src/lib/telemetry.mjs");
   const page = readFileSync(join(import.meta.dir, "../docs/telemetry.md"), "utf8").toLowerCase();
-  const [r] = telemetryRows([row({ jev_model: "jev-1.13.0" })], "i");
+  const [r] = telemetryRows([row({ provider: "cloudflare", decision_model: "clef" })], "i");
   const missing = [];
   for (const [k, v] of Object.entries(r)) {
     if (!page.includes(`\`${k}\``)) missing.push(k);

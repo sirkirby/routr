@@ -103,7 +103,10 @@ export function toEntry(advice, { subscription, model, effort, level, verdict, c
   if (seconds != null && (String(seconds).trim() === "" || !Number.isFinite(+seconds) || +seconds < 0)) throw new Error("--seconds must be a nonnegative duration; omit it when unknown");
   if (causes != null && (!Array.isArray(causes) || causes.some((c) => ![...OUTCOME_CAUSES, "none"].includes(c)) || (causes.includes("none") && causes.length !== 1))) throw new Error(`--cause takes ${OUTCOME_CAUSES.join("|")}|none; none must be used alone`);
   return {
-    ts: new Date().toISOString(), run_id: run_id ?? randomUUID(), project: project ?? projectName(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set, jev_model: advice.jev_model ?? null, // the version that answered: a new Jev is compared on real work
+    ts: new Date().toISOString(), run_id: run_id ?? randomUUID(), project: project ?? projectName(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set,
+    // The decision model that answered and its provider: a new model is compared on real work. A row written before
+    // providers existed has `jev_model` instead, read as TypeSafe's (decisionOf).
+    provider: advice.provider ?? null, decision_model: advice.decision_model ?? null,
     brief_sha: advice.brief_sha, brief_chars: advice.brief_chars, // never the brief itself: briefs can be private
     advised: { level: advice.level, sure: advice.sure, between: advice.between ?? null, work_type: advice.work_type, high_risk: advice.high_risk, fallback: !!advice.fallback,
       facts: Object.fromEntries(Object.entries(advice.facts ?? {}).map(([k, f]) => [k, f.p])) },
@@ -241,17 +244,20 @@ export function levelReview(entries) {
 
 // `routr share`: the rows a user may choose to publish. Everything that could identify them or their work is
 // left out: no ids, no brief hashes, no notes, no timestamps finer than the day, no usage numbers, and no model names
-// unless they ask for them. What remains is what tuning needs: what routr read (and which Jev version read it), what was
-// chosen, how it turned out. The Jev version is routr's, not the user's, so it identifies nothing.
+// unless they ask for them. What remains is what tuning needs: what routr read (and which decision model read it), what
+// was chosen, how it turned out. The decision model is routr's instrument, not the user's work, so it identifies nothing.
 export function shareRows(entries, { withModels = false } = {}) {
   return entries.map((e) => ({
-    v: 1, day: String(e.ts ?? "").slice(0, 10), mode: e.mode, question_set: e.question_set, jev_model: e.jev_model ?? null, brief_chars: e.brief_chars,
+    v: 2, day: String(e.ts ?? "").slice(0, 10), mode: e.mode, question_set: e.question_set, ...decisionOf(e), brief_chars: e.brief_chars,
     advised: { level: e.advised.level, sure: e.advised.sure, between: e.advised.between ?? null, work_type: e.advised.work_type, high_risk: e.advised.high_risk, fallback: e.advised.fallback, facts: e.advised.facts },
     chose: { subscription: e.chose.subscription, level: e.chose.level, effort: e.chose.effort, ...(withModels ? { model: e.chose.model } : {}) },
     outcome: { verdict: e.outcome.verdict, check: e.outcome.check, attempts: e.outcome.attempts ?? 1 },
     subagents: (e.subagents ?? []).map((x) => ({ advised: x.advised, ...(withModels ? { model: x.model } : {}) })),
   }));
 }
+
+// Which decision model answered a ledger row. Rows from before providers existed carry only `jev_model`: TypeSafe's.
+export const decisionOf = (e) => ({ provider: e.provider ?? (e.jev_model ? "typesafe" : null), decision_model: e.decision_model ?? e.jev_model ?? null });
 
 function topFacts(es) {
   const n = {};

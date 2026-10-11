@@ -1,5 +1,5 @@
 // `routr uninstall`: remove what the installer and `routr setup` put on this machine. By default the user's own data
-// stays (config, TypeSafe key, ledger), as with a typical uninstall; `--purge` removes that too. A person is shown the
+// stays (config, decision provider keys, ledger), as with a typical uninstall; `--purge` removes that too. A person is shown the
 // plan and asked; an agent or a script must pass `--yes`. Worktrees and herdr panes belong to the user's repos, not to routr.
 import { copyFileSync, lstatSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -20,7 +20,7 @@ export function uninstallPlan({ home = userHome(), purge = false, binary = null 
     else if (p.state === "theirs") notOurs.push({ path: p.path, what: p.why });
   }
   remove.push({ path: join(home, ".cache/routr"), what: "cache: the usage snapshots and the update log" });
-  const data = [{ path: join(home, ".config/routr"), what: "your config and TypeSafe key" }, { path: join(home, ".local/share/routr"), what: "your ledger" }];
+  const data = [{ path: join(home, ".config/routr"), what: "your config and decision provider keys" }, { path: join(home, ".local/share/routr"), what: "your ledger" }];
   (purge ? remove : keep).push(...data);
   const present = (l) => l.filter((x) => { try { lstatSync(x.path); return true; } catch { return false; } });
   let statusline = false;
@@ -43,7 +43,7 @@ export async function uninstall(args, { home = userHome() } = {}) {
   if (interactive) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const show = (p) => { say("\nThis removes:"); for (const x of p.remove) say(`  ${x.path}   (${x.what})`); if (p.statusline) say("  the `routr statusline` entry in ~/.claude/settings.json (a backup is kept)"); if (p.keep.length || p.not_ours.length) { say("and keeps:"); for (const x of [...p.keep, ...p.not_ours]) say(`  ${x.path}   (${x.what})`); } };
-    if (!purge && plan.keep.length && /^y/i.test((await rl.question("Also remove your config, TypeSafe key, and ledger? [y/N] ")).trim())) { purge = true; plan = uninstallPlan({ home, purge, binary: standalone() ? process.execPath : null }); }
+    if (!purge && plan.keep.length && /^y/i.test((await rl.question("Also remove your config, decision provider keys, and ledger? [y/N] ")).trim())) { purge = true; plan = uninstallPlan({ home, purge, binary: standalone() ? process.execPath : null }); }
     show(plan);
     const go = /^y/i.test((await rl.question("\nUninstall routr? [y/N] ")).trim());
     rl.close();

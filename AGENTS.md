@@ -20,8 +20,12 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - Questions judge the WORK or the REPORT, never a model. They are narrow and literal, about what the text states.
 - A question's wording changes only with a measurement against the old wording on the same items, and a bumped
   `VERSION` / `CHECK_VERSION` in `src/lib/questions.mjs`. Public summary: `docs/evidence.md`.
-- Jev is pinned to an exact version (`JEV_MODEL`), and the pin moves to each new official release once the model gate
-  shows no question does worse (CONTRIBUTING.md). Never ship an alias.
+- Each decision model routr offers is in `src/lib/providers.mjs`, pinned as exactly as its provider allows (Jev by
+  exact version, an Ollama model by tag and measured digest; never an alias) and offered only with a profile (its
+  `sure_at`, its torn record) measured by the model gate beside Jev. The Jev pin moves to each new official release
+  once the gate shows no question does worse (CONTRIBUTING.md). Cloudflare's model names are not versioned:
+  `docs/evidence.md` says so, and the gate is re-run on them. What differs between providers (endpoint, key, envelope,
+  how `confidence` is computed) lives in `providers.mjs` and `systemone.mjs` and nowhere else.
 - The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`, `usage` with no name) write nothing of the
   user's (`doctor --fix` is `setup` under another name); the only thing they may start is one of routr's detached
   background jobs below (the updater, Cursor's and Kiro's usage refresh), which write only under `~/.cache/routr`. They fail open: any error
@@ -41,7 +45,7 @@ measured questions about a brief or a worker report; code adds live usage; the l
   never downgrades by itself. `"auto_update": false` turns it off. Never from a source checkout, never from `statusline`.
 - Every call reads each usage source's newest reading and shows its age. Claude's is read in the call from its own
   `/usage`, hooks and MCP servers off; a statusline snapshot under 5 minutes old is used instead when one exists. Claude, Codex and
-  Antigravity are read in the call (1 to 9 s, beside Jev). routr never has to own a harness feature (a statusline
+  Antigravity are read in the call (1 to 9 s, beside the decision model). routr never has to own a harness feature (a statusline
   slot, a hook) to get its usage: it asks the harness's own CLI. Cursor's own screen takes seconds more and starts
   Cursor, and Kiro's `/usage` takes ~10 s plus its cleanup, so their readings are snapshots: when the last try is over
   4 hours old, a call starts a detached `routr usage cursor` (or `kiro`) to refresh it and carries on, as it does for the updater (unlike the updater, also from a

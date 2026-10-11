@@ -21,7 +21,7 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
     routr doctor
 
 It changes nothing. It reports which harnesses are installed and signed in, which have a live usage source, whether
-the TypeSafe key works, and whether a config exists. A harness that is installed but not signed in gets no work
+the decision model answers, and whether a config exists. A harness that is installed but not signed in gets no work
 (dispatch, launch) until the user signs in, and setup neither adds it, turns it on, nor asks it for models or effort
 levels; one already on can still be turned off. Setup shows the command to run beside it (greyed when it cannot be
 chosen), `setup --yes` notes each one it did not add ("<name> left out: …"), doctor names the command, and routr never
@@ -31,25 +31,37 @@ questions; you run it with `--yes` and the choices you settled with the user. `r
 command. It is safe to run again: it fills in what is missing (a skill left behind by an older routr, a harness
 installed since) and leaves the rest alone.
 
-## 2. TypeSafe key
+## 2. Decision model
 
-routr needs one secret: an API key for TypeSafe, whose small decision model reads each brief. A call costs a small
-fraction of a cent. Walk the user through it:
+A small decision model reads each brief and report. Ask the user which one, and say what each needs and how it did on
+routr's tests (`docs/evidence.md`, "Decision models"):
 
-1. They sign in (or create an account) at https://console.typesafe.ai/keys and create an API key. TypeSafe's quick
-   start shows the same step: https://docs.typesafe.ai/introduction/quickstart
-2. They store it **themselves**, so the key never passes through this conversation. Ask them to run, in their own
-   terminal (in Claude Code they can type `! routr key set`):
+- **TypeSafe's Jev** (the default): the most accurate of the three on routr's tests (83 of 104 levels right). Needs a
+  TypeSafe API key; a call costs a small fraction of a cent. They create one at https://console.typesafe.ai/keys
+  (TypeSafe's quick start shows the step: https://docs.typesafe.ai/introduction/quickstart).
+- **Cloudflare's Clef on Workers AI** (`cloudflare`): for someone who already has a Cloudflare account, or whose
+  organisation does. 72 of 104 levels right, more often too high than too low. Needs a Cloudflare API token with
+  Account › Workers AI › Read (https://dash.cloudflare.com/profile/api-tokens) and their account ID. Workers AI's free
+  daily allowance covers about 200 briefs a day. `cloudflare:clef-flash` is cheaper but reads levels too low more often.
+- **Clef Flash on their own machine through Ollama** (`ollama`): free, and nothing leaves the machine. Apple Silicon
+  only for now: Ollama 0.35 or later, then `ollama pull clef-flash:9b-mxfp8` (12 GB). 5-7 s a brief, and 70 of 104
+  levels right, more often too low. Never pull the model for them without asking: it is a 12 GB download.
 
-       routr key set
+Then set it: `routr setup --yes --decision <typesafe|cloudflare|ollama>` (or `cloudflare:clef-flash`).
 
-   It asks for the key without showing it, saves it to `~/.config/routr/env` readable only by them, and makes one
-   test call. Do not ask the user to paste the key to you, and never print or log it.
-3. Run `routr doctor`: the TypeSafe line should read "works".
+A key is stored by the user **themselves**, so it never passes through this conversation. Ask them to run, in their
+own terminal (in Claude Code they can type `! routr key set`):
 
-If the user would rather manage it themselves, exporting `TYPESAFE_API_KEY` in their shell profile works too. Do not
-put the key in a project `.env`: workers run in worktrees and other folders where that file does not exist, and it
-risks being committed. Without a key routr still answers, but only with the fallback level.
+    routr key set typesafe        # or: routr key set cloudflare (it asks for the token, then the account ID)
+
+It asks without showing a secret, saves it to `~/.config/routr/env` readable only by them, and makes one test call.
+Do not ask the user to paste a key to you, and never print or log it. Then run `routr doctor`: the decision model line
+should read "answers".
+
+If the user would rather manage it themselves, exporting `TYPESAFE_API_KEY` (or `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID`) in their shell profile works too, and wins over the saved file. Do not put a key in a project
+`.env`: workers run in worktrees and other folders where that file does not exist, and it risks being committed.
+Without a decision model routr still answers, but only with the fallback level.
 
 ## 3. Config
 
@@ -148,6 +160,7 @@ can be combined with the others in one run.
 | use a funded account for everyday work | `routr setup --yes --use codex=normal` |
 | keep an account for fallback | `routr setup --yes --use codex=fallback` |
 | get early builds (beta and release candidates), or stop | `routr setup --yes --channel beta` / `routr setup --yes --channel stable` |
+| use another decision model | `routr setup --yes --decision cloudflare` (or `typesafe`, `ollama`, `cloudflare:clef-flash`); then the user stores its key with `routr key set <provider>` in their own terminal (Ollama needs none) |
 | share anonymous outcomes, or stop | `routr telemetry on` / `routr telemetry off`: only when the user says so |
 
 A flag that routr cannot apply fails with the reason and changes nothing: a model the harness does not list (Claude Code excepted), an effort
@@ -175,8 +188,8 @@ either missing and the user wants orchestration, offer to install them:
     curl -fsSL https://herdr.dev/install.sh | sh                 # herdr itself (see herdr.dev for brew and Windows)
     npx skills add herdrdev/herdr --skill herdr -g               # herdr's agent skill (bunx works where there is no Node)
 
-Sizing subagents (`routr subagent`) needs neither. routr needs no TypeSafe skill either: it calls TypeSafe's API
-itself, and the only thing the user supplies is the key.
+Sizing subagents (`routr subagent`) needs neither. routr needs no TypeSafe or Cloudflare skill either: it calls the
+decision model's API itself, and the only thing the user supplies is the key (or, for Ollama, the pulled model).
 
 ## 6. PATH
 
