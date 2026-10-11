@@ -1,5 +1,5 @@
 // `routr setup`: does what `routr doctor` says is missing. It writes the config for the harnesses found and (only for
-// a person at a terminal) asks for the TypeSafe key. It leaves Claude Code's settings alone: Claude's usage is read
+// a person at a terminal) asks which decision model to use and for its key. It leaves Claude Code's settings alone: Claude's usage is read
 // through its own `/usage` (usage.mjs), so routr no longer needs Claude's statusline slot. `--no-statusline` is
 // still accepted, and does nothing, for scripts written for an older routr.
 // A person gets questions; an agent passes `--yes` and the choices it settled with the user as flags. Same code, same file.
@@ -15,7 +15,9 @@ import { setKey } from "./key.mjs";
 import { standalone } from "./runtime.mjs";
 import { updatesOff } from "./update.mjs";
 import { installSkill } from "./skill-install.mjs";
-import { guided } from "./setup-guided.mjs";
+import { askDecision, decisionLabel, guided } from "./setup-guided.mjs";
+import { decisionTarget, isModel, isProvider, modelsHere, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
+import { secretsFor } from "./systemone.mjs";
 import { CANCEL, createUI } from "./tui.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 
@@ -87,6 +89,19 @@ export function parseChannel(args) {
   if (!UPDATE_CHANNELS.includes(args[i + 1])) throw new Error(`--channel takes ${UPDATE_CHANNELS.join(" or ")}`);
   return args[i + 1];
 }
+// `--decision cloudflare` or `--decision ollama:clef-flash:9b-mxfp8`: which decision model reads each brief. A provider
+// alone takes its default model; a model must be one routr has measured there (providers.mjs).
+export function parseDecision(args) {
+  const i = args.indexOf("--decision");
+  if (i < 0) return undefined;
+  const v = args[i + 1] ?? "", at = v.indexOf(":"), provider = at < 0 ? v : v.slice(0, at), model = at < 0 ? null : v.slice(at + 1) || null; // "cloudflare:" is the default model
+  if (!isProvider(provider)) throw new Error(`--decision takes <provider>[:<model>], with one of: ${PROVIDER_NAMES.join(", ")}`);
+  const models = Object.keys(PROVIDERS[provider].models), here = modelsHere(provider);
+  if (model && !isModel(provider, model)) throw new Error(`--decision ${v}: routr has measured ${models.join(", ")} on ${provider}`);
+  // A build this machine cannot run (an MLX model off Apple Silicon) is refused, not written (from the docs review).
+  if (model ? !here.includes(model) : !here.length) throw new Error(`--decision ${v}: ${model ?? `no model routr has measured on ${provider}`} ${model ? "does not run" : "runs"} on this machine${models.length ? ` (${models.map((m) => `${m}: ${PROVIDERS[provider].models[m].runs ?? "any platform"}`).join(", ")})` : ""}`);
+  return { provider, model: model ?? here[0] };
+}
 // What setup says after the channel changed. It runs no update and asks GitHub nothing, so it names no version.
 // Nothing moves a pre-release back to stable by itself (update.mjs): a person leaving beta on one is told so.
 // With automatic updates off, only `routr update` moves it, and the note says why they are off: `off` is updatesOff's
@@ -112,20 +127,20 @@ export async function meteredRanks(fresh, harnesses, ranks, ask) {
 // `deps` are seams so a test can drive a whole run, questions and all, without a terminal, the machine's harnesses, the
 // network, or the user's own files: what is installed (`inspect`), the person's answers (`question`, read line by line
 // in the tui's accessible mode, or `ui`, a ready-made tui), each harness's effort levels (`efforts`), and each step that
-// writes outside the config (the skill, the telemetry state, the key).
+// writes outside the config (the skill, the telemetry state, the key), and whether a provider's key is saved (`hasKey`).
 export async function setup(args, { inspect: look = inspect, question, interactive: tty = Boolean(process.stdin.isTTY), env = process.env,
-  install = installSkill, share: shareOn = setTelemetry, key = setKey, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI, isStandalone = standalone } = {}) {
+  install = installSkill, share: shareOn = setTelemetry, key = setKey, hasKey = (provider) => { try { secretsFor(provider, { env }); return true; } catch { return false; } }, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI, isStandalone = standalone } = {}) {
   const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   const path = flag("--config") ?? CONFIG_PATH;
   const interactive = tty && !args.includes("--yes");
   const say = (s) => { if (!args.includes("--json")) print(s); };
   const did = [], skipped = [];
-  let models, ranks, hardest, reserves, efforts, switches, uses, channel;
-  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); channel = parseChannel(args); } catch (e) { return { ok: false, error: e.message }; }
+  let models, ranks, hardest, reserves, efforts, switches, uses, channel, decision;
+  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); channel = parseChannel(args); decision = parseDecision(args); } catch (e) { return { ok: false, error: e.message }; }
   // The legacy flag remains a setter; explicit --use wins when both flags name the same account.
   uses = { ...Object.fromEntries(Object.entries(ranks).map(([n, rank]) => [n, rank === "with" ? "normal" : "fallback"])), ...uses };
   // Whether any setting flag was given, read once here, before a guided run adds its choices to the same maps.
-  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches, ...uses }).length > 0 || channel !== undefined;
+  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches, ...uses }).length > 0 || channel !== undefined || decision !== undefined;
   // --show only reads: with a change flag beside it, an agent could take the settings printed for the change made.
   if (args.includes("--show")) return flagged || args.includes("--force")
     ? { ok: false, error: "--show only reads your settings: run the change without it, then --show again to see it" } : showSettings(path);
@@ -136,10 +151,10 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   let r;
   if (ui) {
     ui.intro("routr setup");
-    const spin = ui.spinner("Checking your harnesses, their sign-in, and your TypeSafe key");
+    const spin = ui.spinner("Checking your harnesses, their sign-in, and your decision model");
     r = await look({ configPath: path, quiet: true });
     const ready = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && r.harnesses[n].signed_in);
-    spin.stop(`${ready.length} signed in (${ready.join(", ") || "none"}) · key ${r.key.works ? "works" : "missing"}`);
+    spin.stop(`${ready.length} signed in (${ready.join(", ") || "none"}) · decision model ${r.key.works ? "answers" : "not answering yet"}`);
   } else {
     say("Looking at what is installed…");
     r = await look({ configPath: path, quiet: args.includes("--json") });
@@ -205,15 +220,34 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   let telemetryAsked = false;
   try { telemetryAsked = "telemetry" in JSON.parse(readFileSync(path, "utf8")); } catch {}
   let choices = null;
+  // A provider's key, typed by the person (never passed by an agent), when the provider chosen has none yet; for a local
+  // one, whether it is ready. Once per provider in a run: a model changed on the same provider asks nothing again.
+  const handled = new Set();
+  // Stopping before the review writes no settings; a key typed on the way was saved when it was typed, and is said.
+  const stopped = () => { const kept = did.filter((d) => d.startsWith("saved the")); const said = `setup stopped: your settings were not changed${kept.length ? ` (${kept.join("; ")})` : ", and nothing was written"}`;
+    ui.cancel(said[0].toUpperCase() + said.slice(1) + "."); ui.close(); return { ok: false, cancelled: true, error: said, did, skipped }; };
+  const keyFor = async (provider) => {
+    const P = PROVIDERS[provider];
+    const once = P.local ? `${provider}:${decision.model}` : provider; // a key per provider; a local model's readiness per model
+    if (handled.has(once)) return;
+    handled.add(once);
+    if (P.local) { const not = await P.ready(decision.model, env); ui.note(P.label, [not ? `Runs on this machine: no key. ${not}` : `${decision.model} is pulled and Ollama is running: nothing more to do.`]); return; }
+    // The provider doctor just tried and found failing is asked again even with a key saved (one revoked, or mistyped).
+    if (!(provider === (r.key.provider ?? "typesafe") && !r.key.works) && hasKey(provider)) return;
+    ui.note(`${P.label} key`, [`routr asks the decision model about each piece of work: it needs your ${P.label} key.`, P.get]);
+    const k = await key({ provider });
+    (k.ok ? did : skipped).push(k.ok ? `saved the ${P.label} key to ${k.file}${k.works ? " and it works" : `: ${k.error}`}` : `${P.label} key not saved: ${k.error}. Run \`routr key set ${provider}\` when you have it`);
+  };
   if (ui && !flagged) {
-    // The key first: nothing routr advises works without it, and it is typed by the person, never passed by an agent.
+    // The decision model first, and its key: nothing routr advises works without one.
     if (!r.key.works) {
-      ui.note("TypeSafe key", ["routr asks TypeSafe's Jev about each piece of work: it needs your key.", "Create one at https://console.typesafe.ai/keys, then paste it here (it is not shown)."]);
-      const k = await key();
-      (k.ok ? did : skipped).push(k.ok ? `saved the TypeSafe key to ${k.file}${k.works ? " and it works" : `: ${k.error}`}` : `TypeSafe key not saved: ${k.error}. Run \`routr key set\` when you have it`);
+      ui.note("Decision model", ["routr asks a small decision model about each piece of work. TypeSafe's Jev needs a TypeSafe key;", "Cloudflare's Clef runs on your Cloudflare account, or free on this machine through Ollama."]);
+      const d = await askDecision(ui, decisionTarget(config ? loadConfig(path).config : null, {}));
+      if (d === CANCEL) { return stopped(); }
+      if (d?.provider) { decision = d; await keyFor(d.provider); }
     }
-    choices = await guided({ ui, r, config, efforts: levelsOf, telemetry: !telemetryAsked && !envOff(env) });
-    if (choices === CANCEL) { ui.cancel("Setup stopped: nothing was written."); ui.close(); return { ok: false, cancelled: true, error: "setup stopped: nothing was written", did, skipped }; }
+    choices = await guided({ ui, r, config, efforts: levelsOf, telemetry: !telemetryAsked && !envOff(env), decided: decision ?? null });
+    if (choices === CANCEL) { return stopped(); }
     if (!choices.write) {
       if (skillStep()) { if (did.length) ui.note("Done", did); if (skillFailures.length) ui.note("Failed", skillFailures); }
       ui.outro("Your settings did not change."); ui.close();
@@ -223,6 +257,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches); Object.assign(ranks, choices.ranks);
     Object.assign(uses, choices.uses);
     if (choices.channel) channel = choices.channel;
+    if (choices.decision) { decision = choices.decision; await keyFor(decision.provider); }
   }
 
   skillStep();
@@ -241,10 +276,13 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   let old = null; try { old = JSON.parse(readFileSync(path, "utf8")); } catch {}
   await meteredRanks(fresh.filter((n) => !old?.subscriptions?.[n]?.metered_rank), r.harnesses, ranks, null);
   // --force rewrites the file from the suggestions, but keeps the person's own choices: telemetry, automatic updates
-  // and their channel, and which subscriptions are turned off.
+  // and their channel, the decision model, and which subscriptions are turned off.
   if (!config) {
     config = { ...starterConfig(found, models, ranks), ...(typeof old?.telemetry === "boolean" ? { telemetry: old.telemetry } : {}), ...(typeof old?.auto_update === "boolean" ? { auto_update: old.auto_update } : {}),
-      ...(UPDATE_CHANNELS.includes(old?.update_channel) ? { update_channel: old.update_channel } : {}) };
+      ...(UPDATE_CHANNELS.includes(old?.update_channel) ? { update_channel: old.update_channel } : {}), ...(old?.decision ? { decision: old.decision } : {}),
+      // A sure_at the person set is theirs; 0.8 was Jev's, written by an older setup, and now follows the model.
+      ...(typeof old?.sure_at === "number" && old.sure_at !== 0.8 ? { sure_at: old.sure_at } : {}) };
+    if (old?.sure_at === 0.8) did.push(`dropped sure_at 0.8, an older setup's default: it now follows the decision model (if you chose 0.8 yourself, put "sure_at": 0.8 back in ${path})`);
     for (const [n, s] of Object.entries(old?.subscriptions ?? {})) if (config.subscriptions[n]) {
       if (s?.enabled === false) config.subscriptions[n].enabled = false;
       // A rebuild must not silently change where the person permits routine spending.
@@ -284,6 +322,19 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     if (r.config.exists && !args.includes("--force")) changed.push(`update_channel ${config.update_channel === undefined ? "set to" : `${JSON.stringify(config.update_channel)} →`} ${JSON.stringify(channel)}`);
     config.update_channel = channel;
   }
+  // The decision model: one setting for the whole file. The provider's default model is written as null, so it follows
+  // routr's pin when that moves. A sure_at of 0.8 was Jev's, written by an older setup into every config: it is dropped
+  // when the model changes, so the new model's own measured bar applies (providers.mjs).
+  if (decision) {
+    const was = decisionTarget(config, {}), model = decision.model === decisionTarget({ decision: { provider: decision.provider } }, {}).model ? null : decision.model;
+    if (was.provider !== decision.provider || was.model !== decision.model) {
+      if (r.config.exists && !args.includes("--force")) changed.push(`decision ${decisionLabel(was)} → ${decisionLabel(decision)}`);
+      config.decision = { provider: decision.provider, model };
+      if (config.sure_at === 0.8) { delete config.sure_at; changed.push("sure_at 0.8 removed: it now follows the decision model"); }
+      if (!ui && !PROVIDERS[decision.provider].local && !hasKey(decision.provider)) skipped.push(`${PROVIDERS[decision.provider].label} needs its key: the user runs routr key set ${decision.provider} in their own terminal`);
+      if (!ui && PROVIDERS[decision.provider].local) { const not = await PROVIDERS[decision.provider].ready(decision.model, env); if (not) skipped.push(`${PROVIDERS[decision.provider].label}: ${not} (a download of more than 10 GB: ask the user first)`); }
+    }
+  }
   if (changed.length) did.push(`changed ${changed.join(", ")}`);
   if (!r.config.exists || args.includes("--force") || fresh.length || changed.length) {
     mkdirSync(dirname(path), { recursive: true });
@@ -318,6 +369,6 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   if (args.includes("--json")) return result;
   say(`\n${did.map((d) => `${paint(32, "done")} ${d}`).concat(skipped.map((x) => `${paint(33, "note")} ${x}`)).join("\n")}\n\n${render(after)}`);
   if (!interactive && !args.includes("--yes") && !flagged) say("\nNot a terminal, so nothing was asked: suggestions were used. An agent changes a setting with a flag: routr setup --help lists them.");
-  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour settings are plain JSON at ${path}: ${Object.entries(config.subscriptions).map(([n, x]) => settingSummary(n, x)).join("; ")}. Change one any time: routr setup --yes --model <name>=<id> (or --effort, --hardest, --reserve, --use, --disable, --channel), or ask your agent.`);
+  if (found.length && did.some((d) => d.startsWith("wrote"))) say(`\nYour settings are plain JSON at ${path}: ${Object.entries(config.subscriptions).map(([n, x]) => settingSummary(n, x)).join("; ")}. Change one any time: routr setup --yes --model <name>=<id> (or --effort, --hardest, --reserve, --use, --disable, --channel, --decision), or ask your agent.`);
   return result;
 }

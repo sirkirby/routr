@@ -36,7 +36,7 @@ Dispatch's candidates were filtered for the advised level. If you choose a diffe
 
     routr usage --level <basic|standard|strong>
 
-Use the level you chose. This reads usage and applies the user's account settings without asking Jev again. Check
+Use the level you chose. This reads usage and applies the user's account settings without asking the decision model again. Check
 `ok` and `level`, then choose from its `candidates`; if it fails, eligibility was not refreshed. Resolve the error or
 hold the launch until you can establish eligibility. Keep the original dispatch file for `launch --advice` and
 `record --advice`; the usage response is a capacity view, not a replacement assessment.
@@ -182,7 +182,7 @@ result against the project's own standards, not just the brief.
   showing an approval or question: read it, answer it if it is within the task's scope, otherwise ask the user
   (`herdr notification show`).
 - Get the worker's FULL report (Claude's headless `result` field is only its last message), save it, and take a
-  first read: `routr check --brief <file> --report <file>`. It flags, in about 300 ms and the same way every time, a
+  first read: `routr check --brief <file> --report <file>`. It flags, in a second or less (several on a local model) and the same way every time, a
   report that names no verification, skips part of the brief, admits gaps, reads as a symptom patch, or strays out
   of scope. It never accepts work.
 - Then run YOUR check: the diff exists and is in the right directory, the project's tests pass when you run them,

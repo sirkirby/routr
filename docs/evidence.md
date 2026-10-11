@@ -3,7 +3,8 @@
 routr's claims rest on small evals run while it was built (2026-09). Sample sizes are small and most labels were
 written by the people building it; each entry says so. "Jev" is TypeSafe's System One model. routr pins an exact version
 and moves the pin when a new one does at least as well on these items (CONTRIBUTING.md). Every result below was measured on
-`jev-1.13.0`, the current pin.
+`jev-1.13.0`, the current pin, except under [Decision models](#decision-models), which compares the other models routr
+can ask on the same items.
 
 ## Reading a brief
 
@@ -36,3 +37,55 @@ and moves the pin when a new one does at least as well on these items (CONTRIBUT
 | Does a second attempt establish worker failure? | Local outcome fixtures in `test/routing-quality.test.mjs`, 2026-09-30 | Review follow-ups, launch trouble and execution corrections are reported separately. Missing attempts and causes stay unknown locally; explicit run revisions count once, while workers sharing advice stay distinct. First-pass acceptance requires a verified pass, one attempt and no extra work. No model comparison is inferred from these counts; telemetry retains its legacy projection |
 | Can a lead refresh eligibility after changing the work level? | Pure fixtures and isolated CLI tests in `test/routing-quality.test.mjs`, 2026-10-01 | `usage --level` applies the same account policy for upgrades and downgrades, preserves ordinary usage output, rejects invalid or named-refresh combinations before reading usage, and leaves the original assessment intact for recording. A source CLI smoke returned the chosen level and real account diagnostics, including snapshot ages. These checks establish command behavior, not task outcomes |
 | Does quality-first guidance change the lead's stated decisions? | Nine synthetic cases labelled by the implementing agent, old and revised guidance paired in each request to one Opus lead at medium effort, 2026-10-01 | In the initial seven cases, revised responses used task evidence instead of the everyday default, refreshed eligibility after overrides, and separated execution failures from brief gaps. They also inferred an unobserved attempt count and requested redundant permission for configured fallback use. After clarification, two new cases proceeded under existing fallback permission and left unknown attempts/time unset. Decision-only responses, no workers launched; optimistic fixtures, no independent judge, and paired prompts can contaminate the baseline. No measured improvement in real quality, time or spend |
+
+## Decision models
+
+routr asks one decision model about each brief, chosen in `routr setup`: TypeSafe's Jev (the default), or Cloudflare's
+Clef, hosted on Workers AI or run on your own machine through Ollama. Both answer the same System One questions. Each
+model below was run by the maintainers' gate on the saved items above, beside Jev in the same run (2026-10-11), with
+routr's shipped questions (r5, c1). Those questions were worded and tuned on Jev, which favours it.
+
+| | Jev 1.13.0 (TypeSafe) | Clef (Workers AI) | Clef Flash (Workers AI) | Clef Flash (Ollama, MLX) | Clef Flash (Ollama, GGUF) |
+|---|---|---|---|---|---|
+| Level right, 104 labelled briefs | 82-83 | 72 | 74 | 70 | 72 |
+| One level too low / too high | 7-8 / 13-14 | 6 / 26 | 18 / 12 | 22 / 12 | 20 / 12 |
+| Level right, the 36 real tasks | 29-30 | 26 | 23 | 19 | 21 |
+| "Standalone" decisively wrong (78 briefs) | 2-3 | 11 | 3 | 3 | 3 |
+| "Tiny" on the right side of 0.5 (30) | 27-28 | 26 | 25 | 24 | 24 |
+| Yes/no facts more often decisive than Jev's (of 12) | | 11 | 7 | 9 | 8 |
+| Report checks: expected readings (23) | 19-21 | 20 | 18 | 17 | 17 |
+| Reviewer verdicts right (80) | 68-69 | 68 | 71 | 70 | 69 |
+| Same readings on 5 repeats (144 facts, 12 levels) | 139-140, 11 | 144, 12 | 144, 12 | 144, 12 | 144, 12 |
+| Time per brief | ~130 ms | ~420 ms | ~525 ms | 5-7 s (M4 Max) | ~5 s (M4 Max) |
+| `sure_at` | 0.8 | 0.7 | 0.5 | 0.6 | 0.6 |
+
+Jev's ranges are from the four runs it took part in. The MLX build (`clef-flash:9b-mxfp8`) runs only on Apple Silicon;
+the GGUF build (`clef-flash:9b-q8_0`) runs on every platform, and was measured on a Mac. Times are the gate's means from the maintainer's network, and,
+for Ollama, a new brief each time with the model loaded.
+
+- **Which way each is wrong.** Clef reads the level too high more often than Jev, the cheaper direction to be wrong
+  in: a stronger worker than needed. Clef Flash reads it too low, the costlier direction: the work may come back
+  shallow. Clef was more often decisive than Jev on 11 of the 12 yes/no facts, Clef Flash on 7 to 9, and both gave the
+  same answer every time they were asked again. The two local builds of Clef Flash agree with the hosted one within a
+  few briefs.
+- **Calibration does not close the gap.** Weighting the three level probabilities per model, fitted with each brief
+  left out of its own fit, left Clef at 71 and Clef Flash at 71. The difference is in how these models read the level
+  question's wording, which was chosen on Jev (P23). Wording measured on Clef is open work.
+- **Confidence.** Providers compute `confidence` differently: TypeSafe by its own formula, Clef by entropy, which reads
+  a 0.92/0.08 split between two levels as 0.75 where TypeSafe reads 0.88. routr recomputes every non-TypeSafe answer on
+  TypeSafe's scale (`src/lib/systemone.mjs`). Each model's `sure_at` is the lowest bar from 0.5 to 0.8 at which its level,
+  when sure, is right at least as often as Jev's at 0.8 (39 of 44): Clef 12 of 13 at 0.7, Clef Flash on Workers AI 27 of
+  30 at 0.5, on Ollama 23 of 24 at 0.6 (both builds). Few briefs reach those bars, so these are small counts. A `sure_at` you set
+  yourself applies to every model.
+- **Pins.** Jev is asked by exact version. Cloudflare's model names (`clef`, `clef-flash`) are not versioned, so
+  Cloudflare can change the model behind a name; these numbers are from 2026-10-11 and the gate is re-run on them.
+  Ollama's `latest` is a different build on a Mac (MLX) than elsewhere (GGUF), so routr asks an exact tag, and
+  `routr doctor` says when the build you pulled is not the one measured.
+- **Local speed.** On an M4 Max, Clef 27B through Ollama took 13-26 s per brief (MLX) and about 20 s (GGUF), too slow
+  to advise in, so routr does not offer it locally. Every request carries routr's questions, about 1,950 input tokens,
+  so even a short brief costs that much.
+- **Price.** Clef bills input tokens only. Workers AI's free daily allowance (10,000 neurons) covers about 450,000
+  Clef input tokens or 2.9 million Clef Flash input tokens: at about 2,000 tokens a brief, roughly 200 briefs a day on
+  Clef, more on Flash. Above that, Cloudflare's Workers Paid plan ($5 a month) bills by use
+  ([Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/), as of 2026-10-11).
+

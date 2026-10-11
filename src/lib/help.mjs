@@ -111,13 +111,13 @@ export const COMMANDS = {
   },
   key: {
     name: "key",
-    description: "`routr key set` stores your TypeSafe API key: typed with no echo (or piped in), saved owner-only, then tested",
-    args: [{ name: "set", description: "store the key in ~/.config/routr/env", required: true }],
+    description: "`routr key set [typesafe|cloudflare]` stores what your decision model's provider needs (TypeSafe: an API key; Cloudflare: an API token with Workers AI Read and Edit, and your account ID): a secret is typed with no echo (the account ID is shown), or piped in one per line; saved owner-only beside any other provider's, then tested. With no provider, the one your settings use. Ollama needs no key",
+    args: [{ name: "set", description: "store it in ~/.config/routr/env", required: true }, { name: "typesafe|cloudflare", description: "the provider (default: the one your settings use)", required: false }],
     flags: [{ name: "--no-verify", description: "skip the test call", required: false }],
   },
   setup: {
     name: "setup",
-    description: "do what doctor says is missing: write your settings for the harnesses found and ask for the key. It leaves Claude Code's settings alone. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting",
+    description: "do what doctor says is missing: write your settings for the harnesses found, and ask which decision model to use and for its key. It leaves Claude Code's settings alone. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting",
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
       { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list (Claude Code also takes a model's full name, which it does not list); repeatable. Also changes it on an existing config", required: false, repeatable: true },
@@ -129,6 +129,7 @@ export const COMMANDS = {
       { name: "--enable", arg: "<subscription>", description: "let routr hand work to this subscription again (it kept its settings while off); repeatable", required: false, repeatable: true },
       { name: "--disable", arg: "<subscription>", description: "turn a subscription off: routr gives it no work, and it keeps its settings; repeatable", required: false, repeatable: true },
       { name: "--channel", arg: "stable|beta", description: "which releases updates install: stable (the default), or beta for beta and release-candidate builds too (a newer stable release still wins). Read by `routr update` and the daily update; nothing moves you back to an older stable by itself", required: false },
+      { name: "--decision", arg: "<provider>[:<model>]", description: "which decision model reads each brief: typesafe (Jev, the default), cloudflare (Clef on your Cloudflare account; cloudflare:clef-flash is its smaller model), or ollama (Clef Flash on this machine, free). Only models routr has measured (docs/evidence.md); the key is set apart, by the person, with routr key set", required: false },
       { name: "--show", arg: null, description: "print your settings as routr reads them, and change nothing (asks no harness)", required: false },
       { name: "--no-statusline", description: "does nothing: setup no longer sets Claude's statusline (accepted for older scripts)", required: false },
       { name: "--force", description: "rewrite an existing config (the old one is kept as config.json.bak)", required: false },
@@ -140,7 +141,7 @@ export const COMMANDS = {
     name: "uninstall",
     description: "remove routr from this machine: the binary, both skills (routr and routr-orchestrate) and their links, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, key, and ledger unless you say otherwise. Shows the plan and asks first",
     flags: [
-      { name: "--purge", description: "also remove your config, TypeSafe key, and ledger", required: false },
+      { name: "--purge", description: "also remove your config, your decision provider's key, and ledger", required: false },
       { name: "--yes", description: "ask nothing (needed when there is no terminal)", required: false },
       { name: "--dry-run", description: "show what would be removed and kept", required: false },
       { name: "--json", arg: null, description: "output JSON instead of text", required: false, default: false },
@@ -208,7 +209,7 @@ export function formatCommandSynopsis(cmd) {
   }
   if (cmd.args) {
     for (const arg of cmd.args) {
-      parts.push(arg.name);
+      parts.push(arg.required === false && !arg.name.startsWith("[") ? `[${arg.name}]` : arg.name); // an optional word is bracketed, as a flag is
     }
   }
   return parts.join(" ");

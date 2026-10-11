@@ -4,11 +4,13 @@ import { join } from "node:path";
 import { LEVELS } from "./questions.mjs";
 import { HARDEST, NO_CONFIG, RESERVE } from "./wording.mjs";
 import { home } from "./runtime.mjs";
+import { DEFAULT_PROVIDER, defaultModel, isModel, isProvider, modelsHere, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
 
 export const CONFIG_PATH = join(home(), ".config/routr/config.json");
 export const DEFAULTS = {
-  fallback_level: "standard",  // advised when Jev cannot be reached
-  sure_at: 0.8,                // Jev confidence from which its level is presented as settled. P23: 89% correct at or above 0.8, 56% below 0.5
+  fallback_level: "standard",  // advised when the decision model cannot be reached
+  sure_at: null,               // confidence from which a level is presented as settled; null: the decision model's own (providers.mjs; Jev's is 0.8, P23)
+  decision: { provider: DEFAULT_PROVIDER, model: null }, // which System One model reads the brief (providers.mjs); model null: the provider's default
   risk_above: 0.75,            // high_blast_radius probability that gets called out as high risk
   prefer: { research: "strong", review: "strong" }, // your preference per kind of work; shown to the agent as advice, never forced
   auto_update: true,           // check for a new release at most once a day, in the background; applied on the next run
@@ -38,9 +40,10 @@ export function loadConfig(path = CONFIG_PATH) {
   }
   // Every number here is a share between 0 and 1. Anything else (a reserve of -1 would turn an empty subscription into
   // a full one) is reported and replaced by the default.
-  const share = (v, fallback, where) => { if (v === undefined) return fallback; if (typeof v === "number" && v >= 0 && v <= 1) return v; notes.push(`${where}: ${JSON.stringify(v)} is not a number from 0 to 1, using ${fallback}`); return fallback; };
+  const share = (v, fallback, where) => { if (v === undefined) return fallback; if (typeof v === "number" && v >= 0 && v <= 1) return v; notes.push(`${where}: ${JSON.stringify(v)} is not a number from 0 to 1, using ${fallback ?? "the decision model's own"}`); return fallback; };
   const num = (k) => share(raw[k], DEFAULTS[k], k);
-  const config = { fallback_level: isLevel(raw.fallback_level) ? raw.fallback_level : DEFAULTS.fallback_level, sure_at: num("sure_at"), risk_above: num("risk_above"), auto_update: raw.auto_update !== false, update_channel: DEFAULTS.update_channel, telemetry: raw.telemetry === true, prefer: {}, subscriptions: {} };
+  const config = { fallback_level: isLevel(raw.fallback_level) ? raw.fallback_level : DEFAULTS.fallback_level, sure_at: raw.sure_at === null ? null : num("sure_at"), risk_above: num("risk_above"),
+    decision: decisionSetting(raw.decision, notes), auto_update: raw.auto_update !== false, update_channel: DEFAULTS.update_channel, telemetry: raw.telemetry === true, prefer: {}, subscriptions: {} };
   if (UPDATE_CHANNELS.includes(raw.update_channel)) config.update_channel = raw.update_channel;
   else if (raw.update_channel !== undefined) notes.push(`update_channel: ${JSON.stringify(raw.update_channel)} is not one of ${UPDATE_CHANNELS.join(", ")}, using stable: routr setup --channel stable|beta`);
   for (const [k, v] of Object.entries(raw.prefer ?? DEFAULTS.prefer)) isLevel(v) ? (config.prefer[k] = v) : notes.push(`prefer.${k}: "${v}" is not a level, ignored`);
@@ -68,6 +71,23 @@ export function loadConfig(path = CONFIG_PATH) {
     };
   }
   return { config, notes };
+}
+
+// Which decision model to ask. An unknown provider or a model routr has not measured there is reported, and the default
+// stands, so the router still answers.
+function decisionSetting(d, notes) {
+  if (d === undefined || d === null) return { ...DEFAULTS.decision };
+  const provider = isProvider(d?.provider) ? d.provider : DEFAULT_PROVIDER;
+  if (d?.provider !== undefined && provider !== d.provider) notes.push(`decision.provider: ${JSON.stringify(d.provider)} is not one of ${PROVIDER_NAMES.join(", ")}, using ${DEFAULT_PROVIDER}: routr setup --decision <provider>`);
+  const models = Object.keys(PROVIDERS[provider].models);
+  if (d?.model == null || provider !== d.provider) return { provider, model: null };
+  if (isModel(provider, d.model)) {
+    // Measured, but not a build this machine runs (an MLX model off Apple Silicon): said, and kept, since the file may be shared.
+    if (!modelsHere(provider).includes(d.model)) notes.push(`decision.model: ${d.model} does not run on this machine (${PROVIDERS[provider].models[d.model].runs ?? "another platform"} only): routr setup --decision <provider>`);
+    return { provider, model: d.model };
+  }
+  notes.push(`decision.model: ${JSON.stringify(d.model)} is not one routr has measured on ${provider} (${models.join(", ")}), using ${defaultModel(provider)}`);
+  return { provider, model: null };
 }
 
 // The subscriptions routr may hand work to: every configured one the user has not turned off.

@@ -7,8 +7,9 @@ metadata:
 
 # routr
 
-routr gives you a quick, calibrated read at the moment you hand out work. A small decision model (Jev, from
-TypeSafe) reads the brief you are about to give and answers a fixed set of questions in about 300 ms: facts about
+routr gives you a quick, calibrated read at the moment you hand out work. A small decision model (TypeSafe's Jev,
+or Cloudflare's Clef if the user chose it) reads the brief you are about to give and answers a fixed set of questions,
+in under a second (several seconds when it runs on the user's own machine): facts about
 what the brief says, what kind of work it is, how costly a mistake would be, and an overall level. Code adds the
 live usage of each subscription. **You make the decision**: how much intelligence and reasoning the work needs, and
 so which model and effort. You know the codebase and the purpose of the work; routr does not. It gives you the same
@@ -65,9 +66,10 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   brief before you send it.
 - `level`: a one-word summary: `basic` (rote or well-specified), `standard` (must find something out or choose an
   approach), or `strong` (a wrong or shallow result would be expensive and hard to notice). `sure: false` means routr
-  was torn between the two levels in `between`; it then reports the more likely one (the lower, if they are equally likely; and when Jev gives
-  no spread there is no `between`, and the level is its score rounded). On 36 real
-  tasks that was right 29 times, and when it was wrong it was one level too low. routr never names a model.
+  was torn between the two levels in `between`; it then reports the more likely one (the lower, if they are equally likely; and when the model gives
+  no spread there is no `between`, and the level is its score rounded). Its note says how often that was right on 36
+  real tasks for the model that answered (`decision_model`), and which way it was wrong: Jev, 29 times, one level too
+  low otherwise. routr never names a model for the work.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
 - `input_notes` (only when present): something in what you passed that routr did not take as you may have meant: a
   `--headroom` it could not read (ignored), a flag-like word such as `--json` given as the whole brief (set aside, and

@@ -6,7 +6,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { advise, headline } from "./advise.mjs";
 import { readReport } from "./check.mjs";
-import { ask } from "./jev.mjs";
+import { ask } from "./systemone.mjs";
+import { decisionTarget } from "./providers.mjs";
 import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
@@ -31,22 +32,25 @@ export function parseHeadroom(values) {
   return { given, notes };
 }
 
-// `routr subagent|dispatch "<brief>"`: Jev's reading of the brief with the user's preferences, and for dispatch the
-// subscriptions ranked by usage, read while Jev answers. An unreachable Jev still gets an answer: the user's fallback.
+// `routr subagent|dispatch "<brief>"`: the decision model's reading of the brief with the user's preferences, and for
+// dispatch the subscriptions ranked by usage, read while it answers. An unreachable model still gets an answer: the
+// user's fallback.
 export async function adviseCommand(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read = readUsage } = {}) {
   const out = { id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length };
   let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };
-  // Each source's newest reading, read while Jev answers; a slow source (Cursor's screen) is a snapshot refreshed in the background.
+  // Each source's newest reading, read while the decision model answers; a slow source (Cursor's screen) is a snapshot refreshed in the background.
   const usageP = mode === "dispatch" ? read(enabledSubscriptions(config), given).catch(() => []) : null; // a turned-off one is not read
   try {
-    const r = await askFn({ task: { brief } }, questions, undefined, 10000);
-    advice = advise(r.answers, config);
-    // Raw judgments travel with the advice, so preferences can be re-evaluated later without asking again.
+    const r = await askFn({ task: { brief } }, questions, { config });
+    advice = advise(r.answers, config, r.profile ?? undefined);
+    // Raw judgments travel with the advice, so preferences can be re-evaluated later without asking again. Which model
+    // answered, and where, goes with them: answers from two models are not comparable.
     const a = r.answers;
-    Object.assign(out, { jev_model: r.model, ms: Math.round(r.latencyMs), answers: { level: { score: a.level.score, confidence: a.level.confidence, probabilities: a.level.probabilities }, work_type: { choice: a.work_type.choice, confidence: a.work_type.confidence }, high_blast_radius: a.high_blast_radius.noul } }); // fact probabilities are in `facts`
+    Object.assign(out, { provider: r.provider, decision_model: r.model, ...(r.measured === false ? { unmeasured: true } : {}), ms: Math.round(r.latencyMs), answers: { level: { score: a.level.score, confidence: a.level.confidence, probabilities: a.level.probabilities }, work_type: { choice: a.work_type.choice, confidence: a.work_type.confidence }, high_blast_radius: a.high_blast_radius.noul } }); // fact probabilities are in `facts`
   } catch (e) {
     advice.notes.push(`Router unavailable (${short(e, 120)}). "${config.fallback_level}" is only the user's fallback: judge the level yourself.`);
     out.fallback = true;
+    out.provider = decisionTarget(config).provider; // which one failed: a local model that is often down shows in the ledger
   }
   Object.assign(out, { headline: headline(advice), ...advice, meaning: MEANING[advice.level] });
   if (mode === "dispatch") {
@@ -59,13 +63,13 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
 }
 
 // A quick first read of a worker's report; the orchestrator remains the judge.
-export async function checkCommand({ brief: briefFile, report: reportFile }, { askFn = ask } = {}) {
+export async function checkCommand({ brief: briefFile, report: reportFile }, { askFn = ask, config = null } = {}) {
   const out = { mode: "check", question_set: CHECK_VERSION };
   try {
     const brief = readFileSync(briefFile, "utf8").trim(), report = readFileSync(reportFile, "utf8").trim();
     if (report.length < 200) out.warning = "this report is very short: make sure it is the worker's full report, not just its last message";
-    const r = await askFn({ task: { brief }, report: { text: report } }, checkQuestions, undefined, 10000);
-    Object.assign(out, readReport(r.answers), { jev_model: r.model, ms: Math.round(r.latencyMs) });
+    const r = await askFn({ task: { brief }, report: { text: report } }, checkQuestions, { config });
+    Object.assign(out, readReport(r.answers), { provider: r.provider, decision_model: r.model, ms: Math.round(r.latencyMs) });
   } catch (e) { Object.assign(out, { headline: "routr: could not read the report; judge it yourself", fallback: true, error: short(e) }); }
   return out;
 }
@@ -103,7 +107,7 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null, { env
   return [
     `Wrote ${rows.length} rows to ${file}: every row in your ledger, in exactly the form telemetry sends. Writing it sent nothing.`,
     "",
-    "In each row: what routr read from the brief (yes/no probabilities, level, the Jev version), the subscription, model,",
+    "In each row: what routr read from the brief (yes/no probabilities, level, the decision model and its provider), the subscription, model,",
     "effort and level chosen, the outcome, attempts and seconds, and a key per row. Day-level dates only. Anything typed by",
     "hand (a model name, a verdict) is cut to a known value or a short name, or sent as \"other\". Each send also carries",
     "routr's version, your OS, and a random install id made on this machine. Never sent: the briefs (routr never stores",

@@ -1,14 +1,18 @@
-// Jev answers + user preferences → a FACT SHEET and advice for the agent that asked. Pure: no I/O.
-// System One feeds System Two: Jev reads what the brief says, fast and calibrated; the agent, who knows the codebase
-// and the purpose of the work, decides how much intelligence and reasoning to buy. Nothing here overrides either.
+// A decision model's answers + user preferences → a FACT SHEET and advice for the agent that asked. Pure: no I/O.
+// System One feeds System Two: the decision model (Jev, or Clef: providers.mjs) reads what the brief says, fast and
+// calibrated; the agent, who knows the codebase and the purpose of the work, decides how much intelligence and
+// reasoning to buy. Nothing here overrides either.
 import { FACTS, LEVELS } from "./questions.mjs";
+import { decisionTarget } from "./providers.mjs";
 
 const pct = (p) => `${Math.round((p ?? 0) * 100)}%`;
 const YES = 0.8, NO = 0.2; // P26's bar for a decisive answer
 
-export function advise(a, c) {
+// `profile` is the answering model's (providers.mjs): its sure_at, unless the user set one, and the numbers the torn note
+// quotes. Jev's when not given.
+export function advise(a, c, profile = decisionTarget(null, {}).profile) {
   const s = a.level;
-  const sure = s.confidence >= c.sure_at;
+  const sure = s.confidence >= (c.sure_at ?? profile.sure_at);
   // Sure: round to the nearest level. Torn: the MOST LIKELY level (r5). Measured on 36 real tasks from the
   // maintainer's worker runs (P32, 2026-09-26: each labelled by two blind judges, the 16 they split by the maintainer):
   // Jev was torn on 31; on the same gate answers (2026-09-27) the most likely level was right on 29 of 36 (7 one level
@@ -29,15 +33,17 @@ export function advise(a, c) {
     if (reading === "unclear") unclear.push(k);
     if (f.about === "brief" && reading === "no") notes.push(`Fix the brief first: ${f.say[1]}.`);
   }
-  // Said as it was decided: the more likely of two, the lower of two equally likely, or the rounded score when Jev gave
-  // no spread at all (from the review of #42).
+  // Said as it was decided: the more likely of two, the lower of two equally likely, or the rounded score when the model
+  // gave no spread at all (from the review of #42). The record quoted is the answering model's own (its profile).
   const tie = between && probs[topTwo[0]] === probs[topTwo[1]];
+  const t = profile.torn, off = [t.low && "too low", t.high && "too high"].filter(Boolean);
+  const record = `on ${t.of} real tasks it was the right level ${t.right} times${off.length ? `, and when it was wrong it was one level ${off.join(" or ")}` : ""}`;
   if (!sure) notes.push(!between ? `routr is unsure of the level. Start at ${level}, its score rounded. Go higher if a fact calls for it.`
     : `routr is between ${between.join(" and ")} (${LEVELS.map((l, i) => `${l} ${pct(s.probabilities?.[i])}`).join(", ")}). ${tie
       ? `Start at ${level}: the two are equally likely, so the lower one.`
-      : `Start at ${level}, the more likely: on 36 real tasks it was the right level 29 times, and when it was wrong it was one level too low.`} Go higher if a fact calls for it.`);
+      : `Start at ${level}, the more likely: ${record}.`} Go higher if a fact calls for it.`);
   if (unclear.length) notes.push(`routr could not tell from the brief: ${unclear.join(", ")}. You can: you know the codebase.`);
-  // Preferences for every kind of work Jev finds plausible, so an unsure work type does not hide one.
+  // Preferences for every kind of work the model finds plausible, so an unsure work type does not hide one.
   const kinds = Object.entries(a.work_type.probabilities ?? { [a.work_type.choice]: 1 }).filter(([, p]) => p >= 0.3).map(([k]) => k);
   for (const k of kinds) {
     const want = c.prefer[k];

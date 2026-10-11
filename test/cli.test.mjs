@@ -466,6 +466,25 @@ test("routr key set stores a piped key owner-only, never prints it, and refuses 
   const bad = Bun.spawnSync(["bun", SCRIPT, "key", "set", "--no-verify"], { env, stdin: Buffer.from("nope\n") });
   expect(bad.exitCode).toBe(1);
   expect(readFileSync(file, "utf8")).toContain("0123456789abcdef");    // the earlier key is untouched
+  // Cloudflare's two values, piped one per line, are merged in beside TypeSafe's key; a bad account ID writes nothing.
+  const cf = Bun.spawnSync(["bun", SCRIPT, "key", "set", "cloudflare", "--no-verify"], { env, stdin: Buffer.from("cf_test_0123456789abcdef\n0123456789abcdef0123456789abcdef\n") });
+  expect(cf.exitCode).toBe(0);
+  expect(cf.stdout.toString()).not.toContain("cf_test_");
+  expect(readFileSync(file, "utf8")).toBe("TYPESAFE_API_KEY=ts_test_0123456789abcdef\nCLOUDFLARE_API_TOKEN=cf_test_0123456789abcdef\nCLOUDFLARE_ACCOUNT_ID=0123456789abcdef0123456789abcdef\n");
+  const named = Bun.spawnSync(["bun", SCRIPT, "key", "set", "cloudflare", "--no-verify"], { env, stdin: Buffer.from("CLOUDFLARE_ACCOUNT_ID=fedcba9876543210fedcba9876543210\nCLOUDFLARE_API_TOKEN=cf_next_0123456789abcdef\n") });
+  expect(named.exitCode).toBe(0);                                         // NAME=value lines, in any order, replace in place
+  expect(readFileSync(file, "utf8")).toBe("TYPESAFE_API_KEY=ts_test_0123456789abcdef\nCLOUDFLARE_API_TOKEN=cf_next_0123456789abcdef\nCLOUDFLARE_ACCOUNT_ID=fedcba9876543210fedcba9876543210\n");
+  const badId = Bun.spawnSync(["bun", SCRIPT, "key", "set", "cloudflare", "--no-verify"], { env, stdin: Buffer.from("cf_test_0123456789abcdef\nmy-account\n") });
+  expect(badId.exitCode).toBe(1);
+  expect(JSON.parse(badId.stdout.toString()).error).toContain("Cloudflare account ID");
+  expect(readFileSync(file, "utf8")).toContain("cf_next_");               // unchanged
+  const local = JSON.parse(Bun.spawnSync(["bun", SCRIPT, "key", "set", "ollama"], { env, stdin: Buffer.from("") }).stdout.toString());
+  expect(local).toMatchObject({ ok: true, provider: "ollama" });
+  expect(local.note).toContain("needs no key");
+  // With no provider named, the one the settings use.
+  writeFileSync(join(home, ".config/routr/config.json"), JSON.stringify({ decision: { provider: "cloudflare" } }));
+  const fromConfig = Bun.spawnSync(["bun", SCRIPT, "key", "set", "--no-verify"], { env, stdin: Buffer.from("cf_conf_0123456789abcdef\nfedcba9876543210fedcba9876543210\n") });
+  expect(JSON.parse(fromConfig.stdout.toString()).provider).toBe("cloudflare");
 });
 
 test("the file-and-ledger commands answer instead of failing", async () => {
@@ -569,4 +588,11 @@ test("a folder inside routr's copy that cannot be read counts as the user's: the
   } finally { chmodSync(notes, 0o700); }
   expect(readFileSync(`${notes}/mine.txt`, "utf8")).toBe("the user's");    // still where the user put it
   expect(readdirSync(`${home}/.agents/skills`).filter((n) => n.includes("routr-old"))).toEqual([]);
+});
+
+test("from the setup review: a Cloudflare account ID in capitals is taken, and saved in lower case", () => {
+  const home = scratch("key-upper"), env = cliEnv(home);
+  const r = Bun.spawnSync(["bun", SCRIPT, "key", "set", "cloudflare", "--no-verify"], { env, stdin: Buffer.from("cf_test_0123456789abcdef\n0123456789ABCDEF0123456789ABCDEF\n") });
+  expect(r.exitCode).toBe(0);
+  expect(readFileSync(join(home, ".config/routr/env"), "utf8")).toContain("CLOUDFLARE_ACCOUNT_ID=0123456789abcdef0123456789abcdef\n");
 });

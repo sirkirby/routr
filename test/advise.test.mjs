@@ -112,22 +112,31 @@ test("a torn level reads as the more likely of the two (r5)", () => {
   expect(advise(ans(1.6, 0.9), cfg()).between).toBeUndefined();             // sure: plain rounding, no range
 });
 
-test("dispatch and subagent answer from a function: Jev's reading, the ranking, and the user's fallback when Jev is down", async () => {
+test("dispatch and subagent answer from a function: the decision model's reading, the ranking, and the user's fallback when it is down", async () => {
   const { adviseCommand } = await import("../src/lib/commands.mjs");
-  const jev = async () => ({ model: "jev-test", latencyMs: 12.4, answers: fact(ans(1.1, 0.9), {}) });
+  const jev = async () => ({ provider: "typesafe", model: "jev-test", latencyMs: 12.4, answers: fact(ans(1.1, 0.9), {}) });
   const read = async (names) => names.map((n) => live(n, n === "cursor" ? 0.9 : 0.3));
   const d = await adviseCommand("dispatch", "Fix the parser", { config: cfg(), notes: [] }, {}, { askFn: jev, read });
-  expect(d).toMatchObject({ mode: "dispatch", level: "standard", jev_model: "jev-test", ms: 12, brief_chars: 14 });
+  expect(d).toMatchObject({ mode: "dispatch", level: "standard", provider: "typesafe", decision_model: "jev-test", ms: 12, brief_chars: 14 });
   expect(d.subscriptions.most_room).toBe("cursor");
   expect(d.rule).toContain("Quality first:");
   expect(d.rule).toContain("routr usage --level <chosen>");
   expect(JSON.stringify(d)).not.toContain("Fix the parser"); // the brief itself is never in the output
   const down = await adviseCommand("subagent", "Fix it", { config: cfg(), notes: ["a note"] }, {}, { askFn: async () => { throw new Error("offline"); } });
-  expect(down).toMatchObject({ fallback: true, level: "standard", config_notes: ["a note"] });
+  expect(down).toMatchObject({ fallback: true, level: "standard", config_notes: ["a note"], provider: "typesafe" }); // which provider was down
+  expect(down.decision_model).toBeUndefined();
   expect(down.subscriptions).toBeUndefined();
   expect(down.notes[0]).toContain("Router unavailable (offline)");
   const none = await adviseCommand("dispatch", "x", { config: { ...cfg(), subscriptions: {} }, notes: [] }, {}, { askFn: jev, read });
   expect(none.subscriptions.note).toContain("has not run `routr setup`");
+  // Another model's answers are read with its own profile: its sure_at, and its own record in the torn note.
+  const clef = { sure_at: 0.7, torn: { right: 26, of: 36, low: 5, high: 5 } };
+  const c = await adviseCommand("subagent", "x", { config: cfg(), notes: [] }, {}, { askFn: async () => ({ provider: "cloudflare", model: "clef", latencyMs: 400, answers: fact(ans(1.4, 0.75), {}), profile: clef }) });
+  expect(c).toMatchObject({ provider: "cloudflare", decision_model: "clef", sure: true });   // 0.75 clears Clef's 0.7, not Jev's 0.8
+  const torn = await adviseCommand("subagent", "x", { config: cfg(), notes: [] }, {}, { askFn: async () => ({ provider: "cloudflare", model: "clef", latencyMs: 400, answers: fact(ans(1.4, 0.5), {}), profile: clef }) });
+  expect(torn.notes.join(" ")).toContain("on 36 real tasks it was the right level 26 times, and when it was wrong it was one level too low or too high");
+  const own = await adviseCommand("subagent", "x", { config: { ...cfg(), sure_at: 0.9 }, notes: [] }, {}, { askFn: async () => ({ provider: "cloudflare", model: "clef", latencyMs: 400, answers: fact(ans(1.4, 0.75), {}), profile: clef }) });
+  expect(own.sure).toBe(false);                                                               // a sure_at the user set wins
 });
 
 test("the headline gives the level, the kind of work, what the brief leaves open, and any warning in capitals", async () => {

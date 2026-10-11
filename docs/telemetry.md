@@ -36,12 +36,13 @@ send. Never during a command, and a failed send is retried the next day. Each ro
 
 | Field | Example | What it is |
 |---|---|---|
-| `v` | `2` | the row format |
+| `v` | `3` | the row format |
 | `day` | `2026-09-24` | the date the row was recorded; no time of day (the server notes when it received a send) |
 | `mode` | `dispatch` | `dispatch` or `subagent` |
-| `question_set`, `jev_model` | `r4`, `jev-1.13.0` | which routr questions and which Jev version read the brief |
+| `question_set` | `r5` | which routr questions read the brief |
+| `provider`, `decision_model` | `cloudflare`, `clef` | which decision model read the brief, and where it ran (`typesafe`, `cloudflare` or `ollama`): only the models routr offers, or a Jev version, are named; anything else is `"other"` |
 | `brief_chars` | `1975` | the brief's length, never its text |
-| `advised` | level, sure, between, work type, high risk, fallback, facts | what routr read: its level (and the two it was torn between), whether Jev answered, and yes/no probabilities for its fixed questions |
+| `advised` | level, sure, between, work type, high risk, fallback, facts | what routr read: its level (and the two it was torn between), whether the decision model answered, and yes/no probabilities for its fixed questions |
 | `chose` | `codex`, `gpt-5.6-terra`, `high`, `strong` | the subscription, model, effort, and level the agent chose. The effort is the one the run had: an agent's "default" or none is sent as your configured default, or as the effort in the model id (Cursor, Antigravity); where it came from stays in your ledger and is not sent |
 | `outcome` | `done`, `pass`, attempts `1`, seconds `420` | how the work turned out |
 | `subagents` | `[{ advised: "basic", model: "…" }]` | the level advised and the model used for each subagent |
@@ -57,15 +58,15 @@ your machine the first time you share or send feedback. The install id is not de
 machine.
 
 Every field is built from an exact list of known values (harnesses, levels, verdicts, efforts, work types, fact
-names) or a narrow pattern (the question-set and Jev versions). Anything else is sent as `"other"`. The one field no
-list can check is a **model name**: routr holds no list of models, so anything shaped like a model name (letters,
+names) or a narrow pattern (the question set, and a Jev version the maintainers try before routr offers it). Anything else is sent as `"other"`. The one field no
+list can check is a **model name**: routr holds no list of worker models, so anything shaped like a model name (letters,
 digits, `.`, `-`, `:`, brackets; no paths, URLs, emails, or tokens) is sent as written. The endpoint also refuses any
 row carrying a string longer than 80 characters.
 
 ## What is never sent
 
 Your briefs or any other text, notes, worker reports, project or repository names, file paths, the ledger's own ids,
-hashes of briefs, usage numbers, your TypeSafe key, or anything from your code.
+hashes of briefs, usage numbers, your decision provider's key, or anything from your code.
 
 ## Where it goes
 

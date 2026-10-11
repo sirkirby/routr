@@ -8,14 +8,17 @@ Codex, Cursor, Antigravity, and Kiro.
 **It uses what is already on your machine.** The workers are the harness CLIs you have installed and logged in to,
 started in [herdr](https://github.com/herdrdev/herdr) panes (routr is named after it). There are no provider API
 keys to hand over, no proxy, and no new accounts: your subscriptions, your logins, your settings. The one key routr
-needs is for its own decision model.
+needs is for its own decision model, and even that is optional: it can run on your own machine.
 
 **The questions are the product.** Each time the lead is about to hand out work, and again when the work comes
 back, routr asks a fixed set of narrow yes-or-no questions about the text. They were tuned against real briefs and
 real worker reports: the ones that separated easy work from hard work, and good reports from flawed ones, stayed,
-and the rest were dropped ([the evidence](docs/evidence.md)). A System One model
-([TypeSafe's Jev](https://docs.typesafe.ai)) answers them in about 300 ms with calibrated probabilities, the same
-way every time. Code adds each subscription's live usage. The lead agent, your smartest model, stays the judge.
+and the rest were dropped ([the evidence](docs/evidence.md)). A System One model answers them with calibrated
+probabilities, the same way every time: [TypeSafe's Jev](https://docs.typesafe.ai) by default, well under a second,
+or Cloudflare's open [Clef](https://blog.cloudflare.com/clef-decision-models/), on your Cloudflare account or free
+on your own machine through [Ollama](https://ollama.com). Jev reads the level of work most
+accurately on routr's tests; [how each compares](docs/evidence.md#decision-models). Code adds each subscription's live usage. The
+lead agent, your smartest model, stays the judge.
 
 A long task on one subscription runs it hot, and an agent left to itself gives every subagent its own, largest
 model. routr spreads the work across what you have, and starts each piece at the level it needs.
@@ -84,11 +87,11 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `share` | Write exactly what telemetry sends to a file you can read. Sends nothing. |
 | `telemetry on\|off\|status\|send` | Share anonymous outcomes once a day; off unless you turn it on ([details](docs/telemetry.md)). |
 | `feedback "<text>"` | Send the maintainers a note in your own words. |
-| `key set` | Store your TypeSafe API key: typed without echo, saved readable only by you, then tested. |
+| `key set [typesafe\|cloudflare]` | Store your decision model's key (TypeSafe's API key, or a Cloudflare API token and account ID): typed without echo, saved readable only by you, then tested. Ollama needs none. |
 | `update` | Update to the newest release on your update channel now (routr also does this by itself in the background, at most once a day). |
-| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--enable`, `--disable`, `--channel`) and reads them first with `--show`. |
-| `uninstall` | Remove routr: the binary, its two skills, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, key, and ledger; `--purge` removes those too. |
-| `doctor` | Check the setup: harnesses found, live usage, key, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
+| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--enable`, `--disable`, `--channel`, `--decision`) and reads them first with `--show`. |
+| `uninstall` | Remove routr: the binary, its two skills, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, keys, and ledger; `--purge` removes those too. |
+| `doctor` | Check the setup: harnesses found, live usage, the decision model, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
 The advice commands write nothing and never block an agent: with no network or no key they still answer, marked as
 a fallback.
@@ -117,8 +120,19 @@ anything):
 routr setup
 ```
 
-It asks for your [TypeSafe API key](https://console.typesafe.ai/keys) if it has none (typed without echo, never
-shown), finds the harnesses that are installed and signed in, and lets you choose which ones routr may use and each
+When no decision model answers yet, it asks which one should read your briefs, and for its key (typed without echo,
+never shown); run again, its menu's "Decision model" changes it:
+
+- **TypeSafe's Jev** (the default, and the one that reads the level most accurately on routr's tests): an
+  [API key](https://console.typesafe.ai/keys).
+- **Cloudflare's Clef** on Workers AI: an [API token](https://dash.cloudflare.com/profile/api-tokens) with
+  Workers AI Read and Edit, as Cloudflare's "Workers AI" token template sets, and your account ID. Workers AI's free daily allowance covers about 200 briefs a day.
+- **Clef Flash on your own machine**, free: [Ollama](https://ollama.com) 0.35 or later and
+  `ollama pull clef-flash:9b-mxfp8` on Apple Silicon (12 GB; 5-7 s a brief on an M4 Max), or
+  `ollama pull clef-flash:9b-q8_0` elsewhere (11 GB; its speed was measured only on a Mac, about 5 s).
+
+Clef reads the level of work less accurately than Jev on routr's tests ([the numbers](docs/evidence.md#decision-models));
+`routr setup --decision <provider>` switches any time. Then it finds the harnesses that are installed and signed in, and lets you choose which ones routr may use and each
 one's everyday model, effort, hardest work, reserve and account use. Arrow keys choose, Esc goes back, and nothing is written
 until you pick Save and exit. Claude Code's usage needs no setup: routr reads it from Claude's own `/usage` in each
 call. `routr doctor` then shows what is in place and lists anything left to do, and `routr doctor --fix` is
