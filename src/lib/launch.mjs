@@ -340,9 +340,11 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
           const waited = await call(["agent", "wait", out.pane, "--timeout", String(Math.min(1000, remaining()))], true);
           const code = waited.data?.error?.code;
           if (!waited.ok && code === "agent_not_running") {
-            goneSince ??= now();
+            // A question read before it went is no longer what the pane shows: the exit is (from the review: an old
+            // blocked reading was reported at the deadline instead of the harness's own message).
+            goneSince ??= now(); disagreed = null; readySince = null;
             if (now() - goneSince > GONE_GRACE_MS) throw new Error(waited.data?.error?.message ?? "The agent is no longer running");
-            readySince = null; await pause(); continue;
+            await pause(); continue;
           }
           if (!waited.ok && !["timeout", "agent_not_found", "agent_not_ready"].includes(code)) throw new Error(waited.data?.error?.message ?? "Agent wait failed");
           goneSince = null;

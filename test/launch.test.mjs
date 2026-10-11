@@ -978,12 +978,13 @@ test("from the review of #46: a worker seen starting counts even if it is done b
 });
 
 test("from 2026-10-11: a harness is ready only on two readings 1.5 s apart, and a moment of no agent is waited through", async () => {
-  // One ready reading is not enough: the task goes only once the agent has stayed ready for SETTLE_MS.
-  const f = fakeHerdr();
+  // One ready reading is not enough: the task goes only once the agent has stayed ready for SETTLE_MS. The fake reads
+  // ready from its first wait on, so the first agent reading is ready, and the prompt must come 1.5 s after it.
+  let firstGet = null, promptAt = null;
+  const f = fakeHerdr({ reply: (a) => { if (a[1] === "get" && firstGet == null) firstGet = f.deps.now(); if (a[1] === "prompt") promptAt = f.deps.now(); } });
   const r = await launch([...launchArgs, "--task", "Fix the parser. Verify with bun test."], f.deps);
   expect(r.state).toBe("prompted");
-  const gets = f.calls.filter((a) => a[1] === "get").length;
-  expect(gets).toBeGreaterThan(1);
+  expect(promptAt - firstGet).toBeGreaterThanOrEqual(1500);
   // herdr briefly sees no agent (a wrapper handing over to the harness's own process): the launch carries on.
   let gone = 3;
   const g = fakeHerdr({ reply: (a) => (a[1] === "wait" && gone > 0 && f.calls.length >= 0 && g.calls.some((c) => c[1] === "start") ? (gone--, herdrError("agent_not_running")) : undefined) });
@@ -994,6 +995,16 @@ test("from 2026-10-11: a harness is ready only on two readings 1.5 s apart, and 
   expect(dead).toMatchObject({ ok: false, state: "failed" });
   expect(dead.steps.at(-1).detail).toContain("agent_not_running"); // herdr's own error, passed on
   expect(h.calls.some((a) => a[1] === "prompt")).toBe(false);
+  // Gone after a startup question that herdr's explain disagreed with: the exit is reported, not the old question.
+  let waits = 0;
+  const q = fakeHerdr({ reply: (a) => {
+    if (a[1] === "wait" && q.calls.some((c) => c[1] === "start")) return ++waits === 1 ? herdrOK({}) : herdrError("agent_not_running");
+    if (a[1] === "get" && waits === 1) return herdrOK({ agent: { agent: "claude", agent_status: "blocked" } });
+    if (a[1] === "explain") return { ok: true, data: { agent: "claude", state: "idle" } };
+  } });
+  const exited = await launch([...launchArgs, "--timeout", "3000", "--task", "Task"], q.deps);
+  expect(exited).toMatchObject({ ok: false, state: "failed" });
+  expect(exited.needs_input).toBeFalsy();
 });
 
 test("from 2026-10-11: a task that never arrived is sent again by launch, adopting the pane, never by a bare herdr prompt", async () => {
@@ -1013,4 +1024,3 @@ test("from 2026-10-11: a task that never arrived is sent again by launch, adopti
   expect(r.needs_input.then).toContain(`--cwd ${process.cwd()}`);
   expect(r.needs_input.then).not.toContain("herdr agent prompt");
 });
-
