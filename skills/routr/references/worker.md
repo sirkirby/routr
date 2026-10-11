@@ -2,7 +2,9 @@
 
 You were launched by an orchestrator as one worker among several. Do the task in your prompt, within its scope.
 Nobody is watching your pane, so do not stop to ask questions: make a reasonable choice, note it, and carry on.
-If you are truly blocked, say so in your report and stop.
+That includes your harness's own ask-the-user tool (Codex's question box, Claude's AskUserQuestion): a question there
+waits for an answer no one will give. If you are truly blocked, finish with `VERDICT: blocked`, say exactly what you
+need (a file, a value, a decision), and stop.
 
 If you change files, commit your work on the branch you were started on when it is done and verified. Never push,
 and never touch another branch or the main checkout.

@@ -85,7 +85,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
   // question, an agent that has not started. The orchestrator gets what the pane shows (withheld once the task has been
   // sent: it shows the brief), herdr's reading when there is one, and `then`: how to carry on once it has answered.
   // It decides, and asks the user only for what is not its to answer (a password, a sign-in, a folder it did not make).
-  let then = () => null;
+  let then = () => null, rerun = () => null;
   const needsInput = (why, text, more = {}) => {
     out.ok = false; out.state = "needs_input";
     out.needs_input = { why, screen: promptAttempted ? PANE_WITHHELD : text ?? null, pane: out.pane, ...more, then: more.then ?? then() };
@@ -100,16 +100,16 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     // there. A runnable command only when the task comes from a file: an inline --task is never printed (it is the
     // brief), so then the orchestrator is told to give it again (from the review of #48: a placeholder in its place
     // would have been sent as the task).
-    then = () => {
-      if (!out.pane) return null;
+    rerun = () => {
       const keep = [];
       for (let i = 0; i < args.length; i++) {
         if (["--worktree", "--base", "--direction", "--pane", "--cwd", "--trust", "--copy", "--task"].includes(args[i])) { i++; continue; }
         keep.push(args[i]);
       }
       const again = ["routr", "launch", ...keep, "--pane", out.pane, "--cwd", out.cwd].map(quote).join(" ");
-      return `Answer it in the pane (herdr pane send-keys ${out.pane} <keys>), then run ${o.task != null ? `the same launch with your --task given again: ${again} --task <your task>` : again}`;
+      return o.task != null ? `the same launch with your --task given again: ${again} --task <your task>` : again;
     };
+    then = () => (out.pane ? `Answer it in the pane (herdr pane send-keys ${out.pane} <keys>), then run ${rerun()}` : null);
     if (!statSync(out.cwd).isDirectory()) throw new Error("--cwd must be a directory");
     const privateDir = join(tempRoot, `routr-cursor-${randomUUID()}`);
     const p = plan({ ...o, cwd: out.cwd, cursorConfigDir: privateDir });
@@ -323,14 +323,29 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     // started: it has no task of its own, so waiting through its start cannot hand it a second one. A blocked state
     // whose explain reads another state is herdr catching up (above), so the wait goes on; if the two still disagree
     // when the time runs out, inside a call or between calls, the block is reported from the readings already taken.
+    // Two readings, not one, before a task is sent: a harness whose startup (its session hooks, under load) is still
+    // running can read ready once and drop a task pasted into it (seen 2026-10-11: Claude in a new worktree never
+    // received a 3,783-character task that herdr's prompt reported stalled). And herdr can briefly see no agent while a
+    // harness started through a wrapper (Cursor's) hands over to its own process: agent_not_running is waited through
+    // for a moment, and fails the launch only if it lasts (seen the same day under heavy load; three quiet relaunches
+    // did not show it).
+    const SETTLE_MS = 1500, GONE_GRACE_MS = 5000;
     const awaitReady = async (text) => {
       const h = HARNESSES[o.kind];
       const left = () => { try { return remaining(); } catch { return 0; } };
       let disagreed = null; // { text, reading } while herdr's state says blocked and its explain reads another state
+      let readySince = null, goneSince = null;
       for (;;) {
         try {
           const waited = await call(["agent", "wait", out.pane, "--timeout", String(Math.min(1000, remaining()))], true);
-          if (!waited.ok && !["timeout", "agent_not_found", "agent_not_ready"].includes(waited.data?.error?.code)) throw new Error(waited.data?.error?.message ?? "Agent wait failed");
+          const code = waited.data?.error?.code;
+          if (!waited.ok && code === "agent_not_running") {
+            goneSince ??= now();
+            if (now() - goneSince > GONE_GRACE_MS) throw new Error(waited.data?.error?.message ?? "The agent is no longer running");
+            readySince = null; await pause(); continue;
+          }
+          if (!waited.ok && !["timeout", "agent_not_found", "agent_not_ready"].includes(code)) throw new Error(waited.data?.error?.message ?? "Agent wait failed");
+          goneSince = null;
           text = await readPane();
           const got = await call(["agent", "get", out.pane], true);
           if (!got.ok && got.data?.error?.code !== "agent_not_found") throw new Error(got.data?.error?.message ?? "Agent inspection failed");
@@ -345,7 +360,10 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
           // kept the old one, and the deadline reported a block it no longer saw instead of failing (from the final review).
           } else disagreed = null;
           // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
-          if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) break;
+          if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) {
+            readySince ??= now();
+            if (now() - readySince >= SETTLE_MS) break;
+          } else readySince = null;
           await pause();
         } catch (e) {
           if (disagreed && left() <= 0) return blockedAtStart(h, disagreed.text, disagreed.reading);
@@ -387,7 +405,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       if (!got.ok) throw new Error(got.data?.error?.message ?? JSON.stringify(got.data));
       const agent = got.data?.result?.agent;
       const status = agent?.agent_status ?? "unknown";
-      const sent = { then: `The task was sent: do not launch it again. Read the pane (herdr agent read ${out.pane}): answer a question it asks; press Enter if the task sits unsent in its input box (herdr agent send-keys ${out.pane} enter); send it with herdr agent prompt only if it never arrived` };
+      // The task is wrapped (opening, rules, closing) by launch, so a task that never arrived is sent again by launch
+      // too, adopting the agent already in the pane: the orchestrator has no copy of the wrapped text to prompt with.
+      const sent = { then: `The task was sent: do not launch it again while it may be there. Read the pane (herdr agent read ${out.pane}): answer a question it asks; press Enter if the task sits unsent in its input box (herdr agent send-keys ${out.pane} enter). If the input box is empty and the agent never started, it never arrived: send it with ${rerun()}` };
       if (agent?.agent !== o.kind) { unconfirmed = true; return needsInput("Cannot confirm the prompted agent's identity", null, sent); }
       if (status === "blocked") {
         step("prompt", r.ok, `Submitted ${prompt.length} characters; the agent is asking something`);

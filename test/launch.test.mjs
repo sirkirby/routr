@@ -626,7 +626,7 @@ for (const readiness of [undefined, null, false]) test(`Cursor idle readiness ${
       if (a[1] === "get") return herdrOK({ agent: { agent: "cursor", agent_status: "idle",
         ...(readiness === undefined ? {} : { interactive_ready: readiness }) } });
     } });
-    const r = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--timeout", "1500", "--task", "Task"],
+    const r = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--timeout", "4000", "--task", "Task"],
       { ...f.deps, cursorConfigSource: source, tempRoot: root });
     const ready = readiness !== false;
     expect(started).toBe(true);
@@ -670,7 +670,7 @@ test("prompt waits request activity and reserve deadline budget for the status r
     if (a[1] === "prompt") {
       submitted = true;
       expect(a.slice(4, -2)).toEqual(["--wait", "--until", "working", "--until", "idle", "--until", "done", "--until", "blocked"]);
-      expect(ms).toBeLessThanOrEqual(1500 - f.deps.now());
+      expect(ms).toBeLessThanOrEqual(4000 - f.deps.now());
       expect(Number(a.at(-1))).toBeLessThan(ms);
       await f.deps.sleep(ms);
       return herdrError("timeout");
@@ -678,9 +678,9 @@ test("prompt waits request activity and reserve deadline budget for the status r
     if (a[1] === "get" && submitted) return herdrOK({ agent: { agent: "claude", agent_status: "working" } });
     expect(ms).toBeGreaterThan(0);
   } });
-  const r = await launch([...launchArgs, "--timeout", "1500", "--task", "Task"], f.deps);
+  const r = await launch([...launchArgs, "--timeout", "4000", "--task", "Task"], f.deps);
   expect(r).toMatchObject({ ok: true, state: "prompted" });
-  expect(f.deps.now()).toBeLessThan(1500);
+  expect(f.deps.now()).toBeLessThan(4000);
 });
 
 test("transport failures after prompt submission return JSON and warn against retrying", async () => {
@@ -976,3 +976,41 @@ test("from the review of #46: a worker seen starting counts even if it is done b
   expect(readAfter).toBe(false);
   expect(JSON.stringify(b)).not.toContain(brief);
 });
+
+test("from 2026-10-11: a harness is ready only on two readings 1.5 s apart, and a moment of no agent is waited through", async () => {
+  // One ready reading is not enough: the task goes only once the agent has stayed ready for SETTLE_MS.
+  const f = fakeHerdr();
+  const r = await launch([...launchArgs, "--task", "Fix the parser. Verify with bun test."], f.deps);
+  expect(r.state).toBe("prompted");
+  const gets = f.calls.filter((a) => a[1] === "get").length;
+  expect(gets).toBeGreaterThan(1);
+  // herdr briefly sees no agent (a wrapper handing over to the harness's own process): the launch carries on.
+  let gone = 3;
+  const g = fakeHerdr({ reply: (a) => (a[1] === "wait" && gone > 0 && f.calls.length >= 0 && g.calls.some((c) => c[1] === "start") ? (gone--, herdrError("agent_not_running")) : undefined) });
+  expect(await launch([...launchArgs, "--task", "Task"], g.deps)).toMatchObject({ ok: true, state: "prompted" });
+  // One that stays gone fails, with herdr's own words, and nothing is sent.
+  const h = fakeHerdr({ reply: (a) => (a[1] === "wait" && h.calls.some((c) => c[1] === "start") ? herdrError("agent_not_running") : undefined) });
+  const dead = await launch([...launchArgs, "--task", "Task"], h.deps);
+  expect(dead).toMatchObject({ ok: false, state: "failed" });
+  expect(dead.steps.at(-1).detail).toContain("agent_not_running"); // herdr's own error, passed on
+  expect(h.calls.some((a) => a[1] === "prompt")).toBe(false);
+});
+
+test("from 2026-10-11: a task that never arrived is sent again by launch, adopting the pane, never by a bare herdr prompt", async () => {
+  let submitted = false;
+  const f = fakeHerdr({ reply: (a) => {
+    if (a[1] === "prompt") { submitted = true; return herdrError("agent_prompt_stalled"); }
+    if (a[1] === "wait" && submitted) return herdrError("timeout");
+    if (a[1] === "get" && submitted) return herdrOK({ agent: { agent: "claude", agent_status: "idle" } });
+  } });
+  const dir = scratch("never-arrived"), task = join(dir, "task.md");
+  writeFileSync(task, "Fix the parser. Verify with bun test.");
+  const r = await launch([...launchArgs, "--task-file", task], f.deps);
+  expect(r.state).toBe("needs_input");
+  expect(r.needs_input.then).toContain("send it with routr launch");
+  expect(r.needs_input.then).toContain("--pane w1:p2");
+  expect(r.needs_input.then).toContain(`--task-file ${task}`);
+  expect(r.needs_input.then).toContain(`--cwd ${process.cwd()}`);
+  expect(r.needs_input.then).not.toContain("herdr agent prompt");
+});
+
