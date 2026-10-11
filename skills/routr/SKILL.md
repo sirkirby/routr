@@ -9,7 +9,7 @@ metadata:
 
 routr gives you a quick, calibrated read at the moment you hand out work. A small decision model (TypeSafe's Jev,
 or Cloudflare's Clef if the user chose it) reads the brief you are about to give and answers a fixed set of questions,
-in under a second (several seconds when it runs on the user's own machine): facts about
+in under a second (up to several seconds when it runs on the user's own machine): facts about
 what the brief says, what kind of work it is, how costly a mistake would be, and an overall level. Code adds the
 live usage of each subscription. **You make the decision**: how much intelligence and reasoning the work needs, and
 so which model and effort. You know the codebase and the purpose of the work; routr does not. It gives you the same

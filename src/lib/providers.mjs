@@ -32,10 +32,11 @@ export function ollamaHost(env = process.env) {
 // The oldest Ollama that runs Clef Flash: 0.40.0 answered every request on Windows with "Clef: non-finite logit", on
 // the GPU and on the CPU, and 0.40.3 answered (2026-10-11, RTX 5090 laptop); 0.40.1's notes name the fix (ollama#18777).
 export const OLLAMA_MIN = "0.40.1";
+// A pre-release comes before its release: 0.40.1-rc1 is older than 0.40.1 (from the review), 0.41.0-rc1 is not.
 export const olderThan = (v, min) => {
-  const a = String(v).split(/[.-]/).map((x) => parseInt(x, 10)), b = min.split(".").map(Number);
+  const [core, pre] = String(v).split(/-(.*)/s), a = core.split(".").map((x) => parseInt(x, 10)), b = min.split(".").map(Number);
   for (let i = 0; i < b.length; i++) { const x = Number.isNaN(a[i]) ? 0 : a[i] ?? 0; if (x !== b[i]) return x < b[i]; }
-  return false;
+  return Boolean(pre);
 };
 // What to do when the running Ollama is older than OLLAMA_MIN; null when it is new enough or does not say (a build from
 // source reports 0.0.0).
@@ -111,9 +112,13 @@ export const PROVIDERS = {
     // Whether it can answer, without asking it anything: the server is up and the model is pulled. Null when ready,
     // otherwise what to do. Setup says it instead of a generic "install, then pull" (seen in a real terminal).
     ready: async (model, env = process.env) => {
-      const tags = await fetch(`${ollamaHost(env)}/api/tags`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).catch(() => null);
+      // Both asked at once, so a slow version answer adds no wait of its own (from the review). A version Ollama does not
+      // give is not held against it: the request itself then says what is wrong.
+      const [tags, old] = await Promise.all([
+        fetch(`${ollamaHost(env)}/api/tags`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).catch(() => null),
+        ollamaTooOld(env),
+      ]);
       if (!tags) return `Ollama is not running at ${ollamaHost(env)}: install Ollama ${OLLAMA_MIN} or later (https://ollama.com) and start it, then run: ollama pull ${model}`;
-      const old = await ollamaTooOld(env);
       if (old) return old;
       return tags.models?.some((x) => x.name === model || x.model === model) ? null : `${model} is not pulled yet: run ollama pull ${model}`;
     },
@@ -132,7 +137,7 @@ export const PROVIDERS = {
       // 36 real runs, 15 one level low. On Windows with an NVIDIA GPU its answers were the Mac's to within 0.018 on every
       // probability of 5 briefs, with no answer or level changed (2026-10-11).
       "clef-flash:9b-q8_0": { digest: "2aa4d39fd93b", sure_at: 0.6, torn: { right: 21, of: 36, low: 15, high: 0 },
-        hint: "free, on this machine with a GPU (11 GB, 1 to 5 s a brief) · 72 of 104 levels right, more often too low" },
+        hint: "free, on this machine with a GPU (11 GB, under a second to about 5 s a brief) · 72 of 104 levels right, more often too low" },
     },
   },
 };

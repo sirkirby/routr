@@ -380,7 +380,7 @@ test("from the core review: each provider finding stays fixed", async () => {
   expect(ollamaHost({})).toBe("http://127.0.0.1:11434");
   // The oldest Ollama that runs Clef: a pre-release of a newer one counts as that one, and a source build (0.0.0) is not judged.
   const { olderThan, ollamaTooOld } = await import("../src/lib/providers.mjs");
-  expect(["0.40.0", "0.35.1", "0.9.9"].map((v) => olderThan(v, "0.40.1"))).toEqual([true, true, true]);
+  expect(["0.40.0", "0.35.1", "0.9.9", "0.40.1-rc1"].map((v) => olderThan(v, "0.40.1"))).toEqual([true, true, true, true]);
   expect(["0.40.1", "0.40.3", "0.41.0-rc1", "1.0.0", "0.40.10"].map((v) => olderThan(v, "0.40.1"))).toEqual([false, false, false, false, false]);
   for (const [version, said] of [["0.40.0", "Ollama 0.40.0 is running; Clef needs 0.40.1 or later: update Ollama (https://ollama.com) and restart it"], ["0.40.3", null], ["0.0.0", null]]) {
     const server = Bun.serve({ port: 0, fetch: () => Response.json({ version }) });
