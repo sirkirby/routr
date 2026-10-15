@@ -1,6 +1,6 @@
 ---
 name: routr
-description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity, Kiro) from one orchestrating agent in herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before spawning subagents in a routr-managed session; or when asked to set up, configure, or check routr.
+description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity, Kiro) from one orchestrating agent in herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before a routr worker, or an agent outside herdr, spawns a subagent; or when asked to set up, configure, or check routr.
 metadata:
   version: "0.0.0-dev"
 ---
@@ -38,13 +38,15 @@ fallback.
 
 ## Which part applies to you
 
-- Your launch prompt says you are a **routr worker**, or you are about to spawn a subagent → read `references/worker.md`.
+- Your launch prompt says you are a **routr worker** → read `references/worker.md`. You work outside herdr and are
+  about to spawn a subagent → read only its "Before you spawn a subagent" section: the rest is for routr workers.
 - You are the **orchestrator**: you plan the work, hand it out, judge what comes back, and send it back when it
   falls short → read `references/orchestrator.md`, then `references/harnesses.md` before you launch anything. A user
   can start a session this way by typing `/routr-orchestrate <plan>` (`$routr-orchestrate` in Codex).
-  Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another branch or
-  commit) and ends with `routr cleanup`, the command in its launch result. Never close a worker's pane to finish it:
-  that leaves its worktree behind.
+  In herdr, every piece you hand out, research and reviews included, is a pane worker, never one of your harness's
+  own subagents. Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
+  branch or commit) and ends with `routr cleanup`, the command in its launch result. Never close a worker's pane to
+  finish it: that leaves its worktree behind.
 - The user wants routr **set up, configured, or checked**, or **a setting changed** (a model, an effort, a reserve,
   turning a subscription off) → read `references/setup.md`: every setting has a command.
 
@@ -57,7 +59,8 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
 - `headline`: the advice in one line. Read it first; the rest is the detail behind it.
 - `worker`: whether the work is worth handing out at all: `do it yourself` (one or two small edits), `settle it with
   the user first` (the brief leaves them a decision), `split it across workers` (independent pieces), or `worth a
-  worker`. A suggestion with its reason; you know what else is running.
+  worker`. A suggestion with its reason; you know what else is running. From `routr subagent`, a worker is a
+  subagent; from `routr dispatch`, a pane worker.
 - `facts`: yes / no / unclear readings of what the brief says, each with its probability: does it name where to
   work, is the approach left open, is the cause unknown, is the change cross-cutting, are concurrency or stored data
   involved, is it expensive to undo. In testing, 63 to 88% of these readings were decisive, and the same brief got

@@ -122,6 +122,8 @@ test("dispatch and subagent answer from a function: the decision model's reading
   expect(d.rule).toContain("Quality first:");
   expect(d.rule).toContain("routr usage --level <chosen>");
   expect(JSON.stringify(d)).not.toContain("Fix the parser"); // the brief itself is never in the output
+  const sized = await adviseCommand("subagent", "Fix it", { config: cfg(), notes: [] }, {}, { askFn: jev });
+  expect(sized.rule).toContain("An orchestrator in herdr hands work out with routr dispatch and routr launch"); // seen 2026-10-14: an orchestrator read "worth a worker" as leave to spawn its own subagents
   const down = await adviseCommand("subagent", "Fix it", { config: cfg(), notes: ["a note"] }, {}, { askFn: async () => { throw new Error("offline"); } });
   expect(down).toMatchObject({ fallback: true, level: "standard", config_notes: ["a note"], provider: "typesafe" }); // which provider was down
   expect(down.decision_model).toBeUndefined();

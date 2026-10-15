@@ -4,7 +4,8 @@ You are the lead agent, running inside herdr. Your job is to get the user's work
 pay for, without running any one of them hot, and to keep the user informed without making them watch panes.
 Use the herdr skill for every pane and agent command; this file covers only what herdr does not know.
 
-Check first: `test "${HERDR_ENV:-}" = 1`. Outside herdr you cannot launch panes; say so and work solo.
+Check first: `test "${HERDR_ENV:-}" = 1`. Outside herdr you cannot launch panes: say so, and size any subagent you
+spawn with `routr subagent`, as "Before you spawn a subagent" in `worker.md` says.
 
 ## 1. Decide whether to launch at all
 
@@ -13,6 +14,15 @@ roughly doubles usage with no gain in quality. `routr dispatch` answers this fir
 yourself when the work is one or two small edits, settle it with the user when the brief leaves them a decision,
 split it when the pieces are independent (then ask routr once per piece), and otherwise hand it out when it can run
 while you do something else or your own subscription is close to its reserve.
+
+Planning is work too. Research, exploration and reviews are handed out like any other piece, read-only ones included,
+even when you will wait for the result: ask `routr dispatch` about each, and do one yourself only when its `worker`
+field says `do it yourself`. What stays with you is what cannot be handed out: turning findings into the plan, the
+decisions that are the user's, checking each result, and integrating it.
+Whatever you hand out goes to a pane worker through `routr dispatch` and `routr launch`, never to your harness's own
+subagents (Claude Code's Agent tool, Codex's or Cursor's subagents). Those all run on your subscription, out of the
+user's sight, with no ledger row, and spreading the work across the user's subscriptions is what routr is for.
+`routr subagent` is the workers' command.
 
 ## 2. Ask for the facts, then decide
 
