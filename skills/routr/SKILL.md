@@ -45,8 +45,8 @@ fallback.
   can start a session this way by typing `/routr-orchestrate <plan>` (`$routr-orchestrate` in Codex).
   Every piece you hand out, research and reviews included, is a pane worker, never one of your harness's own
   subagents. Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
-  branch or commit) and ends with `routr cleanup`, the command in its launch result. Never close a worker's pane to finish it:
-  that leaves its worktree behind.
+  branch or commit) and ends with `routr cleanup`, the command in its launch result. Never close a worker's pane to
+  finish it: that leaves its worktree behind.
 - The user wants routr **set up, configured, or checked**, or **a setting changed** (a model, an effort, a reserve,
   turning a subscription off) → read `references/setup.md`: every setting has a command.
 

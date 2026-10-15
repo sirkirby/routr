@@ -15,7 +15,7 @@ yourself when the work is one or two small edits, settle it with the user when t
 split it when the pieces are independent (then ask routr once per piece), and otherwise hand it out when it can run
 while you do something else or your own subscription is close to its reserve.
 
-Planning is work too. Research, exploration and plan reviews are handed out like any other piece, read-only ones
+Planning is work too. Research, exploration and reviews are handed out like any other piece, read-only ones
 included. What stays with you is what cannot be handed out: turning findings into the plan, the decisions that are the
 user's, checking each result, and integrating it. Whatever you hand out goes to a pane worker through `routr dispatch`
 and `routr launch`, never to your harness's own subagents (Claude Code's Agent tool, Codex's or Cursor's subagents).
