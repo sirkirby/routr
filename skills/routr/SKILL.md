@@ -1,6 +1,6 @@
 ---
 name: routr
-description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity, Kiro) from one orchestrating agent in herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before spawning subagents in a routr-managed session; or when asked to set up, configure, or check routr.
+description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity, Kiro) from one orchestrating agent in herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before a routr worker, or an agent outside herdr, spawns a subagent; or when asked to set up, configure, or check routr.
 metadata:
   version: "0.0.0-dev"
 ---
@@ -38,8 +38,8 @@ fallback.
 
 ## Which part applies to you
 
-- Your launch prompt says you are a **routr worker**, or you work outside herdr and are about to spawn a subagent →
-  read `references/worker.md`.
+- Your launch prompt says you are a **routr worker** → read `references/worker.md`. You work outside herdr and are
+  about to spawn a subagent → read only its "Before you spawn a subagent" section: the rest is for routr workers.
 - You are the **orchestrator**: you plan the work, hand it out, judge what comes back, and send it back when it
   falls short → read `references/orchestrator.md`, then `references/harnesses.md` before you launch anything. A user
   can start a session this way by typing `/routr-orchestrate <plan>` (`$routr-orchestrate` in Codex).

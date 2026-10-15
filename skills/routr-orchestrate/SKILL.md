@@ -24,8 +24,8 @@ there is none, ask for it and stop.
    `references/orchestrator.md` and `references/harnesses.md`, and follow them for the rest of this session.
 2. Run `routr doctor`. If it reports something that blocks advice (no key, no config), tell the user and follow
    `references/setup.md` first.
-3. Check you are in herdr: `test "${HERDR_ENV:-}" = 1`. Outside herdr you can still size subagents with routr,
-   but you cannot launch workers in panes: say so.
+3. Check you are in herdr: `test "${HERDR_ENV:-}" = 1`. Outside herdr you cannot launch workers in panes: say so,
+   and size each subagent you spawn with `routr subagent`. The rest of this page is for an orchestrator in herdr.
 
 ## For the rest of this session
 
@@ -40,8 +40,9 @@ there is none, ask for it and stop.
 - Every worker starts with `routr launch --worktree <branch>` (`--base <ref>` to start it from another branch or
   commit) and ends with `routr cleanup`, the command in its launch result. Do not make, close or remove a
   worker's worktree or pane with herdr or git yourself: closing its pane leaves its worktree behind.
-- Planning is work too: hand out its research and reviews. Keep for yourself only what cannot be handed out:
-  turning findings into the plan, the decisions that are the user's, checking each result, and integrating it.
+- Planning is work too: its research and reviews go through `routr dispatch` like any other piece. Besides what the
+  `worker` field says to do yourself, keep only what cannot be handed out: turning findings into the plan, the
+  decisions that are the user's, checking each result, and integrating it.
 - One line to the user per launch and one per result, as the orchestrator guide says.
 - Record each worker with `routr record` once you have verified its result.
 - Before you finish, `routr cleanup --cwd <repo>` lists the worktrees still there; remove the ones your session left.
