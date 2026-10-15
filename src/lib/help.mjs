@@ -6,7 +6,7 @@ export const DESCRIPTION = "routr: quick, calibrated advice for an agent that is
 export const COMMANDS = {
   subagent: {
     name: "subagent",
-    description: "an agent is about to spawn a subagent → what the work demands",
+    description: "a worker, or an agent outside herdr, is about to spawn a subagent → what the work demands (an orchestrator in herdr uses dispatch)",
     args: [
       { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin); a flag-like word given alone is set aside when stdin carries the brief, and is the brief otherwise", required: true },
     ],
