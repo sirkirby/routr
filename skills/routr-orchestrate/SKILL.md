@@ -40,9 +40,9 @@ there is none, ask for it and stop.
 - Every worker starts with `routr launch --worktree <branch>` (`--base <ref>` to start it from another branch or
   commit) and ends with `routr cleanup`, the command in its launch result. Do not make, close or remove a
   worker's worktree or pane with herdr or git yourself: closing its pane leaves its worktree behind.
-- Planning is work too: its research and reviews go through `routr dispatch` like any other piece. Besides what the
-  `worker` field says to do yourself, keep only what cannot be handed out: turning findings into the plan, the
-  decisions that are the user's, checking each result, and integrating it.
+- Planning is work too: hand out its research and reviews, even when you will wait for the result, and do one
+  yourself only when routr's `worker` field says `do it yourself`. Keep for yourself what cannot be handed out:
+  turning findings into the plan, the decisions that are the user's, checking each result, and integrating it.
 - One line to the user per launch and one per result, as the orchestrator guide says.
 - Record each worker with `routr record` once you have verified its result.
 - Before you finish, `routr cleanup --cwd <repo>` lists the worktrees still there; remove the ones your session left.
