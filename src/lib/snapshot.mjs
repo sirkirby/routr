@@ -35,7 +35,7 @@ export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`,
     let r;
     try {
       const why = ready ? await ready() : null;
-      r = why ? { ok: false, excluded: true, why: "The harness is not signed in; check its sign-in status before reading usage." } : await read();
+      r = why ? { ok: false, excluded: true, why } : await read();
     }
     catch { r = { ok: false, ...usageFailure("read_failed") }; }
     // A reader returns a code, never prose for the cache. This also classifies unexpected failures from a reader.
@@ -72,7 +72,7 @@ export function readSnapshot({ name, source, windows, describe, keep, byHand, fi
   const invalid = r && (!Number.isFinite(age) || !ws.some((w) => Number.isFinite(w.usedPct)));
   const failure = cached.failure ?? snap?.failure ?? (invalid ? usageFailure("invalid_response") : undefined);
   const after = [started && "a fresh reading is being taken in the background", failure && `the last try failed: ${failure.why}`].filter(Boolean).join("; ");
-  if (r && !invalid && age >= 0 && age < TRUST_SEC) return summarize({ pool: name, source, ts: snap.ts, windows: ws, note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec, failure });
+  if (r && !invalid && age >= 0 && age < TRUST_SEC) return summarize({ pool: name, source, ts: snap.ts, windows: ws, note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec, failure, ...(failure && age >= REFRESH_SEC ? { kept: { source: `${name} snapshot`, ageSec: Math.round(age) } } : {}) });
   const why = invalid ? "the saved reading cannot be read" : r ? age < 0 ? "the last reading is from the future, so it is not used"
     : `the last reading is ${Math.round(age / 3600)} h old, too old to use` : "no reading yet";
   return summarize({ pool: name, source, ts: snap?.ts, note: `${why}${after ? `; ${after}` : ""}; using the assumed headroom.${failure ? ` By hand: ${byHand}` : ""}`, nowSec, failure });

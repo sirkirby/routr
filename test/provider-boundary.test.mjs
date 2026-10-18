@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ask, failureMessage, secretsFor } from "../src/lib/systemone.mjs";
-import { DECISION_FAILURES, DecisionError, decisionTarget, ollamaTooOld, PROVIDERS } from "../src/lib/providers.mjs";
+import { DecisionError, decisionTarget, ollamaTooOld, PROVIDERS } from "../src/lib/providers.mjs";
 import { adviseCommand, checkCommand } from "../src/lib/commands.mjs";
 import { checkQuestions, questions } from "../src/lib/questions.mjs";
 import { BRIEF_MARKER, KEY_MARKER, replyFetch } from "./fixtures/provider-fetch.mjs";
@@ -11,7 +11,7 @@ import { cfg, cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 const providers = ["typesafe", "cloudflare", "ollama"];
 const credentials = { TYPESAFE_API_KEY: KEY_MARKER, CLOUDFLARE_API_TOKEN: KEY_MARKER, CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef" };
 const clean = (value) => { const text = typeof value === "string" ? value : JSON.stringify(value); expect(text).not.toContain(BRIEF_MARKER); expect(text).not.toContain(KEY_MARKER); };
-const expected = (provider, code, status) => new DecisionError(decisionTarget({ decision: { provider } }, {}), code, status).message;
+const expected = (provider, code, status, details = {}) => new DecisionError(decisionTarget({ decision: { provider } }, {}), code, status, details).message;
 const cases = (provider) => [
   ["http500", "provider_error", 500], ["http429", "provider_error", 429], ["http529", "provider_error", 529],
   ["http401", "key_refused"], ["http403", "key_refused"],
@@ -78,10 +78,13 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
     return result.stdout.toString();
   };
   const rows = () => existsSync(ledger) ? readFileSync(ledger, "utf8").trim().split("\n").map(JSON.parse) : [];
-  const unavailable = (stdout, command, code) => {
+  const covered = new Set();
+  const unavailable = (stdout, command, code, status) => {
     if (!["dispatch", "subagent", "check"].includes(command[0])) return;
     const r = JSON.parse(stdout), model = decisionTarget({ decision: { provider } }, {}).model;
-    expect(r.unavailable).toEqual([{ part: "decision model", provider, model, code, why: DECISION_FAILURES[code] }]);
+    expect(r.unavailable).toEqual([{ part: "decision model", provider, model, code, why: expected(provider, code, status, { file: join(home, ".config/routr/env") }),
+      ...(code === "provider_error" ? { status: status ?? 0 } : {}) }]);
+    covered.add(code);
     expect(r.headline).toBe(`routr: no reading (${model} on ${PROVIDERS[provider].label} unavailable: ${code}); ${command[0] === "check" ? "judge the report yourself" : "fallback level standard"}`);
     expect(r.decision_model).toBeUndefined();
   };
@@ -101,12 +104,12 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
     if (JSON.parse(stdout).fallback) expect(after.at(-1).decision_model).toBeNull();
     clean(readFileSync(ledger, "utf8"));
   };
-  // Avoid retry delays in child runs; exhausted retryable statuses are covered through fetchFn above.
-  for (const [scenario, code, status] of [...cases(provider), ["internal", "internal_error"]].filter(([s]) => !["http429", "http529", "string_code", "unknown_code"].includes(s))) {
+  // The preload gives retryable replies a one-request budget: exercise their real classification without delays.
+  for (const [scenario, code, status] of [...cases(provider), ["internal", "internal_error"]]) {
     for (const command of commands) {
       const stdout = run(command, scenario);
       expect(stdout).toContain(expected(provider, code, status));
-      unavailable(stdout, command, code);
+      unavailable(stdout, command, code, status);
       if (["dispatch", "subagent"].includes(command[0])) {
         const parsed = JSON.parse(stdout); expect(parsed).toMatchObject({ fallback: true, level: "standard" });
         record(stdout);
@@ -156,6 +159,7 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
       if (command[0] === "doctor" && command.includes("--json")) doctorFailure(stdout, 0);
     }
   }
+  expect([...covered].sort()).toEqual([...new Set([...cases(provider).map(([, code]) => code), "internal_error", ...(provider !== "ollama" ? ["no_key", "secrets_unreadable"] : [])])].sort());
   if (provider === "typesafe") {
     const stdout = run(["doctor"], "identity", false, { ROUTR_DECISION_MODEL: "jev-preview" });
     expect(stdout).toContain("jev-1.14.0, asked as jev-preview answers");
@@ -256,7 +260,7 @@ test("failures inside advise and readReport use the same fixed internal sentence
   const dir = scratch("internal-report"), brief = join(dir, "brief"), report = join(dir, "report");
   writeFileSync(brief, BRIEF_MARKER); writeFileSync(report, "Complete report. ".repeat(20));
   const r = await checkCommand({ brief, report }, { config, askFn: async () => ({ answers: { get work_type() { return fail(); } } }) });
-  expect(r).toMatchObject({ fallback: true, unavailable: [{ part: "decision model", code: "internal_error", why: DECISION_FAILURES.internal_error }] }); expect(r.next[0].why).toBe(internal); clean(r);
+  expect(r).toMatchObject({ fallback: true, unavailable: [{ part: "decision model", code: "internal_error", why: internal }] }); expect(r.next[0].why).toBe(internal); clean(r);
 });
 
 test("Ollama accepts only declared version and digest formats, keeping unknown metadata out of readiness and doctor notes", async () => {
@@ -324,7 +328,7 @@ test("check names a missing or unreadable input file through the CLI and still e
       env: cliEnv(home, { PATH: home, ...credentials, ROUTR_TEST_PROVIDER: "typesafe", ROUTR_TEST_REPLY: "valid" }), stdin: "ignore",
     });
     expect(result.exitCode).toBe(0); expect(result.stderr.toString()).toBe(""); clean(result.stdout.toString());
-    expect(JSON.parse(result.stdout.toString())).toMatchObject({ fallback: true, unavailable: [{ part: flag, code: "unreadable", why: `The ${flag} file could not be read. Provide a file that exists and is readable.` }], headline: `routr: no reading (${flag} unavailable: unreadable); judge it yourself` });
+    expect(JSON.parse(result.stdout.toString())).toMatchObject({ fallback: true, unavailable: [{ part: flag, code: "unreadable", why: `The ${flag} file could not be read. Provide a file that exists and is readable.` }], headline: `routr: no reading (${flag} unavailable: unreadable); judge the report yourself` });
   }
 });
 

@@ -17,11 +17,11 @@ const now = () => Date.now() / 1000;
 // One subscription's usage as every reader returns it. `ts` is when the harness reported it (null: nothing read);
 // `cls` the class, from the windows when not given; `reason` a stable key for a note doctor acts on. `nowSec` is
 // injectable so the recorded shapes are tests that do not age.
-export function summarize({ pool, source, ts = null, windows = [], note, cls, nowSec = now(), reason, failure }) {
+export function summarize({ pool, source, ts = null, windows = [], note, cls, nowSec = now(), reason, failure, kept }) {
   windows = windows.filter((w) => Number.isFinite(w.usedPct)); // a window without a number must not turn headroom into NaN
   cls ??= windows.length ? "included" : "unknown";
   const ageSec = ts ? Math.round(nowSec - ts) : null;
-  const missing = failure ? { failure: usageFailure(failure.code) } : {};
+  const missing = failure ? { failure: usageFailure(failure.code), ...(kept ? { kept } : {}) } : {};
   if (!windows.length) return { pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? missing.failure?.why ?? "no usage data", ...(reason ? { reason } : {}), ...missing };
   // A window whose reset time has passed since the snapshot has rolled over: treat as empty.
   const live = windows.map((w) => (w.resetsAt && w.resetsAt < nowSec ? { ...w, usedPct: 0 } : w));
@@ -192,7 +192,8 @@ export function parseClaudeUsage(text, nowSec = now()) {
 // recent one is used as it is. Five minutes is a judgment, not a measurement: a working session renders far more
 // often than that, and a weekly window does not move much in five minutes. Otherwise Claude's own `/usage` is read in
 // the call, through its CLI, as Codex and Antigravity are: routr never needs to own Claude's single statusline slot.
-export const CLAUDE_FRESH_SEC = 5 * 60;
+const LOCAL_FRESH_SEC = 5 * 60;
+export const CLAUDE_FRESH_SEC = LOCAL_FRESH_SEC;
 // Measured 2026-10-05 (2.1.289, macOS, load average 9 to 14 from other agents): 4.4 to 5.2 s wall with the user's
 // hooks and MCP servers off (5 reads), 6.8 to 8.8 s with them on (Claude reports ~2 s of that as its own). No hang in
 // 18 reads, unlike agy's one in six, so one try, with room for a slower machine; a hang costs this once, and the call
@@ -272,14 +273,14 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT, nowSec = 
   if (answered) return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: NO_WINDOWS_AFTER_ANSWER,
     note: `${why}. A plan with no quota (usage-based Enterprise) shows none: if that is this seat, set \`billing: "metered"\` for claude in the config` });
   // The statusline's reading however old (its age is shown), as before this reader existed; else nothing, and why.
-  if (fromSnap?.headroom != null) return { ...fromSnap, source: "claude /usage", failure: usageFailure(code), note: [fromSnap.note, `${why} This is the statusline's last reading`].filter(Boolean).join("; ") };
+  if (fromSnap?.headroom != null) return { ...fromSnap, source: "claude /usage", failure: usageFailure(code), kept: { source: "statusline", ageSec: fromSnap.ageSec }, note: [fromSnap.note, `${why} This is the statusline's last reading`].filter(Boolean).join("; ") };
   // A snapshot that says Claude sent no windows after a response keeps saying so: doctor's step keys on it.
   return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: fromSnap?.reason, failure: usageFailure(code), note: `${why} Using the assumed headroom` });
 }
 
 // Codex: the CLI's own app server answers account/rateLimits/read live (~0.4 s, no tokens). It is marked experimental,
 // so the session-log reader stays as the fallback.
-export async function readCodexLive({ exec = run, fallback = readCodex } = {}) {
+export async function readCodexLive({ exec = run, fallback = readCodex, nowSec = now() } = {}) {
   const msgs = [
     { jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "routr", version: "0" } } },
     { jsonrpc: "2.0", method: "initialized", params: {} },
@@ -293,13 +294,14 @@ export async function readCodexLive({ exec = run, fallback = readCodex } = {}) {
       const o = JSON.parse(line);
       const rl = o.id === 2 && o.result?.rateLimits;
       if (!rl) continue;
-      return codexSnapshot(rl, "app-server", now());
+      return codexSnapshot(rl, "app-server", nowSec, nowSec);
     } catch {}
   }
   let kept;
   try { kept = fallback(); } catch {}
   const failure = usageFailure(code ?? (out == null ? "no_response" : "invalid_response"));
   return { ...(kept ?? failedUsage("codex", "app-server")), source: "app-server", failure,
+    ...(kept?.headroom != null && !(Number.isFinite(kept.ageSec) && kept.ageSec >= 0 && kept.ageSec < LOCAL_FRESH_SEC) ? { kept: { source: "session log", ageSec: kept.ageSec } } : {}),
     note: `${failure.why}${kept?.headroom != null ? " Using the session log's last reading." : " Using the assumed headroom."}` };
 }
 
@@ -321,9 +323,9 @@ export async function readAgy({ exec = run } = {}) {
       const own = groups.find((g) => /gemini/i.test(g.name));
       if (!own) return failedUsage("agy", "agy /usage", "invalid_response");
       const mins = { weekly: 10080, "5h": 300 };
-      const ws = own.buckets.map((b) => ({ name: b.id, usedPct: (1 - b.remaining_fraction) * 100, windowMin: mins[b.window] ?? 0, resetsAt: Date.parse(b.reset_time) / 1000 }));
+      const ws = own.buckets.map((b) => ({ name: Object.hasOwn(mins, b.window) ? b.window : "unknown", usedPct: (1 - b.remaining_fraction) * 100, windowMin: mins[b.window] ?? 0, resetsAt: Date.parse(b.reset_time) / 1000 }));
       if (!ws.some((w) => Number.isFinite(w.usedPct))) return failedUsage("agy", "agy /usage", "invalid_response");
-      return summarize({ pool: "agy", source: "agy /usage", ts: now(), windows: ws.map((w, i) => ({ ...w, name: `window_${i + 1}` })), note: "Gemini pool" });
+      return summarize({ pool: "agy", source: "agy /usage", ts: now(), windows: ws, note: "Gemini pool" });
     } catch {}
   }
   return failedUsage("agy", "agy /usage", code);

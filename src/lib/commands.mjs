@@ -19,7 +19,7 @@ import { rankSubscriptions } from "./pick.mjs";
 import { enabledSubscriptions } from "./config.mjs";
 import { readUsage, SOURCES } from "./harnesses.mjs";
 import { failedUsage } from "./usage.mjs";
-import { usageUnavailable } from "./usage-failure.mjs";
+import { usageFailure, usageUnavailable } from "./usage-failure.mjs";
 
 const short = (e, n = 160) => e instanceof DecisionError ? e.message : String(e?.message ?? e).slice(0, n);
 
@@ -68,8 +68,9 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
       out.subscriptions = rankSubscriptions(advice.level, usage, config);
       out.unavailable.push(...usageUnavailable(usage).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
     } catch {
-      out.unavailable.push(...usageUnavailable(names.map((name) => failedUsage(name, SOURCES[name]?.source ?? name))));
-      out.subscriptions = { most_room: null, candidates: { normal: [], fallback: [] }, ranked: [], excluded: [], note: "routr could not read usage; read capacity yourself before choosing an account" };
+      const failure = usageFailure("internal_error");
+      out.unavailable.push({ part: "usage", subscription: null, source: "routr", ...failure });
+      out.subscriptions = { most_room: null, candidates: { normal: [], fallback: [] }, ranked: [], excluded: [], note: failure.why };
     }
     // An unconfigured routr ranks nothing; say why, so the lead tells the user instead of guessing (seen in a real session).
     if (!Object.keys(config.subscriptions).length) out.subscriptions.note = "no subscriptions are configured, so none is ranked: the user has not run `routr setup` yet. Tell them, and ask which subscription to use meanwhile";
@@ -86,7 +87,7 @@ export async function checkCommand({ brief: briefFile, report: reportFile }, { a
   catch { failedFile("brief"); }
   try { report = readFileSync(reportFile, "utf8").trim(); }
   catch { failedFile("report"); }
-  if (out.unavailable.length) return Object.assign(out, { headline: `routr: no reading (${out.unavailable.map((u) => `${u.part} unavailable: ${u.code}`).join("; ")}); judge it yourself`, fallback: true });
+  if (out.unavailable.length) return Object.assign(out, { headline: `routr: no reading (${out.unavailable.map((u) => `${u.part} unavailable: ${u.code}`).join("; ")}); judge the report yourself`, fallback: true });
   try {
     if (report.length < 200) out.warning = "this report is very short: make sure it is the worker's full report, not just its last message";
     const r = await askFn({ task: { brief }, report: { text: report } }, checkQuestions, { config });

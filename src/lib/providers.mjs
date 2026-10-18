@@ -187,25 +187,14 @@ export function decisionTarget(config, env = process.env) {
 
 // Only these sentences cross the provider boundary. No response body, envelope message, URL or thrown exception
 // supplies text; the target is the one routr requested. Callers use the code/provider rather than reading prose.
-export const DECISION_FAILURES = Object.freeze({
-  no_key: "No credential is available for the decision provider.",
-  secrets_unreadable: "routr could not read its secrets file.",
-  key_refused: "The decision provider refused the credential.",
-  model_missing: "The local decision model has not been pulled.",
-  model_unsupported: "The local model or server does not support decision requests.",
-  timeout: "The decision request timed out.",
-  unreachable: "The decision provider could not be reached.",
-  daily_allowance: "The decision provider's daily free allowance is used up.",
-  provider_error: "The decision provider returned an error.",
-  invalid_response: "The decision provider returned a reply routr cannot read.",
-  internal_error: "An internal error stopped the decision check.",
-});
+export const DECISION_CODES = ["no_key", "secrets_unreadable", "key_refused", "model_missing", "model_unsupported",
+  "timeout", "unreachable", "daily_allowance", "provider_error", "invalid_response", "internal_error", "attempt_unknown"];
 
 export class DecisionError extends Error {
   constructor(target, code, status, { secret, file = SECRETS_FILE, host } = {}) {
     const { provider, model } = target, P = PROVIDERS[provider];
-    const get = typeof P.get === "function" ? P.get(model) : P.get;
-    const missing = P.secrets.find((s) => s.name === secret) ?? P.secrets[0];
+    const get = typeof P?.get === "function" ? P.get(model) : P?.get;
+    const missing = P?.secrets.find((s) => s.name === secret) ?? P?.secrets[0];
     const http = Number.isInteger(status) ? status : 0;
     const action = http >= 500 ? "Try again later." : http === 429 ? "Check the provider's limits and try again after they reset."
       : http >= 400 ? "Check the decision model and provider settings before trying again." : "Check the decision provider.";
@@ -217,26 +206,27 @@ export class DecisionError extends Error {
       model_missing: `the local model is not pulled. ${get}`,
       model_unsupported: `the local model is not a decision model, or Ollama is too old: update Ollama to ${OLLAMA_MIN} or later and restart it. ${get}`,
       timeout: "the request timed out. Try again; if it keeps timing out, check the decision provider.",
-      unreachable: P.local ? `the local server is not running or cannot be reached at ${host ?? P.host()}: start it (the Ollama app, or ollama serve). ${get}`
+      unreachable: P?.local ? `the local server is not running or cannot be reached at ${host ?? P.host()}: start it (the Ollama app, or ollama serve). ${get}`
         : "the provider could not be reached. Check your connection and try again.",
       provider_error: `the provider returned HTTP ${http}. ${action}`,
       invalid_response: "the provider returned a reply routr cannot read. Try again; if it persists, check the decision provider.",
-      ...P.failures,
+      internal_error: "routr: an internal error stopped the decision check. Run routr doctor; if it persists, report it to routr.",
+      attempt_unknown: "The saved fallback advice does not name the attempted decision model and its failure.",
+      ...P?.failures,
     };
-    super(code === "internal_error" ? "routr: an internal error stopped the decision check. Run routr doctor; if it persists, report it to routr." : `${P.label}: ${sentences[code]}`);
+    super(code === "internal_error" || code === "attempt_unknown" ? sentences[code] : `${P.label}: ${sentences[code]}`);
     this.name = "DecisionError";
     this.code = code;
     this.provider = provider;
     this.model = model ?? null;
-    this.why = DECISION_FAILURES[code];
     if (code === "provider_error") this.status = Number.isInteger(status) ? status : 0;
   }
 }
 
-// Output-only diagnostic. The detailed message above still supplies the action; this sentence is stable across
-// hosts, secret paths and HTTP statuses, so saved advice can be classified without trusting its prose.
+// Output-only diagnostic, including the same recovery action as every other caller of DecisionError.
 export function decisionUnavailable(e, target) {
   const error = e instanceof DecisionError ? e : new DecisionError(target, "internal_error");
-  return { part: "decision model", provider: error.provider, model: error.model ?? target.model, code: error.code, why: error.why };
+  return { part: "decision model", provider: error.provider, model: error.model ?? target.model, code: error.code, why: error.message,
+    ...(error.code === "provider_error" ? { status: error.status } : {}) };
 }
 export const noReading = (u) => `routr: no reading (${u.model} on ${PROVIDERS[u.provider].label} unavailable: ${u.code})`;

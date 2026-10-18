@@ -1,7 +1,7 @@
 // One comparison for launch and record: advice on a summary or another worker is not advice on this task.
 import { readFileSync } from "node:fs";
 import { briefSha } from "./ledger.mjs";
-import { DECISION_FAILURES, isProvider } from "./providers.mjs";
+import { DECISION_CODES, DecisionError, decisionUnavailable, isProvider } from "./providers.mjs";
 
 // Every file a lead hands routr (advice, task) is read the same way. PowerShell 5.1's > writes UTF-16LE;
 // Set-Content -Encoding utf8 writes a UTF-8 BOM. A BOM-less UTF-16 file of text starts with an ASCII character
@@ -26,9 +26,9 @@ export function matchAdvice(advice, task) {
 export function savedDecisionUnavailable(advice) {
   const entry = Array.isArray(advice.unavailable) ? advice.unavailable.find((u) => u?.part === "decision model") : null;
   if (!entry || !isProvider(entry.provider) || typeof entry.model !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(entry.model)
-    || typeof entry.code !== "string" || !Object.hasOwn(DECISION_FAILURES, entry.code))
-    return { part: "decision model", provider: null, model: null, code: "attempt_unknown", why: "The saved fallback advice does not name the attempted decision model and its failure." };
-  return { part: "decision model", provider: entry.provider, model: entry.model, code: entry.code, why: DECISION_FAILURES[entry.code] };
+    || typeof entry.code !== "string" || !DECISION_CODES.includes(entry.code) || entry.code === "attempt_unknown")
+    return { part: "decision model", provider: null, model: null, code: "attempt_unknown", why: new DecisionError({ provider: null, model: null }, "attempt_unknown").message };
+  return decisionUnavailable(new DecisionError(entry, entry.code, entry.status), entry);
 }
 export function readTask(file) {
   if (typeof file !== "string" || !file.trim() || /^-\S/.test(file)) throw new Error("--task-file requires a usable path");

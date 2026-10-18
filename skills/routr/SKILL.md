@@ -62,8 +62,10 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
 - `headline`: the advice in one line. Read it first; the rest is the detail behind it. When the decision model could
   not answer, it starts with `no reading`, names the attempted model and provider, and states the fallback level.
 - `unavailable`: what routr could not read, as a list (`[]` when nothing was missing). A `decision model` entry names
-  `provider`, the attempted `model`, a fixed failure `code` and `why`. A `usage` entry names `subscription`, `source`,
-  `code` and `why`. Read these before deciding, tell the user in the launch line when advice was a fallback, and
+  `provider`, the attempted `model`, a fixed failure `code` and its recovery action in `why` (`status` also records a provider error's HTTP status). A `usage` entry names `subscription`, `source`,
+  `code` and `why`. Fresh usable readings stay available even after a failed refresh. Otherwise `reading` says
+  `assumed` or `kept`; a kept older reading adds `reading_source` and `age_sec`. An internal usage-ranking error
+  names `source: "routr"` with no subscription. Read these before deciding, tell the user in the launch line when advice was a fallback, and
   judge the missing part yourself. `check` uses the same field, adding `brief` or `report` for unreadable files.
   `launch` carries the saved advice's decision-model entry; older fallback advice says it does not name the attempted
   model. `decision_model` still means the model that answered, so it is absent on fallback advice.

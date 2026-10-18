@@ -441,7 +441,7 @@ test("usage cursor with no Cursor to ask says so, starts nothing, prints JSON an
   const res = Bun.spawnSync([process.execPath, SCRIPT, "usage", "cursor"], { env: cleanEnv });
   expect(res.exitCode).toBe(0);
   const out = JSON.parse(res.stdout.toString());
-  expect(out).toMatchObject({ ok: false, excluded: true });
+  expect(out).toMatchObject({ ok: false, excluded: true, why: "`cursor-agent` did not answer its sign-in check (not installed, or it hung)" });
   expect(JSON.parse(readFileSync(join(home, ".cache/routr/cursor-usage.json"), "utf8"))).toMatchObject({ excluded: true });
   expect(JSON.parse(readFileSync(join(home, ".cache/routr/signed-in.json"), "utf8")).cursor.state).toBe("no answer");
 });
@@ -763,7 +763,7 @@ test("a background reading of a harness that is not signed in never starts it, k
   const dir = scratch("gate"), file = join(dir, "kiro-usage.json"), lock = `${file}.lock`;
   writeFileSync(lock, "");
   const r = await refreshKiro({ file, background: true, ready: async () => "not signed in: kiro-cli login", read: async () => { throw new Error("must not read"); } });
-  expect(r).toMatchObject({ ok: false, excluded: true });
+  expect(r).toMatchObject({ ok: false, excluded: true, why: "not signed in: kiro-cli login" });
   expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ excluded: true });
   expect(JSON.parse(readFileSync(file, "utf8")).failure).toBeUndefined();
   expect(existsSync(lock)).toBe(false);

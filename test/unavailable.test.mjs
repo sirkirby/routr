@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { adviseCommand, checkCommand } from "../src/lib/commands.mjs";
 import { launch } from "../src/lib/launch.mjs";
-import { DECISION_FAILURES, DecisionError, decisionTarget, PROVIDERS } from "../src/lib/providers.mjs";
+import { DECISION_CODES, DecisionError, decisionTarget, PROVIDERS } from "../src/lib/providers.mjs";
 import { readUsage } from "../src/lib/harnesses.mjs";
 import { readAgy, readClaude, readCodexLive, summarize } from "../src/lib/usage.mjs";
 import { parseKiroUsage, refreshKiro, readKiro, kiroUsage } from "../src/lib/kiro-usage.mjs";
@@ -21,14 +21,76 @@ const clean = (value) => {
 };
 const reading = async () => ({ answers: fact(ans(1, 1), {}), provider: "typesafe", model: "jev-1.13.0", latencyMs: 1 });
 const empty = async () => [];
+const dispatchUsage = (row) => adviseCommand("dispatch", marker, { config: cfg({ subscriptions: { [row.pool]: cfg().subscriptions.codex } }) }, {}, { askFn: reading, read: async () => [row] });
+
+test("failed background refreshes leave fresh snapshots available; older and assumed readings say what was used", async () => {
+  const T = 1800000000;
+  for (const [name, refresh, read, good] of [
+    ["cursor", refreshCursor, readCursor, { included_used_pct: 40 }],
+    ["kiro", refreshKiro, readKiro, { credits_used: 20, credits_limit: 50, used_pct: 40 }],
+  ]) {
+    const file = join(scratch("fresh-usage"), "snapshot");
+    await refresh({ file, nowSec: T, read: async () => ({ ok: true, ...good }) });
+    await refresh({ file, nowSec: T + 1, read: async () => ({ ok: false, ...usageFailure("read_failed") }) });
+    const fresh = await dispatchUsage(read({ file, nowSec: T, background: false }));
+    expect(fresh.unavailable).toEqual([]);
+    expect(fresh.subscriptions.ranked[0]).toMatchObject({ usage: "live", age_sec: 0 });
+    const older = await dispatchUsage(read({ file, nowSec: T + 4 * 3600, background: false }));
+    expect(older.unavailable).toEqual([{ part: "usage", subscription: name, source: `${name} /usage`, ...usageFailure("read_failed"),
+      reading: "kept", reading_source: `${name} snapshot`, age_sec: 4 * 3600 }]);
+    const expired = await dispatchUsage(read({ file, nowSec: T + 86400, background: false }));
+    expect(expired.unavailable).toEqual([{ part: "usage", subscription: name, source: `${name} /usage`, ...usageFailure("read_failed"), reading: "assumed" }]);
+    expect(expired.subscriptions.ranked[0]).toMatchObject({ usage: "assumed", age_sec: 86400 });
+    clean([fresh, older, expired]);
+  }
+});
+
+test("Claude and Codex fallback diagnostics distinguish a fresh local reading from a kept older one", async () => {
+  const T = 1800000000, file = join(scratch("local-fallback"), "claude-snapshot");
+  writeFileSync(file, JSON.stringify({ ts: T, rate_limits: { seven_day: { used_percentage: 40, resets_at: T + 86400 } } }));
+  const freshClaude = await readClaude({ file, nowSec: T + 299, exec: () => { throw new Error("a fresh snapshot needs no live read"); } });
+  expect((await dispatchUsage(freshClaude)).unavailable).toEqual([]);
+  const olderClaude = await readClaude({ file, nowSec: T + 300, exec: async () => null });
+  expect((await dispatchUsage(olderClaude)).unavailable).toEqual([{ part: "usage", subscription: "claude", source: "claude /usage", ...usageFailure("no_response"),
+    reading: "kept", reading_source: "statusline", age_sec: 300 }]);
+  for (const age of [0, 299, 300]) {
+    const codex = await readCodexLive({ exec: async () => null, nowSec: T + age, fallback: () => summarize({ pool: "codex", source: "session log", ts: T, nowSec: T + age, windows: [{ usedPct: 40 }] }) });
+    const r = await dispatchUsage(codex);
+    expect(r.unavailable).toEqual(age < 300 ? [] : [{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("no_response"),
+      reading: "kept", reading_source: "session log", age_sec: age }]); clean(r);
+  }
+});
+
+test("launch rebuilds every saved recovery action and HTTP status without trusting saved prose", async () => {
+  const dir = scratch("launch-actions"), file = join(dir, "advice");
+  const args = ["--kind", "claude", "--name", "worker", "--model", "sonnet", "--task", marker, "--advice", file, "--dry-run"];
+  for (const [provider, code, status] of [
+    ["typesafe", "no_key"], ["typesafe", "key_refused"], ["typesafe", "secrets_unreadable"],
+    ["cloudflare", "daily_allowance"], ["cloudflare", "provider_error", 429], ["typesafe", "provider_error", 500],
+    ["ollama", "model_missing"], ["ollama", "model_unsupported"], ["ollama", "unreachable"],
+  ]) {
+    const target = decisionTarget({ decision: { provider } }, {}), error = new DecisionError(target, code, status);
+    writeFileSync(file, JSON.stringify({ fallback: true, brief_sha: briefSha(marker), unavailable: [{ part: "decision model", ...target, code, status, why: marker }] }));
+    const r = await launch(args, { settings: () => cfg({ decision: { provider: "cloudflare", model: "clef-flash" } }) });
+    expect(r.unavailable[0].why).toBe(error.message); expect(r.warnings.join(" ")).toContain(error.message);
+    if (status) expect(r.unavailable[0].status).toBe(status);
+    if (code === "no_key") expect(r.warnings.join(" ")).toContain("routr key set typesafe");
+    clean(r);
+  }
+});
+
+test("Antigravity window names come from known keys instead of outside ids", async () => {
+  const row = await readAgy({ exec: async () => JSON.stringify({ command: { data: { groups: [{ name: "Gemini", buckets: ["weekly", "5h", marker].map((window) => ({ id: marker, window, remaining_fraction: 0.5 })) }] } } }) });
+  expect(row.windows.map((w) => w.name)).toEqual(["weekly", "5h", "unknown"]); clean(row);
+});
 
 test("every classified decision failure has one output contract, independent of the asking command", async () => {
   const dir = scratch("unavailable"), brief = join(dir, "brief"), report = join(dir, "report");
   writeFileSync(brief, BRIEF_MARKER); writeFileSync(report, marker);
-  for (const provider of Object.keys(PROVIDERS)) for (const code of Object.keys(DECISION_FAILURES)) {
+  for (const provider of Object.keys(PROVIDERS)) for (const code of DECISION_CODES.filter((c) => c !== "attempt_unknown" && (provider === "cloudflare" || c !== "daily_allowance"))) {
     const config = cfg({ decision: { provider } }), target = decisionTarget(config, {});
     const askFn = async () => { throw new DecisionError(target, code); };
-    const missing = { part: "decision model", provider, model: target.model, code, why: DECISION_FAILURES[code] };
+    const missing = { part: "decision model", provider, model: target.model, code, why: new DecisionError(target, code).message, ...(code === "provider_error" ? { status: 0 } : {}) };
     for (const mode of ["dispatch", "subagent", "check"]) {
       const r = mode === "check" ? await checkCommand({ brief, report }, { config, askFn })
         : await adviseCommand(mode, marker, { config }, {}, { askFn, read: empty });
@@ -44,18 +106,18 @@ test("aggregate usage rejection and synchronous throws name every unread enabled
     const r = await adviseCommand("dispatch", marker, { config: cfg() }, {}, { askFn: reading, read });
     expect(r.fallback).toBeUndefined(); expect(r.headline).not.toContain("no reading");
     expect(r.unavailable).toEqual(["claude", "codex", "cursor"].map((subscription) => ({ part: "usage", subscription,
-      source: { claude: "claude /usage", codex: "app-server", cursor: "cursor /usage" }[subscription], ...usageFailure("read_failed") })));
+      source: { claude: "claude /usage", codex: "app-server", cursor: "cursor /usage" }[subscription], ...usageFailure("read_failed"), reading: "assumed" })));
     expect(r.subscriptions.ranked).toHaveLength(3); clean(r);
   }
   const malformed = await adviseCommand("dispatch", marker, { config: cfg() }, {}, { askFn: reading, read: async () => null });
-  expect(malformed.unavailable).toHaveLength(3); expect(malformed.subscriptions.ranked).toEqual([]); clean(malformed);
+  expect(malformed.unavailable).toEqual([{ part: "usage", subscription: null, source: "routr", ...usageFailure("internal_error") }]); expect(malformed.subscriptions.ranked).toEqual([]); clean(malformed);
 });
 
 test("check lists both unreadable files and does not ask for a decision", async () => {
   const dir = scratch("unreadable-check");
   const r = await checkCommand({ brief: join(dir, "brief"), report: join(dir, "report") }, { askFn: () => { throw new Error("must not ask"); } });
   expect(r.unavailable.map((u) => [u.part, u.code])).toEqual([["brief", "unreadable"], ["report", "unreadable"]]);
-  expect(r.headline).toBe("routr: no reading (brief unavailable: unreadable; report unavailable: unreadable); judge it yourself");
+  expect(r.headline).toBe("routr: no reading (brief unavailable: unreadable; report unavailable: unreadable); judge the report yourself");
   expect(r.next).toBeUndefined(); clean(r);
 });
 
@@ -74,7 +136,7 @@ test("one source's failed read is isolated, structured at the reader, and never 
   } });
   const config = cfg({ subscriptions: { codex: cfg().subscriptions.codex, cursor: cfg().subscriptions.cursor } });
   const r = await adviseCommand("dispatch", marker, { config }, {}, { askFn: reading, read });
-  expect(r.unavailable).toEqual([{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("read_failed") }]);
+  expect(r.unavailable).toEqual([{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("read_failed"), reading: "assumed" }]);
   expect(r.subscriptions.ranked.find((r) => r.subscription === "cursor").usage).toBe("live"); clean(r);
 });
 
@@ -93,7 +155,7 @@ test("CLI distinguishes failed reads, stale snapshots with age, valid metered un
   };
   writeFileSync(snapshot, JSON.stringify({ ts, tried: ts, reading: { included_used_pct: 40 } }));
   const r = run("four_cases");
-  expect(r.unavailable).toEqual([{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("read_failed") }]);
+  expect(r.unavailable).toEqual([{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("read_failed"), reading: "assumed" }]);
   expect(r.subscriptions.ranked.find((r) => r.subscription === "cursor")).toMatchObject({ usage: "assumed" });
   expect(r.subscriptions.ranked.find((r) => r.subscription === "cursor").age_sec).toBeGreaterThanOrEqual(90000);
   expect(r.subscriptions.ranked.find((r) => r.subscription === "kiro")).toMatchObject({ class: "metered", usable: null, headroom: null, usage: "metered" });
@@ -102,9 +164,17 @@ test("CLI distinguishes failed reads, stale snapshots with age, valid metered un
   expect(signedOut.unavailable).toEqual([]);
   expect(signedOut.subscriptions.excluded).toContainEqual({ subscription: "codex", reason: expect.stringContaining("not signed in") });
   const failed = run("snapshot_failure", false);
-  expect(failed.unavailable).toEqual([{ part: "usage", subscription: "cursor", source: "cursor /usage", ...usageFailure("invalid_response") }]);
+  expect(failed.unavailable).toEqual([{ part: "usage", subscription: "cursor", source: "cursor /usage", ...usageFailure("invalid_response"), reading: "assumed" }]);
   const saved = readFileSync(snapshot, "utf8"); clean(saved);
   expect(JSON.parse(saved).failure).toEqual(usageFailure("invalid_response")); expect(JSON.parse(saved)).not.toHaveProperty("error");
+  writeFileSync(snapshot, JSON.stringify({ ts: Date.now() / 1000, reading: { included_used_pct: 40 } }));
+  const fresh = run("snapshot_failure", false);
+  expect(fresh.unavailable).toEqual([]);
+  expect(fresh.subscriptions.ranked.find((r) => r.subscription === "cursor")).toMatchObject({ usage: "live", age_sec: 0 });
+  writeFileSync(snapshot, JSON.stringify({ ts: Date.now() / 1000 - 18000, reading: { included_used_pct: 40 } }));
+  const kept = run("snapshot_failure", false), age = kept.unavailable[0].age_sec;
+  expect(age).toBeGreaterThanOrEqual(18000);
+  expect(kept.unavailable).toEqual([{ part: "usage", subscription: "cursor", source: "cursor /usage", ...usageFailure("invalid_response"), reading: "kept", reading_source: "cursor snapshot", age_sec: age }]);
 });
 
 test("snapshot writer and reader share codes, redact raw failures, and forget a failure after success", async () => {

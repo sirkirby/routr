@@ -15,7 +15,7 @@ yours (`doctor --fix` is `setup` under another name). What they do besides answe
 
 They fail open: any error still prints usable output and exits 0. `dispatch`, `subagent` and `check` return
 `unavailable`, a list of the readings they could not make (`[]` when nothing was missing). Decision-model failures
-name the provider and attempted model with a fixed code and sentence; their headline starts with `no reading`.
+name the provider and attempted model with a fixed code and the decision error's recovery action; their headline starts with `no reading`.
 `check` also names an unreadable brief or report. `decision_model` continues to mean the model that answered
 (null in a fallback ledger row); `unavailable` is output only, never stored in the ledger or sent in telemetry.
 
@@ -27,7 +27,8 @@ name the provider and attempted model with a fixed code and sentence; their head
   `brief_sha`); missing or nonmatching advice is refused before any harness, pane or worktree call. Dry runs warn
   and plan instead. Matching fallback advice is accepted, including advice saved as UTF-8 or UTF-16LE, with or without
   a BOM. Launch copies its decision-model `unavailable` entry. Older fallback advice that lacks the entry says the
-  saved advice does not name the attempted model; launch never fills it from current settings. The lead still
+  saved advice does not name the attempted model; launch never fills it from current settings. Recovery actions
+  are rebuilt from the saved provider, model and code, including HTTP status for a provider error. The lead still
   chooses the account, model and effort. Real launches return a record template only after a
   start or task-submission attempt; dry runs with matching advice return the planned template.
 - `record --task-file` checks that the advice belongs to that task before reading reports or appending anything.
@@ -70,7 +71,10 @@ routr never has to own a harness feature (a statusline slot, a hook) to get its 
 
 Failed usage reads have fixed codes and sentences at the reader boundary and in the snapshot cache; harness
 output and exception text are never copied into their diagnostics. A failed refresh keeps the last good reading
-and reports the failure separately. A snapshot at least a day old is too old to use: its age is shown with assumed
+and notes the failed attempt. A fresh usable reading stays available. When a failed source leaves assumed
+headroom or a kept older reading, `unavailable` says which; a kept reading names its source and age. Snapshot
+readings are fresh for the four-hour refresh interval, local statusline/session-log readings for five minutes.
+A snapshot at least a day old is too old to use: its age is shown with assumed
 headroom, and age alone is not a failure. Metered accounts without known capacity are valid readings. Accounts
 left out by settings or sign-in status stay in `excluded`, outside the failed readings.
 

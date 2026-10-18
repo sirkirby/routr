@@ -137,7 +137,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         if (advice.fallback === true) {
           const missing = savedDecisionUnavailable(advice);
           out.unavailable.push(missing);
-          out.warnings.push(missing.model == null ? missing.why : `Fallback advice: ${missing.model} on ${missing.provider} was unavailable (${missing.code}). Judge that part yourself.`);
+          out.warnings.push(missing.model == null ? missing.why : `Fallback advice: ${missing.model} on ${missing.provider} was unavailable (${missing.code}). ${missing.why} Judge that part yourself.`);
         }
         recordOptions = { ...o, advice: resolve(o.advice), ...(o["task-file"] ? { "task-file": resolve(o["task-file"]) } : {}) };
       } catch (e) { problem = e.message; }
