@@ -15,8 +15,9 @@ commit subject and, at the next tag, a line in the release notes: write it for a
 - **Measured, or marked unmeasured.** A claim in the guides or the README is backed by something in
   `docs/evidence.md`, or says plainly that it is not yet measured.
 - **Standard mechanisms only**: skills, prompts, hooks. No dependence on a harness's private environment variables.
-- **The advice commands stay side-effect free and fail open.** Only `record` writes to routr's state; only `launch`
-  and `cleanup` act on panes and worktrees.
+- **The advice commands change nothing of yours and fail open.** What they may still do (foreground harness reads,
+  routr's bookkeeping under `~/.cache/routr`, starting a detached job) is in [docs/guarantees.md](docs/guarantees.md).
+  Only `launch` and `cleanup` act on panes and worktrees.
 
 ## Changing a question
 
@@ -74,7 +75,8 @@ shape), and real values getting LOST (a value seen in real rows arriving as "oth
 2. A value seen in real use goes into `test/fixtures/seen-values.json` and the allowlist (a test checks it survives).
 3. Re-read every message that describes sending (`share`, `telemetry status`, setup, doctor, installers) against
    what the code now does; a test covers `share` in each state.
-4. Before release, on a machine that has opted in: `bun run smoke:telemetry`. It reads the real ledger, sends nothing,
+4. The end-to-end test against a mock endpoint keeps passing: it is what proves a row arrives as sent.
+5. Before release, on a machine that has opted in: `bun run smoke:telemetry`. It reads the real ledger, sends nothing,
    and fails on any value that would arrive as "other" or any string the endpoint would refuse.
 
 ## Changing a harness recipe

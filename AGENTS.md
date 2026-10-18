@@ -10,7 +10,8 @@ measured questions about a brief or a worker report; code adds live usage; the l
 - routr is NOT the judge. It advises; no code rule overrides the lead agent or the user's settings.
 - It MUST NOT encode how good or how expensive any model the work goes to is: no model names in advice, no cost
   formulas, no weights that go stale at the next model release. What routr's own decision models were measured to do
-  is in `docs/evidence.md`, with a date. What varies by user is a plain setting in `~/.config/routr/config.json`.
+  is in `docs/evidence.md`, with a date, and their prices nowhere else. What varies by user is a plain setting in
+  `~/.config/routr/config.json`.
 - It does not estimate or manage context, proxy model traffic, or hold provider API keys for workers. Workers are the
   harness CLIs the user already has installed and signed in.
 - There is ONE install path: the install scripts, which download a release binary that installs its own skill. Not a
@@ -28,19 +29,20 @@ page and its tests in the same PR.
   measured by the model gate (CONTRIBUTING.md). Where a provider cannot version its models, `docs/evidence.md` says so
   and the gate is re-run. What differs between providers lives in the provider boundary and nowhere else.
 - The advice commands change nothing of the user's and fail open: any error still prints usable output and exits 0.
-  Every other command acts, and says what it did.
-- routr removes only what it can prove is its own and safe to remove. When it cannot tell, it stops and says what to
-  do; it never forces.
+  A command that acts says what it did.
+- routr removes only what it has checked is its own and safe to remove, and says what its checks cannot see. When
+  it cannot tell, it stops and says what to do; it never forces.
 - Nothing waits on background work: the updater and slow usage refreshes run detached, and a command never waits for
-  them, makes a network call for them, or changes its output because of them.
+  them or makes a network call for them. It may report what they last did.
 - A harness is used only once its own status command says it is signed in. routr never starts a sign-in.
 - routr gets what it needs from a harness through standard mechanisms (skills, prompts, the harness's own CLI). It
   never takes over a harness feature (a statusline slot, a hook) and depends on no private internals beyond what
   `references/harnesses.md` records as observed.
 - The binary is self-contained (no repository checkout at run time) and has no runtime dependencies (`node:`
-  built-ins only). It runs on macOS, Linux and Windows with no shelling out to `sh`.
+  built-ins only). It runs on macOS, Linux and Windows, and starts no process through `sh`.
 - routr writes only in its own folders and what a command was asked to write.
-- Never print, log, store or send a secret or the text of a brief.
+- A brief goes only to the decision model, and a key only to its provider. Neither is ever printed, logged, or put
+  in the ledger or telemetry.
 - Telemetry is OFF unless the person turns it on; an agent never turns it on for them. A new field in a sent row is a
   `docs/telemetry.md` change in the same PR.
 - Claims in `README.md`, the guides, and `docs/evidence.md` are either measured or say they are not.
@@ -49,15 +51,16 @@ page and its tests in the same PR.
 
 - One module owns each outside boundary: the processes routr starts, the decision-model providers, the commands
   routr hands back to an agent. Text from outside (a provider's reply, a harness's output, a pane's screen) is
-  classified there into what routr knows how to say, and MUST NOT pass through to output, the ledger, or telemetry.
+  classified there into what routr knows how to say. It reaches output only where a command's contract names it (a
+  pane's screen shown to the lead when a worker needs input), and MUST NOT reach the ledger or telemetry.
 - Fix the pattern, not the instance. A bug found in one harness, provider or command is fixed in the shared code
   they all go through, after checking every place with the same shape; where no shared code exists, make it.
-- Each command's output is a documented contract that fits its step. A field that means the same thing has one
-  name in every command, and a new field follows those names.
+- Each command has a documented contract: the inputs it requires, the ones it only uses when given, and the fields
+  it returns. A field that means the same thing has one name in every command, and a new field follows those names.
 - A contract and its tests change together. Do not keep an old field or flag beside its replacement: the binary and
   the guides ship and update together.
-- A step that is only correct with an earlier step's output requires it and refuses without it. Failing open covers
-  the advice commands' output, never a skipped input.
+- An input a command is only correct with is a required input: the command refuses without it. Failing open covers
+  the advice commands' output, never a skipped required input.
 - Rules and guides name concepts, not source files: a source path in prose goes stale when the code moves.
 
 ## Quality gates
