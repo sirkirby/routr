@@ -566,10 +566,28 @@ test("a flag subagent and dispatch do not take is never advised on as the brief"
   const inside = JSON.parse(run(["dispatch", "Add", "a", "--verbose", "flag", "to", "the", "CLI"]).out);
   expect(inside.brief_chars).toBe("Add a --verbose flag to the CLI".length);
   expect(inside.input_notes).toEqual(["--verbose looks like a flag routr dispatch does not take; read as part of the brief"]);
-  // With nothing on stdin, flag-like words are the brief (-Werror can be one), and the note says so (from the review of #41).
+  // Without a real brief on stdin, a flag-led invocation is refused instead of being assessed.
   const alone2 = JSON.parse(run(["subagent", "-Werror"]).out);
-  expect(alone2.brief_chars).toBe("-Werror".length);
-  expect(alone2.input_notes).toEqual(["-Werror looks like a flag routr subagent does not take; read as the brief"]);
+  expect(alone2.ok).toBe(false);
+  expect(alone2.error).toContain("-Werror");
+  expect(alone2).not.toHaveProperty("brief_chars");
+  for (const cmd of ["dispatch", "subagent"]) {
+    for (const args of [["--task-fil", "/tmp/x.md"], ["--json"], ["--unknown", "--also-unknown"], ["--task-fil=private-value"]]) {
+      const result = run([cmd, ...args]), refused = JSON.parse(result.out);
+      expect(result.code).toBe(0);
+      expect(refused.ok).toBe(false);
+      expect(refused.error).toContain(args[0].split("=")[0]);
+      expect(refused.next).toEqual([{ kind: "do", why: expect.any(String), template: `routr ${cmd} --task-file <path>` }]);
+      for (const field of ["level", "facts", "answers", "brief_sha", "brief_chars"]) expect(refused).not.toHaveProperty(field);
+      expect(result.out).not.toContain("private-value");
+    }
+    const words = ["Explain", "--task-file", "handling"];
+    const unquoted = JSON.parse(run([cmd, ...words]).out);
+    expect(unquoted.ok).toBe(false);
+    expect(unquoted.error).toContain("quote the whole inline brief");
+    expect(unquoted.error).toContain("--task-file <path>");
+    expect(JSON.parse(run([cmd, words.join(" ")]).out).brief_chars).toBe(words.join(" ").length);
+  }
 });
 
 test("a folder inside routr's copy that cannot be read counts as the user's: the copy is left as it is", async () => {

@@ -5,6 +5,15 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- `routr launch` refuses a task without advice on that exact task, reviews included; a dry run warns and still
+  plans. Your reserves and level limits are applied in `dispatch`, so a launch can no longer skip them. (#84)
+- `dispatch` and `subagent` read the exact brief with `--task-file`, also as PowerShell saves it (UTF-16 or with a
+  byte-order mark); a brief made only of flags routr does not take gets no reading. (#84)
+- Each result says what comes next in `next`: commands that run unchanged in bash, PowerShell and cmd, or
+  instructions for the lead. Launch's `cleanup` and `needs_input.then`, and cleanup's `then` and `refused.then`,
+  moved there; `check` and `skill install` return it as a list. (#84)
+- Launch hands back this worker's `record` template, and `record --task-file` refuses advice given on another task.
+  (#84)
 - A decision model's reply can no longer put its text in routr's output or your ledger. Failures are now a fixed
   set of messages, each saying what to do, and answers are checked against what each question allows. (#82)
 - `check` with a missing brief or report says which file, and Ollama's version and build are shown only in their

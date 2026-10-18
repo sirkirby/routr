@@ -6,7 +6,7 @@ const rep = (over = {}, kind = "debug", verdict = "done") => ({ work_type: { cho
   ...Object.fromEntries(Object.entries({ states_verification: 0.95, covers_brief: 0.95, admits_gaps: 0.05, symptom_patch: 0.05, out_of_scope: 0.05, ...over }).map(([k, p]) => [k, { noul: p }])) });
 
 test("a clean report gives no reason to send it back, and says the orchestrator's own check decides", () => {
-  const r = readReport(rep()); expect(r.flags).toEqual([]); expect(r.next).toContain("your own check");
+  const r = readReport(rep()); expect(r.flags).toEqual([]); expect(r.next[0]).toMatchObject({ kind: "do", why: expect.stringContaining("your own check") });
 });
 
 test("a symptom patch, an admitted gap, and a non-done verdict are each flagged", () => {

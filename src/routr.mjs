@@ -108,8 +108,10 @@ const ADVISE = {
   share: async () => console.log((await commands()).shareCommand({ ledger: take("--ledger"), out: take("--out") }, loaded().config)),
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]
   record: async () => {
-    const revising = argv.includes("--run-id");
+    const revising = argv.includes("--run-id"), comparing = argv.includes("--task-file");
+    const taskFile = take("--task-file");
     const o = Object.fromEntries(["advice", "subscription", "model", "effort", "level", "verdict", "check", "seconds", "attempts", "note", "ledger", "report", "project"].map((f) => [f, take(`--${f}`)]));
+    o.task_file = taskFile ?? (comparing ? "" : undefined);
     o.run_id = take("--run-id") ?? (revising ? "" : undefined); o.causes = takeAll("--cause");
     print((await commands()).recordCommand(o, takeAll("--subagent"), loaded().config)); // never blocks the agent; the config resolves a "default" effort
   },
@@ -119,16 +121,38 @@ const ADVISE = {
 if (ADVISE[mode]) { await ADVISE[mode](); process.exit(0); }
 if (mode !== "subagent" && mode !== "dispatch") { console.error(formatUnknownUsage()); process.exit(2); }
 
+const { doNext } = await import("./lib/next.mjs");
+const briefRefusal = (error) => print({ ok: false, error,
+  next: [doNext("Supply the exact task: quote an inline brief, pipe it on stdin, or use this file form.", `routr ${mode} --task-file <path>`)] });
+
+// File input is explicit: a missing value is refused rather than accidentally reading stdin or advising on a flag.
+if (rest.includes("--task-file")) {
+  const at = rest.indexOf("--task-file");
+  try {
+    if (rest.length !== 2 || at !== 0) throw new Error("--task-file takes one path; quote the whole inline brief if it contains --task-file, or use --task-file <path>");
+    const brief = (await import("./lib/advice-file.mjs")).readTask(rest[1]).trim();
+    if (!brief) throw new Error("--task-file: the task must not be empty");
+    print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given)));
+  } catch (e) { briefRefusal(e.message); }
+  process.exit(0);
+}
+
 // A word that looks like a flag these commands do not take (--json) is never quietly advised on. Given alone with a
 // brief on stdin, it is set aside and stdin is the brief (found 2026-09-26: `routr subagent --json < brief.txt` gave
-// advice about the text "--json"). Otherwise it is the brief, or part of it (-Werror can be one), and the answer says so.
+// advice about the text "--json"). Without a real stdin brief, a flag-led invocation is refused: a misspelled
+// --task-file and its path must not get a reading. Quote a flag-led multi-word brief to make that intent explicit.
 const flagLike = rest.filter((w) => /^--?[a-z][\w-]*$/i.test(w));
 let piped = "";
 if (!process.stdin.isTTY && (!rest.length || flagLike.length === rest.length)) { try { piped = (await import("node:fs")).readFileSync(0, "utf8").trim(); } catch {} }
 const setAside = flagLike.length && flagLike.length === rest.length && piped;
+const unknownFlag = !/\s/.test(rest[0] ?? "") && rest[0]?.match(/^--?[a-z][\w-]*/i)?.[0];
+if (unknownFlag && !setAside) {
+  briefRefusal(`Unknown ${mode} flag: ${unknownFlag}. Quote an inline brief or use routr ${mode} --task-file <path>.`);
+  process.exit(0);
+}
 if (flagLike.length) inputNotes.push(setAside
   ? `${flagLike.join(" ")}: not ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} takes, so ignored; the brief was read from stdin`
-  : `${flagLike.join(" ")} looks like ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} does not take; read as ${flagLike.length === rest.length ? "the brief" : "part of the brief"}`);
+  : `${flagLike.join(" ")} looks like ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} does not take; read as part of the brief`);
 const brief = rest.length && !setAside ? rest.join(" ").trim() : piped;
 if (!brief) { console.error("routr: empty brief"); process.exit(2); }
 print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given)));

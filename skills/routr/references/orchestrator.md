@@ -26,12 +26,17 @@ user's sight, with no ledger row, and spreading the work across the user's subsc
 
 ## 2. Ask for the facts, then decide
 
-    routr dispatch < <the task file you will launch with> > <scratch>/advice-<n>.json
+    routr dispatch --task-file <the task file you will launch with>
+
+Save its stdout to `<scratch>/advice-<n>.json`.
 
 Ask about the task itself, word for word: the file you will pass to `launch --task-file`. A summary gets advice about
 the summary (in the maintainer's ledger, at least 12 of 42 dispatch calls were given one, and routr's facts then
-described text the worker never saw). `launch --advice` checks this for you. Keep your process rules for the worker
-(what it may and may not do, how to report, git steps) out of that file: they go in `--rules-file`, which launch passes
+described text the worker never saw). `launch --advice` requires matching advice on that exact task, including
+reviews. A standing choice of your own (reviewers on a fixed model and effort, for example) is no reason to skip dispatch: you can still choose it after
+reading the advice. Dispatch answers even when its decision model is unavailable; matching fallback advice is valid.
+When advice says something was unavailable, tell the user in the launch line and judge that part yourself. Keep your
+process rules for the worker (what it may and may not do, how to report, git steps) out of that file: they go in `--rules-file`, which launch passes
 to the worker and routr does not judge. In 18 of 36 real tasks such rules were 5 to 38% of the text, and they moved routr's
 readings.
 
@@ -107,8 +112,8 @@ set out its findings.
 
        Finish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.
 
-**Launch.** `routr launch` does the whole sequence in one call. It splits the pane, answers whatever the user's shell
-asks first, applies that harness's permissive flags and its model and effort syntax (chosen so it asks nothing at
+**Launch.** `routr launch` does the whole sequence in one call. It splits the pane, checks that the user's shell
+is ready, applies that harness's permissive flags and its model and effort syntax (chosen so it asks nothing at
 startup), waits until the agent is ready, wraps your task in the opening and closing lines, and prints one JSON
 object describing what it did.
 
@@ -123,12 +128,13 @@ object describing what it did.
   the user's default for that model, and a model without effort ignores it. Kiro also runs its default on a model id
   it does not know, without a word: launch checks the id against Kiro's own list (`kiro-cli chat --list-models`)
   before it opens a pane, and says so in `warnings` when it could not read the list.
-- `--task-file` holds your task alone (parts 2 and 3). Without it the pane is left ready and unprompted, for you to
-  prompt yourself.
+- `--task-file` holds your task alone (parts 2 and 3). With neither task form the pane is left ready and unprompted;
+  sending work later still requires matching advice.
 - `--rules-file` holds your process rules, added after the task. routr passes them on without judging them, and
   `--advice` compares the task alone.
 - `--advice` takes the advice file you saved from `routr dispatch`. launch compares the text that advice was about
-  with the task it sends, and warns when they differ (`advice.matches` is then `false`): ask routr about the task.
+  with the task it sends. A task requires readable JSON advice with a matching `brief_sha`: otherwise launch refuses
+  before any harness, pane or worktree call. Dry runs make the same checks as warnings and still plan.
   With no task (no `--task-file` or `--task`) there is nothing to compare, and no `advice` field.
 - routr answers no question: not the user's shell (its plugins and startup files ask their own), not a harness at
   startup. It passes each harness's own flags so none is asked (Cursor `--trust`, Kiro `--trust-tools=*`, Codex
@@ -137,22 +143,23 @@ object describing what it did.
   nothing.
 - `--dry-run` prints the plan and changes nothing. Use it to see the flags before spending anything.
 - Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_input`, or `failed`.
-  `warnings` holds anything it wants you to look at. `steps` says what it did, in order. `cleanup` is the command
-  that finishes this worker (step 6); keep it with the worker, including one whose launch failed.
+  `warnings` holds anything it wants you to look at. `steps` says what it did, in order. Follow `next`: it includes
+  the cleanup command (step 6) and, after a start or task-submission attempt, this worker’s record template.
+  Preflight refusals have no record template; dry runs with matching advice include the planned template.
 - **`needs_input` is yours to decide.** Something in the pane waits for an answer routr does not give: a shell's own
   question, a harness's startup question, a worker that has not started. `needs_input` holds `why`, the `screen`
   (what the pane shows; withheld once the task was sent, since it then shows the brief: read the pane yourself),
   `pane`, `herdr` (its reading: the state and the rule `herdr agent explain` matched; when a worker launch started
   still read `blocked` but explain read its screen as another state until the timeout, `explained` holds that state
   and `rule` is left out, since that rule is not the question's), a `note` from what routr knows
-  about that harness, and `then`: how to carry on. Answer what is within the task's scope yourself, with
+  about that harness. `next` says how to carry on. Answer what is within the task's scope yourself, with
   `herdr pane send-keys <pane> <keys>`: a question your own launch raised, a folder you created, the user's shell
   asking whether to load a file. Ask the user for anything that is not yours to answer: a password or other secret, a
-  sign-in, a folder you did not create, anything that cannot be undone. Then run `then`: before the task was sent it
+  sign-in, a folder you did not create, anything that cannot be undone. Then follow `next`: before the task was sent it
   is the same `routr launch` with `--pane <pane>`, which carries on from the shell, or adopts the agent already
   running there and sends it the task. It adopts only an idle agent of the kind you asked for, in `--cwd`, and keeps
   the model and effort it is running; it never waits on an agent it did not start, since one it waited for could have
-  work of its own. Running `then` right after you answer works when herdr already reads the agent idle (launch checks
+  work of its own. Following `next` right after you answer works when herdr already reads the agent idle (launch checks
   herdr's live reading, so a `blocked` state herdr has not yet updated does not stop it). Otherwise it comes back as
   `needs_input` (the agent is starting or working): wait until it is idle (`herdr agent wait <pane> --until idle`)
   and run it again. A task you gave inline with `--task` is never printed: give it again.
@@ -161,14 +168,15 @@ object describing what it did.
   first ("the prompt stalled": a harness still starting, a slow connection), launch waits for the agent to start
   (`steps` then holds `prompt_wait`) and never sends the task again or presses a key for it: herdr's rule is that a
   stalled prompt may still have arrived. If the agent has not started by the end of the timeout, the result is
-  `needs_input`, and its `then` says: do not launch it again; read the pane; press Enter if the task sits unsent in
+  `needs_input`, and its `next` says: do not launch it again; read the pane; press Enter if the task sits unsent in
   the input box (`herdr agent send-keys <pane> enter`); and if the box is empty and the agent never started, the task
-  never arrived: run the `routr launch … --pane <pane>` command `then` gives, which wraps and sends it again. Never
+  never arrived: run the `routr launch … --pane <pane>` command `next` describes, which wraps and sends it again. Never
   send it with a bare `herdr agent prompt`: launch wrapped it (the opening, your rules, the closing line), and a bare
   prompt would arrive without them.
 
 `references/harnesses.md` records what each harness does and what goes wrong with it. Read it when a launch surprises
-you, when you are choosing a model, or when you launch by hand. The by-hand sequence is what `routr launch` performs:
+you or when you are choosing a model. Every task handoff uses `routr launch` with its own advice.
+The sequence below explains what launch performs; it is not a route around the advice check:
 
 1. `herdr worktree create --cwd <repo> --branch <name> [--base <ref>] --no-focus`, and take the root pane it returns.
 2. Read the pane; wait for a clean shell prompt before typing (see `harnesses.md` rule 0).
@@ -180,7 +188,7 @@ you, when you are choosing a model, or when you launch by hand. The by-hand sequ
    (`herdr notification show`). The default answer can be "No, exit": read the options before sending keys.
 5. `herdr agent prompt <name> "<text>" --wait`.
 
-A worker launched by hand is finished the same way as any other, with `routr cleanup` (step 6). Never reuse a pane
+Every worker is finished with `routr cleanup` (step 6). Never reuse a pane
 for another worker: keys sent while an agent is exiting land in the wrong place.
 
 ## 4. Judge, send back, escalate
@@ -217,11 +225,12 @@ result against the project's own standards, not just the brief.
 
 ## 5. Record
 
-Keep the advice when you ask for it (`routr dispatch … > <scratch>/advice-<n>.json`), and once you have verified the
-result, record it. `record` is the only command that writes to routr's own state: it appends one line to the user's
+Keep each worker’s advice when you ask for it. Follow the record entry in launch’s `next`, fill its placeholders,
+and add `--note` and `--report` after verifying the result. Never borrow another worker’s advice; with no advice for
+a worker, record nothing. `record` is the only command that writes to routr's own state: it appends one line to the user's
 ledger.
 
-    routr record --advice <file> --subscription <s> --model <m> --effort <e> \
+    routr record --advice <file> --task-file <this worker’s task file> --subscription <s> --model <m> --effort <e> \
         --level <the level you settled on> --verdict <done|partial|blocked> \
         --check <pass|fail|none> [--report <file>] [--subagent "<subtask> → <level> → <model>"] \
         [--attempts <n>] [--seconds <n>] [--cause <cause>] [--run-id <id>] \
@@ -247,9 +256,12 @@ for a successful review finding issues and checking their fixes; `launch` for tr
 prompt; `unknown` when the cause is not established. Several may apply. Use `--cause none` alone when no extra work
 occurred. Attempts alone never establish model failure.
 
-Record each worker separately, including failed launches and workers replaced during escalation. Each call returns
-a new `run_id`, even when workers share advice. To revise the outcome for that same worker, pass its returned
+Record each worker separately, including failed start attempts and workers replaced during escalation. A preflight
+refusal starts no worker and has no record template. Each record call returns a new `run_id`. Advice must belong to
+that worker’s exact task. To revise the outcome for that same worker, pass its returned
 `--run-id` and the same advice, project, subscription, model, effort and level, with the complete updated outcome.
+A fresh dispatch has a new advice `id` and is refused for a revision, even on the same task.
+If the original task file is gone, revise without `--task-file` and say so in `--note`.
 Omitted `--note`, `--report` and `--subagent` preserve the existing note and subagent choices. To replace them, supply
 the new note or report/subagent list; an empty note clears the note, and `--subagent none` clears the list.
 `assess` counts the latest revision once. It keeps old rows without run IDs separate. Only `done`, `check pass`,
@@ -266,7 +278,7 @@ When you finish a long run, mention `routr assess`, and that `routr feedback "<t
 ## 6. Integrate and clean up
 
 A worker that writes commits its work on its own branch inside its worktree (tell it so in the task) and never pushes.
-Every worker is finished with `routr cleanup`, the command in its launch result, once you have verified its work
+Every worker is finished with `routr cleanup`, the command in its launch result’s `next`, once you have verified its work
 and it has nothing left to do. Do not close a worker's pane instead: a worktree's workspace normally has that one
 pane, closing it closes the workspace, and the worktree is then left on disk where herdr no longer removes it.
 
@@ -290,3 +302,33 @@ pane, closing it closes the workspace, and the worktree is then left on disk whe
 
 Finish by telling the user, per piece of work: what was done, on which subscription and model, your check, and where
 the result is.
+
+## Handoff contracts
+
+`dispatch` and `subagent` require a nonempty brief: inline, stdin, or `--task-file <path>`. File input replaces the
+other forms; an unreadable file or a flag without a usable value is refused. Unknown flag-led input without a stdin
+brief returns `ok: false`, without a reading, and points to a quoted brief or the file form in `next`. Neither
+command prints the brief.
+`launch` requires `--kind` and `--name`, a model for a real start, and matching `--advice` whenever it sends a task.
+Advice files accept UTF-8 (with or without BOM) and UTF-16LE (with or without BOM), including PowerShell 5.1 output.
+No task needs no advice. `record --task-file` compares the task before reports are read or any row is appended:
+unreadable, mismatched or unhashed advice records nothing (`ok: false`). An omitted task file is accepted for an
+inline task and returns a warning that the advice was not checked against a task. Outcome revisions keep the original
+advice file. If the original task file is gone, revise without `--task-file` and say so in `--note`.
+
+Follow every result’s `next` array. Each entry is one of:
+
+- `kind: "run"`: `why`, exact `argv`, and `command`, a line for bash, PowerShell 5.1/7 and cmd. If any word falls
+  outside the safe set, `command` is null: execute `argv` directly. `stdout_to`, when present, names the file to save
+  stdout to; it is never a redirection token in `argv`.
+- `kind: "do"`: `why`, and optionally a `template` with placeholders for the lead to fill. It is an instruction,
+  never a runnable command. Unsafe values become named placeholders instead of expanding shell text. Launch’s record
+  template requires matching task advice, also in dry runs. A real launch includes it only after an attempt to start
+  the worker or submit its task. An adopted pane, a dry run naming `--pane`, or no model leaves model and effort as
+  placeholders. Inline tasks omit `--task-file` and never appear in output.
+
+The safe set is nonempty words containing only letters, digits, `_ . / : = @ + - , ~`, backslash and space, without
+a leading tilde, adjacent backslashes or a trailing backslash. Spaces, backslashes, `@`, commas, internal tildes,
+`--` and dash arguments containing a dot or colon are double-quoted. If the first word would need quotes or contains
+`=`, `command` is null. History (`command`, `planned_command`) is display only, with prompt lengths in place of prompt
+text; only follow-up steps go in `next`.
