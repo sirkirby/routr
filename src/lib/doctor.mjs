@@ -6,8 +6,8 @@ import { delimiter, join, win32 } from "node:path";
 import { accountUse, CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
 import { billingFromSignIn, signInHint } from "./signin.mjs";
-import { ping, secretsFor } from "./systemone.mjs";
-import { decisionTarget, DEFAULT_PROVIDER, ollamaHost, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
+import { failureMessage, ping, secretsFor } from "./systemone.mjs";
+import { DecisionError, decisionTarget, DEFAULT_PROVIDER, ollamaHost, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
 import { home, resolveCommand, standalone } from "./runtime.mjs";
 import { autoUpdateStatus } from "./update.mjs";
@@ -62,11 +62,11 @@ export const skillsIncomplete = (r) => [...mine(r).filter((k) => k.missing?.leng
 export const skillsStale = (r) => (r.from_source ? [] : mine(r).filter((k) => baseVersion(k.version) !== baseVersion(ROUTR_VERSION)));
 
 // What is left to do, most important first, each with the command that does it.
-export function nextSteps(r) {
+export function nextSteps(r, keyError) {
   const steps = [];
   // The decision model's own fix: a key for a hosted provider, a running Ollama with the model pulled for a local one.
   const P = PROVIDERS[r.key.provider] ?? PROVIDERS[DEFAULT_PROVIDER], get = typeof P.get === "function" ? P.get(r.key.asked) : P.get;
-  if (!r.key.works) steps.push(P.local ? `Make the local decision model answer: ${r.key.error}`
+  if (!r.key.works) steps.push(keyError instanceof DecisionError ? r.key.error : P.local ? `Make the local decision model answer: ${r.key.error}`
     : r.key.found ? `The ${P.label} key was found but the test call failed (${r.key.error}). ${get}` : `Add your ${P.label} key. ${get}`);
   else if (r.key.note) steps.push(r.key.note);
   if (!r.config.exists) steps.push("Create your config (your defaults for each subscription found): routr setup");
@@ -113,7 +113,7 @@ export async function inspect({ configPath, quiet } = {}) {
   if (tty) process.stderr.write(`Checking ${[`the decision model (${P.label})`, ...found.map((n) => `\`${HARNESSES[n].executable}\``)].join(", ")} (a harness can take up to 20 s to answer)…\n`);
   Object.assign(r.key, { provider: target.provider, label: P.label, asked: target.model, measured: target.measured, local: Boolean(P.local), ...(P.unversioned ? { unversioned: true } : {}),
     where: P.local ? ollamaHost() : P.secrets.map((x) => `${x.name} (environment, or ${SECRETS_FILE})`).join(", ") });
-  const keyCheck = async () => { secretsFor(target.provider); r.key.found = true; const t = await ping({ config }); r.key.note = await P.check?.(target.model, target.profile).catch(() => null); return t; };
+  const keyCheck = async () => { secretsFor(target.provider); r.key.found = true; const t = await ping({ config }); r.key.note = await P.check?.(t.model, t.profile).catch(() => null); return t; };
   // Installed is not enough: each harness is asked whether it is signed in, afresh, before anything else is asked of it.
   // One that is not gets no model list and no usage read, since either could open its sign-in in the browser.
   const statesP = Promise.all(found.map((n) => step(`${n}'s sign-in`, signIn(n, { fresh: true })))).then((s) => Object.fromEntries(found.map((n, i) => [n, s[i]])));
@@ -141,8 +141,8 @@ export async function inspect({ configPath, quiet } = {}) {
       // The billing its own sign-in status stated, and where it was read: shown as the usage line (said, above).
       ...(u.billing ? { usage_billing: u.billing } : {}) };
   }
-  if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; }
-  else { r.key.found ??= false; r.key.works = false; r.key.error = String(key.e?.message ?? key.e).slice(0, 240); }
+  if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; r.key.measured = key.t.measured; }
+  else { r.key.found ??= false; r.key.works = false; r.key.error = failureMessage(key.e, config); }
   const lists = Object.fromEntries(found.map((n, i) => [n, models[i]]));
   for (const n of found) r.harnesses[n].models = lists[n];
   // The installer writes the skill and the binary together, but a skill copied by hand or left behind by an older
@@ -197,7 +197,7 @@ export async function inspect({ configPath, quiet } = {}) {
     r.telemetry = { ...r.telemetry, last_send: last, pending, daily_send: daily, quiet_hours: quiet,
       needs_attention: last?.ok === false || Boolean(daily.problem) || stale || Boolean(daily.why_not && pending > 0) };
   }
-  r.next_steps = nextSteps(r);
+  r.next_steps = nextSteps(r, key.e);
   return r;
 }
 

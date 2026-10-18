@@ -2,7 +2,7 @@
 // transcript. The USER runs this in their own terminal; a secret is typed with no echo (or piped in) and merged into
 // ~/.config/routr/env, owner-only, beside any other provider's. Ollama needs nothing: it runs on this machine.
 import { isProvider, PROVIDER_NAMES, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
-import { ping, writeSecrets } from "./systemone.mjs";
+import { failureMessage, ping, writeSecrets } from "./systemone.mjs";
 
 export const KEYS_URL = PROVIDERS.typesafe.keysUrl;
 
@@ -59,7 +59,7 @@ export async function setKey({ provider = "typesafe", file = SECRETS_FILE, verif
     // Tested as the provider just set up, whatever the config asks, with the values just typed.
     const env = { ...process.env, ...values };
     try { const r = await ping({ config: { decision: { provider } }, env, file }); out.works = true; out.model = r.model; out.ms = Math.round(r.latencyMs); }
-    catch (e) { out.works = false; out.error = `saved, but the test call failed: ${String(e?.message ?? e).slice(0, 140)}`; }
+    catch (e) { out.works = false; out.error = `saved, but the test call failed: ${failureMessage(e, { decision: { provider } })}`; }
   }
   return out; // never includes a secret
 }

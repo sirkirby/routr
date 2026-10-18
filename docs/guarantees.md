@@ -113,9 +113,11 @@ A brief goes only to the decision model you chose and to the worker it is for, a
 either, and never puts them in the ledger or in telemetry: the ledger stores a brief's hash and length. Keys are kept
 only in routr's secrets file, `~/.config/routr/env`, written by `routr key set`.
 
-Known gap, being fixed: text in a decision model's reply is not yet checked before routr uses it. When a request
-fails, part of the provider's reply can appear in routr's output; a successful reply's values can appear in the advice,
-and in the ledger once that advice is recorded (telemetry strips them). A reply may repeat what it was sent.
+Decision-provider failures are classified into fixed sentences with an action to take; response bodies and envelope
+messages never supply their wording. Answers are checked against the questions' choices and numeric ranges before
+use; an unreadable or out-of-range reply makes advice fall back. Only checked answer fields and a model identity
+accepted by its provider (otherwise the requested identity) reach advice or the ledger, so a reply repeating a brief
+or key cannot pass through as text. Ollama's version and build digest must match their declared formats before display.
 
 Telemetry is off unless you turn it on (`routr telemetry on`, or yes to setup's question, default no). An agent never
 turns it on for you. It sends ledger rows with no text of any kind, only from the detached daily job or

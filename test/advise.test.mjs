@@ -1,5 +1,6 @@
 // advise.mjs and pick.mjs: the level, the facts, and how subscriptions are ranked
 import { expect, test } from "bun:test";
+import { DecisionError, decisionTarget } from "../src/lib/providers.mjs";
 import { advise } from "../src/lib/advise.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { NOW, ans, cfg, fact, live, none, scratch, win } from "./helpers.mjs";
@@ -124,11 +125,11 @@ test("dispatch and subagent answer from a function: the decision model's reading
   expect(JSON.stringify(d)).not.toContain("Fix the parser"); // the brief itself is never in the output
   const sized = await adviseCommand("subagent", "Fix it", { config: cfg(), notes: [] }, {}, { askFn: jev });
   expect(sized.rule).toContain("An orchestrator in herdr hands work out with routr dispatch and routr launch"); // seen 2026-10-14: an orchestrator read "worth a worker" as leave to spawn its own subagents
-  const down = await adviseCommand("subagent", "Fix it", { config: cfg(), notes: ["a note"] }, {}, { askFn: async () => { throw new Error("offline"); } });
+  const down = await adviseCommand("subagent", "Fix it", { config: cfg(), notes: ["a note"] }, {}, { askFn: async () => { throw new DecisionError(decisionTarget(null, {}), "unreachable"); } });
   expect(down).toMatchObject({ fallback: true, level: "standard", config_notes: ["a note"], provider: "typesafe" }); // which provider was down
   expect(down.decision_model).toBeUndefined();
   expect(down.subscriptions).toBeUndefined();
-  expect(down.notes[0]).toContain("Router unavailable (offline)");
+  expect(down.notes[0]).toContain("Router unavailable (TypeSafe: the provider could not be reached. Check your connection and try again.)");
   const none = await adviseCommand("dispatch", "x", { config: { ...cfg(), subscriptions: {} }, notes: [] }, {}, { askFn: jev, read });
   expect(none.subscriptions.note).toContain("has not run `routr setup`");
   // Another model's answers are read with its own profile: its sure_at, and its own record in the torn note.
@@ -163,7 +164,7 @@ test("a subscription turned off keeps its settings, is left out of dispatch with
   expect(notes).toContain('subscriptions.kiro.enabled: "no" is not true or false, so it stays on');
   expect(enabledSubscriptions(config)).toEqual(["codex", "kiro"]);
   const read = [];
-  const d = await adviseCommand("dispatch", "x", { config, notes: [] }, {}, { askFn: async () => { throw new Error("offline"); }, read: async (names) => { read.push(...names); return names.map((n) => live(n, 0.9)); } });
+  const d = await adviseCommand("dispatch", "x", { config, notes: [] }, {}, { askFn: async () => { throw new DecisionError(decisionTarget(null, {}), "unreachable"); }, read: async (names) => { read.push(...names); return names.map((n) => live(n, 0.9)); } });
   expect(read).toEqual(["codex", "kiro"]);
   expect(d.subscriptions.excluded).toContainEqual({ subscription: "agy", reason: "turned off in your settings: routr setup --enable agy" });
 });

@@ -40,9 +40,9 @@ export const olderThan = (v, min) => {
 };
 // What to do when the running Ollama is older than OLLAMA_MIN; null when it is new enough or does not say (a build from
 // source reports 0.0.0).
-export async function ollamaTooOld(env = process.env) {
-  const v = await fetch(`${ollamaHost(env)}/api/version`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).then((j) => j?.version).catch(() => null);
-  return typeof v === "string" && /^\d/.test(v) && !v.startsWith("0.0.0") && olderThan(v, OLLAMA_MIN) ? `Ollama ${v} is running; Clef needs ${OLLAMA_MIN} or later: update Ollama (https://ollama.com) and restart it` : null;
+export async function ollamaTooOld(env = process.env, fetchFn = fetch) {
+  const v = await fetchFn(`${ollamaHost(env)}/api/version`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).then((j) => j?.version).catch(() => null);
+  return typeof v === "string" && /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/.test(v) && !v.startsWith("0.0.0") && olderThan(v, OLLAMA_MIN) ? `Ollama ${v} is running; Clef needs ${OLLAMA_MIN} or later: update Ollama (https://ollama.com) and restart it` : null;
 }
 
 export const PROVIDERS = {
@@ -53,6 +53,7 @@ export const PROVIDERS = {
     get: "Create an API key at https://console.typesafe.ai/keys, then run: routr key set typesafe",
     request: (model, s) => ({ url: "https://api.typesafe.ai/v1/systemone", headers: { Authorization: `Bearer ${s.TYPESAFE_API_KEY}` } }),
     unwrap: (j) => j,
+    identity: (model) => typeof model === "string" && /^jev-\d+\.\d+\.\d+$/.test(model),
     nativeConfidence: true, // TypeSafe's own definition: kept as sent (its probabilities arrive rounded to 0.01)
     deadlineMs: 10000,
     models: {
@@ -75,9 +76,14 @@ export const PROVIDERS = {
     request: (model, s) => ({ url: `https://api.cloudflare.com/client/v4/accounts/${s.CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/cloudflare/${model}`, headers: { Authorization: `Bearer ${s.CLOUDFLARE_API_TOKEN}` } }),
     // The REST API wraps the System One answer: { success, errors: [{ code, message }], messages, result }.
     unwrap: (j) => {
-      if (j?.success === false || !j?.result?.answers) throw new Error(`Cloudflare: ${j?.errors?.map((e) => `${e.code} ${e.message}`).join("; ").slice(0, 200) || "no answers in the response"}`);
+      if (j?.success === false || !j?.result?.answers) return null;
       return j.result;
     },
+    identity: (model) => isModel("cloudflare", model),
+    // Workers AI's numeric codes, checked 2026-10-18: https://developers.cloudflare.com/workers-ai/platform/errors/
+    // Only codes select a sentence. A string code (even "3036") and all message text remain untrusted.
+    errorCode: (j) => Array.isArray(j?.errors) && j.errors.some((e) => e?.code === 3036) ? "daily_allowance" : null,
+    failures: { daily_allowance: "the daily free allowance is used up. Wait for the daily reset or enable the Workers Paid plan in Cloudflare." },
     deadlineMs: 10000,
     // Workers AI names are not versioned: Cloudflare can change the weights behind one, so these cannot be pinned the
     // way Jev is. docs/evidence.md says so, and the gate is re-run on them.
@@ -99,8 +105,14 @@ export const PROVIDERS = {
     // for it to load (Clef Flash: 5 to 17 s on an M4 Max, measured).
     request: (model, s, env) => ({ url: `${ollamaHost(env)}/v1/systemone`, headers: {}, body: { keep_alive: "15m" } }),
     unwrap: (j) => j,
+    identity: (model) => isModel("ollama", model),
+    host: ollamaHost,
     deadlineMs: 30000,
     local: true,
+    // Bodies select a fixed failure, never supply its wording. Ollama 0.40.0's non-finite logit is the same
+    // unsupported-runtime failure as a server too old to expose the decision endpoint (observed 2026-10-11).
+    failure: (status, text) => status === 404 ? "model_missing"
+      : /does not support decision|non-finite logit/.test(text) ? "model_unsupported" : null,
     // An explicit tag per model, never `latest`: Ollama's latest resolves to a different build on a Mac (MLX) than
     // elsewhere (GGUF), and the two answer differently. `digest` is the build that was measured; doctor says when the
     // one pulled here is another. `runs: "apple-silicon"`: an MLX build, which Ollama runs only there.
@@ -111,22 +123,22 @@ export const PROVIDERS = {
     // 4.8 s; on that laptop's CPU alone (Core Ultra 9 275HX) 36-41 s, past deadlineMs: it needs a GPU or Apple Silicon.
     // Whether it can answer, without asking it anything: the server is up and the model is pulled. Null when ready,
     // otherwise what to do. Setup says it instead of a generic "install, then pull" (seen in a real terminal).
-    ready: async (model, env = process.env) => {
+    ready: async (model, env = process.env, fetchFn = fetch) => {
       // Both asked at once, so a slow version answer adds no wait of its own (from the review). A version Ollama does not
       // give is not held against it: the request itself then says what is wrong.
       const [tags, old] = await Promise.all([
-        fetch(`${ollamaHost(env)}/api/tags`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).catch(() => null),
-        ollamaTooOld(env),
+        fetchFn(`${ollamaHost(env)}/api/tags`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).catch(() => null),
+        ollamaTooOld(env, fetchFn),
       ]);
       if (!tags) return `Ollama is not running at ${ollamaHost(env)}: install Ollama ${OLLAMA_MIN} or later (https://ollama.com) and start it, then run: ollama pull ${model}`;
       if (old) return old;
       return tags.models?.some((x) => x.name === model || x.model === model) ? null : `${model} is not pulled yet: run ollama pull ${model}`;
     },
-    check: async (model, profile, env = process.env) => {
+    check: async (model, profile, env = process.env, fetchFn = fetch) => {
       if (!profile?.digest) return null;
-      const res = await fetch(`${ollamaHost(env)}/api/tags`, { signal: AbortSignal.timeout(3000) });
+      const res = await fetchFn(`${ollamaHost(env)}/api/tags`, { signal: AbortSignal.timeout(3000) });
       const m = (await res.json()).models?.find((x) => x.name === model || x.model === model);
-      return m && !m.digest.startsWith(profile.digest) ? `${model} here is build ${m.digest.slice(0, 12)}, not ${profile.digest.slice(0, 12)}, the one routr measured: ollama pull ${model} gets that one` : null;
+      return typeof m?.digest === "string" && /^[0-9a-f]{12,}$/.test(m.digest) && !m.digest.startsWith(profile.digest) ? `${model} here is build ${m.digest.slice(0, 12)}, not ${profile.digest.slice(0, 12)}, the one routr measured: ollama pull ${model} gets that one` : null;
     },
     models: {
       // Measured as clef-flash:latest on a Mac, which is this build (same answers, 2026-10-11). Reads levels low (22 of
@@ -171,4 +183,36 @@ export function decisionTarget(config, env = process.env) {
   }
   const measured = isModel(provider, model) ? PROVIDERS[provider].models[model] : null;
   return { provider, model, profile: measured ?? PROVIDERS[provider].models[defaultModel(provider)] ?? null, measured: Boolean(measured), overridden: Boolean(override) };
+}
+
+// Only these sentences cross the provider boundary. No response body, envelope message, URL or thrown exception
+// supplies text; the target is the one routr requested. Callers use the code/provider rather than reading prose.
+export class DecisionError extends Error {
+  constructor(target, code, status, { secret, file = SECRETS_FILE, host } = {}) {
+    const { provider, model } = target, P = PROVIDERS[provider];
+    const get = typeof P.get === "function" ? P.get(model) : P.get;
+    const missing = P.secrets.find((s) => s.name === secret) ?? P.secrets[0];
+    const http = Number.isInteger(status) ? status : 0;
+    const action = http >= 500 ? "Try again later." : http === 429 ? "Check the provider's limits and try again after they reset."
+      : http >= 400 ? "Check the decision model and provider settings before trying again." : "Check the decision provider.";
+    const sentences = {
+      no_key: `no ${missing?.label} saved. ${get}, or set ${missing?.name} in the environment.`,
+      // Not the get-a-key text: `key set` writes this same file, so it would fail too.
+      secrets_unreadable: `routr cannot read its secrets file ${file}. Check the file's permissions or set ${missing?.name} in the environment.`,
+      key_refused: `the key was refused. ${get}`,
+      model_missing: `the local model is not pulled. ${get}`,
+      model_unsupported: `the local model is not a decision model, or Ollama is too old: update Ollama to ${OLLAMA_MIN} or later and restart it. ${get}`,
+      timeout: "the request timed out. Try again; if it keeps timing out, check the decision provider.",
+      unreachable: P.local ? `the local server is not running or cannot be reached at ${host ?? P.host()}: start it (the Ollama app, or ollama serve). ${get}`
+        : "the provider could not be reached. Check your connection and try again.",
+      provider_error: `the provider returned HTTP ${http}. ${action}`,
+      invalid_response: "the provider returned a reply routr cannot read. Try again; if it persists, check the decision provider.",
+      ...P.failures,
+    };
+    super(code === "internal_error" ? "routr: an internal error stopped the decision check. Run routr doctor; if it persists, report it to routr." : `${P.label}: ${sentences[code]}`);
+    this.name = "DecisionError";
+    this.code = code;
+    this.provider = provider;
+    if (code === "provider_error") this.status = Number.isInteger(status) ? status : 0;
+  }
 }
