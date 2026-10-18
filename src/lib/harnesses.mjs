@@ -36,7 +36,7 @@
 //     usage stay light. (Literal import paths, so the compiled binary still bundles them.)
 import { run } from "./runtime.mjs";
 import { billingFromSignIn, signInHint, signInState } from "./signin.mjs";
-import { readAgy, readClaude, readCodexLive, summarize } from "./usage.mjs";
+import { readAgy, readClaude, readCodexLive, summarize, failedUsage } from "./usage.mjs";
 
 // The levels a help text lists after its --effort flag: "(low, medium, high, xhigh, max)", as Claude Code and Kiro print them.
 export const effortsInHelp = (help) => { const m = String(help ?? "").match(/--effort\b[^(]*\((?:e\.g\.\s*)?([a-z]+(?:,\s*[a-z]+)+)\)/i); return m ? m[1].split(/,\s*/) : null; };
@@ -109,7 +109,7 @@ export const HARNESSES = {
     // drops the user's settings. `--strict-mcp-config` with no --mcp-config starts none of their MCP servers, which
     // took the read from 7.1-8.8 s to 4.4-5.2 s wall. `--bare` is no use: it skips the keychain and shows no numbers.
     quiet: ["--settings", '{"disableAllHooks":true}', "--strict-mcp-config"],
-    usage: { read: (o) => readClaude({ ...o, quiet: HARNESSES.claude.quiet }) } },
+    usage: { source: "claude /usage", read: (o) => readClaude({ ...o, quiet: HARNESSES.claude.quiet }) } },
   codex: { label: "Codex", executable: "codex", installAs: "Codex",
     // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
     // "Update available" just after herdr reported it ready, and the Enter that submitted the task chose "Update now".
@@ -129,7 +129,7 @@ export const HARNESSES = {
     models: async () => (await readCodexModels())?.filter((m) => m.visibility !== "hide").map((m) => m.slug ?? m.id).filter(Boolean) ?? null,
     efforts: async (model) => (await readCodexModels())?.find((m) => (m.slug ?? m.id) === model)?.supported_reasoning_levels?.map((e) => e.effort ?? e) ?? null,
     suggested: { hardest_work: "strong", reserve: 0.2 },
-    usage: { read: readCodexLive } },
+    usage: { source: "app-server", read: readCodexLive } },
   cursor: { label: "Cursor", executable: "cursor-agent", installAs: "Cursor (cursor-agent)",
     permissions: ["--yolo", "--trust"], model: "--model", list: "cursor-agent models",
     noEffort: "cursor has no separate --effort flag; choose a model id with the desired effort",
@@ -139,7 +139,7 @@ export const HARNESSES = {
     auth: { check: ["status"], signedIn: (out) => /\bLogged in as\b/.test(out) && !/\bNot logged in\b/.test(out), signIn: "run `cursor-agent login`" },
     models: () => lines("cursor-agent", ["models"], /^\s*([a-z0-9][\w.-]+) - /i),
     suggested: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 },
-    usage: { read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor({ ...o, ready: ready("cursor") }) } },
+    usage: { source: "cursor /usage", read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor({ ...o, ready: ready("cursor") }) } },
   // Skills: measured 2026-10-05 on agy 1.2.17: asked to list its skills, it named one placed in ~/.gemini/config/skills
   // and none of those in ~/.gemini/antigravity-cli/skills (the folder its web docs name) or ~/.agents/skills (it reads
   // only a workspace's .agents/skills). Its bundled guide and its binary name ~/.gemini/config/skills too.
@@ -151,7 +151,7 @@ export const HARNESSES = {
     auth: { check: ["models"], signedIn: (out, code) => code === 0 && !/\bsign in\b/i.test(out), signIn: "run `agy` and sign in" },
     models: () => lines("agy", ["models"], /^([a-z0-9][\w.-]+)\t/i),
     suggested: { hardest_work: "standard", reserve: 0.1 },
-    usage: { read: readAgy } },
+    usage: { source: "agy /usage", read: readAgy } },
   // Kiro CLI 2.24.1: `--trust-all-tools` asks "Kiro is running in trust all tools mode" at every start, with "No, exit"
   // selected, and herdr reads that screen as idle (2026-09-26/28). `--trust-tools=*` allows every built-in tool (its
   // /tools list: all 14 "allowed") and asks nothing (measured 2026-09-28; MCP tools not measured).
@@ -174,7 +174,7 @@ export const HARNESSES = {
     // Kiro's own router, which its docs recommend and which picks the model per task, and effort left to the model:
     // `auto` passes no --effort, which Kiro would otherwise remember as the user's default for that model.
     suggested: { hardest_work: "standard", reserve: 0.1, default_model: "auto", default_effort: "auto" },
-    usage: { read: async (o) => (await import("./kiro-usage.mjs")).readKiro(o), check: async (o) => (await import("./kiro-usage.mjs")).refreshKiro({ ...o, ready: ready("kiro") }) } },
+    usage: { source: "kiro /usage", read: async (o) => (await import("./kiro-usage.mjs")).readKiro(o), check: async (o) => (await import("./kiro-usage.mjs")).refreshKiro({ ...o, ready: ready("kiro") }) } },
 };
 export const KINDS = Object.keys(HARNESSES);
 // Is this harness signed in: "yes", "no", or "no answer"? Kept in the cache between calls (signin.mjs); `fresh` checks
@@ -222,22 +222,24 @@ export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usag
 export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFor } = {}) {
   const signedOut = (name, note) => ({ ...summarize({ pool: name, source: "sign-in check", note }), signedIn: false });
   return Promise.all(names.map(async (name) => {
-    // Signed in first: a number the caller read cannot put work on a harness that cannot take it (launch refuses it).
-    const not = await why(name);
-    if (not) return signedOut(name, not);
-    if (typeof given[name] === "number") return { pool: name, source: "given by caller", given: true, ageSec: 0, windows: [], headroom: Math.min(1, Math.max(0, given[name])) };
-    const src = sources[name];
-    let u;
-    if (!src?.read) u = summarize({ pool: name, source: "none", note: "no usage source: read it yourself and pass --headroom " + name + "=<share left, 0.9 or 90%>" });
-    else try { u = await src.read({ background: background.includes(name) }); } catch (e) { u = summarize({ pool: name, source: "unreadable", note: `usage unreadable: ${String(e?.message ?? e).slice(0, 80)}` }); }
-    // The billing reading settles only a reading without windows, and then it must be today's: a sign-in kept for
-    // 6 hours can predate a switch between a subscription and an API key (from the review: a switch an hour in still
-    // ranked the old way). So in exactly that case the status check runs again now. With windows there is no call.
-    // That check is a sign-in check too: unless it answers signed in, this call leaves the harness out, as any
-    // signed-out one (from the review: a fresh "loggedIn": false still left it a candidate on assumed headroom).
-    const b = await billing(name, { fresh: u?.headroom == null });
-    if (b?.not) return signedOut(name, b.not);
-    return withBilling(name, u, b?.billing);
+    const src = sources[name], source = src?.source ?? name;
+    try {
+      // Signed in first: a number the caller read cannot put work on a harness that cannot take it (launch refuses it).
+      const not = await why(name);
+      if (not) return signedOut(name, not);
+      if (typeof given[name] === "number") return { pool: name, source: "given by caller", given: true, ageSec: 0, windows: [], headroom: Math.min(1, Math.max(0, given[name])) };
+      let u;
+      if (!src?.read) u = failedUsage(name, source, "source_missing");
+      else try { u = await src.read({ background: background.includes(name) }); } catch { u = failedUsage(name, source); }
+      // The billing reading settles only a reading without windows, and then it must be today's: a sign-in kept for
+      // 6 hours can predate a switch between a subscription and an API key (from the review: a switch an hour in still
+      // ranked the old way). So in exactly that case the status check runs again now. With windows there is no call.
+      // That check is a sign-in check too: unless it answers signed in, this call leaves the harness out, as any
+      // signed-out one (from the review: a fresh "loggedIn": false still left it a candidate on assumed headroom).
+      const b = await billing(name, { fresh: u?.headroom == null });
+      if (b?.not) return signedOut(name, b.not);
+      return withBilling(name, u, b?.billing);
+    } catch { return failedUsage(name, source); }
   }));
 }
 

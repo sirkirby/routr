@@ -3,6 +3,7 @@
 import { readFileSync, rmSync } from "node:fs";
 import { olderThan, spawnSelf, takeLock, writeJsonAtomic } from "./runtime.mjs";
 import { summarize } from "./usage.mjs";
+import { usageFailure } from "./usage-failure.mjs";
 
 const now = () => Date.now() / 1000;
 
@@ -18,22 +19,32 @@ const REFRESH_SEC = 4 * 3600;
 // since (Cursor's screen shows no reset time). Past it, the subscription is assumed and the note says so.
 const TRUST_SEC = 24 * 3600;
 const LOCK_SEC = 120; // one background reading at a time; a lock older than any reading (90 s at most) is abandoned
-const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return null; } };
+const readJson = (file) => {
+  try { return { snapshot: JSON.parse(readFileSync(file, "utf8")) }; }
+  catch (e) { return e?.code === "ENOENT" ? {} : { failure: usageFailure(e instanceof SyntaxError ? "invalid_response" : "read_failed") }; }
+};
 const noRefresh = () => process.env.ROUTR_NO_REFRESH === "1"; // tests: nothing detached, nothing written
 const startRefresh = (name) => spawnSelf(["usage", name, "--background"]);
 
 // `routr usage <name>`: read now and keep the reading. A failed read keeps the last good one, whose age then says how
 // old it is. Only the background reading (`--background`) holds the refresh lock, so only it releases it: a reading
 // asked for by hand must not free a lock a background reading still holds.
-// `ready()` gates the read: null to go ahead, or why not (a harness not signed in), kept as the try's error.
+// `ready()` gates the read: null to go ahead, or a harness not signed in. That is an exclusion, never a read failure.
 export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`, nowSec = now(), background = false, ready }) {
   try {
-    const why = ready ? await ready() : null;
-    const r = why ? { ok: false, error: why } : await read();
-    const last = readJson(file);
+    let r;
+    try {
+      const why = ready ? await ready() : null;
+      r = why ? { ok: false, excluded: true, why } : await read();
+    }
+    catch { r = { ok: false, ...usageFailure("read_failed") }; }
+    // A reader returns a code, never prose for the cache. This also classifies unexpected failures from a reader.
+    if (r?.ok !== true && !r?.excluded) r = { ok: false, ...usageFailure(r?.code) };
+    const last = readJson(file).snapshot;
     try {
       writeJsonAtomic(file, r.ok ? { ts: nowSec, tried: nowSec, reading: keep(r) }
-        : { ts: last?.ts ?? null, tried: nowSec, reading: last?.reading ?? null, error: r.error });
+        : { ts: Number.isFinite(last?.ts) ? last.ts : null, tried: nowSec, reading: last?.reading ? keep(last.reading) : null,
+          ...(r.excluded ? { excluded: true } : { failure: usageFailure(r.code) }) });
     } catch {}
     return r;
   } finally { if (background) try { rmSync(lock, { force: true }); } catch {} }
@@ -41,8 +52,15 @@ export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`,
 
 // `background: false` reads without starting a refresh: doctor, for a harness installed but not in the config.
 // `windows(reading)` and `describe(reading)` turn the kept reading into the usage row; `byHand` is said when reading fails.
-export function readSnapshot({ name, source, windows, describe, byHand, file, lock = `${file}.lock`, nowSec = now(), refresh = () => startRefresh(name), background = true, off = noRefresh() }) {
-  let snap = readJson(file);
+export function readSnapshot({ name, source, windows, describe, keep, byHand, file, lock = `${file}.lock`, nowSec = now(), refresh = () => startRefresh(name), background = true, off = noRefresh() }) {
+  const cached = readJson(file);
+  let snap = cached.snapshot ?? (cached.failure ? { failure: cached.failure } : null);
+  // Drop the old raw error field on reads and writes; it is never interpreted or copied forward.
+  if (snap) {
+    const { ts, tried, reading, failure, excluded } = snap;
+    snap = { ts: Number.isFinite(ts) ? ts : null, tried: Number.isFinite(tried) ? tried : null, reading: reading ? keep(reading) : null,
+      ...(failure ? { failure: usageFailure(failure.code) } : {}), ...(excluded ? { excluded: true } : {}) };
+  }
   let started = false;
   if (background && !off && !(nowSec - (snap?.tried ?? 0) < REFRESH_SEC) && takeLock(lock, olderThan(LOCK_SEC * 1000, nowSec * 1000))) {
     // Marked before it starts, so the next call waits its turn; if the mark cannot be written, nothing is started.
@@ -50,8 +68,12 @@ export function readSnapshot({ name, source, windows, describe, byHand, file, lo
     if (!started) try { rmSync(lock, { force: true }); } catch {}
   }
   const r = snap?.reading, age = snap?.ts == null ? null : nowSec - snap.ts;
-  const after = [started && "a fresh reading is being taken in the background", snap?.error && `the last try failed: ${snap.error}`].filter(Boolean).join("; ");
-  if (r && age < TRUST_SEC) return summarize({ pool: name, source, ts: snap.ts, windows: windows(r), note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec });
-  const why = r ? `the last reading is ${Math.round(age / 3600)} h old, too old to use` : "no reading yet";
-  return summarize({ pool: name, source, note: `${why}${after ? `; ${after}` : ""}; using the assumed headroom.${snap?.error ? ` By hand: ${byHand}` : ""}`, nowSec });
+  const ws = r ? windows(r) : [];
+  const invalid = r && (!Number.isFinite(age) || !ws.some((w) => Number.isFinite(w.usedPct)));
+  const failure = cached.failure ?? snap?.failure ?? (invalid ? usageFailure("invalid_response") : undefined);
+  const after = [started && "a fresh reading is being taken in the background", failure && `the last try failed: ${failure.why}`].filter(Boolean).join("; ");
+  if (r && !invalid && age >= 0 && age < TRUST_SEC) return summarize({ pool: name, source, ts: snap.ts, windows: ws, note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec, failure, ...(failure && age >= REFRESH_SEC ? { kept: { source: `${name} snapshot`, ageSec: Math.round(age) } } : {}) });
+  const why = invalid ? "the saved reading cannot be read" : r ? age < 0 ? "the last reading is from the future, so it is not used"
+    : `the last reading is ${Math.round(age / 3600)} h old, too old to use` : "no reading yet";
+  return summarize({ pool: name, source, ts: snap?.ts, note: `${why}${after ? `; ${after}` : ""}; using the assumed headroom.${failure ? ` By hand: ${byHand}` : ""}`, nowSec, failure });
 }

@@ -34,7 +34,8 @@ Then run `routr doctor`; if it reports no key or no config, read `references/set
 itself can run it from a checkout instead: `bun src/routr.mjs`.
 
 The advice commands write nothing and never fail: with no network or no key they still print advice, marked as a
-fallback. Matching fallback advice is valid for launch: tell the user what was unavailable and judge that part yourself.
+fallback. Matching fallback advice is valid for launch: read `unavailable`, tell the user in the launch line that
+the advice was a fallback and what was unavailable, and judge that part yourself.
 
 ## Which part applies to you
 
@@ -58,7 +59,16 @@ or read with `--task-file <path>`.
 Ask about the exact text the worker will get, not a summary of it: for a launch, `routr dispatch --task-file <path>`
 (`references/orchestrator.md` has the whole flow, and `launch --advice` requires matching advice).
 
-- `headline`: the advice in one line. Read it first; the rest is the detail behind it.
+- `headline`: the advice in one line. Read it first; the rest is the detail behind it. When the decision model could
+  not answer, it starts with `no reading`, names the attempted model and provider, and states the fallback level.
+- `unavailable`: what routr could not read, as a list (`[]` when nothing was missing). A `decision model` entry names
+  `provider`, the attempted `model`, a fixed failure `code` and its recovery action in `why` (`status` also records a provider error's HTTP status). A `usage` entry names `subscription`, `source`,
+  `code` and `why`. Fresh usable readings stay available even after a failed refresh. Otherwise `reading` says
+  `assumed` or `kept`; a kept older reading adds `reading_source` and `age_sec`. An internal usage-ranking error
+  names `source: "routr"` with no subscription. Read these before deciding, tell the user in the launch line when advice was a fallback, and
+  judge the missing part yourself. `check` uses the same field, adding `brief` or `report` for unreadable files.
+  `launch` carries the saved advice's decision-model entry; older fallback advice says it does not name the attempted
+  model. `decision_model` still means the model that answered, so it is absent on fallback advice.
 - `worker`: whether the work is worth handing out at all: `do it yourself` (one or two small edits), `settle it with
   the user first` (the brief leaves them a decision), `split it across workers` (independent pieces), or `worth a
   worker`. A suggestion with its reason; you know what else is running. From `routr subagent`, a worker is a
@@ -87,7 +97,9 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   accounts for when no normal candidate can suitably take it. Choose model/effort fit first, then compare capacity
   among suitable options. `most_room` is only a capacity observation. `ranked` lists usable headroom, marked `live`, `given`
   (you passed it in), or `assumed`. `age_sec` is how old the reading is, and `note` says what the harness showed beside
-  the number (Cursor: its Auto and API pools; Kiro: its plan and credits) or why a number is assumed. Under `windows` it shows each usage window as the harness reports it: percent
+  the number (Cursor: its Auto and API pools; Kiro: its plan and credits) or why a number is assumed. A snapshot too
+  old to use stays `assumed` with its age in `age_sec`; age alone is not a read failure. A metered account with
+  unknown capacity is a valid reading. Under `windows` it shows each usage window as the harness reports it: percent
   used and hours until it resets. The user's reserve shrinks as a window nears its reset, because unused capacity
   expires then. `your_default` is the user's everyday model on that subscription. `excluded` lists subscriptions the
   user does not give work this hard, any the user turned off, and any whose harness is not signed in (its `reason`

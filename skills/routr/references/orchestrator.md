@@ -35,7 +35,11 @@ the summary (in the maintainer's ledger, at least 12 of 42 dispatch calls were g
 described text the worker never saw). `launch --advice` requires matching advice on that exact task, including
 reviews. A standing choice of your own (reviewers on a fixed model and effort, for example) is no reason to skip dispatch: you can still choose it after
 reading the advice. Dispatch answers even when its decision model is unavailable; matching fallback advice is valid.
-When advice says something was unavailable, tell the user in the launch line and judge that part yourself. Keep your
+Read `unavailable` before deciding: it names the missing part, the attempted decision model or usage source, and
+its fixed failure code and reason. Tell the user in the launch line when advice was a fallback and what was
+unavailable, and judge that part yourself. Launch carries the saved decision-model entry; older fallback advice
+says the attempted model is unknown. A stale usage snapshot shows its age; unknown metered capacity is a valid
+reading, and excluded accounts remain in `excluded`. These are separate from a failed read. Keep your
 process rules for the worker (what it may and may not do, how to report, git steps) out of that file: they go in `--rules-file`, which launch passes
 to the worker and routr does not judge. In 18 of 36 real tasks such rules were 5 to 38% of the text, and they moved routr's
 readings.

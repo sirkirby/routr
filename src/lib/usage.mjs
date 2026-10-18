@@ -8,6 +8,7 @@ import { CLAUDE_SNAPSHOT, home, run } from "./runtime.mjs";
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { usageFailure } from "./usage-failure.mjs";
 
 export { CLAUDE_SNAPSHOT };
 export const CODEX_SESSIONS = join(home(), ".codex/sessions");
@@ -16,16 +17,18 @@ const now = () => Date.now() / 1000;
 // One subscription's usage as every reader returns it. `ts` is when the harness reported it (null: nothing read);
 // `cls` the class, from the windows when not given; `reason` a stable key for a note doctor acts on. `nowSec` is
 // injectable so the recorded shapes are tests that do not age.
-export function summarize({ pool, source, ts = null, windows = [], note, cls, nowSec = now(), reason }) {
+export function summarize({ pool, source, ts = null, windows = [], note, cls, nowSec = now(), reason, failure, kept }) {
   windows = windows.filter((w) => Number.isFinite(w.usedPct)); // a window without a number must not turn headroom into NaN
   cls ??= windows.length ? "included" : "unknown";
   const ageSec = ts ? Math.round(nowSec - ts) : null;
-  if (!windows.length) return { pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? "no usage data", ...(reason ? { reason } : {}) };
+  const missing = failure ? { failure: usageFailure(failure.code), ...(kept ? { kept } : {}) } : {};
+  if (!windows.length) return { pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? missing.failure?.why ?? "no usage data", ...(reason ? { reason } : {}), ...missing };
   // A window whose reset time has passed since the snapshot has rolled over: treat as empty.
   const live = windows.map((w) => (w.resetsAt && w.resetsAt < nowSec ? { ...w, usedPct: 0 } : w));
   const headroom = Math.min(...live.map((w) => Math.max(0, 1 - w.usedPct / 100)));
-  return { pool, source, ageSec, windows: live, headroom, class: cls, note };
+  return { pool, source, ageSec, windows: live, headroom, class: cls, note, ...missing };
 }
+export const failedUsage = (pool, source, code = "read_failed") => summarize({ pool, source, failure: usageFailure(code) });
 
 // A cap's period is not assumed. When its reset falls on a UTC month boundary the window is that month (the vendors
 // document monthly caps resetting on the 1st at 00:00 UTC); otherwise the length is unknown and the ranker holds the
@@ -49,14 +52,17 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
   // A member credit limit (the owner's monthly cap) is one more window: the tightest wins, as with any other.
   if (cap) { const resetsAt = g(cap, "resetsAt", "resets_at"); ws.push({ name: "monthly_cap", usedPct: 100 - g(cap, "remainingPercent", "remaining_percent"), windowMin: monthMinutes(resetsAt), resetsAt }); }
   const reached = g(rl, "rateLimitReachedType", "rate_limit_reached_type");
-  if (reached) notes.push(`limit reached: ${reached}`);
+  if (reached) notes.push("a rate limit was reached");
   if (g(rl, "spendControlReached", "spend_control_reached") === true) notes.push("spend control reached: the cap is used up");
   const hasCredits = Boolean(g(credits, "hasCredits", "has_credits"));
   // Metered only with NO windows: the one observed shape. Credits beside windows (a Business seat past its included
   // usage; claimed, not observed) leave the windows in charge and are only noted. A finite balance without windows is
-  // also claimed: it is a quota of sorts, but not a share, so it is metered with the balance named.
+  // also claimed: it is a quota of sorts, but not a share. Only a numeric balance is displayable.
   const metered = !cap && !ws.length && (credits?.unlimited || hasCredits);
-  if (metered) notes.push(credits.unlimited ? "metered: unlimited credits, usage is billed, no quota reported" : `metered: workspace credits${credits.balance ? ` (balance ${credits.balance})` : ""}, usage is billed, no window reported`);
+  const balance = typeof credits?.balance === "number" ? credits.balance
+    : typeof credits?.balance === "string" && /^\d+(?:\.\d+)?$/.test(credits.balance) ? Number(credits.balance) : null;
+  if (metered) notes.push(credits.unlimited ? "metered: unlimited credits, usage is billed, no quota reported"
+    : `metered: workspace credits${Number.isFinite(balance) ? ` (balance ${balance})` : ""}, usage is billed, no window reported`);
   else if (ws.length && (credits?.unlimited || hasCredits)) notes.push("workspace credits are on: the harness keeps working past 100% on billed usage");
   return summarize({ pool: "codex", source, ts, windows: ws, note: notes.join("; ") || undefined, cls: cap ? "capped" : metered ? "metered" : undefined, nowSec });
 }
@@ -186,7 +192,8 @@ export function parseClaudeUsage(text, nowSec = now()) {
 // recent one is used as it is. Five minutes is a judgment, not a measurement: a working session renders far more
 // often than that, and a weekly window does not move much in five minutes. Otherwise Claude's own `/usage` is read in
 // the call, through its CLI, as Codex and Antigravity are: routr never needs to own Claude's single statusline slot.
-export const CLAUDE_FRESH_SEC = 5 * 60;
+const LOCAL_FRESH_SEC = 5 * 60;
+export const CLAUDE_FRESH_SEC = LOCAL_FRESH_SEC;
 // Measured 2026-10-05 (2.1.289, macOS, load average 9 to 14 from other agents): 4.4 to 5.2 s wall with the user's
 // hooks and MCP servers off (5 reads), 6.8 to 8.8 s with them on (Claude reports ~2 s of that as its own). No hang in
 // 18 reads, unlike agy's one in six, so one try, with room for a slower machine; a hang costs this once, and the call
@@ -239,20 +246,21 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT, nowSec = 
   } catch {}
   // Still the folder routr made: a real folder, the same device and inode as when it was made.
   const same = () => { try { const st = lstatSync(priv.cwd); return !st.isSymbolicLink() && st.isDirectory() && st.dev === priv.dev && st.ino === priv.ino; } catch { return false; } };
-  let why, answered = false, out = null;
-  if (!priv) why = "routr could not make a private folder in the temp folder to run `claude -p /usage` in, so Claude was not asked";
+  let why, code, answered = false, out = null;
+  if (!priv) { code = "private_folder"; why = usageFailure(code).why; }
   else {
     try { out = await exec("claude", claudeUsageArgs(quiet), { cwd: priv.cwd, timeoutMs: CLAUDE_TIMEOUT_MS }); }
+    catch { code = "read_failed"; }
     finally {
       // run() answers null on a timeout (it kills Claude and does not wait), an error, or no output: the project
       // folder is then left, as Claude may still be writing it; a timed-out read can leave one empty folder.
       if (same()) { if (out != null) priv.targets.forEach(removeProjectFolder); removeEmpty(priv.cwd); }
     }
   }
-  if (priv && out == null) why = `\`claude -p /usage\` did not answer in ${CLAUDE_TIMEOUT_MS / 1000} s`;
+  if (priv && out == null) { code ??= "no_response"; why = usageFailure(code).why; }
   else if (priv) {
     let o = null; try { o = JSON.parse(out); } catch {}
-    if (typeof o?.result !== "string" || o.is_error) why = "`claude -p /usage` did not answer as expected";
+    if (typeof o?.result !== "string" || o.is_error) { code = "invalid_response"; why = usageFailure(code).why; }
     else {
       const p = parseClaudeUsage(o.result, nowSec);
       if (p.windows.length) return summarize({ pool: "claude", source: "claude /usage", ts: nowSec, windows: p.windows, note: p.note, nowSec });
@@ -265,48 +273,60 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT, nowSec = 
   if (answered) return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: NO_WINDOWS_AFTER_ANSWER,
     note: `${why}. A plan with no quota (usage-based Enterprise) shows none: if that is this seat, set \`billing: "metered"\` for claude in the config` });
   // The statusline's reading however old (its age is shown), as before this reader existed; else nothing, and why.
-  if (fromSnap?.headroom != null) return { ...fromSnap, note: [fromSnap.note, `${why}: this is the statusline's last reading`].filter(Boolean).join("; ") };
+  if (fromSnap?.headroom != null) return { ...fromSnap, source: "claude /usage", failure: usageFailure(code), kept: { source: "statusline", ageSec: fromSnap.ageSec }, note: [fromSnap.note, `${why} This is the statusline's last reading`].filter(Boolean).join("; ") };
   // A snapshot that says Claude sent no windows after a response keeps saying so: doctor's step keys on it.
-  return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: fromSnap?.reason, note: `${why}; using the assumed headroom` });
+  return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: fromSnap?.reason, failure: usageFailure(code), note: `${why} Using the assumed headroom` });
 }
 
 // Codex: the CLI's own app server answers account/rateLimits/read live (~0.4 s, no tokens). It is marked experimental,
 // so the session-log reader stays as the fallback.
-export async function readCodexLive() {
+export async function readCodexLive({ exec = run, fallback = readCodex, nowSec = now() } = {}) {
   const msgs = [
     { jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "routr", version: "0" } } },
     { jsonrpc: "2.0", method: "initialized", params: {} },
     { jsonrpc: "2.0", id: 2, method: "account/rateLimits/read", params: {} },
   ];
-  const out = await run("codex", ["app-server"], { input: msgs.map((m) => JSON.stringify(m)).join("\n") + "\n", timeoutMs: 6000, until: (o) => /"id":2[,}][^\n]*\n/.test(o) }); // wait for the whole line, not the first bytes of it
+  let out, code;
+  try { out = await exec("codex", ["app-server"], { input: msgs.map((m) => JSON.stringify(m)).join("\n") + "\n", timeoutMs: 6000, until: (o) => /"id":2[,}][^\n]*\n/.test(o) }); }
+  catch { code = "read_failed"; } // wait for the whole line, not the first bytes of it
   for (const line of (out ?? "").split("\n")) {
     try {
       const o = JSON.parse(line);
       const rl = o.id === 2 && o.result?.rateLimits;
       if (!rl) continue;
-      return codexSnapshot(rl, "app-server", now());
+      return codexSnapshot(rl, "app-server", nowSec, nowSec);
     } catch {}
   }
-  return readCodex();
+  let kept;
+  try { kept = fallback(); } catch {}
+  const failure = usageFailure(code ?? (out == null ? "no_response" : "invalid_response"));
+  return { ...(kept ?? failedUsage("codex", "app-server")), source: "app-server", failure,
+    ...(kept?.class === "metered" || kept?.headroom != null && !(Number.isFinite(kept.ageSec) && kept.ageSec >= 0 && kept.ageSec < LOCAL_FRESH_SEC) ? { kept: { source: "session log", ageSec: kept.ageSec } } : {}),
+    note: `${failure.why}${kept?.headroom != null || kept?.class === "metered" ? " Using the session log's last reading." : " Using the assumed headroom."}` };
 }
 
 // Antigravity: `/usage` in print mode is answered without an agent turn (0 tokens, ~2 s). It reports two pools;
 // routr routes to the harness's OWN models, so only the pool named for Gemini counts.
-export async function readAgy() {
+export async function readAgy({ exec = run } = {}) {
   // Measured: the command answers in ~2 s, but about one call in six hangs. A short timeout and one retry turn that
   // into a rare failure instead of a common one; two hangs in a row are reported, never papered over.
+  let code = "no_response";
   for (const timeoutMs of [4000, 5000]) {
-    const out = await run("agy", ["-p", "/usage", "--output-format", "json"], { timeoutMs });
+    let out;
+    try { out = await exec("agy", ["-p", "/usage", "--output-format", "json"], { timeoutMs }); }
+    catch { code = "read_failed"; continue; }
+    code = out == null ? "no_response" : "invalid_response";
     try {
       const groups = JSON.parse(out).command.data.groups;
       // Only the Gemini pool is the subscription's own. With none named, the usage is unknown: another pool's numbers
       // presented as live headroom would steer work on a guess.
       const own = groups.find((g) => /gemini/i.test(g.name));
-      if (!own) return summarize({ pool: "agy", source: "agy /usage", note: "`agy /usage` lists no Gemini pool; using the assumed headroom" });
+      if (!own) return failedUsage("agy", "agy /usage", "invalid_response");
       const mins = { weekly: 10080, "5h": 300 };
-      const ws = own.buckets.map((b) => ({ name: b.id, usedPct: (1 - b.remaining_fraction) * 100, windowMin: mins[b.window] ?? 0, resetsAt: Date.parse(b.reset_time) / 1000 }));
-      return summarize({ pool: "agy", source: "agy /usage", ts: now(), windows: ws, note: `pool: ${own.name}` });
+      const ws = own.buckets.map((b) => ({ name: Object.hasOwn(mins, b.window) ? b.window : "unknown", usedPct: (1 - b.remaining_fraction) * 100, windowMin: mins[b.window] ?? 0, resetsAt: Date.parse(b.reset_time) / 1000 }));
+      if (!ws.some((w) => Number.isFinite(w.usedPct))) return failedUsage("agy", "agy /usage", "invalid_response");
+      return summarize({ pool: "agy", source: "agy /usage", ts: now(), windows: ws, note: "Gemini pool" });
     } catch {}
   }
-  return summarize({ pool: "agy", source: "agy /usage", note: "`agy -p /usage` did not answer in two tries; using the assumed headroom" });
+  return failedUsage("agy", "agy /usage", code);
 }

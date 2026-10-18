@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
 import { HARNESSES, kindError, notReady, plan } from "./harnesses.mjs";
-import { matchAdvice, readAdvice, readTask } from "./advice-file.mjs";
+import { matchAdvice, readAdvice, readTask, savedDecisionUnavailable } from "./advice-file.mjs";
 import { displayCommand, doNext, launchNext, runNext, templateCommand } from "./next.mjs";
 import { OFF } from "./wording.mjs";
 import { BRANCH, clean, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
@@ -79,7 +79,7 @@ export function parseLaunchArgs(args) {
 export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(), env = process.env, ready = notReady, settings = () => loadConfig().config,
   cursorConfigSource = join(home(), ".cursor", "cli-config.json"), tempRoot = tmpdir(), models = (kind) => HARNESSES[kind].models?.() } = {}) {
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
-    command: [], next: [], argv: [], env: {}, steps: [], warnings: [], needs_input: null, prompt_chars: null };
+    command: [], next: [], argv: [], env: {}, steps: [], warnings: [], needs_input: null, prompt_chars: null, unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
   let configDir, createdPane = false, startAttempted = false, touchedPane = false, promptAttempted = false, unconfirmed = false;
   // Something in the pane needs an answer that routr does not give: a shell's own question, a harness's startup
@@ -134,6 +134,11 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         out.advice = { file: o.advice, matches: false };
         matchAdvice(advice, task);
         out.advice.matches = true;
+        if (advice.fallback === true) {
+          const missing = savedDecisionUnavailable(advice);
+          out.unavailable.push(missing);
+          out.warnings.push(missing.model == null ? missing.why : `Fallback advice: ${missing.model} on ${missing.provider} was unavailable (${missing.code}). ${missing.why} Judge that part yourself.`);
+        }
         recordOptions = { ...o, advice: resolve(o.advice), ...(o["task-file"] ? { "task-file": resolve(o["task-file"]) } : {}) };
       } catch (e) { problem = e.message; }
       if (problem) {

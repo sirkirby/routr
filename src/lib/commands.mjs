@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { advise, headline } from "./advise.mjs";
 import { readReport } from "./check.mjs";
 import { ask, failureMessage } from "./systemone.mjs";
-import { DecisionError, decisionTarget } from "./providers.mjs";
+import { DecisionError, decisionTarget, decisionUnavailable, noReading } from "./providers.mjs";
 import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
@@ -18,6 +18,8 @@ import { ADVICE_RULE } from "./wording.mjs";
 import { rankSubscriptions } from "./pick.mjs";
 import { enabledSubscriptions } from "./config.mjs";
 import { readUsage, SOURCES } from "./harnesses.mjs";
+import { failedUsage } from "./usage.mjs";
+import { usageFailure, usageUnavailable } from "./usage-failure.mjs";
 
 const short = (e, n = 160) => e instanceof DecisionError ? e.message : String(e?.message ?? e).slice(0, n);
 
@@ -38,10 +40,13 @@ export function parseHeadroom(values) {
 // dispatch the subscriptions ranked by usage, read while it answers. An unreachable model still gets an answer: the
 // user's fallback.
 export async function adviseCommand(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read = readUsage } = {}) {
-  const out = { id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length };
+  const out = { id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length, unavailable: [] };
+  const target = decisionTarget(config);
   let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };
   // Each source's newest reading, read while the decision model answers; a slow source (Cursor's screen) is a snapshot refreshed in the background.
-  const usageP = mode === "dispatch" ? read(enabledSubscriptions(config), given).catch(() => []) : null; // a turned-off one is not read
+  const names = enabledSubscriptions(config);
+  const usageP = mode === "dispatch" ? Promise.resolve().then(() => read(names, given))
+    .catch(() => names.map((name) => failedUsage(name, SOURCES[name]?.source ?? name))) : null;
   try {
     const r = await askFn({ task: { brief } }, questions, { config });
     advice = advise(r.answers, config, r.profile ?? undefined);
@@ -50,14 +55,23 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
     const a = r.answers;
     Object.assign(out, { provider: r.provider, decision_model: r.model, ...(r.measured === false ? { unmeasured: true } : {}), ms: Math.round(r.latencyMs), answers: { level: { score: a.level.score, confidence: a.level.confidence, probabilities: a.level.probabilities }, work_type: { choice: a.work_type.choice, confidence: a.work_type.confidence }, high_blast_radius: a.high_blast_radius.noul } }); // fact probabilities are in `facts`
   } catch (e) {
-    advice.notes.push(`Router unavailable (${failureMessage(e, config)}). "${config.fallback_level}" is only the user's fallback: judge the level yourself.`);
+    advice = { level: config.fallback_level, sure: false, facts: {}, notes: [
+      `Router unavailable (${failureMessage(e, config)}). "${config.fallback_level}" is only the user's fallback: judge the level yourself.`] };
     out.fallback = true;
-    out.provider = e instanceof DecisionError ? e.provider : decisionTarget(config).provider; // which one failed: a local model that is often down shows in the ledger
+    out.unavailable.push(decisionUnavailable(e, target));
+    out.provider = out.unavailable[0].provider; // which one failed: a local model that is often down shows in the ledger
   }
-  Object.assign(out, { headline: headline(advice), ...advice, meaning: MEANING[advice.level] });
+  Object.assign(out, { headline: out.fallback ? `${noReading(out.unavailable[0])}; fallback level ${advice.level}` : headline(advice), ...advice, meaning: MEANING[advice.level] });
   if (mode === "dispatch") {
-    try { out.subscriptions = rankSubscriptions(advice.level, await usageP, config); }
-    catch (e) { out.subscriptions = { most_room: null, candidates: { normal: [], fallback: [] }, ranked: [], excluded: [], note: `could not read usage: ${short(e, 120)}` }; }
+    const usage = await usageP;
+    try {
+      out.subscriptions = rankSubscriptions(advice.level, usage, config);
+      out.unavailable.push(...usageUnavailable(usage).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
+    } catch {
+      const failure = usageFailure("internal_error");
+      out.unavailable.push({ part: "usage", subscription: null, source: "routr", ...failure });
+      out.subscriptions = { most_room: null, candidates: { normal: [], fallback: [] }, ranked: [], excluded: [], note: failure.why };
+    }
     // An unconfigured routr ranks nothing; say why, so the lead tells the user instead of guessing (seen in a real session).
     if (!Object.keys(config.subscriptions).length) out.subscriptions.note = "no subscriptions are configured, so none is ranked: the user has not run `routr setup` yet. Tell them, and ask which subscription to use meanwhile";
   }
@@ -66,18 +80,22 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
 
 // A quick first read of a worker's report; the orchestrator remains the judge.
 export async function checkCommand({ brief: briefFile, report: reportFile }, { askFn = ask, config = null } = {}) {
-  const out = { mode: "check", question_set: CHECK_VERSION };
-  const failed = (error) => Object.assign(out, { headline: "routr: could not read the report; judge it yourself", fallback: true, error });
+  const out = { mode: "check", question_set: CHECK_VERSION, unavailable: [] };
+  const failedFile = (part) => out.unavailable.push({ part, code: "unreadable", why: `The ${part} file could not be read. Provide a file that exists and is readable.` });
   let brief, report;
   try { brief = readFileSync(briefFile, "utf8").trim(); }
-  catch { return failed(`could not read --brief ${briefFile ?? "<path>"}: provide a file that exists and is readable.`); }
+  catch { failedFile("brief"); }
   try { report = readFileSync(reportFile, "utf8").trim(); }
-  catch { return failed(`could not read --report ${reportFile ?? "<path>"}: provide a file that exists and is readable.`); }
+  catch { failedFile("report"); }
+  if (out.unavailable.length) return Object.assign(out, { headline: `routr: no reading (${out.unavailable.map((u) => `${u.part} unavailable: ${u.code}`).join("; ")}); judge the report yourself`, fallback: true });
   try {
     if (report.length < 200) out.warning = "this report is very short: make sure it is the worker's full report, not just its last message";
     const r = await askFn({ task: { brief }, report: { text: report } }, checkQuestions, { config });
     Object.assign(out, readReport(r.answers), { provider: r.provider, decision_model: r.model, ms: Math.round(r.latencyMs) });
-  } catch (e) { return failed(failureMessage(e, config)); }
+  } catch (e) {
+    const missing = decisionUnavailable(e, decisionTarget(config));
+    return Object.assign(out, { headline: `${noReading(missing)}; judge the report yourself`, fallback: true, unavailable: [missing], next: [doNext(failureMessage(e, config))] });
+  }
   return out;
 }
 

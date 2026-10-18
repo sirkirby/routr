@@ -6,7 +6,7 @@ export const DESCRIPTION = "routr: quick, calibrated advice for an agent that is
 export const COMMANDS = {
   subagent: {
     name: "subagent",
-    description: "a worker, or an agent outside herdr, is about to spawn a subagent → what the work demands (an orchestrator in herdr uses dispatch)",
+    description: "a worker, or an agent outside herdr, is about to spawn a subagent → what the work demands (an orchestrator in herdr uses dispatch); unavailable names missing readings, with a no-reading headline on fallback",
     args: [
       { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); unknown flag-led input without a stdin brief is refused; quote a multi-word inline brief containing flags", required: true },
     ],
@@ -17,7 +17,7 @@ export const COMMANDS = {
   },
   dispatch: {
     name: "dispatch",
-    description: "an orchestrator is about to launch a pane → work assessment plus eligible subscriptions and headroom; choose for quality, then compare capacity among suitable options",
+    description: "an orchestrator is about to launch a pane → work assessment plus eligible subscriptions and headroom; choose for quality, then compare capacity among suitable options; unavailable names failed decision-model and usage readings, with recovery actions; fresh usable readings stay available",
     args: [
       { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); unknown flag-led input without a stdin brief is refused; quote a multi-word inline brief containing flags", required: true },
     ],
@@ -39,7 +39,7 @@ export const COMMANDS = {
   },
   launch: {
     name: "launch",
-    description: "start a worker with matching task advice; follow next for recovery, recording and cleanup",
+    description: "start a worker with matching task advice; unavailable carries the saved fallback decision-model entry and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
     flags: [
       { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
       { name: "--name", arg: "<name>", description: "worker agent name ([a-z][a-z0-9_-]{0,31})", required: true },
@@ -160,7 +160,7 @@ export const COMMANDS = {
   },
   check: {
     name: "check",
-    description: "a quick first read of a worker's report (writes nothing); you remain the judge",
+    description: "a quick first read of a worker's report (writes nothing); you remain the judge; unavailable names an unreadable brief/report or the attempted decision model and its failure",
     flags: [
       { name: "--brief", arg: "<file>", description: "path to task brief file", required: true },
       { name: "--report", arg: "<file>", description: "path to worker report file", required: true },
