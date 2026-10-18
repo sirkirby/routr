@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { adviseCommand, checkCommand } from "../src/lib/commands.mjs";
 import { launch } from "../src/lib/launch.mjs";
+import { savedDecisionUnavailable } from "../src/lib/advice-file.mjs";
 import { DECISION_CODES, DecisionError, decisionTarget, PROVIDERS } from "../src/lib/providers.mjs";
 import { readUsage } from "../src/lib/harnesses.mjs";
 import { readAgy, readClaude, readCodexLive, summarize } from "../src/lib/usage.mjs";
@@ -61,6 +62,20 @@ test("Claude and Codex fallback diagnostics distinguish a fresh local reading fr
   }
 });
 
+test("a failed live Codex read reports its metered session-log fallback, including its age", async () => {
+  const T = 1800000000;
+  for (const age of [0, 7200]) {
+    const fallback = () => summarize({ pool: "codex", source: "session log", cls: "metered", ts: T, nowSec: T + age });
+    expect((await dispatchUsage(fallback())).unavailable).toEqual([]); // Unknown metered capacity alone is a valid reading.
+    const row = await readCodexLive({ exec: async () => null, fallback, nowSec: T + age });
+    const r = await dispatchUsage(row);
+    expect(r.unavailable).toEqual([{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("no_response"),
+      reading: "kept", reading_source: "session log", age_sec: age }]);
+    expect(r.subscriptions.ranked[0]).toMatchObject({ class: "metered", usable: null, headroom: null, age_sec: age });
+    expect(row.note).toContain("Using the session log's last reading"); expect(row.note).not.toContain("assumed headroom"); clean(r);
+  }
+});
+
 test("launch rebuilds every saved recovery action and HTTP status without trusting saved prose", async () => {
   const dir = scratch("launch-actions"), file = join(dir, "advice");
   const args = ["--kind", "claude", "--name", "worker", "--model", "sonnet", "--task", marker, "--advice", file, "--dry-run"];
@@ -91,6 +106,7 @@ test("every classified decision failure has one output contract, independent of 
     const config = cfg({ decision: { provider } }), target = decisionTarget(config, {});
     const askFn = async () => { throw new DecisionError(target, code); };
     const missing = { part: "decision model", provider, model: target.model, code, why: new DecisionError(target, code).message, ...(code === "provider_error" ? { status: 0 } : {}) };
+    expect(savedDecisionUnavailable({ unavailable: [missing] })).toEqual(missing);
     for (const mode of ["dispatch", "subagent", "check"]) {
       const r = mode === "check" ? await checkCommand({ brief, report }, { config, askFn })
         : await adviseCommand(mode, marker, { config }, {}, { askFn, read: empty });

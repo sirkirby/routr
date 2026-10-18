@@ -83,7 +83,6 @@ export const PROVIDERS = {
     // Workers AI's numeric codes, checked 2026-10-18: https://developers.cloudflare.com/workers-ai/platform/errors/
     // Only codes select a sentence. A string code (even "3036") and all message text remain untrusted.
     errorCode: (j) => Array.isArray(j?.errors) && j.errors.some((e) => e?.code === 3036) ? "daily_allowance" : null,
-    failures: { daily_allowance: "the daily free allowance is used up. Wait for the daily reset or enable the Workers Paid plan in Cloudflare." },
     deadlineMs: 10000,
     // Workers AI names are not versioned: Cloudflare can change the weights behind one, so these cannot be pinned the
     // way Jev is. docs/evidence.md says so, and the gate is re-run on them.
@@ -187,8 +186,23 @@ export function decisionTarget(config, env = process.env) {
 
 // Only these sentences cross the provider boundary. No response body, envelope message, URL or thrown exception
 // supplies text; the target is the one routr requested. Callers use the code/provider rather than reading prose.
-export const DECISION_CODES = ["no_key", "secrets_unreadable", "key_refused", "model_missing", "model_unsupported",
-  "timeout", "unreachable", "daily_allowance", "provider_error", "invalid_response", "internal_error", "attempt_unknown"];
+const DECISION_MESSAGES = {
+  no_key: ({ missing, get }) => `no ${missing?.label} saved. ${get}, or set ${missing?.name} in the environment.`,
+  // Not the get-a-key text: `key set` writes this same file, so it would fail too.
+  secrets_unreadable: ({ file, missing }) => `routr cannot read its secrets file ${file}. Check the file's permissions or set ${missing?.name} in the environment.`,
+  key_refused: ({ get }) => `the key was refused. ${get}`,
+  model_missing: ({ get }) => `the local model is not pulled. ${get}`,
+  model_unsupported: ({ get }) => `the local model is not a decision model, or Ollama is too old: update Ollama to ${OLLAMA_MIN} or later and restart it. ${get}`,
+  timeout: () => "the request timed out. Try again; if it keeps timing out, check the decision provider.",
+  unreachable: ({ P, host, get }) => P?.local ? `the local server is not running or cannot be reached at ${host ?? P.host()}: start it (the Ollama app, or ollama serve). ${get}`
+    : "the provider could not be reached. Check your connection and try again.",
+  provider_error: ({ http, action }) => `the provider returned HTTP ${http}. ${action}`,
+  invalid_response: () => "the provider returned a reply routr cannot read. Try again; if it persists, check the decision provider.",
+  daily_allowance: () => "the daily free allowance is used up. Wait for the daily reset or enable the Workers Paid plan in Cloudflare.",
+  internal_error: () => "routr: an internal error stopped the decision check. Run routr doctor; if it persists, report it to routr.",
+  attempt_unknown: () => "The saved fallback advice does not name the attempted decision model and its failure.",
+};
+export const DECISION_CODES = Object.keys(DECISION_MESSAGES);
 
 export class DecisionError extends Error {
   constructor(target, code, status, { secret, file = SECRETS_FILE, host } = {}) {
@@ -198,23 +212,8 @@ export class DecisionError extends Error {
     const http = Number.isInteger(status) ? status : 0;
     const action = http >= 500 ? "Try again later." : http === 429 ? "Check the provider's limits and try again after they reset."
       : http >= 400 ? "Check the decision model and provider settings before trying again." : "Check the decision provider.";
-    const sentences = {
-      no_key: `no ${missing?.label} saved. ${get}, or set ${missing?.name} in the environment.`,
-      // Not the get-a-key text: `key set` writes this same file, so it would fail too.
-      secrets_unreadable: `routr cannot read its secrets file ${file}. Check the file's permissions or set ${missing?.name} in the environment.`,
-      key_refused: `the key was refused. ${get}`,
-      model_missing: `the local model is not pulled. ${get}`,
-      model_unsupported: `the local model is not a decision model, or Ollama is too old: update Ollama to ${OLLAMA_MIN} or later and restart it. ${get}`,
-      timeout: "the request timed out. Try again; if it keeps timing out, check the decision provider.",
-      unreachable: P?.local ? `the local server is not running or cannot be reached at ${host ?? P.host()}: start it (the Ollama app, or ollama serve). ${get}`
-        : "the provider could not be reached. Check your connection and try again.",
-      provider_error: `the provider returned HTTP ${http}. ${action}`,
-      invalid_response: "the provider returned a reply routr cannot read. Try again; if it persists, check the decision provider.",
-      internal_error: "routr: an internal error stopped the decision check. Run routr doctor; if it persists, report it to routr.",
-      attempt_unknown: "The saved fallback advice does not name the attempted decision model and its failure.",
-      ...P?.failures,
-    };
-    super(code === "internal_error" || code === "attempt_unknown" ? sentences[code] : `${P.label}: ${sentences[code]}`);
+    const sentence = DECISION_MESSAGES[code]?.({ P, get, missing, file, host, http, action });
+    super(code === "internal_error" || code === "attempt_unknown" ? sentence : `${P.label}: ${sentence}`);
     this.name = "DecisionError";
     this.code = code;
     this.provider = provider;

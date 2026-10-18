@@ -301,8 +301,8 @@ export async function readCodexLive({ exec = run, fallback = readCodex, nowSec =
   try { kept = fallback(); } catch {}
   const failure = usageFailure(code ?? (out == null ? "no_response" : "invalid_response"));
   return { ...(kept ?? failedUsage("codex", "app-server")), source: "app-server", failure,
-    ...(kept?.headroom != null && !(Number.isFinite(kept.ageSec) && kept.ageSec >= 0 && kept.ageSec < LOCAL_FRESH_SEC) ? { kept: { source: "session log", ageSec: kept.ageSec } } : {}),
-    note: `${failure.why}${kept?.headroom != null ? " Using the session log's last reading." : " Using the assumed headroom."}` };
+    ...(kept?.class === "metered" || kept?.headroom != null && !(Number.isFinite(kept.ageSec) && kept.ageSec >= 0 && kept.ageSec < LOCAL_FRESH_SEC) ? { kept: { source: "session log", ageSec: kept.ageSec } } : {}),
+    note: `${failure.why}${kept?.headroom != null || kept?.class === "metered" ? " Using the session log's last reading." : " Using the assumed headroom."}` };
 }
 
 // Antigravity: `/usage` in print mode is answered without an agent turn (0 tokens, ~2 s). It reports two pools;

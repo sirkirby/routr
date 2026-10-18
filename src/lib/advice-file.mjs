@@ -28,6 +28,7 @@ export function savedDecisionUnavailable(advice) {
   if (!entry || !isProvider(entry.provider) || typeof entry.model !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(entry.model)
     || typeof entry.code !== "string" || !DECISION_CODES.includes(entry.code) || entry.code === "attempt_unknown")
     return { part: "decision model", provider: null, model: null, code: "attempt_unknown", why: new DecisionError({ provider: null, model: null }, "attempt_unknown").message };
+  // Rebuilt Ollama hints use today's host, never today's model: that comes from saved advice.
   return decisionUnavailable(new DecisionError(entry, entry.code, entry.status), entry);
 }
 export function readTask(file) {

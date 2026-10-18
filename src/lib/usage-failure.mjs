@@ -12,6 +12,6 @@ export const usageFailure = (code) => {
   code = typeof code === "string" && Object.hasOwn(USAGE_FAILURES, code) ? code : "read_failed";
   return { code, why: USAGE_FAILURES[code] };
 };
-export const usageUnavailable = (rows) => rows.filter((r) => r.failure && r.signedIn !== false && r.class !== "metered" && (r.headroom == null || r.kept))
+export const usageUnavailable = (rows) => rows.filter((r) => r.failure && r.signedIn !== false && (r.headroom == null || r.kept))
   .map((r) => ({ part: "usage", subscription: r.pool, source: r.source, ...usageFailure(r.failure.code),
-    reading: r.headroom == null ? "assumed" : "kept", ...(r.headroom != null ? { reading_source: r.kept.source, age_sec: r.kept.ageSec } : {}) }));
+    reading: r.kept ? "kept" : "assumed", ...(r.kept ? { reading_source: r.kept.source, age_sec: r.kept.ageSec } : {}) }));
