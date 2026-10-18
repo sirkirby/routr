@@ -134,8 +134,9 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
     rmSync(join(home, ".config/routr/env")); mkdirSync(join(home, ".config/routr/env"));
     for (const command of commands.filter(([c]) => c !== "key")) {
       const stdout = run(command, "valid", true);
-      // stdout is JSON: a Windows path appears with its backslashes escaped, so look for it as JSON writes it.
-      expect(stdout).toContain("routr cannot read its secrets file"); expect(stdout).toContain(JSON.stringify(join(home, ".config/routr/env")).slice(1, -1));
+      // JSON output escapes a Windows path's backslashes; text output (doctor without --json) prints it as it is.
+      const file = join(home, ".config/routr/env");
+      expect(stdout).toContain("routr cannot read its secrets file"); expect(stdout.includes(file) || stdout.includes(JSON.stringify(file).slice(1, -1))).toBe(true);
       if (command[0] === "doctor" && command.includes("--json")) doctorFailure(stdout, 0);
     }
   }
