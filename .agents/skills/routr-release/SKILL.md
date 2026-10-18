@@ -19,7 +19,9 @@ and verification. Do not turn skill creation or documentation work into a new re
    release; account for existing prereleases. Source version fields stay `0.0.0-dev`. A `-beta.N` or `-rc.N` tag
    reaches beta-channel users through the automatic update, typically within a day: treat publishing one as shipping to them. Only `-alpha.N`
    stays off every channel (installed by naming it in `ROUTR_VERSION`).
-2. Read the release-note authoring requirements in CONTRIBUTING.md. Prepare `docs/releases/<exact-tag>.md`
+2. Read the release-note authoring requirements in CONTRIBUTING.md. For a stable release, move `CHANGELOG.md`'s
+   Unreleased lines into a new `## vX.Y.Z — YYYY-MM-DD` section linking its notes file, leave an empty Unreleased
+   above it, and check it lists every user-facing change in the release. Prepare `docs/releases/<exact-tag>.md`
    in a PR before tagging, including for prereleases. Cover the final release scope, user-visible behavior,
    configuration defaults and JSON compatibility. Commit titles supply the generated change list; this file
    supplies the explanation and upgrade steps. Ensure its tag matches the planned tag.

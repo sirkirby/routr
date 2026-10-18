@@ -115,6 +115,12 @@ For a pre-release use `v0.2.0-rc.1` (`-alpha.N`, `-beta.N`, `-rc.N`). The tag is
 in the repository `src/lib/version.mjs`, `package.json`, and the `version` lines in `skills/routr/SKILL.md` and `skills/routr-orchestrate/SKILL.md` all read
 `0.0.0-dev` (a test checks it), so there is nothing to bump before a release and nothing to write back after one.
 
+`CHANGELOG.md` is the short history beside the release notes below, and only summarizes and links: a pull request with a user-facing change adds one line for it under Unreleased, with its PR number; a stable
+release moves those lines into a new `## vX.Y.Z — YYYY-MM-DD` section linking its notes file, and leaves an empty
+Unreleased above it; pre-releases stay under Unreleased.
+Write each line for a user. The release workflow refuses a stable tag without its section, and a test holds the
+headings to that shape.
+
 Before pushing any release tag, merge `docs/releases/<tag>.md` (for example `docs/releases/v0.4.0.md`) with the
 release's user-facing highlights and upgrade instructions. State whether setup or a settings review is needed,
 which existing defaults are preserved, and any JSON compatibility changes. When no action is needed, say so.

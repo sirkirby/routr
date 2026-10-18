@@ -85,7 +85,10 @@ Merging to `main` only runs tests. A release happens when a `vX.Y.Z` tag is push
 for a pre-release). The tag is the ONLY place a version is set: the repository's version fields stay `0.0.0-dev` and
 are stamped from the tag at build time (CONTRIBUTING.md lists them). Never commit a real version. Reviewed
 `docs/releases/<tag>.md` supplies upgrade guidance; commit subjects supply the generated change list. Write both for
-a user.
+a user. `CHANGELOG.md` is the short history beside them: a pull request with a user-facing change adds one line for it under Unreleased, with its PR number; a stable
+release moves those lines into a new `## vX.Y.Z — YYYY-MM-DD` section linking its notes file, and leaves an empty
+Unreleased above it; pre-releases stay under Unreleased. The release workflow refuses a stable tag
+without its section.
 
 ## Working style
 
