@@ -57,10 +57,27 @@ Codes are the fixed lists routr already has (the decision-model failure codes, t
 
 ## Text from outside routr
 
-AGENTS.md lets outside text reach output only where a command's contract names it. This contract names one place:
-`screen`, what a pane showed, and only before the task was sent (after that it may show the brief, and `screen` is the
-fixed withheld sentence, as today). Everything else a herdr or git call returns is classified where routr starts the
-process, and only routr's own words leave that point.
+AGENTS.md lets outside text reach output only where a command's contract names it. This contract names one place for
+free text: `screen`, what a pane showed, and only before the task was sent (after that it may show the brief, and
+`screen` is the fixed withheld sentence, as today). Everything else a herdr or git call returns is classified where
+routr starts the process: what leaves that point is routr's own words, and the structured herdr values below, each
+checked against a fixed shape.
+
+Structured herdr values. Launch reports herdr's reading of an agent (`needs_input.herdr`) and builds `needs_input.why`
+from it; today it copies herdr's values as they come and interpolates them. Each is checked at the boundary, before any
+`why`, `headline`, step `detail` or `herdr` field is built, and a value outside its shape is never printed:
+
+| value | from herdr | accepted shape | outside the shape |
+|---|---|---|---|
+| agent state (`herdr.state`, `herdr.explained`, and the state named in `why`) | `agent get`'s status, `agent explain`'s state, a prompt's outcome | one of the lifecycle states routr handles: `idle`, `working`, `blocked`, `done` | `unknown`, said as "a state routr does not know"; treated as not ready, as an unreported state is today |
+| matched rule (`herdr.rule`) | `agent explain`'s matched rule id | lowercase letters, digits and `_`, starting with a letter, at most 64 characters (`trust_directory`, `live_blocked_form`, `osc_title_idle`) | left out, as when herdr matched none |
+| rules version (`herdr.rules`) | `agent explain`'s manifest version | a dotted date and serial, `YYYY.MM.DD.N` (`2026.10.01.1`) | left out |
+| agent kind (in `why`: "the pane runs …") | `agent get`'s agent | one of routr's harness kinds | "another agent" |
+| agent folder (in `why`: "works in …") | `agent get`'s working folder | an absolute path of at most 512 characters with no control characters | "a folder herdr does not report", as today when none is given |
+| readiness | `agent get`'s interactive-ready flag | `true`, `false` or absent | absent |
+
+Pane, workspace and worktree ids and the worktree path herdr creates are routr's values once checked (launch already
+checks they are strings; cleanup checks the pane list's shape), and are printed as identifiers.
 
 Today two commands break this, and a review proved it by planting a marker in each: cleanup prints git's first line of
 stderr ("git did not remove <path>: <git's own reason>", and the same for a branch git kept), and launch prints herdr's
@@ -91,7 +108,8 @@ instruction, something the lead should do now in this run because of this answer
 the work, ask or tell the user, fix the brief, read by hand, review, inspect), is a `next` step, added only in the
 situation that calls for it. This keeps one place to follow and lets a note be read without being obeyed.
 
-What moves:
+What moves (the `subscriptions.note` and reading rows apply wherever the ranking appears: `dispatch`, and `usage`
+plain, with `--level`, or named):
 
 | today | stays as explanation | becomes a `next` step |
 |---|---|---|
@@ -438,9 +456,21 @@ subscription that takes <level> work is at its reserve`, adding `; N readings un
 `routr: Cursor, Included 40% used, read now` or `routr: no fresh Cursor reading (<code>)`.
 
 Shared fields: all six. `warnings`: config and input warnings; Kiro's leftover usage session; a named `cursor` or
-`kiro` that is not configured, so not ranked. `next`: with `--level`, choose from `candidates` and keep the original
-advice for launch and record; for a failed `cursor` or `kiro` reading, read it by hand and pass `--headroom`; otherwise
-`[]`.
+`kiro` that is not configured, so not ranked. `next`, each step only in its situation ("Explanation or instruction"),
+for plain usage, `--level` and a named subscription alike:
+
+- every subscription that takes the level is at its reserve: hold the work or ask the user (first);
+- no configured subscription takes the level: hold the work, choose a lower level and refresh with
+  `routr usage --level`, or ask the user;
+- no subscription is configured: tell the user routr is not set up (`routr setup`), and ask which subscription to use
+  meanwhile;
+- a reading failed, live or cached (a `usage` entry in `unavailable`), for a harness with a by-hand way: read it by hand
+  and pass `--headroom <name>=<share left>` (named `cursor` and `kiro` too);
+- the ranking failed (routr's `internal_error` entry): read capacity yourself before choosing an account;
+- with `--level`, when there are candidates: choose from `subscriptions.candidates`, normal before fallback, and keep the
+  original dispatch advice for launch and record.
+
+`[]` only when none of these applies: a plain view with nothing at its reserve and every reading made.
 
 Own fields: `level`; `subscriptions` (the same object as `dispatch`'s; for a named subscription, its row alone);
 named only: `subscription`; named `cursor` or `kiro` with a fresh reading: `reading`, the harness's own numbers for a
@@ -531,7 +561,7 @@ Shared fields that are new to a command are listed as added.
 | `needs_input.why` | kept | |
 | `needs_input.screen` | moved to top-level `screen` | one name for what the pane showed |
 | `needs_input.pane` | removed | the same value as the top-level `pane` |
-| `needs_input.herdr.state`, `.rule`, `.explained`, `.rules` | kept | herdr's own reading |
+| `needs_input.herdr.state`, `.rule`, `.explained`, `.rules` | kept, each checked against its shape at the herdr boundary; a value outside it becomes `unknown` or is left out | herdr's own reading, permitted as validated structured values ("Text from outside routr") |
 | `needs_input.note` | kept | what routr knows of the harness's startup question; an explanation, so a `note` |
 | `prompt_chars` | kept | the prompt's length, never its text |
 | `unavailable` | kept; gains `model list` entries | |
@@ -653,9 +683,15 @@ Tests:
 - `fallback` (output): `test/advise.test.mjs:129`, `test/cli.test.mjs:493`, `test/unavailable.test.mjs:123`,
   `test/provider-boundary.test.mjs:104`, `test/provider-boundary.test.mjs:114`, `test/provider-boundary.test.mjs:136`,
   `test/provider-boundary.test.mjs:258`, `test/provider-boundary.test.mjs:263`, `test/provider-boundary.test.mjs:331`.
-- `fallback` (input: advice files a test writes for `launch` or `record`; still read from older advice, so these keep
-  passing, and new ones should carry the `decision model` entry): `test/telemetry.test.mjs:69`,
-  `test/handoff.test.mjs:19`, `test/launch.test.mjs:20`, `test/unavailable.test.mjs:88`, `test/unavailable.test.mjs:267`.
+- `fallback` (input: advice files a test writes for `launch` or `record`; `fallback: true` is still read from older
+  advice, and new fixtures should carry the `decision model` entry): `test/telemetry.test.mjs:69` (passed to the
+  ledger row builder directly, not through the advice check), `test/handoff.test.mjs:19`, `test/launch.test.mjs:20`
+  keep passing.
+- Advice fixtures with no `id`, which the usable-advice check refuses: each gains a valid `id` so it still tests what
+  it tests (an older fallback, a match, a mismatch): `test/unavailable.test.mjs:88`, `test/unavailable.test.mjs:267`
+  (older fallback advice), `test/launch.test.mjs:75`, `test/launch.test.mjs:126`, `test/launch.test.mjs:130`,
+  `test/handoff.test.mjs:32`. Separate cases test the refusal itself: `test/handoff.test.mjs:31` (no `brief_sha`)
+  stays, and new cases cover no `id`, an empty `id`, and a saved refusal, for `launch` and `record`.
 - `check`'s next repeating the decision model's `why`: `test/provider-boundary.test.mjs:263`.
 - `check`'s `warning`: `test/cli.test.mjs:499`.
 - Launch `command` → `ran`: `test/launch.test.mjs:242`, `test/launch.test.mjs:254`, `test/launch.test.mjs:290`,
@@ -697,7 +733,10 @@ Tests:
   `test/advise.test.mjs:106`, `test/advise.test.mjs:108`, `test/advise.test.mjs:111` ("Start at …"),
   `test/launch.test.mjs:495` ("address it by its pane"), `test/launch.test.mjs:712` ("Prompt may have been
   submitted"), `test/launch.test.mjs:738` ("left alive": the fact stays, the step moves).
-- herdr or git text in output, now classified: no test reads it today; the marker test (implementation checks) is new.
+- herdr text in output, now classified: `test/launch.test.mjs:1018` expects the failed launch's last step `detail` to
+  contain `agent_not_running`, herdr's own error passed on. Replace it with the classified expectation: the step says
+  the agent is no longer running in routr's words, with its routr code, and herdr's text is absent. The marker test
+  (implementation checks) is new.
 
 Source lines (not prose; for the implementing change):
 
@@ -736,12 +775,18 @@ The change that implements this page does all of this in one pull request:
     error code and its JSON answer, and in a pane's process names, and a fake git that puts it in stderr and stdout,
     driven through every failure path of `launch` and `cleanup` (and named `usage cursor`, which drives herdr). The
     marker appears nowhere in the printed JSON except `screen` before a task was sent, and never after.
+  - Structured herdr values: a fake herdr that answers with the marker as an agent state, a rule id, a rules version,
+    an agent kind and a working folder, and with values just outside each shape (an uppercase rule, a relative
+    folder, a control character): none is printed, `why` says `unknown`, "another agent" or "a folder herdr does not
+    report", and in-shape values (`blocked`, `trust_directory`, `2026.10.01.1`) are reported as today.
   - The record template carries `--effort` for every kind, with and without `--effort` at launch, and for an adopted
     pane; following each template (placeholders filled) records a row.
   - Usable advice: each row of the table under record, for both `record` (with and without `--task-file`) and
     `launch` (real and dry run).
   - No `notes`, `note`, `why` or `warnings` string is an instruction this page moves to `next` (the table above), and
-    each moved step appears in `next` in its situation.
+    each moved step appears in `next` in its situation, in `dispatch` and in `usage` (plain, `--level`, and named):
+    every account at its reserve, nothing taking the level, nothing configured, a failed live or cached reading, a
+    ranking failure. Plain usage with none of these returns `next: []`.
 - `docs/guarantees.md` in the same change: dry runs return `ok: false` when a real launch would refuse; outside text
   from herdr and git is classified; usable advice; record's required flags.
 - `CHANGELOG.md`, under Unreleased, one line with the PR number, written for a user, e.g. "Every command a lead reads
