@@ -17,7 +17,7 @@ commit subject and, at the next tag, a line in the release notes: write it for a
 - **Standard mechanisms only**: skills, prompts, hooks. No dependence on a harness's private environment variables.
 - **The advice commands change nothing of yours and fail open.** What they may still do (foreground harness reads,
   routr's bookkeeping under `~/.cache/routr`, starting a detached job) is in [docs/guarantees.md](docs/guarantees.md).
-  Only `launch` and `cleanup` act on panes and worktrees.
+  Only `launch` and `cleanup` act on the user's panes and worktrees.
 
 ## Changing a question
 

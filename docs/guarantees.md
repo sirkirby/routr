@@ -43,7 +43,8 @@ checkout or from `statusline`.
 
 ## Usage readings
 
-`dispatch` and `usage` read each enabled usage source's newest reading and show its age; `subagent` reads none.
+`dispatch` and `usage` with no name read each enabled usage source's newest reading and show its age; `usage <name>`
+reads that one; `subagent` reads none.
 routr never has to own a harness feature (a statusline slot, a hook) to get its usage: it asks the harness's own CLI.
 
 - Claude's is read in the call from its own `/usage`, hooks and MCP servers off; a statusline snapshot under 5 minutes
@@ -108,12 +109,13 @@ cmd), as you would.
 
 ## Secrets, briefs and telemetry
 
-A brief goes only to the decision model you chose, and a key only to its own provider. routr never prints or logs
+A brief goes only to the decision model you chose and to the worker it is for, and a key only to its own provider. routr never prints or logs
 either, and never puts them in the ledger or in telemetry: the ledger stores a brief's hash and length. Keys are kept
 only in routr's secrets file, `~/.config/routr/env`, written by `routr key set`.
 
-Known gap, being fixed: when a decision model's request fails, part of the provider's reply can appear in routr's
-output, and a reply may repeat what it was sent.
+Known gap, being fixed: text in a decision model's reply is not yet checked before routr uses it. When a request
+fails, part of the provider's reply can appear in routr's output; a successful reply's values can appear in the advice,
+and in the ledger once that advice is recorded (telemetry strips them). A reply may repeat what it was sent.
 
 Telemetry is off unless you turn it on (`routr telemetry on`, or yes to setup's question, default no). An agent never
 turns it on for you. It sends ledger rows with no text of any kind, only from the detached daily job or

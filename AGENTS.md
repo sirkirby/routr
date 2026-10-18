@@ -39,9 +39,10 @@ page and its tests in the same PR.
   never takes over a harness feature (a statusline slot, a hook) and depends on no private internals beyond what
   `references/harnesses.md` records as observed.
 - The binary is self-contained (no repository checkout at run time) and has no runtime dependencies (`node:`
-  built-ins only). It runs on macOS, Linux and Windows, and starts no process through `sh`.
+  built-ins only). It runs on macOS, Linux and Windows. It starts its own processes directly, never through `sh`; in
+  a pane, it types commands for that pane's own shell.
 - routr writes only in its own folders and what a command was asked to write.
-- A brief goes only to the decision model, and a key only to its provider. Neither is ever printed, logged, or put
+- A brief goes only to the decision model and the worker it is for, and a key only to its provider. Neither is ever printed, logged, or put
   in the ledger or telemetry.
 - Telemetry is OFF unless the person turns it on; an agent never turns it on for them. A new field in a sent row is a
   `docs/telemetry.md` change in the same PR.

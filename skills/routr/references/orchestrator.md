@@ -277,10 +277,11 @@ pane, closing it closes the workspace, and the worktree is then left on disk whe
   checks again on the merged result, and then run cleanup with `--delete-branch`.
 - Otherwise run cleanup without it: the branch stays. Tell the user where it is and what your check showed.
 - cleanup refuses while the worker's agent is working or waiting at a question, or a command runs in its pane. It
-  also refuses while the worktree holds uncommitted changes, files the worker made and did not commit, files git is
-  told not to check, or a commit that no branch or tag holds. Files you copied in with `--copy` and that are unchanged
-  go with the worktree, and so does everything git ignores (build output, `node_modules`, a copied `.env`), as with
-  `git worktree remove`: tell a worker to commit anything it must keep.
+  also refuses while the worktree holds uncommitted changes, untracked files the main checkout does not hold as they
+  are, files git is told not to check, or a commit that no branch or tag holds. An untracked file identical to the
+  main checkout's (what `--copy` brings in) goes with the worktree, and so does everything git ignores (build output,
+  `node_modules`, a copied `.env`), as with `git worktree remove`: tell a worker to commit anything it must keep.
+  cleanup cannot see a commit made, or a worker started, after its last check: run it only once the worker is done.
   Its `refused` says why and what to do; never discard a worker's changes to get past it, and never push. Work that
   failed your check stays where it is until the user decides.
 - `--delete-branch` deletes a branch only when git agrees it is merged; otherwise it is kept and `warnings` says so.
