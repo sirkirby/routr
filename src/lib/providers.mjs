@@ -196,8 +196,8 @@ export class DecisionError extends Error {
     const action = http >= 500 ? "Try again later." : http === 429 ? "Check the provider's limits and try again after they reset."
       : http >= 400 ? "Check the decision model and provider settings before trying again." : "Check the decision provider.";
     const sentences = {
-      no_key: `no ${missing?.label} saved: run routr key set ${provider} (or set ${missing?.name}).`,
-      secrets_unreadable: `routr cannot read its secrets file ${file}. Check the file's permissions or set ${missing?.name} in the environment.`,
+      no_key: `no ${missing?.label} saved: run routr key set ${provider} (or set ${missing?.name}). ${get}`,
+      secrets_unreadable: `routr cannot read its secrets file ${file}. Check the file's permissions or set ${missing?.name} in the environment. ${get}`,
       key_refused: `the key was refused. ${get}`,
       model_missing: `the local model is not pulled. ${get}`,
       model_unsupported: `the local model is not a decision model, or Ollama is too old: update Ollama to ${OLLAMA_MIN} or later and restart it. ${get}`,

@@ -3,7 +3,7 @@
 // exact answers, latency and tokens.
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { DecisionError, decisionTarget, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
+import { DecisionError, decisionTarget, isModel, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 
 // ---------------------------------------------------------------- secrets
 // One owner-only file of NAME=value lines outside any project, so workers in worktrees and other folders find it too.
@@ -170,7 +170,12 @@ export async function ask(state, questions, { config, deadlineMs, env = process.
     if (!j) throw new DecisionError(t, P.errorCode?.(raw) ?? "invalid_response");
     const answers = readAnswers(j?.answers, questions, t);
     const usage = object(j.usage) ? Object.fromEntries(Object.entries(j.usage).filter(([k, v]) => ["input_tokens", "output_tokens", "total_tokens"].includes(k) && Number.isSafeInteger(v) && v >= 0)) : undefined;
-    return { model: P.identity(j.model) ? j.model : t.model, provider: t.provider, answers: normalize(answers, { native: P.nativeConfidence }), usage, latencyMs, profile: t.profile, measured: t.measured };
+    const model = P.identity(j.model) ? j.model : t.model;
+    // A validated identity can still be an unmeasured version. Keep the fallback profile for reading its answers,
+    // but only claim a measurement for the model that answered, not the pin or alias it was requested through.
+    const profile = isModel(t.provider, model) ? P.models[model] : null;
+    return { model, provider: t.provider, answers: normalize(answers, { native: P.nativeConfidence }), usage, latencyMs,
+      profile: profile ?? t.profile, measured: Boolean(profile) || (model === t.model && Boolean(t.measured)) };
   }
 }
 

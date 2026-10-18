@@ -113,7 +113,7 @@ export async function inspect({ configPath, quiet } = {}) {
   if (tty) process.stderr.write(`Checking ${[`the decision model (${P.label})`, ...found.map((n) => `\`${HARNESSES[n].executable}\``)].join(", ")} (a harness can take up to 20 s to answer)…\n`);
   Object.assign(r.key, { provider: target.provider, label: P.label, asked: target.model, measured: target.measured, local: Boolean(P.local), ...(P.unversioned ? { unversioned: true } : {}),
     where: P.local ? ollamaHost() : P.secrets.map((x) => `${x.name} (environment, or ${SECRETS_FILE})`).join(", ") });
-  const keyCheck = async () => { secretsFor(target.provider); r.key.found = true; const t = await ping({ config }); r.key.note = await P.check?.(target.model, target.profile).catch(() => null); return t; };
+  const keyCheck = async () => { secretsFor(target.provider); r.key.found = true; const t = await ping({ config }); r.key.note = await P.check?.(t.model, t.profile).catch(() => null); return t; };
   // Installed is not enough: each harness is asked whether it is signed in, afresh, before anything else is asked of it.
   // One that is not gets no model list and no usage read, since either could open its sign-in in the browser.
   const statesP = Promise.all(found.map((n) => step(`${n}'s sign-in`, signIn(n, { fresh: true })))).then((s) => Object.fromEntries(found.map((n, i) => [n, s[i]])));
@@ -141,7 +141,7 @@ export async function inspect({ configPath, quiet } = {}) {
       // The billing its own sign-in status stated, and where it was read: shown as the usage line (said, above).
       ...(u.billing ? { usage_billing: u.billing } : {}) };
   }
-  if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; }
+  if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; r.key.measured = key.t.measured; }
   else { r.key.found ??= false; r.key.works = false; r.key.error = failureMessage(key.e, config); }
   const lists = Object.fromEntries(found.map((n, i) => [n, models[i]]));
   for (const n of found) r.harnesses[n].models = lists[n];

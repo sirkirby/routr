@@ -65,12 +65,17 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
 // A quick first read of a worker's report; the orchestrator remains the judge.
 export async function checkCommand({ brief: briefFile, report: reportFile }, { askFn = ask, config = null } = {}) {
   const out = { mode: "check", question_set: CHECK_VERSION };
+  const failed = (error) => Object.assign(out, { headline: "routr: could not read the report; judge it yourself", fallback: true, error });
+  let brief, report;
+  try { brief = readFileSync(briefFile, "utf8").trim(); }
+  catch { return failed(`could not read --brief ${briefFile ?? "<path>"}: provide a file that exists and is readable.`); }
+  try { report = readFileSync(reportFile, "utf8").trim(); }
+  catch { return failed(`could not read --report ${reportFile ?? "<path>"}: provide a file that exists and is readable.`); }
   try {
-    const brief = readFileSync(briefFile, "utf8").trim(), report = readFileSync(reportFile, "utf8").trim();
     if (report.length < 200) out.warning = "this report is very short: make sure it is the worker's full report, not just its last message";
     const r = await askFn({ task: { brief }, report: { text: report } }, checkQuestions, { config });
     Object.assign(out, readReport(r.answers), { provider: r.provider, decision_model: r.model, ms: Math.round(r.latencyMs) });
-  } catch (e) { Object.assign(out, { headline: "routr: could not read the report; judge it yourself", fallback: true, error: failureMessage(e, config) }); }
+  } catch (e) { return failed(failureMessage(e, config)); }
   return out;
 }
 

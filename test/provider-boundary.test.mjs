@@ -78,6 +78,11 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
     return result.stdout.toString();
   };
   const rows = () => existsSync(ledger) ? readFileSync(ledger, "utf8").trim().split("\n").map(JSON.parse) : [];
+  const doctorFailure = (stdout) => {
+    const r = JSON.parse(stdout);
+    expect(r.next_steps[0]).toBe(r.key.error);
+    if (provider !== "ollama") expect(r.next_steps[0].split(PROVIDERS[provider].get).length - 1).toBe(1);
+  };
   const record = (stdout) => {
     const before = rows().length, id = JSON.parse(stdout).id;
     writeFileSync(advice, stdout);
@@ -96,9 +101,7 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
         record(stdout);
       }
       if (command[0] === "doctor" && command.includes("--json") && code === "key_refused") {
-        const r = JSON.parse(stdout);
-        expect(r.next_steps[0]).toBe(r.key.error);
-        expect(r.next_steps[0].split(PROVIDERS[provider].get).length - 1).toBe(provider === "ollama" ? 0 : 1);
+        doctorFailure(stdout);
       }
     }
   }
@@ -122,16 +125,23 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
   if (provider !== "ollama") {
     // Clear the test key saved above before testing absent credentials and an unreadable secrets file.
     writeFileSync(join(home, ".config/routr/env"), "");
-    for (const command of commands.filter(([c]) => c !== "key")) expect(run(command, "valid", true)).toContain(expected(provider, "no_key"));
+    for (const command of commands.filter(([c]) => c !== "key")) {
+      const stdout = run(command, "valid", true);
+      expect(stdout).toContain(expected(provider, "no_key"));
+      if (command[0] === "doctor" && command.includes("--json")) doctorFailure(stdout);
+    }
     rmSync(join(home, ".config/routr/env")); mkdirSync(join(home, ".config/routr/env"));
     for (const command of commands.filter(([c]) => c !== "key")) {
       const stdout = run(command, "valid", true);
       expect(stdout).toContain("routr cannot read its secrets file"); expect(stdout).toContain(join(home, ".config/routr/env"));
+      if (command[0] === "doctor" && command.includes("--json")) doctorFailure(stdout);
     }
   }
   if (provider === "typesafe") {
     const stdout = run(["doctor"], "identity", false, { ROUTR_DECISION_MODEL: "jev-preview" });
     expect(stdout).toContain("jev-1.14.0, asked as jev-preview answers");
+    expect(JSON.parse(run(["doctor", "--json"], "identity")).key.measured).toBe(false);
+    expect(JSON.parse(run(["dispatch", BRIEF_MARKER], "identity"))).toMatchObject({ decision_model: "jev-1.14.0", unmeasured: true });
   }
   if (provider === "ollama") {
     const r = JSON.parse(run(["doctor", "--json"], "digest")); expect(r.key.note).toBeNull();
@@ -285,3 +295,38 @@ for (const provider of ["typesafe", "cloudflare"]) test(`${provider}: setup's re
     const r = JSON.parse(stdout); expect(r.result.ok).toBe(true); expect(r.result.did.join(" ")).toContain(`saved the ${PROVIDERS[provider].label} key`);
   }
 }, 30000);
+
+test("check names a missing or unreadable input file through the CLI and still exits 0", () => {
+  const home = scratch("check-inputs"), brief = join(home, "brief"), report = join(home, "report"), unreadable = join(home, "directory");
+  writeFileSync(brief, BRIEF_MARKER); writeFileSync(report, KEY_MARKER); mkdirSync(unreadable);
+  for (const flag of ["brief", "report"]) for (const path of [join(home, "missing"), unreadable]) {
+    const result = Bun.spawnSync([process.execPath, "--preload", join(import.meta.dir, "fixtures/provider-fetch.mjs"), SCRIPT,
+      "check", "--brief", flag === "brief" ? path : brief, "--report", flag === "report" ? path : report], {
+      env: cliEnv(home, { PATH: home, ...credentials, ROUTR_TEST_PROVIDER: "typesafe", ROUTR_TEST_REPLY: "valid" }), stdin: "ignore",
+    });
+    expect(result.exitCode).toBe(0); expect(result.stderr.toString()).toBe(""); clean(result.stdout.toString());
+    expect(JSON.parse(result.stdout.toString())).toMatchObject({ fallback: true, error: `could not read --${flag} ${path}: provide a file that exists and is readable.` });
+  }
+});
+
+test("measurement and profile follow the answering identity, including aliases and pin mismatches", async () => {
+  const cases = [
+    ["typesafe", "jev-1.13.0", "jev-1.13.1", false, "jev-1.13.0"],
+    ["typesafe", "jev-1.13.0", "jev-1.13.0", true, "jev-1.13.0"],
+    ["typesafe", "jev-preview", "jev-1.13.0", true, "jev-1.13.0"],
+    ["typesafe", "jev-preview", "jev-1.13.1", false, "jev-1.13.0"],
+    ["typesafe", "jev-9.0.0", "jev-9.0.0", false, "jev-1.13.0"],
+    ["cloudflare", "clef", "clef-flash", true, "clef-flash"],
+    ["cloudflare", "clef-flash", "clef", true, "clef"],
+    ["ollama", "clef-flash:9b-q8_0", "clef-flash:9b-mxfp8", true, "clef-flash:9b-mxfp8"],
+    ["ollama", "clef-flash:9b-mxfp8", "clef-flash:9b-q8_0", true, "clef-flash:9b-q8_0"],
+  ];
+  for (const [provider, requested, model, measured, profile] of cases) {
+    const fetchFn = async (url, init) => {
+      const raw = await (await replyFetch(provider, "valid")(url, init)).json(), result = provider === "cloudflare" ? raw.result : raw;
+      result.model = model; return Response.json(raw);
+    };
+    const r = await ask({}, questions, { config: { decision: { provider } }, env: { ...credentials, ROUTR_DECISION_MODEL: requested }, fetchFn });
+    expect(r).toMatchObject({ model, measured }); expect(r.profile).toBe(PROVIDERS[provider].models[profile]); clean(r);
+  }
+});
