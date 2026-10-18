@@ -1,6 +1,7 @@
 // One comparison for launch and record: advice on a summary or another worker is not advice on this task.
 import { readFileSync } from "node:fs";
 import { briefSha } from "./ledger.mjs";
+import { DECISION_FAILURES, isProvider } from "./providers.mjs";
 
 // Every file a lead hands routr (advice, task) is read the same way. PowerShell 5.1's > writes UTF-16LE;
 // Set-Content -Encoding utf8 writes a UTF-8 BOM. A BOM-less UTF-16 file of text starts with an ASCII character
@@ -19,6 +20,15 @@ export function readAdvice(file) {
 export function matchAdvice(advice, task) {
   if (typeof advice?.brief_sha !== "string" || !advice.brief_sha) throw new Error("--advice: missing brief_sha; dispatch the exact task again");
   if (advice.brief_sha !== briefSha(task)) throw new Error("--advice was given on a different text than this task; dispatch the exact task again");
+}
+// Saved advice is an outside boundary too: project known fields and regenerate the sentence from its code. A
+// missing/invalid identity stays unknown; today's config must never fill in yesterday's attempted model.
+export function savedDecisionUnavailable(advice) {
+  const entry = Array.isArray(advice.unavailable) ? advice.unavailable.find((u) => u?.part === "decision model") : null;
+  if (!entry || !isProvider(entry.provider) || typeof entry.model !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,199}$/.test(entry.model)
+    || typeof entry.code !== "string" || !Object.hasOwn(DECISION_FAILURES, entry.code))
+    return { part: "decision model", provider: null, model: null, code: "attempt_unknown", why: "The saved fallback advice does not name the attempted decision model and its failure." };
+  return { part: "decision model", provider: entry.provider, model: entry.model, code: entry.code, why: DECISION_FAILURES[entry.code] };
 }
 export function readTask(file) {
   if (typeof file !== "string" || !file.trim() || /^-\S/.test(file)) throw new Error("--task-file requires a usable path");

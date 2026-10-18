@@ -32,4 +32,10 @@ export const replyFetch = (provider, scenario) => async (url, init) => {
   return Response.json(provider === "cloudflare" ? { success: true, result, errors: [{ message: text }], messages: [text] } : result);
 };
 
-if (process.env.ROUTR_TEST_PROVIDER) globalThis.fetch = replyFetch(process.env.ROUTR_TEST_PROVIDER, process.env.ROUTR_TEST_REPLY);
+if (process.env.ROUTR_TEST_PROVIDER) {
+  globalThis.fetch = replyFetch(process.env.ROUTR_TEST_PROVIDER, process.env.ROUTR_TEST_REPLY);
+  if (process.env.ROUTR_TEST_REPLY === "internal") {
+    const { PROVIDERS } = await import("../../src/lib/providers.mjs");
+    PROVIDERS[process.env.ROUTR_TEST_PROVIDER].request = () => { throw new Error(text); };
+  }
+}

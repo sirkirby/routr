@@ -2,6 +2,7 @@
 import { expect, test } from "bun:test";
 import { basename, dirname, join } from "node:path";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { usageFailure } from "../src/lib/usage-failure.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { tmpdir } from "node:os";
 import { claudeProjectFolders, claudeSnapshot, codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, parseClaudeReset, parseClaudeUsage, readClaude, summarize } from "../src/lib/usage.mjs";
@@ -40,8 +41,8 @@ test("a member credit cap is one more window with its own period, and the tighte
   const both = codexSnapshot(capped(feb1, 10, { primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: NOW / 1000 + 60 } }), "app-server", NOW / 1000, NOW / 1000);
   expect(both.headroom).toBeCloseTo(0.1); expect(both.windows.map((w) => w.name)).toEqual(["primary", "monthly_cap"]);
   const at = codexSnapshot(capped(feb1, 0, { spendControlReached: true, rateLimitReachedType: "workspace_member_credits_depleted" }), "app-server", NOW / 1000, NOW / 1000);
-  expect(at.headroom).toBe(0); expect(at.note).toContain("workspace_member_credits_depleted"); expect(at.note).toContain("spend control reached");
-  // credits beside windows leave the windows in charge (claimed shape); a finite balance with no windows is metered and named
+  expect(at.headroom).toBe(0); expect(at.note).toContain("a rate limit was reached"); expect(at.note).toContain("spend control reached");
+  // credits beside windows leave the windows in charge (claimed shape); a finite balance with no windows is metered
   expect(codexSnapshot({ ...PRO_LOGIN, credits: { hasCredits: true, unlimited: true, balance: null } }, "app-server", NOW / 1000, NOW / 1000)).toMatchObject({ class: "included", headroom: 0.4 });
   expect(codexSnapshot({ ...ENTERPRISE_SEAT, credits: { hasCredits: true, unlimited: false, balance: "250" } }, "app-server", NOW / 1000, NOW / 1000).note).toContain("balance 250");
 });
@@ -223,7 +224,7 @@ test("no private folder, no read: Claude is not started in the shared temp folde
   writeFileSync(file, JSON.stringify({ ts: OCT5 - 3600, rate_limits: { seven_day: { used_percentage: 40, resets_at: OCT5 + 86400 } }, answered: true }));
   const old = await read(file);
   expect(started).toBe(false);
-  expect(old).toMatchObject({ source: "statusline", headroom: 0.6 }); expect(old.note).toContain("this is the statusline's last reading");
+  expect(old).toMatchObject({ source: "claude /usage", headroom: 0.6 }); expect(old.note).toContain("This is the statusline's last reading");
 });
 
 test("Claude's live read fails open: the old snapshot however old, else the assumed headroom, and the note says why", async () => {
@@ -232,13 +233,13 @@ test("Claude's live read fails open: the old snapshot however old, else the assu
   writeFileSync(file, JSON.stringify({ ts: OCT5 - 3 * 3600, rate_limits: rl, answered: true }));
   const read = (exec, f = file) => readClaude({ file: f, nowSec: OCT5, exec: async () => exec });
   const old = await read(null); // timed out, or no claude
-  expect(old).toMatchObject({ source: "statusline", headroom: 0.6, ageSec: 3 * 3600 });
-  expect(old.note).toBe("`claude -p /usage` did not answer in 12 s: this is the statusline's last reading");
-  expect((await read("not json")).note).toContain("did not answer as expected: this is the statusline's last reading");
-  expect((await read(claudeAnswer("x", { is_error: true }))).note).toContain("did not answer as expected");
+  expect(old).toMatchObject({ source: "claude /usage", headroom: 0.6, ageSec: 3 * 3600 });
+  expect(old.note).toBe("The usage source did not answer. This is the statusline's last reading");
+  expect((await read("not json")).note).toContain("returned a reply routr cannot read. This is the statusline's last reading");
+  expect((await read(claudeAnswer("x", { is_error: true }))).note).toContain("returned a reply routr cannot read");
   const nothing = await read(null, missing);
   expect(nothing).toMatchObject({ source: "claude /usage", headroom: null, class: "unknown" });
-  expect(nothing.note).toBe("`claude -p /usage` did not answer in 12 s; using the assumed headroom");
+  expect(nothing.note).toBe("The usage source did not answer. Using the assumed headroom");
   // It answered, and showed no windows: the seat may have no quota; doctor's step keys on the reason.
   const bare = await read(claudeAnswer("You are using an API key"), missing);
   expect(bare).toMatchObject({ headroom: null, class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER }); expect(bare.note).toContain('billing: "metered"');
@@ -393,11 +394,11 @@ test("cursorUsage sends a second enter if the panel is slow, and still removes t
 });
 
 test("cursorUsage removes the session when Cursor never draws or the session fails half way", async () => {
-  for (const [opts, says] of [[{ neverDraws: true }, "timed out"], [{ failCreate: true }, "boom"], [{ spawnFails: true }, "EACCES"]]) {
+  for (const opts of [{ neverDraws: true }, { failCreate: true }, { spawnFails: true }]) {
     const f = fakeCursorUsage(opts);
     const r = await cursorUsage({ ...f.deps, timeout: 1000 });
     expect(r).toMatchObject({ ok: false, read_yourself: CURSOR_BY_HAND });
-    expect(r.error).toContain(says);
+    expect(r).toMatchObject(usageFailure("read_failed"));
     expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
   }
 });
@@ -413,7 +414,7 @@ test("a question the private session's shell asks is not answered: the read stop
 test("cursor-agent missing is said in seconds, not at the 90 s timeout", async () => {
   const f = fakeCursorUsage({ neverDraws: true, cursorRuns: false });
   const r = await cursorUsage(f.deps); // the default 90 s budget
-  expect(r.error).toContain("cursor-agent did not start");
+  expect(r).toMatchObject(usageFailure("no_response"));
   expect(f.deps.now()).toBeLessThan(10000);
   expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
 });
@@ -429,7 +430,7 @@ test("cursorUsage without herdr fails open, says how to read it by hand, and sta
   const started = [];
   const r = await cursorUsage({ run: async () => { throw Object.assign(new Error("spawn herdr ENOENT"), { code: "ENOENT" }); }, terminal: { start: (n) => started.push(n) } });
   expect(r).toMatchObject({ ok: false, read_yourself: CURSOR_BY_HAND });
-  expect(r.error).toContain("herdr is not installed");
+  expect(r).toMatchObject(usageFailure("read_failed"));
   expect(started).toEqual([]);
 });
 
@@ -440,17 +441,17 @@ test("usage cursor with no Cursor to ask says so, starts nothing, prints JSON an
   const res = Bun.spawnSync([process.execPath, SCRIPT, "usage", "cursor"], { env: cleanEnv });
   expect(res.exitCode).toBe(0);
   const out = JSON.parse(res.stdout.toString());
-  expect(out).toMatchObject({ ok: false, error: "`cursor-agent` did not answer its sign-in check (not installed, or it hung)" });
-  expect(JSON.parse(readFileSync(join(home, ".cache/routr/cursor-usage.json"), "utf8")).error).toBe(out.error);
+  expect(out).toMatchObject({ ok: false, excluded: true });
+  expect(JSON.parse(readFileSync(join(home, ".cache/routr/cursor-usage.json"), "utf8"))).toMatchObject({ excluded: true });
   expect(JSON.parse(readFileSync(join(home, ".cache/routr/signed-in.json"), "utf8")).cursor.state).toBe("no answer");
 });
 
 const KIRO_USAGE = "Estimated Usage | resets on 2026-10-01 | KIRO FREE\nCredits (0.00 of 50 covered in plan), 0.0%\nManage your plan at https://app.kiro.dev/account/usage\n";
 
-test("Kiro's /usage text: monthly plan credits and the reset day; unknown lines are kept, never guessed at", () => {
+test("Kiro's /usage text: monthly plan credits and the reset day; unknown lines are counted, never copied", () => {
   expect(parseKiroUsage(KIRO_USAGE)).toEqual({ plan: "KIRO FREE", credits_used: 0, credits_limit: 50, used_pct: 0, resets_at: Date.UTC(2026, 9, 1) / 1000 });
   expect(parseKiroUsage(KIRO_USAGE.replace("0.00 of 50", "1,234.5 of 2,000"))).toMatchObject({ credits_used: 1234.5, credits_limit: 2000, used_pct: 61.7 });
-  expect(parseKiroUsage(`${KIRO_USAGE}Overage: 12.00 credits\n`).other).toBe("Overage: 12.00 credits");
+  expect(parseKiroUsage(`${KIRO_USAGE}Overage: 12.00 credits\n`).unrecognized_lines).toBe(1);
   for (const junk of [null, "", "Credits (5 of 0 covered in plan)", "You are out of credits"]) expect(parseKiroUsage(junk)).toBeNull();
 });
 
@@ -463,7 +464,7 @@ test("kiroUsage runs /usage outside the user's project and deletes the session i
   expect(r.note).toBeUndefined();
   expect(calls.map((c) => [c.cmd, ...c.args])).toEqual([["kiro-cli", "chat", "--output-format", "stream-json", "/usage"], ["kiro-cli", "chat", "--delete-session", "s-1"]]);
   expect(calls.every((c) => c.o.cwd === "/tmp/scratch")).toBe(true);
-  expect((await kiroUsage({ exec: exec(1) })).note).toContain("kiro-cli chat --delete-session s-1"); // left behind: says how to remove it
+  expect((await kiroUsage({ exec: exec(1) })).note).toContain("inspect its saved sessions"); // left behind: says how to remove it
   expect(await kiroUsage({ exec: exec(0, null) })).toMatchObject({ ok: false, read_yourself: KIRO_BY_HAND });
   expect(await kiroUsage({ exec: exec(0, stream.replace("covered in plan", "left")) })).toMatchObject({ ok: false, read_yourself: KIRO_BY_HAND });
 });
@@ -481,8 +482,8 @@ test("Kiro is a snapshot like Cursor's, a monthly window that tapers the reserve
   expect(started).toHaveLength(1);
   await refreshKiro({ file, nowSec: T + 80, read: async () => ({ ...reading, resets_at: T + 3600 }) });
   expect(readKiro({ file, nowSec: T + 7200 }).headroom).toBe(1); // past the reset: a new month, whatever the reading said
-  await refreshKiro({ file, nowSec: T + 100, read: async () => ({ ok: false, error: "kiro-cli did not answer", read_yourself: KIRO_BY_HAND }) });
-  expect(readKiro({ file, nowSec: T + 101 }).note).toContain("the last try failed: kiro-cli did not answer");
+  await refreshKiro({ file, nowSec: T + 100, read: async () => ({ ok: false, ...usageFailure("no_response"), read_yourself: KIRO_BY_HAND }) });
+  expect(readKiro({ file, nowSec: T + 101 }).note).toContain("the last try failed: The usage source did not answer.");
 });
 
 test("Cursor is a snapshot every call reads at once, refreshed in the background about once a session", async () => {
@@ -510,10 +511,10 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
   expect(later.note).toContain("a fresh reading is being taken");
   expect(started).toHaveLength(2);
   // A failed reading keeps the last good one and says why.
-  await refreshCursor({ file, nowSec: T + 20000, read: async () => ({ ok: false, error: "herdr is not installed", read_yourself: CURSOR_BY_HAND }) });
+  await refreshCursor({ file, nowSec: T + 20000, read: async () => ({ ok: false, ...usageFailure("read_failed"), read_yourself: CURSOR_BY_HAND }) });
   const kept = read(T + 20001);
   expect(kept.headroom).toBeCloseTo(0.34, 9);
-  expect(kept.note).toContain("the last try failed: herdr is not installed");
+  expect(kept.note).toContain("the last try failed: routr could not read this usage source.");
   // Only the background reading releases the lock: one asked for by hand must not free a lock it does not hold.
   const byHand = join(dir, "byhand.json"), held = `${byHand}.lock`;
   writeFileSync(held, "");
@@ -523,7 +524,7 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
   expect(existsSync(held)).toBe(false);
   // Never read, and the try failed: assumed, with how to read it by hand.
   const never = join(dir, "never.json");
-  await refreshCursor({ file: never, nowSec: T, read: async () => ({ ok: false, error: "no herdr", read_yourself: CURSOR_BY_HAND }) });
+  await refreshCursor({ file: never, nowSec: T, read: async () => ({ ok: false, ...usageFailure("read_failed"), read_yourself: CURSOR_BY_HAND }) });
   expect(readCursor({ file: never, nowSec: T + 1, refresh: () => {}, off: false }).note).toContain(CURSOR_BY_HAND);
   // Turned off (tests), a call neither starts a reading nor writes the stamp.
   const quiet = join(dir, "quiet.json");
@@ -762,8 +763,9 @@ test("a background reading of a harness that is not signed in never starts it, k
   const dir = scratch("gate"), file = join(dir, "kiro-usage.json"), lock = `${file}.lock`;
   writeFileSync(lock, "");
   const r = await refreshKiro({ file, background: true, ready: async () => "not signed in: kiro-cli login", read: async () => { throw new Error("must not read"); } });
-  expect(r).toEqual({ ok: false, error: "not signed in: kiro-cli login" });
-  expect(JSON.parse(readFileSync(file, "utf8")).error).toBe("not signed in: kiro-cli login");
+  expect(r).toMatchObject({ ok: false, excluded: true });
+  expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ excluded: true });
+  expect(JSON.parse(readFileSync(file, "utf8")).failure).toBeUndefined();
   expect(existsSync(lock)).toBe(false);
 });
 

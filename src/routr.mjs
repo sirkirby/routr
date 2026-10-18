@@ -122,7 +122,7 @@ if (ADVISE[mode]) { await ADVISE[mode](); process.exit(0); }
 if (mode !== "subagent" && mode !== "dispatch") { console.error(formatUnknownUsage()); process.exit(2); }
 
 const { doNext } = await import("./lib/next.mjs");
-const briefRefusal = (error) => print({ ok: false, error,
+const briefRefusal = (error) => print({ ok: false, error, unavailable: [],
   next: [doNext("Supply the exact task: quote an inline brief, pipe it on stdin, or use this file form.", `routr ${mode} --task-file <path>`)] });
 
 // File input is explicit: a missing value is refused rather than accidentally reading stdin or advising on a flag.

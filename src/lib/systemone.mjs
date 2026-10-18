@@ -22,14 +22,14 @@ export function readSecretsFile(file = SECRETS_FILE) {
 // kept). Throws with what to do when one is missing.
 // The file is read only when the environment does not supply everything: an unreadable file must not block a key
 // given in the environment (from the core review; the old TypeSafe client read the environment first too).
-export function secretsFor(provider, { env = process.env, file = SECRETS_FILE } = {}) {
+export function secretsFor(provider, { env = process.env, file = SECRETS_FILE, target = { provider } } = {}) {
   const P = PROVIDERS[provider], out = {};
   let saved = null;
   for (const s of P.secrets) {
     let v;
     try { v = env[s.name] || [s.name, ...(s.aliases ?? [])].map((n) => (saved ??= readSecretsFile(file))[n]).find(Boolean); }
-    catch { throw new DecisionError({ provider }, "secrets_unreadable", undefined, { secret: s.name, file }); }
-    if (!v) throw new DecisionError({ provider }, "no_key", undefined, { secret: s.name });
+    catch { throw new DecisionError(target, "secrets_unreadable", undefined, { secret: s.name, file }); }
+    if (!v) throw new DecisionError(target, "no_key", undefined, { secret: s.name });
     out[s.name] = v;
   }
   return out;
@@ -127,7 +127,7 @@ function readAnswers(answers, questions, target) {
 // `target` and `fetchFn` are seams for the maintainers' gate and for tests.
 export async function ask(state, questions, { config, deadlineMs, env = process.env, target, fetchFn = fetch, file } = {}) {
   const t = target ?? decisionTarget(config, env), P = PROVIDERS[t.provider];
-  const secrets = secretsFor(t.provider, { env, file });
+  const secrets = secretsFor(t.provider, { env, file, target: t });
   let request, payload;
   try { request = P.request(t.model, secrets, env); payload = JSON.stringify({ ...request.body, state, model: t.model, questions }); }
   catch { throw new DecisionError(t, "internal_error"); }

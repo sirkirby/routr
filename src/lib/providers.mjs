@@ -187,6 +187,20 @@ export function decisionTarget(config, env = process.env) {
 
 // Only these sentences cross the provider boundary. No response body, envelope message, URL or thrown exception
 // supplies text; the target is the one routr requested. Callers use the code/provider rather than reading prose.
+export const DECISION_FAILURES = Object.freeze({
+  no_key: "No credential is available for the decision provider.",
+  secrets_unreadable: "routr could not read its secrets file.",
+  key_refused: "The decision provider refused the credential.",
+  model_missing: "The local decision model has not been pulled.",
+  model_unsupported: "The local model or server does not support decision requests.",
+  timeout: "The decision request timed out.",
+  unreachable: "The decision provider could not be reached.",
+  daily_allowance: "The decision provider's daily free allowance is used up.",
+  provider_error: "The decision provider returned an error.",
+  invalid_response: "The decision provider returned a reply routr cannot read.",
+  internal_error: "An internal error stopped the decision check.",
+});
+
 export class DecisionError extends Error {
   constructor(target, code, status, { secret, file = SECRETS_FILE, host } = {}) {
     const { provider, model } = target, P = PROVIDERS[provider];
@@ -213,6 +227,16 @@ export class DecisionError extends Error {
     this.name = "DecisionError";
     this.code = code;
     this.provider = provider;
+    this.model = model ?? null;
+    this.why = DECISION_FAILURES[code];
     if (code === "provider_error") this.status = Number.isInteger(status) ? status : 0;
   }
 }
+
+// Output-only diagnostic. The detailed message above still supplies the action; this sentence is stable across
+// hosts, secret paths and HTTP statuses, so saved advice can be classified without trusting its prose.
+export function decisionUnavailable(e, target) {
+  const error = e instanceof DecisionError ? e : new DecisionError(target, "internal_error");
+  return { part: "decision model", provider: error.provider, model: error.model ?? target.model, code: error.code, why: error.why };
+}
+export const noReading = (u) => `routr: no reading (${u.model} on ${PROVIDERS[u.provider].label} unavailable: ${u.code})`;

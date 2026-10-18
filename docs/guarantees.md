@@ -13,7 +13,11 @@ yours (`doctor --fix` is `setup` under another name). What they do besides answe
   refreshed);
 - start one of routr's detached jobs and carry on: the updater, or Cursor's or Kiro's usage refresh.
 
-They fail open: any error still prints usable output and exits 0.
+They fail open: any error still prints usable output and exits 0. `dispatch`, `subagent` and `check` return
+`unavailable`, a list of the readings they could not make (`[]` when nothing was missing). Decision-model failures
+name the provider and attempted model with a fixed code and sentence; their headline starts with `no reading`.
+`check` also names an unreadable brief or report. `decision_model` continues to mean the model that answered
+(null in a fallback ledger row); `unavailable` is output only, never stored in the ledger or sent in telemetry.
 
 `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`, `feedback`,
 `launch`, `cleanup`, `usage cursor`, and `usage kiro` act, and each says what it did. Their read-only forms
@@ -22,7 +26,9 @@ They fail open: any error still prints usable output and exits 0.
 - `launch` drives panes in your herdr session. A task requires readable JSON advice on that exact task (including
   `brief_sha`); missing or nonmatching advice is refused before any harness, pane or worktree call. Dry runs warn
   and plan instead. Matching fallback advice is accepted, including advice saved as UTF-8 or UTF-16LE, with or without
-  a BOM. The lead still chooses the account, model and effort. Real launches return a record template only after a
+  a BOM. Launch copies its decision-model `unavailable` entry. Older fallback advice that lacks the entry says the
+  saved advice does not name the attempted model; launch never fills it from current settings. The lead still
+  chooses the account, model and effort. Real launches return a record template only after a
   start or task-submission attempt; dry runs with matching advice return the planned template.
 - `record --task-file` checks that the advice belongs to that task before reading reports or appending anything.
   Without a task file it warns that the advice was not checked. Revisions require the original advice identity;
@@ -61,6 +67,12 @@ routr never has to own a harness feature (a statusline slot, a hook) to get its 
   their readings are snapshots: when the last try is over 4 hours old, a call starts a detached `routr usage cursor`
   (or `kiro`) to refresh it, says a fresh reading is being taken, and carries on without waiting (unlike the updater,
   also from a source checkout: it swaps nothing).
+
+Failed usage reads have fixed codes and sentences at the reader boundary and in the snapshot cache; harness
+output and exception text are never copied into their diagnostics. A failed refresh keeps the last good reading
+and reports the failure separately. A snapshot at least a day old is too old to use: its age is shown with assumed
+headroom, and age alone is not a failure. Metered accounts without known capacity are valid readings. Accounts
+left out by settings or sign-in status stay in `excluded`, outside the failed readings.
 
 How usage is ranked: [ranking.md](ranking.md). A reserve is never offered.
 

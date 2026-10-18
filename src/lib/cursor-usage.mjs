@@ -10,6 +10,9 @@ import { deadline, runHerdr, SHELLS, shellAlone, shellFamily, waitForShell } fro
 import { CURSOR_SNAPSHOT, home } from "./runtime.mjs";
 import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
 import { openTerminal } from "./terminal.mjs";
+import { usageFailure } from "./usage-failure.mjs";
+
+const cursorPlan = (p) => ["Free", "Pro", "Pro+", "Ultra", "Team", "Business", "Enterprise"].includes(p) ? p : null;
 
 const PCT = String.raw`(\d+(?:\.\d+)?)%\s+used\b`;
 
@@ -25,7 +28,7 @@ export function parseCursorUsage(text) {
   const api = t.match(new RegExp(String.raw`^\s*API\s+${PCT}`, "m"));
   const plan = t.match(/Usage\s*[•·]\s*(\S+)/)?.[1] ?? null;
   return {
-    plan,
+    plan: cursorPlan(plan),
     included_used_pct: num(included[1]),
     auto_used_pct: auto ? num(auto[1]) : null,
     api_used_pct: api ? num(api[1]) : null,
@@ -46,6 +49,7 @@ export const CURSOR_BY_HAND = "run `cursor-agent`, type /usage, read \"Included 
 export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(),
   tmp = tmpdir(), timeout = 90000, terminal = {}, cursorConfig = join(home(), ".cursor", "cli-config.json") } = {}) {
   let t = null, dir = null;
+  let code = "read_failed";
   try {
     const remaining = deadline(timeout, now, "Cursor usage timed out");
     const pause = async () => sleep(Math.min(250, remaining()));
@@ -63,7 +67,7 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
     for (;;) {
       if (cursorUiReady(await t.read())) break;
       // A cursor-agent that is missing or exits at once leaves the shell alone: say so now, not at the timeout.
-      if (now() - ranAt >= 3000 && await shellAlone(t)) throw new Error("cursor-agent did not start in the login shell (not installed, not on that shell's PATH, or it exited at once)");
+      if (now() - ranAt >= 3000 && await shellAlone(t)) { code = "no_response"; throw new Error(); }
       await pause();
     }
     await t.call(["pane", "send-text", t.pane, "/usage"]);
@@ -77,7 +81,7 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
         await t.call(["pane", "send-keys", t.pane, "enter"]);
         extraEnter = true;
       } else if (extraEnter && now() - panelAt >= 12000) {
-        throw new Error("Cursor /usage panel did not appear");
+        code = "invalid_response"; throw new Error();
       }
       await pause();
     }
@@ -85,8 +89,8 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
     const headroom = Math.round((1 - included / 100) * 100) / 100;
     return { ok: true, subscription: "cursor", plan: parsed.plan, included_used_pct: included,
       auto_used_pct: parsed.auto_used_pct, api_used_pct: parsed.api_used_pct, headroom };
-  } catch (e) {
-    return { ok: false, error: String(e?.message ?? e).slice(0, 200), read_yourself: CURSOR_BY_HAND };
+  } catch {
+    return { ok: false, ...usageFailure(code), read_yourself: CURSOR_BY_HAND };
   } finally {
     await t?.close(); // stopping the session ends Cursor with it
     if (dir) try { rmSync(dir, { recursive: true, force: true }); } catch {}
@@ -96,8 +100,11 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
 // Cursor: only Included counts: it is the whole plan, and Cursor's own models (Composer, Grok) draw on it through Auto.
 // API is other vendors' models inside Cursor, which routr does not route to, so it is shown in the note and never ranked.
 const pct = (x) => (x == null ? "?" : `${x}%`);
+const number = (x) => Number.isFinite(x) ? x : null;
+const keepCursor = (r) => ({ plan: cursorPlan(r.plan), included_used_pct: number(r.included_used_pct), auto_used_pct: number(r.auto_used_pct), api_used_pct: number(r.api_used_pct) });
 export const refreshCursor = ({ read = cursorUsage, file = CURSOR_SNAPSHOT, ...o } = {}) => refreshSnapshot({ read, file, ...o,
-  keep: (r) => ({ plan: r.plan, included_used_pct: r.included_used_pct, auto_used_pct: r.auto_used_pct, api_used_pct: r.api_used_pct }) });
+  keep: keepCursor });
 export const readCursor = ({ file = CURSOR_SNAPSHOT, ...o } = {}) => readSnapshot({ name: "cursor", source: "cursor /usage", byHand: CURSOR_BY_HAND, file, ...o,
+  keep: keepCursor,
   windows: (r) => [{ name: "included", usedPct: r.included_used_pct, windowMin: null, resetsAt: null }],
   describe: (r) => `Included ${pct(r.included_used_pct)} used (Auto ${pct(r.auto_used_pct)}, API ${pct(r.api_used_pct)})` });
