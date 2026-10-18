@@ -92,10 +92,9 @@ measured questions about a brief or a worker report; code adds live usage; the l
 
 ## Design
 
-- One module owns each outside boundary: the processes routr starts (`runtime.mjs`), the decision-model providers
-  (`providers.mjs`, `systemone.mjs`), the commands routr hands back to an agent. Text from outside (a provider's
-  reply, a harness's output, a pane's screen) is classified there into what routr knows how to say, and MUST NOT
-  pass through to output, the ledger, or telemetry.
+- One module owns each outside boundary: the processes routr starts, the decision-model providers, the commands
+  routr hands back to an agent. Text from outside (a provider's reply, a harness's output, a pane's screen) is
+  classified there into what routr knows how to say, and MUST NOT pass through to output, the ledger, or telemetry.
 - Fix the pattern, not the instance. A bug found in one harness, provider or command is fixed in the shared code
   they all go through, after checking every place with the same shape; where no shared code exists, make it.
 - Each command's output is a documented contract that fits its step. A field that means the same thing has one
