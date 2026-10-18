@@ -91,7 +91,13 @@ export function assessCommand({ ledger = LEDGER_PATH }, config) {
 // `o` holds record's flags by name; the advice JSON comes from `--advice <file>` or stdin.
 export function recordCommand(o, subagentFlags = [], config = null) {
   try {
-    const task = o.task_file != null ? readTask(o.task_file) : null;
+    let task = null;
+    try { if (o.task_file != null) task = readTask(o.task_file); }
+    catch (e) {
+      if (o.run_id != null && e.message === "--task-file: could not read the task file")
+        throw new Error(`${e.message}. If the original task file is gone, revise without --task-file and say so in --note`);
+      throw e;
+    }
     const advice = readAdvice(o.advice ?? 0);
     if (task != null) matchAdvice(advice, task);
     const subagents = o.report != null || subagentFlags.length

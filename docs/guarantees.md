@@ -21,7 +21,9 @@ They fail open: any error still prints usable output and exits 0.
 
 - `launch` drives panes in your herdr session. A task requires readable JSON advice on that exact task (including
   `brief_sha`); missing or nonmatching advice is refused before any harness, pane or worktree call. Dry runs warn
-  and plan instead. Matching fallback advice is accepted, and the lead still chooses the account, model and effort.
+  and plan instead. Matching fallback advice is accepted, including advice saved as UTF-8 or UTF-16LE, with or without
+  a BOM. The lead still chooses the account, model and effort. Real launches return a record template only after a
+  start or task-submission attempt; dry runs with matching advice return the planned template.
 - `record --task-file` checks that the advice belongs to that task before reading reports or appending anything.
   Without a task file it warns that the advice was not checked. Revisions require the original advice identity;
   if the original task file is gone, revise without `--task-file` and say so in `--note`.
@@ -111,8 +113,9 @@ paths. Every process it starts goes through one place, which hides its console o
 environment without herdr's pane variables, and on Windows resolves a command as the shell would, starting an npm
 `.cmd` shim's script directly. In a pane, routr types commands for that pane's own shell (POSIX `sh`, PowerShell or
 cmd), as you would. Follow-up commands have exact `argv` and a common-shell `command` only for the documented
-safe alphabet; otherwise `command` is null. Instructions and templates are marked `kind: "do"`, never runnable.
-Execution history stays display only, with prompt lengths instead of prompt text.
+safe alphabet and an unquoted, non-assignment executable; otherwise `command` is null. Instructions and templates are marked `kind: "do"`, never runnable.
+Unsafe template values become placeholders for the lead to fill, never expanding shell text. Execution history stays
+display only, with prompt lengths instead of prompt text.
 
 ## Secrets, briefs and telemetry
 

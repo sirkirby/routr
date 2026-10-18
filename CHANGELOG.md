@@ -7,10 +7,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 - Task launches require matching advice, including reviews; dry runs warn and still plan.
 - `dispatch` and `subagent` can read the exact brief with `--task-file`.
-- Follow-up steps distinguish runnable argv from instructions and templates, with shell-safe command lines.
+- Follow-up fields moved to `next`: launch’s `cleanup` and `needs_input.then`, and cleanup’s `then` and
+  `refused.then`. `check` and `skill install` now return `next` as an array of typed steps, with shell-safe command lines.
 - Launch returns this worker’s record template; `record --task-file` refuses advice on another task.
 - Orchestrator guides follow each result’s next steps and keep each worker’s original advice through recording.
-
 - A decision model's reply can no longer put its text in routr's output or your ledger. Failures are now a fixed
   set of messages, each saying what to do, and answers are checked against what each question allows. (#82)
 - `check` with a missing brief or report says which file, and Ollama's version and build are shown only in their

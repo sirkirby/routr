@@ -15,7 +15,7 @@
 // started after that read, is the limit this narrows and does not close (from the reviews of b32617a, 980f1b2, 31f9ddf).
 import { lstatSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { displayCommand, doNext, runNext } from "./next.mjs";
+import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { BRANCH, runHerdr } from "./herdr.mjs";
 import { probe } from "./runtime.mjs";
 
@@ -149,7 +149,7 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
   };
   let heads = null;
   const unheld = (w, source, sha) => ({ why: `${w.path} is on a commit no branch or tag holds${sha ? ` (${sha.slice(0, 12)})` : ""}`,
-    next: doNext("Keep the commit on a branch first, then run cleanup again.", `${displayCommand(["git", "-C", w.is_prunable ? source : w.path, "branch"])} <name>${sha ? ` ${sha}` : ""}`) });
+    next: doNext("Keep the commit on a branch first, then run cleanup again.", templateCommand(["git", "-C", w.is_prunable ? source : w.path, "branch", "<name>", ...(sha ? [sha] : [])])) });
 
   // What stands between a worktree and its removal. Returns { why, next } or { copies } (untracked exact copies).
   const check = async (w, source) => {
@@ -225,7 +225,7 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
       }
       out.ok = true; out.state = "listed";
       step("list", true, `${linked.length} worktree${linked.length === 1 ? "" : "s"} besides the main checkout; ${out.worktrees.filter((w) => w.removable).length} can be removed now`);
-      out.next.push(doNext("Choose a worktree to remove; add --delete-branch once its work has landed.", `routr cleanup --cwd ${displayCommand([out.cwd])} --path <path>`));
+      out.next.push(doNext("Choose a worktree to remove; add --delete-branch once its work has landed.", templateCommand(["routr", "cleanup", "--cwd", out.cwd, "--path", "<path>"])));
       return out;
     }
 

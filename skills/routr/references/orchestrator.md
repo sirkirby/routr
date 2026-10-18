@@ -144,7 +144,8 @@ object describing what it did.
 - `--dry-run` prints the plan and changes nothing. Use it to see the flags before spending anything.
 - Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_input`, or `failed`.
   `warnings` holds anything it wants you to look at. `steps` says what it did, in order. Follow `next`: it includes
-  this worker’s record template and the cleanup command (step 6); keep it with the worker, including a failed launch.
+  the cleanup command (step 6) and, after a start or task-submission attempt, this worker’s record template.
+  Preflight refusals have no record template; dry runs with matching advice include the planned template.
 - **`needs_input` is yours to decide.** Something in the pane waits for an answer routr does not give: a shell's own
   question, a harness's startup question, a worker that has not started. `needs_input` holds `why`, the `screen`
   (what the pane shows; withheld once the task was sent, since it then shows the brief: read the pane yourself),
@@ -255,8 +256,9 @@ for a successful review finding issues and checking their fixes; `launch` for tr
 prompt; `unknown` when the cause is not established. Several may apply. Use `--cause none` alone when no extra work
 occurred. Attempts alone never establish model failure.
 
-Record each worker separately, including failed launches and workers replaced during escalation. Each call returns
-a new `run_id`. Advice must belong to that worker’s exact task. To revise the outcome for that same worker, pass its returned
+Record each worker separately, including failed start attempts and workers replaced during escalation. A preflight
+refusal starts no worker and has no record template. Each record call returns a new `run_id`. Advice must belong to
+that worker’s exact task. To revise the outcome for that same worker, pass its returned
 `--run-id` and the same advice, project, subscription, model, effort and level, with the complete updated outcome.
 A fresh dispatch has a new advice `id` and is refused for a revision, even on the same task.
 If the original task file is gone, revise without `--task-file` and say so in `--note`.
@@ -304,8 +306,11 @@ the result is.
 ## Handoff contracts
 
 `dispatch` and `subagent` require a nonempty brief: inline, stdin, or `--task-file <path>`. File input replaces the
-other forms; an unreadable file or a flag without a usable value is refused. Neither command prints the brief.
+other forms; an unreadable file or a flag without a usable value is refused. Unknown flag-led input without a stdin
+brief returns `ok: false`, without a reading, and points to a quoted brief or the file form in `next`. Neither
+command prints the brief.
 `launch` requires `--kind` and `--name`, a model for a real start, and matching `--advice` whenever it sends a task.
+Advice files accept UTF-8 (with or without BOM) and UTF-16LE (with or without BOM), including PowerShell 5.1 output.
 No task needs no advice. `record --task-file` compares the task before reports are read or any row is appended:
 unreadable, mismatched or unhashed advice records nothing (`ok: false`). An omitted task file is accepted for an
 inline task and returns a warning that the advice was not checked against a task. Outcome revisions keep the original
@@ -317,10 +322,13 @@ Follow every result’s `next` array. Each entry is one of:
   outside the safe set, `command` is null: execute `argv` directly. `stdout_to`, when present, names the file to save
   stdout to; it is never a redirection token in `argv`.
 - `kind: "do"`: `why`, and optionally a `template` with placeholders for the lead to fill. It is an instruction,
-  never a runnable command. Launch’s record template is present only for a task with matching advice, also in dry
-  runs. An adopted pane, a dry run naming `--pane`, or no model leaves model and effort as placeholders. Inline tasks
-  omit `--task-file` and never appear in output.
+  never a runnable command. Unsafe values become named placeholders instead of expanding shell text. Launch’s record
+  template requires matching task advice, also in dry runs. A real launch includes it only after an attempt to start
+  the worker or submit its task. An adopted pane, a dry run naming `--pane`, or no model leaves model and effort as
+  placeholders. Inline tasks omit `--task-file` and never appear in output.
 
-The safe set is nonempty words containing only letters, digits, `_ . / : = @ + - ,`, backslash and space, without
-adjacent backslashes or a trailing backslash. Words with spaces are double-quoted. History (`command`,
-`planned_command`) is display only, with prompt lengths in place of prompt text; only follow-up steps go in `next`.
+The safe set is nonempty words containing only letters, digits, `_ . / : = @ + - , ~`, backslash and space, without
+a leading tilde, adjacent backslashes or a trailing backslash. Spaces, backslashes, `@`, commas, internal tildes,
+`--` and dash arguments containing a dot or colon are double-quoted. If the first word would need quotes or contains
+`=`, `command` is null. History (`command`, `planned_command`) is display only, with prompt lengths in place of prompt
+text; only follow-up steps go in `next`.

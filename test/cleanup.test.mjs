@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { commandLine } from "../src/lib/next.mjs";
+import { templateCommand } from "../src/lib/next.mjs";
 import { cleanup, dropCopy, linkedWorktree, parseCleanupArgs, parseStatus, parseWorktreeHeads, sameFile } from "../src/lib/cleanup.mjs";
 import { herdrError, herdrOK, scratch } from "./helpers.mjs";
 
@@ -134,7 +134,7 @@ test("with no worker named, cleanup lists every worktree and what it would do, a
   const r = await cleanup(["--cwd", "/repo"], f.deps);
   expect(r).toMatchObject({ ok: true, state: "listed" });
   expect(r.worktrees.map((w) => [w.branch, w.removable])).toEqual([["done", true], ["dirty", false], ["gone", true]]);
-  expect(r.next.find((n) => n.kind === "do").template).toContain(`routr cleanup --cwd ${commandLine([resolve("/repo")])} --path <path>`);
+  expect(r.next.find((n) => n.kind === "do").template).toContain(templateCommand(["routr", "cleanup", "--cwd", resolve("/repo"), "--path", "<path>"]));
   expect(f.calls.some((a) => ["remove", "close"].includes(a[1]))).toBe(false);
   expect(f.gits.some((g) => (g[1] === "worktree" && g[2] === "remove") || g[1] === "branch")).toBe(false);
 });

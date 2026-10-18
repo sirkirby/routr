@@ -78,9 +78,11 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
 - `input_notes` (only when present): something in what you passed that routr did not take as you may have meant: a
   `--headroom` it could not read (ignored), a flag-like word such as `--json` given as the whole brief (set aside, and
-  the brief read from stdin), or such a word kept as the brief or part of it. When the note says something was ignored,
+  the brief read from stdin), or such a word kept as part of a prose brief. When the note says something was ignored,
   fix it and ask again, or tell the user; a word kept in the brief needs nothing (asking again with a changed brief
   needs fresh dispatch advice before launch).
+- A flag-led invocation without a stdin brief is refused with `ok: false`, without a reading. Quote the whole inline
+  brief if it contains flags, or use `--task-file <path>`; follow `next` to correct the input.
 - `subscriptions` (dispatch only). `candidates.normal` lists accounts for everyday work; `candidates.fallback` lists
   accounts for when no normal candidate can suitably take it. Choose model/effort fit first, then compare capacity
   among suitable options. `most_room` is only a capacity observation. `ranked` lists usable headroom, marked `live`, `given`

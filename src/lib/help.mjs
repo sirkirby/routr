@@ -8,7 +8,7 @@ export const COMMANDS = {
     name: "subagent",
     description: "a worker, or an agent outside herdr, is about to spawn a subagent → what the work demands (an orchestrator in herdr uses dispatch)",
     args: [
-      { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); a flag-like word given alone is set aside when stdin carries the brief, and is the brief otherwise", required: true },
+      { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); unknown flag-led input without a stdin brief is refused; quote a multi-word inline brief containing flags", required: true },
     ],
     flags: [
       { name: "--task-file", arg: "<path>", description: "read the exact task from a file instead of inline text or stdin", required: false },
@@ -19,7 +19,7 @@ export const COMMANDS = {
     name: "dispatch",
     description: "an orchestrator is about to launch a pane → work assessment plus eligible subscriptions and headroom; choose for quality, then compare capacity among suitable options",
     args: [
-      { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); a flag-like word given alone is set aside when stdin carries the brief, and is the brief otherwise", required: true },
+      { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); unknown flag-led input without a stdin brief is refused; quote a multi-word inline brief containing flags", required: true },
     ],
     flags: [
       { name: "--task-file", arg: "<path>", description: "read the exact task from a file instead of inline text or stdin", required: false },

@@ -4,6 +4,8 @@ import { join, resolve } from "node:path";
 import { launch } from "../src/lib/launch.mjs";
 import { recordCommand, adviseCommand } from "../src/lib/commands.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
+import { templateCommand } from "../src/lib/next.mjs";
+import { readAdvice } from "../src/lib/advice-file.mjs";
 import { cleanup } from "../src/lib/cleanup.mjs";
 import { cfg, cliEnv, scratch, SCRIPT, herdrOK } from "./helpers.mjs";
 
@@ -37,7 +39,8 @@ test("task launch requires readable, hashed, matching advice before any outside 
     expect(r.steps.at(-1).detail).toContain(error);
     expect(recordStep(r)).toBeUndefined();
     expect(r.next[0]).toMatchObject({ kind: "run", argv: ["routr", "dispatch", "--task-file", resolve(f.task)] });
-    expect(r.next[0].stdout_to).toBeTruthy();
+    expect(r.next[0].stdout_to).toBe(resolve(`${f.task}.advice.json`));
+    expect(r.next[0].stdout_to).not.toBe(file);
     expect(r.next[0].argv).not.toContain(">");
     const dry = await launch([...args, "--dry-run"], noCalls);
     expect(dry).toMatchObject({ ok: true, state: "planned" });
@@ -56,7 +59,7 @@ test("matching fallback advice yields one worker record template on dry and real
   const args = [...base, "--task-file", f.task, "--advice", f.advice];
   const dry = await launch([...args, "--dry-run"], noCalls);
   expect(recordStep(dry)).toEqual({ kind: "do", why: expect.stringContaining("Verify"), template: expect.stringContaining("routr record --advice ") });
-  for (const part of [resolve(f.advice), "--task-file", resolve(f.task), "--subscription claude", "--model sonnet", "--effort low", "--level <level>", "--verdict <done|partial|blocked>", "--check <pass|fail|none>"]) expect(recordStep(dry).template).toContain(part);
+  for (const part of [templateCommand([resolve(f.advice)]), "--task-file", templateCommand([resolve(f.task)]), "--subscription claude", "--model sonnet", "--effort low", "--level <level>", "--verdict <done|partial|blocked>", "--check <pass|fail|none>"]) expect(recordStep(dry).template).toContain(part);
   for (const extra of [["--pane", "w1:p9"], []]) {
     const noModel = args.filter((_, i) => ![base.indexOf("--model"), base.indexOf("--model") + 1].includes(i));
     const r = await launch([...noModel, ...extra, "--dry-run"], noCalls);
@@ -91,6 +94,14 @@ test("whole launch results withhold the brief in prompted, failed and needs-inpu
     expect(r.state).toBe(state);
     expect(recordStep(r).template).toContain("--model <model> --effort <effort>");
     expect(JSON.stringify(r)).not.toContain(MARKER);
+    if (state === "needs_input") {
+      for (const argv of [["herdr", "agent", "read", "w1:p9"], ["herdr", "agent", "send-keys", "w1:p9", "enter"]]) {
+        const instruction = r.next.find((n) => n.template === templateCommand(argv));
+        expect(instruction).toMatchObject({ kind: "do" });
+        expect(instruction).not.toHaveProperty("argv");
+        expect(instruction).not.toHaveProperty("command");
+      }
+    }
     for (const n of r.next) expect(Object.hasOwn(n, "argv") && n.kind === "do").toBe(false);
   }
 });
@@ -114,13 +125,22 @@ test("record compares the task before report processing or append, and revisions
   const fresh = recordCommand({ ...o, run_id: good.run_id });
   expect(fresh.ok).toBe(false);
   expect(fresh.error).toContain("original advice");
-  expect(fresh.error).toContain("original task file is gone");
-  expect(fresh.error).toContain("--note");
+  expect(fresh.error).toContain("omit it for a new run");
+  expect(fresh.error).not.toContain("task file is gone");
   expect(readFileSync(f.ledger, "utf8")).toBe(bytes);
   writeFileSync(f.advice, JSON.stringify({ id: "unhashed" }));
   expect(recordCommand(o).error).toContain("missing brief_sha");
   expect(readFileSync(f.ledger, "utf8")).toBe(bytes);
   writeFileSync(f.advice, JSON.stringify(f.adv));
+  const missingRevision = recordCommand({ ...o, task_file: join(f.dir, "gone"), run_id: good.run_id });
+  expect(missingRevision.error).toContain("If the original task file is gone, revise without --task-file and say so in --note");
+  for (const [field, value] of [["subscription", "codex"], ["model", "another-model"], ["effort", "high"], ["level", "strong"], ["project", "another-project"]]) {
+    const changed = recordCommand({ ...o, [field]: value, run_id: good.run_id });
+    expect(changed.error).toContain(`different ${field}`);
+    expect(changed.error).toContain("omit it for a new run");
+    expect(changed.error).not.toContain("task file is gone");
+  }
+  expect(readFileSync(f.ledger, "utf8")).toBe(bytes);
   const revision = recordCommand({ ...o, task_file: undefined, run_id: good.run_id, note: "Original task file is gone." });
   expect(revision.ok).toBe(true);
   expect(revision.warnings.join(" ")).toContain("not checked against a task");
@@ -169,4 +189,35 @@ test("whole dispatch, record and cleanup results never carry the brief marker", 
   const record = recordCommand({ advice: f.advice, task_file: f.task, ledger: f.ledger });
   const cleaned = await cleanup(["--pane", "w1:p2"], { run: async () => herdrOK({ panes: [] }), env: {} });
   expect(JSON.stringify([dispatch, record, cleaned])).not.toContain(MARKER);
+});
+
+
+test("advice written by PowerShell is readable as UTF-8 BOM and UTF-16LE with or without BOM", async () => {
+  const f = fixture(), json = JSON.stringify({ ...f.adv, note: "café" });
+  for (const bytes of [Buffer.from(json), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(json)]),
+    Buffer.from(json, "utf16le"), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(json, "utf16le")])]) {
+    writeFileSync(f.advice, bytes);
+    expect(readAdvice(f.advice)).toEqual(JSON.parse(json));
+    const planned = await launch([...base, "--task-file", f.task, "--advice", f.advice, "--dry-run"], noCalls);
+    expect(planned.advice.matches).toBe(true);
+    expect(recordStep(planned)).toBeDefined();
+    expect(recordCommand({ advice: f.advice, task_file: f.task, ledger: f.ledger }).ok).toBe(true);
+  }
+  expect(readFileSync(f.ledger, "utf8").trim().split("\n")).toHaveLength(4);
+});
+
+test("templates replace expanding paths with placeholders, while runnable steps retain exact argv", async () => {
+  const f = fixture(), task = join(f.dir, "task-$HOME`cmd`.md"), advice = join(f.dir, "advice-$HOME`cmd`.json");
+  writeFileSync(task, f.text); writeFileSync(advice, JSON.stringify(f.adv));
+  for (const suffix of [["--dry-run"], ["--pane", "w1:p9"]]) {
+    const r = await launch([...base, "--task-file", task, "--advice", advice, ...suffix], adopted("blocked"));
+    expect(recordStep(r).template).toContain("--advice <advice> --task-file <task-file>");
+    for (const n of r.next.filter((n) => n.template)) {
+      expect(n.template).not.toContain("$HOME"); expect(n.template).not.toContain("`cmd`");
+    }
+  }
+  const missing = await launch([...base, "--task-file", task], noCalls);
+  expect(missing.next[0].argv).toEqual(["routr", "dispatch", "--task-file", task]);
+  expect(missing.next[0].command).toBeNull();
+  expect(missing.next[0].stdout_to).toBe(`${task}.advice.json`);
 });

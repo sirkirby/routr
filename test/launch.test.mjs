@@ -6,7 +6,7 @@ import { plan } from "../src/lib/harnesses.mjs";
 import { composePrompt, launch as rawLaunch, parseLaunchArgs, WORKER_GUIDE } from "../src/lib/launch.mjs";
 import { paneText, promptSettled, quote, runHerdr, shellPrompt } from "../src/lib/herdr.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
-import { commandLine } from "../src/lib/next.mjs";
+import { displayCommand, templateCommand } from "../src/lib/next.mjs";
 import { EventEmitter } from "node:events";
 import { herdrError, herdrOK, SCRATCH, scratch, SCRIPT, shellInfo } from "./helpers.mjs";
 // Every task launch keeps testing its original behavior, with advice on exactly the task it sends.
@@ -366,7 +366,7 @@ test("a question the user's shell asks at startup is not answered: its screen go
   expect(r).toMatchObject({ ok: false, state: "needs_input", needs_input: { pane: "w1:p2", screen: expect.stringContaining("Source it?") } });
   expect(r.needs_input.why).toContain("asked a question");
   expect(instructions(r)).toContain("herdr pane send-keys w1:p2");
-  expect(instructions(r)).toContain(`--task-file ${commandLine([task])}`); // quoted as the shell needs it (Windows paths)
+  expect(r.next.find((n) => n.kind === "run" && n.argv[1] === "launch").argv).toContain(task);
   expect(f.calls.some((a) => ["send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
 });
 
@@ -396,7 +396,7 @@ test("--pane adopts only an idle agent of the kind asked for, in --cwd; anything
   const taking = (reply) => (a) => (a[1] === "prompt" ? herdrOK({}) : reply(a));
   const occupying = (agent, extra = {}) => fakeHerdr({ reply: taking((a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", interactive_ready: true, cwd: here, ...agent } }) : undefined)), ...extra });
   const args = [...launchArgs, "--pane", "w1:p9", "--cwd", here, "--task", "Task"];
-  // The `then` of a launch that stopped at a startup question: the agent is running, idle, the question answered.
+  // The `next` of a launch that stopped at a startup question: the agent is running, idle, the question answered.
   const adopt = occupying({});
   const r = await launch(args, adopt.deps);
   expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w1:p9" });
@@ -424,7 +424,7 @@ test("--pane adopts only an idle agent of the kind asked for, in --cwd; anything
   expect(cursor.calls.filter((a) => a[1] === "rename")).toHaveLength(1);
 });
 
-// Seen 2026-10-05 (Codex, herdr rules 2026.10.01.1): the orchestrator answered Codex's folder trust and ran `then` at
+// Seen 2026-10-05 (Codex, herdr rules 2026.10.01.1): the orchestrator answered Codex's folder trust and followed `next` at
 // once. herdr's `agent get` still said blocked while `agent explain` already read idle (osc_title_idle), and launch
 // reported a ready agent as "waiting at a question". herdr is replayed here by its lifecycle state alone: `gets` is
 // what `agent get` says, in order (the last one repeats), `explains` what `agent explain` reads.
@@ -445,7 +445,7 @@ const codexPane = (gets, explains, { cost = 0, reads } = {}) => {
 };
 const adoptArgs = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task", "--pane", "w1:p2", "--cwd", process.cwd()];
 
-test("the `then` of a startup question adopts the agent at once when herdr's live reading is idle, and never waits on it", async () => {
+test("the `next` of a startup question adopts the agent at once when herdr's live reading is idle, and never waits on it", async () => {
   const dir = scratch("adopt-ready"), task = join(dir, "task.md");
   writeFileSync(task, "Review the parser for hidden state.\n");
   const codex = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--effort", "high", "--task-file", task];
@@ -454,11 +454,12 @@ test("the `then` of a startup question adopts the agent at once when herdr's liv
   const stopped = await launch(codex, first.deps);
   expect(stopped).toMatchObject({ state: "needs_input", needs_input: { pane: "w1:p2", herdr: { state: "blocked", rule: "trust_directory" } } });
   expect(stopped.needs_input.note).toContain("trusted the repository in Codex"); // Codex's own way to be asked no more
-  // 2. The orchestrator answers it (herdr pane send-keys w1:p2 enter) and runs `then` at once: herdr's state still says
+  // 2. The orchestrator answers it (herdr pane send-keys w1:p2 enter) and follows `next` at once: herdr's state still says
   // blocked, its explain (the live reading) says idle. The block is stale: the agent is adopted as idle.
-  // The words of `then` are shell-quoted where needed (a Windows path is), so they are checked as text, not split.
-  expect(instructions(stopped)).toContain("routr launch --kind codex --name review --model gpt-6.1-sol --effort high --task-file ");
-  expect(instructions(stopped)).toContain(" --pane w1:p2 --cwd ");
+  // The follow-up carries exact argv, independent of path quoting on each platform.
+  const resume = stopped.next.find((n) => n.kind === "run" && n.argv[1] === "launch");
+  expect(resume.argv.slice(0, codex.length + 2)).toEqual(["routr", "launch", ...codex]);
+  expect(resume.argv.slice(-4)).toEqual(["--pane", "w1:p2", "--cwd", process.cwd()]);
   const again = [...codex, "--pane", "w1:p2", "--cwd", process.cwd()];
   for (const reads of ["idle", "done"]) {
     const stale = codexPane(["blocked"], [explained(reads, `osc_title_${reads}`)]);
@@ -834,7 +835,7 @@ test("launch --base starts the worktree's branch at that commit, and every launc
   expect(() => parseLaunchArgs([...base, "--base", "main"])).toThrow("goes with --worktree");
   for (const bad of ["--upload-pack=x", "-x", "a..b", "a b", "main:x", "HEAD^@", "HEAD^-1", "HEAD^!"]) expect(() => parseLaunchArgs([...base, "--worktree", "b", "--base", bad])).toThrow();
   const plan = await launch([...base, "--cwd", process.cwd(), "--worktree", "stacked", "--base", "feat/one", "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); } });
-  expect(plan.planned_command[0]).toBe(`herdr worktree create --cwd ${commandLine([process.cwd()])} --branch stacked --base feat/one --no-focus`);
+  expect(plan.planned_command[0]).toBe(displayCommand(["herdr", "worktree", "create", "--cwd", process.cwd(), "--branch", "stacked", "--base", "feat/one", "--no-focus"]));
   // A worktree launch: herdr gets --base as given, and the result names the one command that finishes the worker.
   const f = fakeHerdr({ reply: (a) => a[0] === "worktree" ? herdrOK({ root_pane: { pane_id: "w5:p1" }, worktree: { path: process.cwd() }, workspace: { workspace_id: "w5" } }) : undefined });
   const r = await launch([...launchArgs, "--cwd", "/", "--worktree", "stacked", "--base", "feat/one"], f.deps);
@@ -843,8 +844,9 @@ test("launch --base starts the worktree's branch at that commit, and every launc
   expect(r).toMatchObject({ ok: true, pane: "w5:p1", worktree: { branch: "stacked", base: "feat/one", path: process.cwd(), workspace: "w5" } });
   // A split pane is closed by cleanup; a relaunch into a pane gets the pane's line (cleanup redirects a worktree's own).
   expect(cleanupStep(await launch(launchArgs, fakeHerdr().deps))?.command).toBe("routr cleanup --pane w1:p2");
-  const kept = await launch(launchArgs, fakeHerdr({ reply: (a) => a[1] === "start" ? herdrError("boom") : undefined }).deps);
+  const kept = await launch([...launchArgs, "--task", "Task"], fakeHerdr({ reply: (a) => a[1] === "start" ? herdrError("boom") : undefined }).deps);
   expect(kept).toMatchObject({ state: "failed" });
+  expect(kept.next.some((n) => n.template?.startsWith("routr record "))).toBe(true);
   expect(cleanupStep(kept)?.command).toBe("routr cleanup --pane w1:p2"); // a start was tried: the pane stays
   const closed = await launch(launchArgs, fakeHerdr({ reply: (a) => a[1] === "process-info" ? herdrError("boom") : undefined }).deps);
   expect(closed.steps.map((s) => s.step)).toContain("cleanup_pane"); expect(cleanupStep(closed)).toBeUndefined(); // closed by launch
@@ -911,13 +913,15 @@ test("launch refuses a harness that is not signed in, before any herdr call", as
   expect(r).toMatchObject({ ok: false, state: "failed" });
   expect(r.steps.at(-1).detail).toBe("Kiro cannot take work: not signed in: kiro-cli login");
   expect(f.calls).toEqual([]);
+  expect(r.next.some((n) => n.template?.startsWith("routr record "))).toBe(false);
 });
 
 test("launch refuses a subscription the user turned off, before any herdr call", async () => {
   const f = fakeHerdr({ kind: "codex" });
-  const r = await launch(["--kind", "codex", "--name", "worker", "--model", "m"], { ...f.deps, settings: () => ({ subscriptions: { codex: { enabled: false } } }) });
+  const r = await launch(["--kind", "codex", "--name", "worker", "--model", "m", "--task", "Task"], { ...f.deps, settings: () => ({ subscriptions: { codex: { enabled: false } } }) });
   expect(r.steps.at(-1).detail).toBe("Codex is turned off in your settings: turn it on with routr setup --enable codex");
   expect(f.calls).toEqual([]);
+  expect(r.next.some((n) => n.template?.startsWith("routr record "))).toBe(false);
 });
 
 test("a pane whose folder is gone is a person's call, not a crash; no process information is waited out", async () => {
@@ -1038,7 +1042,7 @@ test("from 2026-10-11: a task that never arrived is sent again by launch, adopti
   expect(r.state).toBe("needs_input");
   expect(instructions(r)).toContain("send it with the same launch template");
   expect(instructions(r)).toContain("--pane w1:p2");
-  expect(instructions(r)).toContain(`--task-file ${commandLine([task])}`); // quoted as the shell needs it (Windows paths too)
-  expect(instructions(r)).toContain(`--cwd ${commandLine([process.cwd()])}`);
+  expect(instructions(r)).toContain(templateCommand(["--task-file", task]));
+  expect(instructions(r)).toContain(templateCommand(["--cwd", process.cwd()]));
   expect(instructions(r)).not.toContain("herdr agent prompt");
 });
