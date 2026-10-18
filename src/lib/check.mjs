@@ -1,5 +1,6 @@
 // Jev answers about a worker's report → a quick first read for the orchestrator, who is the judge. Pure: no I/O.
 // It never accepts or rejects work: the orchestrator's own check (run it, read the diff) decides.
+import { doNext } from "./next.mjs";
 import { CHECKS } from "./questions.mjs";
 
 export function readReport(a) {
@@ -19,5 +20,5 @@ export function readReport(a) {
   const next = flags.length
     ? "Send it back to the SAME worker with these points (it has the context). If it comes back flagged again, or the flag is a symptom patch, relaunch one level up and attach this report."
     : "Nothing in the report argues against it. Now run your own check; that is what decides.";
-  return { headline: flags.length ? `routr: ${flags.length} reason${flags.length > 1 ? "s" : ""} to send this back` : "routr: the report gives no reason to send this back", claimed, flags, unclear, checks, next };
+  return { headline: flags.length ? `routr: ${flags.length} reason${flags.length > 1 ? "s" : ""} to send this back` : "routr: the report gives no reason to send this back", claimed, flags, unclear, checks, next: [doNext(next)] };
 }

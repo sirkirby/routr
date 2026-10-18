@@ -8,9 +8,10 @@ export const COMMANDS = {
     name: "subagent",
     description: "a worker, or an agent outside herdr, is about to spawn a subagent → what the work demands (an orchestrator in herdr uses dispatch)",
     args: [
-      { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin); a flag-like word given alone is set aside when stdin carries the brief, and is the brief otherwise", required: true },
+      { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); a flag-like word given alone is set aside when stdin carries the brief, and is the brief otherwise", required: true },
     ],
     flags: [
+      { name: "--task-file", arg: "<path>", description: "read the exact task from a file instead of inline text or stdin", required: false },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
     ],
   },
@@ -18,9 +19,10 @@ export const COMMANDS = {
     name: "dispatch",
     description: "an orchestrator is about to launch a pane → work assessment plus eligible subscriptions and headroom; choose for quality, then compare capacity among suitable options",
     args: [
-      { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin); a flag-like word given alone is set aside when stdin carries the brief, and is the brief otherwise", required: true },
+      { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); a flag-like word given alone is set aside when stdin carries the brief, and is the brief otherwise", required: true },
     ],
     flags: [
+      { name: "--task-file", arg: "<path>", description: "read the exact task from a file instead of inline text or stdin", required: false },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--headroom", arg: "<subscription>=<share>", description: "override a reading with usage you read yourself: the share left, 0.9 or 90% (not for a harness that is not signed in)", required: false, repeatable: true },
     ],
@@ -37,7 +39,7 @@ export const COMMANDS = {
   },
   launch: {
     name: "launch",
-    description: "start a worker, handle startup, and submit its task",
+    description: "start a worker with matching task advice; follow next for recovery, recording and cleanup",
     flags: [
       { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
       { name: "--name", arg: "<name>", description: "worker agent name ([a-z][a-z0-9_-]{0,31})", required: true },
@@ -45,7 +47,7 @@ export const COMMANDS = {
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
       { name: "--effort", arg: "<level>", description: "reasoning effort", required: false },
       { name: "--rules-file", arg: "<path>", description: "your process rules for the worker (what it may do, how to report, git steps): added after the task, and never read by routr, which judges only the task", required: false },
-      { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch warns when it was given on a different text than this task", required: false },
+      { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch refuses unreadable, malformed or nonmatching advice; dry runs warn and plan", required: "required with a task" },
       { name: "--pane", arg: "<id>", description: "existing herdr pane to run in: at a shell prompt, or with an idle agent of --kind already running in --cwd (it is adopted, keeps its model and effort, and is sent the task; one not idle yet is never waited on: run the launch again once it is)", required: false },
       { name: "--worktree", arg: "<branch>", description: "give the worker its own git worktree, opened as a workspace nested under the repo (the rule for workers)", required: false },
       { name: "--base", arg: "<ref>", description: "the commit the worktree's new branch starts from: a branch, tag, or commit id (stacked work, a reviewer of one commit; with --worktree)", required: false, default: "the checkout's HEAD" },
@@ -55,7 +57,7 @@ export const COMMANDS = {
       { name: "--task-file", arg: "<path>", description: "file containing task prompt (mutually exclusive with --task)", required: false },
       { name: "--trust", arg: "<ask|auto>", description: "no longer used: routr answers no startup question (accepted so older launch lines still work)", required: false, default: "ask" },
       { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds", required: false, default: 120000 },
-      { name: "--dry-run", arg: null, description: "plan commands without executing or writing files", required: false, default: false },
+      { name: "--dry-run", arg: null, description: "plan commands without executing or writing files; advice checks warn", required: false, default: false },
     ],
   },
   cleanup: {
@@ -168,6 +170,7 @@ export const COMMANDS = {
     name: "record",
     description: "append what you chose and how it turned out to the ledger",
     flags: [
+      { name: "--task-file", arg: "<path>", description: "compare this worker’s task with the advice before appending; omit only for inline tasks, or revisions when the original file is gone (say so in --note)", required: false },
       { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")})`, required: true },
       { name: "--model", arg: "<name>", description: "model chosen", required: true },
       { name: "--effort", arg: "<level>", description: "reasoning effort chosen. On Claude, Codex and Kiro, \"default\" is recorded as your configured default_effort; on Cursor and Antigravity, none or \"default\" is recorded as the effort word at the end of the model id, or just before a last qualifier (grok-4.7-high, grok-4.6-high-fast). Otherwise it is kept as written; chose.effort_from records which", required: true },
@@ -180,7 +183,7 @@ export const COMMANDS = {
       { name: "--seconds", arg: "<n>", description: "elapsed seconds from handoff through verification (or stopping); omit when unknown", required: false },
       { name: "--attempts", arg: "<n>", description: "positive count of worker attempts; activity, not a quality score. Omit when unknown", required: false },
       { name: "--cause", arg: "<execution|brief|scope|review|launch|unknown|none>", description: "why extra work occurred, including lead corrections; repeatable, local only. none means no extra work and must be used alone", required: false, repeatable: true },
-      { name: "--run-id", arg: "<id>", description: "revise an existing run from record's returned run_id; supply its updated outcome. Omitted note and subagent data are preserved. Otherwise records a new worker run. Local only", required: false },
+      { name: "--run-id", arg: "<id>", description: "revise an existing run from record's returned run_id using the original advice file; supply its updated outcome. Omitted note and subagent data are preserved. Otherwise records a new worker run. Local only", required: false },
       { name: "--project", arg: "<name>", description: "label for the row (default: the git repository's folder name; kept local, never shared)", required: false },
       { name: "--note", arg: "<text>", description: "note explaining choice or outcome", required: false },
       { name: "--ledger", arg: "<path>", description: "path to ledger file", required: false, default: "~/.local/share/routr/ledger.jsonl" },

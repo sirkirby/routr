@@ -1,6 +1,8 @@
 // The advice commands (`subagent`, `dispatch`), the file-and-ledger commands, and `usage`: `check`, `record`, `assess`, `share`. Each takes its parsed flags and returns what to
 // print, so a test can drive it without a process. The pure parts stay where they were (check.mjs, ledger.mjs); this is
 // the I/O around them. None of them may fail an agent: an error becomes output, and the caller exits 0.
+import { matchAdvice, readAdvice, readTask } from "./advice-file.mjs";
+import { doNext } from "./next.mjs";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -59,7 +61,7 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
     // An unconfigured routr ranks nothing; say why, so the lead tells the user instead of guessing (seen in a real session).
     if (!Object.keys(config.subscriptions).length) out.subscriptions.note = "no subscriptions are configured, so none is ranked: the user has not run `routr setup` yet. Tell them, and ask which subscription to use meanwhile";
   }
-  return { ...out, rule: ADVICE_RULE[mode], ...(configNotes.length ? { config_notes: configNotes } : {}) };
+  return { ...out, next: [doNext(mode === "dispatch" ? "Choose the level, model, effort and eligible account, then launch with this saved advice on the exact task." : "Choose the subagent model and effort from this advice before spawning.")], rule: ADVICE_RULE[mode], ...(configNotes.length ? { config_notes: configNotes } : {}) };
 }
 
 // A quick first read of a worker's report; the orchestrator remains the judge.
@@ -89,13 +91,17 @@ export function assessCommand({ ledger = LEDGER_PATH }, config) {
 // `o` holds record's flags by name; the advice JSON comes from `--advice <file>` or stdin.
 export function recordCommand(o, subagentFlags = [], config = null) {
   try {
-    const advice = JSON.parse(readFileSync(o.advice ?? 0, "utf8"));
+    const task = o.task_file != null ? readTask(o.task_file) : null;
+    const advice = readAdvice(o.advice ?? 0);
+    if (task != null) matchAdvice(advice, task);
     const subagents = o.report != null || subagentFlags.length
       ? [...(o.report != null ? parseReportSubagents(readFileSync(o.report, "utf8")) : []), ...subagentFlags] : undefined;
     const entry = toEntry(advice, { ...o, subagents }, config);
     append(entry, o.ledger ?? LEDGER_PATH, { revision: o.run_id != null });
-    return { recorded: advice.id, run_id: entry.run_id, ledger: o.ledger ?? LEDGER_PATH };
-  } catch (e) { return { recorded: null, error: short(e) }; }
+    return { ok: true, recorded: advice.id, run_id: entry.run_id, ledger: o.ledger ?? LEDGER_PATH,
+      warnings: o.task_file == null ? ["The advice was not checked against a task. Omit --task-file only for an inline task, or to revise when the original task file is gone; say so in --note."] : [],
+      next: [doNext("Integrate the verified result and follow launch’s cleanup step when this worker is finished.")] };
+  } catch (e) { return { ok: false, recorded: null, error: short(e) }; }
 }
 
 // `routr share`: write exactly what telemetry sends to a file the user can read. Sends nothing itself.

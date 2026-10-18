@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { quote } from "../src/lib/herdr.mjs";
+import { commandLine } from "../src/lib/next.mjs";
 import { cleanup, dropCopy, linkedWorktree, parseCleanupArgs, parseStatus, parseWorktreeHeads, sameFile } from "../src/lib/cleanup.mjs";
 import { herdrError, herdrOK, scratch } from "./helpers.mjs";
 
@@ -134,7 +134,7 @@ test("with no worker named, cleanup lists every worktree and what it would do, a
   const r = await cleanup(["--cwd", "/repo"], f.deps);
   expect(r).toMatchObject({ ok: true, state: "listed" });
   expect(r.worktrees.map((w) => [w.branch, w.removable])).toEqual([["done", true], ["dirty", false], ["gone", true]]);
-  expect(r.then).toContain(`routr cleanup --cwd ${quote(resolve("/repo"))} --path <path>`);
+  expect(r.next.find((n) => n.kind === "do").template).toContain(`routr cleanup --cwd ${commandLine([resolve("/repo")])} --path <path>`);
   expect(f.calls.some((a) => ["remove", "close"].includes(a[1]))).toBe(false);
   expect(f.gits.some((g) => (g[1] === "worktree" && g[2] === "remove") || g[1] === "branch")).toBe(false);
 });
@@ -153,7 +153,7 @@ test("--pane closes a worker's split pane, never its worktree's only pane or a b
   expect(f.calls).toContainEqual(["pane", "close", "w1:p2"]);
   expect((await cleanup(["--pane", "w1:p3"], f.deps)).refused.why).toContain("working");
   const solo = await cleanup(["--pane", "w5:p1"], f.deps);
-  expect(solo.refused.then).toBe("routr cleanup --cwd /repo --path /wt/solo");
+  expect(solo.next.find((n) => n.kind === "run").command).toBe("routr cleanup --cwd /repo --path /wt/solo");
   expect(await cleanup(["--pane", "w9:p9"], f.deps)).toMatchObject({ ok: true, state: "absent" });
   expect(f.calls.filter((a) => a[1] === "close")).toHaveLength(1);
 });
@@ -182,7 +182,8 @@ test("a file git is told not to check, a detached commit no ref holds, and a gon
   expect((await r("hidden")).refused.why).toContain("secret.json, tuned.cfg");
   // herdr listed it on a branch; it is checked as it is now, detached or not.
   expect((await r("moved")).refused.why).toContain("no branch or tag holds");
-  expect((await r("gone")).refused).toMatchObject({ why: expect.stringContaining("dead1"), then: expect.stringContaining("branch <name> dead1") });
+  expect((await r("gone")).refused.why).toContain("dead1");
+  expect((await r("gone")).next[0].template).toContain("branch <name> dead1");
   expect((await r("unknown")).state).toBe("refused");
   expect(await r("kept")).toMatchObject({ ok: true, state: "removed" });
   expect(f.gits.filter((g) => g[1] === "worktree" && g[2] === "remove").map((g) => g[3])).toEqual(["/wt/kept"]);
@@ -260,4 +261,16 @@ test("the panes are read last: a worker started while the commit is compared aga
     commit: (dir, n) => { if (n > 1) started = true; return `h${dir}`; } });
   expect((await cleanup(["--cwd", "/repo", "--worktree", "x"], f.deps)).refused.why).toContain("working");
   expect(f.calls.some((a) => a[1] === "remove")).toBe(false);
+});
+
+test("cleanup next keeps Windows paths exact, and uses argv for UNC paths", async () => {
+  for (const path of ["C:\\Users\\Jane Doe\\worker", "\\\\server\\share\\worker"]) {
+    const f = fake({ worktrees: [wt("win", { path, open_workspace_id: "w9" })], panes: { w9: [{ pane_id: "w9:p1", workspace_id: "w9", agent_status: "idle" }] } });
+    const r = await cleanup(["--pane", "w9:p1"], f.deps);
+    expect(r.state).toBe("refused");
+    const step = r.next[0];
+    expect(step.argv).toEqual(["routr", "cleanup", "--cwd", "/repo", "--path", path]);
+    expect(step.command).toBe(path.startsWith("\\\\") ? null : 'routr cleanup --cwd /repo --path "C:\\Users\\Jane Doe\\worker"');
+    expect(r.refused).not.toHaveProperty("then");
+  }
 });

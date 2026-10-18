@@ -34,27 +34,29 @@ Then run `routr doctor`; if it reports no key or no config, read `references/set
 itself can run it from a checkout instead: `bun src/routr.mjs`.
 
 The advice commands write nothing and never fail: with no network or no key they still print advice, marked as a
-fallback.
+fallback. Matching fallback advice is valid for launch: tell the user what was unavailable and judge that part yourself.
 
 ## Which part applies to you
 
-- Your launch prompt says you are a **routr worker** → read `references/worker.md`. You work outside herdr and are
-  about to spawn a subagent → read only its "Before you spawn a subagent" section: the rest is for routr workers.
+- Your launch prompt says you are a **routr worker** → read `references/worker.md`; it covers sizing your subagents.
+- You are **outside herdr**, with no routr worker launch prompt, and about to spawn a subagent → read only
+  "Before you spawn a subagent" in `references/worker.md`: the rest is for routr workers.
 - You are the **orchestrator**: you plan the work, hand it out, judge what comes back, and send it back when it
   falls short → read `references/orchestrator.md`, then `references/harnesses.md` before you launch anything. A user
   can start a session this way by typing `/routr-orchestrate <plan>` (`$routr-orchestrate` in Codex).
-  In herdr, every piece you hand out, research and reviews included, is a pane worker, never one of your harness's
-  own subagents. Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
-  branch or commit) and ends with `routr cleanup`, the command in its launch result. Never close a worker's pane to
+  In herdr, never run `routr subagent` and never spawn your harness’s own subagents. Every piece you hand out,
+  research and reviews included, is a pane worker. Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
+  branch or commit) and ends with `routr cleanup`, the command in its launch result’s `next`. Never close a worker's pane to
   finish it: that leaves its worktree behind.
 - The user wants routr **set up, configured, or checked**, or **a setting changed** (a model, an effort, a reserve,
   turning a subscription off) → read `references/setup.md`: every setting has a command.
 
 ## Reading the advice
 
-`routr subagent "<brief>"` and `routr dispatch "<brief>"` print one JSON object. The brief can also be piped on stdin.
-Ask about the exact text the worker will get, not a summary of it: for a launch, `routr dispatch < <task file>`
-(`references/orchestrator.md` has the whole flow, and `launch --advice` checks it).
+`routr subagent "<brief>"` and `routr dispatch "<brief>"` print one JSON object. The brief can also be piped on stdin
+or read with `--task-file <path>`.
+Ask about the exact text the worker will get, not a summary of it: for a launch, `routr dispatch --task-file <path>`
+(`references/orchestrator.md` has the whole flow, and `launch --advice` requires matching advice).
 
 - `headline`: the advice in one line. Read it first; the rest is the detail behind it.
 - `worker`: whether the work is worth handing out at all: `do it yourself` (one or two small edits), `settle it with
@@ -78,7 +80,7 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   `--headroom` it could not read (ignored), a flag-like word such as `--json` given as the whole brief (set aside, and
   the brief read from stdin), or such a word kept as the brief or part of it. When the note says something was ignored,
   fix it and ask again, or tell the user; a word kept in the brief needs nothing (asking again with a changed brief
-  makes `launch --advice` warn).
+  needs fresh dispatch advice before launch).
 - `subscriptions` (dispatch only). `candidates.normal` lists accounts for everyday work; `candidates.fallback` lists
   accounts for when no normal candidate can suitably take it. Choose model/effort fit first, then compare capacity
   among suitable options. `most_room` is only a capacity observation. `ranked` lists usable headroom, marked `live`, `given`

@@ -123,7 +123,7 @@ export function append(entry, path = LEDGER_PATH, { revision = false } = {}) {
     const prior = read(path).findLast((e) => e.run_id === entry.run_id);
     if (!prior) throw new Error("--run-id was not found in this ledger; omit it to record a new worker run");
     if (["id", "brief_sha", "project"].some((k) => prior[k] !== entry[k]) || ["subscription", "model", "effort", "level"].some((k) => prior.chose?.[k] !== entry.chose?.[k]))
-      throw new Error("--run-id belongs to different work or a different worker choice; omit it for a new run");
+      throw new Error("--run-id requires the original advice and worker choice. If the original task file is gone, revise without --task-file and say so in --note");
     // Outcome revisions keep stable choice evidence unless the caller explicitly replaces it.
     entry = { ...entry, subagents: entry.subagents ?? prior.subagents ?? [],
       outcome: { ...entry.outcome, note: entry.outcome.note === undefined ? prior.outcome.note ?? null : entry.outcome.note } };

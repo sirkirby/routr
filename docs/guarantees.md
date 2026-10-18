@@ -19,7 +19,12 @@ They fail open: any error still prints usable output and exits 0.
 `launch`, `cleanup`, `usage cursor`, and `usage kiro` act, and each says what it did. Their read-only forms
 (`telemetry status`, `setup --show`) only read.
 
-- `launch` drives panes in your herdr session.
+- `launch` drives panes in your herdr session. A task requires readable JSON advice on that exact task (including
+  `brief_sha`); missing or nonmatching advice is refused before any harness, pane or worktree call. Dry runs warn
+  and plan instead. Matching fallback advice is accepted, and the lead still chooses the account, model and effort.
+- `record --task-file` checks that the advice belongs to that task before reading reports or appending anything.
+  Without a task file it warns that the advice was not checked. Revisions require the original advice identity;
+  if the original task file is gone, revise without `--task-file` and say so in `--note`.
 - `cleanup` removes a worker's worktree (through herdr, or git when no workspace is open) or closes its pane. It
   refuses while anything it can see runs there or when it cannot tell, never uses `--force`, and refuses a worktree
   holding uncommitted changes, files git is told not to check, a commit no branch or tag holds, or untracked files
@@ -105,7 +110,9 @@ routr runs on macOS, Linux and Windows. It starts every process directly, never 
 paths. Every process it starts goes through one place, which hides its console on Windows, gives harness reads an
 environment without herdr's pane variables, and on Windows resolves a command as the shell would, starting an npm
 `.cmd` shim's script directly. In a pane, routr types commands for that pane's own shell (POSIX `sh`, PowerShell or
-cmd), as you would.
+cmd), as you would. Follow-up commands have exact `argv` and a common-shell `command` only for the documented
+safe alphabet; otherwise `command` is null. Instructions and templates are marked `kind: "do"`, never runnable.
+Execution history stays display only, with prompt lengths instead of prompt text.
 
 ## Secrets, briefs and telemetry
 

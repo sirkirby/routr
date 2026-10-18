@@ -2,6 +2,7 @@
 // which only the user starts) into the shared skills folder, and link each into every harness's own skills folder, so
 // a machine with no Node and no Bun needs nothing but the routr binary. The files are embedded at build time.
 // routr touches only what is provably its own (`owner` below): anything else of the same name is kept and reported.
+import { doNext } from "./next.mjs";
 import { accessSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { HARNESSES, KINDS, SKILLS } from "./harnesses.mjs";
@@ -208,5 +209,5 @@ export function installSkill({ home = userHome(), dryRun = false } = {}) {
   }
   return { ok: !failed.length, skill: sharedPath(home, SKILLS[0]), skills: SKILLS.map((s) => sharedPath(home, s)), installed: done,
     ...(kept.length ? { kept } : {}), ...(failed.length ? { failed } : {}),
-    next: "Ask your agent to set routr up: it will follow references/setup.md in the skill. To start an orchestration, type /routr-orchestrate <your plan> ($routr-orchestrate in Codex)." };
+    next: [doNext("Ask your agent to set routr up: it will follow references/setup.md in the skill. To start an orchestration, type /routr-orchestrate <your plan> ($routr-orchestrate in Codex).")] };
 }
