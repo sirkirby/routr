@@ -5,8 +5,9 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
-- Advice and launch name missing readings in `unavailable`, including the attempted decision model and its
-  recovery action; fallback headlines say there was no reading, and usage failures no longer copy harness text.
+- Each reading says in `unavailable` what routr could not read, and why: the decision model it tried and what to do
+  about it, or a usage source it could not read now. When the decision model could not answer, the headline says so
+  first; launch on fallback advice says so too. Usage failures no longer copy a harness's own text. (#85)
 - `routr launch` refuses a task without advice on that exact task, reviews included; a dry run warns and still
   plans. Your reserves and level limits are applied in `dispatch`, so a launch can no longer skip them. (#84)
 - `dispatch` and `subagent` read the exact brief with `--task-file`, also as PowerShell saves it (UTF-16 or with a
