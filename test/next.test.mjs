@@ -33,4 +33,4 @@ for (const [shell, flags, enabled] of [
   const r = Bun.spawnSync([shell, ...flags, command], { stdin: "ignore", windowsVerbatimArguments: shell === "cmd.exe" });
   expect({ code: r.exitCode, err: r.stderr.toString().trim() }).toEqual({ code: 0, err: "" });
   expect(JSON.parse(r.stdout.toString())).toEqual(words);
-});
+}, 30000); // Windows PowerShell 5.1 can take more than bun's default 5 s just to start (seen on the Windows CI job)
