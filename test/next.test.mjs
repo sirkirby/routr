@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { commandLine, doNext, runNext, templateCommand } from "../src/lib/next.mjs";
 
+// "--" must not come first: bun drops a leading "--" from a script's arguments even without a shell.
 const words = ["plain", "Letters09_./:=@+-,", "two words", " leading", "trailing ", " ", "C:\\work\\task.md", "C:\\two words\\task.md", "@account", "a,b", "--level=standard", "-Dmaven.test.skip=true", "-a.b", "-foo:bar", "--", "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\task.md", "path/with~tilde"];
 test("next separates runnable argv, stdout destination, and instructions", () => {
   expect(runNext("save advice", ["routr", "dispatch", "--task-file", "two words"], "advice.json")).toEqual({

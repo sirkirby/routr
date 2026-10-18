@@ -5,7 +5,7 @@ import { launch } from "../src/lib/launch.mjs";
 import { recordCommand, adviseCommand } from "../src/lib/commands.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
 import { templateCommand } from "../src/lib/next.mjs";
-import { readAdvice } from "../src/lib/advice-file.mjs";
+import { readAdvice, readTask } from "../src/lib/advice-file.mjs";
 import { cleanup } from "../src/lib/cleanup.mjs";
 import { cfg, cliEnv, scratch, SCRIPT, herdrOK } from "./helpers.mjs";
 
@@ -204,6 +204,17 @@ test("advice written by PowerShell is readable as UTF-8 BOM and UTF-16LE with or
     expect(recordCommand({ advice: f.advice, task_file: f.task, ledger: f.ledger }).ok).toBe(true);
   }
   expect(readFileSync(f.ledger, "utf8").trim().split("\n")).toHaveLength(4);
+});
+
+test("a task file written by PowerShell reads as the same text in every encoding, and its advice still matches", async () => {
+  const f = fixture(), text = readFileSync(f.task, "utf8") + " café";
+  for (const bytes of [Buffer.from(text), Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(text)]),
+    Buffer.from(text, "utf16le"), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")])]) {
+    writeFileSync(f.task, bytes);
+    expect(readTask(f.task)).toBe(text); // never garbled: the decision model and the worker get what the lead wrote
+  }
+  writeFileSync(f.task, Buffer.from([0x41, 0x00, 0x42])); // an odd length cannot be UTF-16
+  expect(() => readTask(f.task)).toThrow("not readable text");
 });
 
 test("templates replace expanding paths with placeholders, while runnable steps retain exact argv", async () => {
