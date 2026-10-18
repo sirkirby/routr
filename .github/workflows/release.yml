@@ -36,10 +36,10 @@ jobs:
           if ! grep -q '[^[:space:]]' "docs/releases/${TAG_NAME}.md"; then
             echo "Missing release notes: add docs/releases/${TAG_NAME}.md in a PR before tagging (see CONTRIBUTING.md)" >&2; exit 1
           fi
-          # A stable release also has its section in the changelog: Unreleased renamed to the tag (pre-releases fold
-          # into the stable release's section).
-          if [[ "$VERSION" != *-* ]] && ! grep -q "^## ${TAG_NAME} " CHANGELOG.md; then
-            echo "Missing changelog section: rename CHANGELOG.md's Unreleased to '## ${TAG_NAME} — <date>' in a PR before tagging" >&2; exit 1
+          # A stable release also has its section in the changelog (pre-releases stay under Unreleased); the
+          # changelog test holds the heading's full shape.
+          if [[ "$VERSION" != *-* ]] && ! grep -q "^## ${TAG_NAME} — " CHANGELOG.md; then
+            echo "Missing changelog section: move CHANGELOG.md's Unreleased lines into '## ${TAG_NAME} — YYYY-MM-DD' in a PR before tagging" >&2; exit 1
           fi
           # The tag is the only place the version is set: the repository reads 0.0.0-dev, and each build stamps this one in.
           echo "tag_name=$TAG_NAME" >> "$GITHUB_OUTPUT"

@@ -6,7 +6,7 @@
 
 - [ ] `bun test` passes
 - [ ] If a question's wording changed: the version was bumped, and the measurement against the old wording is described below
-- [ ] If users will notice the change: one line for it under Unreleased in `CHANGELOG.md`
+- [ ] If users will notice the change: one line for it, with the PR number, under Unreleased in `CHANGELOG.md`
 - [ ] If a command, flag, or guide changed: `lib/help.mjs` and the guide that mentions it agree
 - [ ] No model names, prices, or cost formulas; no second install path (see `AGENTS.md`)
 
