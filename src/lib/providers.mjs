@@ -75,7 +75,7 @@ export const PROVIDERS = {
     request: (model, s) => ({ url: `https://api.cloudflare.com/client/v4/accounts/${s.CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/cloudflare/${model}`, headers: { Authorization: `Bearer ${s.CLOUDFLARE_API_TOKEN}` } }),
     // The REST API wraps the System One answer: { success, errors: [{ code, message }], messages, result }.
     unwrap: (j) => {
-      if (j?.success === false || !j?.result?.answers) throw new Error(`Cloudflare: ${j?.errors?.map((e) => `${e.code} ${e.message}`).join("; ").slice(0, 200) || "no answers in the response"}`);
+      if (j?.success === false || !j?.result?.answers) return null;
       return j.result;
     },
     deadlineMs: 10000,
@@ -101,6 +101,10 @@ export const PROVIDERS = {
     unwrap: (j) => j,
     deadlineMs: 30000,
     local: true,
+    // Bodies select a fixed failure, never supply its wording. Ollama 0.40.0's non-finite logit is the same
+    // unsupported-runtime failure as a server too old to expose the decision endpoint (observed 2026-10-11).
+    failure: (status, text) => status === 404 ? "model_missing"
+      : /does not support decision|non-finite logit/.test(text) ? "model_unsupported" : null,
     // An explicit tag per model, never `latest`: Ollama's latest resolves to a different build on a Mac (MLX) than
     // elsewhere (GGUF), and the two answer differently. `digest` is the build that was measured; doctor says when the
     // one pulled here is another. `runs: "apple-silicon"`: an MLX build, which Ollama runs only there.
@@ -171,4 +175,29 @@ export function decisionTarget(config, env = process.env) {
   }
   const measured = isModel(provider, model) ? PROVIDERS[provider].models[model] : null;
   return { provider, model, profile: measured ?? PROVIDERS[provider].models[defaultModel(provider)] ?? null, measured: Boolean(measured), overridden: Boolean(override) };
+}
+
+// Only these sentences cross the provider boundary. No response body, envelope message, URL or thrown exception
+// supplies text; the target is the one routr requested. Callers use the code/provider rather than reading prose.
+export class DecisionError extends Error {
+  constructor(target, code, status) {
+    const { provider, model } = target, P = PROVIDERS[provider];
+    const get = typeof P.get === "function" ? P.get(model) : P.get;
+    const sentences = {
+      no_key: `no key saved: run routr key set ${provider}.`,
+      key_refused: `the key was refused. ${get}`,
+      model_missing: `the local model is not pulled. ${get}`,
+      model_unsupported: `the local model is not a decision model, or Ollama is too old: update Ollama to ${OLLAMA_MIN} or later and restart it. ${get}`,
+      timeout: "the request timed out. Try again; if it keeps timing out, check the decision provider.",
+      unreachable: P.local ? `the local server is not running or cannot be reached: start it (the Ollama app, or ollama serve). ${get}`
+        : "the provider could not be reached. Check your connection and try again.",
+      provider_error: `the provider returned HTTP ${Number.isInteger(status) ? status : 0}. Try again later.`,
+      invalid_response: "the provider returned a reply routr cannot read. Try again; if it persists, check the decision provider.",
+    };
+    super(`${P.label}: ${sentences[code]}`);
+    this.name = "DecisionError";
+    this.code = code;
+    this.provider = provider;
+    if (code === "provider_error") this.status = Number.isInteger(status) ? status : 0;
+  }
 }

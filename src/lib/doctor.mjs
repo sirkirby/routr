@@ -6,7 +6,7 @@ import { delimiter, join, win32 } from "node:path";
 import { accountUse, CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
 import { billingFromSignIn, signInHint } from "./signin.mjs";
-import { ping, secretsFor } from "./systemone.mjs";
+import { failureMessage, ping, secretsFor } from "./systemone.mjs";
 import { decisionTarget, DEFAULT_PROVIDER, ollamaHost, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
 import { home, resolveCommand, standalone } from "./runtime.mjs";
@@ -142,7 +142,7 @@ export async function inspect({ configPath, quiet } = {}) {
       ...(u.billing ? { usage_billing: u.billing } : {}) };
   }
   if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; }
-  else { r.key.found ??= false; r.key.works = false; r.key.error = String(key.e?.message ?? key.e).slice(0, 240); }
+  else { r.key.found ??= false; r.key.works = false; r.key.error = failureMessage(key.e, config); }
   const lists = Object.fromEntries(found.map((n, i) => [n, models[i]]));
   for (const n of found) r.harnesses[n].models = lists[n];
   // The installer writes the skill and the binary together, but a skill copied by hand or left behind by an older

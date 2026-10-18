@@ -204,40 +204,41 @@ test("one client asks every provider: its endpoint, its key, its envelope, and c
   const dir = scratch("providers"), file = join(dir, "env");
   writeFileSync(file, "# routr\nTYPESAFE_API_KEY=ts_test_1234567890\nCLOUDFLARE_API_TOKEN=cf_test_1234567890\nCLOUDFLARE_ACCOUNT_ID=0123456789abcdef0123456789abcdef\n");
   const level = { type: "score", score: 0.92, probabilities: { 0: 0.08, 1: 0.92, 2: 0 }, confidence: 0.75 }; // entropy's reading of a 0.92/0.08 split
+  const requested = { level: { type: "score", criteria: ["basic", "standard", "strong"] }, t: { type: "noul" } };
   const sent = [];
   const fetchFn = async (url, init) => {
     sent.push({ url, auth: init.headers.Authorization, body: JSON.parse(init.body) });
     const answer = { model: JSON.parse(init.body).model, answers: { level, t: { type: "noul", noul: 0.9 } }, usage: { input_tokens: 10 } };
     return Response.json(url.includes("cloudflare") ? { success: true, errors: [], messages: [], result: answer } : answer);
   };
-  const jev = await ask({}, {}, { env: {}, file, fetchFn });
+  const jev = await ask({}, requested, { env: {}, file, fetchFn });
   expect(sent[0]).toMatchObject({ url: "https://api.typesafe.ai/v1/systemone", auth: "Bearer ts_test_1234567890", body: { model: "jev-1.13.0" } });
   expect(jev).toMatchObject({ provider: "typesafe", model: "jev-1.13.0" });
   expect(jev.answers.level.confidence).toBe(0.75);                                // TypeSafe's own confidence is kept as sent
-  const cf = await ask({}, {}, { config: { decision: { provider: "cloudflare" } }, env: {}, file, fetchFn });
+  const cf = await ask({}, requested, { config: { decision: { provider: "cloudflare" } }, env: {}, file, fetchFn });
   expect(sent[1]).toMatchObject({ url: "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/@cf/cloudflare/clef", auth: "Bearer cf_test_1234567890", body: { model: "clef" } });
   expect(cf).toMatchObject({ provider: "cloudflare", model: "clef" });             // the envelope is unwrapped
   expect(cf.answers.level.confidence).toBeCloseTo(0.88, 2);                        // recomputed on TypeSafe's scale
   expect(cf.answers.level.provider_confidence).toBe(0.75);
   expect(cf.answers.t).toEqual({ type: "noul", noul: 0.9 });
   const env = { CLOUDFLARE_API_TOKEN: "cf_env_1234567890" };                      // an environment variable wins over the file
-  await ask({}, {}, { config: { decision: { provider: "cloudflare" } }, env, file, fetchFn });
+  await ask({}, requested, { config: { decision: { provider: "cloudflare" } }, env, file, fetchFn });
   expect(sent[2].auth).toBe("Bearer cf_env_1234567890");
-  const local = await ask({}, {}, { config: { decision: { provider: "ollama" } }, env: { OLLAMA_HOST: "0.0.0.0:11500" }, file: join(dir, "none"), fetchFn });
+  const local = await ask({}, requested, { config: { decision: { provider: "ollama" } }, env: { OLLAMA_HOST: "0.0.0.0:11500" }, file: join(dir, "none"), fetchFn });
   expect(sent[3].url).toBe("http://0.0.0.0:11500/v1/systemone");
   expect(sent[3].body).toMatchObject({ keep_alive: "15m" }); expect(sent[3].auth).toBeUndefined();
   expect(local.provider).toBe("ollama");
   // Cloudflare's errors, a missing key, and a model Ollama has not pulled each say what to do.
   const refuse = async () => Response.json({ success: false, errors: [{ code: 5006, message: "Bad input" }], result: {} });
-  await expect(ask({}, {}, { config: { decision: { provider: "cloudflare" } }, env: {}, file, fetchFn: refuse })).rejects.toThrow("Cloudflare: 5006 Bad input");
-  await expect(ask({}, {}, { config: { decision: { provider: "cloudflare" } }, env: {}, file: join(dir, "none"), fetchFn })).rejects.toThrow("routr key set cloudflare");
+  await expect(ask({}, requested, { config: { decision: { provider: "cloudflare" } }, env: {}, file, fetchFn: refuse })).rejects.toThrow("Cloudflare Workers AI: the provider returned a reply routr cannot read. Try again; if it persists, check the decision provider.");
+  await expect(ask({}, requested, { config: { decision: { provider: "cloudflare" } }, env: {}, file: join(dir, "none"), fetchFn })).rejects.toThrow("routr key set cloudflare");
   const notPulled = async () => new Response('{"error":"model not found, try pulling it first"}', { status: 404 });
-  await expect(ask({}, {}, { config: { decision: { provider: "ollama" } }, env: {}, fetchFn: notPulled })).rejects.toThrow("ollama pull");
+  await expect(ask({}, requested, { config: { decision: { provider: "ollama" } }, env: {}, fetchFn: notPulled })).rejects.toThrow("ollama pull");
   // Ollama 0.40.0 on Windows answered every Clef request this way (2026-10-11): say to update, not the raw error.
   const nanLogit = async () => new Response(JSON.stringify({ error: JSON.stringify({ error: { code: 500, message: "Clef: non-finite logit" } }) }), { status: 500 });
-  await expect(ask({}, {}, { config: { decision: { provider: "ollama" } }, env: {}, fetchFn: nanLogit, deadlineMs: 2000 })).rejects.toThrow("update Ollama to 0.40.1 or later");
+  await expect(ask({}, requested, { config: { decision: { provider: "ollama" } }, env: {}, fetchFn: nanLogit, deadlineMs: 2000 })).rejects.toThrow("update Ollama to 0.40.1 or later");
   const down = async () => { throw new TypeError("fetch failed"); };
-  await expect(ask({}, {}, { config: { decision: { provider: "ollama" } }, env: {}, fetchFn: down })).rejects.toThrow("is not running");
+  await expect(ask({}, requested, { config: { decision: { provider: "ollama" } }, env: {}, fetchFn: down })).rejects.toThrow("is not running");
   // The formulas, on the cases TypeSafe documents: an even split is 0, one certain option is 1.
   expect(confidence("choice", { a: 0.5, b: 0.5 })).toBe(0);
   expect(confidence("choice", { a: 1, b: 0, c: 0 })).toBe(1);

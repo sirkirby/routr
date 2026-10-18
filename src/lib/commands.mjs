@@ -6,8 +6,8 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { advise, headline } from "./advise.mjs";
 import { readReport } from "./check.mjs";
-import { ask } from "./systemone.mjs";
-import { decisionTarget } from "./providers.mjs";
+import { ask, failureMessage } from "./systemone.mjs";
+import { DecisionError, decisionTarget } from "./providers.mjs";
 import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
@@ -17,7 +17,7 @@ import { rankSubscriptions } from "./pick.mjs";
 import { enabledSubscriptions } from "./config.mjs";
 import { readUsage, SOURCES } from "./harnesses.mjs";
 
-const short = (e, n = 160) => String(e?.message ?? e).slice(0, n);
+const short = (e, n = 160) => e instanceof DecisionError ? e.message : String(e?.message ?? e).slice(0, n);
 
 // `--headroom claude=0.4` or `=40%`: usage the caller read itself. A value that cannot be read (empty, "%" alone, out
 // of 0..1, no name) is a note in the answer, never dropped without a word, and never read as 0.
@@ -48,9 +48,9 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
     const a = r.answers;
     Object.assign(out, { provider: r.provider, decision_model: r.model, ...(r.measured === false ? { unmeasured: true } : {}), ms: Math.round(r.latencyMs), answers: { level: { score: a.level.score, confidence: a.level.confidence, probabilities: a.level.probabilities }, work_type: { choice: a.work_type.choice, confidence: a.work_type.confidence }, high_blast_radius: a.high_blast_radius.noul } }); // fact probabilities are in `facts`
   } catch (e) {
-    advice.notes.push(`Router unavailable (${short(e, 120)}). "${config.fallback_level}" is only the user's fallback: judge the level yourself.`);
+    advice.notes.push(`Router unavailable (${failureMessage(e, config)}). "${config.fallback_level}" is only the user's fallback: judge the level yourself.`);
     out.fallback = true;
-    out.provider = decisionTarget(config).provider; // which one failed: a local model that is often down shows in the ledger
+    out.provider = e instanceof DecisionError ? e.provider : decisionTarget(config).provider; // which one failed: a local model that is often down shows in the ledger
   }
   Object.assign(out, { headline: headline(advice), ...advice, meaning: MEANING[advice.level] });
   if (mode === "dispatch") {
@@ -68,7 +68,8 @@ export async function checkCommand({ brief: briefFile, report: reportFile }, { a
   try {
     const brief = readFileSync(briefFile, "utf8").trim(), report = readFileSync(reportFile, "utf8").trim();
     if (report.length < 200) out.warning = "this report is very short: make sure it is the worker's full report, not just its last message";
-    const r = await askFn({ task: { brief }, report: { text: report } }, checkQuestions, { config });
+    const r = await askFn({ task: { brief }, report: { text: report } }, checkQuestions, { config })
+      .catch((e) => { throw e instanceof DecisionError ? e : new DecisionError(decisionTarget(config), "invalid_response"); });
     Object.assign(out, readReport(r.answers), { provider: r.provider, decision_model: r.model, ms: Math.round(r.latencyMs) });
   } catch (e) { Object.assign(out, { headline: "routr: could not read the report; judge it yourself", fallback: true, error: short(e) }); }
   return out;
