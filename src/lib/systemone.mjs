@@ -27,8 +27,9 @@ export function secretsFor(provider, { env = process.env, file = SECRETS_FILE } 
   let saved = null;
   for (const s of P.secrets) {
     let v;
-    try { v = env[s.name] || [s.name, ...(s.aliases ?? [])].map((n) => (saved ??= readSecretsFile(file))[n]).find(Boolean); } catch {}
-    if (!v) throw new DecisionError({ provider }, "no_key");
+    try { v = env[s.name] || [s.name, ...(s.aliases ?? [])].map((n) => (saved ??= readSecretsFile(file))[n]).find(Boolean); }
+    catch { throw new DecisionError({ provider }, "secrets_unreadable", undefined, { secret: s.name, file }); }
+    if (!v) throw new DecisionError({ provider }, "no_key", undefined, { secret: s.name });
     out[s.name] = v;
   }
   return out;
@@ -90,7 +91,7 @@ export function normalize(answers, { native = false } = {}) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Also keep unexpected client failures out of diagnostic prose. The classified error is the only printable one.
-export const failureMessage = (e, config) => (e instanceof DecisionError ? e : new DecisionError(decisionTarget(config), "invalid_response")).message;
+export const failureMessage = (e, config) => (e instanceof DecisionError ? e : new DecisionError(decisionTarget(config), "internal_error")).message;
 
 const object = (x) => x !== null && typeof x === "object" && !Array.isArray(x);
 const inRange = (x, max = 1) => Number.isFinite(x) && x >= 0 && x <= max;
@@ -121,47 +122,55 @@ function readAnswers(answers, questions, target) {
 }
 
 // deadlineMs is the total budget across retries; the provider's own when not given (a local model may need to load).
-// Model identity comes from the request: a reply's free text cannot become an identity in output or the ledger.
+// The reply's model identity is kept only when its provider recognizes it; otherwise use the requested identity.
+// This preserves preview-alias resolution and pin checks in the model gate without accepting arbitrary reply text.
 // `target` and `fetchFn` are seams for the maintainers' gate and for tests.
 export async function ask(state, questions, { config, deadlineMs, env = process.env, target, fetchFn = fetch, file } = {}) {
   const t = target ?? decisionTarget(config, env), P = PROVIDERS[t.provider];
   const secrets = secretsFor(t.provider, { env, file });
-  let request;
-  try { request = P.request(t.model, secrets, env); } catch { throw new DecisionError(t, "unreachable"); }
-  const { url, headers, body } = request;
+  let request, payload;
+  try { request = P.request(t.model, secrets, env); payload = JSON.stringify({ ...request.body, state, model: t.model, questions }); }
+  catch { throw new DecisionError(t, "internal_error"); }
+  const { url, headers } = request;
   const budget = deadlineMs ?? P.deadlineMs, stopAt = performance.now() + budget;
   for (let attempt = 0; ; attempt++) {
     const t0 = performance.now();
     let res;
     const signal = AbortSignal.timeout(Math.max(1, Math.ceil(P.local ? stopAt - t0 : Math.min(8000, stopAt - t0))));
-    const transportError = (e) => new DecisionError(t, signal.aborted || e?.name === "TimeoutError" || e?.name === "AbortError" ? "timeout" : "unreachable");
+    const transportError = (e) => new DecisionError(t, signal.aborted || e?.name === "TimeoutError" || e?.name === "AbortError" ? "timeout" : "unreachable", undefined, { host: P.host?.(env) });
     try {
       res = await fetchFn(url, {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ ...body, state, model: t.model, questions }),
-        // A hosted call answers in well under a second, so a hung attempt is cut at 8 s and retried; a local one may
-        // be loading the model and gets the whole budget.
+        body: payload,
+        // Hosted calls are cut at 8 s; timeouts fail immediately. Only 429/529 replies may be retried below.
+        // A local call may be loading the model and gets the whole budget.
         signal,
       });
     } catch (e) {
       throw transportError(e);
     }
     const latencyMs = performance.now() - t0, wait = 500 * 2 ** attempt;
-    if ((res.status === 429 || res.status === 529) && attempt < 5 && performance.now() + wait < stopAt) { await sleep(wait); continue; }
     if (!res.ok) {
-      // Hosted failures need only the status. Only a local provider has known body patterns to classify.
-      let text = "";
-      if (P.failure) { try { text = await res.text(); } catch (e) { throw transportError(e); } }
-      const code = res.status === 401 || res.status === 403 ? "key_refused" : P.failure?.(res.status, text) ?? "provider_error";
+      // Local bodies may select a known pattern. Hosted envelopes supply only numeric error codes, never wording.
+      let code;
+      if (P.failure) { try { code = P.failure(res.status, await res.text()); } catch (e) { throw transportError(e); } }
+      if (P.errorCode) {
+        try { code = P.errorCode(await res.json()); }
+        catch (e) { if (!(e instanceof SyntaxError)) throw transportError(e); } // a non-JSON HTTP error keeps its status
+      }
+      code = res.status === 401 || res.status === 403 ? "key_refused" : code ?? "provider_error";
+      if (code === "provider_error" && (res.status === 429 || res.status === 529) && attempt < 5 && performance.now() + wait < stopAt) { await sleep(wait); continue; }
       throw new DecisionError(t, code, res.status);
     }
-    let j;
-    try { j = P.unwrap(await res.json()); }
+    let raw;
+    try { raw = await res.json(); }
     catch (e) { throw e instanceof SyntaxError && !signal.aborted ? new DecisionError(t, "invalid_response") : transportError(e); }
+    const j = P.unwrap(raw);
+    if (!j) throw new DecisionError(t, P.errorCode?.(raw) ?? "invalid_response");
     const answers = readAnswers(j?.answers, questions, t);
     const usage = object(j.usage) ? Object.fromEntries(Object.entries(j.usage).filter(([k, v]) => ["input_tokens", "output_tokens", "total_tokens"].includes(k) && Number.isSafeInteger(v) && v >= 0)) : undefined;
-    return { model: t.model, provider: t.provider, answers: normalize(answers, { native: P.nativeConfidence }), usage, latencyMs, profile: t.profile, measured: t.measured };
+    return { model: P.identity(j.model) ? j.model : t.model, provider: t.provider, answers: normalize(answers, { native: P.nativeConfidence }), usage, latencyMs, profile: t.profile, measured: t.measured };
   }
 }
 

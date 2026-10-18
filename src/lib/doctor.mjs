@@ -7,7 +7,7 @@ import { accountUse, CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } f
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
 import { billingFromSignIn, signInHint } from "./signin.mjs";
 import { failureMessage, ping, secretsFor } from "./systemone.mjs";
-import { decisionTarget, DEFAULT_PROVIDER, ollamaHost, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
+import { DecisionError, decisionTarget, DEFAULT_PROVIDER, ollamaHost, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
 import { home, resolveCommand, standalone } from "./runtime.mjs";
 import { autoUpdateStatus } from "./update.mjs";
@@ -62,11 +62,11 @@ export const skillsIncomplete = (r) => [...mine(r).filter((k) => k.missing?.leng
 export const skillsStale = (r) => (r.from_source ? [] : mine(r).filter((k) => baseVersion(k.version) !== baseVersion(ROUTR_VERSION)));
 
 // What is left to do, most important first, each with the command that does it.
-export function nextSteps(r) {
+export function nextSteps(r, keyError) {
   const steps = [];
   // The decision model's own fix: a key for a hosted provider, a running Ollama with the model pulled for a local one.
   const P = PROVIDERS[r.key.provider] ?? PROVIDERS[DEFAULT_PROVIDER], get = typeof P.get === "function" ? P.get(r.key.asked) : P.get;
-  if (!r.key.works) steps.push(P.local ? `Make the local decision model answer: ${r.key.error}`
+  if (!r.key.works) steps.push(keyError instanceof DecisionError ? r.key.error : P.local ? `Make the local decision model answer: ${r.key.error}`
     : r.key.found ? `The ${P.label} key was found but the test call failed (${r.key.error}). ${get}` : `Add your ${P.label} key. ${get}`);
   else if (r.key.note) steps.push(r.key.note);
   if (!r.config.exists) steps.push("Create your config (your defaults for each subscription found): routr setup");
@@ -197,7 +197,7 @@ export async function inspect({ configPath, quiet } = {}) {
     r.telemetry = { ...r.telemetry, last_send: last, pending, daily_send: daily, quiet_hours: quiet,
       needs_attention: last?.ok === false || Boolean(daily.problem) || stale || Boolean(daily.why_not && pending > 0) };
   }
-  r.next_steps = nextSteps(r);
+  r.next_steps = nextSteps(r, key.e);
   return r;
 }
 

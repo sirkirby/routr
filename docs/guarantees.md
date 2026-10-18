@@ -115,8 +115,9 @@ only in routr's secrets file, `~/.config/routr/env`, written by `routr key set`.
 
 Decision-provider failures are classified into fixed sentences with an action to take; response bodies and envelope
 messages never supply their wording. Answers are checked against the questions' choices and numeric ranges before
-use; an unreadable or out-of-range reply makes advice fall back. Only checked answer fields and the requested model's
-identity reach advice or the ledger, so a reply repeating a brief or key cannot pass through as text.
+use; an unreadable or out-of-range reply makes advice fall back. Only checked answer fields and a model identity
+accepted by its provider (otherwise the requested identity) reach advice or the ledger, so a reply repeating a brief
+or key cannot pass through as text. Ollama's version and build digest must match their declared formats before display.
 
 Telemetry is off unless you turn it on (`routr telemetry on`, or yes to setup's question, default no). An agent never
 turns it on for you. It sends ledger rows with no text of any kind, only from the detached daily job or
