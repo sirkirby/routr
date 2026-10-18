@@ -1,0 +1,604 @@
+# Output contracts
+
+What each routr command an orchestrator reads takes, and what it prints. This page is the design: routr's output
+does not match it yet. The tables at the end map every field printed today to where it goes, and the last section lists
+every guide, help text and test that reads a field this map renames or removes, so the change can land in one pull
+request, with the guides, as AGENTS.md requires (no old field kept beside its replacement).
+
+Commands covered: `subagent`, `dispatch`, `check`, `launch` (dry run and real), `record`, `cleanup` (each mode), and
+`usage` (no name, `--level`, and each named reader: `claude`, `codex`, `agy`, `cursor`, `kiro`). The setup and
+maintenance commands (`setup`, `doctor`, `update`, `key`, `telemetry`, `uninstall`, `skill`, `share`, `assess`) are
+not read by an orchestrator during a run and are not covered.
+
+## What every answer says
+
+Each command fits its job (a reading, a worker, a verdict on a report, a ledger row, a removal), and each answers the
+same five things in the same fields, first in the object:
+
+| field | type | always | meaning |
+|---|---|---|---|
+| `ok` | boolean | yes | Whether the command produced what it is for, so the next step can go ahead as designed. Defined per command below. It never means routr accepts work, and never means nothing was missing: `unavailable` says that. |
+| `headline` | string | yes | What happened, in one plain line starting `routr: `. The line to read first and to show the user. Never the brief, never a pane's screen. |
+| `unavailable` | list | yes | What routr could not read, and why (`[]` when nothing was missing). Each entry has `part`, a fixed `code`, and `why`, a fixed sentence with the recovery action; parts add their own identifying fields (below). Text from outside routr never supplies a `why`. |
+| `warnings` | list of strings | yes | What the lead should know about this call: an input routr ignored or read differently, a setting it could not use, a check it skipped, something it left behind. Never a repeat of an `unavailable` entry or of `headline`. |
+| `next` | list | yes | What comes next: `{ kind: "run", why, argv, command, stdout_to? }` or `{ kind: "do", why, template? }`, as today. Every instruction routr gives the lead for this answer is a `next` entry; no other field gives instructions. |
+| `error` | string | only on an error | Present exactly when the command stopped on an error: it refused its input (a required input missing or unusable), or something failed that the command does not report as one of its outcomes. `ok` is then false. An `ok: false` without `error` is an outcome routr reached on purpose (a worker that needs input, a refused removal, a report it could not read), described by `headline` and the command's own fields. |
+
+Acting commands (`launch`, `cleanup`) also return `state`, one word for the outcome, from a fixed list per command.
+
+Names that mean one thing everywhere:
+
+- `why`: the reason for the entry it sits in (a `next` step, an `unavailable` entry, an excluded subscription, a
+  worktree cleanup cannot remove, a launch that needs input). Never a field of its own at the top level.
+- `note`: an explanation that travels with a number or a setting, for the lead to weigh: why a usage number is
+  assumed, what a harness showed beside it, how the ranking treats the user's settings, what routr knows about a
+  harness's startup question. A note is not a warning: nothing is wrong with the call.
+- `notes`: in `subagent` and `dispatch` only, the advice's own reasoning (the user's preferences, a risk warning, how a
+  torn level was settled, a brief to fix). Part of the advice, not about the call.
+- `screen`: what a pane showed when routr stopped, or the fixed sentence saying it is withheld because the task was
+  sent. The only place a pane's text reaches output.
+- `subscription`: a subscription's name, wherever one is named (`unavailable` entries, ranked and excluded rows, a
+  named usage reading).
+- `ran` and `would_run`: display lines of the herdr and git commands a command ran, or in a dry run would run. Display
+  only (prompt text replaced by its length); never something to execute. Runnable lines are only ever in `next`.
+
+`unavailable` parts and their extra fields:
+
+| `part` | extra fields | from |
+|---|---|---|
+| `decision model` | `provider`, `model` (attempted), `status` (a provider error's HTTP status) | `subagent`, `dispatch`, `check`; `launch` copies the saved advice's entry |
+| `usage` | `subscription` (null for routr's own ranking failure), `source`, `reading` (`assumed` or `kept`), `reading_source` and `age_sec` for a kept reading | `dispatch`, `usage` |
+| `brief`, `report` | none | `check` |
+| `model list` | `subscription` | `launch` (a harness whose model list routr checks could not be read) |
+| `pane`, `worktree` | `pane` or `path` | `cleanup` (what runs in a pane, or a worktree's git state, could not be read) |
+
+Codes are the fixed lists routr already has (the decision-model failure codes, the usage failure codes) plus
+`unreadable` for a file, a model list, a pane or a worktree.
+
+## Settled questions
+
+**`notes`, `config_notes` and `input_notes` against `warnings`.** `notes` stays: it is the advice's own reasoning,
+written for the lead to weigh, and it is the same for the same brief and settings. `config_notes` (a setting routr
+could not use, a missing config) and `input_notes` (a `--headroom` it ignored, a flag-like word it set aside or kept
+in the brief) move into `warnings`: both are about this call, not the work, and they are what `warnings` is for in
+every other command. Every command that reads the config now reports its config warnings, not only `subagent` and
+`dispatch` (today `usage` and `check` drop them), and `check` gets the input warnings it can produce.
+
+**`rule`.** Removed. Its sentences become `next` steps. `next` is the field the lead is told to follow on every
+command; a second field of standing instructions competes with it, and as a fixed paragraph repeated on every call it
+reads as boilerplate. The incident it guards against (seen 2026-10-14: an orchestrator read `worth a worker` as leave
+to spawn its own subagents) is answered as well by a `next` step in the same answer, so the text stays in the output.
+`subagent`'s steps: choose the subagent's model and effort yourself, never stronger than yourself and not your own by
+default, and report `ROUTR: <advised> → <chosen> because <reason>` when the level differs; an orchestrator in herdr
+never runs `subagent` or spawns its own subagents. `dispatch`'s steps: settle the level (refresh with
+`routr usage --level <chosen>` if it changed, keeping this advice); choose model, effort and an eligible account,
+quality first; launch with this saved advice on the exact task (a template), telling the user what was unavailable
+when `unavailable` is not empty; record from launch's template.
+
+**Launch's `command` and `argv`.** Both are renamed, because `command` and `argv` inside `next` mean a runnable line
+and its exact words, and a field meaning the same thing has one name. Launch's `command` (the herdr commands it ran,
+prompt shown as its length) becomes `ran`; its dry-run `planned_command` becomes `would_run`; `cleanup`'s `command`
+becomes `ran` too. The prompt's length stays in the display line (`<prompt: N chars>`) and in `prompt_chars`. Launch's
+top-level `argv` and `env` (the harness command started in the pane, and its environment) move into
+`start: { executable, argv, env }`, which says what they are; `executable` is added so the line reads whole.
+
+**Record's `recorded`.** Renamed `id`. It holds the advice's id, which the advice and the ledger row both call `id`
+(beside the row's `run_id`), so the answer names it as the row it wrote does. `recorded: null` on a failure is removed:
+`ok: false` with `error` already says nothing was recorded.
+
+**Cleanup's `refused` and each worktree's `why`.** `refused` (an object holding only `why`) is removed: `state:
+"refused"` says it was refused, and the reason is the `headline` (`routr: kept <path>: 3 uncommitted changes …`). What
+to do is in `next`, as today. Each listed worktree's `why` stays: it is the reason for the entry it sits in, which is
+what `why` means everywhere. When a refusal comes from something cleanup could not read (what runs in a pane, a
+worktree's commit, status or file flags), that read is also an `unavailable` entry; a refusal from what it did read
+(a working agent, uncommitted changes) is not.
+
+**Usage's `note`.** Kept, and not a warning. `subscriptions.note` explains the ranking and the user's account policy
+(who has the most room, normal before fallback, metered budget unknown, everything at its reserve, nothing
+configured); each ranked row's `note` explains its number (what the harness showed beside it, why it is assumed).
+Nothing is wrong with the call when they appear, and the lead reads them to choose. Plain `usage`'s top-level `note`
+moves to `subscriptions.note`, the same place as in `dispatch`.
+
+**The named readers' `read_yourself`.** Moved into `next`, as a `do` step whose template is the `--headroom` flag to
+pass (`--headroom cursor=<share left>`), and whose `why` says how to read the harness's screen by hand. It is an
+instruction, and instructions are `next` entries. (Today it never reaches the output: the fresh-reading path rebuilds a
+failed reading from its code alone and drops it, so the troubleshooting page's promise is unmet.) The failure itself
+(`code`, `why`, at the top level today) becomes a `usage` entry in `unavailable`.
+
+**Kiro's cleanup note.** Moved into `warnings`. "Kiro kept an empty usage session" is something routr left behind and
+could not remove, which the lead should know about and may act on; it explains no number, so it is not a `note`.
+(Today it reaches the output only when the reading succeeded.)
+
+**`fallback` beside `unavailable`.** Removed from `subagent`, `dispatch` and `check`. In the advice commands it is
+exactly "`unavailable` holds a `decision model` entry"; in `check` it is set when a file could not be read and no
+model was asked, so one name has two meanings. Two fields for one fact can disagree, and `candidates.fallback` (an
+account use) shares the word. The ledger's `advised.fallback` does not change: `record` fills it from the advice's
+`decision model` entry (and from `fallback: true` in advice saved by an older routr, which it reads as it already
+reads `jev_model`). `launch` decides it was given fallback advice the same way.
+
+Further decisions this map makes, each for the reason given:
+
+- Excluded subscriptions' `reason` becomes `why`: the reason for that entry, named as everywhere else.
+- Launch's `needs_input.screen` and its failure-time `pane_text` become one top-level `screen`: both are what the pane
+  showed when launch stopped. `needs_input.pane` is removed (the top-level `pane` is the same pane). `needs_input` is
+  present only when `state` is `needs_input`, as the other optional fields are present only when they apply.
+- Plain `usage` returns `subscriptions`, the same object `dispatch` returns, so a lead reads both the same way. Ranked
+  rows carry `hardest_work` in both (today only `usage` has it), so a row has one shape. `level` is always present
+  (`basic` when none was given). The fixed `how` sentence is removed: it is the same on every call, and the ranking page
+  says it.
+- Launch's "Fallback advice: …" warning is removed: it repeats the `decision model` entry `launch` already puts in
+  `unavailable`. The advice commands' "Router unavailable (…)" note is removed from `notes` for the same reason; "judge
+  the level yourself" becomes a `next` step.
+- `check` refuses (with `error`) when `--brief` or `--report` is not given, as a required input; a given file it cannot
+  read stays an `unavailable` entry. `subagent` and `dispatch` refuse an empty brief as JSON and exit 0, like their
+  other refusals (today: a line on stderr and exit 2).
+- `record` refuses without `--subscription`, `--model`, `--effort`, `--verdict` or `--check`, which its help already
+  marks required; today a row is written with nulls and `unknown`.
+- A launch dry run whose real launch would be refused (no advice, or advice on another text) returns `ok: false` with
+  that refusal in `error`, and still plans (`would_run`). Today it returns `ok: true` with the refusal in `warnings`,
+  which tells a lead the launch is good to go.
+- A harness model list that launch could not read (today a warning) is an `unavailable` entry: a read routr could not
+  make.
+- Usage's ranking failing outright reports a fixed `internal_error` entry in `unavailable`, as `dispatch` does; today
+  it prints the exception's text as `error`.
+- Launch's `--trust` is accepted and ignored with a warning, kept for older launch lines. The guides and binary ship
+  together, so this map drops it: it becomes an unknown option.
+
+## subagent and dispatch
+
+A reading of a brief. `subagent` sizes a subagent a worker (or an agent outside herdr) is about to spawn; `dispatch`
+does the same for a pane worker and adds the subscriptions ranked by usage. The saved `dispatch` answer is the advice
+file `launch --advice` and `record --advice` take.
+
+Inputs:
+
+- Required: a nonempty brief, exactly one of an inline brief, stdin, or `--task-file <path>`. Refused (with `error`)
+  when missing, empty, unreadable, or a flag-led word without a stdin brief.
+- Used when given: `--config <path>`; `--headroom <subscription>=<share>` (repeatable; `dispatch` only, it outranks a
+  reading).
+
+`ok`:
+
+| case | `ok` |
+|---|---|
+| a reading made | true |
+| the decision model unavailable: the advice is the user's fallback level | true. The answer is still advice the lead acts on and launch accepts. `unavailable` holds the `decision model` entry, `headline` starts `routr: no reading`, and `next` says to judge the level yourself. |
+| some usage readings failed (`dispatch`) | true; each is a `usage` entry in `unavailable`, and its ranked row says `assumed` or `kept` |
+| the brief refused | false, with `error`; no reading fields |
+
+`headline`: today's (the worker suggestion, level, kind of work, facts that bear on difficulty, `HIGH RISK`, `FIX THE
+BRIEF FIRST`; or `no reading` and the fallback level). On a refusal: `routr: no advice: <error>`.
+
+Shared fields: all six. `warnings` holds config and input warnings.
+
+Own fields:
+
+- The advice's identity, read by `launch` and `record`: `id`, `ts`, `mode`, `question_set`, `brief_sha`,
+  `brief_chars`.
+- Who answered: `provider` (on fallback, the one that failed), `decision_model` (absent on fallback), `unmeasured`
+  (when the model has no measured profile), `ms`, and `answers` (the raw judgments: `level` `{ score, confidence,
+  probabilities }`, `work_type` `{ choice, confidence }`, `high_blast_radius`), absent on fallback.
+- The advice: `level`, `sure`, `between` (when torn), `work_type`, `high_risk`, `worker` `{ suggestion, why }`,
+  `facts` (each `{ reading, p, means? }`), `notes`, `meaning`.
+- `dispatch` only: `subscriptions` `{ most_room, candidates: { normal, fallback }, ranked, excluded, note }`. A ranked
+  row: `subscription`, `class`, `use`, `reserve`, `hardest_work`, `your_default`?, `usable`, `headroom`, `windows`? (each
+  `{ window, used_pct, resets_in_h, left, reserve_now, usable }`), `usage` (`live`, `given`, `assumed`, `metered`),
+  `age_sec`, `note`?. An excluded row: `{ subscription, why }`.
+
+## check
+
+A first read of a worker's report against its brief. It never accepts or rejects work: the lead's own check decides.
+
+Inputs:
+
+- Required: `--brief <file>` and `--report <file>`. Refused (with `error`) when either flag is missing.
+- Used when given: `--config <path>`.
+
+`ok`:
+
+| case | `ok` |
+|---|---|
+| a reading made, no flags | true |
+| a reading made, flagged (reasons to send it back) | true. `ok` says routr read the report; it never means routr accepts the work, flagged or not. The flags are in `flags` and `headline`. |
+| a given file unreadable | false, no `error`; `unavailable` names `brief` or `report` |
+| the decision model unavailable | false, no `error`; `unavailable` names it. Unlike `dispatch`, there is no fallback product: without a reading there is nothing to act on. |
+| a flag missing | false, with `error` |
+
+`headline`: today's (`routr: N reasons to send this back`, `routr: the report gives no reason to send this back`, or
+`routr: no reading (…); judge the report yourself`).
+
+Shared fields: all six. `warnings`: a very short report ("make sure it is the worker's full report"), config warnings.
+`next`: send it back to the same worker, or run your own check, or (no reading) judge the report yourself.
+
+Own fields: `mode`, `question_set`, `provider`, `decision_model`, `unmeasured`?, `ms`, `claimed` (the report's own
+verdict), `flags`, `unclear`, `checks` (each `{ reading, p }`). On no reading only `mode`, `question_set` and, for a
+decision-model failure, `provider`.
+
+## launch
+
+Starts a worker in a pane (a new worktree, a split, or a given pane) and sends it its task.
+
+Inputs:
+
+- Required: `--kind`, `--name`; `--model` for a real launch; `--advice <file>` whenever a task is given (matching
+  advice on that exact task). Refused (with `error`, `state: "failed"`) when missing or unusable, before any herdr call.
+- Used when given: `--cwd` (default `.`), `--worktree <branch>`, `--base <ref>` and `--copy <path>` (with `--worktree`),
+  `--pane <id>`, `--direction`, `--task` or `--task-file`, `--rules-file` (with a task), `--effort`, `--timeout`,
+  `--dry-run`.
+
+`state`: `planned`, `ready`, `prompted`, `needs_input`, `failed`.
+
+`ok`:
+
+| case | `ok` |
+|---|---|
+| dry run (`planned`) | true when the inputs pass every check a real launch makes before touching herdr that a dry run can make (arguments, folder, task, advice). False, with `error`, when a real launch would refuse (missing or nonmatching advice); the plan is still printed. A dry run does not check the environment, the subscription's on/off setting or sign-in; its `plan` step says so. |
+| `ready` (no task given) or `prompted` | true |
+| `needs_input` | false, no `error` |
+| `failed` | false, with `error` |
+
+`headline`: `routr: <name> (<kind>) took its task in pane <pane>`; `routr: <name> is ready in pane <pane>; no task
+sent`; `routr: <name> needs input in pane <pane>: <why>`; `routr: launch failed: <error>`; `routr: planned <kind>
+launch, nothing ran` (adding `; a real launch would refuse: <error>`).
+
+Shared fields: all six. `unavailable`: the saved advice's `decision model` entry, a `model list` entry. `warnings`:
+harness notes (an effort the harness remembers), a skipped `--copy`, a pane or private config left behind, a prompt
+that may have been submitted, a rename that failed. `next`: as today (continue after input, record template, cleanup).
+
+Own fields: `state`, `kind`, `name`, `pane`, `cwd`, `model`, `effort`, `start` `{ executable, argv, env }`, `steps`
+(each `{ step, ok, detail }`), `ran`, `would_run` (dry run only), `prompt_chars`, `advice` `{ file, matches }` (when a
+task was given), `worktree` `{ branch, base?, path, workspace }` (when one was made), `needs_input` `{ why, herdr?,
+note? }` (only in `needs_input`; `herdr` is `{ state, rule?, explained?, rules? }`), `screen` (when launch stopped at
+a pane: needs input, or failed after reading the pane).
+
+## record
+
+Appends one row to the ledger: the advice, what the lead chose, and how it went. The only command that writes routr's
+own state during a run.
+
+Inputs:
+
+- Required: advice (`--advice <file>`, or JSON on stdin), `--subscription`, `--model`, `--effort`, `--verdict`,
+  `--check`. With `--run-id`, the same advice the run was recorded with. Refused (with `error`) when missing,
+  unreadable, or not matching `--task-file`.
+- Used when given: `--task-file` (compared with the advice before anything is read or written), `--level` (default:
+  the advised level; the guides ask for it always), `--report`, `--subagent` (repeatable), `--seconds`, `--attempts`,
+  `--cause` (repeatable), `--run-id`, `--project`, `--note`, `--ledger`.
+
+`ok`: true when the row was appended; false, with `error`, when nothing was.
+
+`headline`: `routr: recorded run <run_id> (advice <id>) in <ledger>`, or `routr: nothing recorded: <error>`.
+
+Shared fields: all six; `unavailable` is always `[]` (a file record cannot read refuses the call). `warnings`: the
+advice was not checked against a task. `next`: integrate the result and run launch's cleanup step.
+
+Own fields: `id` (the advice's id), `run_id`, `ledger`.
+
+## cleanup
+
+Finishes a worker: removes its worktree, or closes its pane, after checking nothing of it would be lost.
+
+Inputs:
+
+- Required: at most one of `--worktree <branch>`, `--path <path>`, `--pane <id>`; `--delete-branch` only with
+  `--worktree` or `--path`; `--pane` takes no `--cwd`. Refused (with `error`) otherwise.
+- Used when given: `--cwd` (default `.`), `--delete-branch`, `--dry-run`.
+
+Modes and `state`:
+
+| mode | states |
+|---|---|
+| `--pane <id>` | `closed`, `absent`, `planned`, `refused`, `failed` |
+| `--cwd` with no worker named: list | `listed`, `failed` |
+| `--worktree` or `--path`: remove | `removed`, `absent`, `planned`, `refused`, `failed` |
+
+`ok`:
+
+| case | `ok` |
+|---|---|
+| `closed`, `removed`, `absent` | true: the worker's pane or worktree is gone, or was not there |
+| `listed` | true when the list was made, whatever it holds |
+| `planned` (dry run) | true: a real run would remove or close it now |
+| `removed`, but the branch kept (`--delete-branch` on an unmerged branch) | true; `branch.deleted` is false and `warnings` says why. The branch is extra to the worker. |
+| `refused` | false, no `error`, including a partial run: files copied in at launch were removed, then a later check refused the worktree (its `steps` show both) |
+| `failed` | false, with `error` |
+
+`headline`: `routr: removed <path>`; `routr: closed <pane>`; `routr: nothing to remove: no worktree <name>`; `routr:
+would remove <path>` (dry run); `routr: N worktrees, M can be removed now`; `routr: kept <path or pane>: <why>`;
+`routr: cleanup failed: <error>`.
+
+Shared fields: all six. `unavailable`: a `pane` or `worktree` entry when a refusal comes from a read cleanup could not
+make. `warnings`: a branch git kept, the repository's other worktrees when the named one is absent. `next`: what to
+do about a refusal, the command that removes a worktree instead of closing its only pane, the list's removal template.
+
+Own fields: `state`, `steps`, `ran`; `cwd` (worktree modes); `pane` (pane mode); `worktrees` (list: each `{ branch,
+path, workspace, detached, removable, why? }`); `worktree` `{ branch, path, workspace, detached }` (remove mode, once
+found); `branch` `{ name, deleted }` (removed, when the worktree had one).
+
+## usage
+
+What routr sees of each subscription's usage, and how dispatch would rank it, with no brief. A capacity view, never a
+reassessment of work.
+
+Inputs:
+
+- Required: none.
+- Used when given: one subscription name (`claude`, `codex`, `agy`, `cursor`, `kiro`); `--level <basic|standard|strong>`
+  (once, unnamed only, without `--background`); `--config`; `--headroom` (repeatable); `--json` (accepted, changes
+  nothing); `--background` (routr's own refresh job, which no one reads). Refused (with `error`) for an unknown flag, a
+  second name, a bad `--level`, or a name that is not configured (except `cursor` and `kiro`, which can be read
+  unconfigured).
+
+`ok`:
+
+| case | `ok` |
+|---|---|
+| no name, or `--level`: the view made | true, also when some readings failed (each is a `usage` entry in `unavailable`, its row `assumed` or `kept`) or a subscription is excluded |
+| the ranking itself failed | false, no `error`; `unavailable` holds routr's `internal_error` entry |
+| named `claude`, `codex` or `agy` | as no name, for that one subscription: these are read on every call, and naming one narrows the view. A failed read is `ok: true` with its entry; a signed-out one is `ok: true` with it in `excluded`. |
+| named `cursor` or `kiro`: a fresh reading taken and kept | true |
+| named `cursor` or `kiro`: the reading failed | false, no `error`; a `usage` entry in `unavailable` (with the last good reading `kept`, when there is one) and a `next` step to read it by hand |
+| named `cursor` or `kiro`: not signed in | false, no `error`; it is in `subscriptions.excluded` with its `why` (the sign-in command), and nothing is read |
+| refused input | false, with `error` |
+
+`headline`: `routr: <name> has the most usable headroom for <level> work; normal: …, fallback: …`, or `routr: every
+subscription that takes <level> work is at its reserve`, adding `; N readings unavailable`. Named `cursor` or `kiro`:
+`routr: Cursor, Included 40% used, read now` or `routr: no fresh Cursor reading (<code>)`.
+
+Shared fields: all six. `warnings`: config and input warnings; Kiro's leftover usage session; a named `cursor` or
+`kiro` that is not configured, so not ranked. `next`: with `--level`, choose from `candidates` and keep the original
+advice for launch and record; for a failed `cursor` or `kiro` reading, read it by hand and pass `--headroom`; otherwise
+`[]`.
+
+Own fields: `level`; `subscriptions` (the same object as `dispatch`'s; for a named subscription, its row alone);
+named only: `subscription`; named `cursor` or `kiro` with a fresh reading: `reading`, the harness's own numbers for a
+person to check against its screen (Cursor `{ plan, included_used_pct, auto_used_pct, api_used_pct, headroom }`; Kiro
+`{ plan, credits_used, credits_limit, used_pct, resets_at, unrecognized_lines?, headroom }`).
+
+## The ledger and telemetry
+
+Neither schema changes. `record` writes the same row from these advice fields, whose names do not change: `id`, `ts`,
+`mode`, `question_set`, `provider`, `decision_model`, `brief_sha`, `brief_chars`, `level`, `sure`, `between`,
+`work_type`, `high_risk`, `facts.*.p`, and each ranked row's `subscription`, `usable` and `usage`. One removal touches
+how a column is filled, not the column: `advised.fallback` comes from the advice's `decision model` entry instead of
+its `fallback` field (or from `fallback: true` in advice an older routr saved). Telemetry rows are built from ledger
+rows, so nothing in them changes. Moving `subscriptions` into `usage` and adding `hardest_work` to `dispatch`'s rows
+adds a field to saved advice that `record` does not read. No rename here needs a `docs/telemetry.md` change.
+
+## Field maps
+
+Destinations: **kept** (as is), **renamed** (to the name given), **moved** (to the place given), **removed**, **added**.
+Shared fields that are new to a command are listed as added.
+
+### subagent and dispatch
+
+| current field | destination | reason |
+|---|---|---|
+| `ok` (refusals only) | kept; **added** on every answer | one meaning of "did it work" in every command |
+| `error` (refusals) | kept | marks a refusal |
+| `headline` | kept; **added** on refusals | every answer has one line |
+| `id`, `ts`, `mode`, `question_set`, `brief_sha`, `brief_chars` | kept | the advice's identity; ledger inputs |
+| `unavailable` and its entries (`part`, `provider`, `model`, `code`, `why`, `status`; `subscription`, `source`, `reading`, `reading_source`, `age_sec`) | kept | already the shared shape |
+| `provider`, `decision_model`, `ms` | kept | who answered; ledger inputs (`provider` on fallback names the one that failed) |
+| `unmeasured` | kept | qualifies `decision_model` in saved advice, for comparing models later |
+| `answers.level.score`, `.confidence`, `.probabilities`; `answers.work_type.choice`, `.confidence`; `answers.high_blast_radius` | kept | raw judgments kept with the advice so preferences can be re-applied without asking again |
+| `fallback` | removed | the same fact as a `decision model` entry in `unavailable`; `record` and `launch` read that entry (settled above) |
+| `level`, `sure`, `between`, `work_type`, `high_risk` | kept | the advice; ledger inputs |
+| `worker.suggestion`, `worker.why` | kept | the advice |
+| `facts.<name>.reading`, `.p`, `.means` | kept | the advice; `p` is a ledger input |
+| `notes` | kept, without the "Router unavailable" note | the advice's reasoning; the fallback note repeats `unavailable`, and its instruction moves to `next` |
+| `meaning` | kept | says what the advised level means; changes with the level |
+| `subscriptions.most_room`, `.candidates.normal`, `.candidates.fallback`, `.note` | kept | the ranking and its policy explanation |
+| `subscriptions.ranked[]`: `subscription`, `class`, `use`, `reserve`, `your_default`, `usable`, `headroom`, `usage`, `age_sec`, `note` | kept | the ranking; `subscription`, `usable`, `usage` are ledger inputs |
+| `subscriptions.ranked[].windows[]`: `window`, `used_pct`, `resets_in_h`, `left`, `reserve_now`, `usable` | kept | per-window numbers to check against the harness |
+| `subscriptions.ranked[].hardest_work` | added | one row shape with `usage` |
+| `subscriptions.excluded[].subscription` | kept | |
+| `subscriptions.excluded[].reason` | renamed `why` | the reason for the entry is `why` everywhere |
+| `next` | kept, with `rule`'s steps added | the one field of instructions |
+| `rule` | removed (its sentences become `next` steps) | settled above |
+| `config_notes` | moved to `warnings` | about the call, not the work |
+| `input_notes` | moved to `warnings` | about the call, not the work |
+| `warnings` | added | shared field |
+| (empty brief: a stderr line, exit 2) | becomes a JSON refusal, exit 0 | a missing required input is refused like the others; advice commands exit 0 |
+
+### check
+
+| current field | destination | reason |
+|---|---|---|
+| `ok` | added | shared field |
+| `headline` | kept | |
+| `mode`, `question_set` | kept | which question set answered |
+| `unavailable` (`brief`/`report` entries: `part`, `code`, `why`; the `decision model` entry) | kept | shared shape |
+| `fallback` | removed | here it meant "no reading", while in the advice commands it means "the decision model failed": one name, two meanings; `ok: false` and `unavailable` say it |
+| `warning` | moved to `warnings` | one shared field, a list |
+| `claimed`, `flags`, `unclear` | kept | the reading |
+| `checks.<name>.reading`, `.p` | kept | the reading |
+| `next` | kept; added when a file was unreadable (today absent); its step no longer repeats the decision model's `why` | every answer says what comes next; the recovery is in `unavailable` |
+| `provider`, `decision_model`, `ms` | kept | who answered |
+| `unmeasured` | added | the same "who answered" block as the advice commands |
+| `error` | added (missing `--brief` or `--report`) | required inputs are refused |
+| `warnings` | added | shared field |
+
+### launch (dry run and real)
+
+| current field | destination | reason |
+|---|---|---|
+| `ok` | kept; false on a dry run a real launch would refuse | `ok: true` must not tell a lead a refused launch is good to go |
+| `state` | kept | |
+| `kind`, `name`, `pane`, `cwd`, `model`, `effort` | kept | what was launched, and where |
+| `command` | renamed `ran` | `command` means a runnable line in `next`; this is display history |
+| `planned_command` (dry run) | renamed `would_run` | as above; says it is a plan |
+| `argv`, `env` | moved to `start.argv`, `start.env` | `argv` means a runnable command's words in `next`; this is the harness start |
+| (the harness's executable) | added as `start.executable` | the start line reads whole |
+| `steps[]`: `step`, `ok`, `detail` | kept | what it did, in order |
+| `warnings` | kept, without "Fallback advice: …" and the unread model list | the first repeats `unavailable`; the second is a read routr could not make |
+| `next` | kept | |
+| `needs_input` (null when not needed) | kept, present only in `needs_input` | optional fields are present only when they apply |
+| `needs_input.why` | kept | |
+| `needs_input.screen` | moved to top-level `screen` | one name for what the pane showed |
+| `needs_input.pane` | removed | the same value as the top-level `pane` |
+| `needs_input.herdr.state`, `.rule`, `.explained`, `.rules` | kept | herdr's own reading |
+| `needs_input.note` | kept | what routr knows of the harness's startup question; an explanation, so a `note` |
+| `prompt_chars` | kept | the prompt's length, never its text |
+| `unavailable` | kept; gains `model list` entries | |
+| `advice.file`, `advice.matches` | kept | the advice check |
+| `worktree.branch`, `.base`, `.path`, `.workspace` | kept | the worktree it made |
+| `pane_text` | renamed `screen` | one name for what the pane showed |
+| `headline` | added | shared field |
+| `error` | added (refusals and `failed`; dry run that a real launch would refuse) | today the reason is only a step's `detail` |
+
+### record
+
+| current field | destination | reason |
+|---|---|---|
+| `ok` | kept | |
+| `recorded` | renamed `id` | it is the advice's id, which the advice and the ledger row call `id` |
+| `recorded: null` (on failure) | removed | `ok: false` and `error` already say nothing was recorded |
+| `run_id`, `ledger` | kept | the row written, and where |
+| `warnings` | kept | |
+| `next` | kept | |
+| `error` | kept | marks a refusal |
+| `headline`, `unavailable` | added | shared fields (`unavailable` always `[]`) |
+
+### cleanup (each mode)
+
+| current field | destination | reason |
+|---|---|---|
+| `ok`, `state` | kept | |
+| `cwd` | kept in worktree modes; omitted in pane mode (today `null`) | present only when it applies |
+| `command` | renamed `ran` | display history, not a runnable line |
+| `next`, `steps`, `warnings` | kept | |
+| `refused.why` | moved to `headline`; `refused` removed | `state` says it was refused; the object held one string |
+| `pane` (pane mode) | kept | |
+| `worktrees[]`: `branch`, `path`, `workspace`, `detached`, `removable` | kept | the list |
+| `worktrees[].why` | kept | the reason for that entry |
+| `worktree`: `branch`, `path`, `workspace`, `detached` | kept | the worktree named |
+| `branch.name`, `branch.deleted` | kept | |
+| `headline`, `unavailable` | added | shared fields; `unavailable` names a pane or worktree cleanup could not read |
+| `error` | added (`failed`) | today the reason is only a step's `detail` |
+
+### usage: no name, `--level`, and named `claude`, `codex`, `agy`
+
+| current field | destination | reason |
+|---|---|---|
+| `ok`, `error` | kept | |
+| `level` (only with `--level`) | kept, always present | the level the view was filtered for; plain usage is `basic` |
+| `most_room` | moved to `subscriptions.most_room` | one object, read the same way in `dispatch` |
+| `candidates.normal`, `candidates.fallback` | moved to `subscriptions.candidates` | as above |
+| `note` | moved to `subscriptions.note` | as above; an explanation, not a warning |
+| `excluded[].subscription` | moved to `subscriptions.excluded` | as above |
+| `excluded[].reason` | moved and renamed `subscriptions.excluded[].why` | as above, and the reason for an entry is `why` |
+| `ranked[]` (every row field, `windows[]` included) | moved to `subscriptions.ranked` | as above |
+| `ranked[].hardest_work` | moved with its row | now in `dispatch`'s rows too |
+| `how` | removed | a fixed sentence, the same on every call; the ranking page says it |
+| `input_notes` | moved to `warnings` | about the call |
+| (ranking failure: `error` with the exception's text) | becomes an `internal_error` entry in `unavailable`, `ok: false` | fixed wording, as `dispatch` gives it |
+| `headline`, `unavailable`, `warnings`, `next` | added | shared fields; usage failures were only in row notes |
+| `subscription` (named) | added | names the subscription asked for |
+
+### usage: named `cursor` and `kiro`
+
+| current field | destination | reason |
+|---|---|---|
+| `ok` | kept | follows the fresh reading |
+| `subscription` | kept | |
+| `plan`, `headroom` | moved to `reading` | the harness's own numbers, kept apart from routr's ranked row |
+| Cursor: `included_used_pct`, `auto_used_pct`, `api_used_pct` | moved to `reading` | as above |
+| Kiro: `credits_used`, `credits_limit`, `used_pct`, `resets_at`, `unrecognized_lines` | moved to `reading` | as above |
+| `code`, `why` (failed reading) | moved to an `unavailable` entry (`part: "usage"`, `subscription`, `source`, `code`, `why`, `reading`) | what routr could not read, in the shared shape |
+| `read_yourself` | moved to a `next` `do` step (template `--headroom <name>=<share left>`) | an instruction; today it is dropped before output |
+| Kiro: `note` (empty session kept) | moved to `warnings` | something left behind, not an explanation of a number |
+| `excluded: true`, `why` (not signed in) | moved to `subscriptions.excluded[]` `{ subscription, why }` | the same exclusion shape as every ranking |
+| `level`, `subscriptions` | added | the same view as unnamed usage, for that subscription, after the fresh reading |
+| `headline`, `unavailable`, `warnings`, `next` | added | shared fields |
+
+## What reads a renamed or removed field
+
+Each guide, skill, help text and test that reads a field this map renames, moves or removes, by file and line, as of
+the commit this page was written on. Lines that only build input (an advice file written for a test) are marked
+"input". Source lines that read a moved field are listed last, for the change that implements this map.
+
+Guides and skills:
+
+- `skills/routr/SKILL.md:36-37` "marked as a fallback": wording for the no-reading headline and `unavailable`, not
+  the `fallback` field; reword.
+- `skills/routr/SKILL.md:89-93` `input_notes` → `warnings`.
+- `skills/routr/SKILL.md:105` excluded `reason` → `why`.
+- `skills/routr/references/orchestrator.md:149-152` launch's `warnings` and `next`: add `headline`; dry run `ok`.
+- `skills/routr/references/orchestrator.md:154-158` `needs_input` holds `screen` and `pane` → top-level `screen`; no
+  `pane` in `needs_input`.
+- `skills/routr/references/orchestrator.md:58-61` usage `ok`, `level`, `candidates` → `subscriptions.candidates`;
+  `level` always present.
+- `skills/routr/references/orchestrator.md:301` cleanup's `refused` → `headline` and `next`.
+- `skills/routr/references/orchestrator.md:337` "History (`command`, `planned_command`)" → `ran`, `would_run`.
+- `docs/troubleshooting.md:43` heading "Every answer says `fallback`" → the no-reading headline.
+- `docs/troubleshooting.md:87` `read_yourself` → the `next` step.
+- `docs/guarantees.md:27` "Dry runs warn and plan instead" → dry runs plan, and return `ok: false` when a real launch
+  would refuse.
+- `README.md:96-97` "marked as a fallback": wording, as in the skill.
+
+Help text: no entry in the help table names a field this map renames or removes. The entries that describe output
+(`subagent`, `dispatch`, `launch`, `check`: `unavailable`, the no-reading headline, `next`) stay true. `launch`'s
+`--advice` and `--dry-run` descriptions (`src/lib/help.mjs:50`, `src/lib/help.mjs:60`, "dry runs warn and plan",
+"advice checks warn") change with the dry-run `ok`, and its `--trust` entry (`src/lib/help.mjs:58`) goes with the flag.
+
+Tests:
+
+- `rule`: `test/advise.test.mjs:123`, `test/advise.test.mjs:124`, `test/advise.test.mjs:127`.
+- `config_notes`: `test/advise.test.mjs:129`.
+- `input_notes`: `test/cli.test.mjs:539`, `test/cli.test.mjs:565`, `test/cli.test.mjs:568`.
+- The fallback note in `notes`: `test/advise.test.mjs:132`, `test/provider-boundary.test.mjs:258`.
+- `fallback` (output): `test/advise.test.mjs:129`, `test/cli.test.mjs:493`, `test/unavailable.test.mjs:123`,
+  `test/provider-boundary.test.mjs:104`, `test/provider-boundary.test.mjs:114`, `test/provider-boundary.test.mjs:136`,
+  `test/provider-boundary.test.mjs:258`, `test/provider-boundary.test.mjs:263`, `test/provider-boundary.test.mjs:331`.
+- `fallback` (input: advice files a test writes for `launch` or `record`; still read from older advice, so these keep
+  passing, and new ones should carry the `decision model` entry): `test/telemetry.test.mjs:69`,
+  `test/handoff.test.mjs:19`, `test/launch.test.mjs:20`, `test/unavailable.test.mjs:88`, `test/unavailable.test.mjs:267`.
+- `check`'s next repeating the decision model's `why`: `test/provider-boundary.test.mjs:263`.
+- `check`'s `warning`: `test/cli.test.mjs:499`.
+- Launch `command` → `ran`: `test/launch.test.mjs:242`, `test/launch.test.mjs:254`, `test/launch.test.mjs:290`,
+  `test/launch.test.mjs:300`, `test/launch.test.mjs:623`, `test/handoff.test.mjs:180`.
+- Launch `planned_command` → `would_run`: `test/handoff.test.mjs:48`, `test/launch.test.mjs:243`,
+  `test/launch.test.mjs:788`, `test/launch.test.mjs:789`, `test/launch.test.mjs:791`, `test/launch.test.mjs:838`,
+  `test/launch.test.mjs:869`.
+- Launch `env` → `start.env`: `test/launch.test.mjs:244`, `test/launch.test.mjs:757`.
+- Launch `needs_input: null` → absent: `test/launch.test.mjs:190`, `test/launch.test.mjs:467`,
+  `test/launch.test.mjs:559`.
+- Launch `needs_input.pane` removed: `test/launch.test.mjs:199`, `test/launch.test.mjs:366`, `test/launch.test.mjs:455`.
+- Launch `needs_input.screen` → `screen`: `test/launch.test.mjs:199`, `test/launch.test.mjs:217`,
+  `test/launch.test.mjs:366`, `test/launch.test.mjs:516`, `test/launch.test.mjs:959`.
+- Launch's "Fallback advice" warning: `test/unavailable.test.mjs:262`.
+- `recorded` → `id`: `test/routing-quality.test.mjs:168`, `test/routing-quality.test.mjs:188`,
+  `test/routing-quality.test.mjs:269`, `test/routing-quality.test.mjs:274`, `test/cli.test.mjs:494`,
+  `test/handoff.test.mjs:169`, `test/provider-boundary.test.mjs:101`, `test/ledger.test.mjs:252`.
+- Cleanup `refused`: `test/cleanup.test.mjs:89`, `test/cleanup.test.mjs:154`, `test/cleanup.test.mjs:169`,
+  `test/cleanup.test.mjs:182`, `test/cleanup.test.mjs:184`, `test/cleanup.test.mjs:185`, `test/cleanup.test.mjs:230`,
+  `test/cleanup.test.mjs:234`, `test/cleanup.test.mjs:253`, `test/cleanup.test.mjs:262`, `test/cleanup.test.mjs:274`.
+- Excluded `reason` → `why` (the ranking produces it for both commands): `test/advise.test.mjs:169`,
+  `test/routing-quality.test.mjs:76`, `test/usage.test.mjs:748`, `test/usage.test.mjs:760`, `test/usage.test.mjs:778`,
+  `test/unavailable.test.mjs:145`, `test/unavailable.test.mjs:178`, `test/unavailable.test.mjs:181`.
+- Usage's top-level ranking fields → `subscriptions`: `test/routing-quality.test.mjs:40`,
+  `test/routing-quality.test.mjs:71`, `test/routing-quality.test.mjs:76`, `test/routing-quality.test.mjs:77`,
+  `test/routing-quality.test.mjs:79`, `test/routing-quality.test.mjs:91`, `test/routing-quality.test.mjs:130`,
+  `test/routing-quality.test.mjs:132`, `test/usage.test.mjs:262`, `test/usage.test.mjs:575`, `test/usage.test.mjs:576`,
+  `test/usage.test.mjs:577`, `test/usage.test.mjs:578`, `test/usage.test.mjs:582`, `test/usage.test.mjs:777`,
+  `test/usage.test.mjs:778`.
+- Usage `level` always present: `test/routing-quality.test.mjs:70`, `test/routing-quality.test.mjs:73`,
+  `test/routing-quality.test.mjs:127`.
+- Usage's ranking failure as `error` text: `test/routing-quality.test.mjs:95`, `test/usage.test.mjs:586`.
+- Named `cursor`/`kiro` output shape: `test/usage.test.mjs:445` (`excluded: true`, `why`), `test/usage.test.mjs:584`
+  (a check result returned as is).
+- `read_yourself` in the readers' own results, which this map moves to the command's `next`:
+  `test/usage.test.mjs:399`, `test/usage.test.mjs:408`, `test/usage.test.mjs:432`, `test/usage.test.mjs:468`,
+  `test/usage.test.mjs:469`, `test/usage.test.mjs:485` (input), `test/usage.test.mjs:514` (input),
+  `test/usage.test.mjs:527` (input).
+- The readers' success shape (`subscription`, the numbers, `headroom` at the top level), which the command moves into
+  `reading`: `test/usage.test.mjs:379`, `test/usage.test.mjs:463`, `test/usage.test.mjs:477` (input).
+
+Source lines that read a moved or removed field (not prose, for the implementing change): `src/lib/launch.mjs:137`
+(`advice.fallback`), `src/lib/ledger.mjs:111` (`advice.fallback` into `advised.fallback`), `src/lib/snapshot.mjs:42`
+(drops `read_yourself` and Kiro's note from a failed reading).
+
+A test this contract implies, per the quality gate for a rule that holds everywhere: every command above, on every
+outcome its tests already drive, prints `ok`, `headline`, `unavailable`, `warnings` and `next`, `error` only when
+`ok` is false, and no field named `command` or `argv` outside `next`.
