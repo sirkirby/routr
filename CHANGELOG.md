@@ -69,8 +69,8 @@ Includes v0.5.0-beta.1 to beta.3.
 - Start an orchestration with `/routr-orchestrate <your plan>` (Codex: `$routr-orchestrate`).
 - npm-installed harnesses work on Windows.
 - Antigravity gets routr's skills.
-- After a worker's startup question, running launch's `then` hands it its task, and a busy worker is never given a
-  second one.
+- After a worker's startup question, running launch's `then` hands it its task once herdr reads it ready, and a busy
+  worker is never given a second one.
 - `routr doctor` makes no network call; updates cannot step backwards; timed-out reads always end.
 - Skill installs and uninstall touch only routr's own files.
 
@@ -81,7 +81,7 @@ Includes v0.5.0-beta.1 to beta.3.
 - No more flashing windows on Windows.
 - A beta update channel.
 - Updates download the exact version they checked and ignore malformed release tags.
-- Reading a harness from inside a herdr pane no longer passes on the pane's variables.
+- A usage, sign-in or model-list read from inside a herdr pane no longer passes on the pane's variables.
 
 ## v0.4.1 — 2026-10-01
 

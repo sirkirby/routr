@@ -4,7 +4,8 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 
 const text = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
-const headings = text.split("\n").filter((l) => l.startsWith("## "));
+// Windows checks the file out with CRLF line endings: split on either.
+const headings = text.split(/\r?\n/).filter((l) => l.startsWith("## "));
 
 test("the changelog opens with Unreleased, then one section per stable release, newest first", () => {
   expect(headings[0]).toBe("## Unreleased");
