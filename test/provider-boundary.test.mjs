@@ -78,10 +78,11 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
     return result.stdout.toString();
   };
   const rows = () => existsSync(ledger) ? readFileSync(ledger, "utf8").trim().split("\n").map(JSON.parse) : [];
-  const doctorFailure = (stdout) => {
+  // The get-a-key text appears exactly once, and never for an unreadable secrets file: `key set` writes that file too.
+  const doctorFailure = (stdout, gets = 1) => {
     const r = JSON.parse(stdout);
     expect(r.next_steps[0]).toBe(r.key.error);
-    if (provider !== "ollama") expect(r.next_steps[0].split(PROVIDERS[provider].get).length - 1).toBe(1);
+    if (provider !== "ollama") expect(r.next_steps[0].split(PROVIDERS[provider].get).length - 1).toBe(gets);
   };
   const record = (stdout) => {
     const before = rows().length, id = JSON.parse(stdout).id;
@@ -134,7 +135,7 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
     for (const command of commands.filter(([c]) => c !== "key")) {
       const stdout = run(command, "valid", true);
       expect(stdout).toContain("routr cannot read its secrets file"); expect(stdout).toContain(join(home, ".config/routr/env"));
-      if (command[0] === "doctor" && command.includes("--json")) doctorFailure(stdout);
+      if (command[0] === "doctor" && command.includes("--json")) doctorFailure(stdout, 0);
     }
   }
   if (provider === "typesafe") {
