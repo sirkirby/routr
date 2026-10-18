@@ -90,9 +90,26 @@ measured questions about a brief or a worker report; code adds live usage; the l
   `routr feedback` is the only text sent, and only what the person typed.
 - Claims in `README.md`, the guides, and `docs/evidence.md` are either measured or say they are not.
 
+## Design
+
+- One module owns each outside boundary: the processes routr starts (`runtime.mjs`), the decision-model providers
+  (`providers.mjs`, `systemone.mjs`), the commands routr hands back to an agent. Text from outside (a provider's
+  reply, a harness's output, a pane's screen) is classified there into what routr knows how to say, and MUST NOT
+  pass through to output, the ledger, or telemetry.
+- Fix the pattern, not the instance. A bug found in one harness, provider or command is fixed in the shared code
+  they all go through, after checking every place with the same shape; where no shared code exists, make it.
+- Each command's output is a documented contract that fits its step. A field that means the same thing has one
+  name in every command, and a new field follows those names.
+- A contract and its tests change together. Do not keep an old field or flag beside its replacement: the binary and
+  the guides ship and update together.
+- A step that is only correct with an earlier step's output requires it and refuses without it. Failing open covers
+  the advice commands' output, never a skipped input.
+
 ## Quality gates
 
 - `bun test` MUST pass. Tests cover the pure parts and call no model and no harness.
+- A rule that holds everywhere (no secret, no brief text) has a test that checks the whole output of every command,
+  not one call site.
 - A change to the guides or the CLI surface updates `src/lib/help.mjs` (one table drives all help text) and the guide
   that mentions it; the launch prompt text in `references/orchestrator.md` is checked word for word by a test.
 - Installs are tested from a clean clone into a throwaway `HOME`, never from a working checkout: installers copy
@@ -123,6 +140,7 @@ supply the generated change list. Write both for a user. Details: `CONTRIBUTING.
 - After merging, the agent MAY cut a release by pushing a NEW `vX.Y.Z` tag, one above the latest release. It never
   moves or deletes an existing tag.
 - Evals, tuning data, and working notes live in a separate private workbench, not here. This repo holds what ships.
-- Match the surrounding code: dense, commented where a decision is non-obvious, with the measurement that justified
-  it named in the comment.
+- Match the surrounding code's style: dense, commented where a decision is non-obvious, with the measurement that
+  justified it named in the comment. Match its style, not its mistakes: when nearby code breaks a Design rule, fix
+  the shared piece instead of copying it.
 - Prose for users and agents is plain and specific. No marketing claims routr cannot back with `docs/evidence.md`.
