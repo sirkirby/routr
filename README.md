@@ -7,8 +7,8 @@ Codex, Cursor, Antigravity, and Kiro.
 
 **It uses what is already on your machine.** The workers are the harness CLIs you have installed and logged in to,
 started in [herdr](https://github.com/herdrdev/herdr) panes (routr is named after it). There are no provider API
-keys to hand over, no proxy, and no new accounts: your subscriptions, your logins, your settings. The one key routr
-needs is for its own decision model, and even that is optional: it can run on your own machine.
+keys to hand over, no proxy, and no new accounts: your subscriptions, your logins, your settings. Keys routr
+needs are for its own chosen decision providers, and those are optional: it can run on your own machine.
 
 **The questions are the product.** Each time the lead is about to hand out work, and again when the work comes
 back, routr asks a fixed set of narrow yes-or-no questions about the text. They were tuned against real briefs and
@@ -20,13 +20,17 @@ on your own machine through [Ollama](https://ollama.com). Jev reads the level of
 accurately on routr's tests; [how each compares](docs/evidence.md#decision-models). Code adds each subscription's live usage. The
 lead agent, your smartest model, stays the judge.
 
+Choose an ordered decision list with `routr setup --decision typesafe,cloudflare:clef-flash`. The first answer
+supplies the reading; earlier failures stay in `unavailable`. Local Ollama runs after hosted choices because it may
+need to load. If none answers, routr uses your fallback level. A backup reading is ordinary advice.
+
 A long task on one subscription runs it hot, and an agent left to itself gives every subagent its own, largest
 model. routr spreads the work across what you have, and starts each piece at the level it needs.
 
 ## The loop
 
 1. **Plan.** The lead asks `routr dispatch < task.md`, on the exact task it will hand over, and gets a fixed set of narrow facts about it, plus
-   each subscription's usable headroom. routr never names a model.
+   each subscription's usable headroom. routr leaves the worker's model to the lead.
 2. **Build.** The lead chooses suitable model and effort options on normal accounts, then compares their capacity.
    Fallback accounts are available when none suitably takes the task. `routr launch` starts the
    worker in a herdr pane with that harness's flags, handling shell prompts on the way and reporting any question a harness asks at startup.
@@ -42,7 +46,7 @@ model. routr spreads the work across what you have, and starts each piece at the
 
     $ routr dispatch "The nightly export job times out on large accounts. Find the cause, fix it, add a regression test, run bun test."
 
-    headline   routr: standard, debug work; approach_open, cause_unknown
+    headline   routr: standard, debug work; approach_open, cause_unknown; reading by jev-1.13.0 on TypeSafe
     worker     worth a worker
     facts      names_location no · approach_open yes · cause_unknown yes · cross_cutting no
                concurrency_or_data unclear · hard_to_reverse no · states_check yes · standalone yes
@@ -91,10 +95,10 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `update` | Update to the newest release on your update channel now (routr also does this by itself in the background, at most once a day). |
 | `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--enable`, `--disable`, `--channel`, `--decision`) and reads them first with `--show`. |
 | `uninstall` | Remove routr: the binary, its two skills, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, keys, and ledger; `--purge` removes those too. |
-| `doctor` | Check the setup: harnesses found, live usage, the decision model, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
+| `doctor` | Check the setup: harnesses found, live usage, every decision-list entry in order, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
 The advice commands write nothing and never block an agent: with no network or no key they still answer with a
-`no reading` headline and a decision-model entry in `unavailable`.
+`no reading` headline and one entry per failed decision model in `unavailable`.
 
 ## Install
 
@@ -133,8 +137,9 @@ never shown); run again, its menu's "Decision model" changes it:
   or Apple Silicon: on a laptop CPU alone a brief took 36-41 s, longer than routr waits.
 
 Clef reads the level of work less accurately than Jev on routr's tests ([the numbers](docs/evidence.md#decision-models));
-`routr setup --decision <provider>` switches any time. Then it finds the harnesses that are installed and signed in, and lets you choose which ones routr may use and each
-one's everyday model, effort, hardest work, reserve and account use. Arrow keys choose, Esc goes back, and nothing is written
+`routr setup --decision <provider>[:<model>],...` changes the ordered list any time. The guided screen offers a first
+model and an optional backup. Then it finds the harnesses that are installed and signed in, and lets you choose which
+ones routr may use and each one's everyday model, effort, hardest work, reserve and account use. Arrow keys choose, Esc goes back, and nothing is written
 until you pick Save and exit. Claude Code's usage needs no setup: routr reads it from Claude's own `/usage` in each
 call. `routr doctor` then shows what is in place and lists anything left to do, and `routr doctor --fix` is
 the same command as `routr setup`: safe to run again, it only fills in what is missing. Or ask your agent to "set up

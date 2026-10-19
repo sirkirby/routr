@@ -176,6 +176,10 @@ test("usable advice table applies to record with and without a task and to real 
   const f = adviceFixture();
   for (const [body, accepted, message] of [
     [{ ...f.body, ok: true }, true], [{ ...f.body, ok: true, unavailable: [{ part: "decision model" }] }, true],
+    [{ ...f.body, ok: true, provider: "cloudflare", decision_model: "clef", unavailable: [
+      { part: "decision model", provider: "typesafe", model: "jev-1.13.0", code: "timeout", why: MARK },
+      { part: "decision model", provider: "cloudflare", model: "clef-flash", code: "provider_error", status: 500, why: MARK },
+    ] }, true],
     [f.body, true], [{ ...f.body, unavailable: {} }, true], [{ ...f.body, fallback: true }, true], [{ ...f.body, fallback: true, unavailable: [{ part: "decision model" }] }, true],
     [{ ...f.body, ok: false }, false, "refused dispatch"], [{ ...f.body, error: null }, false, "refused dispatch"],
     [{ brief_sha: f.body.brief_sha }, false, "missing id"], [{ ...f.body, id: "" }, false, "missing id"], [{ ...f.body, id: "  " }, false, "missing id"],
@@ -185,14 +189,18 @@ test("usable advice table applies to record with and without a task and to real 
     writeFileSync(f.advice, typeof body === "string" ? body : JSON.stringify(body));
     for (const task_file of [undefined, f.task]) {
       const r = recordCommand({ ...recordOptions(f), task_file }); expect(r.ok).toBe(accepted); if (!accepted) expect(r.error).toContain(message);
-      if (accepted && (body.fallback || body.unavailable?.length)) expect(read(f.ledger).at(-1).advised.fallback).toBe(true);
+      if (accepted && (body.fallback || body.unavailable?.length)) expect(read(f.ledger).at(-1).advised.fallback).toBe(body.decision_model ? false : true);
+      if (accepted && body.decision_model) expect(read(f.ledger).at(-1)).toMatchObject({ provider: "cloudflare", decision_model: "clef", advised: { fallback: false } });
     }
     for (const dry of [false, true]) {
       let calls = 0, sent = false;
       const r = await launch([...f.args, "--pane", "w1:p9", ...(dry ? ["--dry-run"] : [])], { env: { HERDR_ENV: "1" }, settings: () => cfg(), ready: async () => null,
         run: async (a) => { calls++; if (a[1] === "prompt") sent = true; return a[1] === "get" ? herdrOK({ agent: { agent: "claude", cwd: f.dir, agent_status: sent ? "working" : "idle" } }) : herdrOK(); } });
       if (!accepted) { expect(r.ok).toBe(false); expect(r.error).toContain(message); expect(calls).toBe(0); if (dry) expect(r.would_run.length).toBeGreaterThan(0); }
-      else { expect(r.advice.matches).toBe(true); expect(r.state).toBe(dry ? "planned" : "prompted"); }
+      else {
+        expect(r.advice.matches).toBe(true); expect(r.state).toBe(dry ? "planned" : "prompted");
+        if (body.decision_model) { expect(r.unavailable).toHaveLength(2); expect(r.unavailable.map((u) => u.code)).toEqual(["timeout", "provider_error"]); expect(JSON.stringify(r)).not.toContain(MARK); }
+      }
     }
   }
   for (const task_file of [undefined, f.task]) expect(recordCommand({ ...recordOptions(f), advice: join(f.dir, "missing"), task_file }).error).toContain("could not read it");

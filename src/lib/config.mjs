@@ -4,13 +4,13 @@ import { join } from "node:path";
 import { LEVELS } from "./questions.mjs";
 import { HARDEST, NO_CONFIG, RESERVE } from "./wording.mjs";
 import { home } from "./runtime.mjs";
-import { DEFAULT_PROVIDER, defaultModel, isModel, isProvider, modelsHere, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
+import { DEFAULT_PROVIDER, decisionSettings } from "./providers.mjs";
 
 export const CONFIG_PATH = join(home(), ".config/routr/config.json");
 export const DEFAULTS = {
   fallback_level: "standard",  // advised when the decision model cannot be reached
   sure_at: null,               // confidence from which a level is presented as settled; null: the decision model's own (providers.mjs; Jev's is 0.8, P23)
-  decision: { provider: DEFAULT_PROVIDER, model: null }, // which System One model reads the brief (providers.mjs); model null: the provider's default
+  decision: [{ provider: DEFAULT_PROVIDER, model: null }], // which System One model reads the brief (providers.mjs); model null: the provider's default
   risk_above: 0.75,            // high_blast_radius probability that gets called out as high risk
   prefer: { research: "strong", review: "strong" }, // your preference per kind of work; shown to the agent as advice, never forced
   auto_update: true,           // check for a new release at most once a day, in the background; applied on the next run
@@ -73,21 +73,11 @@ export function loadConfig(path = CONFIG_PATH) {
   return { config, notes };
 }
 
-// Which decision model to ask. An unknown provider or a model routr has not measured there is reported, and the default
-// stands, so the router still answers.
-function decisionSetting(d, notes) {
-  if (d === undefined || d === null) return { ...DEFAULTS.decision };
-  const provider = isProvider(d?.provider) ? d.provider : DEFAULT_PROVIDER;
-  if (d?.provider !== undefined && provider !== d.provider) notes.push(`decision.provider: ${JSON.stringify(d.provider)} is not one of ${PROVIDER_NAMES.join(", ")}, using ${DEFAULT_PROVIDER}: routr setup --decision <provider>`);
-  const models = Object.keys(PROVIDERS[provider].models);
-  if (d?.model == null || provider !== d.provider) return { provider, model: null };
-  if (isModel(provider, d.model)) {
-    // Measured, but not a build this machine runs (an MLX model off Apple Silicon): said, and kept, since the file may be shared.
-    if (!modelsHere(provider).includes(d.model)) notes.push(`decision.model: ${d.model} does not run on this machine (${PROVIDERS[provider].models[d.model].runs ?? "another platform"} only): routr setup --decision <provider>`);
-    return { provider, model: d.model };
-  }
-  notes.push(`decision.model: ${JSON.stringify(d.model)} is not one routr has measured on ${provider} (${models.join(", ")}), using ${defaultModel(provider)}`);
-  return { provider, model: null };
+// The same provider/model checks and duplicate warnings as setup, without changing the user's file.
+function decisionSetting(setting, notes) {
+  const { decision, warnings } = decisionSettings(setting);
+  notes.push(...warnings);
+  return decision;
 }
 
 // The subscriptions routr may hand work to: every configured one the user has not turned off.

@@ -1,7 +1,8 @@
 // Used both as ask's fetchFn and as a CLI preload. No request leaves the process.
 export const BRIEF_MARKER = "PRIVATE_BRIEF_MARKER_73d0";
 export const KEY_MARKER = "PRIVATE_KEY_MARKER_8be4";
-const text = `${BRIEF_MARKER} ${KEY_MARKER}`;
+export const PROVIDER_MARKER = "PRIVATE_PROVIDER_MARKER_507a";
+const text = `${BRIEF_MARKER} ${KEY_MARKER} ${PROVIDER_MARKER}`;
 
 export const replyFetch = (provider, scenario) => async (url, init) => {
   if (url.endsWith("/api/version")) return Response.json({ version: scenario === "old_version" ? "0.40.0" : `0.40.0 ${text}` });

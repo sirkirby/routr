@@ -15,7 +15,8 @@ yours (`doctor --fix` is `setup` under another name). What they do besides answe
 
 They fail open: any error still prints usable output and exits 0. `dispatch`, `subagent` and `check` return
 `unavailable`, a list of the readings they could not make (`[]` when nothing was missing). Decision-model failures
-name the provider and attempted model with a fixed code and the decision error's recovery action; their headline starts with `no reading`.
+name each failed provider and attempted model with a fixed code and recovery action. A later answer is an ordinary
+reading and its headline names the model that answered; only no answer starts with `no reading`.
 `check` also names an unreadable brief or report. `decision_model` continues to mean the model that answered
 (null in a fallback ledger row); `unavailable` is output only, never stored in the ledger or sent in telemetry.
 
@@ -29,8 +30,8 @@ was given. An existing directory is accepted; a file in its place or a permissio
 - `launch` drives panes in your herdr session. A task requires readable JSON advice on that exact task (including
   `brief_sha`); missing or nonmatching advice is refused before any harness, pane or worktree call. Dry runs return
   `ok: false` with `error` on the same refusal and still plan. Matching fallback advice is accepted, including advice
-  saved as UTF-8 or UTF-16LE, with or without a BOM. Launch copies its decision-model `unavailable` entry. Older fallback advice that lacks the entry says the
-  saved advice does not name the attempted model; launch never fills it from current settings. Recovery actions
+  saved as UTF-8 or UTF-16LE, with or without a BOM. Launch copies all its decision-model `unavailable` entries,
+  including those before a backup reading. Older fallback advice that lacks the entry says the saved advice does not name the attempted model; launch never fills it from current settings. Recovery actions
   are rebuilt from the saved provider, model and code, including HTTP status for a provider error. The lead still
   chooses the account, model and effort. Real launches return a record template only after a
   start or task-submission attempt; dry runs with matching advice return the planned template.
@@ -145,9 +146,16 @@ display only, with prompt lengths instead of prompt text.
 
 ## Secrets, briefs and telemetry
 
-A brief goes only to the decision model you chose and to the worker it is for, and a key only to its own provider. routr never prints or logs
-either, and never puts them in the ledger or in telemetry: the ledger stores a brief's hash and length. Keys are kept
+A brief goes only to the decision models in your chosen list (or the one-call override) until one answers, and to
+the worker it is for. A key goes only to its own provider. routr never prints or logs either, and never puts them in the ledger or in telemetry: the ledger stores a brief's hash and length. Keys are kept
 only in routr's secrets file, `~/.config/routr/env`, written by `routr key set`.
+
+The list keeps hosted choices in order and tries local Ollama choices last, because they may need to load. Hosted
+attempts have an 8-second cut inside one overall deadline: 10 seconds for hosted-only lists, 30 seconds with local.
+A timeout, unreachable provider, provider error, daily allowance, absent key, missing local model or unsupported
+local runtime moves on. A refused key, unreadable reply, unreadable secrets file or internal error stops. Only when
+none answers does advice use the user's fallback level. Each answering model keeps its own measured profile.
+Doctor tests every entry independently and says which are ready; storing a provider key changes no decision list.
 
 Decision-provider failures are classified into fixed sentences with an action to take; response bodies and envelope
 messages never supply their wording. Answers are checked against the questions' choices and numeric ranges before

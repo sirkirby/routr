@@ -5,7 +5,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
 import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesses.mjs";
-import { matchAdvice, readAdvice, readTask, savedDecisionUnavailable, fallbackAdvice } from "./advice-file.mjs";
+import { matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
 import { displayCommand, doNext, launchNext, runNext, templateCommand } from "./next.mjs";
 import { OFF } from "./wording.mjs";
 import { BRANCH, clean, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
@@ -142,10 +142,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         out.advice = { file: o.advice, matches: false };
         matchAdvice(advice, task);
         out.advice.matches = true;
-        if (fallbackAdvice(advice)) {
-          const missing = savedDecisionUnavailable(advice);
-          out.unavailable.push(missing);
-        }
+        out.unavailable.push(...savedDecisionFailures(advice));
         recordOptions = { ...o, advice: resolve(o.advice), ...(o["task-file"] ? { "task-file": resolve(o["task-file"]) } : {}) };
       } catch (e) { problem = e.message; }
       if (problem) {

@@ -43,7 +43,8 @@ const ACT = {
   // `routr key set [typesafe|cloudflare]`: the provider named, or the one the config asks.
   key: async (args) => {
     const ci = args.indexOf("--config"), named = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--config" && a !== "set")[0];
-    const r = await (await import("./lib/key.mjs")).setKey({ provider: named ?? loadConfig(ci >= 0 ? args[ci + 1] : undefined).config.decision.provider, verify: !args.includes("--no-verify") });
+    const config = loadConfig(ci >= 0 ? args[ci + 1] : undefined).config;
+    const r = await (await import("./lib/key.mjs")).setKey({ provider: named, config, verify: !args.includes("--no-verify") });
     print(r); return r.ok ? 0 : 1;
   },
   uninstall: async (args) => {

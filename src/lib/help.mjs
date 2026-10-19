@@ -39,7 +39,7 @@ export const COMMANDS = {
   },
   launch: {
     name: "launch",
-    description: "start a worker with matching task advice; unavailable carries the saved fallback decision-model entry and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
+    description: "start a worker with matching task advice; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
     flags: [
       { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
       { name: "--name", arg: "<name>", description: "worker agent name ([a-z][a-z0-9_-]{0,31})", required: true },
@@ -112,13 +112,13 @@ export const COMMANDS = {
   },
   key: {
     name: "key",
-    description: "`routr key set [typesafe|cloudflare]` stores what your decision model's provider needs (TypeSafe: an API key; Cloudflare: an API token with Workers AI Read, and your account ID): a secret is typed with no echo (the account ID is shown), or piped in one per line; saved owner-only beside any other provider's, then tested. With no provider, the one your settings use. Ollama needs no key",
-    args: [{ name: "set", description: "store it in ~/.config/routr/env", required: true }, { name: "typesafe|cloudflare", description: "the provider (default: the one your settings use)", required: false }],
+    description: "`routr key set [typesafe|cloudflare]` stores what your decision model's provider needs (TypeSafe: an API key; Cloudflare: an API token with Workers AI Read, and your account ID): a secret is typed with no echo (the account ID is shown), or piped in one per line; saved owner-only beside any other provider's, then tested. With no provider, the first entry that needs a key (a local-only list needs none). A provider outside your decision list is named with a setup command to add it; the list stays as it is. Ollama needs no key",
+    args: [{ name: "set", description: "store it in ~/.config/routr/env", required: true }, { name: "typesafe|cloudflare", description: "the provider (default: the first entry that needs a key)", required: false }],
     flags: [{ name: "--no-verify", description: "skip the test call", required: false }],
   },
   setup: {
     name: "setup",
-    description: "do what doctor says is missing: write your settings for the harnesses found, and ask which decision model to use and for its key. It leaves Claude Code's settings alone. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting",
+    description: "do what doctor says is missing: write your settings for the harnesses found, and choose a first decision model and optional backup, and ask for their keys. It leaves Claude Code's settings alone. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting",
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
       { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list (Claude Code also takes a model's full name, which it does not list); repeatable. Also changes it on an existing config", required: false, repeatable: true },
@@ -130,7 +130,7 @@ export const COMMANDS = {
       { name: "--enable", arg: "<subscription>", description: "let routr hand work to this subscription again (it kept its settings while off); repeatable", required: false, repeatable: true },
       { name: "--disable", arg: "<subscription>", description: "turn a subscription off: routr gives it no work, and it keeps its settings; repeatable", required: false, repeatable: true },
       { name: "--channel", arg: "stable|beta", description: "which releases updates install: stable (the default), or beta for beta and release-candidate builds too (a newer stable release still wins). Read by `routr update` and the daily update; nothing moves you back to an older stable by itself", required: false },
-      { name: "--decision", arg: "<provider>[:<model>]", description: "which decision model reads each brief: typesafe (Jev, the default), cloudflare (Clef on your Cloudflare account; cloudflare:clef-flash is its smaller model), or ollama (Clef Flash on this machine, free). Only models routr has measured (docs/evidence.md); the key is set apart, by the person, with routr key set", required: false },
+      { name: "--decision", arg: "<provider>[:<model>],...", description: "ordered decision models (for example typesafe,cloudflare:clef-flash); first answer wins. Local Ollama models run after all hosted entries because they may need to load. Hosted attempts have an 8 s cut within one overall deadline (10 s hosted-only, 30 s with local). Choices: typesafe (Jev, the default), cloudflare (Clef on your Cloudflare account; cloudflare:clef-flash is its smaller model), or ollama (Clef Flash on this machine, free). Only models routr has measured (docs/evidence.md); the key is set apart, by the person, with routr key set", required: false },
       { name: "--show", arg: null, description: "print your settings as routr reads them, and change nothing (asks no harness)", required: false },
       { name: "--no-statusline", description: "does nothing: setup no longer sets Claude's statusline (accepted for older scripts)", required: false },
       { name: "--force", description: "rewrite an existing config (the old one is kept as config.json.bak)", required: false },
@@ -150,7 +150,7 @@ export const COMMANDS = {
   },
   doctor: {
     name: "doctor",
-    description: "check the setup and list what to do next; changes nothing",
+    description: "test every decision-list entry in order, showing which answer and each failure; check harnesses and settings and list what to do next; changes nothing",
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--json", arg: null, description: "output JSON instead of text", required: false, default: false },

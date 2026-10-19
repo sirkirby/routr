@@ -692,7 +692,7 @@ test("an API-key Claude with no windows ranks as metered, with no doctor step as
   const { nextSteps } = await import("../src/lib/doctor.mjs");
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
   const v = ROUTR_VERSION.split("-")[0];
-  const r = (h) => ({ key: { works: true }, config: { exists: true, subscriptions: ["claude"], path: "config.json" }, herdr: { path: "/x", skill: true },
+  const r = (h) => ({ decision: [{ works: true }], config: { exists: true, subscriptions: ["claude"], path: "config.json" }, herdr: { path: "/x", skill: true },
     skill: [{ where: "~/.agents/skills/routr", version: v }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: v }],
     harnesses: { claude: { installed: true, signed_in: true, usage_class: h.class, usage_note: h.note, ...(h.reason ? { usage_reason: h.reason } : {}), ...(h.billing ? { usage_billing: h.billing } : {}) } } });
   expect(nextSteps(r(plain)).join(" ")).toContain('"billing": "metered"');

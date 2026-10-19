@@ -15,7 +15,7 @@ import { ensureParent, standalone } from "./runtime.mjs";
 import { updatesOff } from "./update.mjs";
 import { installSkill } from "./skill-install.mjs";
 import { askDecision, decisionLabel, guided } from "./setup-guided.mjs";
-import { decisionTarget, isModel, isProvider, modelsHere, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
+import { decisionTarget, decisionTargets, decisionSettings, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
 import { secretsFor } from "./systemone.mjs";
 import { CANCEL, createUI } from "./tui.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
@@ -88,18 +88,19 @@ export function parseChannel(args) {
   if (!UPDATE_CHANNELS.includes(args[i + 1])) throw new Error(`--channel takes ${UPDATE_CHANNELS.join(" or ")}`);
   return args[i + 1];
 }
-// `--decision cloudflare` or `--decision ollama:clef-flash:9b-mxfp8`: which decision model reads each brief. A provider
+// `--decision typesafe,cloudflare:clef-flash`: the ordered models that may read each brief. A provider
 // alone takes its default model; a model must be one routr has measured there (providers.mjs).
-export function parseDecision(args) {
+export function parseDecision(args, warnings = []) {
   const i = args.indexOf("--decision");
   if (i < 0) return undefined;
-  const v = args[i + 1] ?? "", at = v.indexOf(":"), provider = at < 0 ? v : v.slice(0, at), model = at < 0 ? null : v.slice(at + 1) || null; // "cloudflare:" is the default model
-  if (!isProvider(provider)) throw new Error(`--decision takes <provider>[:<model>], with one of: ${PROVIDER_NAMES.join(", ")}`);
-  const models = Object.keys(PROVIDERS[provider].models), here = modelsHere(provider);
-  if (model && !isModel(provider, model)) throw new Error(`--decision ${v}: routr has measured ${models.join(", ")} on ${provider}`);
-  // A build this machine cannot run (an MLX model off Apple Silicon) is refused, not written (from the docs review).
-  if (model ? !here.includes(model) : !here.length) throw new Error(`--decision ${v}: ${model ?? `no model routr has measured on ${provider}`} ${model ? "does not run" : "runs"} on this machine${models.length ? ` (${models.map((m) => `${m}: ${PROVIDERS[provider].models[m].runs ?? "any platform"}`).join(", ")})` : ""}`);
-  return { provider, model: model ?? here[0] };
+  const entries = (args[i + 1] ?? "").split(",").map((part) => {
+    const v = part.trim(), at = v.indexOf(":");
+    return { provider: at < 0 ? v : v.slice(0, at), model: at < 0 ? null : v.slice(at + 1) || null };
+  });
+  const result = decisionSettings(entries), bad = result.problems.find((p) => p.code !== "duplicate");
+  if (bad) throw new Error(`--decision takes <provider>[:<model>],... in order, with one of: ${PROVIDER_NAMES.join(", ")}. ${bad.why}`);
+  warnings.push(...result.warnings);
+  return decisionTargets({ decision: result.decision }, {}, { localLast: false }).map(({ provider, model }) => ({ provider, model }));
 }
 // What setup says after the channel changed. It runs no update and asks GitHub nothing, so it names no version.
 // Nothing moves a pre-release back to stable by itself (update.mjs): a person leaving beta on one is told so.
@@ -135,7 +136,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const say = (s) => { if (!args.includes("--json")) print(s); };
   const did = [], skipped = [];
   let models, ranks, hardest, reserves, efforts, switches, uses, channel, decision;
-  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); channel = parseChannel(args); decision = parseDecision(args); } catch (e) { return { ok: false, error: e.message }; }
+  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); channel = parseChannel(args); decision = parseDecision(args, skipped); } catch (e) { return { ok: false, error: e.message }; }
   // The legacy flag remains a setter; explicit --use wins when both flags name the same account.
   uses = { ...Object.fromEntries(Object.entries(ranks).map(([n, rank]) => [n, rank === "with" ? "normal" : "fallback"])), ...uses };
   // Whether any setting flag was given, read once here, before a guided run adds its choices to the same maps.
@@ -153,7 +154,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     const spin = ui.spinner("Checking your harnesses, their sign-in, and your decision model");
     r = await look({ configPath: path, quiet: true });
     const ready = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && r.harnesses[n].signed_in);
-    spin.stop(`${ready.length} signed in (${ready.join(", ") || "none"}) · decision model ${r.key.works ? "answers" : "not answering yet"}`);
+    spin.stop(`${ready.length} signed in (${ready.join(", ") || "none"}) · decision model ${r.decision.some((k) => k.works) ? "answers" : "not answering yet"}`);
   } else {
     say("Looking at what is installed…");
     r = await look({ configPath: path, quiet: args.includes("--json") });
@@ -225,25 +226,25 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // Stopping before the review writes no settings; a key typed on the way was saved when it was typed, and is said.
   const stopped = () => { const kept = did.filter((d) => d.startsWith("saved the")); const said = `setup stopped: your settings were not changed${kept.length ? ` (${kept.join("; ")})` : ", and nothing was written"}`;
     ui.cancel(said[0].toUpperCase() + said.slice(1) + "."); ui.close(); return { ok: false, cancelled: true, error: said, did, skipped }; };
-  const keyFor = async (provider) => {
+  const keyFor = async ({ provider, model }) => {
     const P = PROVIDERS[provider];
-    const once = P.local ? `${provider}:${decision.model}` : provider; // a key per provider; a local model's readiness per model
+    const once = P.local ? `${provider}:${model}` : provider; // a key per provider; a local model's readiness per model
     if (handled.has(once)) return;
     handled.add(once);
-    if (P.local) { const not = await P.ready(decision.model, env); ui.note(P.label, [not ? `Runs on this machine: no key. ${not}` : `${decision.model} is pulled and Ollama is running: nothing more to do.`]); return; }
+    if (P.local) { const not = await P.ready(model, env); ui.note(P.label, [not ? `Runs on this machine: no key. ${not}` : `${model} is pulled and Ollama is running: nothing more to do.`]); return; }
     // The provider doctor just tried and found failing is asked again even with a key saved (one revoked, or mistyped).
-    if (!(provider === (r.key.provider ?? "typesafe") && !r.key.works) && hasKey(provider)) return;
+    if (!r.decision.some((k) => k.provider === provider && !k.works) && hasKey(provider)) return;
     ui.note(`${P.label} key`, [`routr asks the decision model about each piece of work: it needs your ${P.label} key.`, P.get]);
     const k = await key({ provider });
     (k.ok ? did : skipped).push(k.ok ? `saved the ${P.label} key to ${k.file}${k.works ? " and it works" : `: ${k.error}`}` : `${P.label} key not saved: ${k.error}. Run \`routr key set ${provider}\` when you have it`);
   };
   if (ui && !flagged) {
     // The decision model first, and its key: nothing routr advises works without one.
-    if (!r.key.works) {
+    if (!r.decision.some((k) => k.works)) {
       ui.note("Decision model", ["routr asks a small decision model about each piece of work. TypeSafe's Jev needs a TypeSafe key;", "Cloudflare's Clef runs on your Cloudflare account, or free on this machine through Ollama."]);
-      const d = await askDecision(ui, decisionTarget(config ? loadConfig(path).config : null, {}));
+      const d = await askDecision(ui, decisionTargets(config ? loadConfig(path).config : null, {}));
       if (d === CANCEL) { return stopped(); }
-      if (d?.provider) { decision = d; await keyFor(d.provider); }
+      if (Array.isArray(d)) { decision = d; for (const entry of d) await keyFor(entry); }
     }
     choices = await guided({ ui, r, config, efforts: levelsOf, telemetry: !telemetryAsked && !envOff(env), decided: decision ?? null });
     if (choices === CANCEL) { return stopped(); }
@@ -256,7 +257,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches); Object.assign(ranks, choices.ranks);
     Object.assign(uses, choices.uses);
     if (choices.channel) channel = choices.channel;
-    if (choices.decision) { decision = choices.decision; await keyFor(decision.provider); }
+    if (choices.decision) { decision = choices.decision; for (const entry of decision) await keyFor(entry); }
   }
 
   skillStep();
@@ -321,17 +322,22 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     if (r.config.exists && !args.includes("--force")) changed.push(`update_channel ${config.update_channel === undefined ? "set to" : `${JSON.stringify(config.update_channel)} →`} ${JSON.stringify(channel)}`);
     config.update_channel = channel;
   }
-  // The decision model: one setting for the whole file. The provider's default model is written as null, so it follows
-  // routr's pin when that moves. A sure_at of 0.8 was Jev's, written by an older setup into every config: it is dropped
-  // when the model changes, so the new model's own measured bar applies (providers.mjs).
+  // Default model pins follow routr's measured registry; an explicitly different model keeps its name.
   if (decision) {
-    const was = decisionTarget(config, {}), model = decision.model === decisionTarget({ decision: { provider: decision.provider } }, {}).model ? null : decision.model;
-    if (was.provider !== decision.provider || was.model !== decision.model) {
-      if (r.config.exists && !args.includes("--force")) changed.push(`decision ${decisionLabel(was)} → ${decisionLabel(decision)}`);
-      config.decision = { provider: decision.provider, model };
-      if (config.sure_at === 0.8) { delete config.sure_at; changed.push("sure_at 0.8 removed: it now follows the decision model"); }
-      if (!ui && !PROVIDERS[decision.provider].local && !hasKey(decision.provider)) skipped.push(`${PROVIDERS[decision.provider].label} needs its key: the user runs routr key set ${decision.provider} in their own terminal`);
-      if (!ui && PROVIDERS[decision.provider].local) { const not = await PROVIDERS[decision.provider].ready(decision.model, env); if (not) skipped.push(`${PROVIDERS[decision.provider].label}: ${not} (a download of more than 10 GB: ask the user first)`); }
+    const checked = decisionSettings(config.decision);
+    const was = decisionTargets({ decision: checked.decision }, {}, { localLast: false });
+    const moved = decisionLabel(was) !== decisionLabel(decision);
+    const entries = decision.map(({ provider, model }) => ({ provider, model: model === decisionTarget({ decision: { provider } }, {}).model ? null : model }));
+    if (moved || checked.problems.length) {
+      if (r.config.exists && !args.includes("--force")) changed.push(moved ? `decision ${decisionLabel(was)} → ${decisionLabel(decision)}`
+        : `decision file to remove ${checked.problems.length} dropped ${checked.problems.length === 1 ? "entry" : "entries"} (effective list stays ${decisionLabel(was)})`);
+      config.decision = entries;
+      if (moved && config.sure_at === 0.8) { delete config.sure_at; changed.push("sure_at 0.8 removed: it now follows the decision model"); }
+      for (const { provider, model } of decision) {
+        const P = PROVIDERS[provider];
+        if (!ui && !P.local && !hasKey(provider)) skipped.push(`${P.label} needs its key: the user runs routr key set ${provider} in their own terminal`);
+        if (!ui && P.local) { const not = await P.ready(model, env); if (not) skipped.push(`${P.label}: ${not} (a download of more than 10 GB: ask the user first)`); }
+      }
     }
   }
   if (changed.length) did.push(`changed ${changed.join(", ")}`);

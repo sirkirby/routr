@@ -5,12 +5,12 @@ import { ask, failureMessage, secretsFor } from "../src/lib/systemone.mjs";
 import { DecisionError, decisionTarget, ollamaTooOld, PROVIDERS } from "../src/lib/providers.mjs";
 import { adviseCommand, checkCommand } from "./contract.mjs";
 import { checkQuestions, questions } from "../src/lib/questions.mjs";
-import { BRIEF_MARKER, KEY_MARKER, replyFetch } from "./fixtures/provider-fetch.mjs";
+import { BRIEF_MARKER, KEY_MARKER, PROVIDER_MARKER, replyFetch } from "./fixtures/provider-fetch.mjs";
 import { cfg, cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 
 const providers = ["typesafe", "cloudflare", "ollama"];
 const credentials = { TYPESAFE_API_KEY: KEY_MARKER, CLOUDFLARE_API_TOKEN: KEY_MARKER, CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef" };
-const clean = (value) => { const text = typeof value === "string" ? value : JSON.stringify(value); expect(text).not.toContain(BRIEF_MARKER); expect(text).not.toContain(KEY_MARKER); };
+const clean = (value) => { const text = typeof value === "string" ? value : JSON.stringify(value); expect(text).not.toContain(BRIEF_MARKER); expect(text).not.toContain(KEY_MARKER); expect(text).not.toContain(PROVIDER_MARKER); };
 const expected = (provider, code, status, details = {}) => new DecisionError(decisionTarget({ decision: { provider } }, {}), code, status, details).message;
 const cases = (provider) => [
   ["http500", "provider_error", 500], ["http429", "provider_error", 429], ["http529", "provider_error", 529],
@@ -91,7 +91,7 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
   // The get-a-key text appears exactly once, and never for an unreadable secrets file: `key set` writes that file too.
   const doctorFailure = (stdout, gets = 1) => {
     const r = JSON.parse(stdout);
-    expect(r.next_steps[0]).toBe(r.key.error);
+    expect(r.next_steps[0]).toBe(r.decision[0].error);
     if (provider !== "ollama") expect(r.next_steps[0].split(PROVIDERS[provider].get).length - 1).toBe(gets);
   };
   const record = (stdout) => {
@@ -163,11 +163,11 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
   if (provider === "typesafe") {
     const stdout = run(["doctor"], "identity", false, { ROUTR_DECISION_MODEL: "jev-preview" });
     expect(stdout).toContain("jev-1.14.0, asked as jev-preview answers");
-    expect(JSON.parse(run(["doctor", "--json"], "identity")).key.measured).toBe(false);
+    expect(JSON.parse(run(["doctor", "--json"], "identity")).decision[0].measured).toBe(false);
     expect(JSON.parse(run(["dispatch", BRIEF_MARKER], "identity"))).toMatchObject({ decision_model: "jev-1.14.0", unmeasured: true });
   }
   if (provider === "ollama") {
-    const r = JSON.parse(run(["doctor", "--json"], "digest")); expect(r.key.note).toBeNull();
+    const r = JSON.parse(run(["doctor", "--json"], "digest")); expect(r.decision[0].note).toBeNull();
     // --yes setup checks local readiness, including /api/version; no key or harness is needed.
     const stdout = run(["setup", "--yes", "--decision", "ollama:clef-flash:9b-q8_0", "--json"], "version");
     expect(stdout).not.toContain("Ollama 0.40.0");

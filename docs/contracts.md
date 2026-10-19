@@ -5,9 +5,7 @@ The field maps document the migration from the previous output, and the reader i
 that the implementation changed together. In those migration notes, "today" means the output before this change.
 
 Commands covered: `subagent`, `dispatch`, `check`, `launch` (dry run and real), `record`, `cleanup` (each mode), and
-`usage` (no name, `--level`, and each named reader: `claude`, `codex`, `agy`, `cursor`, `kiro`). The setup and
-maintenance commands (`setup`, `doctor`, `update`, `key`, `telemetry`, `uninstall`, `skill`, `share`, `assess`) are
-not read by an orchestrator during a run and are not covered.
+`usage` (no name, `--level`, and each named reader: `claude`, `codex`, `agy`, `cursor`, `kiro`). Setup, doctor and key output for decision models is covered below; other maintenance commands are not covered.
 
 ## What every answer says
 
@@ -45,7 +43,7 @@ Names that mean one thing everywhere:
 
 | `part` | extra fields | from |
 |---|---|---|
-| `decision model` | `provider`, `model` (attempted), `status` (a provider error's HTTP status) | `subagent`, `dispatch`, `check`; `launch` copies the saved advice's entry |
+| `decision model` | `provider`, `model` (attempted), `status` (a provider error's HTTP status) | `subagent`, `dispatch`, `check`; `launch` copies the saved advice's entries |
 | `usage` | `subscription` (null for routr's own ranking failure), `source`, `reading` (`assumed` or `kept`), `reading_source` and `age_sec` for a kept reading | `dispatch`, `usage` |
 | `brief`, `report` | none | `check` |
 | `model list` | `subscription` | `launch` (a harness whose model list routr checks could not be read) |
@@ -53,6 +51,62 @@ Names that mean one thing everywhere:
 
 Codes are the fixed lists routr already has (the decision-model failure codes, the usage failure codes) plus
 `unreadable` for a file, a model list, a pane or a worktree.
+
+## Ordered decision models
+
+`decision` in settings is an ordered list of `{ provider, model }`. A single object in an existing user file reads
+as a list of one. Each entry must name a known provider and a measured model that runs on this machine (`model:
+null` uses that provider's default). Bad entries and duplicate resolved provider/model pairs are dropped, keeping the first occurrence.
+Each warning names the dropped entry, the reason and a concrete setup command preserving the surviving entries
+(or the default when none survives). A non-object entry says it must be an object and shows the required shape. An empty or all-bad list uses the default, TypeSafe's Jev. `ROUTR_DECISION_MODEL`
+replaces the whole list with one model for that call, retaining the model gate's unmeasured-model override.
+
+`dispatch`, `subagent` and `check` share the same traversal. Hosted entries retain their order; local Ollama entries
+come after every hosted entry, whatever their position in settings, because a local model may need to load. One
+overall deadline bounds the decision: 10 seconds for hosted-only lists, 30 seconds when a local model is included.
+Each hosted attempt, including retries, gets at most 8 seconds of the remaining deadline. Entries with no time left
+are reported as `timeout` without a request. The first answer supplies the reading and its own measured profile
+(`sure_at` and torn record); the list never combines readings.
+
+Failures that move on: `timeout`, `unreachable`, `provider_error`, `no_key`, `model_unsupported`, and the existing
+`daily_allowance` and `model_missing` cases. `key_refused` and `invalid_response` stop: the person must fix a refused
+key, and an unreadable reply is not a reason to ask someone else. `secrets_unreadable` and `internal_error` also stop.
+When none answers, advice uses `fallback_level` as before; check asks the lead to judge the report.
+
+Each failed entry produces one `decision model` entry in `unavailable`, in attempted order, naming its provider,
+model, code, fixed recovery sentence and, for `provider_error`, HTTP status. Provider text never supplies a sentence.
+A later successful reading has these earlier failures beside it. Its headline names the answering model and provider
+(`reading by <model> on <provider label>`); it is ordinary advice, with `decision_model` and `provider` naming that
+answer. Launch copies all saved decision failures, rebuilding their sentences. Launch and record use one fallback
+check: an explicit older `fallback: true`, or decision failures without an answering `decision_model` (or older
+`jev_model`). Thus a backup reading records its answering identity and `advised.fallback: false` in the ledger.
+When no model answers, `provider` and the headline both identify the last failed entry; the full ordered failure
+list remains in `unavailable`. No unavailable diagnostics enter the ledger or telemetry; their schemas do not change.
+Dispatch asks the lead to tell the user when a backup answered and why the first choice could not answer. Its
+request to judge missing readings applies only to true fallback or unavailable usage, not to a backup reading.
+
+### Setup, doctor and key output
+
+- `setup --decision <provider>[:<model>],...` accepts an ordered comma-separated list, for example
+  `typesafe,cloudflare:clef-flash`. The guided screen chooses a first model and an optional backup, and explains
+  that local models run last. The command writes a list, reports the change in `did`, preserves a backup of an
+  existing settings file and says which keys or local models still need attention in `skipped`. Duplicate flag
+  entries are dropped with their warnings in `skipped`. An equivalent list (including an older single-object
+  setting or an omitted default) changes nothing and creates no backup when all entries are valid. A file with
+  dropped entries is repaired even when the effective list is unchanged; setup says it repaired the file and names
+  the effective list it kept. Comparisons use the shared settings check, so ignored entries never become the old
+  model in a change message. A first run reports the file it wrote; only a real change to an existing effective
+  list is described as a changed decision list.
+- `doctor` tests every entry independently in effective order, even after a ready entry or a refused key. Text has
+  one decision-model line per entry. JSON has `decision`, a list replacing the former single `key` object: each
+  entry carries `provider`, `label`, `asked`, `measured`, `local`, `where`, optional `unversioned`, `found`, `works`;
+  on success `model`, `ms`, `note`; on failure `code`, `error` (fixed wording). `next_steps` includes each repair.
+- `key set <provider>` keeps the existing owner-only key storage and test output (`ok`, `provider`, `file`, `works`,
+  `model`, `ms`, `error` as applicable). For a provider outside the configured list, `note` names that fact and the
+  `routr setup --decision ...` command that appends it while retaining existing choices. It changes no settings.
+  This rule applies to every provider, including Ollama; a provider already listed gets no setup command.
+  With no provider it uses the first configured entry that needs a key, skipping local models. A local-only list
+  reports that it needs no key. Its test asks only the named provider, independent of overrides.
 
 ## Text from outside routr
 
@@ -248,12 +302,12 @@ Inputs:
 | case | `ok` |
 |---|---|
 | a reading made | true |
-| the decision model unavailable: the advice is the user's fallback level | true. The answer is still advice the lead acts on and launch accepts. `unavailable` holds the `decision model` entry, `headline` starts `routr: no reading`, and `next` says to judge the level yourself. |
+| no decision model answers: the advice is the user's fallback level | true. The answer is still advice the lead acts on and launch accepts. `unavailable` holds each failed `decision model` entry, `headline` starts `routr: no reading`, and `next` says to judge the level yourself. |
 | some usage readings failed (`dispatch`) | true; each is a `usage` entry in `unavailable`, and its ranked row says `assumed` or `kept` |
 | the brief refused | false, with `error`; no reading fields |
 
 `headline`: today's (the worker suggestion, level, kind of work, facts that bear on difficulty, `HIGH RISK`, `FIX THE
-BRIEF FIRST`; or `no reading` and the fallback level). On a refusal: `routr: no advice: <error>`.
+BRIEF FIRST`, followed by the answering model and provider; or `no reading` and the fallback level). On a refusal: `routr: no advice: <error>`.
 
 Shared fields: all six. `warnings` holds config and input warnings. `next` holds `rule`'s steps and, in their
 situations, the steps moved out of `notes` and `subscriptions.note` ("Explanation or instruction").
@@ -262,7 +316,7 @@ Own fields:
 
 - The advice's identity, read by `launch` and `record`: `id`, `ts`, `mode`, `question_set`, `brief_sha`,
   `brief_chars`.
-- Who answered: `provider` (on fallback, the one that failed), `decision_model` (absent on fallback), `unmeasured`
+- Who answered: `provider` (on fallback, the last failed entry's provider), `decision_model` (absent on fallback), `unmeasured`
   (when the model has no measured profile), `ms`, and `answers` (the raw judgments: `level` `{ score, confidence,
   probabilities }`, `work_type` `{ choice, confidence }`, `high_blast_radius`), absent on fallback.
 - The advice: `level`, `sure`, `between` (when torn), `work_type`, `high_risk`, `worker` `{ suggestion, why }`,
@@ -292,7 +346,7 @@ Inputs:
 | a flag missing | false, with `error` |
 
 `headline`: today's (`routr: N reasons to send this back`, `routr: the report gives no reason to send this back`, or
-`routr: no reading (…); judge the report yourself`).
+`routr: no reading (…); judge the report yourself`); successful readings append the answering model and provider.
 
 Shared fields: all six. `warnings`: a very short report ("make sure it is the worker's full report"), config warnings.
 `next`: send it back to the same worker, or run your own check, or (no reading) judge the report yourself.
@@ -329,7 +383,7 @@ Inputs:
 sent`; `routr: <name> needs input in pane <pane>: <why>`; `routr: launch failed: <error>`; `routr: planned <kind>
 launch, nothing ran` (adding `; a real launch would refuse: <error>`).
 
-Shared fields: all six. `unavailable`: the saved advice's `decision model` entry, a `model list` entry. `warnings`:
+Shared fields: all six. `unavailable`: the saved advice's `decision model` entries, a `model list` entry. `warnings`:
 harness notes (an effort the harness remembers), a skipped `--copy`, a pane or private config left behind, a prompt
 that may have been submitted, a rename that failed, each as a fact. `next`: as today (continue after input, record
 template with an explicit `--effort`, cleanup), plus the steps those facts call for. A startup question uses its
@@ -372,7 +426,8 @@ field). The new `ok` field is not required, so advice saved by an older routr is
 | advice file | result |
 |---|---|
 | new success (`ok: true`, `id`, `brief_sha`) | accepted |
-| new fallback (`ok: true`, a `decision model` entry in `unavailable`) | accepted; `advised.fallback` is true |
+| new fallback (`ok: true`, decision failures and no answering model) | accepted; `advised.fallback` is true |
+| backup reading (`ok: true`, `decision_model`, earlier decision failures) | accepted; `advised.fallback` is false |
 | older success (no `ok`, `id`, `brief_sha`) | accepted |
 | older fallback (no `ok`, `fallback: true`, with or without an `unavailable` entry) | accepted; `advised.fallback` is true, and launch says the attempted model is unknown when no entry names it, as today |
 | a refusal, new or older (`ok: false` or `error`; no `id` or `brief_sha`) | refused: "--advice: this is a refused dispatch, not advice; dispatch the exact task again" |
@@ -506,8 +561,8 @@ person to check against its screen (Cursor `{ plan, included_used_pct, auto_used
 Neither schema changes. `record` writes the same row from these advice fields, whose names do not change: `id`, `ts`,
 `mode`, `question_set`, `provider`, `decision_model`, `brief_sha`, `brief_chars`, `level`, `sure`, `between`,
 `work_type`, `high_risk`, `facts.*.p`, and each ranked row's `subscription`, `usable` and `usage`. One removal touches
-how a column is filled, not the column: `advised.fallback` comes from the advice's `decision model` entry instead of
-its `fallback` field (or from `fallback: true` in advice an older routr saved). Telemetry rows are built from ledger
+how a column is filled, not the column: `advised.fallback` uses the shared fallback check above; earlier decision
+failures beside an answering model are ordinary advice. Telemetry rows are built from ledger
 rows, so nothing in them changes. Moving `subscriptions` into `usage` and adding `hardest_work` to `dispatch`'s rows
 adds a field to saved advice that `record` does not read. No rename here needs a `docs/telemetry.md` change.
 
@@ -525,10 +580,10 @@ Shared fields that are new to a command are listed as added.
 | `headline` | kept; **added** on refusals | every answer has one line |
 | `id`, `ts`, `mode`, `question_set`, `brief_sha`, `brief_chars` | kept | the advice's identity; ledger inputs |
 | `unavailable` and its entries (`part`, `provider`, `model`, `code`, `why`, `status`; `subscription`, `source`, `reading`, `reading_source`, `age_sec`) | kept | already the shared shape |
-| `provider`, `decision_model`, `ms` | kept | who answered; ledger inputs (`provider` on fallback names the one that failed) |
+| `provider`, `decision_model`, `ms` | kept | who answered; ledger inputs (`provider` on fallback names the last failed entry's provider) |
 | `unmeasured` | kept | qualifies `decision_model` in saved advice, for comparing models later |
 | `answers.level.score`, `.confidence`, `.probabilities`; `answers.work_type.choice`, `.confidence`; `answers.high_blast_radius` | kept | raw judgments kept with the advice so preferences can be re-applied without asking again |
-| `fallback` | removed | the same fact as a `decision model` entry in `unavailable`; `record` and `launch` read that entry (settled above) |
+| `fallback` | removed | decision failures without an answering model indicate fallback; `record` and `launch` share that check (above) |
 | `level`, `sure`, `between`, `work_type`, `high_risk` | kept | the advice; ledger inputs |
 | `worker.suggestion`, `worker.why` | kept | the advice |
 | `facts.<name>.reading`, `.p`, `.means` | kept | the advice; `p` is a ledger input |

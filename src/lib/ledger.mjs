@@ -1,6 +1,7 @@
 // The run ledger: one JSON line per piece of work handed out: what routr advised, what the agent chose, how it turned
 // out. It is how routr's questions get judged against real work instead of dedicated experiments.
 // `routr record` is the only command that writes the ledger; the advice commands stay side-effect free.
+import { fallbackAdvice } from "./output.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
@@ -109,7 +110,7 @@ export function toEntry(advice, { subscription, model, effort, level, verdict, c
     // providers existed has `jev_model` instead, read as TypeSafe's (decisionOf).
     ...decisionOf(advice), // advice saved by an older routr carries jev_model: read as TypeSafe's (from the core review)
     brief_sha: advice.brief_sha, brief_chars: advice.brief_chars, // never the brief itself: briefs can be private
-    advised: { level: advice.level, sure: advice.sure, between: advice.between ?? null, work_type: advice.work_type, high_risk: advice.high_risk, fallback: advice.fallback === true || Array.isArray(advice.unavailable) && advice.unavailable.some((u) => u?.part === "decision model"),
+    advised: { level: advice.level, sure: advice.sure, between: advice.between ?? null, work_type: advice.work_type, high_risk: advice.high_risk, fallback: fallbackAdvice(advice),
       facts: Object.fromEntries(Object.entries(advice.facts ?? {}).map(([k, f]) => [k, f.p])) },
     headroom: Object.fromEntries((advice.subscriptions?.ranked ?? []).map((r) => [r.subscription, { usable: r.usable, usage: r.usage }])),
     chose: { subscription: subscription ?? null, model: model ?? null, ...resolveEffort({ subscription, model, effort }, config), level: LEVELS.includes(level) ? level : advice.level },

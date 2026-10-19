@@ -7,9 +7,9 @@ metadata:
 
 # routr
 
-routr gives you a quick, calibrated read at the moment you hand out work. A small decision model (TypeSafe's Jev,
-or Cloudflare's Clef if the user chose it) reads the brief you are about to give and answers a fixed set of questions,
-in under a second (up to several seconds when it runs on the user's own machine): facts about
+routr gives you a quick, calibrated read at the moment you hand out work. The first answering decision model in
+the user's ordered list (TypeSafe's Jev by default, or Cloudflare's Clef) reads the brief you are about to give and
+answers a fixed set of questions: facts about
 what the brief says, what kind of work it is, how costly a mistake would be, and an overall level. Code adds the
 live usage of each subscription. **You make the decision**: how much intelligence and reasoning the work needs, and
 so which model and effort. You know the codebase and the purpose of the work; routr does not. It gives you the same
@@ -33,8 +33,10 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
 Then run `routr doctor`; if it reports no key or no config, read `references/setup.md`. Someone working on routr
 itself can run it from a checkout instead: `bun src/routr.mjs`.
 
-The advice commands write nothing and never fail: with no network or no key they still print advice, with a `no reading` headline and a decision-model entry in `unavailable`. Matching fallback advice is valid for launch: read `unavailable`, tell the user in the launch line that
-the advice was a fallback and what was unavailable, and judge that part yourself.
+The advice commands write nothing and never fail: if no configured model answers, they still print advice, with a
+`no reading` headline and one entry per failed decision model in `unavailable`. Matching fallback advice is valid for
+launch: read `unavailable`, tell the user in the launch line that the advice was a fallback and what was unavailable,
+and judge that part yourself.
 
 ## Which part applies to you
 
@@ -61,16 +63,19 @@ or read with `--task-file <path>`.
 Ask about the exact text the worker will get, not a summary of it: for a launch, `routr dispatch --task-file <path>`
 (`references/orchestrator.md` has the whole flow, and `launch --advice` requires matching advice).
 
-- `headline`: the advice in one line. Read it first; the rest is the detail behind it. When the decision model could
-  not answer, it starts with `no reading`, names the attempted model and provider, and states the fallback level.
+- `headline`: the advice in one line. Read it first; the rest is the detail behind it. When the decision-model
+  list gives no answer, it starts with `no reading`, names the last failed model and provider, and states the fallback
+  level. A reading names the model that answered.
 - `unavailable`: what routr could not read, as a list (`[]` when nothing was missing). A `decision model` entry names
   `provider`, the attempted `model`, a fixed failure `code` and its recovery action in `why` (`status` also records a provider error's HTTP status). A `usage` entry names `subscription`, `source`,
   `code` and `why`. Fresh usable readings stay available even after a failed refresh. Otherwise `reading` says
   `assumed` or `kept`; a kept older reading adds `reading_source` and `age_sec`. An internal usage-ranking error
   names `source: "routr"` with no subscription. Read these before deciding, tell the user in the launch line when advice was a fallback, and
   judge the missing part yourself. `check` uses the same field, adding `brief` or `report` for unreadable files.
-  `launch` carries the saved advice's decision-model entry; older fallback advice says it does not name the attempted
-  model. `decision_model` still means the model that answered, so it is absent on fallback advice.
+  A later model's answer is ordinary advice: its headline names that model, and earlier failures in `unavailable`
+  do not make it fallback advice. Tell the user the backup answered and why the first choice could not answer.
+  Only true fallback and missing usage need your own reading of those parts. `launch` carries all the saved decision-model entries; older fallback advice
+  says it does not name the attempted model. `decision_model` still means the model that answered, so it is absent on fallback advice.
 - `worker`: whether the work is worth handing out at all: `do it yourself` (one or two small edits), `settle it with
   the user first` (the brief leaves them a decision), `split it across workers` (independent pieces), or `worth a
   worker`. A suggestion with its reason; you know what else is running. From `routr subagent`, a worker is a

@@ -505,7 +505,7 @@ test("doctor offers a release the daily job saw only on the user's channel, newe
 test("doctor shows the waiting release with its age, and with updates off the command that looks by hand", async () => {
   const { nextSteps, render } = await import("../src/lib/doctor.mjs");
   const r = { runtime: "routr 0.5.0 (standalone binary)", herdr: { path: "/bin/herdr", inside_session: true, skill: true }, skill: [], harnesses: {},
-    key: { works: true, model: "jev", ms: 300 }, config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] },
+    decision: [{ works: true, model: "jev", ms: 300 }], config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] },
     auto_update: { on: true, channel: "stable", checked_hours_ago: 3, last: null }, update_available: "0.6.0", update_seen_hours_ago: 3, next_steps: [] };
   expect(render(r)).toContain("routr 0.5.0 (standalone binary) · 0.6.0 is available, seen 3 h ago: run `routr update`");
   expect(nextSteps(r)).toContain("Update to 0.6.0: routr update");
@@ -524,7 +524,7 @@ test("doctor's inspection makes no network call for updates: fetch is never call
   try {
     const r = await inspect({ configPath: join(scratch("doctor-cfg"), "config.json"), quiet: true });
     expect(calls).toEqual([]); // before, doctor asked GitHub for the latest release on every run
-    expect(r.key).toMatchObject({ found: false, works: false });
+    expect(r.decision[0]).toMatchObject({ found: false, works: false });
     expect(r.update_available).toBeUndefined();
     expect(r.next_steps.length).toBeGreaterThan(0);
   } finally {

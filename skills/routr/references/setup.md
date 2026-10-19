@@ -21,7 +21,7 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
     routr doctor
 
 It changes nothing. It reports which harnesses are installed and signed in, which have a live usage source, whether
-the decision model answers, and whether a config exists. A harness that is installed but not signed in gets no work
+each decision-list entry answers, and whether a config exists. A harness that is installed but not signed in gets no work
 (dispatch, launch) until the user signs in, and setup neither adds it, turns it on, nor asks it for models or effort
 levels; one already on can still be turned off. Setup shows the command to run beside it (greyed when it cannot be
 chosen), `setup --yes` notes each one it did not add ("<name> left out: …"), doctor names the command, and routr never
@@ -31,9 +31,9 @@ questions; you run it with `--yes` and the choices you settled with the user. `r
 command. It is safe to run again: it fills in what is missing (a skill left behind by an older routr, a harness
 installed since) and leaves the rest alone.
 
-## 2. Decision model
+## 2. Decision models
 
-A small decision model reads each brief and report. Ask the user which one, and say what each needs and how it did on
+The first answering model in an ordered list reads each brief and report. Ask for a first choice and optional backup, and say what each needs and how it did on
 routr's tests (`docs/evidence.md`, "Decision models"):
 
 - **TypeSafe's Jev** (the default): reads the level most accurately on routr's tests (83 of 104 right). Needs a
@@ -49,7 +49,12 @@ routr's tests (`docs/evidence.md`, "Decision models"):
   Silicon: on a CPU alone a brief takes longer than routr waits. 70 to 72 of 104 levels right,
   more often too low. Never pull a model for them without asking: it is a download of more than 10 GB.
 
-Then set it: `routr setup --yes --decision <typesafe|cloudflare|ollama>` (or `cloudflare:clef-flash`).
+Set the ordered list: `routr setup --yes --decision typesafe,cloudflare:clef-flash`. A single choice works too.
+The guided screen offers a first model and an optional backup. Ollama is tried after every hosted entry, whatever
+its position in the list, because it may need to load. Each hosted attempt has an 8 s cut; the whole decision has
+one deadline (10 s hosted-only, 30 s when local is included). A temporary failure or absent key moves to the next;
+a refused key or unreadable reply stops and is reported. If none answers, advice uses `fallback_level`.
+`ROUTR_DECISION_MODEL` replaces the list with one model for that call.
 
 A key is stored by the user **themselves**, so it never passes through this conversation. Ask them to run, in their
 own terminal (in Claude Code they can type `! routr key set <provider>`):
@@ -57,8 +62,10 @@ own terminal (in Claude Code they can type `! routr key set <provider>`):
     routr key set typesafe        # or: routr key set cloudflare (it asks for the token, then the account ID)
 
 It asks without showing a secret, saves it to `~/.config/routr/env` readable only by them, and makes one test call.
-Do not ask the user to paste a key to you, and never print or log it. Then run `routr doctor`: the decision model line
-should read "answers".
+Every provider, including Ollama, gets a command that appends it only when it is outside the list. Storing a key
+keeps the list as it is. Plain `routr key set` chooses the first listed provider that needs a key; a local-only list
+says none is needed. Equivalent decision settings are kept as they are; duplicate choices are dropped with a warning.
+Do not ask the user to paste a key to you, and never print or log it. Then run `routr doctor`: each decision model gets its own line saying whether it answers and why it does not.
 
 If the user would rather manage it themselves, exporting `TYPESAFE_API_KEY` (or `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`) in their shell profile works too, and wins over the saved file. Do not put a key in a project
@@ -163,7 +170,7 @@ can be combined with the others in one run.
 | use a funded account for everyday work | `routr setup --yes --use codex=normal` |
 | keep an account for fallback | `routr setup --yes --use codex=fallback` |
 | get early builds (beta and release candidates), or stop | `routr setup --yes --channel beta` / `routr setup --yes --channel stable` |
-| use another decision model | `routr setup --yes --decision cloudflare` (or `typesafe`, `ollama`, `cloudflare:clef-flash`); then the user stores its key with `routr key set <provider>` in their own terminal. Ollama needs none, but its model must be pulled: setup's note says when it is not, and the pull is the user's to agree to |
+| set the ordered decision models | `routr setup --yes --decision typesafe,cloudflare:clef-flash` (a single choice also works); then the user stores its key with `routr key set <provider>` in their own terminal. Ollama needs none, but its model must be pulled: setup's note says when it is not, and the pull is the user's to agree to |
 | share anonymous outcomes, or stop | `routr telemetry on` / `routr telemetry off`: only when the user says so |
 
 A flag that routr cannot apply fails with the reason and changes nothing: a model the harness does not list (Claude Code excepted), an effort
