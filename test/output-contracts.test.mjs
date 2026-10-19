@@ -333,7 +333,8 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
   expect(startup).toContain("otherwise ask the user and leave the pane waiting");
   expect(startup).toContain('the default answer can be "No, exit"');
   expect(invoke("launch", launchArgs, "failed").r.state).toBe("failed");
-  expect(invoke("launch", [...launchArgs, "--task-file", f.task, "--advice", f.advice]).r.state).toBe("prompted");
+  const prompted = invoke("launch", [...launchArgs, "--task-file", f.task, "--advice", f.advice]).r;
+  expect(prompted.error).toBeUndefined(); expect(prompted.state).toBe("prompted");
   for (const args of [["--pane", "w2:p1"], ["--cwd", repo], ["--cwd", repo, "--worktree", "worker"]]) {
     for (const mode of ["ordinary", "absent", "refused", "failed", "git-failed", "branch-kept"]) invoke("cleanup", [...args, ...(mode === "branch-kept" && args.includes("--worktree") ? ["--delete-branch"] : [])], mode);
     invoke("cleanup", [...args, "--dry-run"]);

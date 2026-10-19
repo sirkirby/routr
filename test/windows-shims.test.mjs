@@ -14,11 +14,12 @@ const ARGS = ["plain", "with space", 'dq"inside', "100%", "%PATH%", "a&b", "a^b"
 
 test.skipIf(process.platform !== "win32")("Windows only: CLI fixtures find fake herdr and harness wrappers on their isolated PATH", () => {
   const dir = scratch("fake-tools");
+  const args = ["pane", "read", "w1:p9", "with space", "worker prompt\nwith another line"];
   for (const name of ["herdr", "claude", "cursor-agent", "git"]) {
     fakeExecutable(dir, name, ECHO);
-    const r = startSync(name, ["pane", "read", "w1:p9", "with space"], { env: cliEnv(dir, { PATH: dir }), encoding: "utf8" });
+    const r = startSync(name, args, { env: cliEnv(dir, { PATH: dir }), encoding: "utf8" });
     expect(r.error).toBeUndefined(); expect(r.status).toBe(0); expect(r.stderr).toBe("");
-    expect(JSON.parse(r.stdout)).toEqual(["pane", "read", "w1:p9", "with space"]);
+    expect(JSON.parse(r.stdout)).toEqual(args);
   }
 });
 

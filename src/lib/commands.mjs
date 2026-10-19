@@ -5,7 +5,7 @@ import { matchAdvice, readAdvice, readTask } from "./advice-file.mjs";
 import { answer, refusal } from "./output.mjs";
 import { doNext, recordRevisionNext } from "./next.mjs";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { advise, headline } from "./advise.mjs";
 import { readReport } from "./check.mjs";
@@ -13,7 +13,7 @@ import { ask } from "./systemone.mjs";
 import { DecisionError, decisionTarget, decisionUnavailable, noReading } from "./providers.mjs";
 import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, RunIdError, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
-import { standalone } from "./runtime.mjs";
+import { ensureParent, standalone } from "./runtime.mjs";
 import { CHECK_VERSION, checkQuestions, LEVELS, MEANING, questions, VERSION } from "./questions.mjs";
 import { ADVICE_STEPS, count } from "./wording.mjs";
 import { rankSubscriptions, levelExcludedWhy } from "./pick.mjs";
@@ -148,7 +148,7 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null, { env
   // Beside the ledger read by default (the one --ledger names), never in the current folder: that is usually a
   // repository, and the file could be committed.
   const file = out ?? join(dirname(ledger), `routr-ledger-${new Date().toISOString().slice(0, 10)}.jsonl`);
-  mkdirSync(dirname(file) || ".", { recursive: true });
+  ensureParent(file);
   writeFileSync(file, rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
   const st = telemetryStatus(config, env, telemetryState(ledger)), pending = st.on ? pendingCount(ledger) : 0;
   return [

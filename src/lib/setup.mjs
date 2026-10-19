@@ -3,8 +3,7 @@
 // through its own `/usage` (usage.mjs), so routr no longer needs Claude's statusline slot. `--no-statusline` is
 // still accepted, and does nothing, for scripts written for an older routr.
 // A person gets questions; an agent passes `--yes` and the choices it settled with the user as flags. Same code, same file.
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { ACCOUNT_USE, CONFIG_PATH, loadConfig, SUB_DEFAULTS, UPDATE_CHANNELS } from "./config.mjs";
 import { LEVELS } from "./questions.mjs";
 import { settingSummary } from "./wording.mjs";
@@ -12,7 +11,7 @@ import { envOff, setTelemetry } from "./telemetry.mjs";
 import { inspect, paint, render, skillsIncomplete, skillsMissing, starterConfig } from "./doctor.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { setKey } from "./key.mjs";
-import { standalone } from "./runtime.mjs";
+import { ensureParent, standalone } from "./runtime.mjs";
 import { updatesOff } from "./update.mjs";
 import { installSkill } from "./skill-install.mjs";
 import { askDecision, decisionLabel, guided } from "./setup-guided.mjs";
@@ -337,7 +336,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   }
   if (changed.length) did.push(`changed ${changed.join(", ")}`);
   if (!r.config.exists || args.includes("--force") || fresh.length || changed.length) {
-    mkdirSync(dirname(path), { recursive: true });
+    ensureParent(path);
     if (r.config.exists) copyFileSync(path, `${path}.bak`);
     writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
     did.push(`wrote ${path}${fresh.length ? ` with ${fresh.join(", ")}` : changed.length ? "" : " (no harness found yet: run `routr setup` again after installing one)"}`);

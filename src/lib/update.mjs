@@ -3,10 +3,10 @@
 // when asked, and by itself at most once a day in a detached background job (`maybeAutoUpdate`), which
 // `"auto_update": false` turns off. Every swap is checksum-verified, and a run in progress keeps its binary.
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { loadConfig } from "./config.mjs";
-import { CACHE_DIR, lockIsStale, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
+import { CACHE_DIR, ensureParent, lockIsStale, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
 import { forgetConsentUnlessOn, hoursAgo, sendRows, telemetryStatus } from "./telemetry.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
@@ -197,7 +197,7 @@ export function skillOutcome(res) {
 // the final review: the manual path bypassed the lock. A look (--check) swaps nothing and takes none. `lock` is a seam.
 export async function lockedUpdate(opts = {}, { lock = LOCK(), run = update } = {}) {
   if (opts.checkOnly) return run(opts);
-  try { mkdirSync(dirname(lock), { recursive: true }); } catch {}
+  try { ensureParent(lock); } catch {}
   if (!takeLock(lock, (f) => lockIsStale(f))) return { ok: false, updated: false, error: `another routr update is running (${lock}): nothing was changed. Try again once it finishes` };
   try { return await run(opts); } finally { rmSync(lock, { force: true }); }
 }
@@ -326,7 +326,7 @@ export const updateRecord = (r, channel, at = new Date().toISOString()) =>
 
 // `run` is a seam: a test drives the job with a fake update, and no network.
 export async function backgroundUpdate({ run = update } = {}) {
-  mkdirSync(CACHE(), { recursive: true });
+  ensureParent(LOCK());
   if (!takeLock(LOCK(), (f) => lockIsStale(f))) return; // one updater at a time
   try {
     writeFileSync(UPDATE_STAMP(), new Date().toISOString() + "\n"); // first, so a failing check is not retried on every command

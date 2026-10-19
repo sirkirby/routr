@@ -1,5 +1,5 @@
 // Shared by several test files: fixtures, fakes, and the scratch folder the preload (setup.mjs) made.
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULTS } from "../src/lib/config.mjs";
 // Made by test/setup.mjs, which bunfig.toml preloads for every test file.
@@ -54,11 +54,14 @@ export const npmShim = (target) => "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET 
   + 'IF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n) ELSE (\r\n  SET "_prog=node"\r\n)\r\n\r\n'
   + `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & set PATHEXT=%PATHEXT:;.JS;=;% & "%_prog%"  "%dp0%\\${target}" %*\r\n`;
 
-// Fake CLIs on an isolated PATH: a POSIX executable or a Windows cmd entry, both using this test's Bun binary.
-export function fakeExecutable(bin, name, code) {
+// Fake CLIs on an isolated PATH: a POSIX executable or a recognized npm shim using this test's Bun binary.
+// The shim starts the interpreter directly, like herdr.exe, so multiline worker prompts never pass through cmd.exe.
+export function fakeExecutable(bin, name, code, { platform = process.platform } = {}) {
   const file = join(bin, name);
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     writeFileSync(`${file}.mjs`, code);
-    writeFileSync(`${file}.cmd`, `@echo off\r\n"${process.execPath}" "%~dp0${name}.mjs" %*\r\n`);
+    const node = join(bin, "node.exe");
+    if (!existsSync(node)) copyFileSync(process.execPath, node);
+    writeFileSync(`${file}.cmd`, npmShim(`${name}.mjs`));
   } else { writeFileSync(file, `#!${process.execPath}\n${code}`); chmodSync(file, 0o755); }
 }

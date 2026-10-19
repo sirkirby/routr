@@ -1,9 +1,38 @@
 // runtime.mjs: every process routr starts, and the environment a harness read gets
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
-import { cmdArg, cmdLine, harnessEnv, npmShimScript, probe, resolveCommand, run, start, startOptions, startSync, stop, windowsCommand } from "../src/lib/runtime.mjs";
-import { cliEnv, npmShim, scratch } from "./helpers.mjs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, win32 } from "node:path";
+import { cmdArg, cmdLine, ensureParent, harnessEnv, npmShimScript, probe, resolveCommand, run, start, startOptions, startSync, stop, windowsCommand } from "../src/lib/runtime.mjs";
+import { cliEnv, fakeExecutable, npmShim, scratch } from "./helpers.mjs";
+
+test("the Windows fake herdr forwards a multiline worker prompt without a batch-shell parse", () => {
+  const dir = scratch("fake-herdr-prompt"), root = "C:\\fake-tools";
+  fakeExecutable(dir, "herdr", "console.log(JSON.stringify(process.argv.slice(2)));", { platform: "win32" });
+  // Map Windows lookup onto this host's fixture files, then execute its selected interpreter with the exact argv.
+  const physical = (p) => join(dir, ...win32.relative(root, p).split("\\"));
+  const args = ["agent", "prompt", "w1:p9", "You are a routr worker.\n\nTask\n\nVERDICT: done | partial | blocked"];
+  const w = windowsCommand("herdr", args, { env: { PATH: root }, cwd: root, exists: (p) => existsSync(physical(p)), read: (p) => readFileSync(physical(p), "utf8") });
+  expect(w).toEqual({ cmd: `${root}\\node.exe`, args: [`${root}\\herdr.mjs`, ...args] });
+  const r = Bun.spawnSync([physical(w.cmd), physical(w.args[0]), ...w.args.slice(1)], { stdin: "ignore" });
+  expect(r.exitCode).toBe(0); expect(r.stderr.toString()).toBe(""); expect(JSON.parse(r.stdout.toString())).toEqual(args);
+});
+
+test("parent creation resolves relative files and accepts EEXIST only for an existing directory", () => {
+  const exists = Object.assign(new Error("EEXIST: file already exists, mkdir '.'"), { code: "EEXIST" });
+  const calls = [];
+  // Bun on Windows can throw even with recursive:true when the parent is '.'. Simulate it on every platform.
+  ensureParent("ledger.jsonl", { mkdir: (dir, opts) => { calls.push([dir, opts]); throw exists; } });
+  expect(calls).toEqual([[resolve("."), { recursive: true }]]);
+  expect(isAbsolute(calls[0][0])).toBe(true);
+  const dir = scratch("parents"), file = join(dir, "collision"); writeFileSync(file, "keep");
+  expect(() => ensureParent(join(file, "row.json"), { mkdir: () => { throw exists; } })).toThrow(exists);
+  expect(() => ensureParent(join(dir, "gone", "row.json"), { mkdir: () => { throw exists; } })).toThrow(exists);
+  const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
+  expect(() => ensureParent(join(dir, "row.json"), { mkdir: () => { throw denied; } })).toThrow(denied);
+  ensureParent(join(dir, "new", "nested", "row.json"));
+  expect(statSync(join(dir, "new", "nested")).isDirectory()).toBe(true);
+  ensureParent(join(dir, "new", "nested", "another.json"));
+});
 
 test("CLI fixture PATH overrides its inherited Windows Path spelling so fake commands are found", () => {
   const saved = process.env.Path;
@@ -187,6 +216,9 @@ test("on Windows an npm shim starts node on its script, any other .cmd goes thro
   expect(w("codex", ["login", "status"], { ...base, [js]: "" })).toEqual({ cmd: NODE, args: [js, "login", "status"] });
   // The shim's own node.exe first, as the shim would.
   expect(w("codex", ["x"], { ...base, [js]: "", [`${NPM}\\node.exe`]: "" })).toEqual({ cmd: `${NPM}\\node.exe`, args: [js, "x"] });
+  const prompt = ["agent", "prompt", "w1:p9", "You are a routr worker.\n\nTask\n\nVERDICT: done | partial | blocked"];
+  expect(w("codex", prompt, { ...base, [js]: "", [`${NPM}\\node.exe`]: "" })).toEqual({ cmd: `${NPM}\\node.exe`, args: [js, ...prompt] });
+  expect(() => w("herdr", prompt, { [`${NPM}\\herdr.cmd`]: '@"C:\\bin\\bun.exe" "%~dp0herdr.mjs" %*' })).toThrow(/line break/);
   // Its script missing, or a wrapper of some other shape: cmd.exe runs the file as written.
   const viaCmd = (file, args) => ({ cmd: WIN_ENV.ComSpec, args: ["/d", "/s", "/c", `"${cmdLine(file, args)}"`], verbatim: true });
   expect(w("codex", ["x"], base)).toEqual(viaCmd(`${NPM}\\codex.cmd`, ["x"]));

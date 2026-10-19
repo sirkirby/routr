@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
 import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesses.mjs";
@@ -11,7 +11,7 @@ import { OFF } from "./wording.mjs";
 import { BRANCH, clean, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
-import { home } from "./runtime.mjs";
+import { ensureParent, home } from "./runtime.mjs";
 import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
 
 // The guide is the source of this instruction, embedded at build time just like the installed skills.
@@ -309,7 +309,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       for (const rel of o.copy ?? []) {
         const from = join(repoCwd, rel), to = join(out.cwd, rel);
         if (!existsSync(from)) { out.warnings.push(`--copy ${rel}: not found in ${repoCwd}; skipped`); continue; }
-        mkdirSync(dirname(to), { recursive: true }); cpSync(from, to, { recursive: true });
+        ensureParent(to); cpSync(from, to, { recursive: true });
         step("copy", true, `Copied ${rel} into the worktree`);
       }
     }

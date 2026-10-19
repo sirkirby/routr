@@ -2,11 +2,11 @@
 // out. It is how routr's questions get judged against real work instead of dedicated experiments.
 // `routr record` is the only command that writes the ledger; the advice commands stay side-effect free.
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { HARNESSES } from "./harnesses.mjs";
 import { LEVELS } from "./questions.mjs";
-import { home } from "./runtime.mjs";
+import { ensureParent, home } from "./runtime.mjs";
 
 // The ledger is one file per user, shared by every project on the machine. Each row is labelled with its project so
 // `assess` can tell them apart: the folder name of the git repository the work happened in. A worktree counts as its
@@ -132,7 +132,7 @@ export function append(entry, path = LEDGER_PATH, { revision = false } = {}) {
     entry = { ...entry, subagents: entry.subagents ?? prior.subagents ?? [],
       outcome: { ...entry.outcome, note: entry.outcome.note === undefined ? prior.outcome.note ?? null : entry.outcome.note } };
   }
-  mkdirSync(dirname(path), { recursive: true }); appendFileSync(path, JSON.stringify(entry) + "\n");
+  ensureParent(path); appendFileSync(path, JSON.stringify(entry) + "\n");
 }
 
 export function read(path = LEDGER_PATH) {

@@ -23,6 +23,9 @@ name the provider and attempted model with a fixed code and the decision error's
 `launch`, `cleanup`, `usage cursor`, and `usage kiro` act, and each says what it did. Their read-only forms
 (`telemetry status`, `setup --show`) only read.
 
+Local file writes create parent folders from the file's absolute location, including when only a relative filename
+was given. An existing directory is accepted; a file in its place or a permission error remains a failure.
+
 - `launch` drives panes in your herdr session. A task requires readable JSON advice on that exact task (including
   `brief_sha`); missing or nonmatching advice is refused before any harness, pane or worktree call. Dry runs return
   `ok: false` with `error` on the same refusal and still plan. Matching fallback advice is accepted, including advice
