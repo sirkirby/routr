@@ -392,7 +392,9 @@ advice was not checked against a task. `next`:
 - A `kind: "do"` revision template on every successful record: the original `--advice`, `--task-file` when given,
   recorded `--subscription`, `--model`, resolved `--effort`, chosen `--level`, `--project`, `--ledger`, and this
   `--run-id`, with `--verdict`, `--check` and `--note` placeholders. Resolving effort and retaining project and ledger
-  keep the original choice and row identity when the template is followed. Stdin advice uses an `<advice-file>`
+  keep the original choice and row identity when the template is followed. Advice, task and ledger paths in the
+  template are absolute, resolved from record's working directory, so it can be followed from another folder.
+  Stdin advice uses an `<advice-file>`
   placeholder for the lead to save that same advice; other identity fields are already filled.
 - When the advice was not checked, revise with `--task-file` or say why in `--note`.
 - A malformed or unknown `--run-id` refuses the call and says it takes the `run_id` field from record's earlier

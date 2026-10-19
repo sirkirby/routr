@@ -167,7 +167,7 @@ export const COMMANDS = {
   },
   record: {
     name: "record",
-    description: "append what you chose and how it turned out to the ledger; next integrates and cleans up only for done with check pass, otherwise sends back or escalates, and always includes a template to revise this run",
+    description: "append what you chose and how it turned out to the ledger; next integrates and cleans up only for done with check pass, otherwise sends back or escalates, and always includes a template to revise this run with absolute advice, task and ledger paths",
     flags: [
       { name: "--task-file", arg: "<path>", description: "compare this worker’s task with the advice before appending; omit only for inline tasks, or revisions when the original file is gone (say so in --note)", required: false },
       { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")})`, required: true },

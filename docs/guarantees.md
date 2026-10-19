@@ -39,6 +39,7 @@ name the provider and attempted model with a fixed code and the decision error's
   if the original task file is gone, revise without `--task-file` and say so in `--note`.
   Its next step integrates and cleans up only for `done` with `check pass`; every other outcome calls for rework or
   escalation before cleanup. Every successful record returns a filled revision template for its own `run_id`.
+  Advice, task and ledger paths in that template are absolute, so changing folders still revises the same run.
   An unknown run ID points to the earlier record output and the selected ledger; advice `id` is not a run ID.
 - `cleanup` removes a worker's worktree (through herdr, or git when no workspace is open) or closes its pane. It
   refuses while anything it can see runs there or when it cannot tell, never uses `--force`, and refuses a worktree

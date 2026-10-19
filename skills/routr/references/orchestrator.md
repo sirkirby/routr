@@ -272,7 +272,8 @@ that worker’s exact task. To revise the outcome for that same worker, pass its
 Follow record's `next`: only `done` with `check pass` proceeds to integration and cleanup; otherwise send the work
 back or escalate, then verify and revise the row before cleanup. Every success includes a `kind: "do"` revision
 template with that run's identity already filled, including its resolved effort and chosen level; fill verdict,
-check and note. For advice piped on stdin, save that same advice to fill the template's advice-file placeholder.
+check and note. Advice, task and ledger paths in the template are absolute, so you can follow it from another folder.
+For advice piped on stdin, save that same advice to fill the template's advice-file placeholder.
 `--run-id` takes `run_id` from record's earlier output, not `id` (the advice id). If it is unknown, follow `next`
 to read the worker's `run_id` from that earlier output or its row for this advice id in the selected ledger.
 A fresh dispatch has a new advice `id` and is refused for a revision, even on the same task.

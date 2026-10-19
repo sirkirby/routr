@@ -1,5 +1,6 @@
 // The boundary for commands handed back to a lead. Backslashes need quotes for bash; adjacent or final ones change
 // double-quote parsing. PowerShell 5.1 also splits dotted/colon-bearing dash arguments unless quoted.
+import { resolve } from "node:path";
 const safeWord = (w) => typeof w === "string" && /^[A-Za-z0-9_.\/:=@+\-,\\ ~]+$/.test(w) && !w.startsWith("~") && !w.includes("\\\\") && !w.endsWith("\\");
 const needsQuotes = (w) => /[ \\@,~]/.test(w) || (w.startsWith("-") && (/[.:]/.test(w) || w === "--"));
 const word = (w) => needsQuotes(w) ? `"${w}"` : w;
@@ -28,10 +29,10 @@ export function recordNext(o, { adopted = false, undelivered = false } = {}) {
 }
 
 export function recordRevisionNext(o, entry, ledger) {
-  const argv = ["routr", "record", "--advice", o.advice ?? "<advice-file>",
-    ...(o.task_file != null ? ["--task-file", o.task_file] : []), "--subscription", entry.chose.subscription,
+  const argv = ["routr", "record", "--advice", o.advice != null ? resolve(o.advice) : "<advice-file>",
+    ...(o.task_file != null ? ["--task-file", resolve(o.task_file)] : []), "--subscription", entry.chose.subscription,
     "--model", entry.chose.model, "--effort", entry.chose.effort, "--level", entry.chose.level,
-    "--project", entry.project, "--ledger", ledger, "--run-id", entry.run_id,
+    "--project", entry.project, "--ledger", resolve(ledger), "--run-id", entry.run_id,
     "--verdict", "<done|partial|blocked>", "--check", "<pass|fail|none>", "--note", "<note>"];
   return doNext("To revise this worker's outcome, fill this template with the updated verdict, check and note; use the original advice file.", templateCommand(argv));
 }

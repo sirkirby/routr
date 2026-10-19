@@ -7,7 +7,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 - Every command a lead reads now shares ok, headline, unavailable, warnings and next; output paths are consistent,
   required inputs are checked, and launch’s --trust is removed. Startup steps follow the guide's trust rule; record
-  steps match the outcome and include a template to revise that run. (#86)
+  steps match the outcome and include a template with absolute file paths to revise that run. (#86)
 
 - Each reading says in `unavailable` what routr could not read, and why: the decision model it tried and what to do
   about it, or a usage source it could not read now. When the decision model could not answer, the headline says so

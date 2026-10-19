@@ -178,6 +178,28 @@ test("record next follows the outcome on new rows and revisions, with a usable r
   expect(recordStep(inline).template).not.toContain("--task-file");
 });
 
+test("record revision resolves relative file inputs and works from another folder", () => {
+  const f = fixture(), elsewhere = scratch("revise-elsewhere");
+  const invoke = (args, cwd, input) => {
+    const result = Bun.spawnSync([process.execPath, SCRIPT, "record", ...args], { cwd, env: cliEnv(f.dir, { PATH: "" }), stdin: input ? Buffer.from(input) : "ignore" });
+    expect(result.exitCode).toBe(0); expect(result.stderr.toString()).toBe("");
+    return JSON.parse(result.stdout.toString());
+  };
+  const args = ["--advice", "advice.json", "--task-file", "task.md", "--ledger", "ledger.jsonl", "--subscription", "claude", "--model", "sonnet", "--effort", "low", "--level", "standard", "--verdict", "partial", "--check", "fail"];
+  const first = invoke(args, f.dir); expect(first.ok).toBe(true);
+  const template = recordStep(first).template;
+  for (const [flag, file] of [["advice", f.advice], ["task-file", f.task], ["ledger", f.ledger]]) expect(template).toContain(templateCommand([`--${flag}`, file]));
+  const words = template.replace("<done|partial|blocked>", "done").replace("<pass|fail|none>", "pass").replace("<note>", "rechecked").match(/"[^"]*"|\S+/g).map((w) => w.replace(/^"|"$/g, ""));
+  const revised = invoke(words.slice(2), elsewhere);
+  expect(revised.ok).toBe(true); expect(revised.run_id).toBe(first.run_id);
+  const rows = readFileSync(f.ledger, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  expect(rows.map((r) => r.run_id)).toEqual([first.run_id, first.run_id]);
+  expect(rows[1].outcome).toMatchObject({ verdict: "done", check: "pass", note: "rechecked" });
+  expect(existsSync(join(elsewhere, "ledger.jsonl"))).toBe(false);
+  const stdin = invoke(args.slice(2), f.dir, readFileSync(f.advice, "utf8"));
+  expect(stdin.ok).toBe(true); expect(recordStep(stdin).template).toContain("--advice <advice-file>");
+});
+
 test("unknown record run ids explain id versus run_id and point to the original output and ledger", () => {
   const f = fixture(), o = { advice: f.advice, task_file: f.task, ledger: f.ledger, subscription: "claude", model: "sonnet", effort: "low", verdict: "partial", check: "fail" };
   recordCommand(o);
