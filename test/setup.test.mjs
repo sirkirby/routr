@@ -342,12 +342,12 @@ test("the decision model: --decision writes it, a key is the person's to set, an
   expect(cf.keys).toEqual([]);                                                         // an agent's run never asks for a key
   const flash = await runSetup({ config: cf.saved, found: ["agy"], args: ["--yes", "--decision", "cloudflare:clef-flash"] });
   expect(flash.saved.decision).toEqual([{ provider: "cloudflare", model: "clef-flash" }]);
-  expect((await runSetup({ config, found: ["agy"], args: ["--yes", "--decision", "cloudflare:gpt-5"] })).r.error).toContain("routr has measured clef, clef-flash on cloudflare");
+  expect((await runSetup({ config, found: ["agy"], args: ["--yes", "--decision", "cloudflare:gpt-5"] })).r.error).toContain("not one routr has measured on cloudflare (clef, clef-flash)");
   expect((await runSetup({ config, found: ["agy"], args: ["--yes", "--decision", "openrouter"] })).r.error).toContain("--decision takes <provider>[:<model>]");
   const forced = await runSetup({ config: flash.saved, found: ["agy"], args: ["--yes", "--force"] });
   expect(forced.saved.decision).toEqual([{ provider: "cloudflare", model: "clef-flash" }]); // --force keeps the person's choice
   const same = await runSetup({ config: { ...config, sure_at: 0.9 }, found: ["agy"], args: ["--yes", "--decision", "typesafe"] });
-  expect(same.saved.decision).toEqual([{ provider: "typesafe", model: null }]); // explicit choice writes the list
+  expect(same.r.skipped).toContain("config " + same.r.config + " already covers every harness found: kept as it is"); // no change, nothing written
   // At a terminal: the menu's Decision model (4th, after the update channel) → Cloudflare Clef (2nd), then Save (6th); the
   // key is asked for because none is saved.
   const menu = await runSetup({ config, found: ["agy"], answers: ["4", "2", "1", "6"], env });

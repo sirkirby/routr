@@ -5,7 +5,7 @@ import { loadConfig } from "../src/lib/config.mjs";
 import { decisionTargets, PROVIDERS } from "../src/lib/providers.mjs";
 import { ask } from "../src/lib/systemone.mjs";
 import { adviseCommand, checkCommand } from "../src/lib/commands.mjs";
-import { fallbackAdvice } from "../src/lib/advice-file.mjs";
+import { fallbackAdvice } from "../src/lib/output.mjs";
 import { toEntry } from "../src/lib/ledger.mjs";
 import { questions } from "../src/lib/questions.mjs";
 import { askDecision } from "../src/lib/setup-guided.mjs";

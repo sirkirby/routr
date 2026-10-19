@@ -1,7 +1,7 @@
 // `routr key set [typesafe|cloudflare]`: store what a decision provider needs without it passing through an agent's
 // transcript. The USER runs this in their own terminal; a secret is typed with no echo (or piped in) and merged into
 // ~/.config/routr/env, owner-only, beside any other provider's. Ollama needs nothing: it runs on this machine.
-import { decisionTarget, decisionTargets, isProvider, PROVIDER_NAMES, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
+import { decisionTarget, decisionTargets, decisionCommand, isProvider, PROVIDER_NAMES, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 import { loadConfig } from "./config.mjs";
 import { failureMessage, ping, writeSecrets } from "./systemone.mjs";
 
@@ -44,10 +44,13 @@ export function checkValue(s, v) {
   return v.length < 12 || /\s/.test(v) ? `that does not look like a ${s.label}` : null;
 }
 
-export async function setKey({ provider = "typesafe", file = SECRETS_FILE, verify = true, config = loadConfig().config } = {}) {
+export async function setKey({ provider, file = SECRETS_FILE, verify = true, config = loadConfig().config } = {}) {
+  const targets = decisionTargets(config, {}, { localLast: false });
+  provider ??= targets.find((t) => PROVIDERS[t.provider].secrets.length)?.provider ?? targets[0].provider;
   const P = isProvider(provider) ? PROVIDERS[provider] : null;
   if (!P) return { ok: false, error: `no provider "${provider}": routr key set ${PROVIDER_NAMES.filter((n) => PROVIDERS[n].secrets.length).join("|")}` };
-  if (!P.secrets.length) return { ok: true, provider, note: `${P.label} needs no key: it runs on this machine. To use it: routr setup --decision ${provider}` };
+  const add = targets.some((t) => t.provider === provider) ? null : `${P.label} is not in your decision list. Add it with: ${decisionCommand([...targets, { provider }])}`;
+  if (!P.secrets.length) return { ok: true, provider, note: `${P.label} needs no key: it runs on this machine.${add ? ` ${add}` : ""}` };
   const values = {};
   if (process.stdin.isTTY) {
     console.error(`${P.label}: ${P.get}. A secret is not shown as you type it${P.secrets.some((s) => !s.hidden) ? ` (the ${P.secrets.filter((s) => !s.hidden).map((s) => s.label).join(", ")} is)` : ""}.`);
@@ -62,7 +65,6 @@ export async function setKey({ provider = "typesafe", file = SECRETS_FILE, verif
     try { const r = await ping({ target: decisionTarget({ decision: { provider } }, {}), env, file }); out.works = true; out.model = r.model; out.ms = Math.round(r.latencyMs); }
     catch (e) { out.works = false; out.error = `saved, but the test call failed: ${failureMessage(e, { decision: { provider } })}`; }
   }
-  const targets = decisionTargets(config, {}, { localLast: false });
-  if (!targets.some((t) => t.provider === provider)) out.note = `${P.label} is not in your decision list. Add it with: routr setup --decision ${[...targets.map((t) => `${t.provider}:${t.model}`), provider].join(",")}`;
+  if (add) out.note = add;
   return out; // never includes a secret
 }

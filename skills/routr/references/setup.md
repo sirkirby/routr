@@ -62,7 +62,9 @@ own terminal (in Claude Code they can type `! routr key set <provider>`):
     routr key set typesafe        # or: routr key set cloudflare (it asks for the token, then the account ID)
 
 It asks without showing a secret, saves it to `~/.config/routr/env` readable only by them, and makes one test call.
-A provider outside the list is named with the setup command that adds it; storing its key keeps the list as it is.
+Every provider, including Ollama, gets a command that appends it only when it is outside the list. Storing a key
+keeps the list as it is. Plain `routr key set` chooses the first listed provider that needs a key; a local-only list
+says none is needed. Equivalent decision settings are kept as they are; duplicate choices are dropped with a warning.
 Do not ask the user to paste a key to you, and never print or log it. Then run `routr doctor`: each decision model gets its own line saying whether it answers and why it does not.
 
 If the user would rather manage it themselves, exporting `TYPESAFE_API_KEY` (or `CLOUDFLARE_API_TOKEN` and

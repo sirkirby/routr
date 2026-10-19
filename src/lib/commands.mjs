@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { advise, headline } from "./advise.mjs";
 import { readReport } from "./check.mjs";
 import { ask } from "./systemone.mjs";
-import { DecisionError, decisionTarget, decisionFailures, noReading, readingModel } from "./providers.mjs";
+import { DecisionError, decisionTarget, failedReading, readingModel } from "./providers.mjs";
 import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, RunIdError, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { ensureParent, standalone } from "./runtime.mjs";
@@ -61,10 +61,9 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
     answered = true;
   } catch (e) {
     advice = { level: config.fallback_level, sure: false, facts: {}, notes: [], next: [doNext("Judge the level yourself; the user's fallback level is not a reading")] };
-    out.unavailable.push(...decisionFailures(e, target));
-    out.provider = out.unavailable[0].provider; // which one failed: a local model that is often down shows in the ledger
+    Object.assign(out, failedReading(e, target));
   }
-  Object.assign(out, { headline: !answered ? `${noReading(out.unavailable.at(-1))}; fallback level ${advice.level}` : `${headline(advice)}; reading by ${readingModel(out)}`, ...advice, meaning: MEANING[advice.level] });
+  Object.assign(out, { headline: !answered ? `${out.headline}; fallback level ${advice.level}` : `${headline(advice)}; reading by ${readingModel(out)}`, ...advice, meaning: MEANING[advice.level] });
   if (mode === "dispatch") {
     const usage = await usageP;
     try {
@@ -80,10 +79,18 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
   }
   out.next = [...(mode === "dispatch" ? capacityNext(out.subscriptions, out.unavailable, out.level, config) : []), ...out.next,
     ...ADVICE_STEPS[mode].map((s) => doNext(s)),
-    ...(mode === "dispatch" && out.unavailable.length ? [doNext("Tell the user what was unavailable when stating the launch choice; judge those parts yourself")] : []),
+    ...(mode === "dispatch" ? readingNext(out) : []),
     ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Choose a suitable model and effort from normal candidates first; use fallback when none suitably takes the work. State the advised and chosen level, model, effort and account with separate reasons for model and effort")] : []),
     ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Launch with this saved advice on the exact task; record from launch's template.", "routr launch --kind <subscription> --name <name> --model <model> --effort <effort> --task-file <task-file> --advice <advice-file>")] : [])];
   return answer(out);
+}
+
+// A backup restores the decision reading. Only missing usage or a true fallback needs the lead's own judgment.
+function readingNext(out) {
+  const steps = [], first = out.unavailable.find((u) => u.part === "decision model");
+  if (out.decision_model && first) steps.push(doNext(`Tell the user a backup decision model answered (${readingModel(out)}); the first choice ${readingModel(first)} could not answer: ${first.why}`));
+  if ((!out.decision_model && first) || out.unavailable.some((u) => u.part === "usage")) steps.push(doNext("Tell the user what was unavailable when stating the launch choice; judge those parts yourself"));
+  return steps;
 }
 
 // A quick first read of a worker's report; the orchestrator remains the judge.
@@ -104,8 +111,8 @@ export async function checkCommand({ brief: briefFile, report: reportFile }, { a
     Object.assign(out, readReport(r.answers), { ok: true, provider: r.provider, decision_model: r.model, ...(r.measured === false ? { unmeasured: true } : {}), ms: Math.round(r.latencyMs) });
     out.headline += `; reading by ${readingModel(out)}`;
   } catch (e) {
-    const unavailable = decisionFailures(e, decisionTarget(config)), missing = unavailable.at(-1);
-    return answer(Object.assign(out, { headline: `${noReading(missing)}; judge the report yourself`, provider: missing.provider, unavailable, next: [doNext("Judge the report yourself against the brief")] }));
+    const failure = failedReading(e, decisionTarget(config));
+    return answer(Object.assign(out, failure, { headline: `${failure.headline}; judge the report yourself`, next: [doNext("Judge the report yourself against the brief")] }));
   }
   return answer(out);
 }

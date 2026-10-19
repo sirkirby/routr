@@ -112,7 +112,7 @@ export async function inspect({ configPath, quiet } = {}) {
   const path = configPath ?? CONFIG_PATH;
   const { config, notes } = loadConfig(path); // read once: the usage step and the config report use the same reading
   const targets = decisionTargets(config);
-  if (tty) process.stderr.write(`Checking the decision models and ${found.map((n) => `\`${HARNESSES[n].executable}\``).join(", ")} (a harness can take up to 20 s to answer)…\n`);
+  if (tty) process.stderr.write(`Checking ${["the decision models", ...found.map((n) => `\`${HARNESSES[n].executable}\``)].join(" and ")}${found.length ? " (a harness can take up to 20 s to answer)" : ""}…\n`);
   const keyCheck = async () => {
     for (const target of targets) {
       const P = PROVIDERS[target.provider];

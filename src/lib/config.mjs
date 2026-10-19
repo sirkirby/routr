@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { LEVELS } from "./questions.mjs";
 import { HARDEST, NO_CONFIG, RESERVE } from "./wording.mjs";
 import { home } from "./runtime.mjs";
-import { DEFAULT_PROVIDER, defaultModel, isModel, isProvider, modelsHere, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
+import { DEFAULT_PROVIDER, decisionSettings } from "./providers.mjs";
 
 export const CONFIG_PATH = join(home(), ".config/routr/config.json");
 export const DEFAULTS = {
@@ -73,21 +73,11 @@ export function loadConfig(path = CONFIG_PATH) {
   return { config, notes };
 }
 
-// Read an old single-object user file as one entry. Invalid entries cannot replace a later valid choice.
-function decisionSetting(d, notes) {
-  const defaults = () => DEFAULTS.decision.map((x) => ({ ...x }));
-  if (d === undefined || d === null) return defaults();
-  const entries = Array.isArray(d) ? d : [d], out = [];
-  for (const [i, entry] of entries.entries()) {
-    const { provider, model = null } = entry ?? {};
-    let why;
-    if (!isProvider(provider)) why = `provider ${JSON.stringify(provider)} is not one of ${PROVIDER_NAMES.join(", ")}`;
-    else if (model !== null && !isModel(provider, model)) why = `${JSON.stringify(model)} is not one routr has measured on ${provider} (${Object.keys(PROVIDERS[provider].models).join(", ")})`;
-    else if (!modelsHere(provider).includes(model ?? defaultModel(provider))) why = `${model} does not run on this machine`;
-    if (why) notes.push(`decision[${i}] ${JSON.stringify(entry)} dropped: ${why}. Set the ordered list with routr setup --decision <provider>[:<model>],<provider>[:<model>]`);
-    else out.push({ provider, model });
-  }
-  return out.length ? out : defaults();
+// The same provider/model checks and duplicate warnings as setup, without changing the user's file.
+function decisionSetting(setting, notes) {
+  const { decision, warnings } = decisionSettings(setting);
+  notes.push(...warnings);
+  return decision;
 }
 
 // The subscriptions routr may hand work to: every configured one the user has not turned off.

@@ -44,7 +44,7 @@ const ACT = {
   key: async (args) => {
     const ci = args.indexOf("--config"), named = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--config" && a !== "set")[0];
     const config = loadConfig(ci >= 0 ? args[ci + 1] : undefined).config;
-    const r = await (await import("./lib/key.mjs")).setKey({ provider: named ?? config.decision[0].provider, config, verify: !args.includes("--no-verify") });
+    const r = await (await import("./lib/key.mjs")).setKey({ provider: named, config, verify: !args.includes("--no-verify") });
     print(r); return r.ok ? 0 : 1;
   },
   uninstall: async (args) => {

@@ -1,7 +1,7 @@
-import { fallbackAdvice } from "./advice-file.mjs";
 // The run ledger: one JSON line per piece of work handed out: what routr advised, what the agent chose, how it turned
 // out. It is how routr's questions get judged against real work instead of dedicated experiments.
 // `routr record` is the only command that writes the ledger; the advice commands stay side-effect free.
+import { fallbackAdvice } from "./output.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";

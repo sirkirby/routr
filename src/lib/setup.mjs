@@ -15,7 +15,7 @@ import { ensureParent, standalone } from "./runtime.mjs";
 import { updatesOff } from "./update.mjs";
 import { installSkill } from "./skill-install.mjs";
 import { askDecision, decisionLabel, guided } from "./setup-guided.mjs";
-import { decisionTarget, decisionTargets, isModel, isProvider, modelsHere, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
+import { decisionTarget, decisionTargets, decisionSettings, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
 import { secretsFor } from "./systemone.mjs";
 import { CANCEL, createUI } from "./tui.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
@@ -90,18 +90,17 @@ export function parseChannel(args) {
 }
 // `--decision typesafe,cloudflare:clef-flash`: the ordered models that may read each brief. A provider
 // alone takes its default model; a model must be one routr has measured there (providers.mjs).
-export function parseDecision(args) {
+export function parseDecision(args, warnings = []) {
   const i = args.indexOf("--decision");
   if (i < 0) return undefined;
-  return (args[i + 1] ?? "").split(",").map((part) => {
-    const v = part.trim(), at = v.indexOf(":"), provider = at < 0 ? v : v.slice(0, at), model = at < 0 ? null : v.slice(at + 1) || null; // "cloudflare:" is the default model
-    if (!isProvider(provider)) throw new Error(`--decision takes <provider>[:<model>],... in order, with one of: ${PROVIDER_NAMES.join(", ")}`);
-    const models = Object.keys(PROVIDERS[provider].models), here = modelsHere(provider);
-    if (model && !isModel(provider, model)) throw new Error(`--decision ${v}: routr has measured ${models.join(", ")} on ${provider}`);
-    // A build this machine cannot run (an MLX model off Apple Silicon) is refused, not written (from the docs review).
-    if (model ? !here.includes(model) : !here.length) throw new Error(`--decision ${v}: ${model ?? `no model routr has measured on ${provider}`} ${model ? "does not run" : "runs"} on this machine${models.length ? ` (${models.map((m) => `${m}: ${PROVIDERS[provider].models[m].runs ?? "any platform"}`).join(", ")})` : ""}`);
-    return { provider, model: model ?? here[0] };
+  const entries = (args[i + 1] ?? "").split(",").map((part) => {
+    const v = part.trim(), at = v.indexOf(":");
+    return { provider: at < 0 ? v : v.slice(0, at), model: at < 0 ? null : v.slice(at + 1) || null };
   });
+  const result = decisionSettings(entries), bad = result.problems.find((p) => p.code !== "duplicate");
+  if (bad) throw new Error(`--decision takes <provider>[:<model>],... in order, with one of: ${PROVIDER_NAMES.join(", ")}. ${bad.why}`);
+  warnings.push(...result.warnings);
+  return decisionTargets({ decision: result.decision }, {}, { localLast: false }).map(({ provider, model }) => ({ provider, model }));
 }
 // What setup says after the channel changed. It runs no update and asks GitHub nothing, so it names no version.
 // Nothing moves a pre-release back to stable by itself (update.mjs): a person leaving beta on one is told so.
@@ -137,7 +136,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const say = (s) => { if (!args.includes("--json")) print(s); };
   const did = [], skipped = [];
   let models, ranks, hardest, reserves, efforts, switches, uses, channel, decision;
-  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); channel = parseChannel(args); decision = parseDecision(args); } catch (e) { return { ok: false, error: e.message }; }
+  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); channel = parseChannel(args); decision = parseDecision(args, skipped); } catch (e) { return { ok: false, error: e.message }; }
   // The legacy flag remains a setter; explicit --use wins when both flags name the same account.
   uses = { ...Object.fromEntries(Object.entries(ranks).map(([n, rank]) => [n, rank === "with" ? "normal" : "fallback"])), ...uses };
   // Whether any setting flag was given, read once here, before a guided run adds its choices to the same maps.
@@ -327,8 +326,8 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   if (decision) {
     const was = decisionTargets(config, {}, { localLast: false });
     const entries = decision.map(({ provider, model }) => ({ provider, model: model === decisionTarget({ decision: { provider } }, {}).model ? null : model }));
-    if (decisionLabel(was) !== decisionLabel(decision) || !Array.isArray(config.decision)) {
-      changed.push(`decision ${decisionLabel(was)} → ${decisionLabel(decision)}`);
+    if (decisionLabel(was) !== decisionLabel(decision)) {
+      if (r.config.exists && !args.includes("--force")) changed.push(`decision ${decisionLabel(was)} → ${decisionLabel(decision)}`);
       config.decision = entries;
       if (config.sure_at === 0.8) { delete config.sure_at; changed.push("sure_at 0.8 removed: it now follows the decision model"); }
       for (const { provider, model } of decision) {

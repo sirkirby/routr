@@ -56,8 +56,9 @@ Codes are the fixed lists routr already has (the decision-model failure codes, t
 
 `decision` in settings is an ordered list of `{ provider, model }`. A single object in an existing user file reads
 as a list of one. Each entry must name a known provider and a measured model that runs on this machine (`model:
-null` uses that provider's default). Bad entries are dropped with a warning naming the entry, the reason and the
-setup command to fix the list. An empty or all-bad list uses the default, TypeSafe's Jev. `ROUTR_DECISION_MODEL`
+null` uses that provider's default). Bad entries and duplicate resolved provider/model pairs are dropped, keeping the first occurrence.
+Each warning names the dropped entry, the reason and a concrete setup command preserving the surviving entries
+(or the default when none survives). A non-object entry says it must be an object and shows the required shape. An empty or all-bad list uses the default, TypeSafe's Jev. `ROUTR_DECISION_MODEL`
 replaces the whole list with one model for that call, retaining the model gate's unmeasured-model override.
 
 `dispatch`, `subagent` and `check` share the same traversal. Hosted entries retain their order; local Ollama entries
@@ -79,14 +80,20 @@ A later successful reading has these earlier failures beside it. Its headline na
 answer. Launch copies all saved decision failures, rebuilding their sentences. Launch and record use one fallback
 check: an explicit older `fallback: true`, or decision failures without an answering `decision_model` (or older
 `jev_model`). Thus a backup reading records its answering identity and `advised.fallback: false` in the ledger.
-No unavailable diagnostics enter the ledger or telemetry; their schemas do not change.
+When no model answers, `provider` and the headline both identify the last failed entry; the full ordered failure
+list remains in `unavailable`. No unavailable diagnostics enter the ledger or telemetry; their schemas do not change.
+Dispatch asks the lead to tell the user when a backup answered and why the first choice could not answer. Its
+request to judge missing readings applies only to true fallback or unavailable usage, not to a backup reading.
 
 ### Setup, doctor and key output
 
 - `setup --decision <provider>[:<model>],...` accepts an ordered comma-separated list, for example
   `typesafe,cloudflare:clef-flash`. The guided screen chooses a first model and an optional backup, and explains
   that local models run last. The command writes a list, reports the change in `did`, preserves a backup of an
-  existing settings file and says which keys or local models still need attention in `skipped`.
+  existing settings file and says which keys or local models still need attention in `skipped`. Duplicate flag
+  entries are dropped with their warnings in `skipped`. An equivalent list (including an older single-object
+  setting or an omitted default) changes nothing and creates no backup. A first run reports the file it wrote;
+  only a real change to an existing setting is described as a changed decision list.
 - `doctor` tests every entry independently in effective order, even after a ready entry or a refused key. Text has
   one decision-model line per entry. JSON has `decision`, a list replacing the former single `key` object: each
   entry carries `provider`, `label`, `asked`, `measured`, `local`, `where`, optional `unversioned`, `found`, `works`;
@@ -94,7 +101,9 @@ No unavailable diagnostics enter the ledger or telemetry; their schemas do not c
 - `key set <provider>` keeps the existing owner-only key storage and test output (`ok`, `provider`, `file`, `works`,
   `model`, `ms`, `error` as applicable). For a provider outside the configured list, `note` names that fact and the
   `routr setup --decision ...` command that appends it while retaining existing choices. It changes no settings.
-  With no provider it uses the first configured entry. Its test asks only the named provider, independent of overrides.
+  This rule applies to every provider, including Ollama; a provider already listed gets no setup command.
+  With no provider it uses the first configured entry that needs a key, skipping local models. A local-only list
+  reports that it needs no key. Its test asks only the named provider, independent of overrides.
 
 ## Text from outside routr
 
@@ -304,7 +313,7 @@ Own fields:
 
 - The advice's identity, read by `launch` and `record`: `id`, `ts`, `mode`, `question_set`, `brief_sha`,
   `brief_chars`.
-- Who answered: `provider` (on fallback, the one that failed), `decision_model` (absent on fallback), `unmeasured`
+- Who answered: `provider` (on fallback, the last failed entry's provider), `decision_model` (absent on fallback), `unmeasured`
   (when the model has no measured profile), `ms`, and `answers` (the raw judgments: `level` `{ score, confidence,
   probabilities }`, `work_type` `{ choice, confidence }`, `high_blast_radius`), absent on fallback.
 - The advice: `level`, `sure`, `between` (when torn), `work_type`, `high_risk`, `worker` `{ suggestion, why }`,
@@ -568,7 +577,7 @@ Shared fields that are new to a command are listed as added.
 | `headline` | kept; **added** on refusals | every answer has one line |
 | `id`, `ts`, `mode`, `question_set`, `brief_sha`, `brief_chars` | kept | the advice's identity; ledger inputs |
 | `unavailable` and its entries (`part`, `provider`, `model`, `code`, `why`, `status`; `subscription`, `source`, `reading`, `reading_source`, `age_sec`) | kept | already the shared shape |
-| `provider`, `decision_model`, `ms` | kept | who answered; ledger inputs (`provider` on fallback names the one that failed) |
+| `provider`, `decision_model`, `ms` | kept | who answered; ledger inputs (`provider` on fallback names the last failed entry's provider) |
 | `unmeasured` | kept | qualifies `decision_model` in saved advice, for comparing models later |
 | `answers.level.score`, `.confidence`, `.probabilities`; `answers.work_type.choice`, `.confidence`; `answers.high_blast_radius` | kept | raw judgments kept with the advice so preferences can be re-applied without asking again |
 | `fallback` | removed | decision failures without an answering model indicate fallback; `record` and `launch` share that check (above) |

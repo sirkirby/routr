@@ -73,7 +73,8 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   names `source: "routr"` with no subscription. Read these before deciding, tell the user in the launch line when advice was a fallback, and
   judge the missing part yourself. `check` uses the same field, adding `brief` or `report` for unreadable files.
   A later model's answer is ordinary advice: its headline names that model, and earlier failures in `unavailable`
-  do not make it fallback advice. `launch` carries all the saved decision-model entries; older fallback advice
+  do not make it fallback advice. Tell the user the backup answered and why the first choice could not answer.
+  Only true fallback and missing usage need your own reading of those parts. `launch` carries all the saved decision-model entries; older fallback advice
   says it does not name the attempted model. `decision_model` still means the model that answered, so it is absent on fallback advice.
 - `worker`: whether the work is worth handing out at all: `do it yourself` (one or two small edits), `settle it with
   the user first` (the brief leaves them a decision), `split it across workers` (independent pieces), or `worth a

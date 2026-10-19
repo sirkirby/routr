@@ -1,4 +1,5 @@
 // One comparison for launch and record: advice on a summary or another worker is not advice on this task.
+import { fallbackAdvice } from "./output.mjs";
 import { readFileSync } from "node:fs";
 import { briefSha } from "./ledger.mjs";
 import { DECISION_CODES, DecisionError, decisionUnavailable, isProvider } from "./providers.mjs";
@@ -24,7 +25,6 @@ export function usableAdvice(advice) {
   for (const field of ["id", "brief_sha"]) if (typeof advice?.[field] !== "string" || !advice[field].trim()) throw new Error(`--advice: missing ${field}; dispatch the exact task again`);
   return advice;
 }
-export const fallbackAdvice = (advice) => advice.fallback === true || !advice.decision_model && !advice.jev_model && Array.isArray(advice.unavailable) && advice.unavailable.some((u) => u?.part === "decision model");
 export function matchAdvice(advice, task) {
   usableAdvice(advice);
   if (typeof advice?.brief_sha !== "string" || !advice.brief_sha) throw new Error("--advice: missing brief_sha; dispatch the exact task again");

@@ -167,6 +167,29 @@ export const defaultModel = (provider, here) => modelsHere(provider, here)[0] ??
 // Every model id routr offers, across providers: the only values telemetry sends as a decision model.
 export const KNOWN_MODELS = PROVIDER_NAMES.flatMap((p) => Object.keys(PROVIDERS[p].models));
 
+// One check for settings and setup: resolve default pins for equality, keep the first occurrence, and give every
+// dropped entry a concrete repair command that preserves all valid choices. The runtime override stays separate
+// because the model gate deliberately asks unmeasured versions.
+export const decisionCommand = (entries) => `routr setup --decision ${entries.map(({ provider, model }) => `${provider}:${model ?? defaultModel(provider)}`).join(",")}`;
+export function decisionSettings(setting) {
+  const entries = setting == null ? [] : Array.isArray(setting) ? setting : [setting], decision = [], problems = [], seen = new Set();
+  for (const [index, entry] of entries.entries()) {
+    const { provider, model = null } = entry ?? {};
+    let why, code;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) { code = "bad_entry"; why = 'an entry must be an object like {"provider":"typesafe","model":null}'; }
+    else if (!isProvider(provider)) { code = "unknown_provider"; why = `provider ${JSON.stringify(provider)} is not one of ${PROVIDER_NAMES.join(", ")}`; }
+    else if (model !== null && !isModel(provider, model)) { code = "unmeasured_model"; why = `${JSON.stringify(model)} is not one routr has measured on ${provider} (${Object.keys(PROVIDERS[provider].models).join(", ")})`; }
+    else if (!modelsHere(provider).includes(model ?? defaultModel(provider))) { code = "wrong_platform"; why = `${model} does not run on this machine`; }
+    const identity = `${provider}\u0000${model ?? (isProvider(provider) ? defaultModel(provider) : "")}`;
+    if (!why && seen.has(identity)) { code = "duplicate"; why = `duplicate ${provider}:${model ?? defaultModel(provider)}`; }
+    if (why) problems.push({ index, entry, code, why });
+    else { seen.add(identity); decision.push({ provider, model }); }
+  }
+  if (!decision.length) decision.push({ provider: DEFAULT_PROVIDER, model: null });
+  const fix = decisionCommand(decision);
+  return { decision, problems, warnings: problems.map(({ index, entry, why }) => `decision[${index}] ${JSON.stringify(entry)} dropped: ${why}. Set the ordered list with ${fix}`) };
+}
+
 // What routr will ask: the provider and model from the config (`decision`), or ROUTR_DECISION_MODEL
 // ("<provider>:<model>", or a model id alone for the configured provider), which the maintainers' gate uses to try a
 // model that has no profile yet. An unmeasured model reads with its provider's default profile, and says so.
@@ -252,3 +275,9 @@ export class DecisionListError extends DecisionError {
   }
 }
 export const decisionFailures = (e, target) => e instanceof DecisionListError ? e.unavailable : [decisionUnavailable(e, target)];
+
+// No-reading output always identifies the last failed entry, beside the full ordered diagnostics.
+export function failedReading(error, target) {
+  const unavailable = decisionFailures(error, target), last = unavailable.at(-1);
+  return { provider: last.provider, unavailable, headline: noReading(last) };
+}
