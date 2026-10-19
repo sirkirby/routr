@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readFileSync, writeFileSync, existsSync, realpathSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import { launch } from "./contract.mjs";
 import { recordCommand, adviseCommand } from "./contract.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
@@ -188,8 +188,12 @@ test("record revision resolves relative file inputs and works from another folde
   const args = ["--advice", "advice.json", "--task-file", "task.md", "--ledger", "ledger.jsonl", "--subscription", "claude", "--model", "sonnet", "--effort", "low", "--level", "standard", "--verdict", "partial", "--check", "fail"];
   const first = invoke(args, f.dir); expect(first.ok).toBe(true);
   const template = recordStep(first).template;
-  for (const [flag, file] of [["advice", f.advice], ["task-file", f.task], ["ledger", f.ledger]]) expect(template).toContain(templateCommand([`--${flag}`, file]));
   const words = template.replace("<done|partial|blocked>", "done").replace("<pass|fail|none>", "pass").replace("<note>", "rechecked").match(/"[^"]*"|\S+/g).map((w) => w.replace(/^"|"$/g, ""));
+  // The child resolves against its own cwd, which can be the real path (macOS /var is /private/var), so compare real paths.
+  for (const [flag, file] of [["advice", f.advice], ["task-file", f.task], ["ledger", f.ledger]]) {
+    const given = words[words.indexOf(`--${flag}`) + 1];
+    expect(isAbsolute(given)).toBe(true); expect(realpathSync(given)).toBe(realpathSync(file));
+  }
   const revised = invoke(words.slice(2), elsewhere);
   expect(revised.ok).toBe(true); expect(revised.run_id).toBe(first.run_id);
   const rows = readFileSync(f.ledger, "utf8").trim().split("\n").map((line) => JSON.parse(line));
