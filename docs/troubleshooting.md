@@ -42,11 +42,12 @@ reread the installed routr skill and its orchestration guide, or start a new ses
 
 ## Every answer starts with `no reading`
 
-routr could not reach its decision model: there is no key, the key is wrong, there is no network, or (with Ollama)
-Ollama is not running or the model is not pulled. `routr doctor` shows which, and the command that fixes it: a key is
+No decision-list entry answered, or a refused key or unreadable reply stopped the list. There may be no key or
+network, or (with Ollama) the server is not running or the model is not pulled. `routr doctor` tests each entry and shows why, and the command that fixes it: a key is
 stored with `routr key set` (TypeSafe's from https://console.typesafe.ai/keys; Cloudflare's token, with
 Workers AI Read, and account ID), and a local model is fetched with `ollama pull <the tag doctor names>`. routr keeps
-answering without one, but only with your fallback level.
+answering without a reading, but only with your fallback level. An earlier failure beside a later model's answer is
+ordinary advice; its headline names the model that answered.
 
 A Cloudflare token in your shell (`CLOUDFLARE_API_TOKEN`, as wrangler uses) wins over the one `routr key set` saved.
 If doctor says the key was refused, that token may lack the Workers AI permission: unset it for routr, or give it

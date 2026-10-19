@@ -171,7 +171,8 @@ export const KNOWN_MODELS = PROVIDER_NAMES.flatMap((p) => Object.keys(PROVIDERS[
 // ("<provider>:<model>", or a model id alone for the configured provider), which the maintainers' gate uses to try a
 // model that has no profile yet. An unmeasured model reads with its provider's default profile, and says so.
 export function decisionTarget(config, env = process.env) {
-  const d = config?.decision ?? {};
+  const setting = config?.decision;
+  const d = (Array.isArray(setting) ? setting[0] : setting) ?? {};
   let provider = isProvider(d.provider) ? d.provider : DEFAULT_PROVIDER;
   let model = isModel(provider, d.model) ? d.model : defaultModel(provider);
   const override = env.ROUTR_DECISION_MODEL?.trim();
@@ -183,6 +184,17 @@ export function decisionTarget(config, env = process.env) {
   const measured = isModel(provider, model) ? PROVIDERS[provider].models[model] : null;
   return { provider, model, profile: measured ?? PROVIDERS[provider].models[defaultModel(provider)] ?? null, measured: Boolean(measured), overridden: Boolean(override) };
 }
+
+// Preserve the person's order among hosted models; local models run last because they may need to load.
+export function decisionTargets(config, env = process.env, { localLast = true } = {}) {
+  if (env.ROUTR_DECISION_MODEL?.trim()) return [decisionTarget(config, env)];
+  const setting = config?.decision, entries = Array.isArray(setting) ? setting : setting ? [setting] : [];
+  const targets = (entries.length ? entries : [{}]).map((decision) => decisionTarget({ decision }, {}));
+  return localLast ? [...targets.filter((t) => !PROVIDERS[t.provider].local), ...targets.filter((t) => PROVIDERS[t.provider].local)] : targets;
+}
+
+// Headline identity uses the same provider labels as classified diagnostics.
+export const readingModel = (r) => `${r.model ?? r.decision_model} on ${PROVIDERS[r.provider]?.label ?? r.provider}`;
 
 // Only these sentences cross the provider boundary. No response body, envelope message, URL or thrown exception
 // supplies text; the target is the one routr requested. Callers use the code/provider rather than reading prose.
@@ -229,3 +241,14 @@ export function decisionUnavailable(e, target) {
     ...(error.code === "provider_error" ? { status: error.status } : {}) };
 }
 export const noReading = (u) => `routr: no reading (${u.model} on ${PROVIDERS[u.provider].label} unavailable: ${u.code})`;
+
+// Only classified failures can travel from list traversal to the command output.
+export class DecisionListError extends DecisionError {
+  constructor(errors) {
+    const last = errors.at(-1);
+    super(last, last.code, last.status);
+    this.message = last.message;
+    this.unavailable = errors.map((e) => decisionUnavailable(e, e));
+  }
+}
+export const decisionFailures = (e, target) => e instanceof DecisionListError ? e.unavailable : [decisionUnavailable(e, target)];

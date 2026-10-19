@@ -1,7 +1,8 @@
 // `routr key set [typesafe|cloudflare]`: store what a decision provider needs without it passing through an agent's
 // transcript. The USER runs this in their own terminal; a secret is typed with no echo (or piped in) and merged into
 // ~/.config/routr/env, owner-only, beside any other provider's. Ollama needs nothing: it runs on this machine.
-import { isProvider, PROVIDER_NAMES, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
+import { decisionTarget, decisionTargets, isProvider, PROVIDER_NAMES, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
+import { loadConfig } from "./config.mjs";
 import { failureMessage, ping, writeSecrets } from "./systemone.mjs";
 
 export const KEYS_URL = PROVIDERS.typesafe.keysUrl;
@@ -43,7 +44,7 @@ export function checkValue(s, v) {
   return v.length < 12 || /\s/.test(v) ? `that does not look like a ${s.label}` : null;
 }
 
-export async function setKey({ provider = "typesafe", file = SECRETS_FILE, verify = true } = {}) {
+export async function setKey({ provider = "typesafe", file = SECRETS_FILE, verify = true, config = loadConfig().config } = {}) {
   const P = isProvider(provider) ? PROVIDERS[provider] : null;
   if (!P) return { ok: false, error: `no provider "${provider}": routr key set ${PROVIDER_NAMES.filter((n) => PROVIDERS[n].secrets.length).join("|")}` };
   if (!P.secrets.length) return { ok: true, provider, note: `${P.label} needs no key: it runs on this machine. To use it: routr setup --decision ${provider}` };
@@ -58,8 +59,10 @@ export async function setKey({ provider = "typesafe", file = SECRETS_FILE, verif
   if (verify) {
     // Tested as the provider just set up, whatever the config asks, with the values just typed.
     const env = { ...process.env, ...values };
-    try { const r = await ping({ config: { decision: { provider } }, env, file }); out.works = true; out.model = r.model; out.ms = Math.round(r.latencyMs); }
+    try { const r = await ping({ target: decisionTarget({ decision: { provider } }, {}), env, file }); out.works = true; out.model = r.model; out.ms = Math.round(r.latencyMs); }
     catch (e) { out.works = false; out.error = `saved, but the test call failed: ${failureMessage(e, { decision: { provider } })}`; }
   }
+  const targets = decisionTargets(config, {}, { localLast: false });
+  if (!targets.some((t) => t.provider === provider)) out.note = `${P.label} is not in your decision list. Add it with: routr setup --decision ${[...targets.map((t) => `${t.provider}:${t.model}`), provider].join(",")}`;
   return out; // never includes a secret
 }

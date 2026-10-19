@@ -24,7 +24,7 @@ export function usableAdvice(advice) {
   for (const field of ["id", "brief_sha"]) if (typeof advice?.[field] !== "string" || !advice[field].trim()) throw new Error(`--advice: missing ${field}; dispatch the exact task again`);
   return advice;
 }
-export const fallbackAdvice = (advice) => advice.fallback === true || Array.isArray(advice.unavailable) && advice.unavailable.some((u) => u?.part === "decision model");
+export const fallbackAdvice = (advice) => advice.fallback === true || !advice.decision_model && !advice.jev_model && Array.isArray(advice.unavailable) && advice.unavailable.some((u) => u?.part === "decision model");
 export function matchAdvice(advice, task) {
   usableAdvice(advice);
   if (typeof advice?.brief_sha !== "string" || !advice.brief_sha) throw new Error("--advice: missing brief_sha; dispatch the exact task again");
@@ -46,4 +46,9 @@ export function readTask(file) {
   try { text = decode(readFileSync(file)); } catch { throw new Error("--task-file: could not read the task file"); }
   if (text == null) throw new Error("--task-file: not readable text; save it as UTF-8 or UTF-16");
   return text;
+}
+
+export function savedDecisionFailures(advice) {
+  const entries = Array.isArray(advice.unavailable) ? advice.unavailable.filter((u) => u?.part === "decision model") : [];
+  return entries.length ? entries.map((entry) => savedDecisionUnavailable({ unavailable: [entry] })) : fallbackAdvice(advice) ? [savedDecisionUnavailable(advice)] : [];
 }

@@ -7,7 +7,7 @@ import { accountUse, CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } f
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
 import { billingFromSignIn, signInHint } from "./signin.mjs";
 import { failureMessage, ping, secretsFor } from "./systemone.mjs";
-import { DecisionError, decisionTarget, DEFAULT_PROVIDER, ollamaHost, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
+import { DecisionError, decisionTargets, DEFAULT_PROVIDER, ollamaHost, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
 import { home, resolveCommand, standalone } from "./runtime.mjs";
 import { autoUpdateStatus } from "./update.mjs";
@@ -62,13 +62,15 @@ export const skillsIncomplete = (r) => [...mine(r).filter((k) => k.missing?.leng
 export const skillsStale = (r) => (r.from_source ? [] : mine(r).filter((k) => baseVersion(k.version) !== baseVersion(ROUTR_VERSION)));
 
 // What is left to do, most important first, each with the command that does it.
-export function nextSteps(r, keyError) {
+export function nextSteps(r) {
   const steps = [];
-  // The decision model's own fix: a key for a hosted provider, a running Ollama with the model pulled for a local one.
-  const P = PROVIDERS[r.key.provider] ?? PROVIDERS[DEFAULT_PROVIDER], get = typeof P.get === "function" ? P.get(r.key.asked) : P.get;
-  if (!r.key.works) steps.push(keyError instanceof DecisionError ? r.key.error : P.local ? `Make the local decision model answer: ${r.key.error}`
-    : r.key.found ? `The ${P.label} key was found but the test call failed (${r.key.error}). ${get}` : `Add your ${P.label} key. ${get}`);
-  else if (r.key.note) steps.push(r.key.note);
+  // Every configured entry is tested independently; one working backup does not hide a broken first choice.
+  for (const k of r.decision) {
+    const P = PROVIDERS[k.provider] ?? PROVIDERS[DEFAULT_PROVIDER], get = typeof P.get === "function" ? P.get(k.asked) : P.get;
+    if (!k.works) steps.push(k.code ? k.error : P.local ? `Make the local decision model answer: ${k.error}`
+      : k.found ? `The ${P.label} key was found but the test call failed (${k.error}). ${get}` : `Add your ${P.label} key. ${get}`);
+    else if (k.note) steps.push(k.note);
+  }
   if (!r.config.exists) steps.push("Create your config (your defaults for each subscription found): routr setup");
   else if (r.config.problems?.length) steps.push(`Fix your settings: ${r.config.problems.join("; ")}`);
   else if (Object.entries(r.harnesses).some(([n, h]) => h.signed_in && !r.config.subscriptions.includes(n))) steps.push(`Add the harnesses found since the config was written (${Object.entries(r.harnesses).filter(([n, h]) => h.signed_in && !r.config.subscriptions.includes(n)).map(([n]) => n).join(", ")}): routr setup`);
@@ -100,7 +102,7 @@ export function nextSteps(r, keyError) {
 export async function inspect({ configPath, quiet } = {}) {
   const r = { from_source: !standalone(), runtime: `routr ${ROUTR_VERSION} (${standalone() ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, herdr: { path: which("herdr") ?? offPath("herdr"), inside_session: process.env.HERDR_ENV === "1",
     // The orchestrator guide leans on herdr's own skill for pane and agent commands; routr does not bundle it.
-    skill: [".agents/skills/herdr", ".claude/skills/herdr"].some((d) => existsSync(join(home(), d, "SKILL.md"))) }, harnesses: {}, key: {}, config: {}, starter_config: null };
+    skill: [".agents/skills/herdr", ".claude/skills/herdr"].some((d) => existsSync(join(home(), d, "SKILL.md"))) }, harnesses: {}, decision: [], config: {}, starter_config: null };
   // Every check that waits on something else (each harness, the key's test call) runs at once:
   // one after another, a logged-out harness that is slow to answer made doctor sit silent for most of a minute.
   // A person at a terminal sees each one finish, on stderr so the report and `--json` stay clean.
@@ -109,22 +111,32 @@ export async function inspect({ configPath, quiet } = {}) {
   const step = async (label, p) => { try { return await p; } finally { if (tty) process.stderr.write(`  checked ${label}\n`); } };
   const path = configPath ?? CONFIG_PATH;
   const { config, notes } = loadConfig(path); // read once: the usage step and the config report use the same reading
-  const target = decisionTarget(config), P = PROVIDERS[target.provider];
-  if (tty) process.stderr.write(`Checking ${[`the decision model (${P.label})`, ...found.map((n) => `\`${HARNESSES[n].executable}\``)].join(", ")} (a harness can take up to 20 s to answer)…\n`);
-  Object.assign(r.key, { provider: target.provider, label: P.label, asked: target.model, measured: target.measured, local: Boolean(P.local), ...(P.unversioned ? { unversioned: true } : {}),
-    where: P.local ? ollamaHost() : P.secrets.map((x) => `${x.name} (environment, or ${SECRETS_FILE})`).join(", ") });
-  const keyCheck = async () => { secretsFor(target.provider); r.key.found = true; const t = await ping({ config }); r.key.note = await P.check?.(t.model, t.profile).catch(() => null); return t; };
+  const targets = decisionTargets(config);
+  if (tty) process.stderr.write(`Checking the decision models and ${found.map((n) => `\`${HARNESSES[n].executable}\``).join(", ")} (a harness can take up to 20 s to answer)…\n`);
+  const keyCheck = async () => {
+    for (const target of targets) {
+      const P = PROVIDERS[target.provider];
+      const k = { provider: target.provider, label: P.label, asked: target.model, measured: target.measured, local: Boolean(P.local), ...(P.unversioned ? { unversioned: true } : {}),
+        where: P.local ? ollamaHost() : P.secrets.map((x) => `${x.name} (environment, or ${SECRETS_FILE})`).join(", ") };
+      r.decision.push(k);
+      try {
+        secretsFor(target.provider, { target }); k.found = true;
+        const t = await ping({ target, deadlineMs: P.local ? P.deadlineMs : Math.min(8000, P.deadlineMs) });
+        Object.assign(k, { works: true, ms: Math.round(t.latencyMs), model: t.model, measured: t.measured, note: await P.check?.(t.model, t.profile).catch(() => null) });
+      } catch (e) { k.found ??= false; k.works = false; k.code = e instanceof DecisionError ? e.code : "internal_error"; k.error = failureMessage(e, { decision: target }); }
+    }
+  };
   // Installed is not enough: each harness is asked whether it is signed in, afresh, before anything else is asked of it.
   // One that is not gets no model list and no usage read, since either could open its sign-in in the browser.
   const statesP = Promise.all(found.map((n) => step(`${n}'s sign-in`, signIn(n, { fresh: true })))).then((s) => Object.fromEntries(found.map((n, i) => [n, s[i]])));
   const whyNot = (states) => (n) => (states[n] === "yes" ? null : signInHint(HARNESSES[n], states[n]));
   // No release lookup here: doctor is an advice command, and a command never makes the updater's network call. Whether a
   // newer release is waiting comes from what the daily job saw (autoUpdateStatus, below); `routr update --check` asks.
-  const [usage, key, states, ...models] = await Promise.all([
+  const [usage, , states, ...models] = await Promise.all([
     // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
     // Its sign-in answers were just asked afresh, so their billing readings are today's: no second status check.
     step("usage", statesP.then((st) => readUsage(found, {}, { background: enabledSubscriptions(config), why: whyNot(st), billing: (n) => ({ billing: billingFromSignIn(n), not: null }) }))), // a turned-off one is never refreshed
-    step(`the decision model (${P.label})`, keyCheck().then((t) => ({ t }), (e) => ({ e }))),
+    step("the decision models", keyCheck()),
     statesP,
     ...found.map((n) => statesP.then((st) => (st[n] !== "yes" ? null : step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))))),
   ]);
@@ -141,8 +153,6 @@ export async function inspect({ configPath, quiet } = {}) {
       // The billing its own sign-in status stated, and where it was read: shown as the usage line (said, above).
       ...(u.billing ? { usage_billing: u.billing } : {}) };
   }
-  if (key.t) { r.key.works = true; r.key.ms = Math.round(key.t.latencyMs); r.key.model = key.t.model; r.key.measured = key.t.measured; }
-  else { r.key.found ??= false; r.key.works = false; r.key.error = failureMessage(key.e, config); }
   const lists = Object.fromEntries(found.map((n, i) => [n, models[i]]));
   for (const n of found) r.harnesses[n].models = lists[n];
   // The installer writes the skill and the binary together, but a skill copied by hand or left behind by an older
@@ -197,7 +207,7 @@ export async function inspect({ configPath, quiet } = {}) {
     r.telemetry = { ...r.telemetry, last_send: last, pending, daily_send: daily, quiet_hours: quiet,
       needs_attention: last?.ok === false || Boolean(daily.problem) || stale || Boolean(daily.why_not && pending > 0) };
   }
-  r.next_steps = nextSteps(r, key.e);
+  r.next_steps = nextSteps(r);
   return r;
 }
 
@@ -250,10 +260,12 @@ export function render(r) {
     const models = h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${more}` : "";
     line(off ? "absent" : h.installed ? (h.signed_in ? "ok" : r.config.subscriptions.includes(n) ? "need" : "absent") : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${where}${models}`);
   }
-  const k = r.key, asked = k.asked && k.model !== k.asked ? `, asked as ${k.asked}` : "";
-  const measured = k.measured === false ? " · not a model routr has measured (ROUTR_DECISION_MODEL)" : k.unversioned ? " · Cloudflare does not version this name: docs/evidence.md says what was measured" : "";
-  line(k.works ? "ok" : "need", `decision model ${k.label}: ${k.works ? `${k.model}${asked} answers (${k.ms} ms)${measured}${k.note ? ` · ${k.note}` : ""}`
-    : k.local ? `${k.asked} does not answer: ${k.error}` : `${k.found ? "key found but the test call failed" : "key missing"}: ${k.error}`}`);
+  for (const k of r.decision) {
+    const asked = k.asked && k.model !== k.asked ? `, asked as ${k.asked}` : "";
+    const measured = k.measured === false ? " · not a model routr has measured (ROUTR_DECISION_MODEL)" : k.unversioned ? " · Cloudflare does not version this name: docs/evidence.md says what was measured" : "";
+    line(k.works ? "ok" : "need", `decision model ${k.label}: ${k.works ? `${k.model}${asked} answers (${k.ms} ms)${measured}${k.note ? ` · ${k.note}` : ""}`
+      : k.local ? `${k.asked} does not answer: ${k.error}` : `${k.asked}: ${k.found ? "key found but the test call failed" : "key missing"}: ${k.error}`}`);
+  }
   line(r.config.exists && !problems.length ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && [...problems, ...notes].length ? `\n   ${[...problems, ...notes].join("\n   ")}` : ""}`);
   const au = r.auto_update;
   // The channel is shown on or off: `routr update` by hand follows it too.

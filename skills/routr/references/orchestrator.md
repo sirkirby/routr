@@ -37,7 +37,10 @@ reviews. A standing choice of your own (reviewers on a fixed model and effort, f
 reading the advice. Dispatch answers even when its decision model is unavailable; matching fallback advice is valid.
 Read `unavailable` before deciding: it names the missing part, the attempted decision model or usage source, and
 its fixed failure code and reason. Tell the user in the launch line when advice was a fallback and what was
-unavailable, and judge that part yourself. Launch carries the saved decision-model entry; older fallback advice
+unavailable, and judge that part yourself. A later decision model's answer is ordinary advice: `decision_model` names
+who answered and earlier failures in `unavailable` do not mean fallback. The list tries local Ollama after hosted entries because it may need to load,
+with an 8 s cut per hosted attempt and one overall deadline (10 s hosted-only, 30 s with local).
+Launch carries all saved decision-model entries; older fallback advice
 says the attempted model is unknown. A stale usage snapshot shows its age; unknown metered capacity is a valid
 reading, and excluded accounts remain in `excluded`. These are separate from a failed read. Keep your
 process rules for the worker (what it may and may not do, how to report, git steps) out of that file: they go in `--rules-file`, which launch passes

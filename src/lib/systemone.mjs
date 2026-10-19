@@ -3,7 +3,7 @@
 // exact answers, latency and tokens.
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { ensureParent } from "./runtime.mjs";
-import { DecisionError, decisionTarget, isModel, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
+import { DecisionError, DecisionListError, decisionTarget, decisionTargets, decisionUnavailable, isModel, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 
 // ---------------------------------------------------------------- secrets
 // One owner-only file of NAME=value lines outside any project, so workers in worktrees and other folders find it too.
@@ -125,7 +125,7 @@ function readAnswers(answers, questions, target) {
 // The reply's model identity is kept only when its provider recognizes it; otherwise use the requested identity.
 // This preserves preview-alias resolution and pin checks in the model gate without accepting arbitrary reply text.
 // `target` and `fetchFn` are seams for the maintainers' gate and for tests.
-export async function ask(state, questions, { config, deadlineMs, env = process.env, target, fetchFn = fetch, file } = {}) {
+async function askOne(state, questions, { config, deadlineMs, env = process.env, target, fetchFn = fetch, file } = {}) {
   const t = target ?? decisionTarget(config, env), P = PROVIDERS[t.provider];
   const secrets = secretsFor(t.provider, { env, file, target: t });
   let request, payload;
@@ -177,6 +177,28 @@ export async function ask(state, questions, { config, deadlineMs, env = process.
     return { model, provider: t.provider, answers: normalize(answers, { native: P.nativeConfidence }), usage, latencyMs,
       profile: profile ?? t.profile, measured: Boolean(profile) || (model === t.model && Boolean(t.measured)) };
   }
+}
+
+// P33 (2026-10-18): a measured backup beats a constant level. A refused key or unreadable reply needs fixing,
+// not another opinion. One deadline bounds the list, including retries and local model loading.
+export async function ask(state, questions, opts = {}) {
+  if (opts.target) return askOne(state, questions, opts);
+  const targets = decisionTargets(opts.config, opts.env), errors = [];
+  const budget = opts.deadlineMs ?? Math.max(...targets.map((t) => PROVIDERS[t.provider].deadlineMs));
+  const stopAt = performance.now() + budget;
+  for (const target of targets) {
+    const P = PROVIDERS[target.provider], remaining = stopAt - performance.now();
+    try {
+      if (remaining <= 0) throw new DecisionError(target, "timeout");
+      const r = await askOne(state, questions, { ...opts, target, deadlineMs: Math.min(remaining, P.deadlineMs, P.local ? Infinity : 8000) });
+      return { ...r, unavailable: errors.map((e) => decisionUnavailable(e, e)) };
+    } catch (e) {
+      const error = e instanceof DecisionError ? e : new DecisionError(target, "internal_error");
+      errors.push(error);
+      if (!["timeout", "unreachable", "provider_error", "daily_allowance", "no_key", "model_missing", "model_unsupported"].includes(error.code)) break;
+    }
+  }
+  throw new DecisionListError(errors);
 }
 
 // One tiny real call: "does the decision model answer". `routr key set` and `routr doctor` must mean the same thing by it.

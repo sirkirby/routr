@@ -41,7 +41,7 @@ can ask on the same items.
 
 ## Decision models
 
-routr asks one decision model about each brief, chosen in `routr setup`: TypeSafe's Jev (the default), or Cloudflare's
+routr tries the ordered decision models chosen in `routr setup` until one answers: TypeSafe's Jev (the default), or Cloudflare's
 Clef, hosted on Workers AI or run on your own machine through Ollama. Both answer the same System One questions. Each
 model below was run by the maintainers' gate on the saved items above, beside Jev in the same run (2026-10-11), with
 routr's shipped questions (r5, c1). Those questions were worded and tuned on Jev, which favours it.
@@ -60,6 +60,23 @@ routr's shipped questions (r5, c1). Those questions were worded and tuned on Jev
 | Time per brief | ~130 ms | ~420 ms | ~525 ms | 5-7 s (M4 Max) | ~5 s (M4 Max) |
 | `sure_at` | 0.8 | 0.7 | 0.5 | 0.6 | 0.6 |
 
+### Backup model or constant fallback
+
+Private workbench P33, 2026-10-18, compared the model gate's 104 labelled briefs with constant levels. The real
+runs are one maintainer's work (n = 36), a subset of those briefs. No model was asked for the constant rows: each
+row assigns that level to every brief. Jev and Clef use the gate readings from 2026-10-11. This supports trying a
+backup model before the default constant fallback; it does not measure a live outage sequence or independent users.
+
+| reading | exact /104 | over | under | real runs exact /36 |
+|---|---|---|---|---|
+| Jev 1.13.0 (gate 2026-10-11) | 83 | 14 | 7 | 30 |
+| Clef on Workers AI (gate 2026-10-11) | 72 | 26 | 6 | 26 |
+| constant standard (routr's default fallback_level) | 58 | 24 | 22 | 21 |
+| constant basic | 24 | 0 | 80 | 4 |
+| constant strong | 22 | 82 | 0 | 11 |
+
+### Measurement details
+
 Jev's ranges are from the four runs it took part in. The MLX build (`clef-flash:9b-mxfp8`) runs only on Apple Silicon;
 the GGUF build (`clef-flash:9b-q8_0`) runs on every platform, and was measured on a Mac. On Windows (Ollama 0.40.3, an
 NVIDIA RTX 5090 laptop GPU) the same build's answers to 5 briefs matched the Mac's to within 0.018 on every
@@ -76,7 +93,7 @@ for Ollama, a new brief each time with the model loaded.
   question's wording, which was chosen on Jev (P23). Wording measured on Clef is open work.
 - **Confidence.** Providers compute `confidence` differently: TypeSafe by its own formula, Clef by entropy, which reads
   a 0.92/0.08 split between two levels as 0.75 where TypeSafe reads 0.88. routr recomputes every non-TypeSafe answer on
-  TypeSafe's scale (`src/lib/systemone.mjs`). Each model's `sure_at` is the lowest bar from 0.5 to 0.8 at which its level,
+  TypeSafe's scale in the shared decision caller. Each model's `sure_at` is the lowest bar from 0.5 to 0.8 at which its level,
   when sure, is right at least as often as Jev's at 0.8 (39 of 44): Clef 12 of 13 at 0.7, Clef Flash on Workers AI 27 of
   30 at 0.5, on Ollama 23 of 24 at 0.6 (both builds). Few briefs reach those bars, so these are small counts. A `sure_at` you set
   yourself applies to every model.

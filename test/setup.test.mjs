@@ -49,10 +49,10 @@ test("doctor reports opted-in telemetry sends in text and JSON and flags failure
 test("doctor's next steps name the command for each thing missing, most important first", async () => {
   const { nextSteps, starterConfig } = await import("../src/lib/doctor.mjs");
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
-  const base = { key: { works: true }, config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true } }, skill: [{ where: "~/.agents/skills/routr", version: ROUTR_VERSION.split("-")[0] }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
+  const base = { decision: [{ works: true }], config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true } }, skill: [{ where: "~/.agents/skills/routr", version: ROUTR_VERSION.split("-")[0] }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
   expect(nextSteps(base)).toEqual([]);
   // Claude's usage is read through its own /usage: no statusline is ever a step.
-  const fresh = nextSteps({ ...base, key: { works: false, found: false }, config: { exists: false, subscriptions: [] } });
+  const fresh = nextSteps({ ...base, decision: [{ works: false, found: false }], config: { exists: false, subscriptions: [] } });
   expect(fresh[0]).toContain("routr key set");
   expect(fresh[1]).toContain("routr setup");
   expect(fresh.length).toBe(2);
@@ -158,7 +158,7 @@ async function runSetup({ config, args = [], answers = [], found = ["agy", "curs
     const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
     return { harnesses: Object.fromEntries(["claude", "codex", "cursor", "agy", "kiro"].map((n) => [n, { installed: found.includes(n) || signedOut.includes(n), signed_in: found.includes(n), ...(signedOut.includes(n) ? { sign_in: `not signed in: run \`${n}-cli login\`` } : {}), models: models[n] ?? [], usage_class: usage[n] ?? "included", usage_note: usage[n] === "metered" ? "metered: unlimited credits" : undefined }])),
       config: { path, exists: Boolean(saved), subscriptions: Object.keys(saved?.subscriptions ?? {}), off: Object.keys(saved?.subscriptions ?? {}).filter((n) => saved.subscriptions[n].enabled === false) }, skill,
-      key: { works: keyWorks }, next_steps: [] };
+      decision: [{ works: keyWorks }], next_steps: [] };
   };
   const queue = [...answers];
   const question = async (q) => { asked.push(q.trim()); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); };
@@ -327,7 +327,7 @@ test("setup run by an agent (--yes) asks nothing, takes suggestions, never turns
   expect(x.r.skipped.join(" ")).toContain("Ask the user whether to share");
   // A person at a terminal whose decision model does not answer is asked which one to use, then for its key, first:
   // nothing routr advises works without it. Enter keeps the one set (TypeSafe's Jev), which needs a key.
-  const person = await runSetup({ keyWorks: false, found: ["agy"], answers: ["", "", "", "", "", "", "n", ""] });
+  const person = await runSetup({ keyWorks: false, found: ["agy"], answers: ["", "", "", "", "", "", "", "n", ""] });
   expect(person.asked[0]).toMatch(/^Which decision model reads each brief\?/);
   expect(person.keys).toEqual([1]);
 });
@@ -336,25 +336,25 @@ test("the decision model: --decision writes it, a key is the person's to set, an
   const config = { telemetry: false, sure_at: 0.8, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } };
   const env = { CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "" };
   const cf = await runSetup({ config, found: ["agy"], args: ["--yes", "--decision", "cloudflare"], env });
-  expect(cf.saved.decision).toEqual({ provider: "cloudflare", model: null });        // the default model: follows routr's pin
+  expect(cf.saved.decision).toEqual([{ provider: "cloudflare", model: null }]);        // the default model: follows routr's pin
   expect(cf.saved.sure_at).toBeUndefined();                                            // Jev's 0.8, written by an older setup, gives way to Clef's own
   expect(cf.r.did.join(" ")).toContain("decision TypeSafe · jev-1.13.0 → Cloudflare Workers AI · clef");
   expect(cf.keys).toEqual([]);                                                         // an agent's run never asks for a key
   const flash = await runSetup({ config: cf.saved, found: ["agy"], args: ["--yes", "--decision", "cloudflare:clef-flash"] });
-  expect(flash.saved.decision).toEqual({ provider: "cloudflare", model: "clef-flash" });
+  expect(flash.saved.decision).toEqual([{ provider: "cloudflare", model: "clef-flash" }]);
   expect((await runSetup({ config, found: ["agy"], args: ["--yes", "--decision", "cloudflare:gpt-5"] })).r.error).toContain("routr has measured clef, clef-flash on cloudflare");
   expect((await runSetup({ config, found: ["agy"], args: ["--yes", "--decision", "openrouter"] })).r.error).toContain("--decision takes <provider>[:<model>]");
   const forced = await runSetup({ config: flash.saved, found: ["agy"], args: ["--yes", "--force"] });
-  expect(forced.saved.decision).toEqual({ provider: "cloudflare", model: "clef-flash" }); // --force keeps the person's choice
+  expect(forced.saved.decision).toEqual([{ provider: "cloudflare", model: "clef-flash" }]); // --force keeps the person's choice
   const same = await runSetup({ config: { ...config, sure_at: 0.9 }, found: ["agy"], args: ["--yes", "--decision", "typesafe"] });
-  expect(same.r.skipped).toContain("config " + same.r.config + " already covers every harness found: kept as it is"); // no change, nothing written
+  expect(same.saved.decision).toEqual([{ provider: "typesafe", model: null }]); // explicit choice writes the list
   // At a terminal: the menu's Decision model (4th, after the update channel) → Cloudflare Clef (2nd), then Save (6th); the
   // key is asked for because none is saved.
-  const menu = await runSetup({ config, found: ["agy"], answers: ["4", "2", "6"], env });
+  const menu = await runSetup({ config, found: ["agy"], answers: ["4", "2", "1", "6"], env });
   expect(menu.asked[1]).toMatch(/^Which decision model reads each brief\?/);
-  expect(menu.saved.decision).toEqual({ provider: "cloudflare", model: null });
+  expect(menu.saved.decision).toEqual([{ provider: "cloudflare", model: null }]);
   expect(menu.keys).toEqual([1]);
-  const saved = await runSetup({ config, found: ["agy"], answers: ["4", "2", "6"], keysSaved: ["cloudflare"] });
+  const saved = await runSetup({ config, found: ["agy"], answers: ["4", "2", "1", "6"], keysSaved: ["cloudflare"] });
   expect(saved.keys).toEqual([]);                                                      // a key already saved is not asked for again
   expect((await runSetup({ config, found: ["agy"], args: ["--yes", "--decision", "cloudflare"] })).r.skipped.join(" ")).toContain("the user runs routr key set cloudflare in their own terminal");
 });
@@ -366,20 +366,20 @@ const PROVIDER_ORDER = PN.flatMap((p) => MH(p).map((m) => `${p}:${m}`));
 test("from the setup review: each decision-model finding stays fixed", async () => {
   const cf = { telemetry: false, decision: { provider: "cloudflare" }, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } };
   // The provider that failed, then another model on it: its key is asked once, not twice.
-  const x = await runSetup({ config: cf, found: ["agy"], keyWorks: false, answers: ["3", "6"] }); // Clef Flash; then Save on the menu
+  const x = await runSetup({ config: cf, found: ["agy"], keyWorks: false, answers: ["3", "1", "6"] }); // Clef Flash; then Save on the menu
   expect(x.keys).toEqual([1]);
-  expect(x.saved.decision).toEqual({ provider: "cloudflare", model: "clef-flash" });
+  expect(x.saved.decision).toEqual([{ provider: "cloudflare", model: "clef-flash" }]);
   // Leaving without saving after a key was typed says the settings were not changed, not that nothing was written.
   const savedKey = async () => ({ ok: true, file: "/k/env", works: true });
   const { setup } = await import("../src/lib/setup.mjs");
   const dir = scratch("stop"), path = join(dir, "config.json"); writeFileSync(path, JSON.stringify(cf));
-  const queue = ["3", "7"]; // Clef Flash; then Exit without saving (the menu has a pending change)
-  const inspect = async () => ({ harnesses: { agy: { installed: true, signed_in: true, models: [] } }, config: { path, exists: true, subscriptions: ["agy"], off: [] }, skill: [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: "0.0.0-dev" }], key: { provider: "cloudflare", works: false }, next_steps: [] });
+  const queue = ["3", "1", "7"]; // Clef Flash; then Exit without saving (the menu has a pending change)
+  const inspect = async () => ({ harnesses: { agy: { installed: true, signed_in: true, models: [] } }, config: { path, exists: true, subscriptions: ["agy"], off: [] }, skill: [{ where: "~/.agents/skills/routr", version: "0.0.0-dev" }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: "0.0.0-dev" }], decision: [{ provider: "cloudflare", works: false }], next_steps: [] });
   const stop = await setup(["--config", path, "--json"], { inspect, question: async () => queue.shift() ?? "", interactive: true, env: {}, install: () => {}, share: () => {}, key: savedKey, hasKey: () => false, print: () => {} });
   expect(stop).toMatchObject({ ok: false, cancelled: true });
   expect(stop.error).toContain("your settings were not changed (saved the Cloudflare Workers AI key to /k/env and it works)");
   // "cloudflare:" is the provider's default model, never an empty one.
-  expect((await runSetup({ config: cf, found: ["agy"], args: ["--yes", "--decision", "typesafe:"] })).saved.decision).toEqual({ provider: "typesafe", model: null });
+  expect((await runSetup({ config: cf, found: ["agy"], args: ["--yes", "--decision", "typesafe:"] })).saved.decision).toEqual([{ provider: "typesafe", model: null }]);
   // --force keeps a sure_at the person set; 0.8, an older setup's default, is dropped and said.
   expect((await runSetup({ config: { ...cf, sure_at: 0.9 }, found: ["agy"], args: ["--yes", "--force"] })).saved.sure_at).toBe(0.9);
   const dropped = await runSetup({ config: { ...cf, sure_at: 0.8 }, found: ["agy"], args: ["--yes", "--force"] });
@@ -399,7 +399,7 @@ test("from the setup review: each decision-model finding stays fixed", async () 
     const said = [];
     const gguf = PROVIDER_ORDER.indexOf("ollama:clef-flash:9b-q8_0") + 1, other = PROVIDER_ORDER.indexOf("ollama:clef-flash:9b-mxfp8") + 1;
     if (other > 0) { // Apple Silicon offers both builds: pick the unpulled MLX one first, then the pulled GGUF one from the menu
-      await runSetup({ config: cf, found: ["agy"], keyWorks: false, env: { OLLAMA_HOST: `127.0.0.1:${server2.port}` }, answers: [String(other), "4", String(gguf), "6"], print: (t) => said.push(t) });
+      await runSetup({ config: cf, found: ["agy"], keyWorks: false, env: { OLLAMA_HOST: `127.0.0.1:${server2.port}` }, answers: [String(other), "1", "4", String(gguf), "1", "6"], print: (t) => said.push(t) });
       expect(said.join("\n")).toContain("clef-flash:9b-mxfp8 is not pulled yet");
       expect(said.join("\n")).toContain("clef-flash:9b-q8_0 is pulled and Ollama is running");
     }
@@ -416,7 +416,7 @@ test("from the setup review: each decision-model finding stays fixed", async () 
 
 test("doctor names the decision model, its provider, and the fix that provider needs", async () => {
   const { nextSteps, render } = await import("../src/lib/doctor.mjs");
-  const r = (key) => ({ runtime: "routr 0.0.0-dev (from source)", from_source: true, herdr: { path: "/bin/herdr", skill: true }, skill: [], harnesses: {}, key,
+  const r = (key) => ({ runtime: "routr 0.0.0-dev (from source)", from_source: true, herdr: { path: "/bin/herdr", skill: true }, skill: [], harnesses: {}, decision: [key],
     config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] }, auto_update: { on: false, why_off: "running from source" }, next_steps: [] });
   expect(render(r({ provider: "typesafe", label: "TypeSafe", asked: "jev-1.13.0", model: "jev-1.13.0", works: true, ms: 271, measured: true }))).toContain("ok decision model TypeSafe: jev-1.13.0 answers (271 ms)");
   expect(render(r({ provider: "cloudflare", label: "Cloudflare Workers AI", asked: "clef", model: "clef", works: true, ms: 577, measured: true, unversioned: true }))).toContain("Cloudflare does not version this name");
@@ -671,7 +671,7 @@ test("doctor's text says each harness's state in words: signed in, signed out, t
       agy: { command: "agy", installed: false, off_path: "/Users/x/.local/bin/agy" },
       kiro: { command: "kiro-cli", installed: true, signed_in: true, usage: "live: 100% left" },
     },
-    key: { works: true, model: "jev", ms: 300 }, config: { path: "/c.json", exists: true, subscriptions: ["claude", "codex", "cursor", "kiro"], off: ["kiro"], problems: [], notes: [] },
+    decision: [{ works: true, model: "jev", ms: 300 }], config: { path: "/c.json", exists: true, subscriptions: ["claude", "codex", "cursor", "kiro"], off: ["kiro"], problems: [], notes: [] },
     auto_update: { on: false, why_off: "running from source" }, telemetry: { on: false, why_off: "not turned on" }, next_steps: [],
   };
   const text = render(r);
@@ -734,7 +734,7 @@ test("doctor reports both skills with their versions, setup repairs a missing on
   const { nextSteps, render, skillsMissing } = await import("../src/lib/doctor.mjs");
   const r = { runtime: "routr 0.0.0-dev (from source)", from_source: true, herdr: { path: "/bin/herdr", inside_session: true, skill: true },
     skill: [{ name: "routr", where: "~/.agents/skills/routr", version: "0.0.0-dev" }, { name: "routr", where: "~/.kiro/skills/routr", version: "0.0.0-dev" }],
-    harnesses: {}, key: { works: true, model: "jev", ms: 300 }, config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] },
+    harnesses: {}, decision: [{ works: true, model: "jev", ms: 300 }], config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] },
     auto_update: { on: false, why_off: "running from source" }, telemetry: { on: false, why_off: "not turned on" }, next_steps: [] };
   expect(skillsMissing(r)).toEqual(["routr-orchestrate"]);
   expect(render(r)).toContain("routr skill ~/.agents/skills/routr, ~/.kiro/skills/routr are 0.0.0-dev");

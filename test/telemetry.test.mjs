@@ -365,7 +365,7 @@ test("from the core review: each provider finding stays fixed", async () => {
   for (const name of ["constructor", "__proto__", "toString"]) {
     const p = join(dir, `${name}.json`); writeFileSync(p, JSON.stringify({ decision: { provider: name, model: name } }));
     const { config, notes } = loadConfig(p);
-    expect(config.decision).toEqual({ provider: "typesafe", model: null }); expect(notes.join(" ")).toContain("decision.provider");
+    expect(config.decision).toEqual([{ provider: "typesafe", model: null }]); expect(notes.join(" ")).toContain("decision[0]");
     expect(decisionTarget({ decision: { provider: "cloudflare", model: name } }, {}).model).toBe("clef");
   }
   // 2. A name set twice keeps one line, the new value: the stale one below can no longer win.

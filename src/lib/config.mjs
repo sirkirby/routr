@@ -10,7 +10,7 @@ export const CONFIG_PATH = join(home(), ".config/routr/config.json");
 export const DEFAULTS = {
   fallback_level: "standard",  // advised when the decision model cannot be reached
   sure_at: null,               // confidence from which a level is presented as settled; null: the decision model's own (providers.mjs; Jev's is 0.8, P23)
-  decision: { provider: DEFAULT_PROVIDER, model: null }, // which System One model reads the brief (providers.mjs); model null: the provider's default
+  decision: [{ provider: DEFAULT_PROVIDER, model: null }], // which System One model reads the brief (providers.mjs); model null: the provider's default
   risk_above: 0.75,            // high_blast_radius probability that gets called out as high risk
   prefer: { research: "strong", review: "strong" }, // your preference per kind of work; shown to the agent as advice, never forced
   auto_update: true,           // check for a new release at most once a day, in the background; applied on the next run
@@ -73,21 +73,21 @@ export function loadConfig(path = CONFIG_PATH) {
   return { config, notes };
 }
 
-// Which decision model to ask. An unknown provider or a model routr has not measured there is reported, and the default
-// stands, so the router still answers.
+// Read an old single-object user file as one entry. Invalid entries cannot replace a later valid choice.
 function decisionSetting(d, notes) {
-  if (d === undefined || d === null) return { ...DEFAULTS.decision };
-  const provider = isProvider(d?.provider) ? d.provider : DEFAULT_PROVIDER;
-  if (d?.provider !== undefined && provider !== d.provider) notes.push(`decision.provider: ${JSON.stringify(d.provider)} is not one of ${PROVIDER_NAMES.join(", ")}, using ${DEFAULT_PROVIDER}: routr setup --decision <provider>`);
-  const models = Object.keys(PROVIDERS[provider].models);
-  if (d?.model == null || provider !== d.provider) return { provider, model: null };
-  if (isModel(provider, d.model)) {
-    // Measured, but not a build this machine runs (an MLX model off Apple Silicon): said, and kept, since the file may be shared.
-    if (!modelsHere(provider).includes(d.model)) notes.push(`decision.model: ${d.model} does not run on this machine (${PROVIDERS[provider].models[d.model].runs ?? "another platform"} only): routr setup --decision <provider>`);
-    return { provider, model: d.model };
+  const defaults = () => DEFAULTS.decision.map((x) => ({ ...x }));
+  if (d === undefined || d === null) return defaults();
+  const entries = Array.isArray(d) ? d : [d], out = [];
+  for (const [i, entry] of entries.entries()) {
+    const { provider, model = null } = entry ?? {};
+    let why;
+    if (!isProvider(provider)) why = `provider ${JSON.stringify(provider)} is not one of ${PROVIDER_NAMES.join(", ")}`;
+    else if (model !== null && !isModel(provider, model)) why = `${JSON.stringify(model)} is not one routr has measured on ${provider} (${Object.keys(PROVIDERS[provider].models).join(", ")})`;
+    else if (!modelsHere(provider).includes(model ?? defaultModel(provider))) why = `${model} does not run on this machine`;
+    if (why) notes.push(`decision[${i}] ${JSON.stringify(entry)} dropped: ${why}. Set the ordered list with routr setup --decision <provider>[:<model>],<provider>[:<model>]`);
+    else out.push({ provider, model });
   }
-  notes.push(`decision.model: ${JSON.stringify(d.model)} is not one routr has measured on ${provider} (${models.join(", ")}), using ${defaultModel(provider)}`);
-  return { provider, model: null };
+  return out.length ? out : defaults();
 }
 
 // The subscriptions routr may hand work to: every configured one the user has not turned off.
