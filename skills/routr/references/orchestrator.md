@@ -56,7 +56,7 @@ Dispatch's candidates were filtered for the advised level. If you choose a diffe
     routr usage --level <basic|standard|strong>
 
 Use the level you chose. This reads usage and applies the user's account settings without asking the decision model again. Check
-`ok` and `level`, then choose from its `candidates`; if it fails, eligibility was not refreshed. Resolve the error or
+`ok` and `level`, then choose from its `subscriptions.candidates`; if it fails, eligibility was not refreshed. Resolve the error or
 hold the launch until you can establish eligibility. Keep the original dispatch file for `launch --advice` and
 `record --advice`; the usage response is a capacity view, not a replacement assessment.
 
@@ -131,29 +131,28 @@ object describing what it did.
   with `--model auto`) passes no flag and leaves effort to the model; a level is passed, but Kiro remembers it as
   the user's default for that model, and a model without effort ignores it. Kiro also runs its default on a model id
   it does not know, without a word: launch checks the id against Kiro's own list (`kiro-cli chat --list-models`)
-  before it opens a pane, and says so in `warnings` when it could not read the list.
+  before it opens a pane, and names it in `unavailable` when it could not read the list.
 - `--task-file` holds your task alone (parts 2 and 3). With neither task form the pane is left ready and unprompted;
   sending work later still requires matching advice.
 - `--rules-file` holds your process rules, added after the task. routr passes them on without judging them, and
   `--advice` compares the task alone.
 - `--advice` takes the advice file you saved from `routr dispatch`. launch compares the text that advice was about
-  with the task it sends. A task requires readable JSON advice with a matching `brief_sha`: otherwise launch refuses
-  before any harness, pane or worktree call. Dry runs make the same checks as warnings and still plan.
+  with the task it sends. A task requires usable JSON advice (nonempty `id` and `brief_sha`, no `ok: false` or `error`)
+  with a matching `brief_sha`: otherwise launch refuses before any harness, pane or worktree call. Dry runs make the same checks, return `ok: false` with `error` on a refusal, and still plan.
   With no task (no `--task-file` or `--task`) there is nothing to compare, and no `advice` field.
 - routr answers no question: not the user's shell (its plugins and startup files ask their own), not a harness at
   startup. It passes each harness's own flags so none is asked (Cursor `--trust`, Kiro `--trust-tools=*`, Codex
   `--dangerously-bypass-hook-trust` for its hooks review; Codex and Claude Code still ask to trust a folder outside a
-  trusted one), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is still accepted and does
-  nothing.
-- `--dry-run` prints the plan and changes nothing. Use it to see the flags before spending anything.
+  trusted one), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
+- `--dry-run` requires `--model`, prints `would_run` and changes nothing. It returns `ok: false` and `error` when a real launch would refuse its arguments, folder, task or advice; otherwise `ok: true`. It does not check the environment, subscription settings or sign-in.
 - Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_input`, or `failed`.
-  `warnings` holds anything it wants you to look at. `steps` says what it did, in order. Follow `next`: it includes
+  `headline` says what happened. `warnings` states facts about the call. `steps` says what it did, in order. Follow `next`: it includes
   the cleanup command (step 6) and, after a start or task-submission attempt, this worker’s record template.
-  Preflight refusals have no record template; dry runs with matching advice include the planned template.
+  Preflight refusals have no record template; dry runs with matching advice include the planned template. A failed
+  launch that never submitted a task says so in the record step and records `blocked` with `--check none`.
 - **`needs_input` is yours to decide.** Something in the pane waits for an answer routr does not give: a shell's own
-  question, a harness's startup question, a worker that has not started. `needs_input` holds `why`, the `screen`
-  (what the pane shows; withheld once the task was sent, since it then shows the brief: read the pane yourself),
-  `pane`, `herdr` (its reading: the state and the rule `herdr agent explain` matched; when a worker launch started
+  question, a harness's startup question, a worker that has not started. `screen` is top-level (what the pane shows; withheld once the task was sent, since it then shows the brief).
+  `needs_input` holds `why`, `herdr` (its reading: the state and the rule `herdr agent explain` matched; when a worker launch started
   still read `blocked` but explain read its screen as another state until the timeout, `explained` holds that state
   and `rule` is left out, since that rule is not the question's), a `note` from what routr knows
   about that harness. `next` says how to carry on. Answer what is within the task's scope yourself, with
@@ -187,9 +186,15 @@ The sequence below explains what launch performs; it is not a route around the a
 3. `herdr agent start <name> --kind <kind> --pane <id> -- <permissive flags>`.
 4. **Read the pane after every start**, whatever state herdr reports. A startup question may be showing: herdr
    reports Claude's folder trust as `agent_not_ready`, then `blocked`, and `herdr agent explain <pane>` says what it
-   matched; a screen herdr's rules do not know reads as `idle`. You may accept it yourself only for a directory
-   you created, or a worktree of the repository the user already has you working in. For anything else, ask the user
-   (`herdr notification show`). The default answer can be "No, exit": read the options before sending keys.
+   matched; a screen herdr's rules do not know reads as `idle`.
+
+   <!-- startup-input -->
+   Read the pane and its options before sending keys: the default answer can be "No, exit". Accept folder trust only
+   for a directory you created or a worktree of the repository the user already has you working in; otherwise ask the
+   user and leave the pane waiting. For other startup questions, answer only within scope; ask the user for a secret
+   or sign-in and leave the pane waiting.
+   <!-- /startup-input -->
+
 5. `herdr agent prompt <name> "<text>" --wait`.
 
 Every worker is finished with `routr cleanup` (step 6). Never reuse a pane
@@ -261,9 +266,16 @@ prompt; `unknown` when the cause is not established. Several may apply. Use `--c
 occurred. Attempts alone never establish model failure.
 
 Record each worker separately, including failed start attempts and workers replaced during escalation. A preflight
-refusal starts no worker and has no record template. Each record call returns a new `run_id`. Advice must belong to
+refusal starts no worker and has no record template. Each new record returns a new `run_id`; a revision keeps it. Advice must belong to
 that worker’s exact task. To revise the outcome for that same worker, pass its returned
 `--run-id` and the same advice, project, subscription, model, effort and level, with the complete updated outcome.
+Follow record's `next`: only `done` with `check pass` proceeds to integration and cleanup; otherwise send the work
+back or escalate, then verify and revise the row before cleanup. Every success includes a `kind: "do"` revision
+template with that run's identity already filled, including its resolved effort and chosen level; fill verdict,
+check and note. Advice, task and ledger paths in the template are absolute, so you can follow it from another folder.
+For advice piped on stdin, save that same advice to fill the template's advice-file placeholder.
+`--run-id` takes `run_id` from record's earlier output, not `id` (the advice id). If it is unknown, follow `next`
+to read the worker's `run_id` from that earlier output or its row for this advice id in the selected ledger.
 A fresh dispatch has a new advice `id` and is refused for a revision, even on the same task.
 If the original task file is gone, revise without `--task-file` and say so in `--note`.
 Omitted `--note`, `--report` and `--subagent` preserve the existing note and subagent choices. To replace them, supply
@@ -298,7 +310,7 @@ pane, closing it closes the workspace, and the worktree is then left on disk whe
   main checkout's (what `--copy` brings in) goes with the worktree, and so does everything git ignores (build output,
   `node_modules`, a copied `.env`), as with `git worktree remove`: tell a worker to commit anything it must keep.
   cleanup cannot see a commit made, or a worker started, after its last check: run it only once the worker is done.
-  Its `refused` says why and what to do; never discard a worker's changes to get past it, and never push. Work that
+  Its `headline` says why; `next` says what to do; never discard a worker's changes to get past it, and never push. Work that
   failed your check stays where it is until the user decides.
 - `--delete-branch` deletes a branch only when git agrees it is merged; otherwise it is kept and `warnings` says so.
 - `routr cleanup --cwd <repo>` with no worker named lists every worktree of the repository and whether cleanup can
@@ -320,6 +332,11 @@ unreadable, mismatched or unhashed advice records nothing (`ok: false`). An omit
 inline task and returns a warning that the advice was not checked against a task. Outcome revisions keep the original
 advice file. If the original task file is gone, revise without `--task-file` and say so in `--note`.
 
+The commands a lead reads (`subagent`, `dispatch`, `check`, `launch`, `record`, `cleanup`, `usage`) return
+`ok`, `headline`, `unavailable`, `warnings` and `next` first. Launch puts its harness command
+in `start` (`executable`, `argv`, `env`), and history in `ran` or dry-run `would_run`. Record returns the advice `id`
+and the row’s `run_id`.
+
 Follow every result’s `next` array. Each entry is one of:
 
 - `kind: "run"`: `why`, exact `argv`, and `command`, a line for bash, PowerShell 5.1/7 and cmd. If any word falls
@@ -334,5 +351,5 @@ Follow every result’s `next` array. Each entry is one of:
 The safe set is nonempty words containing only letters, digits, `_ . / : = @ + - , ~`, backslash and space, without
 a leading tilde, adjacent backslashes or a trailing backslash. Spaces, backslashes, `@`, commas, internal tildes,
 `--` and dash arguments containing a dot or colon are double-quoted. If the first word would need quotes or contains
-`=`, `command` is null. History (`command`, `planned_command`) is display only, with prompt lengths in place of prompt
+`=`, `command` is null. History (`ran`, `would_run`) is display only, with prompt lengths in place of prompt
 text; only follow-up steps go in `next`.

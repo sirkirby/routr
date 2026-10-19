@@ -40,7 +40,7 @@ After updating, run `routr setup` to review settings and check the
 If an agent still follows an older guide after the update, ask it to
 reread the installed routr skill and its orchestration guide, or start a new session.
 
-## Every answer says `fallback`
+## Every answer starts with `no reading`
 
 routr could not reach its decision model: there is no key, the key is wrong, there is no network, or (with Ollama)
 Ollama is not running or the model is not pulled. `routr doctor` shows which, and the command that fixes it: a key is
@@ -84,7 +84,7 @@ Cursor shows usage only in its own `/usage` screen. routr reads it in a private 
 opens on your screen; herdr has to be installed), about once per working session, and keeps the reading in
 `~/.cache/routr/cursor-usage.json`. Until the first reading lands, or when reading fails, Cursor is `assumed` and the
 row's `note` says why. Run `routr usage cursor` to read it now and see any error; if it cannot be read at all, pass
-`--headroom cursor=<share left>` yourself (0.9 or 90%) (its `read_yourself` says how to read the screen by hand).
+`--headroom cursor=<share left>` yourself (0.9 or 90%) (the by-hand step in `next` says how to read the screen).
 
 ## Kiro's usage is "assumed"
 

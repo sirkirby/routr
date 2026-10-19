@@ -9,7 +9,7 @@ import { claudeProjectFolders, claudeSnapshot, codexSnapshot, monthMinutes, NO_W
 import { KIRO_BY_HAND, kiroUsage, parseKiroUsage, readKiro, refreshKiro } from "../src/lib/kiro-usage.mjs";
 import { HARNESSES, readUsage } from "../src/lib/harnesses.mjs";
 import { olderThan, takeLock } from "../src/lib/runtime.mjs";
-import { usageCommand } from "../src/lib/commands.mjs";
+import { usageCommand } from "./contract.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
 import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage, readCursor, refreshCursor } from "../src/lib/cursor-usage.mjs";
 import { cfg, cliEnv, herdrError, herdrOK, live, metered, none, NOW, scratch, SCRIPT, shellInfo, win } from "./helpers.mjs";
@@ -259,7 +259,7 @@ test("no model name from Claude's /usage reaches routr usage's output", async ()
   const sources = { claude: { read: () => readClaude({ file: join(dir, "none.json"), exec: async () => claudeAnswer(CLAUDE_USAGE) }) } };
   const c = cfg({ subscriptions: { claude: cfg().subscriptions.claude } });
   const out = await usageCommand([], c, {}, { read: (names, given, o) => readUsage(names, given, { ...o, why: async () => null }), sources });
-  expect(out.ok).toBe(true); expect(out.ranked[0]).toMatchObject({ subscription: "claude", usage: "live" });
+  expect(out.ok).toBe(true); expect(out.subscriptions.ranked[0]).toMatchObject({ subscription: "claude", usage: "live" });
   expect(JSON.stringify(out)).toContain("model-specific weekly limit");
   expect(JSON.stringify(out)).not.toContain("Fable");
 });
@@ -441,7 +441,7 @@ test("usage cursor with no Cursor to ask says so, starts nothing, prints JSON an
   const res = Bun.spawnSync([process.execPath, SCRIPT, "usage", "cursor"], { env: cleanEnv });
   expect(res.exitCode).toBe(0);
   const out = JSON.parse(res.stdout.toString());
-  expect(out).toMatchObject({ ok: false, excluded: true, why: "`cursor-agent` did not answer its sign-in check (not installed, or it hung)" });
+  expect(out).toMatchObject({ ok: false, subscriptions: { excluded: [{ subscription: "cursor", why: expect.stringContaining("`cursor-agent` did not answer its sign-in check (not installed, or it hung)") }] } });
   expect(JSON.parse(readFileSync(join(home, ".cache/routr/cursor-usage.json"), "utf8"))).toMatchObject({ excluded: true });
   expect(JSON.parse(readFileSync(join(home, ".cache/routr/signed-in.json"), "utf8")).cursor.state).toBe("no answer");
 });
@@ -525,7 +525,7 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
   // Never read, and the try failed: assumed, with how to read it by hand.
   const never = join(dir, "never.json");
   await refreshCursor({ file: never, nowSec: T, read: async () => ({ ok: false, ...usageFailure("read_failed"), read_yourself: CURSOR_BY_HAND }) });
-  expect(readCursor({ file: never, nowSec: T + 1, refresh: () => {}, off: false }).note).toContain(CURSOR_BY_HAND);
+  expect(readCursor({ file: never, nowSec: T + 1, refresh: () => {}, off: false }).note).not.toContain(CURSOR_BY_HAND);
   // Turned off (tests), a call neither starts a reading nor writes the stamp.
   const quiet = join(dir, "quiet.json");
   expect(readCursor({ file: quiet, nowSec: T, refresh: () => started.push("quiet") }).headroom).toBeNull();
@@ -572,18 +572,18 @@ test("routr usage ranks what it sees without a brief, and a name narrows it or o
   const read = async (names, given) => names.map((n) => (n === "cursor" && given.cursor != null ? { pool: n, source: "given by caller", given: true, ageSec: 0, windows: [], headroom: given.cursor } : n === "claude" ? live("claude", 0.6) : none(n)));
   const all = await usageCommand([], c, {}, { read });
   expect(all.ok).toBe(true);
-  expect(all.ranked.map((x) => x.subscription).sort()).toEqual(Object.keys(c.subscriptions).sort());
-  expect(all.ranked.every((x) => x.hardest_work)).toBe(true);
-  expect((await usageCommand([], c, { cursor: 0.4 }, { read })).ranked.find((x) => x.subscription === "cursor").usage).toBe("given");
-  expect((await usageCommand(["claude"], c, {}, { read })).ranked.map((x) => x.subscription)).toEqual(["claude"]);
+  expect(all.subscriptions.ranked.map((x) => x.subscription).sort()).toEqual(Object.keys(c.subscriptions).sort());
+  expect(all.subscriptions.ranked.every((x) => x.hardest_work)).toBe(true);
+  expect((await usageCommand([], c, { cursor: 0.4 }, { read })).subscriptions.ranked.find((x) => x.subscription === "cursor").usage).toBe("given");
+  expect((await usageCommand(["claude"], c, {}, { read })).subscriptions.ranked.map((x) => x.subscription)).toEqual(["claude"]);
   expect((await usageCommand(["nope"], c, {}, { read })).error).toContain("not a configured subscription");
   expect((await usageCommand(["claude", "x"], c, {}, { read })).ok).toBe(false);
   expect((await usageCommand(["--json"], c, {}, { read })).ok).toBe(true); // doctor's flag: the output is JSON already
-  expect((await usageCommand(["claude", "--json"], c, {}, { read })).ranked.map((x) => x.subscription)).toEqual(["claude"]);
+  expect((await usageCommand(["claude", "--json"], c, {}, { read })).subscriptions.ranked.map((x) => x.subscription)).toEqual(["claude"]);
   expect((await usageCommand(["--bogus"], c, {}, { read })).error).toContain("unknown: --bogus");
-  expect(await usageCommand(["cursor"], c, {}, { read, sources: { cursor: { check: async () => ({ ok: true, opened: true }) } } })).toEqual({ ok: true, opened: true });
+  expect(await usageCommand(["cursor"], c, {}, { read, sources: { cursor: { check: async () => ({ ok: true, opened: true }) } } })).toMatchObject({ ok: true, reading: {}, subscription: "cursor" });
   const broken = await usageCommand([], c, {}, { read: async () => { throw new Error("gone"); } });
-  expect(broken).toMatchObject({ ok: false, error: "gone" });
+  expect(broken).toMatchObject({ ok: false, unavailable: [{ code: "internal_error" }] });
 });
 
 // Each harness's own status output, signed in and signed out, as measured on 2026-09-26 (stdout and stderr together).
@@ -745,7 +745,7 @@ test("the fresh status check is a sign-in check: signed out or no answer now lea
     const [u] = await readUsage([name], {}, { sources: noWindows, why: async () => null, billing: (n, o) => billingFor(n, { ...o, harness: HARNESSES.claude, file, nowSec: T + 3600, ask: async () => answer }) });
     expect(u).toMatchObject({ signedIn: false, headroom: null }); expect(u.note).toContain(hint);
     const r = rankSubscriptions("standard", [u], c);
-    expect(r.ranked).toEqual([]); expect(r.excluded).toEqual([{ subscription: name, reason: u.note }]);
+    expect(r.ranked).toEqual([]); expect(r.excluded).toEqual([{ subscription: name, why: u.note }]);
     expect(JSON.parse(readFileSync(file, "utf8"))[name].state).toBe(answer ? "no" : "no answer");
   }
 });
@@ -757,7 +757,7 @@ test("a harness that is not signed in is never read, and dispatch leaves it out 
   expect(usage.find((u) => u.pool === "cursor")).toMatchObject({ signedIn: false, headroom: null, note: "not signed in: cursor-agent login" });
   const r = rankSubscriptions("basic", usage, cfg());
   expect(r.ranked.map((x) => x.subscription)).not.toContain("cursor");
-  expect(r.excluded).toContainEqual({ subscription: "cursor", reason: "not signed in: cursor-agent login" });
+  expect(r.excluded).toContainEqual({ subscription: "cursor", why: "not signed in: cursor-agent login" });
 });
 test("a background reading of a harness that is not signed in never starts it, keeps why, and gives the lock back", async () => {
   const dir = scratch("gate"), file = join(dir, "kiro-usage.json"), lock = `${file}.lock`;
@@ -774,6 +774,6 @@ test("routr usage leaves a turned-off subscription out, says how to turn it on, 
   const config = cfg({ subscriptions: { codex: { enabled: true, hardest_work: "strong", reserve: 0.2, assumed_headroom: 0.5 }, cursor: { enabled: false, hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 } } });
   const r = await usageCommand([], config, {}, { read: async (names) => { read.push(...names); return names.map((n) => live(n, 0.9)); } });
   expect(read).toEqual(["codex"]);
-  expect(r.ranked.map((x) => x.subscription)).toEqual(["codex"]);
-  expect(r.excluded).toEqual([{ subscription: "cursor", reason: "turned off in your settings: routr setup --enable cursor" }]);
+  expect(r.subscriptions.ranked.map((x) => x.subscription)).toEqual(["codex"]);
+  expect(r.subscriptions.excluded).toEqual([{ subscription: "cursor", why: "turned off in your settings: routr setup --enable cursor" }]);
 });

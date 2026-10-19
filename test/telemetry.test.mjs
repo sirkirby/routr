@@ -268,7 +268,7 @@ test("every value seen in real rows, and every value routr documents, survives t
 });
 
 test("routr share says what will really happen to the rows, in each state", async () => {
-  const { shareCommand } = await import("../src/lib/commands.mjs");
+  const { shareCommand } = await import("./contract.mjs");
   const dir = scratch("sharemsg"), ledger = join(dir, "ledger.jsonl"), out = join(dir, "out.jsonl");
   try {
     writeFileSync(ledger, [row({ ts: "2026-09-21T10:00:00.000Z" }), row({ ts: "2026-09-23T10:00:00.000Z" })].map((r) => JSON.stringify(r)).join("\n") + "\n");

@@ -110,14 +110,14 @@ setting wins over either when no window arrived; a window that does arrive is al
 
 ## The order
 
-`candidates.normal` and `candidates.fallback` list eligible names alphabetically, without ranking model quality.
+`subscriptions.candidates.normal` and `subscriptions.candidates.fallback` list eligible names alphabetically, without ranking model quality.
 Accounts at their reserve are absent. The lead starts with suitable model/effort options on normal accounts and may
 use fallback when none suitably takes the work, including when the remaining normal models do not fit the task.
 Those settings authorize use in those circumstances. An unknown metered budget is uncertainty to weigh with the
 user's explicit spending limits; it does not by itself revoke that permission.
 
-`ranked` remains a capacity diagnostic: accounts with a number come first, most usable at the top, then metered
-accounts, then accounts at their reserve. `most_room` names only an account with a positive number; it is null when
+`subscriptions.ranked` remains a capacity diagnostic: accounts with a number come first, most usable at the top, then metered
+accounts, then accounts at their reserve. `subscriptions.most_room` names only an account with a positive number; it is null when
 only metered candidates remain. Numbers may be labelled assumed. Neither field is a recommendation to choose that
 account. If there are no candidates, hold the work or ask the user. Routr never offers a reserve.
 
@@ -148,3 +148,6 @@ a retry elsewhere, while later routing should consider comparable verified outco
 problems from brief gaps, scope changes and launch trouble. Changes to persistent user preferences remain explicit.
 This quality-first procedure is working guidance; improved quality or efficiency has not been established by an
 outcome comparison.
+
+Both `dispatch` and `usage` return this `subscriptions` object. Excluded rows use `why` for their reason.
+A usage view always names its `level` (`basic` by default).

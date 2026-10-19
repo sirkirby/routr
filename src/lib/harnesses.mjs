@@ -165,7 +165,7 @@ export const HARNESSES = {
     unknownModelRunsDefault: true,
     // Its docs: "start with --effort, and Kiro remembers it for future sessions". Not measured: no model on the
     // measured account took effort.
-    notes: (model, effort) => [...(effort ? [`Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently: check the model's /effort panel.`] : [])],
+    notes: (model, effort) => [...(effort ? [`Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently.`] : [])],
     // `{"accountType":"SocialGitHub","email":…}` / `{"account":null}` (exit 1). Any `chat` command opens a sign-in.
     auth: { check: ["whoami", "--format", "json"], signedIn: (out, code) => code === 0 && /"email"\s*:\s*"[^"]/.test(out), signIn: "run `kiro-cli login`" },
     // Its help lists the levels; `auto` (no flag) leaves effort to the model, and is the only choice a model without levels has.
@@ -194,10 +194,11 @@ export const SKILL_FOLDERS = [".agents/skills", ...KINDS.map((n) => HARNESSES[n]
 export const SKILLS = ["routr", "routr-orchestrate"];
 
 
+export const MODEL_REQUIRED = "--model is required; a worker must not use the harness default";
 export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir }) {
   const h = Object.hasOwn(HARNESSES, kind) && HARNESSES[kind];
   if (!h) throw kindError();
-  if (!model && !dryRun) throw new Error("--model is required; a worker must not use the harness default");
+  if (!model && !dryRun) throw new Error(MODEL_REQUIRED);
   if (effort && !h.effort) throw new Error(h.noEffort);
   if (h.dirFlag && !cwd) throw new Error(`${kind} requires a directory for ${h.dirFlag}`);
   if (effort === h.autoEffort) effort = undefined;

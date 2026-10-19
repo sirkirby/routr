@@ -3,7 +3,7 @@
 // a machine with no Node and no Bun needs nothing but the routr binary. The files are embedded at build time.
 // routr touches only what is provably its own (`owner` below): anything else of the same name is kept and reported.
 import { doNext } from "./next.mjs";
-import { accessSync, constants, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { HARNESSES, KINDS, SKILLS } from "./harnesses.mjs";
 import skillMd from "../../skills/routr/SKILL.md" with { type: "text" };
@@ -13,7 +13,7 @@ import harnesses from "../../skills/routr/references/harnesses.md" with { type: 
 import setup from "../../skills/routr/references/setup.md" with { type: "text" };
 import orchestrateMd from "../../skills/routr-orchestrate/SKILL.md" with { type: "text" };
 import orchestrateYaml from "../../skills/routr-orchestrate/agents/openai.yaml" with { type: "text" };
-import { home as userHome } from "./runtime.mjs";
+import { ensureParent, home as userHome } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 // Every file of each skill in SKILLS, by its path inside the skill's folder (literal imports, so the binary bundles them).
@@ -106,7 +106,7 @@ export function linkAbove(root, rel) {
 // Write one file of routr's inside a folder it is filling, never through a link.
 function writeInside(root, rel, text) {
   if (linkAbove(root, rel)) throw new Error(`${join(root, rel)}: a folder above it is a link, not followed`);
-  mkdirSync(dirname(join(root, rel)), { recursive: true });
+  ensureParent(join(root, rel));
   writeFileSync(join(root, rel), text);
 }
 // Every file routr's copy at `dir` should have that is not a readable regular file there (a folder in place of a file
@@ -180,7 +180,7 @@ export function installSkill({ home = userHome(), dryRun = false } = {}) {
     const receipt = JSON.stringify({ skill, version: ROUTR_VERSION, files: Object.keys(FILES[skill]) }, null, 1) + "\n";
     try {
       if (!dryRun) {
-        mkdirSync(dirname(shared.path), { recursive: true });
+        ensureParent(shared.path);
         // routr's files and its manifest, in the same staged write: the folder is routr's exactly when it is complete.
         staged(shared.path, (tmp) => {
           for (const [rel, text] of Object.entries(FILES[skill])) writeInside(tmp, rel, text);
@@ -196,7 +196,7 @@ export function installSkill({ home = userHome(), dryRun = false } = {}) {
       if (more.length) { kept.push({ skill, where: p.path, why: hasExtras(p.path, more) }); continue; }
       if (dryRun) { done.push({ skill, where: p.path, how: `for ${p.label}` }); continue; }
       try {
-        mkdirSync(dirname(p.path), { recursive: true });
+        ensureParent(p.path);
         // A link keeps one copy; Windows often refuses links without admin rights, so copy there (staged, like the shared
         // one, with its manifest: routr's files only, written afresh, never through a link). A copy routr made stays a copy.
         let how;

@@ -9,6 +9,7 @@
 // leave no process and no session folder behind.
 import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
+import { callHerdr, processError } from "./process-boundary.mjs";
 import { paneView } from "./herdr.mjs";
 import { start as startProcess } from "./runtime.mjs";
 
@@ -29,10 +30,8 @@ const startServer = (name, failed) => { const c = startProcess("herdr", ["--sess
 export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAlive, age = ageMs, start = startServer, pid = process.pid } = {}) {
   const name = `routr-scratch-${pid}-${randomBytes(3).toString("hex")}`;
   const bare = async (args) => {
-    let r;
-    try { r = await run(args, remaining()); }
-    catch (e) { throw new Error(e?.code === "ENOENT" ? "herdr is not installed (or not on PATH), and routr needs it to open a terminal" : String(e?.message ?? e)); }
-    if (!r.ok) throw new Error(r.data?.error?.message ?? JSON.stringify(r.data));
+    const r = await callHerdr(run, args, remaining());
+    if (!r.ok) throw processError(r);
     return r;
   };
   const on = (args) => ["--session", name, ...args];
@@ -57,10 +56,10 @@ export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAliv
     let spawnError = null;
     start(name, (e) => { spawnError = e; }); started = true;
     for (;;) { // the server answers within a second; `remaining()` ends the wait
-      if (spawnError) throw new Error(`herdr could not start a private session: ${spawnError.code ?? spawnError.message}`);
-      const r = await run(on(["workspace", "list"]), remaining());
+      if (spawnError) throw new Error("herdr could not start a private session (herdr_unreachable)");
+      const r = await callHerdr(run, on(["workspace", "list"]), remaining());
       if (r.ok) break;
-      if (r.data?.error?.code !== "server_not_running") throw new Error(r.data?.error?.message ?? "herdr did not start a private session");
+      if (r.data?.error?.code !== "server_not_running") throw processError(r);
       await sleep(Math.min(200, remaining()));
     }
     const pane = (await call(["workspace", "create", "--cwd", cwd, "--no-focus"])).data?.result?.root_pane?.pane_id;

@@ -4,13 +4,24 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { probe, resolveCommand, run } from "../src/lib/runtime.mjs";
-import { npmShim, scratch } from "./helpers.mjs";
+import { probe, resolveCommand, run, startSync } from "../src/lib/runtime.mjs";
+import { cliEnv, fakeExecutable, npmShim, scratch } from "./helpers.mjs";
 
 const ECHO = "process.stdout.write(JSON.stringify(process.argv.slice(2)))\n";
 // Everything cmd treats specially, the C runtime's quote and backslash rules, and the JSON Claude Code's read passes.
 const ARGS = ["plain", "with space", 'dq"inside', "100%", "%PATH%", "a&b", "a^b", "a|b", '{"disableAllHooks":true}', "trailing\\",
   'back\\"q', "", "!x!", "<y>", "(p)", "a & echo INJECTED", 'a"&echo INJECTED'];
+
+test.skipIf(process.platform !== "win32")("Windows only: CLI fixtures find fake herdr and harness wrappers on their isolated PATH", () => {
+  const dir = scratch("fake-tools");
+  const args = ["pane", "read", "w1:p9", "with space", "worker prompt\nwith another line"];
+  for (const name of ["herdr", "claude", "cursor-agent", "git"]) {
+    fakeExecutable(dir, name, ECHO);
+    const r = startSync(name, args, { env: cliEnv(dir, { PATH: dir }), encoding: "utf8" });
+    expect(r.error).toBeUndefined(); expect(r.status).toBe(0); expect(r.stderr).toBe("");
+    expect(JSON.parse(r.stdout)).toEqual(args);
+  }
+});
 
 // Measured before the fix (windows-latest, 2026-10-05, Bun 1.4.2): every one of these answered null.
 test.skipIf(process.platform !== "win32")("Windows only: run and probe start a .cmd and an npm shim, by bare name and full path, and every argument arrives intact", async () => {

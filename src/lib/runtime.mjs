@@ -5,7 +5,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, win32 } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
 
 // The user's home, read when asked: HOME (USERPROFILE on Windows), as Node's os.homedir() reads it. Bun's os.homedir()
 // ignores a HOME changed while it runs (measured 2026-09-26, Bun 1.3.13), so a test's scratch home reached only the CLIs
@@ -26,10 +26,21 @@ export const CURSOR_SNAPSHOT = join(home(), ".cache/routr/cursor-usage.json");
 // Written by `routr usage kiro` the same way, read by the usage reader.
 export const KIRO_SNAPSHOT = join(home(), ".cache/routr/kiro-usage.json");
 
+export function ensureParent(file, { mkdir = mkdirSync } = {}) {
+  const dir = dirname(resolve(file));
+  try { mkdir(dir, { recursive: true }); }
+  catch (e) {
+    // Bun on Windows can report EEXIST for an existing parent even with recursive:true. A file or unreadable
+    // parent is still a failure; permission and other mkdir errors must never be mistaken for success.
+    if (e?.code === "EEXIST") try { if (statSync(dir).isDirectory()) return; } catch {}
+    throw e;
+  }
+}
+
 // Written whole or not at all (a temp file, then a rename): a reader never sees half a file. Windows will not rename
 // over an existing file, so it is removed first there.
 export function writeJsonAtomic(file, value) {
-  mkdirSync(dirname(file), { recursive: true });
+  ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
   writeFileSync(tmp, JSON.stringify(value) + "\n");
   try { renameSync(tmp, file); } catch { try { unlinkSync(file); } catch {} renameSync(tmp, file); }

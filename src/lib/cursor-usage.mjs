@@ -10,7 +10,7 @@ import { deadline, runHerdr, SHELLS, shellAlone, shellFamily, waitForShell } fro
 import { CURSOR_SNAPSHOT, home } from "./runtime.mjs";
 import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
 import { openTerminal } from "./terminal.mjs";
-import { usageFailure } from "./usage-failure.mjs";
+import { USAGE_BY_HAND, usageFailure } from "./usage-failure.mjs";
 
 const cursorPlan = (p) => ["Free", "Pro", "Pro+", "Ultra", "Team", "Business", "Enterprise"].includes(p) ? p : null;
 
@@ -42,7 +42,7 @@ const cursorUiReady = (text) => {
 };
 
 // What to do when routr cannot open the screen itself: said with every failed read.
-export const CURSOR_BY_HAND = "run `cursor-agent`, type /usage, read \"Included N% used\", and pass --headroom cursor=<1 - N/100>";
+export const CURSOR_BY_HAND = USAGE_BY_HAND.cursor;
 
 // Cursor writes to its config folder as it runs (seen 2026-09-25: it rewrote cli-config.json and added a project
 // folder for the working directory), so it runs on a private copy, as `launch` does, removed when the read ends.

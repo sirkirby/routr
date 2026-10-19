@@ -30,10 +30,10 @@ test("help table covers every command the CLI dispatches", () => {
 
   // launch flags match parseLaunchArgs options
   const launchFlags = COMMANDS.launch.flags.map((f) => f.name.replace(/^--/, ""));
-  for (const opt of ["kind", "name", "cwd", "model", "effort", "pane", "direction", "task", "task-file", "trust", "timeout", "dry-run"]) {
+  for (const opt of ["kind", "name", "cwd", "model", "effort", "pane", "direction", "task", "task-file", "timeout", "dry-run"]) {
     expect(launchFlags).toContain(opt);
   }
-  expect(COMMANDS.launch.flags.find((f) => f.name === "--model").required).toBe("required unless --dry-run");
+  expect(COMMANDS.launch.flags.find((f) => f.name === "--model").required).toBe(true);
 
   // Unknown usage string contains every command
   const unknownUsage = formatUnknownUsage();
@@ -87,7 +87,7 @@ test("command help prints usage for each command and exits 0", () => {
   expect(launchRes.stdout.toString()).toContain("routr launch: start a worker");
   expect(launchRes.stdout.toString()).toContain("--kind <kind>");
   expect(launchRes.stdout.toString()).toContain("--model <id>");
-  expect(launchRes.stdout.toString()).toContain("required unless --dry-run");
+  expect(launchRes.stdout.toString()).not.toContain("required unless --dry-run");
 
   // routr record --help exits 0 without reading stdin
   const recordRes = Bun.spawnSync(["bun", SCRIPT, "record", "--help"], { stdin: "ignore" });
@@ -488,15 +488,15 @@ test("routr key set stores a piped key owner-only, never prints it, and refuses 
 });
 
 test("the file-and-ledger commands answer instead of failing", async () => {
-  const { checkCommand, recordCommand } = await import("../src/lib/commands.mjs");
+  const { checkCommand, recordCommand } = await import("./contract.mjs");
   const missing = await checkCommand({ brief: "/nonexistent/brief", report: "/nonexistent/report" });
-  expect(missing.fallback).toBe(true);
-  expect(recordCommand({ advice: "/nonexistent/advice.json" }).recorded).toBeNull();
+  expect(missing.ok).toBe(false);
+  expect(recordCommand({ advice: "/nonexistent/advice.json" }).id).toBeUndefined();
   const dir = scratch("check");
   writeFileSync(join(dir, "b"), "Fix the typo in README.md and run bun test."); writeFileSync(join(dir, "r"), "VERDICT: done");
   const seen = [];
   const out = await checkCommand({ brief: join(dir, "b"), report: join(dir, "r") }, { askFn: async (input) => { seen.push(input); return { answers: {}, latencyMs: 12 }; } });
-  expect(out.warning).toContain("very short");
+  expect(out.warnings.join(" ")).toContain("very short");
   expect(seen[0].report.text).toBe("VERDICT: done");
   expect(out.ms).toBe(12);
 });
@@ -536,9 +536,9 @@ test("small CLI fixes: help for a command however it is asked, --headroom never 
   // An empty --headroom is taken off the line with the rest; a percent is read; what cannot be read is said.
   const d = JSON.parse(run("dispatch", "--headroom", "cursor=", "--headroom", "claude=40%", "--headroom", "codex=lots", "Fix the parser").stdout.toString());
   expect(d.brief_chars).toBe("Fix the parser".length);
-  expect(d.input_notes).toEqual([
+  expect(d.warnings).toEqual(expect.arrayContaining([
     "--headroom cursor= is not <subscription>=<a share from 0 to 1, or a percent>: ignored",
-    "--headroom codex=lots is not <subscription>=<a share from 0 to 1, or a percent>: ignored"]);
+    "--headroom codex=lots is not <subscription>=<a share from 0 to 1, or a percent>: ignored"]));
   // share writes its file beside the ledger it read, the one --ledger names.
   const dir = join(home, "elsewhere"); mkdirSync(dir);
   const ledger = join(dir, "l.jsonl");
@@ -548,7 +548,7 @@ test("small CLI fixes: help for a command however it is asked, --headroom never 
 });
 
 test("--headroom: a share or a percent is read; empty, % alone, out of range, or no name is a note, never a 0", async () => {
-  const { parseHeadroom } = await import("../src/lib/commands.mjs");
+  const { parseHeadroom } = await import("./contract.mjs");
   const r = parseHeadroom(["claude=40%", "codex=0.9", "cursor=%", "agy=% ", "kiro=150%", "x=1.5", "claude2 =0.5", "=0.5", "lots", "y="]);
   expect(r.given).toEqual({ claude: 0.4, codex: 0.9, claude2: 0.5 });
   expect(r.notes.map((n) => n.split(" is not")[0])).toEqual(["--headroom cursor=%", "--headroom agy=% ", "--headroom kiro=150%", "--headroom x=1.5", "--headroom =0.5", "--headroom lots", "--headroom y="]);
@@ -562,10 +562,10 @@ test("a flag subagent and dispatch do not take is never advised on as the brief"
   const alone = run(["subagent", "--json"], file), a = JSON.parse(alone.out);
   expect(alone.code).toBe(0);
   expect(a.brief_chars).toBe(text.length); // the brief came from stdin
-  expect(a.input_notes).toEqual(["--json: not a flag routr subagent takes, so ignored; the brief was read from stdin"]);
+  expect(a.warnings).toContain("--json: not a flag routr subagent takes, so ignored; the brief was read from stdin");
   const inside = JSON.parse(run(["dispatch", "Add", "a", "--verbose", "flag", "to", "the", "CLI"]).out);
   expect(inside.brief_chars).toBe("Add a --verbose flag to the CLI".length);
-  expect(inside.input_notes).toEqual(["--verbose looks like a flag routr dispatch does not take; read as part of the brief"]);
+  expect(inside.warnings).toContain("--verbose looks like a flag routr dispatch does not take; read as part of the brief");
   // Without a real brief on stdin, a flag-led invocation is refused instead of being assessed.
   const alone2 = JSON.parse(run(["subagent", "-Werror"]).out);
   expect(alone2.ok).toBe(false);

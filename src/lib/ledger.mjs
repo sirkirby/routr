@@ -2,11 +2,11 @@
 // out. It is how routr's questions get judged against real work instead of dedicated experiments.
 // `routr record` is the only command that writes the ledger; the advice commands stay side-effect free.
 import { createHash, randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { HARNESSES } from "./harnesses.mjs";
 import { LEVELS } from "./questions.mjs";
-import { home } from "./runtime.mjs";
+import { ensureParent, home } from "./runtime.mjs";
 
 // The ledger is one file per user, shared by every project on the machine. Each row is labelled with its project so
 // `assess` can tell them apart: the folder name of the git repository the work happened in. A worktree counts as its
@@ -97,8 +97,9 @@ export function resolveEffort({ subscription, model, effort }, config = null) {
 
 export const OUTCOME_CAUSES = ["execution", "brief", "scope", "review", "launch", "unknown"];
 const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export class RunIdError extends Error {}
 export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, causes, run_id, note, subagents, project }, config = null) {
-  if (run_id != null && !RUN_ID.test(run_id)) throw new Error("--run-id must be an existing run_id returned by record");
+  if (run_id != null && !RUN_ID.test(run_id)) throw new RunIdError("--run-id takes the run_id field from record's earlier output, not id; it must name an existing run in this ledger");
   if (attempts != null && (!/^[1-9]\d*$/.test(String(attempts)) || !Number.isSafeInteger(+attempts))) throw new Error("--attempts must be a positive whole number; omit it when unknown");
   if (seconds != null && (String(seconds).trim() === "" || !Number.isFinite(+seconds) || +seconds < 0)) throw new Error("--seconds must be a nonnegative duration; omit it when unknown");
   if (causes != null && (!Array.isArray(causes) || causes.some((c) => ![...OUTCOME_CAUSES, "none"].includes(c)) || (causes.includes("none") && causes.length !== 1))) throw new Error(`--cause takes ${OUTCOME_CAUSES.join("|")}|none; none must be used alone`);
@@ -108,7 +109,7 @@ export function toEntry(advice, { subscription, model, effort, level, verdict, c
     // providers existed has `jev_model` instead, read as TypeSafe's (decisionOf).
     ...decisionOf(advice), // advice saved by an older routr carries jev_model: read as TypeSafe's (from the core review)
     brief_sha: advice.brief_sha, brief_chars: advice.brief_chars, // never the brief itself: briefs can be private
-    advised: { level: advice.level, sure: advice.sure, between: advice.between ?? null, work_type: advice.work_type, high_risk: advice.high_risk, fallback: !!advice.fallback,
+    advised: { level: advice.level, sure: advice.sure, between: advice.between ?? null, work_type: advice.work_type, high_risk: advice.high_risk, fallback: advice.fallback === true || Array.isArray(advice.unavailable) && advice.unavailable.some((u) => u?.part === "decision model"),
       facts: Object.fromEntries(Object.entries(advice.facts ?? {}).map(([k, f]) => [k, f.p])) },
     headroom: Object.fromEntries((advice.subscriptions?.ranked ?? []).map((r) => [r.subscription, { usable: r.usable, usage: r.usage }])),
     chose: { subscription: subscription ?? null, model: model ?? null, ...resolveEffort({ subscription, model, effort }, config), level: LEVELS.includes(level) ? level : advice.level },
@@ -121,7 +122,7 @@ export function toEntry(advice, { subscription, model, effort, level, verdict, c
 export function append(entry, path = LEDGER_PATH, { revision = false } = {}) {
   if (revision) {
     const prior = read(path).findLast((e) => e.run_id === entry.run_id);
-    if (!prior) throw new Error("--run-id was not found in this ledger; omit it to record a new worker run");
+    if (!prior) throw new RunIdError("--run-id was not found in this ledger; use the run_id field from record's earlier output, not id; omit it for a new worker run");
     const adviceChanged = ["id", "brief_sha"].filter((k) => prior[k] !== entry[k]);
     if (adviceChanged.length) throw new Error(`--run-id requires the original advice (different ${adviceChanged.join(", ")}); omit it for a new run`);
     if (prior.project !== entry.project) throw new Error("--run-id has a different project; use the original project or omit it for a new run");
@@ -131,7 +132,7 @@ export function append(entry, path = LEDGER_PATH, { revision = false } = {}) {
     entry = { ...entry, subagents: entry.subagents ?? prior.subagents ?? [],
       outcome: { ...entry.outcome, note: entry.outcome.note === undefined ? prior.outcome.note ?? null : entry.outcome.note } };
   }
-  mkdirSync(dirname(path), { recursive: true }); appendFileSync(path, JSON.stringify(entry) + "\n");
+  ensureParent(path); appendFileSync(path, JSON.stringify(entry) + "\n");
 }
 
 export function read(path = LEDGER_PATH) {

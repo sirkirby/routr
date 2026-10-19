@@ -23,17 +23,27 @@ name the provider and attempted model with a fixed code and the decision error's
 `launch`, `cleanup`, `usage cursor`, and `usage kiro` act, and each says what it did. Their read-only forms
 (`telemetry status`, `setup --show`) only read.
 
+Local file writes create parent folders from the file's absolute location, including when only a relative filename
+was given. An existing directory is accepted; a file in its place or a permission error remains a failure.
+
 - `launch` drives panes in your herdr session. A task requires readable JSON advice on that exact task (including
-  `brief_sha`); missing or nonmatching advice is refused before any harness, pane or worktree call. Dry runs warn
-  and plan instead. Matching fallback advice is accepted, including advice saved as UTF-8 or UTF-16LE, with or without
-  a BOM. Launch copies its decision-model `unavailable` entry. Older fallback advice that lacks the entry says the
+  `brief_sha`); missing or nonmatching advice is refused before any harness, pane or worktree call. Dry runs return
+  `ok: false` with `error` on the same refusal and still plan. Matching fallback advice is accepted, including advice
+  saved as UTF-8 or UTF-16LE, with or without a BOM. Launch copies its decision-model `unavailable` entry. Older fallback advice that lacks the entry says the
   saved advice does not name the attempted model; launch never fills it from current settings. Recovery actions
   are rebuilt from the saved provider, model and code, including HTTP status for a provider error. The lead still
   chooses the account, model and effort. Real launches return a record template only after a
   start or task-submission attempt; dry runs with matching advice return the planned template.
+  A startup question's next step uses the guide's trust rule: accept only a directory the lead created or a worktree
+  of the repository the user already has it working in; otherwise ask the user and leave the pane waiting. The lead
+  reads the options before sending keys because the default can exit the worker.
 - `record --task-file` checks that the advice belongs to that task before reading reports or appending anything.
   Without a task file it warns that the advice was not checked. Revisions require the original advice identity;
   if the original task file is gone, revise without `--task-file` and say so in `--note`.
+  Its next step integrates and cleans up only for `done` with `check pass`; every other outcome calls for rework or
+  escalation before cleanup. Every successful record returns a filled revision template for its own `run_id`.
+  Advice, task and ledger paths in that template are absolute, so changing folders still revises the same run.
+  An unknown run ID points to the earlier record output and the selected ledger; advice `id` is not a run ID.
 - `cleanup` removes a worker's worktree (through herdr, or git when no workspace is open) or closes its pane. It
   refuses while anything it can see runs there or when it cannot tell, never uses `--force`, and refuses a worktree
   holding uncommitted changes, files git is told not to check, a commit no branch or tag holds, or untracked files
@@ -149,3 +159,23 @@ Telemetry is off unless you turn it on (`routr telemetry on`, or yes to setup's 
 turns it on for you. It sends ledger rows with no text of any kind, only from the detached daily job or
 `routr telemetry send`, and stays off under `ROUTR_TELEMETRY=0`, `DO_NOT_TRACK=1`, or CI. What is sent:
 [telemetry.md](telemetry.md). `routr feedback` is the only text sent, and only what you typed.
+
+## Output a lead reads
+
+`subagent`, `dispatch`, `check`, `launch`, `record`, `cleanup` and `usage` always start with `ok`, `headline`,
+`unavailable`, `warnings` and `next`. Follow `next` for instructions. An `error` marks refused inputs or a stopped
+command; an expected outcome such as a worker needing input has `ok: false` without `error`. Missing required
+inputs are refused even by commands that exit 0: check needs `--brief` and `--report`; record needs `--subscription`,
+`--model`, `--effort`, `--verdict` and `--check`.
+
+Launch and record share one usable-advice check before comparing the task, reading a report or writing a row:
+a JSON object with nonempty `id` and `brief_sha`, without `ok: false` or any `error` field. Older advice without
+`ok` remains usable. A saved refusal is refused. Every launch record template carries an explicit effort. Launch dry runs
+also refuse a missing model while printing their plan. Failed launches that sent no task offer a blocked record, not a worker-result verification step.
+
+Herdr and git failures are classified into fixed codes and routr's own sentences. Structured herdr state, rule,
+rules version, kind, folder and readiness are checked before use. An absent explain state adds no disagreement.
+A missing herdr executable says so and supplies an installation/PATH step; a failed git ref read is reported as
+unreadable, not as a commit no ref holds. Arbitrary process text appears only in `screen`
+before the task was sent; after submission `screen` is a fixed withheld sentence. Process names are counted, never
+printed. These diagnostics never enter the ledger or telemetry.

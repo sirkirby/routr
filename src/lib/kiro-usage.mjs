@@ -3,14 +3,14 @@ import { tmpdir } from "node:os";
 import { KIRO_SNAPSHOT, run } from "./runtime.mjs";
 import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
 import { monthMinutes } from "./usage.mjs";
-import { usageFailure } from "./usage-failure.mjs";
+import { USAGE_BY_HAND, usageFailure } from "./usage-failure.mjs";
 const kiroPlan = (p) => ["KIRO FREE", "KIRO PRO", "KIRO PRO+", "KIRO POWER"].includes(p) ? p : null;
 
 // Kiro: `kiro-cli chat --no-interactive /usage` answers without an agent turn (0 credits) with the plan's monthly
 // credits: "Estimated Usage | resets on 2026-10-01 | KIRO FREE" / "Credits (0.00 of 50 covered in plan), 0.0%"
 // (measured on a Free plan, 2026-09-26). Every model draws on those credits, so there is one pool. Other lines are
 // counted, never copied: their text can contain account details or prompts.
-export const KIRO_BY_HAND = "run `kiro-cli chat --no-interactive /usage`, read \"Credits (X of Y covered in plan)\", and pass --headroom kiro=<1 - X/Y>";
+export const KIRO_BY_HAND = USAGE_BY_HAND.kiro;
 export function parseKiroUsage(text) {
   const t = String(text ?? "");
   const m = t.match(/Credits\s*\(\s*([\d.,]+)\s+of\s+([\d.,]+)\s+covered in plan\s*\)/i);

@@ -1,8 +1,8 @@
 // The one System One client. Asks the configured provider (providers.mjs), unwraps its envelope, and normalizes the
 // answers, so advise.mjs and check.mjs read every provider the same way. Raw HTTP, node: built-ins only; exposes the
 // exact answers, latency and tokens.
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { ensureParent } from "./runtime.mjs";
 import { DecisionError, decisionTarget, isModel, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 
 // ---------------------------------------------------------------- secrets
@@ -47,7 +47,7 @@ export function writeSecrets(values, file = SECRETS_FILE) {
     lines = lines.filter((l, i) => i <= at || nameOf(l) !== name);
     lines[at] = `${name}=${value}`;
   }
-  mkdirSync(dirname(file), { recursive: true });
+  ensureParent(file);
   writeFileSync(file, lines.join("\n") + "\n", { mode: 0o600 });
   try { chmodSync(file, 0o600); } catch {} // an existing file keeps its old mode unless we set it; no-op on Windows
 }

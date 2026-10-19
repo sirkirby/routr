@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { launch } from "../src/lib/launch.mjs";
-import { recordCommand, adviseCommand } from "../src/lib/commands.mjs";
+import { readFileSync, writeFileSync, existsSync, realpathSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
+import { launch } from "./contract.mjs";
+import { recordCommand, adviseCommand } from "./contract.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
 import { templateCommand } from "../src/lib/next.mjs";
 import { readAdvice, readTask } from "../src/lib/advice-file.mjs";
-import { cleanup } from "../src/lib/cleanup.mjs";
+import { cleanup } from "./contract.mjs";
 import { cfg, cliEnv, scratch, SCRIPT, herdrOK } from "./helpers.mjs";
 
 const MARKER = "PRIVATE_BRIEF_HANDOFF_MARKER_9b98";
@@ -16,20 +16,20 @@ function fixture() {
   const dir = scratch("handoff"), task = join(dir, "task.md"), advice = join(dir, "advice.json"), ledger = join(dir, "ledger.jsonl");
   const text = `Fix ${MARKER} and verify it.\n`;
   writeFileSync(task, text);
-  const adv = { id: "worker-advice", brief_sha: briefSha(text), fallback: true, level: "standard", facts: {} };
+  const adv = { id: "worker-advice", brief_sha: briefSha(text), ok: true, level: "standard", facts: {} };
   writeFileSync(advice, JSON.stringify(adv));
   return { dir, task, advice, ledger, text, adv };
 }
 const noCalls = { run: () => { throw new Error("unexpected herdr call"); }, ready: () => { throw new Error("unexpected harness call"); }, models: () => { throw new Error("unexpected model list call"); } };
 
-test("task launch requires readable, hashed, matching advice before any outside call; dry runs warn and plan", async () => {
+test("task launch requires readable, hashed, matching advice before any outside call; dry runs refuse and plan", async () => {
   const f = fixture();
   for (const [label, body, error] of [
     ["missing", null, "No advice file was supplied for this task."],
     ["unreadable", null, "could not read it"],
     ["malformed", "not JSON", "not JSON"],
     ["unhashed", JSON.stringify({ id: "old" }), "missing brief_sha"],
-    ["mismatched", JSON.stringify({ brief_sha: briefSha("someone else's task") }), "different text"],
+    ["mismatched", JSON.stringify({ id: "advice-test", brief_sha: briefSha("someone else's task") }), "different text"],
   ]) {
     const file = join(f.dir, label + ".json");
     if (body) writeFileSync(file, body);
@@ -43,9 +43,9 @@ test("task launch requires readable, hashed, matching advice before any outside 
     expect(r.next[0].stdout_to).not.toBe(file);
     expect(r.next[0].argv).not.toContain(">");
     const dry = await launch([...args, "--dry-run"], noCalls);
-    expect(dry).toMatchObject({ ok: true, state: "planned" });
-    expect(dry.warnings.join(" ")).toContain(error);
-    expect(dry.planned_command.length).toBeGreaterThan(0);
+    expect(dry).toMatchObject({ ok: false, state: "planned" });
+    expect(dry.error).toContain(error);
+    expect(dry.would_run.length).toBeGreaterThan(0);
     expect(recordStep(dry)).toBeUndefined();
     expect(JSON.stringify([r, dry])).not.toContain(MARKER);
   }
@@ -151,6 +151,76 @@ test("record compares the task before report processing or append, and revisions
   expect(readFileSync(f.ledger, "utf8")).not.toContain(MARKER);
 });
 
+test("record next follows the outcome on new rows and revisions, with a usable revision template", () => {
+  const f = fixture(), config = cfg();
+  config.subscriptions.claude.default_effort = "high";
+  const o = { advice: f.advice, task_file: f.task, ledger: f.ledger, project: "gate-project", subscription: "claude", model: "sonnet", effort: "default", level: "strong", verdict: "done", check: "pass" };
+  const first = recordCommand(o, [], config);
+  for (const verdict of ["done", "partial", "blocked"]) for (const check of ["pass", "fail", "none"]) for (const run_id of [undefined, first.run_id]) {
+    const r = recordCommand({ ...o, verdict, check, run_id }, [], config);
+    expect(r.ok).toBe(true);
+    const why = r.next.map((n) => n.why).join(" ");
+    if (verdict === "done" && check === "pass") {
+      expect(why).toContain("Integrate the verified result"); expect(why).toContain("cleanup");
+    } else {
+      expect(why).toContain("Send the work back or escalate"); expect(why).toContain("no cleanup yet"); expect(why).not.toContain("Integrate");
+    }
+    const step = recordStep(r); expect(step).toBeDefined(); expect(step.kind).toBe("do");
+    for (const [flag, value] of [["advice", f.advice], ["task-file", f.task], ["ledger", f.ledger], ["project", o.project], ["subscription", o.subscription], ["model", o.model], ["effort", "high"], ["level", "strong"], ["run-id", r.run_id]]) {
+      expect(step.template).toContain(templateCommand([`--${flag}`, value]));
+    }
+    expect(step.template).toContain("--verdict <done|partial|blocked> --check <pass|fail|none> --note <note>");
+    const words = step.template.replace("<done|partial|blocked>", "done").replace("<pass|fail|none>", "pass").replace("<note>", "rechecked").match(/"[^"]*"|\S+/g).map((w) => w.replace(/^"|"$/g, ""));
+    const revised = recordCommand(Object.fromEntries(Array.from({ length: (words.length - 2) / 2 }, (_, i) => [words[2 + i * 2].slice(2).replaceAll("-", "_"), words[3 + i * 2]])), [], config);
+    expect(revised).toMatchObject({ ok: true, run_id: r.run_id });
+  }
+  const inline = recordCommand({ ...o, task_file: undefined }, [], config);
+  expect(recordStep(inline).template).not.toContain("--task-file");
+});
+
+test("record revision resolves relative file inputs and works from another folder", () => {
+  const f = fixture(), elsewhere = scratch("revise-elsewhere");
+  const invoke = (args, cwd, input) => {
+    const result = Bun.spawnSync([process.execPath, SCRIPT, "record", ...args], { cwd, env: cliEnv(f.dir, { PATH: "" }), stdin: input ? Buffer.from(input) : "ignore" });
+    expect(result.exitCode).toBe(0); expect(result.stderr.toString()).toBe("");
+    return JSON.parse(result.stdout.toString());
+  };
+  const args = ["--advice", "advice.json", "--task-file", "task.md", "--ledger", "ledger.jsonl", "--subscription", "claude", "--model", "sonnet", "--effort", "low", "--level", "standard", "--verdict", "partial", "--check", "fail"];
+  const first = invoke(args, f.dir); expect(first.error).toBeUndefined(); expect(first.ok).toBe(true);
+  const template = recordStep(first).template;
+  const words = template.replace("<done|partial|blocked>", "done").replace("<pass|fail|none>", "pass").replace("<note>", "rechecked").match(/"[^"]*"|\S+/g).map((w) => w.replace(/^"|"$/g, ""));
+  // The child resolves against its own cwd, which can be the real path (macOS /var is /private/var), so compare real paths.
+  for (const [flag, file] of [["advice", f.advice], ["task-file", f.task], ["ledger", f.ledger]]) {
+    const given = words[words.indexOf(`--${flag}`) + 1];
+    expect(isAbsolute(given)).toBe(true); expect(realpathSync(given)).toBe(realpathSync(file));
+  }
+  const revised = invoke(words.slice(2), elsewhere);
+  expect(revised.ok).toBe(true); expect(revised.run_id).toBe(first.run_id);
+  const rows = readFileSync(f.ledger, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  expect(rows.map((r) => r.run_id)).toEqual([first.run_id, first.run_id]);
+  expect(rows[1].outcome).toMatchObject({ verdict: "done", check: "pass", note: "rechecked" });
+  expect(existsSync(join(elsewhere, "ledger.jsonl"))).toBe(false);
+  const stdin = invoke(args.slice(2), f.dir, readFileSync(f.advice, "utf8"));
+  expect(stdin.ok).toBe(true); expect(recordStep(stdin).template).toContain("--advice <advice-file>");
+}, 60000); // many CLI runs: Windows CI starts processes slowly, past bun's default 5 s
+
+test("unknown record run ids explain id versus run_id and point to the original output and ledger", () => {
+  const f = fixture(), o = { advice: f.advice, task_file: f.task, ledger: f.ledger, subscription: "claude", model: "sonnet", effort: "low", verdict: "partial", check: "fail" };
+  recordCommand(o);
+  const before = readFileSync(f.ledger, "utf8");
+  for (const run_id of [f.adv.id, "", "12345678-1234-4234-8234-123456789abc"]) {
+    const r = recordCommand({ ...o, run_id });
+    expect(r.ok).toBe(false); expect(r.error).toContain("run_id field from record's earlier output, not id");
+    const why = r.next.map((n) => n.why).join(" ");
+    expect(why).toContain(f.ledger); expect(why).toContain(f.adv.id); expect(why).toContain("run_id");
+    expect(r.next[0].kind).toBe("do"); expect(readFileSync(f.ledger, "utf8")).toBe(before);
+  }
+  const empty = join(f.dir, "empty-ledger.jsonl");
+  const r = recordCommand({ ...o, ledger: empty, run_id: "12345678-1234-4234-8234-123456789abc" });
+  expect(r.next[0].kind).toBe("do"); expect(r.next[0].why).toContain("record's earlier output");
+  expect(r.next[0].why).toContain(empty); expect(existsSync(empty)).toBe(false);
+});
+
 test("CLI file dispatch matches stdin advice, trailing record task-file refuses, and no task text reaches output", async () => {
   const f = fixture();
   const config = join(f.dir, "config.json");
@@ -165,19 +235,19 @@ test("CLI file dispatch matches stdin advice, trailing record task-file refuses,
     expect(file.stdout.toString() + file.stderr.toString()).not.toContain(MARKER);
     for (const flags of [["--task-file"], ["--task-file", "--bad"], ["--task-file", join(f.dir, "missing")]]) expect(JSON.parse(run([cmd, ...flags]).stdout.toString()).ok).toBe(false);
   }
-  const rec = run(["record", "--advice", f.advice, "--ledger", f.ledger, "--task-file"]);
-  expect(JSON.parse(rec.stdout.toString())).toMatchObject({ ok: false, recorded: null, error: expect.stringContaining("--task-file") });
+  const rec = run(["record", "--advice", f.advice, "--subscription", "claude", "--model", "sonnet", "--effort", "default", "--verdict", "done", "--check", "pass", "--ledger", f.ledger, "--task-file"]);
+  expect(JSON.parse(rec.stdout.toString())).toMatchObject({ ok: false, error: expect.stringContaining("--task-file") });
   expect(existsSync(f.ledger)).toBe(false);
   const other = join(f.dir, "other.md"); writeFileSync(other, "different task");
-  const mismatch = run(["record", "--advice", f.advice, "--ledger", f.ledger, "--task-file", other]);
+  const mismatch = run(["record", "--advice", f.advice, "--subscription", "claude", "--model", "sonnet", "--effort", "default", "--verdict", "done", "--check", "pass", "--ledger", f.ledger, "--task-file", other]);
   expect(JSON.parse(mismatch.stdout.toString()).ok).toBe(false);
   expect(existsSync(f.ledger)).toBe(false);
   expect(run(["record", "--help"]).stdout.toString()).toContain("--task-file <path>");
   const dry = run(["launch", ...base, "--task-file", f.task, "--dry-run"]);
-  expect(JSON.parse(dry.stdout.toString())).toMatchObject({ ok: true, state: "planned", warnings: expect.arrayContaining([expect.stringContaining("No advice file")]) });
+  expect(JSON.parse(dry.stdout.toString())).toMatchObject({ ok: false, state: "planned", error: expect.stringContaining("No advice file") });
   const refused = run(["launch", ...base, "--task-file", f.task]);
   expect(refused.exitCode).toBe(1);
-  expect(JSON.parse(refused.stdout.toString()).command).toEqual([]);
+  expect(JSON.parse(refused.stdout.toString()).ran).toEqual([]);
   const matched = run(["launch", ...base, "--task-file", f.task, "--advice", f.advice, "--dry-run"]);
   expect(recordStep(JSON.parse(matched.stdout.toString())).template).toContain("--task-file");
   expect([dry, refused, matched, mismatch, rec].map((r) => r.stdout.toString() + r.stderr.toString()).join(" ")).not.toContain(MARKER);
@@ -186,7 +256,7 @@ test("CLI file dispatch matches stdin advice, trailing record task-file refuses,
 test("whole dispatch, record and cleanup results never carry the brief marker", async () => {
   const f = fixture();
   const dispatch = await adviseCommand("dispatch", f.text, { config: cfg() }, {}, { askFn: async () => { throw new Error(MARKER); }, read: async () => [] });
-  const record = recordCommand({ advice: f.advice, task_file: f.task, ledger: f.ledger });
+  const record = recordCommand({ advice: f.advice, task_file: f.task, ledger: f.ledger, subscription: "claude", model: "sonnet", effort: "default", verdict: "done", check: "pass" });
   const cleaned = await cleanup(["--pane", "w1:p2"], { run: async () => herdrOK({ panes: [] }), env: {} });
   expect(JSON.stringify([dispatch, record, cleaned])).not.toContain(MARKER);
 });
@@ -201,7 +271,7 @@ test("advice written by PowerShell is readable as UTF-8 BOM and UTF-16LE with or
     const planned = await launch([...base, "--task-file", f.task, "--advice", f.advice, "--dry-run"], noCalls);
     expect(planned.advice.matches).toBe(true);
     expect(recordStep(planned)).toBeDefined();
-    expect(recordCommand({ advice: f.advice, task_file: f.task, ledger: f.ledger }).ok).toBe(true);
+    expect(recordCommand({ advice: f.advice, task_file: f.task, ledger: f.ledger, subscription: "claude", model: "sonnet", effort: "default", verdict: "done", check: "pass" }).ok).toBe(true);
   }
   expect(readFileSync(f.ledger, "utf8").trim().split("\n")).toHaveLength(4);
 });

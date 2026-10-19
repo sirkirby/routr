@@ -3,6 +3,7 @@
 // and an advice command that reads Cursor's usage never loads the launcher.
 import { realpathSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
+import { callHerdr } from "./process-boundary.mjs";
 import { start } from "./runtime.mjs";
 
 // A branch name launch gives `herdr worktree create`, and cleanup finds a worktree by.
@@ -103,7 +104,7 @@ export const promptSettled = (text, previous) => {
 // killed, never its tree: a herdr client may have started the herdr server, the user's whole session. Our ends of
 // the pipes are closed and the child unref'd, so a client that lingers holds neither this call nor routr's exit.
 // `via` is a test seam (runtime's start).
-export function runHerdr(args, timeout, { via = start } = {}) {
+function transport(args, timeout, { via = start } = {}) {
   return new Promise((done, reject) => {
     const child = via("herdr", args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "", stderr = "", settled = false;
@@ -188,3 +189,5 @@ export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBus
     await pause();
   }
 }
+
+export const runHerdr = (args, timeout, options) => callHerdr((a, ms) => transport(a, ms, options), args, timeout);

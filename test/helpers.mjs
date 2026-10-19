@@ -1,5 +1,5 @@
 // Shared by several test files: fixtures, fakes, and the scratch folder the preload (setup.mjs) made.
-import { mkdtempSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULTS } from "../src/lib/config.mjs";
 // Made by test/setup.mjs, which bunfig.toml preloads for every test file.
@@ -12,7 +12,13 @@ export const SCRIPT = join(import.meta.dir, "../src/routr.mjs");
 // A CLI run in a test sees the same environment locally and in CI: the variables that turn telemetry off are dropped
 // (CI sets CI and GITHUB_ACTIONS), and a test that wants one passes it in `over`.
 const QUIET = ["CI", "GITHUB_ACTIONS", "DO_NOT_TRACK", "ROUTR_TELEMETRY"];
-export const cliEnv = (home, over = {}) => ({ ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !QUIET.includes(k))), HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "", CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "", OLLAMA_HOST: "", ROUTR_DECISION_MODEL: "", ...over });
+export const cliEnv = (home, over = {}) => {
+  const given = { HOME: home, USERPROFILE: home, TYPESAFE_API_KEY: "", CLOUDFLARE_API_TOKEN: "", CLOUDFLARE_ACCOUNT_ID: "", OLLAMA_HOST: "", ROUTR_DECISION_MODEL: "", ...over };
+  // A plain env object can contain both Path and PATH, unlike Windows' process.env. Drop inherited aliases before
+  // overriding, so child processes and routr's case-insensitive lookup both see the isolated fake-tool PATH.
+  const replaced = new Set([...QUIET, ...Object.keys(given)].map((k) => k.toLowerCase()));
+  return { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !replaced.has(k.toLowerCase()))), ...given };
+};
 
 export const cfg = (over = {}) => ({ ...DEFAULTS, subscriptions: {
   claude: { hardest_work: "strong", reserve: 0.25, assumed_headroom: 0.5 },
@@ -47,3 +53,15 @@ export const row = (over = {}) => ({ ts: "2026-09-21T10:11:12.000Z", id: "abc123
 export const npmShim = (target) => "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\n"
   + 'IF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n) ELSE (\r\n  SET "_prog=node"\r\n)\r\n\r\n'
   + `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & set PATHEXT=%PATHEXT:;.JS;=;% & "%_prog%"  "%dp0%\\${target}" %*\r\n`;
+
+// Fake CLIs on an isolated PATH: a POSIX executable or a recognized npm shim using this test's Bun binary.
+// The shim starts the interpreter directly, like herdr.exe, so multiline worker prompts never pass through cmd.exe.
+export function fakeExecutable(bin, name, code, { platform = process.platform } = {}) {
+  const file = join(bin, name);
+  if (platform === "win32") {
+    writeFileSync(`${file}.mjs`, code);
+    const node = join(bin, "node.exe");
+    if (!existsSync(node)) copyFileSync(process.execPath, node);
+    writeFileSync(`${file}.cmd`, npmShim(`${name}.mjs`));
+  } else { writeFileSync(file, `#!${process.execPath}\n${code}`); chmodSync(file, 0o755); }
+}

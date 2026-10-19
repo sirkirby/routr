@@ -91,10 +91,10 @@ const configPath = take("--config");
 // Every --headroom is taken off the line, even an empty one, so none can end up in the brief. A share (0.97) or a
 // percent (97%) is read; anything else is said in the answer, never dropped without a word.
 const { given, notes: inputNotes } = (await import("./lib/commands.mjs")).parseHeadroom(takeAll("--headroom"));
-const withNotes = (r) => (inputNotes.length && r && typeof r === "object" ? { ...r, input_notes: inputNotes } : r);
+const withNotes = (r) => (inputNotes.length && r && typeof r === "object" ? { ...r, warnings: [...(r.warnings ?? []), ...inputNotes] } : r);
 const [mode, ...rest] = argv;
 if (mode === "usage" && levelFlags !== rest.filter((word) => /^--level(?:=|$)/.test(word)).length) {
-  print({ ok: false, error: "usage: --level cannot be a value for --config or --headroom; eligibility was not refreshed" });
+  print({ ...(await import("./lib/output.mjs")).refusal("no usage view", "usage: --level cannot be a value for --config or --headroom; eligibility was not refreshed"), level: "basic" });
   process.exit(0);
 }
 const loaded = () => loadConfig(configPath);
@@ -103,7 +103,7 @@ if (["subagent", "dispatch", "check", "record", "assess", "share", "doctor", "us
 
 const commands = () => import("./lib/commands.mjs");
 const ADVISE = {
-  check: async () => print(await (await commands()).checkCommand({ brief: take("--brief"), report: take("--report") }, { config: loaded().config })),
+  check: async () => print(withNotes(await (await commands()).checkCommand({ brief: take("--brief"), report: take("--report") }, { config: loaded().config, warnings: loaded().notes }))),
   assess: async () => console.log((await commands()).assessCommand({ ledger: take("--ledger") }, loaded().config)),
   share: async () => console.log((await commands()).shareCommand({ ledger: take("--ledger"), out: take("--out") }, loaded().config)),
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]
@@ -113,17 +113,17 @@ const ADVISE = {
     const o = Object.fromEntries(["advice", "subscription", "model", "effort", "level", "verdict", "check", "seconds", "attempts", "note", "ledger", "report", "project"].map((f) => [f, take(`--${f}`)]));
     o.task_file = taskFile ?? (comparing ? "" : undefined);
     o.run_id = take("--run-id") ?? (revising ? "" : undefined); o.causes = takeAll("--cause");
-    print((await commands()).recordCommand(o, takeAll("--subagent"), loaded().config)); // never blocks the agent; the config resolves a "default" effort
+    print((await commands()).recordCommand(o, takeAll("--subagent"), loaded().config, { warnings: [...loaded().notes, ...inputNotes] })); // never blocks the agent; the config resolves a "default" effort
   },
-  usage: async () => print(withNotes(await (await commands()).usageCommand(rest, loaded().config, given)), 1), // never blocks an agent
+  usage: async () => print(withNotes(await (await commands()).usageCommand(rest, loaded().config, given, { warnings: loaded().notes })), 1), // never blocks an agent
   doctor: async () => (await import("./lib/doctor.mjs")).doctor({ json: rest.includes("--json"), configPath }),
 };
 if (ADVISE[mode]) { await ADVISE[mode](); process.exit(0); }
 if (mode !== "subagent" && mode !== "dispatch") { console.error(formatUnknownUsage()); process.exit(2); }
 
 const { doNext } = await import("./lib/next.mjs");
-const briefRefusal = (error) => print({ ok: false, error, unavailable: [],
-  next: [doNext("Supply the exact task: quote an inline brief, pipe it on stdin, or use this file form.", `routr ${mode} --task-file <path>`)] });
+const briefRefusal = (error) => print({ ok: false, headline: `routr: no advice: ${error}`, unavailable: [], warnings: [...loaded().notes, ...inputNotes],
+  next: [doNext("Supply the exact task: quote an inline brief, pipe it on stdin, or use this file form.", `routr ${mode} --task-file <path>`)], error });
 
 // File input is explicit: a missing value is refused rather than accidentally reading stdin or advising on a flag.
 if (rest.includes("--task-file")) {
@@ -154,5 +154,5 @@ if (flagLike.length) inputNotes.push(setAside
   ? `${flagLike.join(" ")}: not ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} takes, so ignored; the brief was read from stdin`
   : `${flagLike.join(" ")} looks like ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} does not take; read as part of the brief`);
 const brief = rest.length && !setAside ? rest.join(" ").trim() : piped;
-if (!brief) { console.error("routr: empty brief"); process.exit(2); }
+if (!brief) { briefRefusal("empty brief"); process.exit(0); }
 print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given)));
