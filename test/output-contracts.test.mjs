@@ -67,7 +67,7 @@ console.error(JSON.stringify({ error: { code: process.env.FAKE_CODE, message: ${
   // Check every field, including error, headline, next, why and warnings; do not exempt diagnostic subtrees.
   const leaks = outputs.filter(({ output }) => [MARK, ...codes].some((text) => output.includes(text)));
   expect(leaks).toEqual([]);
-});
+}, 60000); // many CLI runs: Windows CI starts processes slowly, past bun's default 5 s
 
 test("pane process-info keeps only shell vocabulary and drops private process names at callHerdr", async () => {
   const cwd = scratch("process-info"), privateName = `${MARK}_process`, privateArgv = `${MARK}_argv0`;

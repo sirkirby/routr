@@ -172,4 +172,4 @@ else yes({});`);
   expect(missing.error).toContain("herdr is not installed"); expect(text(missing)).toContain("Install herdr");
   expect(invoke("cleanup", ["--cwd", repo]).out.headline).toContain("1 worktree,");
   expect(invoke("cleanup", ["--pane", "w1:p9"], "busy").out.headline).toContain("1 command besides its shell");
-});
+}, 60000); // many CLI runs: Windows CI starts processes slowly, past bun's default 5 s

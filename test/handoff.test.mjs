@@ -202,7 +202,7 @@ test("record revision resolves relative file inputs and works from another folde
   expect(existsSync(join(elsewhere, "ledger.jsonl"))).toBe(false);
   const stdin = invoke(args.slice(2), f.dir, readFileSync(f.advice, "utf8"));
   expect(stdin.ok).toBe(true); expect(recordStep(stdin).template).toContain("--advice <advice-file>");
-});
+}, 60000); // many CLI runs: Windows CI starts processes slowly, past bun's default 5 s
 
 test("unknown record run ids explain id versus run_id and point to the original output and ledger", () => {
   const f = fixture(), o = { advice: f.advice, task_file: f.task, ledger: f.ledger, subscription: "claude", model: "sonnet", effort: "low", verdict: "partial", check: "fail" };
