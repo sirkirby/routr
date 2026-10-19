@@ -2,10 +2,12 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ask } from "../src/lib/systemone.mjs";
+import { questions } from "../src/lib/questions.mjs";
 import { adviseCommand } from "../src/lib/commands.mjs";
 import { failedUsage } from "../src/lib/usage.mjs";
 import { cfg, cliEnv, scratch, SCRIPT } from "./helpers.mjs";
-import { BRIEF_MARKER, KEY_MARKER, PROVIDER_MARKER } from "./fixtures/provider-fetch.mjs";
+import { BRIEF_MARKER, KEY_MARKER, PROVIDER_MARKER, replyFetch } from "./fixtures/provider-fetch.mjs";
 
 const ts = { provider: "typesafe", model: "jev-1.13.0" }, cf = { provider: "cloudflare", model: "clef" }, local = { provider: "ollama", model: "clef-flash:9b-q8_0" };
 const credentials = { TYPESAFE_API_KEY: KEY_MARKER, CLOUDFLARE_API_TOKEN: KEY_MARKER, CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef" };
@@ -63,13 +65,24 @@ test("review 3a: doctor tests a broken backup even after a ready first model", (
   expect(text).toContain("jev-1.13.0 answers"); expect(text).toContain("clef: key found but the test call failed");
 });
 
-test("review 3b: 429 retries exhaust only the per-entry cap and leave time to ask a backup", () => {
-  const m = machine([ts, cf]), started = performance.now();
+test("review 3b: 429 retries exhaust only the per-entry cap and leave time to ask a backup", async () => {
+  let now = 0;
+  const requests = [], clock = { now: () => now, sleep: async (ms) => { now += ms; } };
   // Two-second replies put another retry past 8 s but inside 10 s. Immediate 429s do not distinguish those caps.
-  const r = m.run(["dispatch", "--task-file", m.brief], { replies: { typesafe: "http429" }, env: { ROUTR_TEST_DELAYS: '{"typesafe":2000}' } }).json();
-  expect(r).toMatchObject({ provider: "cloudflare", decision_model: "clef", unavailable: [{ provider: "typesafe", code: "provider_error", status: 429 }] });
-  expect(performance.now() - started).toBeGreaterThan(7000); expect(performance.now() - started).toBeLessThan(9500);
-}, 12000);
+  const r = await ask({}, questions, { config: { decision: [ts, cf] }, env: credentials, clock,
+    fetchFn: async (url, init) => {
+      const provider = url.includes("typesafe") ? "typesafe" : "cloudflare", request = { provider, asked: now };
+      requests.push(request); now += provider === "typesafe" ? 2000 : 10;
+      const response = await replyFetch(provider, provider === "typesafe" ? "http429" : "valid")(url, init);
+      request.answered = now; return response;
+    },
+  });
+  expect(r).toMatchObject({ provider: "cloudflare", model: "clef", unavailable: [{ provider: "typesafe", code: "provider_error", status: 429 }] });
+  expect(requests.filter((q) => q.provider === "typesafe").map((q) => q.asked)).toEqual([0, 2500, 5500]);
+  const backup = requests.find((q) => q.provider === "cloudflare");
+  expect(backup).toEqual({ provider: "cloudflare", asked: 7500, answered: 7510 });
+  expect(backup.answered).toBeLessThan(10000); // the decision's overall deadline, on the injected clock
+});
 
 test("review 4: setup leaves equivalent object, omitted and list settings byte-for-byte; first setup reports a write", () => {
   for (const decision of [undefined, ts, [ts]]) {
@@ -83,6 +96,23 @@ test("review 4: setup leaves equivalent object, omitted and list settings byte-f
   const config = join(m.home, "first.json"), r = m.run(["setup", "--yes", "--config", config, "--decision", "cloudflare", "--json"]).json();
   expect(r.did.join(" ")).toContain(`wrote ${config}`); expect(r.did.join(" ")).not.toContain("changed decision");
   expect(JSON.parse(readFileSync(config, "utf8")).decision).toEqual([{ provider: "cloudflare", model: null }]);
+});
+
+test("a warning's concrete setup command repairs dropped entries using the effective old list", () => {
+  for (const decision of [[{ provider: "openai" }], ["typesafe"], [{ provider: "cloudflare", model: "nope" }], [ts, ts]]) {
+    const m = machine(decision), before = readFileSync(m.config, "utf8");
+    const advice = m.run(["subagent", "--task-file", m.brief]).json();
+    const fix = advice.warnings[0].split("Set the ordered list with ")[1];
+    expect(fix).toBe("routr setup --decision typesafe:jev-1.13.0");
+    const r = m.run(["setup", "--yes", ...fix.split(" ").slice(2), "--json"]).json();
+    expect(JSON.parse(readFileSync(m.config, "utf8")).decision).toEqual([{ provider: "typesafe", model: null }]);
+    expect(readFileSync(`${m.config}.bak`, "utf8")).toBe(before);
+    expect(r.did.join(" ")).toContain("decision file"); expect(r.did.join(" ")).toContain("effective list stays TypeSafe · jev-1.13.0");
+    expect(r.did.join(" ")).not.toContain("Cloudflare Workers AI · clef → TypeSafe");
+    expect(m.run(["subagent", "--task-file", m.brief]).json().warnings).toEqual([]);
+    const again = m.run(["setup", "--yes", ...fix.split(" ").slice(2), "--json"]).json();
+    expect(again.did.join(" ")).not.toContain("changed decision");
+  }
 });
 
 test("reviews 5 and 7: settings and setup drop duplicate resolved models and give concrete surviving-list remedies", () => {

@@ -324,12 +324,15 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   }
   // Default model pins follow routr's measured registry; an explicitly different model keeps its name.
   if (decision) {
-    const was = decisionTargets(config, {}, { localLast: false });
+    const checked = decisionSettings(config.decision);
+    const was = decisionTargets({ decision: checked.decision }, {}, { localLast: false });
+    const moved = decisionLabel(was) !== decisionLabel(decision);
     const entries = decision.map(({ provider, model }) => ({ provider, model: model === decisionTarget({ decision: { provider } }, {}).model ? null : model }));
-    if (decisionLabel(was) !== decisionLabel(decision)) {
-      if (r.config.exists && !args.includes("--force")) changed.push(`decision ${decisionLabel(was)} → ${decisionLabel(decision)}`);
+    if (moved || checked.problems.length) {
+      if (r.config.exists && !args.includes("--force")) changed.push(moved ? `decision ${decisionLabel(was)} → ${decisionLabel(decision)}`
+        : `decision file to remove ${checked.problems.length} dropped ${checked.problems.length === 1 ? "entry" : "entries"} (effective list stays ${decisionLabel(was)})`);
       config.decision = entries;
-      if (config.sure_at === 0.8) { delete config.sure_at; changed.push("sure_at 0.8 removed: it now follows the decision model"); }
+      if (moved && config.sure_at === 0.8) { delete config.sure_at; changed.push("sure_at 0.8 removed: it now follows the decision model"); }
       for (const { provider, model } of decision) {
         const P = PROVIDERS[provider];
         if (!ui && !P.local && !hasKey(provider)) skipped.push(`${P.label} needs its key: the user runs routr key set ${provider} in their own terminal`);

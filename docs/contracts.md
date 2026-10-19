@@ -92,8 +92,11 @@ request to judge missing readings applies only to true fallback or unavailable u
   that local models run last. The command writes a list, reports the change in `did`, preserves a backup of an
   existing settings file and says which keys or local models still need attention in `skipped`. Duplicate flag
   entries are dropped with their warnings in `skipped`. An equivalent list (including an older single-object
-  setting or an omitted default) changes nothing and creates no backup. A first run reports the file it wrote;
-  only a real change to an existing setting is described as a changed decision list.
+  setting or an omitted default) changes nothing and creates no backup when all entries are valid. A file with
+  dropped entries is repaired even when the effective list is unchanged; setup says it repaired the file and names
+  the effective list it kept. Comparisons use the shared settings check, so ignored entries never become the old
+  model in a change message. A first run reports the file it wrote; only a real change to an existing effective
+  list is described as a changed decision list.
 - `doctor` tests every entry independently in effective order, even after a ready entry or a refused key. Text has
   one decision-model line per entry. JSON has `decision`, a list replacing the former single `key` object: each
   entry carries `provider`, `label`, `asked`, `measured`, `local`, `where`, optional `unversioned`, `found`, `works`;

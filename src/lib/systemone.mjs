@@ -88,7 +88,7 @@ export function normalize(answers, { native = false } = {}) {
 }
 
 // ---------------------------------------------------------------- asking
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const REAL_CLOCK = { now: () => performance.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
 
 // Also keep unexpected client failures out of diagnostic prose. The classified error is the only printable one.
 export const failureMessage = (e, config) => (e instanceof DecisionError ? e : new DecisionError(decisionTarget(config), "internal_error")).message;
@@ -124,17 +124,17 @@ function readAnswers(answers, questions, target) {
 // deadlineMs is the total budget across retries; the provider's own when not given (a local model may need to load).
 // The reply's model identity is kept only when its provider recognizes it; otherwise use the requested identity.
 // This preserves preview-alias resolution and pin checks in the model gate without accepting arbitrary reply text.
-// `target` and `fetchFn` are seams for the maintainers' gate and for tests.
-async function askOne(state, questions, { config, deadlineMs, env = process.env, target, fetchFn = fetch, file } = {}) {
+// `target` and `fetchFn` are seams for the maintainers' gate and for tests; `clock` makes retry budgets testable.
+async function askOne(state, questions, { config, deadlineMs, env = process.env, target, fetchFn = fetch, file, clock = REAL_CLOCK } = {}) {
   const t = target ?? decisionTarget(config, env), P = PROVIDERS[t.provider];
   const secrets = secretsFor(t.provider, { env, file, target: t });
   let request, payload;
   try { request = P.request(t.model, secrets, env); payload = JSON.stringify({ ...request.body, state, model: t.model, questions }); }
   catch { throw new DecisionError(t, "internal_error"); }
   const { url, headers } = request;
-  const budget = deadlineMs ?? P.deadlineMs, stopAt = performance.now() + budget;
+  const budget = deadlineMs ?? P.deadlineMs, stopAt = clock.now() + budget;
   for (let attempt = 0; ; attempt++) {
-    const t0 = performance.now();
+    const t0 = clock.now();
     let res;
     const signal = AbortSignal.timeout(Math.max(1, Math.ceil(P.local ? stopAt - t0 : Math.min(8000, stopAt - t0))));
     const transportError = (e) => new DecisionError(t, signal.aborted || e?.name === "TimeoutError" || e?.name === "AbortError" ? "timeout" : "unreachable", undefined, { host: P.host?.(env) });
@@ -150,7 +150,7 @@ async function askOne(state, questions, { config, deadlineMs, env = process.env,
     } catch (e) {
       throw transportError(e);
     }
-    const latencyMs = performance.now() - t0, wait = 500 * 2 ** attempt;
+    const latencyMs = clock.now() - t0, wait = 500 * 2 ** attempt;
     if (!res.ok) {
       // Local bodies may select a known pattern. Hosted envelopes supply only numeric error codes, never wording.
       let code;
@@ -160,7 +160,7 @@ async function askOne(state, questions, { config, deadlineMs, env = process.env,
         catch (e) { if (!(e instanceof SyntaxError)) throw transportError(e); } // a non-JSON HTTP error keeps its status
       }
       code = res.status === 401 || res.status === 403 ? "key_refused" : code ?? "provider_error";
-      if (code === "provider_error" && (res.status === 429 || res.status === 529) && attempt < 5 && performance.now() + wait < stopAt) { await sleep(wait); continue; }
+      if (code === "provider_error" && (res.status === 429 || res.status === 529) && attempt < 5 && clock.now() + wait < stopAt) { await clock.sleep(wait); continue; }
       throw new DecisionError(t, code, res.status);
     }
     let raw;
@@ -183,11 +183,11 @@ async function askOne(state, questions, { config, deadlineMs, env = process.env,
 // not another opinion. One deadline bounds the list, including retries and local model loading.
 export async function ask(state, questions, opts = {}) {
   if (opts.target) return askOne(state, questions, opts);
-  const targets = decisionTargets(opts.config, opts.env), errors = [];
+  const targets = decisionTargets(opts.config, opts.env), errors = [], clock = opts.clock ?? REAL_CLOCK;
   const budget = opts.deadlineMs ?? Math.max(...targets.map((t) => PROVIDERS[t.provider].deadlineMs));
-  const stopAt = performance.now() + budget;
+  const stopAt = clock.now() + budget;
   for (const target of targets) {
-    const P = PROVIDERS[target.provider], remaining = stopAt - performance.now();
+    const P = PROVIDERS[target.provider], remaining = stopAt - clock.now();
     try {
       if (remaining <= 0) throw new DecisionError(target, "timeout");
       const r = await askOne(state, questions, { ...opts, target, deadlineMs: Math.min(remaining, P.deadlineMs, P.local ? Infinity : 8000) });
