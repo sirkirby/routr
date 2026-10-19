@@ -31,9 +31,15 @@ name the provider and attempted model with a fixed code and the decision error's
   are rebuilt from the saved provider, model and code, including HTTP status for a provider error. The lead still
   chooses the account, model and effort. Real launches return a record template only after a
   start or task-submission attempt; dry runs with matching advice return the planned template.
+  A startup question's next step uses the guide's trust rule: accept only a directory the lead created or a worktree
+  of the repository the user already has it working in; otherwise ask the user and leave the pane waiting. The lead
+  reads the options before sending keys because the default can exit the worker.
 - `record --task-file` checks that the advice belongs to that task before reading reports or appending anything.
   Without a task file it warns that the advice was not checked. Revisions require the original advice identity;
   if the original task file is gone, revise without `--task-file` and say so in `--note`.
+  Its next step integrates and cleans up only for `done` with `check pass`; every other outcome calls for rework or
+  escalation before cleanup. Every successful record returns a filled revision template for its own `run_id`.
+  An unknown run ID points to the earlier record output and the selected ledger; advice `id` is not a run ID.
 - `cleanup` removes a worker's worktree (through herdr, or git when no workspace is open) or closes its pane. It
   refuses while anything it can see runs there or when it cannot tell, never uses `--force`, and refuses a worktree
   holding uncommitted changes, files git is told not to check, a commit no branch or tag holds, or untracked files

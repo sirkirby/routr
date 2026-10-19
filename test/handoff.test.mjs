@@ -151,6 +151,50 @@ test("record compares the task before report processing or append, and revisions
   expect(readFileSync(f.ledger, "utf8")).not.toContain(MARKER);
 });
 
+test("record next follows the outcome on new rows and revisions, with a usable revision template", () => {
+  const f = fixture(), config = cfg();
+  config.subscriptions.claude.default_effort = "high";
+  const o = { advice: f.advice, task_file: f.task, ledger: f.ledger, project: "gate-project", subscription: "claude", model: "sonnet", effort: "default", level: "strong", verdict: "done", check: "pass" };
+  const first = recordCommand(o, [], config);
+  for (const verdict of ["done", "partial", "blocked"]) for (const check of ["pass", "fail", "none"]) for (const run_id of [undefined, first.run_id]) {
+    const r = recordCommand({ ...o, verdict, check, run_id }, [], config);
+    expect(r.ok).toBe(true);
+    const why = r.next.map((n) => n.why).join(" ");
+    if (verdict === "done" && check === "pass") {
+      expect(why).toContain("Integrate the verified result"); expect(why).toContain("cleanup");
+    } else {
+      expect(why).toContain("Send the work back or escalate"); expect(why).toContain("no cleanup yet"); expect(why).not.toContain("Integrate");
+    }
+    const step = recordStep(r); expect(step).toBeDefined(); expect(step.kind).toBe("do");
+    for (const [flag, value] of [["advice", f.advice], ["task-file", f.task], ["ledger", f.ledger], ["project", o.project], ["subscription", o.subscription], ["model", o.model], ["effort", "high"], ["level", "strong"], ["run-id", r.run_id]]) {
+      expect(step.template).toContain(templateCommand([`--${flag}`, value]));
+    }
+    expect(step.template).toContain("--verdict <done|partial|blocked> --check <pass|fail|none> --note <note>");
+    const words = step.template.replace("<done|partial|blocked>", "done").replace("<pass|fail|none>", "pass").replace("<note>", "rechecked").match(/"[^"]*"|\S+/g).map((w) => w.replace(/^"|"$/g, ""));
+    const revised = recordCommand(Object.fromEntries(Array.from({ length: (words.length - 2) / 2 }, (_, i) => [words[2 + i * 2].slice(2).replaceAll("-", "_"), words[3 + i * 2]])), [], config);
+    expect(revised).toMatchObject({ ok: true, run_id: r.run_id });
+  }
+  const inline = recordCommand({ ...o, task_file: undefined }, [], config);
+  expect(recordStep(inline).template).not.toContain("--task-file");
+});
+
+test("unknown record run ids explain id versus run_id and point to the original output and ledger", () => {
+  const f = fixture(), o = { advice: f.advice, task_file: f.task, ledger: f.ledger, subscription: "claude", model: "sonnet", effort: "low", verdict: "partial", check: "fail" };
+  recordCommand(o);
+  const before = readFileSync(f.ledger, "utf8");
+  for (const run_id of [f.adv.id, "", "12345678-1234-4234-8234-123456789abc"]) {
+    const r = recordCommand({ ...o, run_id });
+    expect(r.ok).toBe(false); expect(r.error).toContain("run_id field from record's earlier output, not id");
+    const why = r.next.map((n) => n.why).join(" ");
+    expect(why).toContain(f.ledger); expect(why).toContain(f.adv.id); expect(why).toContain("run_id");
+    expect(r.next[0].kind).toBe("do"); expect(readFileSync(f.ledger, "utf8")).toBe(before);
+  }
+  const empty = join(f.dir, "empty-ledger.jsonl");
+  const r = recordCommand({ ...o, ledger: empty, run_id: "12345678-1234-4234-8234-123456789abc" });
+  expect(r.next[0].kind).toBe("do"); expect(r.next[0].why).toContain("record's earlier output");
+  expect(r.next[0].why).toContain(empty); expect(existsSync(empty)).toBe(false);
+});
+
 test("CLI file dispatch matches stdin advice, trailing record task-file refuses, and no task text reaches output", async () => {
   const f = fixture();
   const config = join(f.dir, "config.json");

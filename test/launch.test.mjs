@@ -191,6 +191,22 @@ test("startup waits for the shell, recovers agent_not_ready, then prompts", asyn
   expect(r.steps.map((s) => s.step).indexOf("ready")).toBeLessThan(r.steps.map((s) => s.step).indexOf("prompt"));
 });
 
+test("startup next uses the guide's trust rule and leaves an unauthorized question waiting", async () => {
+  const f = fakeHerdr({ trust: claudeTrust, notReady: true });
+  const r = await launch([...launchArgs, "--task", "Task"], f.deps);
+  const instruction = r.next.find((n) => n.template?.startsWith("herdr pane send-keys "));
+  expect(instruction?.why).toContain("Accept folder trust only for a directory you created or a worktree of the repository the user already has you working in");
+  expect(instruction.why).toContain("otherwise ask the user and leave the pane waiting");
+  expect(instruction.why).toContain('the default answer can be "No, exit"');
+  expect(instruction.why).toContain("Read the pane and its options before sending keys");
+  expect(instruction.why).toContain("secret or sign-in");
+  const guide = readFileSync(new URL("../skills/routr/references/orchestrator.md", import.meta.url), "utf8");
+  const rule = guide.match(/<!-- startup-input -->\s*([\s\S]*?)\s*<!-- \/startup-input -->/)?.[1].replace(/\s*\n\s*/g, " ");
+  expect(instruction.why).toBe(rule);
+  expect(r.state).toBe("needs_input");
+  expect(f.calls.some((a) => ["send-keys", "prompt", "close"].includes(a[1]))).toBe(false);
+});
+
 test("a question at startup is never answered: herdr's reading and the screen go to the orchestrator, with what the registry knows", async () => {
   // The retired routr --trust flag is refused; harness startup still stops at a question.
   for (const extra of [[]]) {

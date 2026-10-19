@@ -167,7 +167,7 @@ export const COMMANDS = {
   },
   record: {
     name: "record",
-    description: "append what you chose and how it turned out to the ledger",
+    description: "append what you chose and how it turned out to the ledger; next integrates and cleans up only for done with check pass, otherwise sends back or escalates, and always includes a template to revise this run",
     flags: [
       { name: "--task-file", arg: "<path>", description: "compare this worker’s task with the advice before appending; omit only for inline tasks, or revisions when the original file is gone (say so in --note)", required: false },
       { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")})`, required: true },
@@ -182,7 +182,7 @@ export const COMMANDS = {
       { name: "--seconds", arg: "<n>", description: "elapsed seconds from handoff through verification (or stopping); omit when unknown", required: false },
       { name: "--attempts", arg: "<n>", description: "positive count of worker attempts; activity, not a quality score. Omit when unknown", required: false },
       { name: "--cause", arg: "<execution|brief|scope|review|launch|unknown|none>", description: "why extra work occurred, including lead corrections; repeatable, local only. none means no extra work and must be used alone", required: false, repeatable: true },
-      { name: "--run-id", arg: "<id>", description: "revise an existing run from record's returned run_id using the original advice file; supply its updated outcome. Omitted note and subagent data are preserved. Otherwise records a new worker run. Local only", required: false },
+      { name: "--run-id", arg: "<run_id>", description: "revise an existing run using the run_id field from record's earlier output, not id (the advice id); the row's run_id is also in the ledger. Use next's revision template with the original advice and updated outcome. Omitted note and subagent data are preserved. Otherwise records a new worker run. Local only", required: false },
       { name: "--project", arg: "<name>", description: "label for the row (default: the git repository's folder name; kept local, never shared)", required: false },
       { name: "--note", arg: "<text>", description: "note explaining choice or outcome", required: false },
       { name: "--ledger", arg: "<path>", description: "path to ledger file", required: false, default: "~/.local/share/routr/ledger.jsonl" },

@@ -306,13 +306,32 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
     if (args[0] === "cursor") { expect(r.ok).toBe(false); expect(r.unavailable.some((u) => u.subscription === "cursor")).toBe(true); }
     if (args[0] === "kiro") expect(r.reading).toMatchObject({ credits_used: 20, credits_limit: 50, used_pct: 40 });
   }
-  expect(invoke("record", ["--advice", f.advice, "--ledger", f.ledger, "--subscription", "claude", "--model", "model", "--effort", "default", "--verdict", "done", "--check", "pass", "--task-file", f.task]).r.id).toBe(f.body.id);
+  const recordArgs = ["--advice", f.advice, "--ledger", f.ledger, "--subscription", "claude", "--model", "model", "--effort", "default", "--task-file", f.task];
+  const recorded = invoke("record", [...recordArgs, "--verdict", "done", "--check", "pass"]).r;
+  expect(recorded.id).toBe(f.body.id);
+  for (const verdict of ["done", "partial", "blocked"]) for (const check of ["pass", "fail", "none"]) {
+    for (const revision of [[], ["--run-id", recorded.run_id]]) {
+      const r = invoke("record", [...recordArgs, "--verdict", verdict, "--check", check, ...revision]).r;
+      const why = r.next.map((n) => n.why).join(" ");
+      if (verdict === "done" && check === "pass") expect(why).toContain("Integrate the verified result");
+      else { expect(why).toContain("Send the work back or escalate"); expect(why).toContain("no cleanup yet"); expect(why).not.toContain("Integrate"); }
+      expect(r.next.find((n) => n.template?.startsWith("routr record ")).template).toContain(`--run-id ${r.run_id}`);
+    }
+  }
+  for (const run_id of [f.body.id, "12345678-1234-4234-8234-123456789abc"]) {
+    const r = invoke("record", [...recordArgs, "--verdict", "blocked", "--check", "none", "--run-id", run_id]).r;
+    expect(r.error).toContain("run_id field from record's earlier output, not id"); expect(r.next[0].why).toContain(f.ledger);
+  }
   expect(invoke("record").r.error).toContain("--subscription");
   const launchArgs = [...base, "--cwd", f.dir, "--pane", "w1:p9"];
   expect(invoke("launch", [...launchArgs, "--dry-run"]).r.state).toBe("planned");
   expect(invoke("launch", [...launchArgs, "--task-file", f.task, "--dry-run"]).code).toBe(1);
   expect(invoke("launch", launchArgs).r.state).toBe("ready");
-  expect(invoke("launch", launchArgs, "needs_input").r.state).toBe("needs_input");
+  const needsInput = invoke("launch", launchArgs, "needs_input").r;
+  expect(needsInput.state).toBe("needs_input");
+  const startup = needsInput.next.find((n) => n.template?.startsWith("herdr pane send-keys ")).why;
+  expect(startup).toContain("otherwise ask the user and leave the pane waiting");
+  expect(startup).toContain('the default answer can be "No, exit"');
   expect(invoke("launch", launchArgs, "failed").r.state).toBe("failed");
   expect(invoke("launch", [...launchArgs, "--task-file", f.task, "--advice", f.advice]).r.state).toBe("prompted");
   for (const args of [["--pane", "w2:p1"], ["--cwd", repo], ["--cwd", repo, "--worktree", "worker"]]) {

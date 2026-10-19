@@ -3,7 +3,7 @@
 // the I/O around them. None of them may fail an agent: an error becomes output, and the caller exits 0.
 import { matchAdvice, readAdvice, readTask } from "./advice-file.mjs";
 import { answer, refusal } from "./output.mjs";
-import { doNext } from "./next.mjs";
+import { doNext, recordRevisionNext } from "./next.mjs";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -11,7 +11,7 @@ import { advise, headline } from "./advise.mjs";
 import { readReport } from "./check.mjs";
 import { ask } from "./systemone.mjs";
 import { DecisionError, decisionTarget, decisionUnavailable, noReading } from "./providers.mjs";
-import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./ledger.mjs";
+import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, RunIdError, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
 import { CHECK_VERSION, checkQuestions, LEVELS, MEANING, questions, VERSION } from "./questions.mjs";
@@ -114,9 +114,11 @@ export function assessCommand({ ledger = LEDGER_PATH }, config) {
 
 // `o` holds record's flags by name; the advice JSON comes from `--advice <file>` or stdin.
 export function recordCommand(o, subagentFlags = [], config = null, { warnings = [] } = {}) {
+  const ledger = o.ledger ?? LEDGER_PATH;
+  let advice;
   try {
     for (const flag of ["subscription", "model", "effort", "verdict", "check"]) if (typeof o[flag] !== "string" || !o[flag].trim() || o[flag].startsWith("--")) throw new Error(`record requires --${flag}`);
-    const advice = readAdvice(o.advice ?? 0);
+    advice = readAdvice(o.advice ?? 0);
     let task = null;
     try { if (o.task_file != null) task = readTask(o.task_file); }
     catch (e) {
@@ -128,12 +130,14 @@ export function recordCommand(o, subagentFlags = [], config = null, { warnings =
     const subagents = o.report != null || subagentFlags.length
       ? [...(o.report != null ? parseReportSubagents(readFileSync(o.report, "utf8")) : []), ...subagentFlags] : undefined;
     const entry = toEntry(advice, { ...o, subagents }, config);
-    append(entry, o.ledger ?? LEDGER_PATH, { revision: o.run_id != null });
-    const ledger = o.ledger ?? LEDGER_PATH;
+    append(entry, ledger, { revision: o.run_id != null });
     return answer({ ok: true, headline: `routr: recorded run ${entry.run_id} (advice ${advice.id}) in ${ledger}`, id: advice.id, run_id: entry.run_id, ledger,
       warnings: [...warnings, ...(o.task_file == null ? ["The advice was not checked against a task."] : [])],
-      next: [...(o.task_file == null ? [doNext("If this task came from a file, revise this row with --run-id and --task-file; otherwise say why in --note")] : []), doNext("Integrate the verified result and follow launch’s cleanup step when this worker is finished.")] });
-  } catch (e) { return refusal("nothing recorded", short(e), warnings); }
+      next: [doNext(entry.outcome.verdict === "done" && entry.outcome.check === "pass"
+        ? "Integrate the verified result, then follow launch’s cleanup step when this worker is finished."
+        : "Send the work back or escalate, then verify and revise this row; no cleanup yet."),
+      ...(o.task_file == null ? [doNext("If this task came from a file, revise this row with --run-id and --task-file; otherwise say why in --note")] : []), recordRevisionNext(o, entry, ledger)] });
+  } catch (e) { return refusal("nothing recorded", short(e), warnings, e instanceof RunIdError ? [doNext(`Read the run_id field from record's earlier output, or from this worker's row for advice ${advice.id} in ${ledger}; retry with that run_id. Omit --run-id only for a new worker run.`)] : []); }
 }
 
 // `routr share`: write exactly what telemetry sends to a file the user can read. Sends nothing itself.

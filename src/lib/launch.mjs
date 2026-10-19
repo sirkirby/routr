@@ -12,6 +12,10 @@ import { BRANCH, clean, deadline, paneText, paneView, runHerdr, SHELLS, shellFam
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
 import { home } from "./runtime.mjs";
+import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
+
+// The guide is the source of this instruction, embedded at build time just like the installed skills.
+const STARTUP_INPUT = orchestratorGuide.match(/<!-- startup-input -->\s*([\s\S]*?)\s*<!-- \/startup-input -->/)[1].replace(/\s*\n\s*/g, " ");
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
 // around it, so it points at the installed skill (written by the installer or `routr skill install`).
@@ -114,7 +118,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       return o.task != null ? doNext("Repeat the same launch with your --task given again.", templateCommand([...again, "--task", "<your-task>"]))
         : runNext("Continue this launch after resolving the pane's input.", again);
     };
-    resumeSteps = () => out.pane ? [doNext("Read the pane and answer its question if it is within scope; ask the user for a secret or sign-in.", templateCommand(["herdr", "pane", "send-keys", out.pane, "<keys>"])), rerun()] : [];
+    resumeSteps = () => out.pane ? [doNext(STARTUP_INPUT, templateCommand(["herdr", "pane", "send-keys", out.pane, "<keys>"])), rerun()] : [];
     if (!statSync(out.cwd).isDirectory()) throw new Error("--cwd must be a directory");
     const privateDir = join(tempRoot, `routr-cursor-${randomUUID()}`);
     const p = plan({ ...o, cwd: out.cwd, cursorConfigDir: privateDir });

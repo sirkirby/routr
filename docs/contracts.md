@@ -333,7 +333,11 @@ Shared fields: all six. `unavailable`: the saved advice's `decision model` entry
 harness notes (an effort the harness remembers), a skipped `--copy`, a pane or private config left behind, a prompt
 that may have been submitted, a rename that failed, each as a fact. `next`: as today (continue after input, record
 template with an explicit `--effort`, cleanup), plus the steps those facts call for. A startup question uses its
-answer-then-continue steps without a competing inspect-before-retry step. If launch failed before any task submission,
+answer-then-continue steps without a competing inspect-before-retry step. The startup instruction is the guide's
+exact rule, embedded from that single source: read the pane and its options before sending keys (the default can be
+"No, exit"); accept folder trust only for a directory the lead created or a worktree of the repository the user
+already has it working in; otherwise ask the user and leave the pane waiting. Secrets and sign-in also wait for the
+user. If launch failed before any task submission,
 the record step says no task was delivered and uses `--verdict blocked --check none`. herdr's own messages and answers
 never reach `steps[].detail`, `error` or `headline`: a failed herdr call is said by its classified code ("Text from
 outside routr").
@@ -380,8 +384,20 @@ field). The new `ok` field is not required, so advice saved by an older routr is
 `headline`: `routr: recorded run <run_id> (advice <id>) in <ledger>`, or `routr: nothing recorded: <error>`.
 
 Shared fields: all six; `unavailable` is always `[]` (a file record cannot read refuses the call). `warnings`: the
-advice was not checked against a task. `next`: integrate the result and run launch's cleanup step; when the advice was
-not checked, revise with `--task-file` or say why in `--note`.
+advice was not checked against a task. `next`:
+
+- Only `done` with `check pass`: integrate the verified result, then follow launch's cleanup step when the worker
+  is finished. Every other outcome: send the work back or escalate, then verify and revise the row; no cleanup yet.
+  This applies to a new row and a `--run-id` revision alike.
+- A `kind: "do"` revision template on every successful record: the original `--advice`, `--task-file` when given,
+  recorded `--subscription`, `--model`, resolved `--effort`, chosen `--level`, `--project`, `--ledger`, and this
+  `--run-id`, with `--verdict`, `--check` and `--note` placeholders. Resolving effort and retaining project and ledger
+  keep the original choice and row identity when the template is followed. Stdin advice uses an `<advice-file>`
+  placeholder for the lead to save that same advice; other identity fields are already filled.
+- When the advice was not checked, revise with `--task-file` or say why in `--note`.
+- A malformed or unknown `--run-id` refuses the call and says it takes the `run_id` field from record's earlier
+  output, not `id` (the advice id). A `kind: "do"` step points to that output and this worker's row for the advice
+  id in the selected ledger to recover `run_id`; only a new worker run omits the flag.
 
 Own fields: `id` (the advice's id), `run_id`, `ledger`.
 
@@ -586,7 +602,7 @@ Shared fields that are new to a command are listed as added.
 | `recorded: null` (on failure) | removed | `ok: false` and `error` already say nothing was recorded |
 | `run_id`, `ledger` | kept | the row written, and where |
 | `warnings` | kept, as a fact; its instruction moved to `next` | instructions are `next` steps |
-| `next` | kept | |
+| `next` | kept, with outcome-specific integration or rework, a filled revision template, and recovery for an unknown `run_id` | the lead can follow this answer for both new rows and revisions |
 | `error` | kept; also on unusable advice (a saved refusal, no `id` or `brief_sha`) and a missing required flag | a row is appended only from usable advice and complete inputs |
 | `headline`, `unavailable` | added | shared fields (`unavailable` always `[]`) |
 
@@ -787,6 +803,11 @@ The change that implements this page does all of this in one pull request:
     report", and in-shape values (`blocked`, `trust_directory`, `2026.10.01.1`) are reported as today.
   - The record template carries `--effort` for every kind, with and without `--effort` at launch, and for an adopted
     pane; following each template (placeholders filled) records a row.
+  - A startup question's `next` uses the guide's exact trust rule from one source, leaves an unauthorized folder
+    question waiting for the user, and warns that the default can exit the worker.
+  - Record's next step integrates only `done` with `check pass`, for new rows and revisions; every success supplies a
+    revision template whose filled placeholders revise that same run. Unknown or malformed run IDs explain `run_id`
+    versus advice `id`, point to the earlier output and ledger, and append nothing.
   - Usable advice: each row of the table under record, for both `record` (with and without `--task-file`) and
     `launch` (real and dry run).
   - No `notes`, `note`, `why` or `warnings` string is an instruction this page moves to `next` (the table above), and

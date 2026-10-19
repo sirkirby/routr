@@ -186,9 +186,15 @@ The sequence below explains what launch performs; it is not a route around the a
 3. `herdr agent start <name> --kind <kind> --pane <id> -- <permissive flags>`.
 4. **Read the pane after every start**, whatever state herdr reports. A startup question may be showing: herdr
    reports Claude's folder trust as `agent_not_ready`, then `blocked`, and `herdr agent explain <pane>` says what it
-   matched; a screen herdr's rules do not know reads as `idle`. You may accept it yourself only for a directory
-   you created, or a worktree of the repository the user already has you working in. For anything else, ask the user
-   (`herdr notification show`). The default answer can be "No, exit": read the options before sending keys.
+   matched; a screen herdr's rules do not know reads as `idle`.
+
+   <!-- startup-input -->
+   Read the pane and its options before sending keys: the default answer can be "No, exit". Accept folder trust only
+   for a directory you created or a worktree of the repository the user already has you working in; otherwise ask the
+   user and leave the pane waiting. For other startup questions, answer only within scope; ask the user for a secret
+   or sign-in and leave the pane waiting.
+   <!-- /startup-input -->
+
 5. `herdr agent prompt <name> "<text>" --wait`.
 
 Every worker is finished with `routr cleanup` (step 6). Never reuse a pane
@@ -260,9 +266,15 @@ prompt; `unknown` when the cause is not established. Several may apply. Use `--c
 occurred. Attempts alone never establish model failure.
 
 Record each worker separately, including failed start attempts and workers replaced during escalation. A preflight
-refusal starts no worker and has no record template. Each record call returns a new `run_id`. Advice must belong to
+refusal starts no worker and has no record template. Each new record returns a new `run_id`; a revision keeps it. Advice must belong to
 that worker’s exact task. To revise the outcome for that same worker, pass its returned
 `--run-id` and the same advice, project, subscription, model, effort and level, with the complete updated outcome.
+Follow record's `next`: only `done` with `check pass` proceeds to integration and cleanup; otherwise send the work
+back or escalate, then verify and revise the row before cleanup. Every success includes a `kind: "do"` revision
+template with that run's identity already filled, including its resolved effort and chosen level; fill verdict,
+check and note. For advice piped on stdin, save that same advice to fill the template's advice-file placeholder.
+`--run-id` takes `run_id` from record's earlier output, not `id` (the advice id). If it is unknown, follow `next`
+to read the worker's `run_id` from that earlier output or its row for this advice id in the selected ledger.
 A fresh dispatch has a new advice `id` and is refused for a revision, even on the same task.
 If the original task file is gone, revise without `--task-file` and say so in `--note`.
 Omitted `--note`, `--report` and `--subagent` preserve the existing note and subagent choices. To replace them, supply
