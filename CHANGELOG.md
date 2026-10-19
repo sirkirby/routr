@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.7.0 — 2026-10-19
+
+[Full notes](docs/releases/v0.7.0.md)
+
 - `routr launch` takes advice from `routr dispatch` only: `routr subagent` advice ranks no accounts, so a launch on it
   would skip your reserves and level limits. (#88)
 - Name backup decision models: routr asks them in order before using the fallback level, and a backup’s answer is
@@ -13,7 +17,6 @@ A short history of what changed in each routr release, one line per change. Each
   required inputs are checked, and launch’s --trust is removed. Startup steps follow the guide's trust rule; record
   steps match the outcome and include a template with absolute file paths to revise that run. Relative output files
   work on Windows. (#86)
-
 - Each reading says in `unavailable` what routr could not read, and why: the decision model it tried and what to do
   about it, or a usage source it could not read now. When the decision model could not answer, the headline says so
   first; launch on fallback advice says so too. Usage failures no longer copy a harness's own text. (#85)
