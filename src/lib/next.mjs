@@ -22,7 +22,7 @@ export function recordNext(o, { adopted = false } = {}) {
   const argv = ["routr", "record", "--advice", o.advice,
     ...(o["task-file"] ? ["--task-file", o["task-file"]] : []), "--subscription", o.kind,
     "--model", unknown ? "<model>" : o.model,
-    ...(unknown || o.effort ? ["--effort", unknown ? "<effort>" : o.effort] : []),
+    "--effort", unknown ? "<effort>" : o.effort ?? "default",
     "--level", "<level>", "--verdict", "<done|partial|blocked>", "--check", "<pass|fail|none>"];
   return doNext("Verify this worker's result, then fill this record template; add --note and --report.", templateCommand(argv));
 }

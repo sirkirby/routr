@@ -249,7 +249,7 @@ test("CLI round trip for record with repeatable --subagent and --report flags", 
   ]);
   expect(rec.exitCode).toBe(0);
   const recOut = JSON.parse(rec.stdout.toString().trim());
-  expect(recOut.recorded).toBe("test1234");
+  expect(recOut.id).toBe("test1234");
 
   // Read ledger entry
   const entry = JSON.parse(readFileSync(ledgerFile, "utf8").trim());
@@ -305,7 +305,7 @@ test("ledger rows are labelled with their project, a worktree counts as its repo
 test("record --project labels the row, assess answers on an unreadable ledger, and share never writes into the current folder", () => {
   const home = scratch("cli"), work = join(home, "work"); mkdirSync(work);
   const env = cliEnv(home);
-  const advice = JSON.stringify({ id: "a1", mode: "dispatch", level: "basic", sure: true, facts: {} });
+  const advice = JSON.stringify({ id: "a1", brief_sha: "abc", mode: "dispatch", level: "basic", sure: true, facts: {} });
   const rec = Bun.spawnSync([process.execPath, SCRIPT, "record", "--subscription", "codex", "--model", "m", "--effort", "low", "--verdict", "done", "--check", "pass", "--project", "other"], { env, cwd: work, stdin: Buffer.from(advice) });
   expect(rec.exitCode).toBe(0);
   expect(JSON.parse(readFileSync(join(home, ".local/share/routr/ledger.jsonl"), "utf8").trim()).project).toBe("other");

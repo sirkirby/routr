@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { ask, failureMessage, secretsFor } from "../src/lib/systemone.mjs";
 import { DecisionError, decisionTarget, ollamaTooOld, PROVIDERS } from "../src/lib/providers.mjs";
-import { adviseCommand, checkCommand } from "../src/lib/commands.mjs";
+import { adviseCommand, checkCommand } from "./contract.mjs";
 import { checkQuestions, questions } from "../src/lib/questions.mjs";
 import { BRIEF_MARKER, KEY_MARKER, replyFetch } from "./fixtures/provider-fetch.mjs";
 import { cfg, cliEnv, scratch, SCRIPT } from "./helpers.mjs";
@@ -97,11 +97,11 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
   const record = (stdout) => {
     const before = rows().length, id = JSON.parse(stdout).id;
     writeFileSync(advice, stdout);
-    const result = JSON.parse(run(["record", "--advice", advice, "--ledger", ledger], "valid"));
-    expect(result).toMatchObject({ recorded: id, ledger }); expect(result.run_id).toBeString();
+    const result = JSON.parse(run(["record", "--advice", advice, "--subscription", "codex", "--model", "worker", "--effort", "default", "--verdict", "done", "--check", "pass", "--ledger", ledger], "valid"));
+    expect(result).toMatchObject({ id, ledger }); expect(result.run_id).toBeString();
     const after = rows(); expect(after).toHaveLength(before + 1); expect(after.at(-1)).toMatchObject({ id, run_id: result.run_id });
     expect(after.at(-1)).not.toHaveProperty("unavailable");
-    if (JSON.parse(stdout).fallback) expect(after.at(-1).decision_model).toBeNull();
+    if (JSON.parse(stdout).unavailable.some((u) => u.part === "decision model")) expect(after.at(-1).decision_model).toBeNull();
     clean(readFileSync(ledger, "utf8"));
   };
   // The preload gives retryable replies a one-request budget: exercise their real classification without delays.
@@ -111,7 +111,7 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
       expect(stdout).toContain(expected(provider, code, status));
       unavailable(stdout, command, code, status);
       if (["dispatch", "subagent"].includes(command[0])) {
-        const parsed = JSON.parse(stdout); expect(parsed).toMatchObject({ fallback: true, level: "standard" });
+        const parsed = JSON.parse(stdout); expect(parsed).toMatchObject({ ok: true, level: "standard" });
         record(stdout);
       }
       if (command[0] === "doctor" && command.includes("--json") && code === "key_refused") {
@@ -255,12 +255,12 @@ test("failures inside advise and readReport use the same fixed internal sentence
   expect(failureMessage(new Error(KEY_MARKER), config)).toBe(internal);
   for (const mode of ["dispatch", "subagent"]) {
     const r = await adviseCommand(mode, BRIEF_MARKER, { config }, {}, { askFn: async () => ({ answers: { get level() { return fail(); } } }), read: async () => [] });
-    expect(r.fallback).toBe(true); expect(r.notes.join(" ")).toContain(internal); clean(r);
+    expect(r.unavailable[0].why).toBe(internal); expect(r.notes).toEqual([]); clean(r);
   }
   const dir = scratch("internal-report"), brief = join(dir, "brief"), report = join(dir, "report");
   writeFileSync(brief, BRIEF_MARKER); writeFileSync(report, "Complete report. ".repeat(20));
   const r = await checkCommand({ brief, report }, { config, askFn: async () => ({ answers: { get work_type() { return fail(); } } }) });
-  expect(r).toMatchObject({ fallback: true, unavailable: [{ part: "decision model", code: "internal_error", why: internal }] }); expect(r.next[0].why).toBe(internal); clean(r);
+  expect(r).toMatchObject({ ok: false, unavailable: [{ part: "decision model", code: "internal_error", why: internal }] }); expect(r.next[0].why).toContain("Judge the report yourself"); clean(r);
 });
 
 test("Ollama accepts only declared version and digest formats, keeping unknown metadata out of readiness and doctor notes", async () => {
@@ -328,7 +328,7 @@ test("check names a missing or unreadable input file through the CLI and still e
       env: cliEnv(home, { PATH: home, ...credentials, ROUTR_TEST_PROVIDER: "typesafe", ROUTR_TEST_REPLY: "valid" }), stdin: "ignore",
     });
     expect(result.exitCode).toBe(0); expect(result.stderr.toString()).toBe(""); clean(result.stdout.toString());
-    expect(JSON.parse(result.stdout.toString())).toMatchObject({ fallback: true, unavailable: [{ part: flag, code: "unreadable", why: `The ${flag} file could not be read. Provide a file that exists and is readable.` }], headline: `routr: no reading (${flag} unavailable: unreadable); judge the report yourself` });
+    expect(JSON.parse(result.stdout.toString())).toMatchObject({ ok: false, unavailable: [{ part: flag, code: "unreadable", why: `The ${flag} file could not be read. Provide a file that exists and is readable.` }], headline: `routr: no reading (${flag} unavailable: unreadable); judge the report yourself` });
   }
 });
 

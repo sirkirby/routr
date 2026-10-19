@@ -37,7 +37,7 @@ test("facts are read as yes, no, or unclear, and unclear ones go back to the age
 
 test("gaps in the brief are flagged for fixing before it is sent", () => {
   const a = advise(fact(ans(1, 0.9), { states_check: 0.05, standalone: 0.1 }), cfg());
-  expect(a.notes.filter((n) => n.startsWith("Fix the brief first")).length).toBe(2);
+  expect(a.next.filter((n) => n.why.startsWith("Fix the brief:")).length).toBe(2);
   expect(advise(fact(ans(1, 0.9), { states_check: 0.95, standalone: 0.95 }), cfg()).notes).toEqual([]);
 });
 
@@ -103,35 +103,35 @@ test("a torn level reads as the more likely of the two (r5)", () => {
   expect(advise(torn({ 0: 0, 1: 0.2, 2: 0.8 }, 1.8), cfg()).level).toBe("strong");
   expect(advise(torn({ 0: 0.27, 1: 0.7, 2: 0.03 }, 0.76), cfg()).level).toBe("standard");
   expect(advise(torn({ 0: 0.5, 1: 0.5, 2: 0 }, 0.5), cfg()).level).toBe("basic"); // a tie goes to the lower level
-  expect(a.notes.join(" ")).toContain("Start at strong, the more likely");
+  expect(a.notes.join(" ")).toContain("strong is the more likely");
   // Said as decided (from the review of #42): a tie is the lower of two equals, and no spread is the rounded score.
-  expect(advise(torn({ 0: 0.1, 1: 0.45, 2: 0.45 }, 1.35), cfg()).notes.join(" ")).toContain("Start at standard: the two are equally likely, so the lower one.");
+  expect(advise(torn({ 0: 0.1, 1: 0.45, 2: 0.45 }, 1.35), cfg()).notes.join(" ")).toContain("standard is the lower of two equally likely levels");
   const flat = advise({ level: { score: 1.6, confidence: 0.3 }, work_type: { choice: "implement", confidence: 1, probabilities: { implement: 1 } }, high_blast_radius: { noul: 0.1 } }, cfg());
   expect(flat.level).toBe("strong");
-  expect(flat.notes.join(" ")).toContain("routr is unsure of the level. Start at strong, its score rounded.");
+  expect(flat.notes.join(" ")).toContain("routr is unsure of the level; its rounded score is strong.");
   expect(flat.notes.join(" ")).not.toContain("more likely");
   expect(advise(ans(1.6, 0.9), cfg()).between).toBeUndefined();             // sure: plain rounding, no range
 });
 
 test("dispatch and subagent answer from a function: the decision model's reading, the ranking, and the user's fallback when it is down", async () => {
-  const { adviseCommand } = await import("../src/lib/commands.mjs");
+  const { adviseCommand } = await import("./contract.mjs");
   const jev = async () => ({ provider: "typesafe", model: "jev-test", latencyMs: 12.4, answers: fact(ans(1.1, 0.9), {}) });
   const read = async (names) => names.map((n) => live(n, n === "cursor" ? 0.9 : 0.3));
   const d = await adviseCommand("dispatch", "Fix the parser", { config: cfg(), notes: [] }, {}, { askFn: jev, read });
   expect(d).toMatchObject({ mode: "dispatch", level: "standard", provider: "typesafe", decision_model: "jev-test", ms: 12, brief_chars: 14 });
   expect(d.subscriptions.most_room).toBe("cursor");
-  expect(d.rule).toContain("Quality first:");
-  expect(d.rule).toContain("routr usage --level <chosen>");
+  expect(d.next.map((n) => n.why).join(" ")).toContain("Quality first:");
+  expect(d.next.map((n) => n.why).join(" ")).toContain("routr usage --level <chosen>");
   expect(JSON.stringify(d)).not.toContain("Fix the parser"); // the brief itself is never in the output
   const sized = await adviseCommand("subagent", "Fix it", { config: cfg(), notes: [] }, {}, { askFn: jev });
-  expect(sized.rule).toContain("An orchestrator in herdr never runs routr subagent or spawns its own subagents"); // seen 2026-10-14: an orchestrator read "worth a worker" as leave to spawn its own subagents
+  expect(sized.next.map((n) => n.why).join(" ")).toContain("An orchestrator in herdr never runs routr subagent or spawns its own subagents"); // seen 2026-10-14: an orchestrator read "worth a worker" as leave to spawn its own subagents
   const down = await adviseCommand("subagent", "Fix it", { config: cfg(), notes: ["a note"] }, {}, { askFn: async () => { throw new DecisionError(decisionTarget(null, {}), "unreachable"); } });
-  expect(down).toMatchObject({ fallback: true, level: "standard", config_notes: ["a note"], provider: "typesafe" }); // which provider was down
+  expect(down).toMatchObject({ ok: true, level: "standard", warnings: ["a note"], provider: "typesafe" }); // which provider was down
   expect(down.decision_model).toBeUndefined();
   expect(down.subscriptions).toBeUndefined();
-  expect(down.notes[0]).toContain("Router unavailable (TypeSafe: the provider could not be reached. Check your connection and try again.)");
+  expect(down.notes).toEqual([]); expect(down.next[0].why).toContain("Judge the level yourself");
   const none = await adviseCommand("dispatch", "x", { config: { ...cfg(), subscriptions: {} }, notes: [] }, {}, { askFn: jev, read });
-  expect(none.subscriptions.note).toContain("has not run `routr setup`");
+  expect(none.subscriptions.note).toContain("routr setup has not been run");
   // Another model's answers are read with its own profile: its sure_at, and its own record in the torn note.
   const clef = { sure_at: 0.7, torn: { right: 26, of: 36, low: 5, high: 5 } };
   const c = await adviseCommand("subagent", "x", { config: cfg(), notes: [] }, {}, { askFn: async () => ({ provider: "cloudflare", model: "clef", latencyMs: 400, answers: fact(ans(1.4, 0.75), {}), profile: clef }) });
@@ -146,14 +146,14 @@ test("the headline gives the level, the kind of work, what the brief leaves open
   const { headline } = await import("../src/lib/advise.mjs");
   const facts = { approach_open: { reading: "yes" }, standalone: { reading: "yes" }, cross_cutting: { reading: "no" } };
   expect(headline({ level: "standard", sure: true, work_type: "debug", facts })).toBe("routr: standard, debug work; approach_open");
-  expect(headline({ level: "standard", sure: false, between: ["standard", "strong"], work_type: "review", facts: {}, high_risk: true, worker: { suggestion: "split it across workers" }, notes: ["Fix the brief: it names no check"] }))
+  expect(headline({ level: "standard", sure: false, between: ["standard", "strong"], work_type: "review", facts: { states_check: { reading: "no" } }, high_risk: true, worker: { suggestion: "split it across workers" }, notes: ["Fix the brief: it names no check"] }))
     .toBe("routr: SPLIT IT ACROSS WORKERS · standard (torn between standard and strong), review work; HIGH RISK; FIX THE BRIEF FIRST");
   expect(headline({ level: "basic", sure: false })).toBe("routr: basic (unsure), unknown work");
 });
 
 test("a subscription turned off keeps its settings, is left out of dispatch with how to turn it on, and is not read", async () => {
   const { loadConfig, enabledSubscriptions } = await import("../src/lib/config.mjs");
-  const { adviseCommand } = await import("../src/lib/commands.mjs");
+  const { adviseCommand } = await import("./contract.mjs");
   const { writeFileSync } = await import("node:fs");
   const { join } = await import("node:path");
   const file = join(scratch("off"), "config.json");
@@ -166,5 +166,5 @@ test("a subscription turned off keeps its settings, is left out of dispatch with
   const read = [];
   const d = await adviseCommand("dispatch", "x", { config, notes: [] }, {}, { askFn: async () => { throw new DecisionError(decisionTarget(null, {}), "unreachable"); }, read: async (names) => { read.push(...names); return names.map((n) => live(n, 0.9)); } });
   expect(read).toEqual(["codex", "kiro"]);
-  expect(d.subscriptions.excluded).toContainEqual({ subscription: "agy", reason: "turned off in your settings: routr setup --enable agy" });
+  expect(d.subscriptions.excluded).toContainEqual({ subscription: "agy", why: "turned off in your settings: routr setup --enable agy" });
 });

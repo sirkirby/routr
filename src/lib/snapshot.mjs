@@ -39,7 +39,7 @@ export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`,
     }
     catch { r = { ok: false, ...usageFailure("read_failed") }; }
     // A reader returns a code, never prose for the cache. This also classifies unexpected failures from a reader.
-    if (r?.ok !== true && !r?.excluded) r = { ok: false, ...usageFailure(r?.code) };
+    if (r?.ok !== true && !r?.excluded) r = { ok: false, ...usageFailure(r?.code), ...(r?.note ? { note: r.note } : {}) };
     const last = readJson(file).snapshot;
     try {
       writeJsonAtomic(file, r.ok ? { ts: nowSec, tried: nowSec, reading: keep(r) }
@@ -75,5 +75,5 @@ export function readSnapshot({ name, source, windows, describe, keep, byHand, fi
   if (r && !invalid && age >= 0 && age < TRUST_SEC) return summarize({ pool: name, source, ts: snap.ts, windows: ws, note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec, failure, ...(failure && age >= REFRESH_SEC ? { kept: { source: `${name} snapshot`, ageSec: Math.round(age) } } : {}) });
   const why = invalid ? "the saved reading cannot be read" : r ? age < 0 ? "the last reading is from the future, so it is not used"
     : `the last reading is ${Math.round(age / 3600)} h old, too old to use` : "no reading yet";
-  return summarize({ pool: name, source, ts: snap?.ts, note: `${why}${after ? `; ${after}` : ""}; using the assumed headroom.${failure ? ` By hand: ${byHand}` : ""}`, nowSec, failure });
+  return summarize({ pool: name, source, ts: snap?.ts, note: `${why}${after ? `; ${after}` : ""}; using the assumed headroom.`, nowSec, failure });
 }

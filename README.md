@@ -80,7 +80,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `subagent "<brief>"` | A worker, or an agent outside herdr, is about to spawn a subagent: facts, level, worth-a-worker. The brief can also come from `--task-file <path>`. An orchestrator in herdr uses `dispatch`. |
 | `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus normal/fallback candidates and a capacity ranking. Give it the exact task the worker will get (`routr dispatch --task-file task.md`, saving stdout as `advice.json`); `launch --advice advice.json` requires a match. `--headroom <name>=0.9` (or `90%`) overrides a reading. |
 | `usage [cursor\|kiro]` | Each subscription's usage, candidates and capacity ranking, with no brief. `usage cursor` or `usage kiro` reads that one now. |
-| `launch` | Start one worker in its own git worktree, nested under the repo in herdr (`--base` starts it from another branch or commit): flags, model syntax, shell prompts, startup questions reported (never answered), readiness, prompt. A task requires matching `--advice`; `--dry-run` warns and shows the plan. `next` holds recovery, the record template and cleanup. |
+| `launch` | Start one worker in its own git worktree, nested under the repo in herdr (`--base` starts it from another branch or commit): flags, model syntax, shell prompts, startup questions reported (never answered), readiness, prompt. A task requires matching `--advice`; `--dry-run` shows the plan and returns `ok: false` with `error` when a real launch would refuse. `next` holds recovery, the record template and cleanup. |
 | `cleanup` | Finish a worker: remove its worktree and workspace (or close its pane), never while anything runs there or anything in it is uncommitted. Keeps the branch unless `--delete-branch` and it is merged. With no worker named, lists the repo's worktrees. `--dry-run` says what it would do. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
 | `record`, `assess` | Write one ledger line (`record --task-file <path>` checks advice against this worker’s task); read the ledger back as advice about your own settings. |
@@ -93,8 +93,8 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `uninstall` | Remove routr: the binary, its two skills, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, keys, and ledger; `--purge` removes those too. |
 | `doctor` | Check the setup: harnesses found, live usage, the decision model, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
-The advice commands write nothing and never block an agent: with no network or no key they still answer, marked as
-a fallback.
+The advice commands write nothing and never block an agent: with no network or no key they still answer with a
+`no reading` headline and a decision-model entry in `unavailable`.
 
 ## Install
 

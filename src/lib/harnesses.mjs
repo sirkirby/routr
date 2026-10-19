@@ -165,7 +165,7 @@ export const HARNESSES = {
     unknownModelRunsDefault: true,
     // Its docs: "start with --effort, and Kiro remembers it for future sessions". Not measured: no model on the
     // measured account took effort.
-    notes: (model, effort) => [...(effort ? [`Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently: check the model's /effort panel.`] : [])],
+    notes: (model, effort) => [...(effort ? [`Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently.`] : [])],
     // `{"accountType":"SocialGitHub","email":…}` / `{"account":null}` (exit 1). Any `chat` command opens a sign-in.
     auth: { check: ["whoami", "--format", "json"], signedIn: (out, code) => code === 0 && /"email"\s*:\s*"[^"]/.test(out), signIn: "run `kiro-cli login`" },
     // Its help lists the levels; `auto` (no flag) leaves effort to the model, and is the only choice a model without levels has.

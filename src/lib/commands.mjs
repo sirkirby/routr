@@ -2,24 +2,25 @@
 // print, so a test can drive it without a process. The pure parts stay where they were (check.mjs, ledger.mjs); this is
 // the I/O around them. None of them may fail an agent: an error becomes output, and the caller exits 0.
 import { matchAdvice, readAdvice, readTask } from "./advice-file.mjs";
+import { answer, refusal } from "./output.mjs";
 import { doNext } from "./next.mjs";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { advise, headline } from "./advise.mjs";
 import { readReport } from "./check.mjs";
-import { ask, failureMessage } from "./systemone.mjs";
+import { ask } from "./systemone.mjs";
 import { DecisionError, decisionTarget, decisionUnavailable, noReading } from "./providers.mjs";
 import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
 import { CHECK_VERSION, checkQuestions, LEVELS, MEANING, questions, VERSION } from "./questions.mjs";
-import { ADVICE_RULE } from "./wording.mjs";
+import { ADVICE_STEPS } from "./wording.mjs";
 import { rankSubscriptions } from "./pick.mjs";
 import { enabledSubscriptions } from "./config.mjs";
 import { readUsage, SOURCES } from "./harnesses.mjs";
 import { failedUsage } from "./usage.mjs";
-import { usageFailure, usageUnavailable } from "./usage-failure.mjs";
+import { USAGE_BY_HAND, usageFailure, usageUnavailable } from "./usage-failure.mjs";
 
 const short = (e, n = 160) => e instanceof DecisionError ? e.message : String(e?.message ?? e).slice(0, n);
 
@@ -40,7 +41,8 @@ export function parseHeadroom(values) {
 // dispatch the subscriptions ranked by usage, read while it answers. An unreachable model still gets an answer: the
 // user's fallback.
 export async function adviseCommand(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read = readUsage } = {}) {
-  const out = { id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length, unavailable: [] };
+  if (typeof brief !== "string" || !brief.trim()) return refusal("no advice", "empty brief", configNotes, [doNext("Supply the exact task", `routr ${mode} --task-file <path>`)]);
+  const out = { ok: true, warnings: configNotes, next: [], id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length, unavailable: [] };
   const target = decisionTarget(config);
   let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };
   // Each source's newest reading, read while the decision model answers; a slow source (Cursor's screen) is a snapshot refreshed in the background.
@@ -55,13 +57,11 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
     const a = r.answers;
     Object.assign(out, { provider: r.provider, decision_model: r.model, ...(r.measured === false ? { unmeasured: true } : {}), ms: Math.round(r.latencyMs), answers: { level: { score: a.level.score, confidence: a.level.confidence, probabilities: a.level.probabilities }, work_type: { choice: a.work_type.choice, confidence: a.work_type.confidence }, high_blast_radius: a.high_blast_radius.noul } }); // fact probabilities are in `facts`
   } catch (e) {
-    advice = { level: config.fallback_level, sure: false, facts: {}, notes: [
-      `Router unavailable (${failureMessage(e, config)}). "${config.fallback_level}" is only the user's fallback: judge the level yourself.`] };
-    out.fallback = true;
+    advice = { level: config.fallback_level, sure: false, facts: {}, notes: [], next: [doNext("Judge the level yourself; the user's fallback level is not a reading")] };
     out.unavailable.push(decisionUnavailable(e, target));
     out.provider = out.unavailable[0].provider; // which one failed: a local model that is often down shows in the ledger
   }
-  Object.assign(out, { headline: out.fallback ? `${noReading(out.unavailable[0])}; fallback level ${advice.level}` : headline(advice), ...advice, meaning: MEANING[advice.level] });
+  Object.assign(out, { headline: out.unavailable.some((u) => u.part === "decision model") ? `${noReading(out.unavailable[0])}; fallback level ${advice.level}` : headline(advice), ...advice, meaning: MEANING[advice.level] });
   if (mode === "dispatch") {
     const usage = await usageP;
     try {
@@ -73,30 +73,36 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
       out.subscriptions = { most_room: null, candidates: { normal: [], fallback: [] }, ranked: [], excluded: [], note: failure.why };
     }
     // An unconfigured routr ranks nothing; say why, so the lead tells the user instead of guessing (seen in a real session).
-    if (!Object.keys(config.subscriptions).length) out.subscriptions.note = "no subscriptions are configured, so none is ranked: the user has not run `routr setup` yet. Tell them, and ask which subscription to use meanwhile";
+    if (!Object.keys(config.subscriptions).length) out.subscriptions.note = "no subscriptions are configured: routr setup has not been run";
   }
-  return { ...out, next: [doNext(mode === "dispatch" ? "Choose the level, model, effort and eligible account, then launch with this saved advice on the exact task." : "Choose the subagent model and effort from this advice before spawning.")], rule: ADVICE_RULE[mode], ...(configNotes.length ? { config_notes: configNotes } : {}) };
+  out.next = [...(mode === "dispatch" ? capacityNext(out.subscriptions, out.unavailable, out.level, config) : []), ...out.next,
+    ...ADVICE_STEPS[mode].map((s) => doNext(s)),
+    ...(out.unavailable.length ? [doNext("Tell the user what was unavailable when stating the launch choice; judge those parts yourself")] : []),
+    ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Choose a suitable model and effort from normal candidates first; use fallback when none suitably takes the work. State the advised and chosen level, model, effort and account with separate reasons for model and effort")] : []),
+    ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Launch with this saved advice on the exact task; record from launch's template.", "routr launch --kind <subscription> --name <name> --model <model> --effort <effort> --task-file <task-file> --advice <advice-file>")] : [])];
+  return answer(out);
 }
 
 // A quick first read of a worker's report; the orchestrator remains the judge.
-export async function checkCommand({ brief: briefFile, report: reportFile }, { askFn = ask, config = null } = {}) {
-  const out = { mode: "check", question_set: CHECK_VERSION, unavailable: [] };
+export async function checkCommand({ brief: briefFile, report: reportFile }, { askFn = ask, config = null, warnings = [] } = {}) {
+  const out = { ok: false, warnings: [...warnings], next: [], mode: "check", question_set: CHECK_VERSION, unavailable: [] };
+  for (const [flag, value] of [["brief", briefFile], ["report", reportFile]]) if (typeof value !== "string" || !value.trim() || value.startsWith("--")) return { ...refusal("no reading", `check requires --${flag} <file>`, warnings), mode: "check", question_set: CHECK_VERSION };
   const failedFile = (part) => out.unavailable.push({ part, code: "unreadable", why: `The ${part} file could not be read. Provide a file that exists and is readable.` });
   let brief, report;
   try { brief = readFileSync(briefFile, "utf8").trim(); }
   catch { failedFile("brief"); }
   try { report = readFileSync(reportFile, "utf8").trim(); }
   catch { failedFile("report"); }
-  if (out.unavailable.length) return Object.assign(out, { headline: `routr: no reading (${out.unavailable.map((u) => `${u.part} unavailable: ${u.code}`).join("; ")}); judge the report yourself`, fallback: true });
+  if (out.unavailable.length) return answer(Object.assign(out, { headline: `routr: no reading (${out.unavailable.map((u) => `${u.part} unavailable: ${u.code}`).join("; ")}); judge the report yourself`, next: [doNext("Judge the report yourself against the brief")] }));
   try {
-    if (report.length < 200) out.warning = "this report is very short: make sure it is the worker's full report, not just its last message";
+    if (report.length < 200) out.warnings.push("this report is very short: make sure it is the worker's full report, not just its last message");
     const r = await askFn({ task: { brief }, report: { text: report } }, checkQuestions, { config });
-    Object.assign(out, readReport(r.answers), { provider: r.provider, decision_model: r.model, ms: Math.round(r.latencyMs) });
+    Object.assign(out, readReport(r.answers), { ok: true, provider: r.provider, decision_model: r.model, ...(r.measured === false ? { unmeasured: true } : {}), ms: Math.round(r.latencyMs) });
   } catch (e) {
     const missing = decisionUnavailable(e, decisionTarget(config));
-    return Object.assign(out, { headline: `${noReading(missing)}; judge the report yourself`, fallback: true, unavailable: [missing], next: [doNext(failureMessage(e, config))] });
+    return answer(Object.assign(out, { headline: `${noReading(missing)}; judge the report yourself`, unavailable: [missing], next: [doNext("Judge the report yourself against the brief")] }));
   }
-  return out;
+  return answer(out);
 }
 
 // An advice command: an unreadable ledger still gets an answer.
@@ -107,8 +113,10 @@ export function assessCommand({ ledger = LEDGER_PATH }, config) {
 }
 
 // `o` holds record's flags by name; the advice JSON comes from `--advice <file>` or stdin.
-export function recordCommand(o, subagentFlags = [], config = null) {
+export function recordCommand(o, subagentFlags = [], config = null, { warnings = [] } = {}) {
   try {
+    for (const flag of ["subscription", "model", "effort", "verdict", "check"]) if (typeof o[flag] !== "string" || !o[flag].trim() || o[flag].startsWith("--")) throw new Error(`record requires --${flag}`);
+    const advice = readAdvice(o.advice ?? 0);
     let task = null;
     try { if (o.task_file != null) task = readTask(o.task_file); }
     catch (e) {
@@ -116,16 +124,16 @@ export function recordCommand(o, subagentFlags = [], config = null) {
         throw new Error(`${e.message}. If the original task file is gone, revise without --task-file and say so in --note`);
       throw e;
     }
-    const advice = readAdvice(o.advice ?? 0);
     if (task != null) matchAdvice(advice, task);
     const subagents = o.report != null || subagentFlags.length
       ? [...(o.report != null ? parseReportSubagents(readFileSync(o.report, "utf8")) : []), ...subagentFlags] : undefined;
     const entry = toEntry(advice, { ...o, subagents }, config);
     append(entry, o.ledger ?? LEDGER_PATH, { revision: o.run_id != null });
-    return { ok: true, recorded: advice.id, run_id: entry.run_id, ledger: o.ledger ?? LEDGER_PATH,
-      warnings: o.task_file == null ? ["The advice was not checked against a task. Omit --task-file only for an inline task, or to revise when the original task file is gone; say so in --note."] : [],
-      next: [doNext("Integrate the verified result and follow launch’s cleanup step when this worker is finished.")] };
-  } catch (e) { return { ok: false, recorded: null, error: short(e) }; }
+    const ledger = o.ledger ?? LEDGER_PATH;
+    return answer({ ok: true, headline: `routr: recorded run ${entry.run_id} (advice ${advice.id}) in ${ledger}`, id: advice.id, run_id: entry.run_id, ledger,
+      warnings: [...warnings, ...(o.task_file == null ? ["The advice was not checked against a task."] : [])],
+      next: [...(o.task_file == null ? [doNext("If this task came from a file, revise this row with --run-id and --task-file; otherwise say why in --note")] : []), doNext("Integrate the verified result and follow launch’s cleanup step when this worker is finished.")] });
+  } catch (e) { return refusal("nothing recorded", short(e), warnings); }
 }
 
 // `routr share`: write exactly what telemetry sends to a file the user can read. Sends nothing itself.
@@ -157,33 +165,75 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null, { env
 
 // `routr usage [<subscription>]`: what routr sees of each subscription's usage and how dispatch would rank it, with no
 // brief. Named, a harness with a `check` (Cursor) prints its raw reading instead, for a person to verify. Fails open.
-export async function usageCommand(words, config, given = {}, { read = readUsage, sources = SOURCES } = {}) {
-  // Filter capacity for the lead's chosen level without replacing Jev's original assessment. Parse here so neither
-  // record's --level nor words in a task brief change meaning. Validate before any named usage action can run.
+const hasCandidates = (r) => r && [...r.candidates.normal, ...r.candidates.fallback].length > 0;
+// One set of capacity steps wherever the same ranking is printed.
+export function capacityNext(r, unavailable, level, config) {
+  const steps = [];
+  if (unavailable.some((u) => u.part === "usage" && u.code === "internal_error")) steps.push(doNext("Read capacity yourself before choosing an account"));
+  else if (!Object.keys(config.subscriptions).length) steps.push(doNext("Tell the user routr is not set up (routr setup), and ask which subscription to use meanwhile"));
+  else if (!r.ranked.length) steps.push(doNext("Hold the work, or choose a lower level and refresh with routr usage --level, or ask the user"));
+  else if (!hasCandidates(r)) steps.push(doNext(`Hold the work or ask the user: every subscription that takes ${level} work is at its reserve`));
+  for (const u of unavailable.filter((u) => u.part === "usage")) {
+    const byHand = USAGE_BY_HAND[u.subscription];
+    if (byHand) steps.push(doNext(`Read ${u.subscription}'s usage by hand: ${byHand}`, `--headroom ${u.subscription}=<share left>`));
+  }
+  return steps;
+}
+const emptyRanking = (note) => ({ most_room: null, candidates: { normal: [], fallback: [] }, ranked: [], excluded: [], note });
+export async function usageCommand(words, config, given = {}, { read = readUsage, sources = SOURCES, warnings = [] } = {}) {
   words = [...words];
   const at = words.indexOf("--level"), explicit = at !== -1;
   let level = "basic";
+  const refuse = (error) => ({ ...refusal("no usage view", error, warnings), level });
   if (explicit) {
     if (words.lastIndexOf("--level") !== at || !LEVELS.includes(words[at + 1]))
-      return { ok: false, error: "usage: --level takes one of basic, standard, strong, once; eligibility was not refreshed" };
-    level = words[at + 1];
-    words.splice(at, 2);
+      return refuse("usage: --level takes one of basic, standard, strong, once; eligibility was not refreshed");
+    level = words[at + 1]; words.splice(at, 2);
   }
   const flags = words.filter((w) => w.startsWith("-")), configured = Object.keys(config.subscriptions);
   const [name, ...extra] = words.filter((w) => !w.startsWith("-"));
-  // The output is JSON already, so --json (which doctor and setup take) is accepted and changes nothing.
-  const unknown = flags.filter((f) => f !== "--json" && f !== "--background"); // --background: routr's own refresh job
-  if (extra.length || unknown.length) return { ok: false, error: `usage: routr usage [--config <path>] [--headroom <subscription>=<share, 0.9 or 90%>]... [<subscription> | --level <basic|standard|strong>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}` };
-  if (explicit && (name || flags.includes("--background")))
-    return { ok: false, error: "usage: --level is for unnamed usage only; omit the subscription and --background. Eligibility was not refreshed" };
-  if (name && sources[name]?.check) return sources[name].check({ background: flags.includes("--background") });
-  if (name && !configured.includes(name)) return { ok: false, error: `${name} is not a configured subscription (configured: ${configured.join(", ") || "none, run routr setup"})` };
+  const unknown = flags.filter((f) => f !== "--json" && f !== "--background");
+  if (extra.length || unknown.length) return refuse(`usage: routr usage [--config <path>] [--headroom <subscription>=<share, 0.9 or 90%>]... [<subscription> | --level <basic|standard|strong>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}`);
+  if (explicit && (name || flags.includes("--background"))) return refuse("usage: --level is for unnamed usage only; omit the subscription and --background. Eligibility was not refreshed");
+  const fresh = name && Object.hasOwn(sources, name) && sources[name]?.check;
+  if (name && !configured.includes(name) && !fresh) return { ...refuse(`${name} is not a configured subscription (configured: ${configured.join(", ") || "none, run routr setup"})`), subscription: name };
+  const out = { ok: true, warnings: [...warnings], next: [], unavailable: [], level, ...(name ? { subscription: name } : {}) };
   try {
-    const names = name ? [name] : configured;
+    let reading = null;
+    if (fresh) {
+      try { reading = await fresh({ background: flags.includes("--background") }); } catch { reading = { ok: false, ...usageFailure("read_failed") }; }
+      out.ok = reading?.ok === true;
+      if (name === "kiro" && reading?.note) out.warnings.push("Kiro kept an empty usage session");
+      if (name === "kiro" && reading?.note) out.next.push(doNext("Inspect Kiro's saved sessions to remove the empty usage session"));
+      if (out.ok) {
+        const fields = name === "cursor" ? ["plan", "included_used_pct", "auto_used_pct", "api_used_pct", "headroom"] : ["plan", "credits_used", "credits_limit", "used_pct", "resets_at", "unrecognized_lines", "headroom"];
+        out.reading = Object.fromEntries(fields.filter((k) => Object.hasOwn(reading, k)).map((k) => [k, reading[k]]));
+      }
+      if (!configured.includes(name)) out.warnings.push(`${name} is not configured, so it is not ranked`);
+    }
+    const names = name ? configured.filter((n) => n === name) : configured;
     const subs = Object.fromEntries(names.map((n) => [n, config.subscriptions[n]]));
-    // Plain usage keeps its basic-work view; the explicit filter uses the same account policy as dispatch.
-    const r = rankSubscriptions(level, await read(names.filter((n) => subs[n].enabled !== false), given, { sources }), { ...config, subscriptions: subs });
-    return { ok: true, ...(explicit ? { level } : {}), most_room: r.most_room, candidates: r.candidates, note: r.note, ...(r.excluded.length ? { excluded: r.excluded } : {}), ranked: r.ranked.map((row) => ({ ...row, hardest_work: subs[row.subscription].hardest_work })),
-      how: "usable = what is left in the tightest window minus your reserve, and the reserve shrinks as the window nears its reset. dispatch ranks the same way and leaves out a subscription whose hardest_work is below the level of the work" };
-  } catch (e) { return { ok: false, error: short(e) }; }
+    const viewConfig = { ...config, subscriptions: subs };
+    const readingNames = fresh && !configured.includes(name) ? [name] : names.filter((n) => subs[n].enabled !== false);
+    const rows = reading?.excluded ? [{ pool: name, signedIn: false, note: reading.why }] : await read(readingNames, given, { sources, background: fresh ? [] : names });
+    out.subscriptions = rankSubscriptions(level, rows, viewConfig);
+    out.unavailable.push(...usageUnavailable(rows).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
+    if (fresh && !reading?.ok && !reading?.excluded && !out.unavailable.some((u) => u.subscription === name)) {
+      const kept = rows.find((r) => r.pool === name && r.headroom != null);
+      out.unavailable.push({ part: "usage", subscription: name, source: sources[name].source ?? name, ...usageFailure(reading?.code), reading: kept ? "kept" : "assumed", ...(kept ? { reading_source: kept.source, age_sec: kept.ageSec } : {}) });
+    }
+    if (reading?.excluded && !out.subscriptions.excluded.some((r) => r.subscription === name)) out.subscriptions.excluded.push({ subscription: name, why: reading.why });
+    if (!configured.length) out.subscriptions.note = "no subscriptions are configured: routr setup has not been run";
+    out.next = [...capacityNext(out.subscriptions, out.unavailable, level, config), ...out.next];
+    if (explicit && hasCandidates(out.subscriptions)) out.next.push(doNext("Choose from subscriptions.candidates, normal before fallback, and keep the original dispatch advice for launch and record"));
+    out.headline = fresh ? reading?.ok ? `routr: ${name === "cursor" ? "Cursor" : "Kiro"}, ${name === "cursor" ? `Included ${reading.included_used_pct}% used` : `${reading.used_pct}% used`}, read now` : `routr: no fresh ${name === "cursor" ? "Cursor" : "Kiro"} reading (${reading?.excluded ? "not signed in" : usageFailure(reading?.code).code})`
+      : `routr: ${out.subscriptions.most_room ? `${out.subscriptions.most_room} has the most usable headroom for ${level} work; normal: ${out.subscriptions.candidates.normal.join(", ") || "none"}, fallback: ${out.subscriptions.candidates.fallback.join(", ") || "none"}` : out.subscriptions.note}${out.unavailable.length ? `; ${out.unavailable.length} readings unavailable` : ""}`;
+  } catch {
+    out.ok = false;
+    const failure = { part: "usage", subscription: null, source: "routr", ...usageFailure("internal_error") };
+    out.unavailable.push(failure); out.subscriptions = emptyRanking(failure.why);
+    out.headline = "routr: no usage ranking (internal_error)";
+    out.next.push(doNext("Read capacity yourself before choosing an account"));
+  }
+  return answer(out);
 }

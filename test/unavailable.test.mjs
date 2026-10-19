@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { adviseCommand, checkCommand } from "../src/lib/commands.mjs";
-import { launch } from "../src/lib/launch.mjs";
+import { adviseCommand, checkCommand } from "./contract.mjs";
+import { launch } from "./contract.mjs";
 import { savedDecisionUnavailable } from "../src/lib/advice-file.mjs";
 import { DECISION_CODES, DecisionError, decisionTarget, PROVIDERS } from "../src/lib/providers.mjs";
 import { readUsage } from "../src/lib/harnesses.mjs";
@@ -85,11 +85,11 @@ test("launch rebuilds every saved recovery action and HTTP status without trusti
     ["ollama", "model_missing"], ["ollama", "model_unsupported"], ["ollama", "unreachable"],
   ]) {
     const target = decisionTarget({ decision: { provider } }, {}), error = new DecisionError(target, code, status);
-    writeFileSync(file, JSON.stringify({ fallback: true, brief_sha: briefSha(marker), unavailable: [{ part: "decision model", ...target, code, status, why: marker }] }));
+    writeFileSync(file, JSON.stringify({ id: "older", fallback: true, brief_sha: briefSha(marker), unavailable: [{ part: "decision model", ...target, code, status, why: marker }] }));
     const r = await launch(args, { settings: () => cfg({ decision: { provider: "cloudflare", model: "clef-flash" } }) });
-    expect(r.unavailable[0].why).toBe(error.message); expect(r.warnings.join(" ")).toContain(error.message);
+    expect(r.unavailable[0].why).toBe(error.message); expect(r.warnings).toEqual([]);
     if (status) expect(r.unavailable[0].status).toBe(status);
-    if (code === "no_key") expect(r.warnings.join(" ")).toContain("routr key set typesafe");
+    if (code === "no_key") expect(r.unavailable[0].why).toContain("routr key set typesafe");
     clean(r);
   }
 });
@@ -134,7 +134,7 @@ test("check lists both unreadable files and does not ask for a decision", async 
   const r = await checkCommand({ brief: join(dir, "brief"), report: join(dir, "report") }, { askFn: () => { throw new Error("must not ask"); } });
   expect(r.unavailable.map((u) => [u.part, u.code])).toEqual([["brief", "unreadable"], ["report", "unreadable"]]);
   expect(r.headline).toBe("routr: no reading (brief unavailable: unreadable; report unavailable: unreadable); judge the report yourself");
-  expect(r.next).toBeUndefined(); clean(r);
+  expect(r.next[0].why).toContain("Judge the report yourself"); clean(r);
 });
 
 test("a subscription excluded by the user's work-level setting is not reported as a failed reading", async () => {
@@ -142,7 +142,7 @@ test("a subscription excluded by the user's work-level setting is not reported a
   const read = (names) => readUsage(names, {}, { why: () => null, billing: () => null,
     sources: { codex: { read: () => { throw new Error(marker); } } } });
   const r = await adviseCommand("dispatch", marker, { config }, {}, { askFn: reading, read });
-  expect(r.unavailable).toEqual([]); expect(r.subscriptions.excluded).toEqual([{ subscription: "codex", reason: "the user does not give it standard work" }]); clean(r);
+  expect(r.unavailable).toEqual([]); expect(r.subscriptions.excluded).toEqual([{ subscription: "codex", why: "the user does not give it standard work" }]); clean(r);
 });
 
 test("one source's failed read is isolated, structured at the reader, and never includes its output", async () => {
@@ -175,10 +175,10 @@ test("CLI distinguishes failed reads, stale snapshots with age, valid metered un
   expect(r.subscriptions.ranked.find((r) => r.subscription === "cursor")).toMatchObject({ usage: "assumed" });
   expect(r.subscriptions.ranked.find((r) => r.subscription === "cursor").age_sec).toBeGreaterThanOrEqual(90000);
   expect(r.subscriptions.ranked.find((r) => r.subscription === "kiro")).toMatchObject({ class: "metered", usable: null, headroom: null, usage: "metered" });
-  expect(r.subscriptions.excluded).toContainEqual({ subscription: "agy", reason: expect.stringContaining("off") });
+  expect(r.subscriptions.excluded).toContainEqual({ subscription: "agy", why: expect.stringContaining("off") });
   const signedOut = run("four_cases", false);
   expect(signedOut.unavailable).toEqual([]);
-  expect(signedOut.subscriptions.excluded).toContainEqual({ subscription: "codex", reason: expect.stringContaining("not signed in") });
+  expect(signedOut.subscriptions.excluded).toContainEqual({ subscription: "codex", why: expect.stringContaining("not signed in") });
   const failed = run("snapshot_failure", false);
   expect(failed.unavailable).toEqual([{ part: "usage", subscription: "cursor", source: "cursor /usage", ...usageFailure("invalid_response"), reading: "assumed" }]);
   const saved = readFileSync(snapshot, "utf8"); clean(saved);
@@ -259,15 +259,15 @@ test("matching fallback launch preserves dispatch's attempted model through sett
   const args = ["--kind", "claude", "--name", "worker", "--model", "sonnet", "--task", marker, "--advice", adviceFile, "--pane", "w1:p9"];
   const real = await launch(args, deps);
   expect(real).toMatchObject({ ok: true, state: "prompted" }); expect(prompted).toBe(true);
-  expect(real.unavailable).toEqual(advice.unavailable); expect(real.warnings.join(" ")).toContain("Fallback advice: jev-1.13.0"); clean(real);
+  expect(real.unavailable).toEqual(advice.unavailable); expect(real.warnings).toEqual([]); clean(real);
   const dry = await launch([...args, "--dry-run"], deps);
   expect(dry).toMatchObject({ ok: true, state: "planned", unavailable: advice.unavailable }); clean(dry);
   const entry = toEntry(advice, {}); expect(entry.decision_model).toBeNull(); expect(entry).not.toHaveProperty("unavailable");
   const sent = telemetryRows([entry], "test-install"); expect(sent[0]).not.toHaveProperty("unavailable"); clean(sent);
-  writeFileSync(adviceFile, JSON.stringify({ fallback: true, brief_sha: briefSha(marker) }));
+  writeFileSync(adviceFile, JSON.stringify({ id: "older", fallback: true, brief_sha: briefSha(marker) }));
   const old = await launch([...args, "--dry-run"], deps);
   expect(old.ok).toBe(true); expect(old.unavailable).toEqual([{ part: "decision model", provider: null, model: null, code: "attempt_unknown", why: "The saved fallback advice does not name the attempted decision model and its failure." }]);
-  expect(old.warnings.join(" ")).toContain("does not name the attempted decision model"); expect(JSON.stringify(old)).not.toContain("clef-flash"); clean(old);
+  expect(old.warnings).toEqual([]); expect(JSON.stringify(old)).not.toContain("clef-flash"); clean(old);
   prompted = false;
   const oldReal = await launch(args, deps);
   expect(oldReal).toMatchObject({ ok: true, state: "prompted", unavailable: old.unavailable }); clean(oldReal);

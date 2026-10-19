@@ -15,9 +15,18 @@ function decode(bytes) {
 export function readAdvice(file) {
   let bytes;
   try { bytes = readFileSync(file); } catch { throw new Error("--advice: could not read it; supply a readable advice file"); }
-  try { return JSON.parse(decode(bytes)); } catch { throw new Error("--advice: not JSON; save the dispatch result as JSON"); }
+  let advice;
+  try { advice = JSON.parse(decode(bytes)); } catch { throw new Error("--advice: not JSON; save the dispatch result as JSON"); }
+  return usableAdvice(advice);
 }
+export function usableAdvice(advice) {
+  if (advice && (advice.ok === false || Object.hasOwn(advice, "error"))) throw new Error("--advice: this is a refused dispatch, not advice; dispatch the exact task again");
+  for (const field of ["id", "brief_sha"]) if (typeof advice?.[field] !== "string" || !advice[field].trim()) throw new Error(`--advice: missing ${field}; dispatch the exact task again`);
+  return advice;
+}
+export const fallbackAdvice = (advice) => advice.fallback === true || Array.isArray(advice.unavailable) && advice.unavailable.some((u) => u?.part === "decision model");
 export function matchAdvice(advice, task) {
+  usableAdvice(advice);
   if (typeof advice?.brief_sha !== "string" || !advice.brief_sha) throw new Error("--advice: missing brief_sha; dispatch the exact task again");
   if (advice.brief_sha !== briefSha(task)) throw new Error("--advice was given on a different text than this task; dispatch the exact task again");
 }

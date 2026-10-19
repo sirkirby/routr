@@ -33,8 +33,7 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
 Then run `routr doctor`; if it reports no key or no config, read `references/setup.md`. Someone working on routr
 itself can run it from a checkout instead: `bun src/routr.mjs`.
 
-The advice commands write nothing and never fail: with no network or no key they still print advice, marked as a
-fallback. Matching fallback advice is valid for launch: read `unavailable`, tell the user in the launch line that
+The advice commands write nothing and never fail: with no network or no key they still print advice, with a `no reading` headline and a decision-model entry in `unavailable`. Matching fallback advice is valid for launch: read `unavailable`, tell the user in the launch line that
 the advice was a fallback and what was unavailable, and judge that part yourself.
 
 ## Which part applies to you
@@ -53,6 +52,9 @@ the advice was a fallback and what was unavailable, and judge that part yourself
   turning a subscription off) → read `references/setup.md`: every setting has a command.
 
 ## Reading the advice
+
+Every run command starts with `ok`, `headline`, `unavailable`, `warnings` and `next`. `ok` says whether the command
+produced what it is for; a stopped command also carries `error`. Follow `next` for instructions.
 
 `routr subagent "<brief>"` and `routr dispatch "<brief>"` print one JSON object. The brief can also be piped on stdin
 or read with `--task-file <path>`.
@@ -86,14 +88,14 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   real tasks for the model that answered (`decision_model`), and which way it was wrong: Jev, 29 times, one level too
   low otherwise. routr never names a model for the work.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
-- `input_notes` (only when present): something in what you passed that routr did not take as you may have meant: a
+- `warnings` (always a list): something in what you passed that routr did not take as you may have meant: a
   `--headroom` it could not read (ignored), a flag-like word such as `--json` given as the whole brief (set aside, and
   the brief read from stdin), or such a word kept as part of a prose brief. When the note says something was ignored,
   fix it and ask again, or tell the user; a word kept in the brief needs nothing (asking again with a changed brief
   needs fresh dispatch advice before launch).
 - A flag-led invocation without a stdin brief is refused with `ok: false`, without a reading. Quote the whole inline
   brief if it contains flags, or use `--task-file <path>`; follow `next` to correct the input.
-- `subscriptions` (dispatch only). `candidates.normal` lists accounts for everyday work; `candidates.fallback` lists
+- `subscriptions` (`dispatch` and `usage`). `candidates.normal` lists accounts for everyday work; `candidates.fallback` lists
   accounts for when no normal candidate can suitably take it. Choose model/effort fit first, then compare capacity
   among suitable options. `most_room` is only a capacity observation. `ranked` lists usable headroom, marked `live`, `given`
   (you passed it in), or `assumed`. `age_sec` is how old the reading is, and `note` says what the harness showed beside
@@ -102,7 +104,7 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   unknown capacity is a valid reading. Under `windows` it shows each usage window as the harness reports it: percent
   used and hours until it resets. The user's reserve shrinks as a window nears its reset, because unused capacity
   expires then. `your_default` is the user's everyday model on that subscription. `excluded` lists subscriptions the
-  user does not give work this hard, any the user turned off, and any whose harness is not signed in (its `reason`
+  user does not give work this hard, any the user turned off, and any whose harness is not signed in (its `why`
   says what to run). Never spend a reserve: when everything is at its reserve, hold the work or ask
   the user. `class` says what kind of pool each one is: `included` (a subscription whose windows expire), `capped`
   (a spend cap the vendor enforces, shown as one more window), `metered` (a seat with no quota, billed per token:

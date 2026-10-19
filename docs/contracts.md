@@ -1,9 +1,8 @@
 # Output contracts
 
-What each routr command an orchestrator reads takes, and what it prints. This page is the design: routr's output
-does not match it yet. The tables at the end map every field printed today to where it goes, and the last section lists
-every guide, help text and test that reads a field this map renames or removes, so the change can land in one pull
-request, with the guides, as AGENTS.md requires (no old field kept beside its replacement).
+What each routr command an orchestrator reads takes, and what it prints. This page specifies the command output.
+The field maps document the migration from the previous output, and the reader inventory records the baseline
+that the implementation changed together. In those migration notes, "today" means the output before this change.
 
 Commands covered: `subagent`, `dispatch`, `check`, `launch` (dry run and real), `record`, `cleanup` (each mode), and
 `usage` (no name, `--level`, and each named reader: `claude`, `codex`, `agy`, `cursor`, `kiro`). The setup and
@@ -494,7 +493,7 @@ Shared fields that are new to a command are listed as added.
 
 ### subagent and dispatch
 
-| current field | destination | reason |
+| previous field | destination | reason |
 |---|---|---|
 | `ok` (refusals only) | kept; **added** on every answer | one meaning of "did it work" in every command |
 | `error` (refusals) | kept | marks a refusal |
@@ -526,7 +525,7 @@ Shared fields that are new to a command are listed as added.
 
 ### check
 
-| current field | destination | reason |
+| previous field | destination | reason |
 |---|---|---|
 | `ok` | added | shared field |
 | `headline` | kept | |
@@ -544,7 +543,7 @@ Shared fields that are new to a command are listed as added.
 
 ### launch (dry run and real)
 
-| current field | destination | reason |
+| previous field | destination | reason |
 |---|---|---|
 | `ok` | kept; false on a dry run a real launch would refuse | `ok: true` must not tell a lead a refused launch is good to go |
 | `state` | kept | |
@@ -573,7 +572,7 @@ Shared fields that are new to a command are listed as added.
 
 ### record
 
-| current field | destination | reason |
+| previous field | destination | reason |
 |---|---|---|
 | `ok` | kept | |
 | `recorded` | renamed `id` | it is the advice's id, which the advice and the ledger row call `id` |
@@ -586,7 +585,7 @@ Shared fields that are new to a command are listed as added.
 
 ### cleanup (each mode)
 
-| current field | destination | reason |
+| previous field | destination | reason |
 |---|---|---|
 | `ok`, `state` | kept | |
 | `cwd` | kept in worktree modes; omitted in pane mode (today `null`) | present only when it applies |
@@ -603,7 +602,7 @@ Shared fields that are new to a command are listed as added.
 
 ### usage: no name, `--level`, and named `claude`, `codex`, `agy`
 
-| current field | destination | reason |
+| previous field | destination | reason |
 |---|---|---|
 | `ok`, `error` | kept | |
 | `level` (only with `--level`) | kept, always present | the level the view was filtered for; plain usage is `basic` |
@@ -622,7 +621,7 @@ Shared fields that are new to a command are listed as added.
 
 ### usage: named `cursor` and `kiro`
 
-| current field | destination | reason |
+| previous field | destination | reason |
 |---|---|---|
 | `ok` | kept | follows the fresh reading |
 | `subscription` | kept | |
@@ -792,7 +791,7 @@ The change that implements this page does all of this in one pull request:
 - `CHANGELOG.md`, under Unreleased, one line with the PR number, written for a user, e.g. "Every command a lead reads
   now says the same five things the same way (ok, headline, unavailable, warnings, next); several output fields are
   renamed, and launch's --trust is gone".
-- Release notes (`docs/releases/<tag>.md`) for the release that ships it, for a user and an agent upgrading mid-run:
+- Release notes (`docs/releases/<tag>.md`) for the release that ships it, for a user and an agent:
   - Renamed output paths, as a short table: `ran` and `would_run` (was `command`, `planned_command`), `start.*` (was
     `argv`, `env`), `screen` (was `needs_input.screen`, `pane_text`), `id` (was `recorded`), `subscriptions.*` in
     `usage` (was top-level), `excluded[].why` (was `reason`), `warnings` (was `config_notes`, `input_notes`, `warning`),
@@ -804,3 +803,8 @@ The change that implements this page does all of this in one pull request:
   - Advice saved by an older routr is still read by `launch` and `record`; a saved refusal is refused.
   - A lead whose guides and binary update together needs nothing else; the skill and guides ship in the same
     release.
+
+Implementation clarifications: git's status and file-flag output is used for safety checks, but refusal prose counts
+changed, untracked and unchecked files rather than copying their names. Those names are outside text; `next` offers
+the git inspection command. Missing or malformed git commit, status, file-flag and ref readings are unreadable
+worktree state, never proof that a worktree is safe. A model list read that throws is unavailable like an empty list.

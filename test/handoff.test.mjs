@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { launch } from "../src/lib/launch.mjs";
-import { recordCommand, adviseCommand } from "../src/lib/commands.mjs";
+import { launch } from "./contract.mjs";
+import { recordCommand, adviseCommand } from "./contract.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
 import { templateCommand } from "../src/lib/next.mjs";
 import { readAdvice, readTask } from "../src/lib/advice-file.mjs";
-import { cleanup } from "../src/lib/cleanup.mjs";
+import { cleanup } from "./contract.mjs";
 import { cfg, cliEnv, scratch, SCRIPT, herdrOK } from "./helpers.mjs";
 
 const MARKER = "PRIVATE_BRIEF_HANDOFF_MARKER_9b98";
@@ -16,20 +16,20 @@ function fixture() {
   const dir = scratch("handoff"), task = join(dir, "task.md"), advice = join(dir, "advice.json"), ledger = join(dir, "ledger.jsonl");
   const text = `Fix ${MARKER} and verify it.\n`;
   writeFileSync(task, text);
-  const adv = { id: "worker-advice", brief_sha: briefSha(text), fallback: true, level: "standard", facts: {} };
+  const adv = { id: "worker-advice", brief_sha: briefSha(text), ok: true, level: "standard", facts: {} };
   writeFileSync(advice, JSON.stringify(adv));
   return { dir, task, advice, ledger, text, adv };
 }
 const noCalls = { run: () => { throw new Error("unexpected herdr call"); }, ready: () => { throw new Error("unexpected harness call"); }, models: () => { throw new Error("unexpected model list call"); } };
 
-test("task launch requires readable, hashed, matching advice before any outside call; dry runs warn and plan", async () => {
+test("task launch requires readable, hashed, matching advice before any outside call; dry runs refuse and plan", async () => {
   const f = fixture();
   for (const [label, body, error] of [
     ["missing", null, "No advice file was supplied for this task."],
     ["unreadable", null, "could not read it"],
     ["malformed", "not JSON", "not JSON"],
     ["unhashed", JSON.stringify({ id: "old" }), "missing brief_sha"],
-    ["mismatched", JSON.stringify({ brief_sha: briefSha("someone else's task") }), "different text"],
+    ["mismatched", JSON.stringify({ id: "advice-test", brief_sha: briefSha("someone else's task") }), "different text"],
   ]) {
     const file = join(f.dir, label + ".json");
     if (body) writeFileSync(file, body);
@@ -43,9 +43,9 @@ test("task launch requires readable, hashed, matching advice before any outside 
     expect(r.next[0].stdout_to).not.toBe(file);
     expect(r.next[0].argv).not.toContain(">");
     const dry = await launch([...args, "--dry-run"], noCalls);
-    expect(dry).toMatchObject({ ok: true, state: "planned" });
-    expect(dry.warnings.join(" ")).toContain(error);
-    expect(dry.planned_command.length).toBeGreaterThan(0);
+    expect(dry).toMatchObject({ ok: false, state: "planned" });
+    expect(dry.error).toContain(error);
+    expect(dry.would_run.length).toBeGreaterThan(0);
     expect(recordStep(dry)).toBeUndefined();
     expect(JSON.stringify([r, dry])).not.toContain(MARKER);
   }
@@ -165,19 +165,19 @@ test("CLI file dispatch matches stdin advice, trailing record task-file refuses,
     expect(file.stdout.toString() + file.stderr.toString()).not.toContain(MARKER);
     for (const flags of [["--task-file"], ["--task-file", "--bad"], ["--task-file", join(f.dir, "missing")]]) expect(JSON.parse(run([cmd, ...flags]).stdout.toString()).ok).toBe(false);
   }
-  const rec = run(["record", "--advice", f.advice, "--ledger", f.ledger, "--task-file"]);
-  expect(JSON.parse(rec.stdout.toString())).toMatchObject({ ok: false, recorded: null, error: expect.stringContaining("--task-file") });
+  const rec = run(["record", "--advice", f.advice, "--subscription", "claude", "--model", "sonnet", "--effort", "default", "--verdict", "done", "--check", "pass", "--ledger", f.ledger, "--task-file"]);
+  expect(JSON.parse(rec.stdout.toString())).toMatchObject({ ok: false, error: expect.stringContaining("--task-file") });
   expect(existsSync(f.ledger)).toBe(false);
   const other = join(f.dir, "other.md"); writeFileSync(other, "different task");
-  const mismatch = run(["record", "--advice", f.advice, "--ledger", f.ledger, "--task-file", other]);
+  const mismatch = run(["record", "--advice", f.advice, "--subscription", "claude", "--model", "sonnet", "--effort", "default", "--verdict", "done", "--check", "pass", "--ledger", f.ledger, "--task-file", other]);
   expect(JSON.parse(mismatch.stdout.toString()).ok).toBe(false);
   expect(existsSync(f.ledger)).toBe(false);
   expect(run(["record", "--help"]).stdout.toString()).toContain("--task-file <path>");
   const dry = run(["launch", ...base, "--task-file", f.task, "--dry-run"]);
-  expect(JSON.parse(dry.stdout.toString())).toMatchObject({ ok: true, state: "planned", warnings: expect.arrayContaining([expect.stringContaining("No advice file")]) });
+  expect(JSON.parse(dry.stdout.toString())).toMatchObject({ ok: false, state: "planned", error: expect.stringContaining("No advice file") });
   const refused = run(["launch", ...base, "--task-file", f.task]);
   expect(refused.exitCode).toBe(1);
-  expect(JSON.parse(refused.stdout.toString()).command).toEqual([]);
+  expect(JSON.parse(refused.stdout.toString()).ran).toEqual([]);
   const matched = run(["launch", ...base, "--task-file", f.task, "--advice", f.advice, "--dry-run"]);
   expect(recordStep(JSON.parse(matched.stdout.toString())).template).toContain("--task-file");
   expect([dry, refused, matched, mismatch, rec].map((r) => r.stdout.toString() + r.stderr.toString()).join(" ")).not.toContain(MARKER);
@@ -186,7 +186,7 @@ test("CLI file dispatch matches stdin advice, trailing record task-file refuses,
 test("whole dispatch, record and cleanup results never carry the brief marker", async () => {
   const f = fixture();
   const dispatch = await adviseCommand("dispatch", f.text, { config: cfg() }, {}, { askFn: async () => { throw new Error(MARKER); }, read: async () => [] });
-  const record = recordCommand({ advice: f.advice, task_file: f.task, ledger: f.ledger });
+  const record = recordCommand({ advice: f.advice, task_file: f.task, ledger: f.ledger, subscription: "claude", model: "sonnet", effort: "default", verdict: "done", check: "pass" });
   const cleaned = await cleanup(["--pane", "w1:p2"], { run: async () => herdrOK({ panes: [] }), env: {} });
   expect(JSON.stringify([dispatch, record, cleaned])).not.toContain(MARKER);
 });
@@ -201,7 +201,7 @@ test("advice written by PowerShell is readable as UTF-8 BOM and UTF-16LE with or
     const planned = await launch([...base, "--task-file", f.task, "--advice", f.advice, "--dry-run"], noCalls);
     expect(planned.advice.matches).toBe(true);
     expect(recordStep(planned)).toBeDefined();
-    expect(recordCommand({ advice: f.advice, task_file: f.task, ledger: f.ledger }).ok).toBe(true);
+    expect(recordCommand({ advice: f.advice, task_file: f.task, ledger: f.ledger, subscription: "claude", model: "sonnet", effort: "default", verdict: "done", check: "pass" }).ok).toBe(true);
   }
   expect(readFileSync(f.ledger, "utf8").trim().split("\n")).toHaveLength(4);
 });

@@ -12,11 +12,11 @@ import { accountUse } from "./config.mjs";
 export function rankSubscriptions(level, usage, c) {
   const ranked = [], excluded = [];
   for (const [name, s] of Object.entries(c.subscriptions)) {
-    if (s.enabled === false) { excluded.push({ subscription: name, reason: OFF.reason(name) }); continue; }
+    if (s.enabled === false) { excluded.push({ subscription: name, why: OFF.reason(name) }); continue; }
     // A harness that is not signed in cannot take the work; the reading says what to run.
     const signedOut = usage.find((p) => p.pool === name && p.signedIn === false);
-    if (signedOut) { excluded.push({ subscription: name, reason: signedOut.note }); continue; }
-    if (LEVELS.indexOf(s.hardest_work) < LEVELS.indexOf(level)) { excluded.push({ subscription: name, reason: `the user does not give it ${level} work` }); continue; }
+    if (signedOut) { excluded.push({ subscription: name, why: signedOut.note }); continue; }
+    if (LEVELS.indexOf(s.hardest_work) < LEVELS.indexOf(level)) { excluded.push({ subscription: name, why: `the user does not give it ${level} work` }); continue; }
     const u = usage.find((p) => p.pool === name);
     const live = u?.headroom != null;
     // The class is the shape the harness reported (usage.mjs), or the user's `billing` when the harness cannot show it.
@@ -24,7 +24,7 @@ export function rankSubscriptions(level, usage, c) {
     // `billing` wins over what the harness's sign-in status said (an API-key Claude reads `metered`: readUsage).
     const cls = live ? (u.given ? "included" : u.class === "capped" ? "capped" : "included") : s.billing ?? u?.class ?? "unknown";
     const r2 = (x) => Math.round(x * 100) / 100, nowSec = (c.now ?? Date.now()) / 1000;
-    const base = { subscription: name, class: cls, use: accountUse(s, s.billing ?? u?.class ?? cls), reserve: s.reserve, ...(s.default_model ? { your_default: s.default_model + (s.default_effort ? ` @ ${s.default_effort}` : "") } : {}) };
+    const base = { subscription: name, class: cls, use: accountUse(s, s.billing ?? u?.class ?? cls), reserve: s.reserve, hardest_work: s.hardest_work, ...(s.default_model ? { your_default: s.default_model + (s.default_effort ? ` @ ${s.default_effort}` : "") } : {}) };
     if (cls === "metered") {
       ranked.push({ ...base, usable: null, headroom: null, usage: "metered", age_sec: u?.ageSec ?? null, note: u?.note ?? "metered: remaining budget is unknown" });
       continue;
@@ -51,7 +51,7 @@ export function rankSubscriptions(level, usage, c) {
   const candidates = Object.fromEntries(["normal", "fallback"].map((use) => [use,
     [...open, ...metered].filter((r) => r.use === use).map((r) => r.subscription).sort()]));
   const note = !ranked.length ? `no configured subscription takes ${level} work`
-    : !open.length && !metered.length ? `every subscription that takes ${level} work is at its reserve: hold the work or ask the user`
-    : `${open.length ? `${open[0].subscription} has the most usable headroom among accounts with a number` : "remaining capacity is unknown"}. Choose a suitable model and effort from normal candidates first; use fallback when no normal candidate suitably takes the work. Metered budget is unknown.`;
+    : !open.length && !metered.length ? `every subscription that takes ${level} work is at its reserve`
+    : `${open.length ? `${open[0].subscription} has the most usable headroom among accounts with a number` : "remaining capacity is unknown"}. Metered budget is unknown.`;
   return { most_room: open[0]?.subscription ?? null, candidates, ranked, excluded, note };
 }
