@@ -341,7 +341,7 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
   }
   const rows = read(f.ledger);
   for (const value of [readFileSync(f.ledger, "utf8"), JSON.stringify(telemetryRows(rows, "local-test"))]) expect(value).not.toContain(MARK);
-});
+}, 60000); // dozens of CLI runs: the Windows CI job takes about 5 s, past bun's default limit
 
 test("classification preserves plain private-session pane reads and discards successful action prose", async () => {
   const r = await callHerdr(async () => ({ ok: true, data: MARK }), ["--session", "routr-scratch-1-abc", "pane", "read", "w1:p1"], 10);
