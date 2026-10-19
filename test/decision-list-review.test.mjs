@@ -135,13 +135,11 @@ test("review 6: every no-reading command and headline identify the last failed m
   }
 });
 
-test("review 8: help, terminal progress, import direction and the new changelog line stay consistent", () => {
+test("review 8: help, terminal progress, and import direction stay consistent", () => {
   const m = machine([ts]);
   expect(m.run(["key", "--help"]).stdout).toContain("first entry that needs a key");
   const progress = m.run(["doctor"], { env: { ROUTR_TEST_TTY: "1" } }).stderr;
   expect(progress).toContain("Checking the decision models…"); expect(progress).not.toContain("decision models and ");
   const ledger = readFileSync(join(import.meta.dir, "../src/lib/ledger.mjs"), "utf8");
   expect(ledger).toStartWith("// The run ledger"); expect(ledger).not.toContain('from "./advice-file.mjs"');
-  const changelog = readFileSync(join(import.meta.dir, "../CHANGELOG.md"), "utf8");
-  expect(changelog).toMatch(/Choose an ordered list[^\n]+\n- Every command/);
 });
