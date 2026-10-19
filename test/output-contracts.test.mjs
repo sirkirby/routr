@@ -60,7 +60,7 @@ console.error(JSON.stringify({ error: { code: process.env.FAKE_CODE, message: ${
       expect(result.exitCode).toBe(exitCode); expect(result.stderr.toString()).toBe("");
       const r = contract(JSON.parse(result.stdout.toString()));
       expect(r.ok).toBe(false);
-      expect(readFileSync(calls, "utf8").trim().split("\n").map((line) => JSON.parse(line).slice(0, 2))).toContainEqual(op);
+      expect(readFileSync(calls, "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line).slice(0, 2))).toContainEqual(op);
       outputs.push({ command, code, output: result.stdout.toString() });
     }
   }

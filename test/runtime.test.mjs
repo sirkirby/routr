@@ -3,7 +3,17 @@ import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { cmdArg, cmdLine, harnessEnv, npmShimScript, probe, resolveCommand, run, start, startOptions, startSync, stop, windowsCommand } from "../src/lib/runtime.mjs";
-import { npmShim, scratch } from "./helpers.mjs";
+import { cliEnv, npmShim, scratch } from "./helpers.mjs";
+
+test("CLI fixture PATH overrides its inherited Windows Path spelling so fake commands are found", () => {
+  const saved = process.env.Path;
+  try {
+    process.env.Path = "C:\\real-tools";
+    const env = cliEnv("C:\\scratch", { PATH: "C:\\fake-tools" });
+    expect(Object.keys(env).filter((k) => k.toLowerCase() === "path")).toEqual(["PATH"]);
+    expect(resolveCommand("herdr", { env, cwd: "C:\\work", exists: (p) => p === "C:\\fake-tools\\herdr.cmd" })).toBe("C:\\fake-tools\\herdr.cmd");
+  } finally { if (saved === undefined) delete process.env.Path; else process.env.Path = saved; }
+});
 
 // The ordinary ways of reaching node's process API, or Bun's: a static import, require, or a literal dynamic import,
 // with or without node:. A text scan, not a parser: a computed import or `Bun["spawn"]` would get past it, and a comment

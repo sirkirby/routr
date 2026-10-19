@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { launch } from "./contract.mjs";
 import { recordCommand, adviseCommand } from "./contract.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
@@ -180,13 +181,17 @@ test("record next follows the outcome on new rows and revisions, with a usable r
 
 test("record revision resolves relative file inputs and works from another folder", () => {
   const f = fixture(), elsewhere = scratch("revise-elsewhere");
+  // Set the cwd in the child before loading the real CLI: this tests record's relative inputs, independently of
+  // the spawning runtime's Windows drive-cwd handling. Keep every argument and both CLI invocations unchanged.
+  const entry = join(f.dir, "record-cli.mjs");
+  writeFileSync(entry, `process.chdir(process.env.ROUTR_TEST_RECORD_CWD); await import(${JSON.stringify(pathToFileURL(SCRIPT).href)});`);
   const invoke = (args, cwd, input) => {
-    const result = Bun.spawnSync([process.execPath, SCRIPT, "record", ...args], { cwd, env: cliEnv(f.dir, { PATH: "" }), stdin: input ? Buffer.from(input) : "ignore" });
+    const result = Bun.spawnSync([process.execPath, entry, "record", ...args], { env: cliEnv(f.dir, { PATH: "", ROUTR_TEST_RECORD_CWD: cwd }), stdin: input ? Buffer.from(input) : "ignore" });
     expect(result.exitCode).toBe(0); expect(result.stderr.toString()).toBe("");
     return JSON.parse(result.stdout.toString());
   };
   const args = ["--advice", "advice.json", "--task-file", "task.md", "--ledger", "ledger.jsonl", "--subscription", "claude", "--model", "sonnet", "--effort", "low", "--level", "standard", "--verdict", "partial", "--check", "fail"];
-  const first = invoke(args, f.dir); expect(first.ok).toBe(true);
+  const first = invoke(args, f.dir); expect(first.error).toBeUndefined(); expect(first.ok).toBe(true);
   const template = recordStep(first).template;
   const words = template.replace("<done|partial|blocked>", "done").replace("<pass|fail|none>", "pass").replace("<note>", "rechecked").match(/"[^"]*"|\S+/g).map((w) => w.replace(/^"|"$/g, ""));
   // The child resolves against its own cwd, which can be the real path (macOS /var is /private/var), so compare real paths.
