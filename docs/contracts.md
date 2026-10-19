@@ -78,10 +78,10 @@ from it; today it copies herdr's values as they come and interpolates them. Each
 Pane, workspace and worktree ids and the worktree path herdr creates are routr's values once checked (launch already
 checks they are strings; cleanup checks the pane list's shape), and are printed as identifiers.
 
-Today two commands break this, and a review proved it by planting a marker in each: cleanup prints git's first line of
-stderr ("git did not remove <path>: <git's own reason>", and the same for a branch git kept), and launch prints herdr's
+Before these contracts, two commands broke this; a review proved it by planting a marker in each. Cleanup printed
+git’s first line of stderr ("git did not remove <path>: <git's own reason>", and the same for a branch git kept), and launch printed herdr’s
 error message (and, for a failed start, herdr's whole JSON answer) in a step's `detail`, which this map would also have
-put in `error` and `headline`. Cleanup also names the processes herdr says run in a pane.
+put in `error` and `headline`. Cleanup also named the processes herdr says run in a pane.
 
 The rule, as #82 made it for the decision-model providers:
 
@@ -91,6 +91,8 @@ The rule, as #82 made it for the decision-model providers:
   `herdr_refused` (herdr answered with an error), `herdr_invalid_response` (an answer without what routr asked for),
   `git_unreachable`, `git_refused` (a nonzero exit), `git_invalid_response`. herdr's own error code may choose among
   routr's codes (as launch already treats `agent_not_running` and `timeout` apart) but is never printed.
+- A missing herdr executable retains `herdr_unreachable`, says herdr is not installed or not on PATH, and adds
+  an installation/PATH step in `next`. Other unreachable calls say they did not answer.
 - `headline`, `warnings`, `steps[].detail`, `error`, `unavailable[].why` and `why` anywhere are built from those
   codes and from values routr already holds (its arguments, pane and workspace ids, paths it was given or created).
 - What herdr says runs in a pane is counted, not named: "w1:p3 is running 2 commands besides its shell", with a `next`
@@ -119,7 +121,7 @@ plain, with `--level`, or named):
 | advice note on high risk | "A mistake here could be costly (85% likely high risk)." | "Do not go below standard, and review the result" |
 | `subscriptions.note`, normal | "codex has the most usable headroom among accounts with a number. Metered budget is unknown." | "Choose a suitable model and effort from normal candidates first; use fallback when none suitably takes the work" (part of dispatch's choose step) |
 | `subscriptions.note`, everything at its reserve | "every subscription that takes strong work is at its reserve" | "Hold the work or ask the user: every subscription that takes strong work is at its reserve", first in `next`, in place of the launch step |
-| `subscriptions.note`, nothing takes the level | "no configured subscription takes strong work" | "Hold the work, or choose a lower level and refresh with routr usage --level, or ask the user" |
+| `subscriptions.note`, nothing takes the level | "no eligible subscriptions for strong work", followed by each exclusion’s reason | "Hold the work, or choose a lower level and refresh with routr usage --level, or ask the user" when the level excluded an account; otherwise use an eligible subscription or ask the user. Never offer a level below basic |
 | `subscriptions.note`, nothing configured | "no subscriptions are configured: routr setup has not been run" | "Tell the user routr is not set up (routr setup), and ask which subscription to use meanwhile" |
 | a ranked row's note "… By hand: run `cursor-agent`, …" | "the last try failed: …; using the assumed headroom" | "Read Cursor's usage by hand: …, and pass --headroom cursor=<share left>", with that row's `usage` entry |
 | a Claude row's note "… set `billing: \"metered\"` for claude in the config" | reworded as the remedy: "a seat with no quota is set with `billing: \"metered\"`" | (none: the user's setting) |
@@ -305,8 +307,9 @@ Starts a worker in a pane (a new worktree, a split, or a given pane) and sends i
 
 Inputs:
 
-- Required: `--kind`, `--name`; `--model` for a real launch; `--advice <file>` whenever a task is given (matching
-  advice on that exact task). Refused (with `error`, `state: "failed"`) when missing or unusable, before any herdr call.
+- Required: `--kind`, `--name`; `--model` (real and dry run); `--advice <file>` whenever a task is given (matching
+  advice on that exact task). Refused with `error` before any herdr call when missing or unusable; real launches
+  use `state: "failed"`, and dry runs follow the `ok` rule below while still planning.
 - Used when given: `--cwd` (default `.`), `--worktree <branch>`, `--base <ref>` and `--copy <path>` (with `--worktree`),
   `--pane <id>`, `--direction`, `--task` or `--task-file`, `--rules-file` (with a task), `--effort`, `--timeout`,
   `--dry-run`.
@@ -317,7 +320,7 @@ Inputs:
 
 | case | `ok` |
 |---|---|
-| dry run (`planned`) | true when the inputs pass every check a real launch makes before touching herdr that a dry run can make (arguments, folder, task, advice). False, with `error`, when a real launch would refuse (missing or nonmatching advice); the plan is still printed. A dry run does not check the environment, the subscription's on/off setting or sign-in; its `plan` step says so. |
+| dry run (`planned`) | true when the inputs pass every check a real launch makes before touching herdr that a dry run can make (arguments, folder, task, advice). False, with `error`, when a real launch would refuse (including a missing model or missing or nonmatching advice); the plan is still printed. A dry run does not check the environment, the subscription's on/off setting or sign-in; its `plan` step says so. |
 | `ready` (no task given) or `prompted` | true |
 | `needs_input` | false, no `error` |
 | `failed` | false, with `error` |
@@ -329,7 +332,9 @@ launch, nothing ran` (adding `; a real launch would refuse: <error>`).
 Shared fields: all six. `unavailable`: the saved advice's `decision model` entry, a `model list` entry. `warnings`:
 harness notes (an effort the harness remembers), a skipped `--copy`, a pane or private config left behind, a prompt
 that may have been submitted, a rename that failed, each as a fact. `next`: as today (continue after input, record
-template with an explicit `--effort`, cleanup), plus the steps those facts call for. herdr's own messages and answers
+template with an explicit `--effort`, cleanup), plus the steps those facts call for. A startup question uses its
+answer-then-continue steps without a competing inspect-before-retry step. If launch failed before any task submission,
+the record step says no task was delivered and uses `--verdict blocked --check none`. herdr's own messages and answers
 never reach `steps[].detail`, `error` or `headline`: a failed herdr call is said by its classified code ("Text from
 outside routr").
 
@@ -416,7 +421,7 @@ would remove <path>` (dry run); `routr: N worktrees, M can be removed now`; `rou
 Shared fields: all six. `unavailable`: a `pane` or `worktree` entry when a refusal comes from a read cleanup could not
 make. `warnings`: a branch git kept, the repository's other worktrees when the named one is absent. `next`: what to
 do about a refusal, the command that removes a worktree instead of closing its only pane, the list's removal template.
-A refusal's reason, and so the headline, is routr's own sentence: "git refused `git worktree remove` for <path>",
+A refusal's reason, and so the headline, is routr's own sentence: "git refused `worktree remove` for <path>",
 "git kept branch <name>: it deletes only a merged branch", "<pane> is running 2 commands besides its shell", never
 git's or herdr's text or a process's name ("Text from outside routr").
 
@@ -452,15 +457,17 @@ Inputs:
 
 `headline`: `routr: <name> has the most usable headroom for <level> work; normal: …, fallback: …`, or `routr: every
 subscription that takes <level> work is at its reserve`, adding `; N readings unavailable`. Named `cursor` or `kiro`:
-`routr: Cursor, Included 40% used, read now` or `routr: no fresh Cursor reading (<code>)`.
+`routr: Cursor, Included 40% used, read now` or `routr: no fresh Cursor reading (<code>)`. An unranked view names
+each actual exclusion (turned off, not configured, or not signed in) and its remedy; a fresh reading can succeed while
+the subscription remains unranked. The headline includes that fact.
 
 Shared fields: all six. `warnings`: config and input warnings; Kiro's leftover usage session; a named `cursor` or
-`kiro` that is not configured, so not ranked. `next`, each step only in its situation ("Explanation or instruction"),
+`kiro` that is not configured, so not ranked (also named in `subscriptions.excluded`). `next`, each step only in its situation ("Explanation or instruction"),
 for plain usage, `--level` and a named subscription alike:
 
 - every subscription that takes the level is at its reserve: hold the work or ask the user (first);
-- no configured subscription takes the level: hold the work, choose a lower level and refresh with
-  `routr usage --level`, or ask the user;
+- no eligible subscription: hold the work, use an eligible subscription or ask the user. Only an unnamed view
+  above basic with an exclusion due to work level offers choosing a lower level and refreshing with `routr usage --level`;
 - no subscription is configured: tell the user routr is not set up (`routr setup`), and ask which subscription to use
   meanwhile;
 - a reading failed, live or cached (a `usage` entry in `unavailable`), for a harness with a by-hand way: read it by hand
@@ -545,7 +552,7 @@ Shared fields that are new to a command are listed as added.
 
 | previous field | destination | reason |
 |---|---|---|
-| `ok` | kept; false on a dry run a real launch would refuse | `ok: true` must not tell a lead a refused launch is good to go |
+| `ok` | kept; follows the launch `ok` rule above, including dry-run refusals | `ok: true` must not tell a lead a refused launch is good to go |
 | `state` | kept | |
 | `kind`, `name`, `pane`, `cwd`, `model`, `effort` | kept | what was launched, and where |
 | `command` | renamed `ran` | `command` means a runnable line in `next`; this is display history |
@@ -808,3 +815,6 @@ Implementation clarifications: git's status and file-flag output is used for saf
 changed, untracked and unchecked files rather than copying their names. Those names are outside text; `next` offers
 the git inspection command. Missing or malformed git commit, status, file-flag and ref readings are unreadable
 worktree state, never proof that a worktree is safe. A model list read that throws is unavailable like an empty list.
+
+An unreadable ref check is an unreadable check, not an unheld commit. Cleanup states which read failed and offers
+the corresponding git inspection command. An explain answer without a state adds no disagreement to a blocked reading.

@@ -160,9 +160,12 @@ inputs are refused even by commands that exit 0: check needs `--brief` and `--re
 
 Launch and record share one usable-advice check before comparing the task, reading a report or writing a row:
 a JSON object with nonempty `id` and `brief_sha`, without `ok: false` or any `error` field. Older advice without
-`ok` remains usable. A saved refusal is refused. Every launch record template carries an explicit effort.
+`ok` remains usable. A saved refusal is refused. Every launch record template carries an explicit effort. Launch dry runs
+also refuse a missing model while printing their plan. Failed launches that sent no task offer a blocked record, not a worker-result verification step.
 
 Herdr and git failures are classified into fixed codes and routr's own sentences. Structured herdr state, rule,
-rules version, kind, folder and readiness are checked before use. Arbitrary process text appears only in `screen`
+rules version, kind, folder and readiness are checked before use. An absent explain state adds no disagreement.
+A missing herdr executable says so and supplies an installation/PATH step; a failed git ref read is reported as
+unreadable, not as a commit no ref holds. Arbitrary process text appears only in `screen`
 before the task was sent; after submission `screen` is a fixed withheld sentence. Process names are counted, never
 printed. These diagnostics never enter the ledger or telemetry.

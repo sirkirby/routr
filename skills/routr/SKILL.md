@@ -88,11 +88,10 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   real tasks for the model that answered (`decision_model`), and which way it was wrong: Jev, 29 times, one level too
   low otherwise. routr never names a model for the work.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
-- `warnings` (always a list): something in what you passed that routr did not take as you may have meant: a
-  `--headroom` it could not read (ignored), a flag-like word such as `--json` given as the whole brief (set aside, and
-  the brief read from stdin), or such a word kept as part of a prose brief. When the note says something was ignored,
-  fix it and ask again, or tell the user; a word kept in the brief needs nothing (asking again with a changed brief
-  needs fresh dispatch advice before launch).
+- `warnings` (always a list): facts about this call: a config setting routr could not use, an input it ignored or
+  read differently, a skipped check, or something left behind. Input examples include an unreadable `--headroom`,
+  a flag-like word set aside while stdin supplied the brief, or a flag-like word kept as part of a prose brief.
+  Follow `next` for any action the warning calls for; changing the task needs fresh dispatch advice before launch.
 - A flag-led invocation without a stdin brief is refused with `ok: false`, without a reading. Quote the whole inline
   brief if it contains flags, or use `--task-file <path>`; follow `next` to correct the input.
 - `subscriptions` (`dispatch` and `usage`). `candidates.normal` lists accounts for everyday work; `candidates.fallback` lists

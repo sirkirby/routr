@@ -441,7 +441,7 @@ test("usage cursor with no Cursor to ask says so, starts nothing, prints JSON an
   const res = Bun.spawnSync([process.execPath, SCRIPT, "usage", "cursor"], { env: cleanEnv });
   expect(res.exitCode).toBe(0);
   const out = JSON.parse(res.stdout.toString());
-  expect(out).toMatchObject({ ok: false, subscriptions: { excluded: [{ subscription: "cursor", why: "`cursor-agent` did not answer its sign-in check (not installed, or it hung)" }] } });
+  expect(out).toMatchObject({ ok: false, subscriptions: { excluded: [{ subscription: "cursor", why: expect.stringContaining("`cursor-agent` did not answer its sign-in check (not installed, or it hung)") }] } });
   expect(JSON.parse(readFileSync(join(home, ".cache/routr/cursor-usage.json"), "utf8"))).toMatchObject({ excluded: true });
   expect(JSON.parse(readFileSync(join(home, ".cache/routr/signed-in.json"), "utf8")).cursor.state).toBe("no answer");
 });

@@ -33,7 +33,7 @@ test("help table covers every command the CLI dispatches", () => {
   for (const opt of ["kind", "name", "cwd", "model", "effort", "pane", "direction", "task", "task-file", "timeout", "dry-run"]) {
     expect(launchFlags).toContain(opt);
   }
-  expect(COMMANDS.launch.flags.find((f) => f.name === "--model").required).toBe("required unless --dry-run");
+  expect(COMMANDS.launch.flags.find((f) => f.name === "--model").required).toBe(true);
 
   // Unknown usage string contains every command
   const unknownUsage = formatUnknownUsage();
@@ -87,7 +87,7 @@ test("command help prints usage for each command and exits 0", () => {
   expect(launchRes.stdout.toString()).toContain("routr launch: start a worker");
   expect(launchRes.stdout.toString()).toContain("--kind <kind>");
   expect(launchRes.stdout.toString()).toContain("--model <id>");
-  expect(launchRes.stdout.toString()).toContain("required unless --dry-run");
+  expect(launchRes.stdout.toString()).not.toContain("required unless --dry-run");
 
   // routr record --help exits 0 without reading stdin
   const recordRes = Bun.spawnSync(["bun", SCRIPT, "record", "--help"], { stdin: "ignore" });

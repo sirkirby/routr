@@ -1,5 +1,5 @@
 // Shared by several test files: fixtures, fakes, and the scratch folder the preload (setup.mjs) made.
-import { mkdtempSync } from "node:fs";
+import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULTS } from "../src/lib/config.mjs";
 // Made by test/setup.mjs, which bunfig.toml preloads for every test file.
@@ -47,3 +47,12 @@ export const row = (over = {}) => ({ ts: "2026-09-21T10:11:12.000Z", id: "abc123
 export const npmShim = (target) => "@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n\r\n"
   + 'IF EXIST "%dp0%\\node.exe" (\r\n  SET "_prog=%dp0%\\node.exe"\r\n) ELSE (\r\n  SET "_prog=node"\r\n)\r\n\r\n'
   + `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & set PATHEXT=%PATHEXT:;.JS;=;% & "%_prog%"  "%dp0%\\${target}" %*\r\n`;
+
+// Fake CLIs on an isolated PATH: a POSIX executable or a Windows cmd entry, both using this test's Bun binary.
+export function fakeExecutable(bin, name, code) {
+  const file = join(bin, name);
+  if (process.platform === "win32") {
+    writeFileSync(`${file}.mjs`, code);
+    writeFileSync(`${file}.cmd`, `@echo off\r\n"${process.execPath}" "%~dp0${name}.mjs" %*\r\n`);
+  } else { writeFileSync(file, `#!${process.execPath}\n${code}`); chmodSync(file, 0o755); }
+}

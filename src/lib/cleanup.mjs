@@ -17,8 +17,9 @@ import { lstatSync, readFileSync, readlinkSync, realpathSync, rmSync } from "nod
 import { dirname, join, resolve } from "node:path";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { BRANCH, runHerdr } from "./herdr.mjs";
+import { count } from "./wording.mjs";
 import { answer } from "./output.mjs";
-import { callHerdr, callGit, processError } from "./process-boundary.mjs";
+import { callHerdr, callGit, processError, processSteps } from "./process-boundary.mjs";
 import { probe } from "./runtime.mjs";
 
 const herdrLine = (args) => displayCommand(["herdr", ...args]);
@@ -105,7 +106,7 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
   const herdr = async (a, tolerate = false) => {
     out.ran.push(herdrLine(a));
-    const r = await callHerdr(run, a, 10000);
+    const r = processSteps(out, await callHerdr(run, a, 10000));
     if (!r.ok && !tolerate) throw processError(r);
     return r;
   };
@@ -132,7 +133,7 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
       const info = r.ok ? r.data?.result?.process_info : null;
       if (!Array.isArray(info?.foreground_processes)) { missing("pane", p.pane_id); return { why: `Could not read what runs in ${p.pane_id}`, next: inspect("Look at the pane before deciding whether cleanup is safe.", ["herdr", "pane", "read", p.pane_id]) }; }
       const others = info.foreground_processes.filter((f) => f.pid !== info.shell_pid);
-      if (others.length) return { why: `${p.pane_id} is running ${others.length} commands besides its shell`, next: [runNext("Read the pane before deciding whether to let it finish or stop it.", ["herdr", "pane", "read", p.pane_id]), doNext("Let the command finish, or decide whether it is within scope to stop it, then run cleanup again.")] };
+      if (others.length) return { why: `${p.pane_id} is running ${count(others.length, "command")} besides its shell`, next: [runNext("Read the pane before deciding whether to let it finish or stop it.", ["herdr", "pane", "read", p.pane_id]), doNext("Let the command finish, or decide whether it is within scope to stop it, then run cleanup again.")] };
     }
     return null;
   };
@@ -147,11 +148,13 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
   const headOf = async (dir) => { const r = await gitRun(dir, ["rev-parse", "--verify", "HEAD"]); if (r?.code !== 0) missing("worktree", dir); return r?.code === 0 ? r.out.trim() : null; };
   // Whether a branch, remote branch or tag holds `rev`. Always asked, of the commit the worktree is on now: one on a
   // branch when herdr listed it can have been detached since (from the review of b32617a).
+  const refArgs = (rev) => ["for-each-ref", "--contains", rev, "--count=1", "--format=%(refname)", "refs/heads", "refs/remotes", "refs/tags"];
   const held = async (dir, rev, path = dir) => {
-    const on = await gitRun(dir, ["for-each-ref", "--contains", rev, "--count=1", "--format=%(refname)", "refs/heads", "refs/remotes", "refs/tags"]);
+    const on = await gitRun(dir, refArgs(rev));
     if (on?.code !== 0) missing("worktree", path);
-    return on?.code === 0 && Boolean(on.out.trim());
+    return on?.code === 0 ? Boolean(on.out.trim()) : null;
   };
+  const unreadableRefs = (w, dir, sha) => ({ why: `git could not read the refs for ${w.path}`, next: inspect("Read the repository refs before deciding whether this commit is held.", ["git", "-C", dir, ...refArgs(sha)]) });
   let heads = null;
   const unheld = (w, source, sha) => ({ why: `${w.path} is on a commit no branch or tag holds${sha ? ` (${sha.slice(0, 12)})` : ""}`,
     next: doNext("Keep the commit on a branch first, then run cleanup again.", templateCommand(["git", "-C", w.is_prunable ? source : w.path, "branch", "<name>", ...(sha ? [sha] : [])])) });
@@ -169,8 +172,10 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
       // a branch or tag holds it.
       heads ??= parseWorktreeHeads((await gitRun(source, ["worktree", "list", "--porcelain"]))?.out);
       const sha = heads.get(w.path) ?? [...heads].find(([p]) => real(p) === real(w.path))?.[1];
-      if (!sha) missing("worktree", w.path);
-      if (!sha || !(await held(source, sha, w.path))) return unheld(w, source, sha);
+      if (!sha) { missing("worktree", w.path); return { why: `git could not read the recorded commit for ${w.path}`, next: inspect("Read git’s recorded worktree commits.", ["git", "-C", source, "worktree", "list", "--porcelain"]) }; }
+      const refs = await held(source, sha, w.path);
+      if (refs == null) return unreadableRefs(w, source, sha);
+      if (!refs) return unheld(w, source, sha);
       return { copies: [] };
     }
     const head = await headOf(w.path);
@@ -185,11 +190,13 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
       next: [runNext("Read the files git is told not to check.", ["git", "-C", w.path, "ls-files", "-v"]), doNext("Ask the user how to handle these unchecked files.")] };
     const { changed, untracked } = parseStatus(st.out);
     if (changed.length) return { why: `${changed.length} uncommitted change${changed.length > 1 ? "s" : ""} in ${w.path}`,
-      next: doNext("Have the worker commit what should be kept on its branch, or ask the user; never discard a worker's changes yourself") };
+      next: [runNext("Inspect the uncommitted files.", ["git", "-C", w.path, "status"]), doNext("Have the worker commit what should be kept on its branch, or ask the user; never discard a worker's changes yourself")] };
     const made = untracked.filter((rel) => !sameFile(join(w.path, rel), join(source, rel)));
     if (made.length) return { why: `${made.length} untracked file${made.length > 1 ? "s" : ""} in ${w.path} that the main checkout does not hold as they are`,
-      next: doNext("Have the worker commit them if they are part of the work, or ask the user; files copied in with launch --copy and left unchanged are removed by cleanup itself") };
-    if (!(await held(w.path, head))) return unheld(w, source, head);
+      next: [runNext("Inspect the untracked files.", ["git", "-C", w.path, "status"]), doNext("Have the worker commit them if they are part of the work, or ask the user; files copied in with launch --copy and left unchanged are removed by cleanup itself")] };
+    const refs = await held(w.path, head);
+    if (refs == null) return unreadableRefs(w, w.path, head);
+    if (!refs) return unheld(w, source, head);
     return { copies: untracked, head, rootReal };
   };
 
@@ -266,11 +273,11 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
     // Never --force: if anything changed since the check, herdr and git refuse and the worktree stays.
     if (w.open_workspace_id) {
       const r = await herdr(["worktree", "remove", "--workspace", w.open_workspace_id], true);
-      if (!r.ok) return refuse(`herdr refused herdr worktree remove for ${w.path} (${r.code})`, inspect("Read the worktree after removal was refused.", ["git", "-C", w.path, "status"]));
+      if (!r.ok) return refuse(`herdr refused worktree remove for ${w.path} (${r.code})`, inspect("Read the worktree after removal was refused.", ["git", "-C", w.path, "status"]));
       step("remove", true, `Removed ${w.path} and closed workspace ${w.open_workspace_id}`);
     } else {
       const r = await gitRun(source, ["worktree", "remove", w.path]);
-      if (r?.code !== 0) return refuse(`git refused git worktree remove for ${w.path} (${r.code})`, inspect("Read the worktree after removal was refused.", ["git", "-C", w.path, "status"]));
+      if (r?.code !== 0) return refuse(`git refused worktree remove for ${w.path} (${r.code})`, inspect("Read the worktree after removal was refused.", ["git", "-C", w.path, "status"]));
       step("remove", true, `Removed ${w.path} (no workspace was open for it)`);
     }
     out.ok = true; out.state = "removed";
@@ -287,7 +294,7 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
     out.ok = false; out.state = "failed"; out.error = String(e?.message ?? e); step("failed", false, out.error);
   } finally {
     out.headline ??= out.state === "failed" ? `routr: cleanup failed: ${out.error}`
-      : out.state === "listed" ? `routr: ${out.worktrees.length} worktrees, ${out.worktrees.filter((w) => w.removable).length} can be removed now`
+      : out.state === "listed" ? `routr: ${count(out.worktrees.length, "worktree")}, ${out.worktrees.filter((w) => w.removable).length} can be removed now`
       : out.state === "absent" ? `routr: nothing to remove: no ${out.pane ? `pane ${out.pane}` : `worktree ${out.worktree?.path ?? target}`}`
       : `routr: ${out.state === "planned" ? "would " + (out.pane ? "close" : "remove") : out.state} ${out.pane ?? out.worktree?.path}`;
     const ordered = answer(out); for (const key of Object.keys(out)) delete out[key]; Object.assign(out, ordered);

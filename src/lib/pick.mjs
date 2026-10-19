@@ -9,6 +9,7 @@ import { LEVELS } from "./questions.mjs";
 import { OFF } from "./wording.mjs";
 import { accountUse } from "./config.mjs";
 
+export const levelExcludedWhy = (level) => `the user does not give it ${level} work`;
 export function rankSubscriptions(level, usage, c) {
   const ranked = [], excluded = [];
   for (const [name, s] of Object.entries(c.subscriptions)) {
@@ -16,7 +17,7 @@ export function rankSubscriptions(level, usage, c) {
     // A harness that is not signed in cannot take the work; the reading says what to run.
     const signedOut = usage.find((p) => p.pool === name && p.signedIn === false);
     if (signedOut) { excluded.push({ subscription: name, why: signedOut.note }); continue; }
-    if (LEVELS.indexOf(s.hardest_work) < LEVELS.indexOf(level)) { excluded.push({ subscription: name, why: `the user does not give it ${level} work` }); continue; }
+    if (LEVELS.indexOf(s.hardest_work) < LEVELS.indexOf(level)) { excluded.push({ subscription: name, why: levelExcludedWhy(level) }); continue; }
     const u = usage.find((p) => p.pool === name);
     const live = u?.headroom != null;
     // The class is the shape the harness reported (usage.mjs), or the user's `billing` when the harness cannot show it.
@@ -50,7 +51,8 @@ export function rankSubscriptions(level, usage, c) {
   // Candidate lists express permission, not suitability or a ranking. The lead chooses model/effort fit first.
   const candidates = Object.fromEntries(["normal", "fallback"].map((use) => [use,
     [...open, ...metered].filter((r) => r.use === use).map((r) => r.subscription).sort()]));
-  const note = !ranked.length ? `no configured subscription takes ${level} work`
+  const note = !ranked.length ? !Object.keys(c.subscriptions).length ? "no subscriptions are configured: routr setup has not been run"
+    : `no eligible subscriptions for ${level} work${excluded.length ? `; ${excluded.map((e) => `${e.subscription}: ${e.why}`).join("; ")}` : ""}`
     : !open.length && !metered.length ? `every subscription that takes ${level} work is at its reserve`
     : `${open.length ? `${open[0].subscription} has the most usable headroom among accounts with a number` : "remaining capacity is unknown"}. Metered budget is unknown.`;
   return { most_room: open[0]?.subscription ?? null, candidates, ranked, excluded, note };

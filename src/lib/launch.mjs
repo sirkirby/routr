@@ -4,13 +4,13 @@ import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
-import { HARNESSES, kindError, notReady, plan } from "./harnesses.mjs";
+import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesses.mjs";
 import { matchAdvice, readAdvice, readTask, savedDecisionUnavailable, fallbackAdvice } from "./advice-file.mjs";
 import { displayCommand, doNext, launchNext, runNext, templateCommand } from "./next.mjs";
 import { OFF } from "./wording.mjs";
 import { BRANCH, clean, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
 import { answer } from "./output.mjs";
-import { callHerdr, processError, stateWords } from "./process-boundary.mjs";
+import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
 import { home } from "./runtime.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
@@ -79,7 +79,7 @@ export function parseLaunchArgs(args) {
 // `ready(kind)`: null when the harness is signed in, or why not (harnesses.mjs). `settings()`: the user's config.
 export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(), env = process.env, ready = notReady, settings = () => loadConfig(),
   cursorConfigSource = join(home(), ".cursor", "cli-config.json"), tempRoot = tmpdir(), models = (kind) => HARNESSES[kind].models?.() } = {}) {
-  const safeRun = (args, ms) => callHerdr(run, args, ms);
+  const safeRun = async (args, ms) => processSteps(out, await callHerdr(run, args, ms));
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
     ran: [], next: [], start: { executable: null, argv: [], env: {} }, steps: [], warnings: [], prompt_chars: null, unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
@@ -179,8 +179,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         ...(prompt ? [promptForLog(promptArgs(pane, Math.max(1, Math.min(Math.floor(o.timeout / 2), 30000)))), command(["agent", "get", pane])] : []),
       ];
       step("plan", true, "No commands executed or files written. Pane ids, geometry, polling, timeouts and shell questions are resolved at launch. Environment, subscription settings and sign-in are not checked.");
-      planned = true; out.ok = !adviceProblem; out.state = "planned";
-      if (adviceProblem) out.error = adviceProblem;
+      const problems = [!o.model && MODEL_REQUIRED, adviceProblem].filter(Boolean);
+      planned = true; out.ok = !problems.length; out.state = "planned";
+      if (problems.length) out.error = problems.join("; ");
       return out;
     }
     if (env.HERDR_ENV !== "1") throw new Error("Launch requires HERDR_ENV=1 inside a Herdr pane");
@@ -258,13 +259,13 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
           // herdr's state may be stale (above): its live reading decides, once. Idle (or done) is a block already answered.
           const x = await explain();
           if (x.reads === "blocked" || typeof x.reads !== "string") return blockedAtStart(HARNESSES[o.kind], await screen(), x);
-          if (!["idle", "done"].includes(x.reads)) return notWaiting(x.reads);
+          if (!["idle", "done"].includes(x.reads)) return await notWaiting(x.reads);
           step("explain", true, `herdr's state said blocked, but its rules read the screen as ${x.reads}${x.rule ? ` by ${x.rule}` : ""}: the question was answered`);
           status = x.reads;
         }
-        if (!["idle", "done"].includes(status)) return notWaiting(status);
+        if (!["idle", "done"].includes(status)) return await notWaiting(status);
         // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
-        if (occupant.interactive_ready === false && occupant.agent_status !== "blocked") return notWaiting(`${status} but not ready for input`);
+        if (occupant.interactive_ready === false && occupant.agent_status !== "blocked") return await notWaiting(`${status} but not ready for input`);
         adopted = true; step("adopt", true, `${o.kind} is already running in ${out.pane}, ${status}, in ${out.cwd}: launch sends it the task (its model and effort are the ones it runs; not changed)`);
       }
     }
@@ -512,7 +513,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       try { rmSync(configDir, { recursive: true, force: true }); step("cleanup_config", true, "Removed unused Cursor config"); }
       catch (e) { out.warnings.push(`Could not remove unused Cursor config ${configDir}`); }
     }
-    if (createdPane && !out.ok) { out.warnings.push(`Pane ${out.pane} was left alive`); out.next.push(doNext(`Inspect pane ${out.pane} before closing it or retrying`)); }
+    if (createdPane && !out.ok) { out.warnings.push(`Pane ${out.pane} was left alive`); if (out.state !== "needs_input") out.next.push(doNext(`Inspect pane ${out.pane} before closing it or retrying`)); }
     if (configDir && startAttempted && !out.ok) { out.warnings.push(`Cursor config ${configDir} is retained for a possible running worker`); out.next.push(doNext(`Remove the private Cursor config ${configDir} if the launch command did not run`)); }
     if (promptAttempted && out.state !== "prompted") { out.warnings.push("Prompt may have been submitted"); out.next.push(doNext(`Inspect pane ${out.pane} before retrying`)); }
     out.headline = out.state === "planned" ? `routr: planned ${out.kind} launch, nothing ran${out.error ? `; a real launch would refuse: ${out.error}` : ""}`
@@ -523,7 +524,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     // Return paths share this finally block: put the envelope first even for early refusals and planned launches.
     const ordered = answer(out); for (const key of Object.keys(out)) delete out[key]; Object.assign(out, ordered);
     out.next = launchNext(out.next, { record: recordOptions, cleanup: cleanupArgs, adopted,
-      attempted: startAttempted || promptAttempted, planned });
+      attempted: startAttempted || promptAttempted, planned, submitted: promptAttempted, failed: out.state === "failed" });
   }
   return out;
 }

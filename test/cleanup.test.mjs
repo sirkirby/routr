@@ -171,7 +171,7 @@ test("a pane cleanup cannot read, or one running a command, keeps the worktree; 
   const why = async (f, name) => { const r = await cleanup(["--cwd", "/repo", "--worktree", name], f.deps); expect(r).toMatchObject({ ok: false, state: "refused" }); expect(f.calls.some((a) => a[1] === "remove")).toBe(false); return r.headline; };
   const shell = { w5: [{ pane_id: "w5:p1", agent_status: "unknown" }] };
   expect(await why(fake({ worktrees: [wt("x", { open_workspace_id: "w5" })], panes: shell, processes: { "w5:p1": null } }), "x")).toContain("Could not read");
-  expect(await why(fake({ worktrees: [wt("x", { open_workspace_id: "w5" })], panes: shell, processes: { "w5:p1": [{ pid: 1 }, { pid: 7, name: "bun" }] } }), "x")).toContain("running 1 commands besides its shell");
+  expect(await why(fake({ worktrees: [wt("x", { open_workspace_id: "w5" })], panes: shell, processes: { "w5:p1": [{ pid: 1 }, { pid: 7, name: "bun" }] } }), "x")).toContain("running 1 command besides its shell");
   let reads = 0;
   const late = fake({ worktrees: [wt("x", { open_workspace_id: "w5" })], panes: () => ({ w5: [idle("w5:p1", ++reads > 1 ? "working" : "idle")] }) });
   expect(await why(late, "x")).toContain("working");

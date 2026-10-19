@@ -144,11 +144,12 @@ object describing what it did.
   startup. It passes each harness's own flags so none is asked (Cursor `--trust`, Kiro `--trust-tools=*`, Codex
   `--dangerously-bypass-hook-trust` for its hooks review; Codex and Claude Code still ask to trust a folder outside a
   trusted one), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
-- `--dry-run` prints `would_run` and changes nothing. It returns `ok: false` and `error` when a real launch would refuse the task or advice; otherwise `ok: true`. It does not check the environment, subscription settings or sign-in.
+- `--dry-run` requires `--model`, prints `would_run` and changes nothing. It returns `ok: false` and `error` when a real launch would refuse its arguments, folder, task or advice; otherwise `ok: true`. It does not check the environment, subscription settings or sign-in.
 - Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_input`, or `failed`.
   `headline` says what happened. `warnings` states facts about the call. `steps` says what it did, in order. Follow `next`: it includes
   the cleanup command (step 6) and, after a start or task-submission attempt, this worker’s record template.
-  Preflight refusals have no record template; dry runs with matching advice include the planned template.
+  Preflight refusals have no record template; dry runs with matching advice include the planned template. A failed
+  launch that never submitted a task says so in the record step and records `blocked` with `--check none`.
 - **`needs_input` is yours to decide.** Something in the pane waits for an answer routr does not give: a shell's own
   question, a harness's startup question, a worker that has not started. `screen` is top-level (what the pane shows; withheld once the task was sent, since it then shows the brief).
   `needs_input` holds `why`, `herdr` (its reading: the state and the rule `herdr agent explain` matched; when a worker launch started
@@ -296,7 +297,7 @@ pane, closing it closes the workspace, and the worktree is then left on disk whe
   main checkout's (what `--copy` brings in) goes with the worktree, and so does everything git ignores (build output,
   `node_modules`, a copied `.env`), as with `git worktree remove`: tell a worker to commit anything it must keep.
   cleanup cannot see a commit made, or a worker started, after its last check: run it only once the worker is done.
-  Its `headline` says why and what to do; never discard a worker's changes to get past it, and never push. Work that
+  Its `headline` says why; `next` says what to do; never discard a worker's changes to get past it, and never push. Work that
   failed your check stays where it is until the user decides.
 - `--delete-branch` deletes a branch only when git agrees it is merged; otherwise it is kept and `warnings` says so.
 - `routr cleanup --cwd <repo>` with no worker named lists every worktree of the repository and whether cleanup can
@@ -318,7 +319,8 @@ unreadable, mismatched or unhashed advice records nothing (`ok: false`). An omit
 inline task and returns a warning that the advice was not checked against a task. Outcome revisions keep the original
 advice file. If the original task file is gone, revise without `--task-file` and say so in `--note`.
 
-Every command returns `ok`, `headline`, `unavailable`, `warnings` and `next` first. Launch puts its harness command
+The commands a lead reads (`subagent`, `dispatch`, `check`, `launch`, `record`, `cleanup`, `usage`) return
+`ok`, `headline`, `unavailable`, `warnings` and `next` first. Launch puts its harness command
 in `start` (`executable`, `argv`, `env`), and history in `ran` or dry-run `would_run`. Record returns the advice `id`
 and the row’s `run_id`.
 

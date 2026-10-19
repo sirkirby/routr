@@ -1,6 +1,7 @@
 // One vocabulary for herdr and git failures. Callers (including injected transports) cross this boundary before
 // inspecting results; process messages and unrecognised structured values never become routr's prose.
 import { isAbsolute, win32 } from "node:path";
+import { doNext } from "./next.mjs";
 import { KINDS } from "./harnesses.mjs";
 const states = new Set(["idle", "working", "blocked", "done"]);
 export const agentState = (s) => states.has(s) ? s : "unknown";
@@ -9,18 +10,19 @@ const absolutePath = (s) => typeof s === "string" && s.length > 0 && !/[\x00-\x1
 const folder = (s) => absolutePath(s) && s.length <= 512;
 const id = (s) => typeof s === "string" && s.length > 0;
 const knownErrors = new Set(["timeout", "agent_not_running", "agent_not_found", "agent_not_ready", "agent_prompt_stalled", "server_not_running"]);
-export function processFailure(tool, args, code) {
-  const call = `${tool} ${args.filter((a, i) => i < 2).join(" ")}`;
-  const why = code.endsWith("unreachable") ? `${call} did not answer (${code}).`
+export function processFailure(tool, args, code, missing = false) {
+  const command = (args[0] === "--session" ? args.slice(2) : args).slice(0, 2).join(" ");
+  const call = `${tool} ${command}`;
+  const why = missing ? "herdr is not installed or not on PATH (herdr_unreachable)." : code.endsWith("unreachable") ? `${call} did not answer (${code}).`
     : code.endsWith("invalid_response") ? `${call} returned an answer routr cannot read (${code}).`
-    : `${tool} refused ${call} (${code}).`;
-  return { ok: false, code, why };
+    : `${tool} refused ${command} (${code}).`;
+  return { ok: false, code, why, ...(missing ? { missing: true, next: [doNext("Install herdr or put its executable on PATH, then retry this command")] } : {}) };
 }
 export const processError = (r) => new Error(r.why);
 export function herdrResult(args, r) {
   if (r?.ok !== true) {
     const raw = r?.data?.error?.code;
-    if (["herdr_unreachable", "herdr_refused", "herdr_invalid_response"].includes(r?.code)) return { ...processFailure("herdr", args, r.code), data: { error: { ...(knownErrors.has(raw) ? { code: raw } : {}) } } };
+    if (["herdr_unreachable", "herdr_refused", "herdr_invalid_response"].includes(r?.code)) return { ...processFailure("herdr", args, r.code, r.missing === true), data: { error: { ...(knownErrors.has(raw) ? { code: raw } : {}) } } };
     const code = !r || ["timeout", "connect_failed", "server_not_running"].includes(raw) ? "herdr_unreachable" : "herdr_refused";
     return { ...processFailure("herdr", args, code), data: { error: { ...(knownErrors.has(raw) ? { code: raw } : {}) } } };
   }
@@ -42,6 +44,7 @@ export function herdrResult(args, r) {
   } else if (key === "agent explain") {
     const x = v ?? data;
     if (!x || typeof x !== "object") return invalid();
+    if (!Object.hasOwn(x, "state")) return { ok: true, data: {} };
     const rule = x.matched_rule?.id, rules = x.manifest_version;
     data = { state: agentState(x.state), ...(typeof rule === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(rule) ? { matched_rule: { id: rule } } : {}),
       ...(typeof rules === "string" && /^\d{4}\.\d{2}\.\d{2}\.\d+$/.test(rules) ? { manifest_version: rules } : {}) };
@@ -87,7 +90,7 @@ export function herdrResult(args, r) {
 }
 export async function callHerdr(run, args, timeout) {
   try { return herdrResult(args, await run(args, timeout)); }
-  catch { return { ...processFailure("herdr", args, "herdr_unreachable"), data: {} }; }
+  catch (e) { return { ...processFailure("herdr", args, "herdr_unreachable", e?.code === "ENOENT"), data: {} }; }
 }
 export async function callGit(run, dir, args) {
   let r;
@@ -116,4 +119,10 @@ export async function callGit(run, dir, args) {
     : out.trim().split(/\r?\n\r?\n/).every((block) => /^worktree .+\r?\nHEAD [0-9a-f]{40,64}(?:\r?\n|$)/.test(block));
   if (!valid) return invalid();
   return { ok: true, code: 0, out };
+}
+
+// Recovery from a missing executable is the same in every command, even when the failed read was tolerated.
+export function processSteps(out, result) {
+  for (const step of result.next ?? []) if (!out.next.some((s) => s.why === step.why)) out.next.push(step);
+  return result;
 }

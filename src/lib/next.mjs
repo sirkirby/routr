@@ -17,17 +17,17 @@ export const displayCommand = (argv) => argv.map((w) => safeWord(w) ? word(w) : 
 export const templateCommand = (argv) => argv.map((w, i) => /^<[A-Za-z0-9_| -]+>$/.test(w) ? w : safeWord(w) ? word(w)
   : `<${/^--[a-z][\w-]*$/.test(argv[i - 1] ?? "") ? argv[i - 1].slice(2) : `argument-${i + 1}`}>`).join(" ");
 
-export function recordNext(o, { adopted = false } = {}) {
+export function recordNext(o, { adopted = false, undelivered = false } = {}) {
   const unknown = adopted || (o.dryRun && o.pane) || !o.model;
   const argv = ["routr", "record", "--advice", o.advice,
     ...(o["task-file"] ? ["--task-file", o["task-file"]] : []), "--subscription", o.kind,
     "--model", unknown ? "<model>" : o.model,
     "--effort", unknown ? "<effort>" : o.effort ?? "default",
-    "--level", "<level>", "--verdict", "<done|partial|blocked>", "--check", "<pass|fail|none>"];
-  return doNext("Verify this worker's result, then fill this record template; add --note and --report.", templateCommand(argv));
+    "--level", "<level>", "--verdict", undelivered ? "blocked" : "<done|partial|blocked>", "--check", undelivered ? "none" : "<pass|fail|none>"];
+  return doNext(undelivered ? "No task was delivered. Record this launch as blocked with --check none and explain the launch failure in --note." : "Verify this worker's result, then fill this record template; add --note and --report.", templateCommand(argv));
 }
 
-export function launchNext(next, { record, cleanup, adopted, attempted, planned }) {
-  return [...next, ...(record && (planned || attempted) ? [recordNext(record, { adopted })] : []),
+export function launchNext(next, { record, cleanup, adopted, attempted, planned, submitted, failed }) {
+  return [...next, ...(record && (planned || attempted) ? [recordNext(record, { adopted, undelivered: failed && attempted && !submitted && !planned })] : []),
     ...(cleanup ? [runNext("After verification, finish this worker.", cleanup)] : [])];
 }

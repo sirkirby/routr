@@ -43,7 +43,7 @@ export const COMMANDS = {
     flags: [
       { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
       { name: "--name", arg: "<name>", description: "worker agent name ([a-z][a-z0-9_-]{0,31})", required: true },
-      { name: "--model", arg: "<id>", description: "model id", required: "required unless --dry-run" },
+      { name: "--model", arg: "<id>", description: "model id", required: true },
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
       { name: "--effort", arg: "<level>", description: "reasoning effort", required: false },
       { name: "--rules-file", arg: "<path>", description: "your process rules for the worker (what it may do, how to report, git steps): added after the task, and never read by routr, which judges only the task", required: false },
@@ -172,7 +172,7 @@ export const COMMANDS = {
       { name: "--task-file", arg: "<path>", description: "compare this worker’s task with the advice before appending; omit only for inline tasks, or revisions when the original file is gone (say so in --note)", required: false },
       { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")})`, required: true },
       { name: "--model", arg: "<name>", description: "model chosen", required: true },
-      { name: "--effort", arg: "<level>", description: "reasoning effort chosen. On Claude, Codex and Kiro, \"default\" is recorded as your configured default_effort; on Cursor and Antigravity, none or \"default\" is recorded as the effort word at the end of the model id, or just before a last qualifier (grok-4.7-high, grok-4.6-high-fast). Otherwise it is kept as written; chose.effort_from records which", required: true },
+      { name: "--effort", arg: "<level>", description: "reasoning effort chosen. On Claude, Codex and Kiro, \"default\" is recorded as your configured default_effort; on Cursor and Antigravity, \"default\" is recorded as the effort word at the end of the model id, or just before a last qualifier (grok-4.7-high, grok-4.6-high-fast). Otherwise it is kept as written; chose.effort_from records which", required: true },
       { name: "--verdict", arg: "<done|partial|blocked>", description: "worker outcome verdict", required: true },
       { name: "--check", arg: "<pass|fail|none>", description: "verification outcome", required: true },
       { name: "--advice", arg: "<file>", description: "path to advice JSON file (or pipe on stdin)", required: false, default: "stdin" },

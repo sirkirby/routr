@@ -15,8 +15,8 @@ import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, toEn
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { standalone } from "./runtime.mjs";
 import { CHECK_VERSION, checkQuestions, LEVELS, MEANING, questions, VERSION } from "./questions.mjs";
-import { ADVICE_STEPS } from "./wording.mjs";
-import { rankSubscriptions } from "./pick.mjs";
+import { ADVICE_STEPS, count } from "./wording.mjs";
+import { rankSubscriptions, levelExcludedWhy } from "./pick.mjs";
 import { enabledSubscriptions } from "./config.mjs";
 import { readUsage, SOURCES } from "./harnesses.mjs";
 import { failedUsage } from "./usage.mjs";
@@ -77,7 +77,7 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
   }
   out.next = [...(mode === "dispatch" ? capacityNext(out.subscriptions, out.unavailable, out.level, config) : []), ...out.next,
     ...ADVICE_STEPS[mode].map((s) => doNext(s)),
-    ...(out.unavailable.length ? [doNext("Tell the user what was unavailable when stating the launch choice; judge those parts yourself")] : []),
+    ...(mode === "dispatch" && out.unavailable.length ? [doNext("Tell the user what was unavailable when stating the launch choice; judge those parts yourself")] : []),
     ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Choose a suitable model and effort from normal candidates first; use fallback when none suitably takes the work. State the advised and chosen level, model, effort and account with separate reasons for model and effort")] : []),
     ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Launch with this saved advice on the exact task; record from launch's template.", "routr launch --kind <subscription> --name <name> --model <model> --effort <effort> --task-file <task-file> --advice <advice-file>")] : [])];
   return answer(out);
@@ -100,7 +100,7 @@ export async function checkCommand({ brief: briefFile, report: reportFile }, { a
     Object.assign(out, readReport(r.answers), { ok: true, provider: r.provider, decision_model: r.model, ...(r.measured === false ? { unmeasured: true } : {}), ms: Math.round(r.latencyMs) });
   } catch (e) {
     const missing = decisionUnavailable(e, decisionTarget(config));
-    return answer(Object.assign(out, { headline: `${noReading(missing)}; judge the report yourself`, unavailable: [missing], next: [doNext("Judge the report yourself against the brief")] }));
+    return answer(Object.assign(out, { headline: `${noReading(missing)}; judge the report yourself`, provider: missing.provider, unavailable: [missing], next: [doNext("Judge the report yourself against the brief")] }));
   }
   return answer(out);
 }
@@ -167,11 +167,13 @@ export function shareCommand({ ledger = LEDGER_PATH, out }, config = null, { env
 // brief. Named, a harness with a `check` (Cursor) prints its raw reading instead, for a person to verify. Fails open.
 const hasCandidates = (r) => r && [...r.candidates.normal, ...r.candidates.fallback].length > 0;
 // One set of capacity steps wherever the same ranking is printed.
-export function capacityNext(r, unavailable, level, config) {
+export function capacityNext(r, unavailable, level, config, subscription = null) {
   const steps = [];
   if (unavailable.some((u) => u.part === "usage" && u.code === "internal_error")) steps.push(doNext("Read capacity yourself before choosing an account"));
   else if (!Object.keys(config.subscriptions).length) steps.push(doNext("Tell the user routr is not set up (routr setup), and ask which subscription to use meanwhile"));
-  else if (!r.ranked.length) steps.push(doNext("Hold the work, or choose a lower level and refresh with routr usage --level, or ask the user"));
+  else if (!r.ranked.length) steps.push(doNext(level !== "basic" && !subscription && r.excluded.some((e) => e.why === levelExcludedWhy(level))
+    ? "Hold the work, or choose a lower level and refresh with routr usage --level, or ask the user"
+    : "Hold the work, use an eligible subscription for this run, or ask the user; the exclusions explain what fixes eligibility"));
   else if (!hasCandidates(r)) steps.push(doNext(`Hold the work or ask the user: every subscription that takes ${level} work is at its reserve`));
   for (const u of unavailable.filter((u) => u.part === "usage")) {
     const byHand = USAGE_BY_HAND[u.subscription];
@@ -223,11 +225,16 @@ export async function usageCommand(words, config, given = {}, { read = readUsage
       out.unavailable.push({ part: "usage", subscription: name, source: sources[name].source ?? name, ...usageFailure(reading?.code), reading: kept ? "kept" : "assumed", ...(kept ? { reading_source: kept.source, age_sec: kept.ageSec } : {}) });
     }
     if (reading?.excluded && !out.subscriptions.excluded.some((r) => r.subscription === name)) out.subscriptions.excluded.push({ subscription: name, why: reading.why });
-    if (!configured.length) out.subscriptions.note = "no subscriptions are configured: routr setup has not been run";
-    out.next = [...capacityNext(out.subscriptions, out.unavailable, level, config), ...out.next];
+    if (name && !configured.includes(name)) {
+      const excluded = out.subscriptions.excluded.find((e) => e.subscription === name);
+      const why = ["not configured: routr setup configures this subscription", excluded?.why].filter(Boolean).join("; ");
+      if (excluded) excluded.why = why; else out.subscriptions.excluded.push({ subscription: name, why });
+      out.subscriptions.note = `${name} is ${why}`;
+    }
+    out.next = [...capacityNext(out.subscriptions, out.unavailable, level, config, name), ...out.next];
     if (explicit && hasCandidates(out.subscriptions)) out.next.push(doNext("Choose from subscriptions.candidates, normal before fallback, and keep the original dispatch advice for launch and record"));
-    out.headline = fresh ? reading?.ok ? `routr: ${name === "cursor" ? "Cursor" : "Kiro"}, ${name === "cursor" ? `Included ${reading.included_used_pct}% used` : `${reading.used_pct}% used`}, read now` : `routr: no fresh ${name === "cursor" ? "Cursor" : "Kiro"} reading (${reading?.excluded ? "not signed in" : usageFailure(reading?.code).code})`
-      : `routr: ${out.subscriptions.most_room ? `${out.subscriptions.most_room} has the most usable headroom for ${level} work; normal: ${out.subscriptions.candidates.normal.join(", ") || "none"}, fallback: ${out.subscriptions.candidates.fallback.join(", ") || "none"}` : out.subscriptions.note}${out.unavailable.length ? `; ${out.unavailable.length} readings unavailable` : ""}`;
+    out.headline = fresh ? reading?.ok ? `routr: ${name === "cursor" ? "Cursor" : "Kiro"}, ${name === "cursor" ? `Included ${reading.included_used_pct}% used` : `${reading.used_pct}% used`}, read now${!out.subscriptions.ranked.length ? `; ${out.subscriptions.note}` : ""}` : `routr: no fresh ${name === "cursor" ? "Cursor" : "Kiro"} reading (${reading?.excluded ? "not signed in" : usageFailure(reading?.code).code})`
+      : `routr: ${out.subscriptions.most_room ? `${out.subscriptions.most_room} has the most usable headroom for ${level} work; normal: ${out.subscriptions.candidates.normal.join(", ") || "none"}, fallback: ${out.subscriptions.candidates.fallback.join(", ") || "none"}` : out.subscriptions.note}${out.unavailable.length ? `; ${count(out.unavailable.length, "reading")} unavailable` : ""}`;
   } catch {
     out.ok = false;
     const failure = { part: "usage", subscription: null, source: "routr", ...usageFailure("internal_error") };

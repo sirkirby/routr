@@ -54,3 +54,5 @@ export const ADVICE_STEPS = {
     "Quality first: settle the level from the facts, uncertainty, user preferences and repository evidence. If it changes, refresh eligible accounts with routr usage --level <chosen>, keeping this original advice.",
   ],
 };
+
+export const count = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;

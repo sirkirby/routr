@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { adviseCommand, checkCommand, cleanup, contract, launch, recordCommand, usageCommand } from "./contract.mjs";
-import { ans, cfg, cliEnv, herdrOK, live, scratch, SCRIPT, shellInfo } from "./helpers.mjs";
+import { ans, cfg, cliEnv, fakeExecutable, herdrOK, live, scratch, SCRIPT, shellInfo } from "./helpers.mjs";
 import { briefSha, read, shareRows } from "../src/lib/ledger.mjs";
 import { telemetryRows } from "../src/lib/telemetry.mjs";
 import { callGit, callHerdr } from "../src/lib/process-boundary.mjs";
@@ -90,7 +90,7 @@ test("cleanup counts processes and classifies herdr and git across read, remove 
       },
     });
     expect(JSON.stringify(r)).not.toContain(MARK);
-    if (op === "process-name") { expect(r.headline).toContain("1 commands besides its shell"); expect(r.next[0].argv).toEqual(["herdr", "pane", "read", "w2:p1"]); }
+    if (op === "process-name") { expect(r.headline).toContain("1 command besides its shell"); expect(r.next[0].argv).toEqual(["herdr", "pane", "read", "w2:p1"]); }
     if (["rev-parse", "status", "ls-files", "for-each-ref"].includes(op)) expect(r.unavailable).toContainEqual(expect.objectContaining({ part: "worktree", path, code: "unreadable" }));
   }
   const recorded = recordCommand(recordOptions(f)); expect(recorded.ok).toBe(true);
@@ -207,7 +207,7 @@ test("source CLI outputs match the field maps in a throwaway home with fake herd
   writeFileSync(join(f.dir, ".cursor/cli-config.json"), "{}");
   const config = join(f.dir, ".config/routr/config.json");
   writeFileSync(config, JSON.stringify({ ...cfg({ subscriptions: Object.fromEntries(["claude", "codex", "agy", "cursor", "kiro"].map((n) => [n, { hardest_work: "strong", reserve: 0, assumed_headroom: 0.5 }])) }), auto_update: false }));
-  const executable = (name, code) => { const file = join(bin, name); writeFileSync(file, `#!${process.execPath}\n${code}`); chmodSync(file, 0o755); };
+  const executable = (name, code) => fakeExecutable(bin, name, code);
   executable("herdr", `import { existsSync, writeFileSync } from 'node:fs';
 const a = process.argv.slice(2), mode = process.env.FAKE_MODE, mark = ${JSON.stringify(MARK)};
 const yes = result => console.log(JSON.stringify({ result }));
