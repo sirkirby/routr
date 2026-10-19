@@ -36,6 +36,52 @@ test("process failures and malformed answers have fixed codes, never outside pro
   }
 });
 
+test("known herdr error codes stay out of whole launch, cleanup and cursor usage outputs", () => {
+  // Unknown markers are discarded immediately; these real codes survive internally for lifecycle decisions.
+  const codes = ["agent_not_found", "agent_not_running", "agent_not_ready", "agent_prompt_stalled", "server_not_running", "timeout"];
+  const home = scratch("known-herdr-errors"), bin = join(home, "bin"), calls = join(home, "calls.jsonl");
+  for (const dir of [bin, join(home, ".config/routr")]) mkdirSync(dir, { recursive: true });
+  writeFileSync(join(home, ".config/routr/config.json"), JSON.stringify({ ...cfg(), auto_update: false }));
+  fakeExecutable(bin, "herdr", `import { appendFileSync } from 'node:fs';
+appendFileSync(process.env.FAKE_CALLS, JSON.stringify(process.argv.slice(2)) + '\\n');
+console.error(JSON.stringify({ error: { code: process.env.FAKE_CODE, message: ${JSON.stringify(MARK)} } })); process.exit(1);`);
+  fakeExecutable(bin, "claude", `console.log('{"loggedIn":true}');`);
+  fakeExecutable(bin, "cursor-agent", `console.log('Logged in as local@example.invalid');`);
+  const env = cliEnv(home, { PATH: bin + delimiter + dirname(process.execPath), HERDR_ENV: "1", FAKE_CALLS: calls });
+  const outputs = [];
+  for (const code of codes) {
+    for (const [command, args, op, exitCode] of [
+      ["launch", [...base, "--cwd", home, "--direction", "right"], ["pane", "split"], 1],
+      ["cleanup", ["--pane", "w1:p9"], ["pane", "list"], 1],
+      ["usage", ["cursor"], ["session", "list"], 0],
+    ]) {
+      writeFileSync(calls, "");
+      const result = Bun.spawnSync([process.execPath, SCRIPT, command, ...args], { env: { ...env, FAKE_CODE: code }, stdin: "ignore" });
+      expect(result.exitCode).toBe(exitCode); expect(result.stderr.toString()).toBe("");
+      const r = contract(JSON.parse(result.stdout.toString()));
+      expect(r.ok).toBe(false);
+      expect(readFileSync(calls, "utf8").trim().split("\n").map((line) => JSON.parse(line).slice(0, 2))).toContainEqual(op);
+      outputs.push({ command, code, output: result.stdout.toString() });
+    }
+  }
+  // Check every field, including error, headline, next, why and warnings; do not exempt diagnostic subtrees.
+  const leaks = outputs.filter(({ output }) => [MARK, ...codes].some((text) => output.includes(text)));
+  expect(leaks).toEqual([]);
+});
+
+test("pane process-info keeps only shell vocabulary and drops private process names at callHerdr", async () => {
+  const cwd = scratch("process-info"), privateName = `${MARK}_process`, privateArgv = `${MARK}_argv0`;
+  const r = await callHerdr(async () => shellInfo([
+    { pid: 1, name: "zsh", cwd },
+    { pid: 2, name: privateName, argv0: privateArgv, cwd },
+    { pid: 3, name: "claude", argv0: privateArgv },
+  ]), ["pane", "process-info", "w1:p9"], 10);
+  expect(JSON.stringify(r)).not.toContain(MARK);
+  expect(r).toEqual(herdrOK({ process_info: { shell_pid: 1, foreground_processes: [
+    { pid: 1, name: "zsh", cwd }, { pid: 2, name: "shell", cwd }, { pid: 3, name: "shell" },
+  ] } }));
+});
+
 test("launch never prints herdr failures at any stage, and only screen may contain pre-submission text", async () => {
   const f = adviceFixture();
   for (const op of ["current", "layout", "split", "read", "process-info", "start", "wait", "get", "explain", "prompt", "rename"]) {
