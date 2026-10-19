@@ -16,7 +16,7 @@ function fixture() {
   const dir = scratch("handoff"), task = join(dir, "task.md"), advice = join(dir, "advice.json"), ledger = join(dir, "ledger.jsonl");
   const text = `Fix ${MARKER} and verify it.\n`;
   writeFileSync(task, text);
-  const adv = { id: "worker-advice", brief_sha: briefSha(text), ok: true, level: "standard", facts: {} };
+  const adv = { mode: "dispatch", id: "worker-advice", brief_sha: briefSha(text), ok: true, level: "standard", facts: {} };
   writeFileSync(advice, JSON.stringify(adv));
   return { dir, task, advice, ledger, text, adv };
 }
@@ -28,8 +28,11 @@ test("task launch requires readable, hashed, matching advice before any outside 
     ["missing", null, "No advice file was supplied for this task."],
     ["unreadable", null, "could not read it"],
     ["malformed", "not JSON", "not JSON"],
-    ["unhashed", JSON.stringify({ id: "old" }), "missing brief_sha"],
-    ["mismatched", JSON.stringify({ id: "advice-test", brief_sha: briefSha("someone else's task") }), "different text"],
+    ["unhashed", JSON.stringify({ mode: "dispatch", id: "old" }), "missing brief_sha"],
+    ["mismatched", JSON.stringify({ mode: "dispatch", id: "advice-test", brief_sha: briefSha("someone else's task") }), "different text"],
+    // subagent advice ranks no accounts, so a launch on it would skip the reserves and level limits dispatch applies
+    ["subagent", JSON.stringify({ mode: "subagent", id: "advice-test", brief_sha: briefSha(`Fix ${MARKER} and verify it.\n`) }), "routr subagent advice"],
+    ["no mode", JSON.stringify({ id: "advice-test", brief_sha: briefSha(`Fix ${MARKER} and verify it.\n`) }), "not dispatch advice"],
   ]) {
     const file = join(f.dir, label + ".json");
     if (body) writeFileSync(file, body);

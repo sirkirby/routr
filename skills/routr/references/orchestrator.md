@@ -32,8 +32,8 @@ Save its stdout to `<scratch>/advice-<n>.json`.
 
 Ask about the task itself, word for word: the file you will pass to `launch --task-file`. A summary gets advice about
 the summary (in the maintainer's ledger, at least 12 of 42 dispatch calls were given one, and routr's facts then
-described text the worker never saw). `launch --advice` requires matching advice on that exact task, including
-reviews. A standing choice of your own (reviewers on a fixed model and effort, for example) is no reason to skip dispatch: you can still choose it after
+described text the worker never saw). `launch --advice` requires matching `dispatch` advice on that exact task, including
+reviews (`subagent` advice ranks no accounts and is refused). A standing choice of your own (reviewers on a fixed model and effort, for example) is no reason to skip dispatch: you can still choose it after
 reading the advice. Dispatch answers even when its decision model is unavailable; matching fallback advice is valid.
 Read `unavailable` before deciding: it names the missing part, the attempted decision model or usage source, and
 its fixed failure code and reason. Tell the user in the launch line when advice was a fallback and what was

@@ -5,6 +5,8 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- `routr launch` takes advice from `routr dispatch` only: `routr subagent` advice ranks no accounts, so a launch on it
+  would skip your reserves and level limits. (#88)
 - Name backup decision models: routr asks them in order before using the fallback level, and a backup’s answer is
   ordinary advice that says which models could not answer and why. (#87)
 - Every command a lead reads now shares ok, headline, unavailable, warnings and next; output paths are consistent,

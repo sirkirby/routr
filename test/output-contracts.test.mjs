@@ -13,7 +13,7 @@ const failure = () => ({ ok: false, data: { error: { code: MARK, message: MARK }
 const base = ["--kind", "claude", "--name", "worker", "--model", "model"];
 const adviceFixture = () => {
   const dir = scratch("contracts"), advice = join(dir, "advice.json"), task = join(dir, "task.txt"), ledger = join(dir, "ledger.jsonl");
-  const body = { id: "contract-advice", brief_sha: briefSha(MARK), level: "standard", facts: {} };
+  const body = { mode: "dispatch", id: "contract-advice", brief_sha: briefSha(MARK), level: "standard", facts: {} };
   writeFileSync(task, MARK); writeFileSync(advice, JSON.stringify(body));
   return { dir, advice, task, ledger, body, args: [...base, "--cwd", dir, "--advice", advice, "--task-file", task] };
 };
@@ -183,7 +183,7 @@ test("usable advice table applies to record with and without a task and to real 
     [f.body, true], [{ ...f.body, unavailable: {} }, true], [{ ...f.body, fallback: true }, true], [{ ...f.body, fallback: true, unavailable: [{ part: "decision model" }] }, true],
     [{ ...f.body, ok: false }, false, "refused dispatch"], [{ ...f.body, error: null }, false, "refused dispatch"],
     [{ brief_sha: f.body.brief_sha }, false, "missing id"], [{ ...f.body, id: "" }, false, "missing id"], [{ ...f.body, id: "  " }, false, "missing id"],
-    [{ id: "test" }, false, "missing brief_sha"], [{ ...f.body, brief_sha: " " }, false, "missing brief_sha"],
+    [{ mode: "dispatch", id: "test" }, false, "missing brief_sha"], [{ ...f.body, brief_sha: " " }, false, "missing brief_sha"],
     [[], false, "missing id"], [null, false, "missing id"], ["not JSON", false, "not JSON"],
   ]) {
     writeFileSync(f.advice, typeof body === "string" ? body : JSON.stringify(body));

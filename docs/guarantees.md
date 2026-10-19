@@ -27,8 +27,8 @@ reading and its headline names the model that answered; only no answer starts wi
 Local file writes create parent folders from the file's absolute location, including when only a relative filename
 was given. An existing directory is accepted; a file in its place or a permission error remains a failure.
 
-- `launch` drives panes in your herdr session. A task requires readable JSON advice on that exact task (including
-  `brief_sha`); missing or nonmatching advice is refused before any harness, pane or worktree call. Dry runs return
+- `launch` drives panes in your herdr session. A task requires readable JSON advice from `routr dispatch` on that exact task
+  (including `brief_sha`); missing, nonmatching or `routr subagent` advice is refused before any harness, pane or worktree call. Dry runs return
   `ok: false` with `error` on the same refusal and still plan. Matching fallback advice is accepted, including advice
   saved as UTF-8 or UTF-16LE, with or without a BOM. Launch copies all its decision-model `unavailable` entries,
   including those before a backup reading. Older fallback advice that lacks the entry says the saved advice does not name the attempted model; launch never fills it from current settings. Recovery actions

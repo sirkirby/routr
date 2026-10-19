@@ -47,7 +47,7 @@ export const COMMANDS = {
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
       { name: "--effort", arg: "<level>", description: "reasoning effort", required: false },
       { name: "--rules-file", arg: "<path>", description: "your process rules for the worker (what it may do, how to report, git steps): added after the task, and never read by routr, which judges only the task", required: false },
-      { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch refuses unreadable, malformed or nonmatching advice; dry runs refuse with ok:false and still plan", required: "required with a task" },
+      { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch refuses unreadable, malformed, nonmatching or `routr subagent` advice; dry runs refuse with ok:false and still plan", required: "required with a task" },
       { name: "--pane", arg: "<id>", description: "existing herdr pane to run in: at a shell prompt, or with an idle agent of --kind already running in --cwd (it is adopted, keeps its model and effort, and is sent the task; one not idle yet is never waited on: run the launch again once it is)", required: false },
       { name: "--worktree", arg: "<branch>", description: "give the worker its own git worktree, opened as a workspace nested under the repo (the rule for workers)", required: false },
       { name: "--base", arg: "<ref>", description: "the commit the worktree's new branch starts from: a branch, tag, or commit id (stacked work, a reviewer of one commit; with --worktree)", required: false, default: "the checkout's HEAD" },

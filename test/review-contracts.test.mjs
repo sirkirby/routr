@@ -9,7 +9,7 @@ const base = ["--kind", "claude", "--name", "worker", "--model", "model"];
 const text = (r) => r.next.map((n) => n.why).join(" ");
 const fixture = () => {
   const dir = scratch("review-contracts"), advice = join(dir, "advice.json"), task = join(dir, "task.txt");
-  writeFileSync(task, "Fix the test and verify it."); writeFileSync(advice, JSON.stringify({ id: "review", brief_sha: briefSha(readFileSync(task, "utf8")) }));
+  writeFileSync(task, "Fix the test and verify it."); writeFileSync(advice, JSON.stringify({ mode: "dispatch", id: "review", brief_sha: briefSha(readFileSync(task, "utf8")) }));
   return { dir, advice, task };
 };
 const deps = (run) => ({ run, env: { HERDR_ENV: "1" }, settings: () => cfg(), ready: async () => null });

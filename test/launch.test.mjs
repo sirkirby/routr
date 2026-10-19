@@ -17,7 +17,7 @@ function matchingAdvice(args) {
   try { task = fi >= 0 ? readFileSync(args[fi + 1], "utf8") : ti >= 0 ? args[ti + 1] : null; } catch { return args; }
   if (task == null) return args;
   const advice = join(scratch("matching-advice"), "advice.json");
-  writeFileSync(advice, JSON.stringify({ id: "test-advice", brief_sha: briefSha(task), fallback: true }));
+  writeFileSync(advice, JSON.stringify({ mode: "dispatch", id: "test-advice", brief_sha: briefSha(task), fallback: true }));
   return [...args, "--advice", advice];
 }
 const launch = (args, deps) => rawLaunch(matchingAdvice(args), deps);
@@ -72,7 +72,7 @@ test("--rules-file goes to the worker after the task, and only the task is compa
   expect(composePrompt("Do X.", "/g.md", null)).toBe(composePrompt("Do X.", "/g.md"));
   const dir = scratch("rules-file"), task = join(dir, "task.md"), rules = join(dir, "rules.md"), advice = join(dir, "advice.json");
   writeFileSync(task, "Fix the flaky retry test in src/retry.mjs.\n"); writeFileSync(rules, "Do not edit anything outside src/. Commit on your branch; never push.\n");
-  writeFileSync(advice, JSON.stringify({ id: "advice-test", brief_sha: briefSha("Fix the flaky retry test in src/retry.mjs.") }));
+  writeFileSync(advice, JSON.stringify({ mode: "dispatch", id: "advice-test", brief_sha: briefSha("Fix the flaky retry test in src/retry.mjs.") }));
   const r = await launch([...launchArgs, "--task-file", task, "--rules-file", rules, "--advice", advice, "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); } });
   expect(r.advice).toEqual({ file: advice, matches: true }); // the rules are not part of what routr judged
   expect(r.prompt_chars).toBe(composePrompt(readFileSync(task, "utf8"), WORKER_GUIDE, readFileSync(rules, "utf8")).length);
@@ -123,11 +123,11 @@ test("launch --advice refuses when the advice was given on a different text than
   const dir = scratch("launch-advice"), task = join(dir, "task.md"), advice = join(dir, "advice.json");
   writeFileSync(task, "Fix the flaky retry test in src/retry.mjs.\n");
   const go = (a) => launch([...launchArgs, "--task-file", task, "--advice", a, "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); } });
-  writeFileSync(advice, JSON.stringify({ id: "advice-test", brief_sha: briefSha("Fix the flaky retry test in src/retry.mjs.") })); // dispatch trims, as launch does
+  writeFileSync(advice, JSON.stringify({ mode: "dispatch", id: "advice-test", brief_sha: briefSha("Fix the flaky retry test in src/retry.mjs.") })); // dispatch trims, as launch does
   const same = await go(advice);
   expect(same.advice).toEqual({ file: advice, matches: true });
   expect(same.warnings.join(" ")).not.toContain("different text");
-  writeFileSync(advice, JSON.stringify({ id: "advice-test", brief_sha: briefSha("Retry test: see the task file for paths.") })); // a summary, as leads wrote 8 times
+  writeFileSync(advice, JSON.stringify({ mode: "dispatch", id: "advice-test", brief_sha: briefSha("Retry test: see the task file for paths.") })); // a summary, as leads wrote 8 times
   const other = await go(advice);
   expect(other.advice).toEqual({ file: advice, matches: false });
   expect(other.error).toContain("was given on a different text than this task");
