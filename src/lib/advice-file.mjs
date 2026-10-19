@@ -25,6 +25,14 @@ export function usableAdvice(advice) {
   for (const field of ["id", "brief_sha"]) if (typeof advice?.[field] !== "string" || !advice[field].trim()) throw new Error(`--advice: missing ${field}; dispatch the exact task again`);
   return advice;
 }
+// A pane worker's advice: only dispatch ranks the accounts and applies the user's reserves and level limits, and
+// subagent advice skips both, so launch takes dispatch advice only.
+export function dispatchAdvice(advice) {
+  if (advice?.mode !== "dispatch") throw new Error(advice?.mode === "subagent"
+    ? "--advice: this is routr subagent advice, which sizes a subagent and ranks no accounts; dispatch the exact task"
+    : "--advice: not dispatch advice; dispatch the exact task again");
+  return advice;
+}
 export function matchAdvice(advice, task) {
   usableAdvice(advice);
   if (typeof advice?.brief_sha !== "string" || !advice.brief_sha) throw new Error("--advice: missing brief_sha; dispatch the exact task again");

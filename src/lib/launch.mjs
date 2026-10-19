@@ -5,7 +5,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.mjs";
 import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesses.mjs";
-import { matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
+import { dispatchAdvice, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
 import { displayCommand, doNext, launchNext, runNext, templateCommand } from "./next.mjs";
 import { OFF } from "./wording.mjs";
 import { BRANCH, clean, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
@@ -138,7 +138,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       let problem = null;
       try {
         if (!o.advice) throw new Error("No advice file was supplied for this task. Run routr dispatch on the exact task and save what it prints, then launch with --advice <advice file>. Dispatch answers even when its decision model is unavailable.");
-        const advice = readAdvice(resolve(o.advice));
+        const advice = dispatchAdvice(readAdvice(resolve(o.advice)));
         out.advice = { file: o.advice, matches: false };
         matchAdvice(advice, task);
         out.advice.matches = true;

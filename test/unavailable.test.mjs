@@ -85,7 +85,7 @@ test("launch rebuilds every saved recovery action and HTTP status without trusti
     ["ollama", "model_missing"], ["ollama", "model_unsupported"], ["ollama", "unreachable"],
   ]) {
     const target = decisionTarget({ decision: { provider } }, {}), error = new DecisionError(target, code, status);
-    writeFileSync(file, JSON.stringify({ id: "older", fallback: true, brief_sha: briefSha(marker), unavailable: [{ part: "decision model", ...target, code, status, why: marker }] }));
+    writeFileSync(file, JSON.stringify({ mode: "dispatch", id: "older", fallback: true, brief_sha: briefSha(marker), unavailable: [{ part: "decision model", ...target, code, status, why: marker }] }));
     const r = await launch(args, { settings: () => cfg({ decision: { provider: "cloudflare", model: "clef-flash" } }) });
     expect(r.unavailable[0].why).toBe(error.message); expect(r.warnings).toEqual([]);
     if (status) expect(r.unavailable[0].status).toBe(status);
@@ -264,7 +264,7 @@ test("matching fallback launch preserves dispatch's attempted model through sett
   expect(dry).toMatchObject({ ok: true, state: "planned", unavailable: advice.unavailable }); clean(dry);
   const entry = toEntry(advice, {}); expect(entry.decision_model).toBeNull(); expect(entry).not.toHaveProperty("unavailable");
   const sent = telemetryRows([entry], "test-install"); expect(sent[0]).not.toHaveProperty("unavailable"); clean(sent);
-  writeFileSync(adviceFile, JSON.stringify({ id: "older", fallback: true, brief_sha: briefSha(marker) }));
+  writeFileSync(adviceFile, JSON.stringify({ mode: "dispatch", id: "older", fallback: true, brief_sha: briefSha(marker) }));
   const old = await launch([...args, "--dry-run"], deps);
   expect(old.ok).toBe(true); expect(old.unavailable).toEqual([{ part: "decision model", provider: null, model: null, code: "attempt_unknown", why: "The saved fallback advice does not name the attempted decision model and its failure." }]);
   expect(old.warnings).toEqual([]); expect(JSON.stringify(old)).not.toContain("clef-flash"); clean(old);

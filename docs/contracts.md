@@ -362,7 +362,7 @@ Starts a worker in a pane (a new worktree, a split, or a given pane) and sends i
 Inputs:
 
 - Required: `--kind`, `--name`; `--model` (real and dry run); `--advice <file>` whenever a task is given (matching
-  advice on that exact task). Refused with `error` before any herdr call when missing or unusable; real launches
+  `dispatch` advice on that exact task; `subagent` advice ranks no accounts and is refused). Refused with `error` before any herdr call when missing or unusable; real launches
   use `state: "failed"`, and dry runs follow the `ok` rule below while still planning.
 - Used when given: `--cwd` (default `.`), `--worktree <branch>`, `--base <ref>` and `--copy <path>` (with `--worktree`),
   `--pane <id>`, `--direction`, `--task` or `--task-file`, `--rules-file` (with a task), `--effort`, `--timeout`,
