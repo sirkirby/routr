@@ -5,7 +5,8 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
-- Choose an ordered list of decision models; the first answer supplies ordinary advice, with each failed attempt reported. (#PR)
+- Name backup decision models: routr asks them in order before using the fallback level, and a backup’s answer is
+  ordinary advice that says which models could not answer and why. (#87)
 - Every command a lead reads now shares ok, headline, unavailable, warnings and next; output paths are consistent,
   required inputs are checked, and launch’s --trust is removed. Startup steps follow the guide's trust rule; record
   steps match the outcome and include a template with absolute file paths to revise that run. Relative output files
