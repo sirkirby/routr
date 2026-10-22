@@ -373,7 +373,7 @@ test("release binaries do not load a .env or bunfig.toml from the folder they ru
   const dir = scratch("no-dotenv"), entry = join(dir, "entry.mjs"), ext = process.platform === "win32" ? ".exe" : "";
   writeFileSync(entry, `console.log(process.env.ROUTR_DOTENV_PROBE ?? "unset");\n`);
   writeFileSync(join(dir, ".env"), "ROUTR_DOTENV_PROBE=loaded\n");
-  const { ROUTR_DOTENV_PROBE: _, ...env } = process.env;
+  const env = { ...process.env }; delete env.ROUTR_DOTENV_PROBE;
   const seen = (flags, exe) => {
     expect(Bun.spawnSync([process.execPath, "build", "--compile", ...flags, entry, "--outfile", exe]).exitCode).toBe(0);
     return Bun.spawnSync([exe], { cwd: dir, env }).stdout.toString().trim();
