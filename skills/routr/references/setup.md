@@ -69,7 +69,7 @@ Do not ask the user to paste a key to you, and never print or log it. Then run `
 
 If the user would rather manage it themselves, exporting `TYPESAFE_API_KEY` (or `CLOUDFLARE_API_TOKEN` and
 `CLOUDFLARE_ACCOUNT_ID`) in their shell profile works too, and wins over the saved file. Do not put a key in a project
-`.env`: workers run in worktrees and other folders where that file does not exist, and it risks being committed.
+`.env`: routr does not read one, and it risks being committed.
 Without a decision model routr still answers, but only with the fallback level.
 
 ## 3. Config

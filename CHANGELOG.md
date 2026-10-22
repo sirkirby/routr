@@ -5,6 +5,11 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- The routr binary no longer loads a `.env` or `bunfig.toml` from the folder you run it in. In a project whose `.env`
+  set `ANTHROPIC_API_KEY`, routr's own Claude Code reads (sign-in status, usage) used that key instead of your
+  subscription, so Claude Code could read as billed per token; a decision-model key or `ROUTR_*` variable in that
+  `.env` was used too. Workers that `routr launch` starts were not affected. (#91)
+
 ## v0.7.0 — 2026-10-19
 
 [Full notes](docs/releases/v0.7.0.md)

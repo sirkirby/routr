@@ -357,3 +357,30 @@ test.skipIf(process.platform === "win32")("a child that ignores SIGTERM does not
   for (let i = 0; i < 10 && alive(); i++) await Bun.sleep(100);
   expect(alive()).toBe(false);
 });
+
+// A compiled Bun binary loads .env and bunfig.toml from the folder it runs in, by default, and passes what it loaded to
+// every child: run in a project whose .env holds ANTHROPIC_API_KEY, routr's harness reads used that key, not the
+// person's sign-in (measured 2026-10-22, Bun 1.4.3: Claude's init said apiKeySource "ANTHROPIC_API_KEY"). The release
+// builds turn both off; this checks that each build line says so and that Bun honours the flags on this platform.
+const NO_AUTOLOAD = ["--no-compile-autoload-dotenv", "--no-compile-autoload-bunfig"];
+test("release binaries do not load a .env or bunfig.toml from the folder they run in", () => {
+  const workflow = readFileSync(join(import.meta.dir, "../.github/workflows/release.yml"), "utf8");
+  const builds = workflow.split(/\n\s*\n|\n\s*- /).filter((step) => step.includes("bun build --compile"));
+  expect(builds.length).toBe(2);
+  for (const step of builds) for (const flag of NO_AUTOLOAD) expect(step).toContain(flag);
+
+  // Built both ways, so the probe is shown to see each file when the flags are off: a .env value, and a bunfig.toml
+  // preload that sets a variable of its own.
+  const dir = scratch("no-dotenv"), entry = join(dir, "entry.mjs"), ext = process.platform === "win32" ? ".exe" : "";
+  writeFileSync(entry, `console.log([process.env.ROUTR_DOTENV_PROBE, process.env.ROUTR_BUNFIG_PROBE].map((v) => v ?? "unset").join(" "));\n`);
+  writeFileSync(join(dir, ".env"), "ROUTR_DOTENV_PROBE=loaded\n");
+  writeFileSync(join(dir, "bunfig.toml"), 'preload = ["./preload.mjs"]\n');
+  writeFileSync(join(dir, "preload.mjs"), 'process.env.ROUTR_BUNFIG_PROBE = "preloaded";\n');
+  const env = { ...process.env }; delete env.ROUTR_DOTENV_PROBE; delete env.ROUTR_BUNFIG_PROBE;
+  const seen = (flags, exe) => {
+    expect(Bun.spawnSync([process.execPath, "build", "--compile", ...flags, entry, "--outfile", exe], { cwd: scratch("no-dotenv-build") }).exitCode).toBe(0);
+    return Bun.spawnSync([exe], { cwd: dir, env }).stdout.toString().trim();
+  };
+  expect(seen([], join(dir, `default${ext}`))).toBe("loaded preloaded");
+  expect(seen(NO_AUTOLOAD, join(dir, `release${ext}`))).toBe("unset unset");
+}, 60000);

@@ -136,11 +136,15 @@ after a backup, and only when it runs `routr statusline`.
 ## Processes and platforms
 
 routr runs on macOS, Linux and Windows. It starts every process directly, never through `sh`, and with no Unix-only
-paths. Every process it starts goes through one place, which hides its console on Windows, gives harness reads an
-environment without herdr's pane variables, and on Windows resolves a command as the shell would, starting an npm
-`.cmd` shim's script directly. In a pane, routr types commands for that pane's own shell (POSIX `sh`, PowerShell or
-cmd), as you would. Follow-up commands have exact `argv` and a common-shell `command` only for the documented
-safe alphabet and an unquoted, non-assignment executable; otherwise `command` is null. Instructions and templates are marked `kind: "do"`, never runnable.
+paths. The binary does not load a `.env` or `bunfig.toml` from the folder you run it in, so routr does not use a
+project's `.env` itself or pass it to the harness commands it runs (sign-in status and usage reads). Variables already
+in its environment, exported in your shell, still reach them. A worker that `routr launch` starts runs in its pane's
+own shell, which loads what that shell is set up to load. Every process it starts goes through one place, which hides
+its console on Windows, gives harness reads an environment without herdr's pane variables, and on Windows resolves a
+command as the shell would, starting an npm `.cmd` shim's script directly. In a pane, routr types commands for that
+pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. Follow-up commands have exact `argv` and a
+common-shell `command` only for the documented safe alphabet and an unquoted, non-assignment executable; otherwise
+`command` is null. Instructions and templates are marked `kind: "do"`, never runnable.
 Unsafe template values become placeholders for the lead to fill, never expanding shell text. Execution history stays
 display only, with prompt lengths instead of prompt text.
 
