@@ -9,6 +9,7 @@ import { billingFromSignIn, signInHint } from "./signin.mjs";
 import { failureMessage, ping, secretsFor } from "./systemone.mjs";
 import { DecisionError, decisionTargets, DEFAULT_PROVIDER, ollamaHost, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
+import { staleReaders } from "./usage-failure.mjs";
 import { home, resolveCommand, standalone } from "./runtime.mjs";
 import { autoUpdateStatus } from "./update.mjs";
 import { dailyTelemetrySend, hoursAgo, lastTelemetrySend, pendingCount, telemetryState, telemetryStatus } from "./telemetry.mjs";
@@ -74,6 +75,7 @@ export function nextSteps(r) {
   if (!r.config.exists) steps.push("Create your config (your defaults for each subscription found): routr setup");
   else if (r.config.problems?.length) steps.push(`Fix your settings: ${r.config.problems.join("; ")}`);
   else if (Object.entries(r.harnesses).some(([n, h]) => h.signed_in && !r.config.subscriptions.includes(n))) steps.push(`Add the harnesses found since the config was written (${Object.entries(r.harnesses).filter(([n, h]) => h.signed_in && !r.config.subscriptions.includes(n)).map(([n]) => n).join(", ")}): routr setup`);
+  for (const n of r.config.subscriptions ?? []) if (!r.config.off?.includes(n) && r.harnesses[n]?.usage_stale) steps.push(r.harnesses[n].usage_stale);
   // A subscription the user set up whose harness is signed out gets no work until they sign in again.
   for (const n of r.config.subscriptions ?? []) if (!r.config.off?.includes(n) && r.harnesses[n]?.installed && !r.harnesses[n].signed_in) steps.push(`${HARNESSES[n].label} is set up in routr but gets no work: ${r.harnesses[n].sign_in}`);
   if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push(`Install and log in to at least one harness: ${KINDS.slice(0, -1).map((n) => HARNESSES[n].installAs).join(", ")}, or ${HARNESSES[KINDS.at(-1)].installAs}`);
@@ -151,7 +153,9 @@ export async function inspect({ configPath, quiet } = {}) {
     r.harnesses[n] = { command, installed: true, off_path: null, signed_in: signed, ...(signed ? {} : { sign_in: signInHint(HARNESSES[n], states[n]) }),
       usage: said(u), usage_source: u.source, usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}),
       // The billing its own sign-in status stated, and where it was read: shown as the usage line (said, above).
-      ...(u.billing ? { usage_billing: u.billing } : {}) };
+      ...(u.billing ? { usage_billing: u.billing } : {}),
+      // A reader that has failed for over a day, said as a step (usage-failure.mjs).
+      ...(signed && staleReaders([u], { subscriptions: config.subscriptions }).length ? { usage_stale: `${staleReaders([u], { subscriptions: config.subscriptions })[0].warning}. Try it again: routr usage ${n}` } : {}) };
   }
   const lists = Object.fromEntries(found.map((n, i) => [n, models[i]]));
   for (const n of found) r.harnesses[n].models = lists[n];

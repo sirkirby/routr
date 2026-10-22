@@ -51,6 +51,10 @@ test("doctor's next steps name the command for each thing missing, most importan
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
   const base = { decision: [{ works: true }], config: { exists: true, subscriptions: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true } }, skill: [{ where: "~/.agents/skills/routr", version: ROUTR_VERSION.split("-")[0] }, { name: "routr-orchestrate", where: "~/.agents/skills/routr-orchestrate", version: ROUTR_VERSION.split("-")[0] }], herdr: { path: "/x", skill: true } };
   expect(nextSteps(base)).toEqual([]);
+  // A reader that has failed for over a day is a step; one turned off is not.
+  const stale = "claude's usage has not been read for 30 h";
+  expect(nextSteps({ ...base, harnesses: { claude: { installed: true, signed_in: true, usage_stale: stale } } })).toEqual([stale]);
+  expect(nextSteps({ ...base, config: { ...base.config, off: ["claude"] }, harnesses: { claude: { installed: true, signed_in: true, usage_stale: stale } } })).toEqual([]);
   // Claude's usage is read through its own /usage: no statusline is ever a step.
   const fresh = nextSteps({ ...base, decision: [{ works: false, found: false }], config: { exists: false, subscriptions: [] } });
   expect(fresh[0]).toContain("routr key set");

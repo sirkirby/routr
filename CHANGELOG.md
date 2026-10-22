@@ -5,6 +5,9 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- A usage reader that stopped working is said: when a subscription's last reading is over a day old and its last
+  try failed, `routr dispatch`, `routr usage` and `routr doctor` say so, instead of quietly ranking on the assumed
+  headroom. (#98)
 - With herdr 0.9.5, `routr usage cursor` reads Cursor's usage again (it reported `read_failed`, so routing assumed half
   its headroom), and `routr launch --kind cursor` in a pane starts Cursor again: herdr now answers nothing when it types
   into a pane, and routr took that for no answer. (#97)

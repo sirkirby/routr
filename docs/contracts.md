@@ -234,6 +234,14 @@ configured); each ranked row's `note` explains its number (what the harness show
 Nothing is wrong with the call when they appear, and the lead reads them to choose. Plain `usage`'s top-level `note`
 moves to `subscriptions.note`, the same place as in `dispatch`.
 
+**A reader that stopped working.** When a subscription's last reading is over a day old and its last try failed,
+`dispatch` and `usage` add a `warnings` line saying so (its age and the failure's code, and that routing assumes its
+headroom: a harness or herdr update may have changed what routr reads) and a `next` step to try `routr usage <name>`
+again; `doctor` lists it as a step. How to read it by hand stays in `next` too. A metered seat (by its harness, or the
+user's `billing`) is ranked as unknown capacity, not assumed, and gets no such line; nor does a reader that never read
+anything (already `assumed` in `unavailable`). A fresh `usage <name>` read that works clears it; one that fails again
+keeps it.
+
 **The named readers' `read_yourself`.** Moved into `next`, as a `do` step whose template is the `--headroom` flag to
 pass (`--headroom cursor=<share left>`), and whose `why` says how to read the harness's screen by hand. It is an
 instruction, and instructions are `next` entries. (Today it never reaches the output: the fresh-reading path rebuilds a
