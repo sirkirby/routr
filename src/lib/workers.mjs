@@ -71,16 +71,16 @@ export async function view(name, { check = true } = {}) {
   if (!w) return null;
   // The channel first, then the state: a holder that ends between the two has written its last state by the time
   // its generation reads released.
-  // Read again when they are of different generations (a holder ended and the next began in between).
+  // The channel says something about the state only when both are of one generation: read again when they are not (a
+  // holder ended and the next began in between), and when they never agree, take neither as lost or unreachable.
   let channel = null, st = readState(name) ?? {};
-  for (let i = 0; i < 3; i++) {
-    const p = check ? await probe(runDir(name)) : null;
+  for (let i = 0; i < 3 && check; i++) {
+    const p = await probe(runDir(name));
     st = readState(name) ?? {};
-    channel = p?.state ?? null;
-    if (!p || p.gen === (st.gen ?? 0) || p.state === "none") break;
+    if (p.gen === (st.gen ?? 0)) { channel = p.state; break; }
   }
   let state = st.state ?? "starting";
-  if (RUNNING.has(state) && ["dead", "abandoned", "none"].includes(channel)) state = "lost";
+  if (RUNNING.has(state) && ["dead", "abandoned"].includes(channel)) state = "lost";
   if (channel === "unreachable") state = "unreachable";
   const reported = (st.turns ?? []).filter((t) => t.report).at(-1);
   return { name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, state, gen: st.gen ?? 0, turn: st.turn ?? 0,

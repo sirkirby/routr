@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { claim, connect, endpointFor, generations, ownEndpoint, probe, serve, SOCKET_DIR, writeSecret } from "../src/lib/channel.mjs";
 import { readEvent } from "../src/lib/headless.mjs";
+import { view } from "../src/lib/workers.mjs";
 import { launch } from "../src/lib/launch.mjs";
 import { harnessEnv, start, stop } from "../src/lib/runtime.mjs";
 import { cfg, cliEnv, fakeExecutable, scratch, SCRIPT } from "./helpers.mjs";
@@ -44,10 +45,12 @@ async function turn(text) {
   out({ type: "result", subtype: "success", is_error: text.includes("FAIL"), result: "VERDICT: done\\nSUMMARY: turn with " + mid.length + " mid-turn messages" });
   busy = false;
   if (text.includes("BACKGROUND")) { await sleep(500); tasks = 0; out({ type: "system", subtype: "background_tasks_changed", tasks: [] }); await turn("the background task ended"); }
-  if (ended && !tasks) process.exit(0);
+  if (ended && !tasks) leave();
 }
 process.stdin.on("data", async (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); const t = JSON.parse(l).message.content; if (busy) mid.push(t); else await turn(t); } });
-process.stdin.on("end", () => { ended = true; if (!busy && !tasks) setTimeout(() => process.exit(0), process.env.FAKE_SLOW_EXIT ? 1500 : 0); });
+// FAKE_HOLD_EXIT: once its input closes, it stays until the test writes the gate file (a Claude slow to exit).
+const leave = async () => { if (process.env.FAKE_HOLD_EXIT) for (let i = 0; i < 400 && !fs.existsSync(process.env.FAKE_GATE); i++) await sleep(50); process.exit(0); };
+process.stdin.on("end", () => { ended = true; if (!busy && !tasks) leave(); });
 `;
 const BRIEF = "PRIVATE-BRIEF-7f3a: rename foo to bar in x.js. Check: grep bar x.js.";
 const SENT = "PRIVATE-SEND-91c2: also rename baz.";
@@ -162,12 +165,13 @@ test("a turn the harness starts itself, after a background command ends, is wait
 }, 60000);
 
 test("a message sent while Claude is exiting is queued, and runs as the next turn on the same session", async () => {
-  const w = world({ FAKE_SLOW_EXIT: "1" });
+  const w = world({ FAKE_HOLD_EXIT: "1" });
   expect(w.launch("q1", w.task(BRIEF)).state).toBe("prompted");
   expect(w.run(["wait", "--name", "q1", "--timeout", "20000"]).workers[0].turns.map((t) => t.turn)).toEqual([1]);
   // Its input is closed and it has not exited yet: the holder keeps the message for the next Claude.
   await until(() => w.state("q1").state === "waiting", 3000);
   expect(w.run(["send", "--name", "q1", "--task", SENT])).toMatchObject({ ok: true, state: "queued", message: { code: "queued" } });
+  w.release(); // the first Claude exits; the holder starts the next on the same session
   const next = w.run(["wait", "--name", "q1", "--timeout", "20000"]);
   expect(next.workers[0].turns).toMatchObject([{ turn: 2, outcome: "finished" }]);
   expect(w.state("q1").turns.map((t) => t.outcome)).toEqual(["finished", "finished"]);
@@ -315,6 +319,31 @@ test("the channel: one claimant per generation, and nothing for a peer that has 
     const again = await connect(dir, 1, endpoint);
     expect((await again.request("ping")).code).toBe("ok");
     again.close(); server.close();
+  } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
+});
+
+test("a worker is lost only when its channel and its state are of one generation", async () => {
+  const home = shortHome(), saved = [process.env.HOME, process.env.USERPROFILE];
+  process.env.HOME = process.env.USERPROFILE = home;
+  try {
+    const dir = join(home, ".local", "state", "routr", "workers", "v1");
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(dir, "worker.json"), JSON.stringify({ format: 1, id: "abcdef0123456789", name: "v1", kind: "claude", model: "m", cwd: home }));
+    const gone = Bun.spawnSync([process.execPath, "-e", ""]).pid; // a process that has exited
+    const state = (gen) => writeFileSync(join(dir, "state.json"), JSON.stringify({ gen, state: "working", turn: 1, turns: [{ turn: 1 }] }));
+    // The state is generation 2's; the channel only shows generation 1, released: the two never agree, so nothing is
+    // concluded from the channel.
+    writeFileSync(join(dir, "gen-1.claim"), JSON.stringify({ pid: gone, at: 0 }));
+    writeFileSync(join(dir, "gen-1.ready"), JSON.stringify({ endpoint: "x", pid: gone }));
+    writeFileSync(join(dir, "gen-1.released"), JSON.stringify({ at: 0 }));
+    state(2);
+    expect((await view("v1")).state).toBe("working");
+    // No generation at all beside a running state: still not lost.
+    for (const f of ["gen-1.claim", "gen-1.ready", "gen-1.released"]) rmSync(join(dir, f));
+    expect((await view("v1")).state).toBe("working");
+    // One generation, claimed by a process that is gone and never bound: lost.
+    writeFileSync(join(dir, "gen-2.claim"), JSON.stringify({ pid: gone, at: 0 }));
+    expect((await view("v1")).state).toBe("lost");
   } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
 });
 
