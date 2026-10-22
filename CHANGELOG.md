@@ -8,6 +8,9 @@ A short history of what changed in each routr release, one line per change. Each
 - Outside herdr, `routr launch --kind kiro` starts a headless Kiro worker through its ACP mode, on your sign-in: a
   correction sent mid-turn waits and runs as its next turn, and a follow-up loads its session (its protocol measured;
   not yet run end to end with a real Kiro). (#96)
+- With herdr 0.9.5, `routr usage cursor` reads Cursor's usage again (it reported `read_failed`, so routing assumed half
+  its headroom), and `routr launch --kind cursor` in a pane starts Cursor again: herdr now answers nothing when it types
+  into a pane, and routr took that for no answer. (#97)
 - Outside herdr, `routr launch --kind agy` starts a headless Antigravity worker in its stream-json mode, on your
   sign-in: `routr send` queues a correction as its next turn, or continues its conversation with a follow-up. (#95)
 - Outside herdr, `routr launch --kind codex` starts a headless Codex worker through its app-server, on your sign-in:
