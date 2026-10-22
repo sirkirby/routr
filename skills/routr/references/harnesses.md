@@ -281,7 +281,9 @@ stream-json` with the pane's `--dangerously-skip-permissions`, `--add-dir <folde
   (`conversation_id`); `step_update` steps carry `step_type` (`user_input`, `agent_response`, `tool`) and a tool's
   `tool_name`; `result` holds the turn's `response` and `status` (`SUCCESS`).
 - A line written while a turn runs does not join it: it waits, and runs as the next turn in the same process (no new
-  `init`). A correction therefore lands after the work it corrects.
+  `init`). A correction therefore lands after the work it corrects. routr does not write it mid-turn: the holder keeps
+  it and writes it after that turn's `result`, one line per turn (measured 2026-10-22 with Antigravity itself: two
+  corrections sent during one turn ran as turns 2 and 3, one commit each).
 - Closing its stdin after the last `result` ends it at once (exit 0). `--conversation <id>` continues the
   conversation in a new process, its context kept.
 - With `--dangerously-skip-permissions` its `run_command` ran without asking. Told to ask, it skipped its question

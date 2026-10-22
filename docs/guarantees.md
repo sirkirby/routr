@@ -189,7 +189,8 @@ harnesses, `--pane` and `--direction` are refused outside herdr. What that means
   `cleanup --worker` removes it.
 - **The brief and your messages** go from launch or send to the holder over the channel, and from the holder to the
   harness on its standard input (Claude and Antigravity: a stream-json message; Kiro: its ACP `session/prompt`; Codex: the app-server's `turn/start`
-  and `turn/steer` requests): never in a process's arguments. routr keeps no copy of them. What it keeps of the worker's text is each
+  and `turn/steer` requests): never in a process's arguments. routr writes no copy of them to disk; the holder keeps a message in memory
+  only until it hands it over (Antigravity and Kiro: until the running turn ends). What it keeps of the worker's text is each
   turn's report: the harness's final message of that turn (Codex: its final answer; Kiro: the text it wrote after its last tool call; Antigravity: its turn's
   response), as it wrote it (cut at 1 MB),
   which can quote the brief or anything else the worker saw. Reports stay, owner-only on macOS and Linux, until `cleanup

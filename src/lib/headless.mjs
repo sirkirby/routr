@@ -319,7 +319,7 @@ export const ADAPTERS = {
         // a message until the running turn ends.
         send: async (text) => {
           if ((await readyWithin(ready)) !== true) return { code: "refused", why: "not_started" };
-          if (running) return { code: "refused", why: "busy" };
+          if (running) return null; // never asked while a turn runs: the holder keeps the message (as when its input closed)
           return (await prompt(text)) ? { code: "handed_to_harness", next: true } : null;
         },
         line: (l) => { const ev = r.read(l); return take(ev) ? (ev.request != null ? { activity: true } : null) : ev; },
@@ -446,12 +446,14 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
         // A harness that queues runs them one turn each, in the order they came (the first now, the rest as each turn
         // ends, from the same queue); the others take them as one. Not when this process ended before it took its
         // task (a resume would end the same way) or something of it still runs: then each gets a turn, not started.
-        if (queue.length && !stopAsked && st.session_id) {
+        // Without a session (it ended during its first start) there is nothing to resume: they get their turns too.
+        if (queue.length && !stopAsked) {
           const each = h.queues;
-          if (taskIn && !groupAlive(st.harness_pgid)) {
-            const next = each ? queue.shift() : queue.splice(0).join("\n\n"), carried = each ? 1 : next.split("\n\n").length;
+          if (taskIn && st.session_id && !groupAlive(st.harness_pgid)) {
+            // Counted as the messages they are (a message holds paragraphs of its own: from the review of 420d69c).
+            const taken = each ? queue.splice(0, 1) : queue.splice(0);
             save({ queued: queue.length });
-            runHarness(next, st.session_id, { carried }); return;
+            runHarness(taken.join("\n\n"), st.session_id, { carried: taken.length }); return;
           }
           const all = queue.splice(0); save({ queued: 0 });
           for (let i = 0; i < (each ? all.length : 1); i++) { beginTurn(each ? 1 : all.length); endTurn("not_started", null); }

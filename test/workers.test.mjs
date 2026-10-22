@@ -161,7 +161,7 @@ process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n"
   if (e.id != null && !e.method) { if (process.env.FAKE_ANSWERS) fs.appendFileSync(process.env.FAKE_ANSWERS, JSON.stringify(e) + "\\n"); continue; }
   const p = e.params ?? {};
   if (e.method === "initialize") out({ id: e.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
-  else if (e.method === "session/new") { log({ method: e.method, cwd: p.cwd }); out({ id: e.id, result: { sessionId: SID, models: { currentModelId: a[a.indexOf("--model") + 1] } } }); }
+  else if (e.method === "session/new") { log({ method: e.method, cwd: p.cwd }); if (process.env.FAKE_NEW_DIE) { setTimeout(() => process.exit(0), 1500); continue; } out({ id: e.id, result: { sessionId: SID, models: { currentModelId: a[a.indexOf("--model") + 1] } } }); }
   else if (e.method === "session/load") { log({ method: e.method, sessionId: p.sessionId, cwd: p.cwd }); if (process.env.FAKE_LOAD_DIE) process.exit(0); const ms = Number(process.env.FAKE_LOAD_MS ?? 0); if (ms) { const id = e.id; setTimeout(() => { up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-not-the-report" } }); out({ id, result: {} }); }, ms); continue; } up({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "an old prompt" } }); up({ sessionUpdate: "tool_call", toolCallId: "old", kind: "edit" }); up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-not-the-report" } }); out({ id: e.id, result: {} }); }
   else if (e.method === "session/prompt") { log({ method: e.method, busy, tag: (p.prompt[0].text.match(/TAG-\\w+/) ?? [null])[0] }); if (busy) out({ id: e.id, error: { code: -32603, message: "Internal error", data: "Prompt already in progress" } }); else prompt(e.id, p.prompt[0].text); }
 } });
@@ -488,6 +488,31 @@ test("Kiro: a message sent while a resumed process starts runs after the ones he
   await d.settled("k7");
   expect([d.state("k7").turns.map((t) => [t.outcome, t.delivered]), d.state("k7").queued]).toEqual([[["no_finish", 0], ["no_finish", 1], ["not_started", 1]], 0]);
   for (const [x, n] of [[w, "k6"], [d, "k7"]]) expect(x.run(["cleanup", "--worker", n]).state).toBe("removed");
+}, 60000);
+
+test("Kiro: a correction queued while its first start fails is not lost: it gets a turn of its own, not started", async () => {
+  // The fake answers session/new never, and exits 1.5 s in: no session is ever named. The launch runs meanwhile.
+  const w = world({ FAKE_NEW_DIE: "1" }), file = w.task(BRIEF);
+  const p = Bun.spawn([process.execPath, SCRIPT, "launch", "--kind", "kiro", "--name", "k8", "--model", "auto", "--task-file", file, "--advice", w.advise(file)], { cwd: w.work, env: w.env, stdout: "pipe", stderr: "pipe" });
+  expect(await until(() => w.state("k8").state === "working")).toBe(true);
+  expect(w.run(["send", "--name", "k8", "--task", `${SENT} TAG-early`]).state).toBe("queued");
+  await p.exited;
+  await w.settled("k8");
+  expect([w.state("k8").turns.map((t) => [t.outcome, t.delivered]), w.state("k8").queued]).toEqual([[["no_finish", 0], ["not_started", 1]], 0]);
+  w.run(["cleanup", "--worker", "k8"]);
+}, 60000);
+
+test("Claude: a queued message of several paragraphs is counted once on the turn that resumes it", async () => {
+  const w = world({ FAKE_HOLD_EXIT: "1" });
+  expect(w.launch("q2", w.task(BRIEF)).state).toBe("prompted");
+  // Claude has finished its turn and is slow to exit: its input is closed, so the message waits for the next process.
+  expect(await until(() => w.state("q2").turns?.[0]?.outcome === "finished")).toBe(true);
+  expect(w.run(["send", "--name", "q2", "--task", "First paragraph.\n\nSecond paragraph.\n\nThird."]).state).toBe("queued");
+  w.release();
+  expect(await until(() => w.state("q2").turns?.length === 2 && w.state("q2").turns[1].outcome === "finished", 20000)).toBe(true);
+  await w.settled("q2");
+  expect(w.state("q2").turns.map((t) => t.delivered)).toEqual([0, 1]);
+  w.run(["cleanup", "--worker", "q2"]);
 }, 60000);
 
 test("Kiro's ACP output as routr reads it: replies, its own requests, fixed tool kinds, the text after its last tool call, nothing while a session loads", () => {
