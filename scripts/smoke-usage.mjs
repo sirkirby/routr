@@ -8,7 +8,7 @@
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig } from "../src/lib/config.mjs";
-import { HARNESSES, notReady } from "../src/lib/harnesses.mjs";
+import { billingFor, HARNESSES, notReady, withBilling } from "../src/lib/harnesses.mjs";
 import { readAgy, readClaude, readCodexLive } from "../src/lib/usage.mjs";
 import { cursorUsage } from "../src/lib/cursor-usage.mjs";
 import { kiroUsage } from "../src/lib/kiro-usage.mjs";
@@ -20,18 +20,27 @@ const LIVE = {
   kiro: () => kiroUsage(),
   agy: () => readAgy(),
 };
-const said = (r) => (r?.ok === false ? `FAILED (${r.code})` : r?.headroom != null ? `ok: ${Math.round(r.headroom * 100)}% left` : r?.class === "metered" ? "ok: metered" : `FAILED (${r?.failure?.code ?? "no reading"})`);
-const { config } = loadConfig();
-let failed = 0;
-for (const name of Object.keys(LIVE)) {
-  if (!config.subscriptions[name]) { console.log(`${name}: not set up, not read`); continue; }
-  if (config.subscriptions[name].enabled === false) { console.log(`${name}: turned off, not read`); continue; }
-  const why = await notReady(name);
-  if (why) { console.log(`${name}: ${why}, not read`); continue; }
-  const t = performance.now();
-  let r; try { r = await LIVE[name](); } catch { r = { ok: false, code: "read_failed" }; }
-  const line = said(r);
-  if (line.startsWith("FAILED")) failed++;
-  console.log(`${name}: ${line} (${HARNESSES[name].usage.source}, ${((performance.now() - t) / 1000).toFixed(1)} s)`);
+// A reading as routing would take it: a seat its own sign-in says is billed per token (Claude with a key) is metered,
+// as is one the user's `billing` says is; a reader's own report of something it could not clean up is a failure.
+const said = (r, billing) => (r?.ok === false ? `FAILED (${r.code})` : r?.ok === true && r.note ? `FAILED (cleanup: ${r.note})`
+  : r?.headroom != null ? `ok: ${Math.round(r.headroom * 100)}% left` : r?.class === "metered" || billing === "metered" ? "ok: metered" : `FAILED (${r?.failure?.code ?? "no reading"})`);
+// The check itself, its seams given (the tests give fakes): one line per subscription, and how many could not read.
+export async function smokeUsage({ config = loadConfig().config, live = LIVE, ready = notReady, billing = billingFor, log = console.log } = {}) {
+  let failed = 0;
+  for (const name of Object.keys(live)) {
+    const s = config.subscriptions?.[name];
+    if (!s) { log(`${name}: not set up, not read`); continue; }
+    if (s.enabled === false) { log(`${name}: turned off, not read`); continue; }
+    // Asked now, not the answer kept for hours: a harness signed out since must not be read.
+    const why = await ready(name, { fresh: true });
+    if (why) { log(`${name}: ${why}, not read`); continue; }
+    const t = performance.now();
+    let r; try { r = await live[name](); } catch { r = { ok: false, code: "read_failed" }; }
+    if (r && r.ok === undefined) { const b = await billing(name, { fresh: r.headroom == null }); if (b.not) { log(`${name}: ${b.not}, not read`); continue; } r = withBilling(name, r, b.billing); }
+    const line = said(r, s.billing);
+    if (line.startsWith("FAILED")) failed++;
+    log(`${name}: ${line} (${HARNESSES[name].usage.source}, ${((performance.now() - t) / 1000).toFixed(1)} s)`);
+  }
+  return failed;
 }
-process.exitCode = failed ? 1 : 0;
+if (import.meta.main) process.exitCode = (await smokeUsage()) ? 1 : 0;

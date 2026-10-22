@@ -20,10 +20,13 @@ export const usageUnavailable = (rows) => rows.filter((r) => r.failure && r.sign
 // row's note. From the herdr 0.9.5 change of 2026-10-22: Cursor's reader failed on every try, ranking ran on the
 // assumed headroom, and the only trace was a note inside a ranked row for 89 hours.
 export const STALE_SEC = 24 * 3600;
-// One that never read anything is already `assumed` in `unavailable`; this is for one that worked and stopped. How to
-// read it by hand stays in `next`.
-export const staleReaders = (rows) => rows.filter((r) => r.failure && r.signedIn !== false && r.headroom == null && r.ageSec != null && r.ageSec >= STALE_SEC)
-  .map((r) => `${r.pool}'s usage has not been read for ${Math.round(r.ageSec / 3600)} h, and its last try failed (${r.failure.code}), so routing assumes its headroom: an update of ${r.pool} or herdr may have changed what routr reads. Run \`routr usage ${r.pool}\` to try again`);
+// One that never read anything is already `assumed` in `unavailable`; this is for one that worked and stopped. A
+// metered seat (said by its harness, or the user's `billing`) is ranked as unknown capacity, never assumed: it is not
+// said here. Each is `{ pool, warning }`: the warning states what happened; trying again is a step in `next`.
+export const staleReaders = (rows, config = {}) => rows
+  .filter((r) => r.failure && r.signedIn !== false && r.headroom == null && r.class !== "metered" && config.subscriptions?.[r.pool]?.billing !== "metered"
+    && r.ageSec != null && r.ageSec >= STALE_SEC)
+  .map((r) => ({ pool: r.pool, warning: `${r.pool}'s usage has not been read for ${Math.round(r.ageSec / 3600)} h, and its last try failed (${r.failure.code}), so routing assumes its headroom: an update of ${r.pool} or herdr may have changed what routr reads` }));
 
 // Shared by reader diagnostics and command next steps; never tucked into a ranked row's note.
 export const USAGE_BY_HAND = {

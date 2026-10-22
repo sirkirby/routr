@@ -784,13 +784,48 @@ test("a reader whose last reading is over a day old and whose last try failed is
   const { staleReaders, STALE_SEC } = await import("../src/lib/usage-failure.mjs");
   const row = (pool, ageH, over = {}) => ({ ...summarize({ pool, source: `${pool} /usage`, ts: ageH == null ? null : NOW - ageH * 3600, nowSec: NOW, failure: usageFailure("read_failed") }), ...over });
   const warned = staleReaders([row("cursor", 89), row("kiro", 2), row("claude", null), row("agy", 30, { signedIn: false }), row("codex", 30, { failure: undefined })]);
-  expect(warned).toEqual(["cursor's usage has not been read for 89 h, and its last try failed (read_failed), so routing assumes its headroom: an update of cursor or herdr may have changed what routr reads. Run `routr usage cursor` to try again"]);
+  expect(warned).toEqual([{ pool: "cursor", warning: "cursor's usage has not been read for 89 h, and its last try failed (read_failed), so routing assumes its headroom: an update of cursor or herdr may have changed what routr reads" }]);
   expect(STALE_SEC).toBe(86400);
   // In a command's output; how to read it by hand stays in `next`.
   const config = cfg({ subscriptions: { cursor: {}, kiro: {} } });
   const r = await usageCommand([], config, {}, { read: async () => [row("cursor", 89), row("kiro", 2)] });
-  expect(r.warnings).toEqual([warned[0]]);
+  expect(r.warnings).toEqual([warned[0].warning]);
   // A fresh read that just worked clears its own warning.
   const ok = await usageCommand(["cursor"], config, {}, { read: async () => [row("cursor", 89)], sources: { cursor: { source: "cursor /usage", check: async () => ({ ok: true, included_used_pct: 2 }) } } });
   expect(ok.warnings).toEqual([]);
+});
+
+test("the stale warning leaves metered seats out, keeps itself after a failed retry, and puts trying again in next", async () => {
+  const { staleReaders } = await import("../src/lib/usage-failure.mjs");
+  const row = (pool, ageH, over = {}) => ({ ...summarize({ pool, source: `${pool} /usage`, ts: NOW - ageH * 3600, nowSec: NOW, failure: usageFailure("read_failed") }), ...over });
+  expect(staleReaders([row("codex", 30, { class: "metered" }), row("claude", 30)], { subscriptions: { claude: { billing: "metered" } } })).toEqual([]);
+  const config = cfg({ subscriptions: { cursor: {} } });
+  const failedAgain = await usageCommand(["cursor"], config, {}, { read: async () => [row("cursor", 89)], sources: { cursor: { source: "cursor /usage", check: async () => ({ ok: false, ...usageFailure("read_failed") }) } } });
+  expect(failedAgain.warnings.map((w) => w.startsWith("cursor's usage has not been read for 89 h, and its last try failed (read_failed)"))).toEqual([true]);
+  const plain = await usageCommand([], config, {}, { read: async () => [row("cursor", 89)] });
+  expect(plain.warnings.join(" ")).not.toMatch(/\brun\b|try again/i);
+  expect(plain.next.filter((n) => n.argv?.join(" ") === "routr usage cursor")).toHaveLength(1);
+});
+
+test("smoke:usage reads each subscription live, asks sign-in fresh, takes a metered seat as working, and fails on a reader's cleanup note", async () => {
+  const { smokeUsage } = await import("../scripts/smoke-usage.mjs");
+  const lines = [], asked = [];
+  const config = { subscriptions: { claude: {}, codex: {}, cursor: {}, kiro: {}, agy: { enabled: false } } };
+  const live = {
+    claude: async () => summarize({ pool: "claude", source: "claude /usage", nowSec: NOW }), // no windows: metered, by its sign-in
+    codex: async () => summarize({ pool: "codex", source: "app-server", ts: NOW, nowSec: NOW, windows: [{ usedPct: 10 }] }),
+    cursor: async () => ({ ok: false, code: "read_failed" }),
+    kiro: async () => ({ ok: true, headroom: 0.9, note: "Kiro kept an empty usage session; inspect its saved sessions to remove it." }),
+    agy: async () => { throw new Error("turned off: never read"); },
+  };
+  const ready = async (name, o) => { asked.push([name, o?.fresh]); return null; };
+  const billing = async (name) => ({ billing: name === "claude" ? { billing: "metered", why: "an API key" } : null, not: null });
+  const failed = await smokeUsage({ config, live, ready, billing, log: (l) => lines.push(l.replace(/ \([^)]*, [\d.]+ s\)$/, "")) });
+  expect(asked).toEqual([["claude", true], ["codex", true], ["cursor", true], ["kiro", true]]);
+  expect(lines).toEqual(["claude: ok: metered", "codex: ok: 90% left", "cursor: FAILED (read_failed)", "kiro: FAILED (cleanup: Kiro kept an empty usage session; inspect its saved sessions to remove it.)", "agy: turned off, not read"]);
+  expect(failed).toBe(2);
+  // Signed out now (whatever was kept): not read at all.
+  const out = [];
+  await smokeUsage({ config: { subscriptions: { kiro: {} } }, live: { kiro: async () => { throw new Error("read while signed out"); } }, ready: async () => "not signed in: run `kiro-cli login`", log: (l) => out.push(l) });
+  expect(out).toEqual(["kiro: not signed in: run `kiro-cli login`, not read"]);
 });

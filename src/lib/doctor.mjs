@@ -155,7 +155,7 @@ export async function inspect({ configPath, quiet } = {}) {
       // The billing its own sign-in status stated, and where it was read: shown as the usage line (said, above).
       ...(u.billing ? { usage_billing: u.billing } : {}),
       // A reader that has failed for over a day, said as a step (usage-failure.mjs).
-      ...(signed && staleReaders([u]).length ? { usage_stale: staleReaders([u])[0] } : {}) };
+      ...(signed && staleReaders([u], { subscriptions: config.subscriptions }).length ? { usage_stale: `${staleReaders([u], { subscriptions: config.subscriptions })[0].warning}. Try it again: routr usage ${n}` } : {}) };
   }
   const lists = Object.fromEntries(found.map((n, i) => [n, models[i]]));
   for (const n of found) r.harnesses[n].models = lists[n];
