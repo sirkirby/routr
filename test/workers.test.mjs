@@ -178,9 +178,10 @@ test("a headless Codex worker: its app-server, a message steered into the runnin
   expect([l.ok, l.state, l.headline]).toEqual([true, "prompted", "routr: c1 (codex) took its task, running headless"]);
   expect(l.worker).toEqual({ name: "c1", backend: "headless", run: w.runDir("c1"), session: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b" });
   expect(l.start.argv).toEqual(["app-server", "-c", "check_for_update_on_startup=false"]);
-  // Its settings go in the protocol: what --yolo is in a pane, the model, the effort; the brief only as turn input.
+  // Its settings go in the protocol: the worker's folder, what --yolo is in a pane, the model, the effort; the brief
+  // only as turn input.
   expect(rpcs(w).map((r) => r.method)).toEqual(["initialize", "initialized", "thread/start", "turn/start"]);
-  expect(rpcs(w)[2]).toEqual({ method: "thread/start", cwd: realpathSync.native(w.work), model: "gpt-6-luna", approvalPolicy: "never", sandbox: "danger-full-access" });
+  expect(rpcs(w)[2]).toEqual({ method: "thread/start", cwd: l.cwd, model: "gpt-6-luna", approvalPolicy: "never", sandbox: "danger-full-access" });
   expect(rpcs(w)[3]).toEqual({ method: "turn/start", threadId: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", effort: "low" });
   const s = w.run(["send", "--name", "c1", "--task", SENT]);
   expect([s.ok, s.state, s.message.code, s.headline]).toEqual([true, "delivered", "accepted", "routr: c1: taken by the running worker (into its running turn, or as its next)"]);
@@ -196,7 +197,7 @@ test("a headless Codex worker: its app-server, a message steered into the runnin
   // Idle: a new app-server resumes the thread with the follow-up as its next turn.
   const again = w.run(["send", "--name", "c1", "--task", SENT]);
   expect([again.state, again.message?.code]).toEqual(["resumed", "prompted"]);
-  expect(rpcs(w).filter((r) => r.method === "thread/resume")).toEqual([{ method: "thread/resume", threadId: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", cwd: realpathSync.native(w.work), model: "gpt-6-luna", approvalPolicy: "never", sandbox: "danger-full-access" }]);
+  expect(rpcs(w).filter((r) => r.method === "thread/resume")).toEqual([{ method: "thread/resume", threadId: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", cwd: l.cwd, model: "gpt-6-luna", approvalPolicy: "never", sandbox: "danger-full-access" }]);
   expect(w.run(["wait", "--name", "c1", "--timeout", "20000"]).workers[0].turns).toMatchObject([{ turn: 2, outcome: "finished", delivered: 0 }]);
   await w.settled("c1");
   for (const o of w.outputs) for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([m, o.includes(m)]).toEqual([m, false]);
