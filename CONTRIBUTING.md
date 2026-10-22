@@ -106,8 +106,8 @@ Agents preparing or publishing a release follow the [repo release skill](.agents
 
 The source is plain JavaScript under `src/`, run with Bun while developing
 (`bun src/routr.mjs doctor`). Releases are standalone binaries built with `bun build --compile`. CI and releases use the
-Bun version in `.bun-version`; a Bun upgrade changes that file in its own PR, so a change in Bun's behaviour shows in
-the tests on its own.
+Bun version in `.bun-version`; develop with the same one to see what CI sees. A Bun upgrade changes that file in its
+own PR, so a change in Bun's behaviour shows in that PR's tests apart from any other change.
 
 Merging to `main` only runs the tests. **A release happens when a version tag is pushed, and only then:**
 
