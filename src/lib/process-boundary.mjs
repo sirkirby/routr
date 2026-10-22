@@ -19,6 +19,7 @@ export function processFailure(tool, args, code, missing = false) {
   return { ok: false, code, why, ...(missing ? { missing: true, next: [doNext("Install herdr or put its executable on PATH, then retry this command")] } : {}) };
 }
 export const processError = (r) => new Error(r.why);
+const QUIET = new Set(["pane run", "pane send-text", "pane send-keys"]);
 export function herdrResult(args, r) {
   if (r?.ok !== true) {
     const raw = r?.data?.error?.code;
@@ -32,6 +33,9 @@ export function herdrResult(args, r) {
   // Private sessions prefix their commands. Validate the actual command in exactly the same way.
   const a = args[0] === "--session" ? args.slice(2) : args;
   const key = a.slice(0, 2).join(" "), v = data?.result;
+  // Typing into a pane answers nothing on success from herdr 0.9.5 (measured 2026-10-22: `pane run`, `pane send-text`
+  // and `pane send-keys` exit 0 with no output; older herdr printed a JSON result). Exit 0 is the answer then.
+  if ((data == null || data === "") && QUIET.has(key)) return { ok: true, data: { result: {} } };
   if ((data == null || data === "") && key !== "pane read") return { ...processFailure("herdr", args, "herdr_unreachable"), data: {} };
   if ((!data || typeof data !== "object" || Array.isArray(data)) && key !== "pane read") return invalid();
   if (key === "agent get") {
