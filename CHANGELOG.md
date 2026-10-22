@@ -5,6 +5,8 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- Outside herdr, `routr launch --kind kiro` starts a headless Kiro worker through its ACP mode, on your sign-in: a
+  correction sent mid-turn waits and runs as its next turn, and a follow-up loads its session. (#96)
 - Outside herdr, `routr launch --kind agy` starts a headless Antigravity worker in its stream-json mode, on your
   sign-in: `routr send` queues a correction as its next turn, or continues its conversation with a follow-up. (#95)
 - Outside herdr, `routr launch --kind codex` starts a headless Codex worker through its app-server, on your sign-in:

@@ -405,10 +405,10 @@ a pane: needs input, or failed after reading the pane).
 
 ### launch outside herdr (headless)
 
-Outside herdr (`HERDR_ENV` is not `1`), a real launch starts a headless Claude Code, Codex or Antigravity worker instead of a pane. A dry run
+Outside herdr (`HERDR_ENV` is not `1`), a real launch starts a headless Claude Code, Codex, Antigravity or Kiro worker instead of a pane. A dry run
 plans the pane launch as before: it does not check the environment.
 
-- Required, beyond launch's own: `--kind claude`, `codex` or `agy`, a task (`--task-file` or `--task`, at most 3 MB with launch's
+- Required, beyond launch's own: `--kind claude`, `codex`, `agy` or `kiro`, a task (`--task-file` or `--task`, at most 3 MB with launch's
   wrapping) with its matching `--advice`. Refused (with `error`, `state: "failed"`), before a run folder is written or a
   holder or worker started: another kind; `--pane` or `--direction`; no task; a task too large; a lead's sandbox it can
   see (`SANDBOX_RUNTIME`, `CODEX_SANDBOX`); a name whose run folder exists; a home whose socket path would be too long;
@@ -429,14 +429,14 @@ plans the pane launch as before: it does not check the environment.
   add time.
 - `state`: `prompted` or `failed`. `prompted` means the task reached the harness and it named its session (Claude:
   written to its input, not proven read; Antigravity: written to its input, not proven read, and the session is its
-  conversation id; Codex: its app-server started the turn, and the session is its thread id),
+  conversation id; Kiro: its `session/prompt` written, and the session is its ACP session id; Codex: its app-server started the turn, and the session is its thread id),
   or, with the task in, 30 seconds passed without a session. A harness still starting at 30 seconds, the task not yet
   in, is a failure saying whether it took it is not known (`not_started_in_time`). `wait` says how the turn went.
 - `headline`: `routr: <name> (<kind>) took its task, running headless`, or the failure as for a pane launch.
 - Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "headless", run, session }` (`run`:
-  the run folder; `session`: the harness's session id (Codex: its thread id; Antigravity: its conversation id), or null).
+  the run folder; `session`: the harness's session id (Codex: its thread id; Antigravity: its conversation id; Kiro: its ACP session id), or null).
   `start.argv` is the harness's headless command line (Codex: `app-server` only; its model and effort go in the
-  protocol; Antigravity: with the worker's folder in `--add-dir`); it is set once the worker's folder is known: a launch
+  protocol; Antigravity: with the worker's folder in `--add-dir`; Kiro: `acp` with the pane's flags); it is set once the worker's folder is known: a launch
   refused before that shows the pane command planned first, not the headless one. `ran` displays it. `steps`: `reserve`, `holder`, `prompt`. When no holder could have started, launch removes the run folder
   it made and `worker` is null; when the holder is starting or does not answer, it keeps the folder and `worker`, and
   `next` says to look at it with `routr workers --name <name>` before retrying.
@@ -579,7 +579,7 @@ headless worker to wait on`.
 Own fields: `state`, `workers` (each as `workers` prints it, plus `gen`, the holder generation, and `turns` holding
 only the turns reported now: `{ turn, outcome, report, delivered }`; `outcome` is `finished`, `failed`, `no_finish`
 (the process ended without finishing the turn), `not_started`, `stopped` or `running`; `report` is a path or null;
-`delivered` counts messages that went into that turn: for Antigravity, and Codex once a turn has ended, the turn the message started, not the one running when it was sent). A report is the worker's final message of that turn (Codex: its final answer; Antigravity: its `result`'s response), cut at 1 MB; a
+`delivered` counts messages that went into that turn: for Antigravity and Kiro, and Codex once a turn has ended, the turn the message started, not the one running when it was sent). A report is the worker's final message of that turn (Codex: its final answer; Antigravity: its `result`'s response; Kiro: the text after its last tool call), cut at 1 MB; a
 turn can end without one. `next`: for each new report a `do` step with the `routr check` template on its path, and
 for a turn without one a `do` step to look at the worker's work yourself; a step for a worker that is `lost` or has a
 process group left; a note when background commands may start another turn; `routr wait` again (run) for the
@@ -597,9 +597,12 @@ in.
 
 `state`: `delivered` (into the running worker. Claude: written into its input, `message.code` `handed_to_harness`, not
 proven read. Antigravity: written into its input (`handed_to_harness`); it runs as the next turn once the running one
-ends, in the same process, and each message is a turn of its own, in the order sent. Codex: taken by its app-server, `accepted`: steered into the running turn, or, once that turn has ended,
-started as the next turn in the same process), `queued` (the harness's input had closed: the holder keeps the message
-in memory and, once that process has exited, starts a new one resuming the same session with it; lost if the holder
+ends, in the same process, and each message is a turn of its own, in the order sent. Kiro, between turns: its
+`session/prompt` written (`handed_to_harness`). Codex: taken by its app-server, `accepted`: steered into the running turn, or, once that turn has ended,
+started as the next turn in the same process), `queued` (the holder keeps the message in memory: for Kiro while a
+turn runs (`message.why` `next_turn`), sent as its next turn once that one ends, in the same process, one turn per
+message; otherwise when the harness's input had closed, and once that process has exited the holder starts a new one
+resuming the same session with it. A message Kiro ended before taking goes to that new process too. Lost if the holder
 dies first), `resumed` (a new holder resumed the session with it: `prompted`), `refused` (the holder did not take it:
 `message.why` is a fixed code, such as `no_session`, `stopping`, `queue_full`, `harness_ended` when the resumed
 harness ended before taking it, `harness_refused` when Codex said no, `not_started` when Codex had not started the
@@ -619,9 +622,9 @@ turn, seconds_since_event, last_tool, tasks, queued, session, report, harness_gr
 `working`, `waiting` (between turns: background commands running, a message queued, or the harness exiting), `idle`,
 `failed`, `stopped`, `no_task` (its process started and no task came), `lost` (its process ended mid-turn without
 settling), or `unreachable` (its channel does not answer). `last_tool` is one of the harness's own tool names (Claude's
-tools; Codex's item types, such as `commandExecution` and `fileChange`; Antigravity's tools, such as `run_command`),
+tools; Codex's item types, such as `commandExecution` and `fileChange`; Antigravity's tools, such as `run_command`; Kiro's tool kinds, such as `execute` and `edit`),
 `mcp`, `other`, or null. `report` is the path of the latest turn's report that has one, or null. `tasks` counts Claude's background commands;
-it is 0 for Codex and Antigravity, which report none. `harness_group`: a process group it
+it is 0 for Codex, Antigravity and Kiro, which report none. `harness_group`: a process group it
 recorded that still has members (a lost worker's harness, or a command that outlived it), on macOS and Linux.
 Never worker text. Inside a sandbox it can see, `warnings` says so.
 

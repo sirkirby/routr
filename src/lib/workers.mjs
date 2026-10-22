@@ -329,7 +329,7 @@ export async function waitCommand(args, { now = () => Date.now(), pause = sleep,
 // the next turn of the same session (a new holder resumes it). New work is a new launch with its own advice.
 const SENT = { handed_to_harness: () => "written to the running worker's input (not yet proven read)",
   accepted: () => "taken by the running worker (into its running turn, or as its next)",
-  queued: (label) => `queued: it runs as the worker's next turn, in a new ${label} process on the same session`,
+  queued: (label, why) => (why === "next_turn" ? "queued: it runs as the worker's next turn, once the running one ends" : `queued: it runs as the worker's next turn, in a new ${label} process on the same session`),
   prompted: () => "the worker resumed its session with it as the next turn" };
 export async function sendCommand(args, { env = process.env, settings = () => loadConfig(), ready = notReady, spawn } = {}) {
   const out = { ok: false, headline: "", unavailable: [], warnings: [], next: [], state: "failed", name: null };
@@ -379,7 +379,7 @@ export async function sendCommand(args, { env = process.env, settings = () => lo
       return answer(out);
     }
     out.ok = true; out.state = r.code === "prompted" ? "resumed" : r.code === "queued" ? "queued" : "delivered";
-    out.headline = `routr: ${name}: ${SENT[r.code](HARNESSES[w.kind].label)}`;
+    out.headline = `routr: ${name}: ${SENT[r.code](HARNESSES[w.kind].label, r.why)}`;
     out.next.push(runNext("Wait for this worker's turn to end.", ["routr", "wait", "--name", name]));
   } catch (e) { out.error = String(e?.message ?? e); out.headline = `routr: send failed: ${out.error}`; }
   return answer(out);

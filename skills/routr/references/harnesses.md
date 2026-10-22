@@ -288,3 +288,21 @@ stream-json` with the pane's `--dangerously-skip-permissions`, `--add-dir <folde
   tool and asked in text (p37).
 - Not measured: a first run before Antigravity's Terms of Service screen has been answered, a background command, a
   lead's sandbox, stop mid-turn. (p39 for the stream, p37 for `--print=` and the question.)
+
+## Kiro headless, outside herdr (measured 2026-10-22, kiro-cli 2.33.1)
+
+What `routr launch --kind kiro` outside herdr relies on: `kiro-cli acp` with the pane's `--trust-tools=*`, `--model`
+and `--effort`, speaking the Agent Client Protocol (JSON-RPC on stdin and stdout).
+
+- `initialize`, then `session/new` with the folder: a session id (a UUID). `session/prompt` with the task as its
+  prompt is answered when the turn ends, with a `stopReason` (`end_turn`); its text streams as `agent_message_chunk`
+  updates in pieces, and tools as `tool_call` updates with a `kind` (`execute`, `edit`, ...). routr's report is the text
+  after the last tool call.
+- A second `session/prompt` while one runs is refused at once (-32603, "Prompt already in progress") and the running
+  turn goes on. A prompt after the turn ends runs as the next turn in the same process.
+- Closing its stdin after the last turn ends it at once (exit 0). `session/load` continues the session in a new
+  process: it first replays the session's history as updates, then answers from its context.
+- An id Kiro does not list is taken at `session/new` (reported as its current model), so routr checks the id against
+  `kiro-cli chat --list-models` first, as for a pane.
+- Kiro sends notifications of its own (`_kiro.dev/metadata` with context and credits, `_kiro.dev/commands/available`);
+  routr ignores them. No request reached the client with `--trust-tools=*`.

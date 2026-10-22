@@ -6,7 +6,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { claim, connect, endpointFor, generations, ownEndpoint, probe, serve, SOCKET_DIR, writeSecret } from "../src/lib/channel.mjs";
-import { ADAPTERS, agyReader, codexReader, readEvent } from "../src/lib/headless.mjs";
+import { ADAPTERS, agyReader, codexReader, kiroReader, readEvent } from "../src/lib/headless.mjs";
 import { unmakeWorktree, view } from "../src/lib/workers.mjs";
 import { EventEmitter } from "node:events";
 import { Writable } from "node:stream";
@@ -125,6 +125,47 @@ async function turn(text) {
 process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const e = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1); const t = e.message.content; if (busy) waiting.push(t); else turn(t); } });
 process.stdin.on("end", () => { if (process.env.FAKE_EOF) fs.appendFileSync(process.env.FAKE_EOF, JSON.stringify({ turns: n, busy, waiting: waiting.length }) + "\\n"); ended = true; if (!busy) process.exit(0); });
 `;
+// Kiro's ACP mode, as measured (p40): initialize, session/new or session/load (which replays the session's history as
+// updates first), session/prompt answered at the turn's end with a stopReason, text in agent_message_chunk updates, a
+// second prompt while one runs refused ("Prompt already in progress"); closing stdin ends it. It writes each prompt's
+// arrival (never its text) to FAKE_RPC. HOLD, FAIL, CRASH, ASK as above.
+const FAKE_KIRO = `
+const fs = require("node:fs");
+const a = process.argv.slice(2);
+if (a[0] === "whoami") { console.log(JSON.stringify({ email: "user@example.com" })); process.exit(0); }
+if (a[0] === "chat" && a.includes("--list-models")) { console.log(JSON.stringify({ models: [{ model_id: "auto" }, { model_id: "claude-sonnet-5" }] })); process.exit(0); }
+if (a[0] !== "acp") process.exit(0);
+if (process.env.FAKE_ARGV) fs.appendFileSync(process.env.FAKE_ARGV, JSON.stringify(["kiro-cli", ...a]) + "\\n");
+const out = (o) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...o }) + "\\n");
+const log = (o) => process.env.FAKE_RPC && fs.appendFileSync(process.env.FAKE_RPC, JSON.stringify(o) + "\\n");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const SID = "b7cad7ce-3a91-46bd-8a45-3af4a23b39b5";
+let buf = "", busy = false, ended = false, n = 0;
+const up = (update) => out({ method: "session/update", params: { sessionId: SID, update } });
+async function prompt(id, text) {
+  if (text.includes("CRASH")) process.exit(3);
+  busy = true; n++;
+  up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Let me look first." } });
+  up({ sessionUpdate: "tool_call", toolCallId: "t" + n, title: "Running: an argument", kind: "execute", rawInput: { command: "an argument" } });
+  out({ method: "_kiro.dev/metadata", params: { sessionId: SID, contextUsagePercentage: 1 } });
+  if (text.includes("ASK")) out({ id: 900, method: "session/request_permission", params: { sessionId: SID } });
+  if (text.includes("HOLD")) for (let i = 0; i < 400 && !fs.existsSync(process.env.FAKE_GATE); i++) await sleep(50);
+  up({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "THOUGHT-not-the-report" } });
+  for (const part of ["VERDICT: done\\nSUMMARY: kiro ", "turn " + n]) up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: part } });
+  busy = false;
+  out({ id, result: { stopReason: text.includes("FAIL") ? "refusal" : "end_turn" } });
+  if (ended) process.exit(0);
+}
+process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const e = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
+  if (e.id != null && !e.method) { if (process.env.FAKE_ANSWERS) fs.appendFileSync(process.env.FAKE_ANSWERS, JSON.stringify(e) + "\\n"); continue; }
+  const p = e.params ?? {};
+  if (e.method === "initialize") out({ id: e.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
+  else if (e.method === "session/new") { log({ method: e.method, cwd: p.cwd }); out({ id: e.id, result: { sessionId: SID, models: { currentModelId: a[a.indexOf("--model") + 1] } } }); }
+  else if (e.method === "session/load") { log({ method: e.method, sessionId: p.sessionId, cwd: p.cwd }); up({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "an old prompt" } }); up({ sessionUpdate: "tool_call", toolCallId: "old", kind: "edit" }); up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-not-the-report" } }); out({ id: e.id, result: {} }); }
+  else if (e.method === "session/prompt") { log({ method: e.method, busy }); if (busy) out({ id: e.id, error: { code: -32603, message: "Internal error", data: "Prompt already in progress" } }); else prompt(e.id, p.prompt[0].text); }
+} });
+process.stdin.on("end", () => { ended = true; if (!busy) process.exit(0); });
+`;
 const BRIEF = "PRIVATE-BRIEF-7f3a: rename foo to bar in x.js. Check: grep bar x.js.";
 const SENT = "PRIVATE-SEND-91c2: also rename baz.";
 
@@ -134,6 +175,7 @@ function world(over = {}) {
   fakeExecutable(bin, "claude", FAKE_CLAUDE);
   fakeExecutable(bin, "codex", FAKE_CODEX);
   fakeExecutable(bin, "agy", FAKE_AGY);
+  fakeExecutable(bin, "kiro-cli", FAKE_KIRO);
   const gate = join(home, "gate"), linger = join(home, "linger");
   // git's own folder too: launch --worktree and cleanup run it, as they would for a person.
   const env = cliEnv(home, { PATH: [bin, dirname(process.execPath), dirname(Bun.which("git") ?? "git")].join(delimiter), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_RPC: join(home, "rpc.jsonl"), FAKE_ANSWERS: join(home, "answers.jsonl"), FAKE_EOF: join(home, "eof.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, ...over });
@@ -146,7 +188,7 @@ function world(over = {}) {
   };
   const task = (text, name = "task.md") => { const f = join(inputs, name); writeFileSync(f, text); return f; };
   const advise = (file) => { const a = join(home, `${file.split(/[\\/]/).pop()}.advice.json`); writeFileSync(a, JSON.stringify(run(["dispatch", "--task-file", file]))); return a; };
-  const launchW = (name, file, more = [], extra, kind = "claude") => run(["launch", "--kind", kind, "--name", name, "--model", { codex: "gpt-6-luna", agy: "gemini-3.8-flash-low" }[kind] ?? "haiku", "--task-file", file, "--advice", advise(file), ...more], extra);
+  const launchW = (name, file, more = [], extra, kind = "claude", model) => run(["launch", "--kind", kind, "--name", name, "--model", model ?? { codex: "gpt-6-luna", agy: "gemini-3.8-flash-low", kiro: "auto" }[kind] ?? "haiku", "--task-file", file, "--advice", advise(file), ...more], extra);
   const runDir = (name) => join(home, ".local", "state", "routr", "workers", name);
   const state = (n) => { try { return JSON.parse(readFileSync(join(runDir(n), "state.json"), "utf8")); } catch { return {}; } };
   const settled = (n) => until(() => !["working", "waiting", "starting"].includes(state(n).state));
@@ -364,6 +406,57 @@ test("Antigravity's stream as routr reads it: the conversation, turns it starts 
   expect(j({ event: "step_update", step_update: { step_type: "user_input", state: "DONE" } })).toEqual({ turn: true, activity: true });
   expect(j({ event: "result", result: { status: "ERROR" } })).toEqual({ result: { failed: true, text: null } });
   expect([read("not json"), j({ event: "something" })]).toEqual([null, null]);
+});
+
+test("a headless Kiro worker: its ACP mode, a message held for its next turn, a follow-up that loads its session", async () => {
+  const w = world(), file = w.task(`${BRIEF} HOLD ASK`);
+  const l = w.launch("k1", file, [], undefined, "kiro");
+  expect([l.ok, l.state, l.headline]).toEqual([true, "prompted", "routr: k1 (kiro) took its task, running headless"]);
+  expect([l.worker.session, l.start.argv]).toEqual(["b7cad7ce-3a91-46bd-8a45-3af4a23b39b5", ["acp", "--trust-tools=*", "--model", "auto"]]);
+  expect(l.steps.find((s) => s.step === "model")).toMatchObject({ ok: true });
+  expect(await until(() => w.state("k1").last_tool === "execute")).toBe(true);
+  // Its permission request was declined, and the turn went on.
+  expect(await until(() => existsSync(join(w.home, "answers.jsonl")))).toBe(true);
+  // Mid-turn, Kiro takes no prompt: the holder keeps the message, and it runs as turn 2, in the same process.
+  const s = w.run(["send", "--name", "k1", "--task", SENT]);
+  expect([s.ok, s.state, s.message, s.headline]).toEqual([true, "queued", { code: "queued", why: "next_turn" }, "routr: k1: queued: it runs as the worker's next turn, once the running one ends"]);
+  w.release();
+  expect(await until(() => w.state("k1").turns?.length === 2 && w.state("k1").turns[1].outcome === "finished")).toBe(true);
+  expect(w.state("k1").turns.map((t) => [t.turn, t.outcome, t.delivered])).toEqual([[1, "finished", 0], [2, "finished", 1]]);
+  // Never a second prompt while one ran; the report is the text after its last tool call, not its thoughts.
+  expect(rpcs(w).filter((r) => r.method === "session/prompt").map((r) => r.busy)).toEqual([false, false]);
+  expect(readFileSync(w.state("k1").turns[1].report, "utf8")).toBe("VERDICT: done\nSUMMARY: kiro turn 2");
+  await w.settled("k1");
+  // Idle: a new process loads the session; what it replays is not this run's.
+  expect(w.run(["send", "--name", "k1", "--task", SENT]).state).toBe("resumed");
+  expect(w.run(["wait", "--name", "k1", "--timeout", "20000"]).workers[0].turns.at(-1)).toMatchObject({ turn: 3, outcome: "finished" });
+  expect(rpcs(w).filter((r) => r.method === "session/load")).toEqual([{ method: "session/load", sessionId: "b7cad7ce-3a91-46bd-8a45-3af4a23b39b5", cwd: l.cwd }]);
+  expect(readFileSync(w.state("k1").turns[2].report, "utf8")).toBe("VERDICT: done\nSUMMARY: kiro turn 1");
+  await w.settled("k1");
+  for (const o of w.outputs) for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([m, o.includes(m)]).toEqual([m, false]);
+  noBriefInFiles(w);
+  // A model Kiro does not list is refused before anything is written; a failed turn is failed.
+  expect(w.launch("k2", w.task(BRIEF, "m.md"), [], undefined, "kiro", "nosuch").error).toStartWith("kiro-cli does not list --model nosuch");
+  expect(existsSync(w.runDir("k2"))).toBe(false);
+  expect(w.launch("k3", w.task(`${BRIEF} FAIL`, "f.md"), [], undefined, "kiro").state).toBe("prompted");
+  await w.settled("k3");
+  expect(w.state("k3")).toMatchObject({ state: "failed", turns: [expect.objectContaining({ outcome: "failed", report: expect.any(String) })] });
+  for (const n of ["k1", "k3"]) expect(w.run(["cleanup", "--worker", n]).state).toBe("removed");
+}, 60000);
+
+test("Kiro's ACP output as routr reads it: replies, its own requests, fixed tool kinds, the text after its last tool call, nothing while a session loads", () => {
+  const r = kiroReader(), up = (update) => r.read(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { update } }));
+  expect(r.read(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { stopReason: "end_turn" } }))).toEqual({ reply: { id: 2, result: { stopReason: "end_turn" }, error: null } });
+  expect(r.read(JSON.stringify({ jsonrpc: "2.0", id: 9, method: "session/request_permission", params: {} }))).toEqual({ request: 9 });
+  expect(up({ sessionUpdate: "agent_message_chunk", content: { text: "I will look." } })).toEqual({ activity: true });
+  for (const [kind, tool] of [["execute", "execute"], ["edit", "edit"], ["something_new", "other"]]) expect(up({ sessionUpdate: "tool_call", kind })).toEqual({ tool });
+  up({ sessionUpdate: "agent_thought_chunk", content: { text: "thinking" } });
+  up({ sessionUpdate: "agent_message_chunk", content: { text: "the " } }); up({ sessionUpdate: "agent_message_chunk", content: { text: "answer" } });
+  expect(r.take()).toBe("the answer");
+  r.loading(true);
+  expect(up({ sessionUpdate: "agent_message_chunk", content: { text: "old" } })).toBe(null);
+  r.loading(false);
+  expect([r.take(), r.read(JSON.stringify({ jsonrpc: "2.0", method: "_kiro.dev/metadata", params: {} })), r.read("not json")]).toEqual(["", null, null]);
 });
 
 test("the brief and messages reach the harness on stdin only: never an answer, an argument, or a file but the reports", async () => {
@@ -600,7 +693,7 @@ test("a harness that ends before its session leaves a failed worker that send wi
 test("outside herdr, launch refuses what a headless worker cannot do, before it writes or starts anything", async () => {
   const w = world(), file = w.task(BRIEF), advice = w.advise(file);
   const go = (args, extra) => w.run(["launch", "--name", "r1", "--model", "m", "--task-file", file, "--advice", advice, ...args], extra);
-  expect(go(["--kind", "cursor"]).error).toBe("outside herdr, routr launch starts Claude Code, Codex and Antigravity workers only; run the lead inside herdr for a Cursor worker");
+  expect(go(["--kind", "cursor"]).error).toBe("outside herdr, routr launch starts Claude Code, Codex, Antigravity and Kiro workers only; run the lead inside herdr for a Cursor worker");
   expect(go(["--kind", "claude", "--pane", "w1:p1"]).error).toBe("--pane needs herdr; outside herdr a worker runs headless, with no pane");
   expect(go(["--kind", "claude", "--worktree", "b"]).error).toStartWith("--worktree needs a git repository: git found none at");
   expect(w.run(["launch", "--kind", "claude", "--name", "r1", "--model", "m"]).error).toBe("outside herdr a worker starts with its task: pass --task-file (or --task) and --advice");

@@ -39,7 +39,7 @@ export const COMMANDS = {
   },
   launch: {
     name: "launch",
-    description: "start a worker with matching task advice: in a herdr pane, or outside herdr a headless Claude Code, Codex or Antigravity worker that `routr wait` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
+    description: "start a worker with matching task advice: in a herdr pane, or outside herdr a headless Claude Code, Codex, Antigravity or Kiro worker that `routr wait` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
     flags: [
       { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
       { name: "--name", arg: "<name>", description: "worker agent name ([a-z][a-z0-9_-]{0,31})", required: true },
