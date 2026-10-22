@@ -605,8 +605,8 @@ the message in memory, at most 8. For Antigravity and Kiro while a turn runs, or
 process. Otherwise when the harness's input had closed: once that process has exited the holder starts a new one
 resuming the same session with it. When the process exits with messages still kept, a new one resumes with them:
 Antigravity and Kiro run each as a turn of its own, in the order sent; Claude and Codex take them together as one
-turn, whose `delivered` counts them. A process that ended before it took its task is not resumed: each kept message
-gets a turn of its own, `not_started`. Lost if the holder dies first; dropped by a stop, which says how many), `resumed` (a new holder resumed the session with it: `prompted`), `refused` (the holder did not take it:
+turn, whose `delivered` counts them. A process that ended before it took its task, or a session that cannot be resumed, is not resumed: Antigravity and
+Kiro give each kept message a turn of its own, `not_started`; Claude and Codex one `not_started` turn for them all. Lost if the holder dies first; dropped by a stop, which says how many), `resumed` (a new holder resumed the session with it: `prompted`), `refused` (the holder did not take it:
 `message.why` is a fixed code, such as `no_session`, `stopping`, `queue_full`, `harness_ended` when the resumed
 harness ended before taking it, `harness_refused` when Codex said no or Kiro would not load its session, `not_started` when Codex or Kiro had not started the
 task's turn within 30 seconds, or `not_written` when its input would not take it), `unknown` (handed over and no answer came: whether it
