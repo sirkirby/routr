@@ -47,7 +47,7 @@ async function turn(text) {
   if (ended && !tasks) process.exit(0);
 }
 process.stdin.on("data", async (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); const t = JSON.parse(l).message.content; if (busy) mid.push(t); else await turn(t); } });
-process.stdin.on("end", () => { ended = true; if (!busy && !tasks) process.exit(0); });
+process.stdin.on("end", () => { ended = true; if (!busy && !tasks) setTimeout(() => process.exit(0), process.env.FAKE_SLOW_EXIT ? 1500 : 0); });
 `;
 const BRIEF = "PRIVATE-BRIEF-7f3a: rename foo to bar in x.js. Check: grep bar x.js.";
 const SENT = "PRIVATE-SEND-91c2: also rename baz.";
@@ -159,6 +159,20 @@ test("a turn the harness starts itself, after a background command ends, is wait
   await w.settled("bg");
   expect(w.state("bg").state).toBe("idle");
   w.run(["cleanup", "--worker", "bg"]);
+}, 60000);
+
+test("a message sent while Claude is exiting is queued, and runs as the next turn on the same session", async () => {
+  const w = world({ FAKE_SLOW_EXIT: "1" });
+  expect(w.launch("q1", w.task(BRIEF)).state).toBe("prompted");
+  expect(w.run(["wait", "--name", "q1", "--timeout", "20000"]).workers[0].turns.map((t) => t.turn)).toEqual([1]);
+  // Its input is closed and it has not exited yet: the holder keeps the message for the next Claude.
+  await until(() => w.state("q1").state === "waiting", 3000);
+  expect(w.run(["send", "--name", "q1", "--task", SENT])).toMatchObject({ ok: true, state: "queued", message: { code: "queued" } });
+  const next = w.run(["wait", "--name", "q1", "--timeout", "20000"]);
+  expect(next.workers[0].turns).toMatchObject([{ turn: 2, outcome: "finished" }]);
+  expect(w.state("q1").turns.map((t) => t.outcome)).toEqual(["finished", "finished"]);
+  await w.settled("q1");
+  w.run(["cleanup", "--worker", "q1"]);
 }, 60000);
 
 test("after a failed turn, wait reports the failure once, then the turn a follow-up resumes", async () => {

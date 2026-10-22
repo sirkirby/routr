@@ -97,6 +97,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   let pending = 0, refusing = null;
   const turnRow = () => st.turns.at(-1);
   const setRow = (patch) => ({ turns: [...st.turns.slice(0, -1), { ...turnRow(), ...patch }] });
+  // One more message written into turn `n`, whether or not that turn is still running.
+  const addDelivered = (n) => save({ turns: st.turns.map((t) => (t.turn === n ? { ...t, delivered: (t.delivered ?? 0) + 1 } : t)) });
   const beginTurn = () => { inTurn = true; const delivered = pending; pending = 0; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered }], state: "working" }); };
   const endTurn = (outcome, text) => {
     if (!inTurn) return;
@@ -142,6 +144,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       child = c;
       const finish = (why) => {
         if (finished) return; finished = true;
+        // Messages it took between turns, and no turn started for them: they get one, ended with this process.
+        if (pending && !inTurn) beginTurn();
         endTurn(stopAsked ? "stopped" : why, null);
         answer({ code: "failed", why: "harness_ended" });
         if (child === c) child = null;
@@ -180,7 +184,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
           if (ev.result && !inTurn) beginTurn();
           if (ev.result) endTurn(ev.result.failed ? "failed" : "finished", ev.result.text);
           // Nothing more to say to it: close its input, so it ends once its background commands have.
-          if ((ev.result || ev.tasks === 0) && !inTurn && !queue.length && !st.tasks && !c.stdin.writableEnded) c.stdin.end();
+          // Not while a message it was given has yet to start its turn.
+          if ((ev.result || ev.tasks === 0) && !inTurn && !pending && !queue.length && !st.tasks && !c.stdin.writableEnded) c.stdin.end();
         }
       });
       write(c, text).then((ok) => { if (!ok) { stop(c, { group: true }); answer({ code: "failed", why: "task_not_written" }); } });
@@ -219,9 +224,12 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
     // Into the running Claude while its input is open: counted on the running turn, or, between turns, on the turn it
     // starts. A write that fails changes no turn.
     if (child && !child.stdin.writableEnded && !child.stdin.destroyed) {
-      const into = inTurn ? st.turn : null;
+      // The turn it goes into: the running one, or the next. Decided now, counted once the write is through, which may
+      // be after Claude has started that next turn.
+      const into = inTurn ? st.turn : null, before = st.turn;
       if (await write(child, m.text)) {
-        if (into != null && st.turn === into && inTurn) save(setRow({ delivered: (turnRow()?.delivered ?? 0) + 1 }));
+        if (into != null) addDelivered(into);
+        else if (st.turn > before) addDelivered(before + 1);
         else pending++;
         return { code: "handed_to_harness" };
       }
