@@ -413,7 +413,8 @@ plans the pane launch as before: it does not check the environment.
   holder or worker started: another kind; `--pane` or `--direction`; no task; a task too large; a lead's sandbox it can
   see (`SANDBOX_RUNTIME`, `CODEX_SANDBOX`); a name whose run folder exists; a home whose socket path would be too long;
   with `--worktree`, a `--cwd` git finds no repository at, a branch that exists, or a worktree folder that exists; the
-  subscription turned off; the harness not signed in.
+  subscription turned off; the harness not signed in; for Kiro, a `--model` its own list (`kiro-cli chat --list-models`)
+  does not have (read only once it is on and signed in).
 - `--worktree <branch>` (with `--base`, `--copy`): launch makes the worktree with git under
   `~/.local/share/routr/worktrees`, on that new branch, and the worker runs there; `worktree` is `{ branch, base?, path,
   workspace: null }`, `cwd` its path, and `steps` add `worktree` and `copy`. git refusing to make it (a `--base` it
@@ -437,7 +438,7 @@ plans the pane launch as before: it does not check the environment.
   the run folder; `session`: the harness's session id (Codex: its thread id; Antigravity: its conversation id; Kiro: its ACP session id), or null).
   `start.argv` is the harness's headless command line (Codex: `app-server` only; its model and effort go in the
   protocol; Antigravity: with the worker's folder in `--add-dir`; Kiro: `acp` with the pane's flags); it is set once the worker's folder is known: a launch
-  refused before that shows the pane command planned first, not the headless one. `ran` displays it. `steps`: `reserve`, `holder`, `prompt`. When no holder could have started, launch removes the run folder
+  refused before that shows the pane command planned first, not the headless one. `ran` displays it. `steps`: `reserve`, `holder`, `prompt` (Kiro: `model` first, when its list was read). When no holder could have started, launch removes the run folder
   it made and `worker` is null; when the holder is starting or does not answer, it keeps the folder and `worker`, and
   `next` says to look at it with `routr workers --name <name>` before retrying.
 - `next`: `routr wait --name <name>` (run), the record template, and `routr cleanup --worker <name>` (run). A failure
@@ -605,7 +606,7 @@ message; otherwise when the harness's input had closed, and once that process ha
 resuming the same session with it. A message Kiro ended before taking goes to that new process too. Lost if the holder
 dies first), `resumed` (a new holder resumed the session with it: `prompted`), `refused` (the holder did not take it:
 `message.why` is a fixed code, such as `no_session`, `stopping`, `queue_full`, `harness_ended` when the resumed
-harness ended before taking it, `harness_refused` when Codex said no, `not_started` when Codex had not started the
+harness ended before taking it, `harness_refused` when Codex said no or Kiro would not load its session, `queue_full` when Kiro already holds 8, `not_started` when Codex or Kiro had not started the
 task's turn within 30 seconds, or `not_written` when its input would not take it), `unknown` (handed over and no answer came: whether it
 was taken is not known, and it is never sent again on its own; `no_reply` when Codex ended before answering;
 `headline` `routr: whether <name> took the message is not known (<why>)`), `failed` (refused input).
@@ -636,7 +637,8 @@ Stops a headless worker through its own process. Inputs: required: `--name`.
 within six seconds, or something of its group still there after it went), `absent` (not running), `lost` (its process is gone, or a group it recorded still has members),
 `unreachable`, `unknown`, `failed` (refused). `ok`: true for `stopped` and `absent`. For `lost` and `unreachable`,
 `warnings` says routr never stops a process by a saved id and `next` says what to look at. Own fields: `state`,
-`name`. `next`: `routr cleanup --worker <name>` (run).
+`name`. Messages the holder still keeps (`queued`, Kiro's held ones included) are dropped by a stop, and `warnings` says
+how many. `next`: `routr cleanup --worker <name>` (run).
 
 ## usage
 

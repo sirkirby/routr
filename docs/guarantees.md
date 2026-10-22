@@ -161,7 +161,7 @@ display only, with prompt lengths instead of prompt text.
 
 ## Headless workers
 
-Outside herdr, `routr launch --kind claude`, `codex` or `agy` starts the worker headless: Claude Code's own `-p`
+Outside herdr, `routr launch --kind claude`, `codex`, `agy` or `kiro` starts the worker headless: Claude Code's own `-p`
 stream-json mode, Codex's app-server, Antigravity's `--print` stream-json mode, or Kiro's ACP mode, on your sign-in, held by one routr process of its own (its holder). Other
 harnesses, `--pane` and `--direction` are refused outside herdr. What that means on your machine:
 
@@ -197,8 +197,10 @@ harnesses, `--pane` and `--direction` are refused outside herdr. What that means
   telemetry. The harness keeps its own session history as it always does. Its error output is not read. A tool is shown
   by its name only when it is one of the harness's own (Claude's tools, Codex's item types, Antigravity's tools, Kiro's tool kinds); an MCP server's tool is
   `mcp` and any other `other`.
-- **Kiro's permissions.** Kiro runs with `--trust-tools=*`, as in a pane. A request it makes of routr (a permission,
-  for one) is declined with a JSON-RPC error; none came in the measured runs.
+- **Kiro's permissions.** Kiro runs with `--trust-tools=*`, as in a pane, and routr tells it at `initialize` that it
+  reads and writes no files and runs no terminal for it. A request Kiro makes of routr (a permission, for one) is
+  declined with a JSON-RPC error. None came in the one measured protocol run, so what Kiro does after a decline is not
+  measured.
 - **Codex's permissions.** Codex runs with `approvalPolicy: "never"` and `sandbox: "danger-full-access"`, what
   `--yolo` is in a pane. Unlike a pane, a hook you have not trusted in Codex does not run: its app-server skips it,
   silently (measured). A request Codex makes of routr (an approval, a question, a tool call) is answered with a
