@@ -85,6 +85,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus normal/fallback candidates and a capacity ranking. Give it the exact task the worker will get (`routr dispatch --task-file task.md`, saving stdout as `advice.json`); `launch --advice advice.json` requires a match. `--headroom <name>=0.9` (or `90%`) overrides a reading. |
 | `usage [cursor\|kiro]` | Each subscription's usage, candidates and capacity ranking, with no brief. `usage cursor` or `usage kiro` reads that one now. |
 | `launch` | Start one worker in its own git worktree, nested under the repo in herdr (`--base` starts it from another branch or commit): flags, model syntax, shell prompts, startup questions reported (never answered), readiness, prompt. A task requires matching `--advice`; `--dry-run` shows the plan and returns `ok: false` with `error` when a real launch would refuse. `next` holds recovery, the record template and cleanup. |
+| `wait`, `send`, `workers`, `stop` | Outside herdr, `launch` starts Claude Code workers headless: `wait` returns when one finishes a turn, with its report's path; `send` corrects it mid-turn or resumes its session with a follow-up; `workers` shows each one's state; `stop` ends one. |
 | `cleanup` | Finish a worker: remove its worktree and workspace (or close its pane), never while anything runs there or anything in it is uncommitted. Keeps the branch unless `--delete-branch` and it is merged. With no worker named, lists the repo's worktrees. `--dry-run` says what it would do. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
 | `record`, `assess` | Write one ledger line (`record --task-file <path>` checks advice against this worker’s task); read the ledger back as advice about your own settings. |
@@ -164,9 +165,10 @@ keeps your beta until a stable release passes it; `routr update --force` switche
 To remove it, run `routr uninstall`. It shows what it will remove and asks first. Your config, key, and ledger stay
 for a later reinstall unless you choose otherwise (`--purge`).
 
-For orchestration you also need [herdr](https://herdr.dev) and its agent skill
+For orchestration across every harness you also need [herdr](https://herdr.dev) and its agent skill
 (`npx skills add herdrdev/herdr --skill herdr -g`); setup offers to install both, and `routr doctor` tells you when
-either is missing. Sizing subagents works without them.
+either is missing. Without herdr, `routr launch` starts Claude Code workers headless, followed with `routr wait`; the
+other harnesses need herdr for now. Sizing subagents works without it.
 
 To start an orchestration, open your lead agent in herdr and type your plan after the `routr-orchestrate` skill, which
 routr installs beside the routr skill:

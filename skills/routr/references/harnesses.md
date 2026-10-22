@@ -225,3 +225,25 @@ and `resets_at` (a window is dropped once `resets_at` passes); `prompt_cache` ap
 response (v2.1.251+); `context_window.current_usage` is null before the first API call and after `/compact`. The last
 two only tell the reader whether "no windows" came before or after a response, which changes its note, not its class.
 
+
+## Claude Code headless, outside herdr (measured 2026-10-21 and 2026-10-22, Claude Code 2.1.306 to 2.1.308)
+
+What `routr launch` outside herdr relies on: `claude -p --input-format stream-json --output-format stream-json
+--verbose` with the permissive flags, model and effort as in a pane.
+
+- The task goes in on stdin as a stream-json user message; a message written while a turn runs joins that turn.
+  `--resume <session>` continues a session as a new process, its earlier context kept.
+- There is no question box: AskUserQuestion is absent under `-p`. Told to ask, Claude asks in text and ends the
+  turn with a successful `result`.
+- `result` holds the turn's final message. A command started with `run_in_background` keeps Claude running after it,
+  even once stdin is closed; when that command ends, Claude starts a turn by itself (a second `init` and `result`).
+  `background_tasks_changed` lists what is pending.
+- A Bash tool command that outlives Claude's 2-minute default (`BASH_DEFAULT_TIMEOUT_MS`) is moved to the background,
+  not killed, and a `-p` session waits for it before it ends.
+- Each tool command runs in a process group of its own. SIGTERM to Claude ends them; SIGKILL leaves them running.
+- With its reader gone (the process that held its output killed), Claude keeps working until its next write fails.
+- Started from a lead's sandbox it fails: Claude Code's Bash sandbox blocks api.anthropic.com and writes outside the
+  allowed folders (it sets `SANDBOX_RUNTIME`); inside Codex's workspace-write sandbox `claude` says "Not logged in"
+  (Keychain hidden; it sets `CODEX_SANDBOX`).
+- Started from a Bun process in a folder with a `.env`, Claude used that file's `ANTHROPIC_API_KEY` (`apiKeySource`
+  in its `init`): Bun had loaded it. routr's release builds do not load a `.env`.

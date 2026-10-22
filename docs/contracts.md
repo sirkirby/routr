@@ -4,7 +4,8 @@ What each routr command an orchestrator reads takes, and what it prints. This pa
 The field maps document the migration from the previous output, and the reader inventory records the baseline
 that the implementation changed together. In those migration notes, "today" means the output before this change.
 
-Commands covered: `subagent`, `dispatch`, `check`, `launch` (dry run and real), `record`, `cleanup` (each mode), and
+Commands covered: `subagent`, `dispatch`, `check`, `launch` (dry run, in herdr, and headless), `record`, `cleanup` (each mode),
+`wait`, `send`, `workers`, `stop`, and
 `usage` (no name, `--level`, and each named reader: `claude`, `codex`, `agy`, `cursor`, `kiro`). Setup, doctor and key output for decision models is covered below; other maintenance commands are not covered.
 
 ## What every answer says
@@ -402,6 +403,25 @@ task was given), `worktree` `{ branch, base?, path, workspace }` (when one was m
 note? }` (only in `needs_input`; `herdr` is `{ state, rule?, explained?, rules? }`), `screen` (when launch stopped at
 a pane: needs input, or failed after reading the pane).
 
+### launch outside herdr (headless)
+
+Outside herdr (`HERDR_ENV` is not `1`), a real launch starts a headless Claude Code worker instead of a pane. A dry run
+plans the pane launch as before: it does not check the environment.
+
+- Required, beyond launch's own: `--kind claude`, a task (`--task-file` or `--task`) with its matching `--advice`.
+  Refused (with `error`, `state: "failed"`, before anything starts): another kind; any of `--pane`, `--direction`,
+  `--worktree`, `--base`, `--copy`; no task; a lead's sandbox it can see (`SANDBOX_RUNTIME`, `CODEX_SANDBOX`); a name
+  whose run folder exists; a home whose socket path is too long. The subscription's on/off setting and Claude's
+  sign-in are checked as for a pane.
+- `state`: `prompted` (the harness took the task and named its session, or has not named it within 30 seconds) or
+  `failed`.
+- `headline`: `routr: <name> (claude) took its task, running headless`, or the failure as for a pane launch.
+- Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "headless", run, session }` (`run`:
+  the run folder; `session`: Claude's session id, or null). `start.argv` is Claude's headless command line; `ran`
+  displays it. `steps`: `reserve`, `holder`, `prompt`.
+- `next`: `routr wait --name <name>` (run), the record template, and `routr cleanup --worker <name>` (run). A failure
+  after the task was handed over warns that it may have been sent and says to run `routr workers` before retrying.
+
 ## record
 
 Appends one row to the ledger: the advice, what the lead chose, and how it went. The only command that appends to the
@@ -464,8 +484,11 @@ Finishes a worker: removes its worktree, or closes its pane, after checking noth
 
 Inputs:
 
-- Required: at most one of `--worktree <branch>`, `--path <path>`, `--pane <id>`; `--delete-branch` only with
-  `--worktree` or `--path`; `--pane` takes no `--cwd`. Refused (with `error`) otherwise.
+- Required: at most one of `--worktree <branch>`, `--path <path>`, `--pane <id>`, `--worker <name>`; `--delete-branch`
+  only with `--worktree` or `--path`; `--pane` and `--worker` take no `--cwd`. Refused (with `error`) otherwise.
+- `--worker` refuses (`refused`) while the worker runs, does not answer, or its process ended and a group it recorded
+  still has members; `headline` `routr: removed worker <name>`, `routr: kept <name>: <why>`, `routr: would remove
+  <folder>`; it warns that the worker's changes in its folder are the lead's to check. Own field: `worker` (the name).
 - Used when given: `--cwd` (default `.`), `--delete-branch`, `--dry-run`.
 
 Modes and `state`:
@@ -475,6 +498,7 @@ Modes and `state`:
 | `--pane <id>` | `closed`, `absent`, `planned`, `refused`, `failed` |
 | `--cwd` with no worker named: list | `listed`, `failed` |
 | `--worktree` or `--path`: remove | `removed`, `absent`, `planned`, `refused`, `failed` |
+| `--worker <name>`: a headless worker's run folder | `removed`, `absent`, `planned`, `refused`, `failed` |
 
 `ok`:
 
@@ -501,6 +525,65 @@ git's or herdr's text or a process's name ("Text from outside routr").
 Own fields: `state`, `steps`, `ran`; `cwd` (worktree modes); `pane` (pane mode); `worktrees` (list: each `{ branch,
 path, workspace, detached, removable, why? }`); `worktree` `{ branch, path, workspace, detached }` (remove mode, once
 found); `branch` `{ name, deleted }` (removed, when the worktree had one).
+
+## wait
+
+Waits for headless workers. Changes nothing of yours; it records, in each worker's run folder, the turns it has
+reported, so the next wait reports only newer ones.
+
+Inputs: used when given: `--name <name>` (repeatable; default: every worker still running or with a turn not yet
+reported), `--timeout <ms>` (default 90000, at most 600000). A name with no worker is refused (`error`).
+
+`state`: `finished` (a watched worker has a turn not reported before, or has `failed`, `stopped`, `lost`, `no_task` or
+become `unreachable`), `running` (the timeout came first), `idle` (nothing watched is running and nothing is new),
+`none` (no worker to wait on), `failed` (refused).
+
+`ok`: true unless refused. `headline`: `routr: <name> finished a turn` (or `<name> <state>`), joined with `; `;
+`routr: still running: <names>`; `routr: nothing running: <name> <state>, …`; `routr: no headless worker to wait on`.
+
+Own fields: `state`, `workers` (each as `workers` prints it, with `turns` holding only the turns reported now: `{ turn,
+outcome, report, delivered }`; `outcome` is `finished`, `failed`, `no_finish`, `stopped` or `running`; `report` is a
+path or null; `delivered` counts messages handed into that turn). `next`: for each new report a `do` step with the
+`routr check` template on its path; a `lost` worker's step; a note when background commands may start another turn;
+`routr wait` again (run) for the workers still running.
+
+## send
+
+A correction or follow-up for a headless worker launched with advice; the original advice and rules carry over. The
+message is the task text with the report reminder appended.
+
+Inputs: required: `--name`, and one of `--task` or `--task-file`. Refused (`error`): an unknown worker, an empty
+message, a worker whose process does not answer, one whose harness may still run after its process ended, a sandbox
+(when a new holder must start), Claude not signed in (likewise), a worker with no session to resume.
+
+`state`: `delivered` (written into the running turn's input: `message.code` `handed_to_harness`, not yet proven read),
+`queued` (it runs as the next turn of the same process), `resumed` (a new holder resumed the session with it:
+`prompted`), `refused` (the holder refused it: `message.why` is a fixed code), `unknown` (no answer after it was
+handed over: run `routr workers` before sending again), `failed` (refused input).
+
+`ok`: true for `delivered`, `queued`, `resumed`. Own fields: `state`, `name`, `message` `{ code, why? }`. `next`:
+`routr wait --name <name>` (run).
+
+## workers
+
+Each headless worker as its holder last recorded it, checked against whether its channel answers. Changes nothing.
+
+Inputs: used when given: `--name` (repeatable). Own fields: `workers`, each `{ name, kind, model, effort, cwd, state,
+turn, seconds_since_event, last_tool, tasks, queued, session, report, harness_group? }`. `state` is `starting`,
+`working`, `waiting` (between turns: background commands running, or a message queued), `idle`, `failed`, `stopped`,
+`no_task` (its process started and no task came), `lost` (its process ended mid-turn without settling), or
+`unreachable` (its channel does not answer). `last_tool` is one of Claude's tool names, `mcp`, `other`, or null.
+`harness_group` (only when `lost`): the process group it recorded, while that group still has members. Never worker
+text.
+
+## stop
+
+Stops a headless worker through its own process. Inputs: required: `--name`.
+
+`state`: `stopped` (the harness exited), `still_exiting` (told to stop; not gone within the grace), `absent` (not
+running), `lost` (its process is gone; a recorded group may still run), `unreachable`, `unknown`, `failed`. `ok`: true for
+`stopped` and `absent`. For `lost` and `unreachable`, `warnings` says routr never stops a process by a saved id and
+`next` says what to look at. Own fields: `state`, `name`. `next` (when ok): `routr cleanup --worker <name>`.
 
 ## usage
 

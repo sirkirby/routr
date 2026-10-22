@@ -39,7 +39,7 @@ export const COMMANDS = {
   },
   launch: {
     name: "launch",
-    description: "start a worker with matching task advice; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
+    description: "start a worker with matching task advice: in a herdr pane, or outside herdr a headless Claude Code worker that `routr wait` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
     flags: [
       { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
       { name: "--name", arg: "<name>", description: "worker agent name ([a-z][a-z0-9_-]{0,31})", required: true },
@@ -67,9 +67,37 @@ export const COMMANDS = {
       { name: "--worktree", arg: "<branch>", description: "the worker's worktree, by the branch given to launch --worktree (name one worker: --worktree, --path, or --pane)", required: false },
       { name: "--path", arg: "<path>", description: "the worker's worktree, by its folder (one on no branch, or made by hand)", required: false },
       { name: "--pane", arg: "<id>", description: "a worker launched without --worktree: close its pane (a worktree's only pane is refused, with the command that removes the worktree). Takes no --cwd", required: false },
+      { name: "--worker", arg: "<name>", description: "a headless worker (launched outside herdr): remove its run folder and reports once nothing of it runs. Takes no --cwd", required: false },
       { name: "--delete-branch", arg: null, description: "also delete the worktree's branch, once its work has landed: git deletes it only when it is merged (with --worktree or --path)", required: false, default: false },
       { name: "--dry-run", arg: null, description: "check and say what it would do; change nothing", required: false, default: false },
     ],
+  },
+  wait: {
+    name: "wait",
+    description: "outside herdr: wait for headless workers; returns when one finishes a turn (with its report's path), fails, stops or is lost, or at the timeout with the ones still running; changes nothing of yours",
+    flags: [
+      { name: "--name", arg: "<name>", description: "a worker to wait on (repeatable)", required: false, default: "every worker still running or with a turn not yet reported", repeatable: true },
+      { name: "--timeout", arg: "<ms>", description: "how long to wait, at most 600000; the default fits inside a lead's own command time limit", required: false, default: 90000 },
+    ],
+  },
+  send: {
+    name: "send",
+    description: "outside herdr: a correction or follow-up for a headless worker, into its running turn where the harness takes it, or as the next turn of the same session; new work is a new launch with its own advice",
+    flags: [
+      { name: "--name", arg: "<name>", description: "the worker", required: true },
+      { name: "--task", arg: "<text>", description: "the message (mutually exclusive with --task-file)", required: false },
+      { name: "--task-file", arg: "<path>", description: "file containing the message (mutually exclusive with --task)", required: false },
+    ],
+  },
+  workers: {
+    name: "workers",
+    description: "outside herdr: each headless worker's state, turn, seconds since its last event, last tool, session and latest report path; never its text; changes nothing",
+    flags: [{ name: "--name", arg: "<name>", description: "only this worker (repeatable)", required: false, repeatable: true }],
+  },
+  stop: {
+    name: "stop",
+    description: "outside herdr: stop a headless worker through its own process (SIGTERM to its harness and what that started, then SIGKILL); never by a saved process id",
+    flags: [{ name: "--name", arg: "<name>", description: "the worker", required: true }],
   },
   share: {
     name: "share",
