@@ -208,7 +208,7 @@ harnesses, `--pane` and `--direction` are refused outside herdr. What that means
   Linux) is refused before launch writes anything. On Windows it is a named pipe, and Windows' default security lets
   other local users and anonymous logons open it for reading: the handshake is what keeps them out (measured: a reader
   got only a fixed error), not the pipe's permissions. Not tested: another local account, a remote client.
-- **What it starts.** The holder starts the harness (`claude`, `codex app-server`, or `agy --print`) in its own process group
+- **What it starts.** The holder starts the harness (`claude`, `codex app-server`, or `agy --print=`) in its own process group
   (POSIX), in the worker's folder (its worktree, or `--cwd`), with herdr's and the lead's session variables removed,
   and records that group before the task goes in. It exits once the harness has. On macOS and Linux, `stop` sends
   SIGTERM to that group, then SIGKILL to the group two seconds later if the harness itself has not exited, and waits

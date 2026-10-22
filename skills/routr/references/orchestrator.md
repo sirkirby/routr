@@ -358,17 +358,21 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   that is running (Claude and Codex: it joins that turn, and one that arrives just as the turn ends starts the next
   turn instead; Antigravity: it waits, and runs as the next turn once the running one ends) or, when the worker is
   idle, resumes its session with it as the next turn. It keeps the worker's context, so this is the send-back of step
-  4. With Antigravity, a correction does not stop work already under way: read the first turn's report as work the
-  correction may change. `state: "delivered"` means it reached the running worker (Claude and Antigravity: written to
+  4. With Antigravity, a correction does not stop work already under way: `wait` first returns the report of the turn
+  that was running, which the correction may change; the turn whose `delivered` counts your message carries the
+  correction, so judge that report. When the running work is wrong enough to waste, `routr stop` the worker first,
+  then `routr send` the correction: it continues the conversation in a new process (not measured for Antigravity).
+  `state: "delivered"` means it reached the running worker (Claude and Antigravity: written to
   its input, not proven read; Codex: accepted by its app-server), not that the worker acted on it; wait for the
   turn's report.
   `state: "unknown"` means it was handed over and no answer came: look with `routr workers` before you send it again.
   New work is a new launch with its own advice.
 - **Background commands.** A Claude worker that left a command running in the background may start another turn by
   itself when that command ends. `wait` reports that turn like any other. Codex's and Antigravity's background
-  commands are not tracked: routr closes their input once a turn ends and nothing waits, so they never start a turn by
-  themselves. What that
-  does to a command still running is not measured; one left in its process group blocks `send` and cleanup (see
+  commands are not tracked: routr closes their input once a turn ends, which ended each at once in the measured runs
+  (none had a background command left). Whether either starts a turn by itself, or what happens to a command still
+  running, is not measured; `wait` reports such a turn like any other, and a command left in its process group
+  blocks `send` and cleanup (see
   "Lost").
 - **Look at it.** `routr workers` shows each worker's state, turn, seconds since it last did something, its last
   tool, and its latest report path, never its text. Taking a worker over interactively is not built yet: do not open

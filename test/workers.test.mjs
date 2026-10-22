@@ -123,7 +123,7 @@ async function turn(text) {
   if (ended) process.exit(0);
 }
 process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const e = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1); const t = e.message.content; if (busy) waiting.push(t); else turn(t); } });
-process.stdin.on("end", () => { ended = true; if (!busy) process.exit(0); });
+process.stdin.on("end", () => { if (process.env.FAKE_EOF) fs.appendFileSync(process.env.FAKE_EOF, JSON.stringify({ turns: n, busy, waiting: waiting.length }) + "\\n"); ended = true; if (!busy) process.exit(0); });
 `;
 const BRIEF = "PRIVATE-BRIEF-7f3a: rename foo to bar in x.js. Check: grep bar x.js.";
 const SENT = "PRIVATE-SEND-91c2: also rename baz.";
@@ -136,7 +136,7 @@ function world(over = {}) {
   fakeExecutable(bin, "agy", FAKE_AGY);
   const gate = join(home, "gate"), linger = join(home, "linger");
   // git's own folder too: launch --worktree and cleanup run it, as they would for a person.
-  const env = cliEnv(home, { PATH: [bin, dirname(process.execPath), dirname(Bun.which("git") ?? "git")].join(delimiter), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_RPC: join(home, "rpc.jsonl"), FAKE_ANSWERS: join(home, "answers.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, ...over });
+  const env = cliEnv(home, { PATH: [bin, dirname(process.execPath), dirname(Bun.which("git") ?? "git")].join(delimiter), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_RPC: join(home, "rpc.jsonl"), FAKE_ANSWERS: join(home, "answers.jsonl"), FAKE_EOF: join(home, "eof.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, ...over });
   for (const k of Object.keys(env)) if (/^(HERDR_|CLAUDECODE$|CLAUDE_CODE_SESSION|SANDBOX_RUNTIME$|CODEX_SANDBOX)/.test(k)) delete env[k];
   const outputs = [];
   const run = (args, extra = {}) => {
@@ -199,6 +199,13 @@ test("a headless Claude worker: launch, a message mid-turn, wait, a follow-up th
   expect(w.run(["cleanup", "--worker", "w1", "--cwd", w.work]).error).toBe("--worker takes no --cwd: the worker's run folder says where its worktree is");
 }, 90000);
 
+// No brief or message text in any file under the home but the test's own inputs and the reports.
+const noBriefInFiles = (w) => {
+  for (const f of filesUnder(w.home).filter((x) => !x.startsWith("inputs") && !x.split(/[\\/]/).includes("reports") && !x.startsWith("bin"))) {
+    const text = readFileSync(join(w.home, f), "utf8");
+    for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([f, m, text.includes(m)]).toEqual([f, m, false]);
+  }
+};
 const rpcs = (w) => { try { return readFileSync(join(w.home, "rpc.jsonl"), "utf8").trim().split("\n").map((x) => JSON.parse(x)); } catch { return []; } };
 
 test("a headless Codex worker: its app-server, a message steered into the running turn, wait, a follow-up that resumes its thread", async () => {
@@ -230,7 +237,7 @@ test("a headless Codex worker: its app-server, a message steered into the runnin
   expect(w.run(["wait", "--name", "c1", "--timeout", "20000"]).workers[0].turns).toMatchObject([{ turn: 2, outcome: "finished", delivered: 0 }]);
   await w.settled("c1");
   for (const o of w.outputs) for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([m, o.includes(m)]).toEqual([m, false]);
-  for (const f of ["argv.jsonl", "rpc.jsonl"]) for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([f, readFileSync(join(w.home, f), "utf8").includes(m)]).toEqual([f, false]);
+  noBriefInFiles(w);
   expect(w.run(["cleanup", "--worker", "c1"])).toMatchObject({ ok: true, state: "removed" });
 }, 60000);
 
@@ -320,13 +327,31 @@ test("a headless Antigravity worker: its stream-json mode, a message queued as i
   expect(w.run(["wait", "--name", "a1", "--timeout", "20000"]).workers[0].turns).toMatchObject([{ turn: 3, outcome: "finished" }]);
   await w.settled("a1");
   for (const o of w.outputs) for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([m, o.includes(m)]).toEqual([m, false]);
-  for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([m, readFileSync(join(w.home, "argv.jsonl"), "utf8").includes(m)]).toEqual([m, false]);
+  noBriefInFiles(w);
+  // Two corrections in one turn: two turns of their own, one message each, and its input open until the last has run.
+  rmSync(w.gate, { force: true }); rmSync(join(w.home, "eof.jsonl"), { force: true });
+  expect(w.launch("a3", w.task(`${BRIEF} HOLD`, "q.md"), [], undefined, "agy").state).toBe("prompted");
+  for (const t of [SENT, `${SENT} again`]) expect(w.run(["send", "--name", "a3", "--task", t]).state).toBe("delivered");
+  w.release();
+  expect(await until(() => w.state("a3").turns?.length === 3 && w.state("a3").turns.every((t) => t.outcome === "finished"))).toBe(true);
+  expect(w.state("a3").turns.map((t) => t.delivered)).toEqual([0, 1, 1]);
+  await w.settled("a3");
+  expect(readFileSync(join(w.home, "eof.jsonl"), "utf8").trim().split("\n").map((x) => JSON.parse(x))).toEqual([{ turns: 3, busy: false, waiting: 0 }]);
   // A failed turn, and an MCP tool by its fixed name.
   const f = w.launch("a2", w.task(`${BRIEF} FAIL MCP`, "f.md"), [], undefined, "agy");
   expect(f.state).toBe("prompted");
   await w.settled("a2");
   expect(w.state("a2")).toMatchObject({ state: "failed", last_tool: "mcp", turns: [expect.objectContaining({ outcome: "failed" })] });
-  for (const n of ["a1", "a2"]) expect(w.run(["cleanup", "--worker", n]).state).toBe("removed");
+  // In its own worktree: the folder it is given is the worktree's, as shown. An --effort it would refuse writes nothing.
+  repo(w);
+  expect(w.launch("a4", w.task(BRIEF, "e.md"), ["--worktree", "work/a4", "--effort", "high"], undefined, "agy").error).toBe("agy encodes effort in --model; omit --effort (agy 1.2.11 refuses one that disagrees with the id)");
+  expect(existsSync(w.runDir("a4"))).toBe(false);
+  const t = w.launch("a4", w.task(BRIEF, "e.md"), ["--worktree", "work/a4"], undefined, "agy");
+  expect(t.state).toBe("prompted");
+  const ran = readFileSync(join(w.home, "argv.jsonl"), "utf8").trim().split("\n").map((x) => JSON.parse(x)).filter((x) => x[0] === "agy").at(-1);
+  expect([t.start.argv[t.start.argv.indexOf("--add-dir") + 1], ran[ran.indexOf("--add-dir") + 1], t.cwd]).toEqual([t.worktree.path, t.worktree.path, t.worktree.path]);
+  await w.settled("a4");
+  for (const n of ["a1", "a2", "a3", "a4"]) expect(w.run(["cleanup", "--worker", n]).state).toBe("removed");
 }, 60000);
 
 test("Antigravity's stream as routr reads it: the conversation, turns it starts for queued messages, fixed tool names, the response", () => {

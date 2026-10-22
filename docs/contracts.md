@@ -427,16 +427,17 @@ plans the pane launch as before: it does not check the environment.
   seconds of it (a probe under way when that runs out finishes), and the request handing the harness the task gets between
   35 and 45 seconds (the holder itself answers after 30). The sign-in check, the lock and each channel handshake can
   add time.
-- `state`: `prompted` or `failed`. `prompted` means the task reached the harness and it named its session (Claude and
-  Antigravity: written to its input, not proven read; Codex: its app-server started the turn, and the session is its
-  thread id; Antigravity's session is its conversation id),
+- `state`: `prompted` or `failed`. `prompted` means the task reached the harness and it named its session (Claude:
+  written to its input, not proven read; Antigravity: written to its input, not proven read, and the session is its
+  conversation id; Codex: its app-server started the turn, and the session is its thread id),
   or, with the task in, 30 seconds passed without a session. A harness still starting at 30 seconds, the task not yet
   in, is a failure saying whether it took it is not known (`not_started_in_time`). `wait` says how the turn went.
 - `headline`: `routr: <name> (<kind>) took its task, running headless`, or the failure as for a pane launch.
 - Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "headless", run, session }` (`run`:
   the run folder; `session`: the harness's session id (Codex: its thread id; Antigravity: its conversation id), or null).
   `start.argv` is the harness's headless command line (Codex: `app-server` only; its model and effort go in the
-  protocol); `ran` displays it. `steps`: `reserve`, `holder`, `prompt`. When no holder could have started, launch removes the run folder
+  protocol; Antigravity: with the worker's folder in `--add-dir`); it is set once the worker's folder is known, so a
+  launch refused before that has no `start`. `ran` displays it. `steps`: `reserve`, `holder`, `prompt`. When no holder could have started, launch removes the run folder
   it made and `worker` is null; when the holder is starting or does not answer, it keeps the folder and `worker`, and
   `next` says to look at it with `routr workers --name <name>` before retrying.
 - `next`: `routr wait --name <name>` (run), the record template, and `routr cleanup --worker <name>` (run). A failure
@@ -578,7 +579,7 @@ headless worker to wait on`.
 Own fields: `state`, `workers` (each as `workers` prints it, plus `gen`, the holder generation, and `turns` holding
 only the turns reported now: `{ turn, outcome, report, delivered }`; `outcome` is `finished`, `failed`, `no_finish`
 (the process ended without finishing the turn), `not_started`, `stopped` or `running`; `report` is a path or null;
-`delivered` counts messages written into that turn). A report is the worker's final message of that turn (Codex: its final answer; Antigravity: its `result`'s response), cut at 1 MB; a
+`delivered` counts messages that went into that turn: for Antigravity, and Codex once a turn has ended, the turn the message started, not the one running when it was sent). A report is the worker's final message of that turn (Codex: its final answer; Antigravity: its `result`'s response), cut at 1 MB; a
 turn can end without one. `next`: for each new report a `do` step with the `routr check` template on its path, and
 for a turn without one a `do` step to look at the worker's work yourself; a step for a worker that is `lost` or has a
 process group left; a note when background commands may start another turn; `routr wait` again (run) for the

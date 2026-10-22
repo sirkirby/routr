@@ -234,8 +234,9 @@ export const ADAPTERS = {
       ...plan({ kind: "agy", model, effort, cwd }).argv, ...(session ? ["--conversation", session] : [])],
     connect: (c) => {
       const put = (text) => writeLine(c, JSON.stringify({ event: "user", message: { content: text } }) + "\n");
-      // A message it takes while a turn runs waits for that turn to end, and runs as the next.
-      return { begin: put, send: async (text) => ((await put(text)) ? { code: "handed_to_harness", next: true } : null), line: agyReader(),
+      // A message it takes while a turn runs waits for that turn to end, and runs as a turn of its own (one per line,
+      // its help says; from the review of 31b2f18: two corrections are two turns).
+      return { queues: true, begin: put, send: async (text) => ((await put(text)) ? { code: "handed_to_harness", next: true } : null), line: agyReader(),
         open: () => !c.stdin.writableEnded && !c.stdin.destroyed, done: () => c.stdin.end() };
     },
   },
@@ -284,7 +285,9 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const setRow = (patch) => ({ turns: [...st.turns.slice(0, -1), { ...turnRow(), ...patch }] });
   // One more message written into turn `n`, whether or not that turn is still running.
   const addDelivered = (n) => save({ turns: st.turns.map((t) => (t.turn === n ? { ...t, delivered: (t.delivered ?? 0) + 1 } : t)) });
-  const beginTurn = () => { inTurn = true; const delivered = pending; pending = 0; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered }], state: "working" }); };
+  // A harness that runs each message as a turn of its own (`queues`: Antigravity) starts one turn per waiting message;
+  // the others take every message written between turns into the one turn they start.
+  const beginTurn = () => { inTurn = true; const delivered = conn?.queues ? Math.min(1, pending) : pending; pending -= delivered; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered }], state: "working" }); };
   const endTurn = (outcome, text) => {
     if (!inTurn) return;
     inTurn = false;
@@ -341,9 +344,11 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       conn = h = ADAPTERS[w.kind].connect(c, { cwd: w.cwd, model: w.model, effort: w.effort, session, emit: onEvent });
       const finish = (why) => {
         if (finished) return; finished = true;
-        // Messages it took between turns, and no turn started for them: they get one, ended with this process.
+        // Messages it took between turns, and no turn started for them: they get one (one each, for a harness that
+        // queues), ended with this process.
         if (pending && !inTurn) beginTurn();
         endTurn(stopAsked ? "stopped" : why, null);
+        while (pending) { beginTurn(); endTurn(stopAsked ? "stopped" : why, null); }
         answer({ code: "failed", why: "harness_ended" });
         if (child === c) { child = null; conn = null; }
         // A message that arrived after its input closed: the next turn, on the same session, unless something of the
@@ -419,8 +424,13 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       // The turn it goes into: the running one, or the next. Decided now, counted once it is in, which may be after the
       // harness has started that next turn.
       const into = inTurn ? st.turn : null, before = st.turn, c = conn;
+      // A harness that queues: the message is counted as waiting before it goes in, so the turn it starts takes it even
+      // when that turn begins before the write is acknowledged; it is taken back if the harness never got it.
+      if (c.queues) pending++;
       sending++;
       let r; try { r = await c.send(m.text, inTurn); } finally { sending--; }
+      if (c.queues && !(r?.code === "handed_to_harness")) pending = Math.max(0, pending - 1);
+      if (c.queues && r?.code === "handed_to_harness") { maybeClose(); return { code: r.code }; }
       // It said no, or ended before saying: no turn counts it, and it is not queued (it may have taken it).
       if (r && (r.code === "refused" || r.code === "unknown")) { maybeClose(); return { code: r.code, why: r.why }; }
       if (r) {
