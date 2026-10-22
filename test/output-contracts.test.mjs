@@ -69,6 +69,18 @@ console.error(JSON.stringify({ error: { code: process.env.FAKE_CODE, message: ${
   expect(leaks).toEqual([]);
 }, 60000); // many CLI runs: Windows CI starts processes slowly, past bun's default 5 s
 
+test("typing into a pane is a success when herdr answers exit 0 with nothing, as 0.9.5 does; other commands still need an answer", async () => {
+  const quiet = async () => ({ ok: true, data: "" }); // what transport makes of exit 0 and empty stdout
+  for (const args of [["pane", "run", "w1:p1", "echo hi"], ["pane", "send-text", "w1:p1", "x"], ["pane", "send-keys", "w1:p1", "enter"], ["--session", "s", "pane", "run", "w1:p1", "x"]]) {
+    expect([args.join(" "), await callHerdr(quiet, args, 10)]).toEqual([args.join(" "), { ok: true, data: { result: {} } }]);
+  }
+  for (const args of [["pane", "split", "w1:p1"], ["workspace", "create"], ["agent", "start", "w", "--kind", "claude"], ["pane", "close", "w1:p1"]]) {
+    expect([args.join(" "), (await callHerdr(quiet, args, 10)).code]).toEqual([args.join(" "), "herdr_unreachable"]);
+  }
+  // A failure is still a failure, and an empty answer to a failed exit is not taken as success.
+  expect((await callHerdr(async () => ({ ok: false, data: { error: { code: "herdr_failed", message: MARK } } }), ["pane", "run", "w1:p1", "x"], 10)).ok).toBe(false);
+});
+
 test("pane process-info keeps only shell vocabulary and drops private process names at callHerdr", async () => {
   const cwd = scratch("process-info"), privateName = `${MARK}_process`, privateArgv = `${MARK}_argv0`;
   const r = await callHerdr(async () => shellInfo([
