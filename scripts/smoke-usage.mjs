@@ -22,8 +22,10 @@ const LIVE = {
 };
 // A reading as routing would take it: a seat its own sign-in says is billed per token (Claude with a key) is metered,
 // as is one the user's `billing` says is; a reader's own report of something it could not clean up is a failure.
-const said = (r, billing) => (r?.ok === false ? `FAILED (${r.code})` : r?.ok === true && r.note ? `FAILED (cleanup: ${r.note})`
-  : r?.headroom != null ? `ok: ${Math.round(r.headroom * 100)}% left` : r?.class === "metered" || billing === "metered" ? "ok: metered" : `FAILED (${r?.failure?.code ?? "no reading"})`);
+// A failed read is a failure whatever the billing: only a reading that worked is taken as metered (from the review of 59545ef).
+const said = (r, billing) => (!r ? "FAILED (no reading)" : r.ok === false ? `FAILED (${r.code})` : r.failure ? `FAILED (${r.failure.code})`
+  : r.ok === true && r.note ? `FAILED (cleanup: ${r.note})`
+  : r.headroom != null ? `ok: ${Math.round(r.headroom * 100)}% left` : r.class === "metered" || billing === "metered" ? "ok: metered" : "FAILED (no reading)");
 // The check itself, its seams given (the tests give fakes): one line per subscription, and how many could not read.
 export async function smokeUsage({ config = loadConfig().config, live = LIVE, ready = notReady, billing = billingFor, log = console.log } = {}) {
   let failed = 0;

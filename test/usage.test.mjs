@@ -824,6 +824,12 @@ test("smoke:usage reads each subscription live, asks sign-in fresh, takes a mete
   expect(asked).toEqual([["claude", true], ["codex", true], ["cursor", true], ["kiro", true]]);
   expect(lines).toEqual(["claude: ok: metered", "codex: ok: 90% left", "cursor: FAILED (read_failed)", "kiro: FAILED (cleanup: Kiro kept an empty usage session; inspect its saved sessions to remove it.)", "agy: turned off, not read"]);
   expect(failed).toBe(2);
+  // A read that failed is a failure on a metered seat too, whether its sign-in or the user's billing says metered.
+  const metered = [];
+  const failedCount = await smokeUsage({ config: { subscriptions: { claude: { billing: "metered" }, codex: {}, agy: {} } }, ready, log: (l) => metered.push(l.replace(/ \([^)]*, [\d.]+ s\)$/, "")),
+    billing: async () => ({ billing: { billing: "metered", why: "an API key" }, not: null }),
+    live: { claude: async () => summarize({ pool: "claude", source: "claude /usage", nowSec: NOW, failure: usageFailure("no_response") }), codex: async () => summarize({ pool: "codex", source: "app-server", nowSec: NOW, failure: usageFailure("read_failed") }), agy: async () => null } });
+  expect([metered, failedCount]).toEqual([["claude: FAILED (no_response)", "codex: FAILED (read_failed)", "agy: FAILED (no reading)"], 3]);
   // Signed out now (whatever was kept): not read at all.
   const out = [];
   await smokeUsage({ config: { subscriptions: { kiro: {} } }, live: { kiro: async () => { throw new Error("read while signed out"); } }, ready: async () => "not signed in: run `kiro-cli login`", log: (l) => out.push(l) });
