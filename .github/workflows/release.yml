@@ -53,6 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version-file: .bun-version }
       - run: bun test
 
   build:
@@ -69,6 +70,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version-file: .bun-version }
       - name: Stamp the tag's version into the source (the guides embedded in the binary carry it)
         run: bun scripts/stamp-version.mjs "${{ needs.validate-tag.outputs.version }}"
       - name: Compile a standalone binary
@@ -115,6 +117,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+        with: { bun-version-file: .bun-version }
       - name: Stamp the tag's version into the source (the guides embedded in the binary carry it)
         run: bun scripts/stamp-version.mjs "${{ needs.validate-tag.outputs.version }}"
       - name: Compile a standalone binary
