@@ -369,15 +369,18 @@ test("release binaries do not load a .env or bunfig.toml from the folder they ru
   expect(builds.length).toBe(2);
   for (const step of builds) for (const flag of NO_AUTOLOAD) expect(step).toContain(flag);
 
-  // Built both ways, so the probe is shown to see a loaded .env when the flags are off.
+  // Built both ways, so the probe is shown to see each file when the flags are off: a .env value, and a bunfig.toml
+  // preload that sets a variable of its own.
   const dir = scratch("no-dotenv"), entry = join(dir, "entry.mjs"), ext = process.platform === "win32" ? ".exe" : "";
-  writeFileSync(entry, `console.log(process.env.ROUTR_DOTENV_PROBE ?? "unset");\n`);
+  writeFileSync(entry, `console.log([process.env.ROUTR_DOTENV_PROBE, process.env.ROUTR_BUNFIG_PROBE].map((v) => v ?? "unset").join(" "));\n`);
   writeFileSync(join(dir, ".env"), "ROUTR_DOTENV_PROBE=loaded\n");
-  const env = { ...process.env }; delete env.ROUTR_DOTENV_PROBE;
+  writeFileSync(join(dir, "bunfig.toml"), 'preload = ["./preload.mjs"]\n');
+  writeFileSync(join(dir, "preload.mjs"), 'process.env.ROUTR_BUNFIG_PROBE = "preloaded";\n');
+  const env = { ...process.env }; delete env.ROUTR_DOTENV_PROBE; delete env.ROUTR_BUNFIG_PROBE;
   const seen = (flags, exe) => {
-    expect(Bun.spawnSync([process.execPath, "build", "--compile", ...flags, entry, "--outfile", exe]).exitCode).toBe(0);
+    expect(Bun.spawnSync([process.execPath, "build", "--compile", ...flags, entry, "--outfile", exe], { cwd: scratch("no-dotenv-build") }).exitCode).toBe(0);
     return Bun.spawnSync([exe], { cwd: dir, env }).stdout.toString().trim();
   };
-  expect(seen([], join(dir, `default${ext}`))).toBe("loaded");
-  expect(seen(NO_AUTOLOAD, join(dir, `release${ext}`))).toBe("unset");
+  expect(seen([], join(dir, `default${ext}`))).toBe("loaded preloaded");
+  expect(seen(NO_AUTOLOAD, join(dir, `release${ext}`))).toBe("unset unset");
 }, 60000);
