@@ -436,8 +436,8 @@ plans the pane launch as before: it does not check the environment.
 - Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "headless", run, session }` (`run`:
   the run folder; `session`: the harness's session id (Codex: its thread id; Antigravity: its conversation id), or null).
   `start.argv` is the harness's headless command line (Codex: `app-server` only; its model and effort go in the
-  protocol; Antigravity: with the worker's folder in `--add-dir`); it is set once the worker's folder is known, so a
-  launch refused before that has no `start`. `ran` displays it. `steps`: `reserve`, `holder`, `prompt`. When no holder could have started, launch removes the run folder
+  protocol; Antigravity: with the worker's folder in `--add-dir`); it is set once the worker's folder is known: a launch
+  refused before that shows the pane command planned first, not the headless one. `ran` displays it. `steps`: `reserve`, `holder`, `prompt`. When no holder could have started, launch removes the run folder
   it made and `worker` is null; when the holder is starting or does not answer, it keeps the folder and `worker`, and
   `next` says to look at it with `routr workers --name <name>` before retrying.
 - `next`: `routr wait --name <name>` (run), the record template, and `routr cleanup --worker <name>` (run). A failure
@@ -597,7 +597,7 @@ in.
 
 `state`: `delivered` (into the running worker. Claude: written into its input, `message.code` `handed_to_harness`, not
 proven read. Antigravity: written into its input (`handed_to_harness`); it runs as the next turn once the running one
-ends, in the same process. Codex: taken by its app-server, `accepted`: steered into the running turn, or, once that turn has ended,
+ends, in the same process, and each message is a turn of its own, in the order sent. Codex: taken by its app-server, `accepted`: steered into the running turn, or, once that turn has ended,
 started as the next turn in the same process), `queued` (the harness's input had closed: the holder keeps the message
 in memory and, once that process has exited, starts a new one resuming the same session with it; lost if the holder
 dies first), `resumed` (a new holder resumed the session with it: `prompted`), `refused` (the holder did not take it:
