@@ -5,6 +5,9 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- routr no longer loads a `.env` from the folder you run it in: in a project whose `.env` held `ANTHROPIC_API_KEY`, the
+  harness commands routr runs (sign-in status, usage) ran with that key rather than your sign-in (#91).
+
 ## v0.7.0 — 2026-10-19
 
 [Full notes](docs/releases/v0.7.0.md)

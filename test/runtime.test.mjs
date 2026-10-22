@@ -357,3 +357,27 @@ test.skipIf(process.platform === "win32")("a child that ignores SIGTERM does not
   for (let i = 0; i < 10 && alive(); i++) await Bun.sleep(100);
   expect(alive()).toBe(false);
 });
+
+// A compiled Bun binary loads .env and bunfig.toml from the folder it runs in, by default, and passes what it loaded to
+// every child: run in a project whose .env holds ANTHROPIC_API_KEY, routr's harness reads used that key, not the
+// person's sign-in (measured 2026-10-22, Bun 1.4.3: Claude's init said apiKeySource "ANTHROPIC_API_KEY"). The release
+// builds turn both off; this checks that each build line says so and that Bun honours the flags on this platform.
+const NO_AUTOLOAD = ["--no-compile-autoload-dotenv", "--no-compile-autoload-bunfig"];
+test("release binaries do not load a .env or bunfig.toml from the folder they run in", () => {
+  const workflow = readFileSync(join(import.meta.dir, "../.github/workflows/release.yml"), "utf8");
+  const builds = workflow.split(/\n\s*\n|\n\s*- /).filter((step) => step.includes("bun build --compile"));
+  expect(builds.length).toBe(2);
+  for (const step of builds) for (const flag of NO_AUTOLOAD) expect(step).toContain(flag);
+
+  // Built both ways, so the probe is shown to see a loaded .env when the flags are off.
+  const dir = scratch("no-dotenv"), entry = join(dir, "entry.mjs"), ext = process.platform === "win32" ? ".exe" : "";
+  writeFileSync(entry, `console.log(process.env.ROUTR_DOTENV_PROBE ?? "unset");\n`);
+  writeFileSync(join(dir, ".env"), "ROUTR_DOTENV_PROBE=loaded\n");
+  const { ROUTR_DOTENV_PROBE: _, ...env } = process.env;
+  const seen = (flags, exe) => {
+    expect(Bun.spawnSync([process.execPath, "build", "--compile", ...flags, entry, "--outfile", exe]).exitCode).toBe(0);
+    return Bun.spawnSync([exe], { cwd: dir, env }).stdout.toString().trim();
+  };
+  expect(seen([], join(dir, `default${ext}`))).toBe("loaded");
+  expect(seen(NO_AUTOLOAD, join(dir, `release${ext}`))).toBe("unset");
+}, 60000);

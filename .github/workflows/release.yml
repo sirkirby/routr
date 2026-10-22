@@ -76,6 +76,7 @@ jobs:
       - name: Compile a standalone binary
         run: >-
           bun build --compile --minify --target=bun-${{ matrix.target }}
+          --no-compile-autoload-dotenv --no-compile-autoload-bunfig
           --define 'ROUTR_BUILD_VERSION="${{ needs.validate-tag.outputs.version }}"'
           src/routr.mjs --outfile routr-${{ matrix.target }}${{ matrix.ext }}
       - name: Smoke-test the binary this runner can execute
@@ -123,6 +124,7 @@ jobs:
       - name: Compile a standalone binary
         run: >-
           bun build --compile --minify --target=bun-${{ matrix.target }}
+          --no-compile-autoload-dotenv --no-compile-autoload-bunfig
           --define 'ROUTR_BUILD_VERSION="${{ needs.validate-tag.outputs.version }}"'
           src/routr.mjs --outfile "$BIN"
       - name: Sign with Developer ID (hardened runtime)
