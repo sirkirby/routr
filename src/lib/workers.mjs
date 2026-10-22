@@ -182,9 +182,9 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
   const signedOut = await ready(o.kind);
   if (signedOut) throw new Error(`${HARNESSES[o.kind].label} cannot take work: ${signedOut}`);
   const until = Date.now() + o.timeout, left = () => Math.max(1000, until - Date.now());
-  const argv = headlessArgv({ kind: o.kind, model: o.model, effort: o.effort });
-  out.start = { executable: HARNESSES[o.kind].executable, argv, env: {} };
-  out.ran.push(displayCommand([HARNESSES[o.kind].executable, ...argv]));
+  // Checked now, so a flag the harness would refuse is refused before anything is written; shown once the worker's
+  // folder is known (Antigravity's --add-dir names it).
+  headlessArgv({ kind: o.kind, model: o.model, effort: o.effort, cwd: plannedTree?.path ?? out.cwd });
   let dir;
   try { dir = reserve(o.name); }
   catch (e) {
@@ -218,6 +218,9 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
       out.worktree = { branch: o.worktree, ...(o.base ? { base: o.base } : {}), path: wt.path, workspace: null };
       step("worktree", true, `Created ${wt.path} on branch ${o.worktree}${o.base ? ` from ${o.base}` : ""}`);
     }
+    const argv = headlessArgv({ kind: o.kind, model: o.model, effort: o.effort, cwd: out.cwd });
+    out.start = { executable: HARNESSES[o.kind].executable, argv, env: {} };
+    out.ran.push(displayCommand([HARNESSES[o.kind].executable, ...argv]));
     const w = { format: FORMAT, id: randomUUID().replace(/-/g, ""), name: o.name, kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(),
       ...(wt ? { worktree: { branch: wt.branch, base: wt.base, path: wt.path, source: wt.source, start: wt.start, folder: wt.folder } } : {}) };
     writeFileSync(join(dir, "worker.json"), JSON.stringify(w) + "\n", { mode: 0o600 });

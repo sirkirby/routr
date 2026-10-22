@@ -270,3 +270,19 @@ its JSON-RPC protocol on stdin and stdout (`codex app-server generate-json-schem
   unlike a pane (where routr passes `--dangerously-bypass-hook-trust`), a headless Codex skips hooks the user has not
   trusted (that a trusted hook runs: not measured).
 - No folder-trust question in a folder Codex has not trusted (a throwaway repository; a pane in the same folder asked).
+
+## Antigravity headless, outside herdr (measured 2026-10-22, agy 1.4.5)
+
+What `routr launch --kind agy` outside herdr relies on: `agy --print= --input-format stream-json --output-format
+stream-json` with the pane's `--dangerously-skip-permissions`, `--add-dir <folder>` and `--model <id>`.
+
+- `--print=` with the empty value: a bare `-p` takes the next word as its prompt.
+- Each `{"event":"user","message":{"content":"…"}}` line on stdin runs a turn. `init` names the conversation
+  (`conversation_id`); `step_update` steps carry `step_type` (`user_input`, `agent_response`, `tool`) and a tool's
+  `tool_name`; `result` holds the turn's `response` and `status` (`SUCCESS`).
+- A line written while a turn runs does not join it: it waits, and runs as the next turn in the same process (no new
+  `init`). A correction therefore lands after the work it corrects.
+- Closing its stdin after the last `result` ends it at once (exit 0). `--conversation <id>` continues the
+  conversation in a new process, its context kept.
+- With `--dangerously-skip-permissions` its `run_command` ran without asking. Told to ask, it skipped its question
+  tool and asked in text (p37).

@@ -1,8 +1,8 @@
 // Headless workers: a worker that runs its harness's own headless mode on the user's sign-in, outside herdr, with one
 // routr process (the holder) owning it. The holder starts as a numbered generation of its worker (channel.mjs), binds
 // the channel before it starts the harness and closes it only after the harness has exited, and is the only writer of
-// the worker's state. It lives while a turn runs or one is waiting, and exits once the harness has. Claude Code and
-// Codex; each harness's part is an adapter below. Claude, measured as prototypes p34 (2026-10-21) and p36 (2026-10-22,
+// the worker's state. It lives while a turn runs or one is waiting, and exits once the harness has. Claude Code, Codex
+// and Antigravity; each harness's part is an adapter below. Claude, measured as prototypes p34 (2026-10-21) and p36 (2026-10-22,
 // Claude Code 2.1.307), routr-lab:
 //   - `claude -p --input-format stream-json --output-format stream-json` takes the brief on stdin and a message the
 //     lead sends mid-turn into the running turn. The brief never touches routr's disk or a process's arguments.
@@ -20,6 +20,11 @@
 // ended it is refused (-32600 "no active turn to steer"), so the message starts the next turn instead; a later turn
 // in the same process is another `turn/start`; closing its input ends it at once (exit 0, 16 ms); a new app-server
 // resumes the thread (`thread/resume`) with its context. With approvalPolicy never it asked the client nothing.
+// Antigravity, measured as p39 (2026-10-22, agy 1.4.5): `agy --print= --input-format stream-json --output-format
+// stream-json` runs a turn for each `{"event":"user",...}` line on stdin; one written while a turn runs waits and runs as
+// the next turn in the same process (it does not join the running one). `init` names the conversation, `step_update`
+// steps name their tool, `result` holds the turn's response and status. Closing stdin ends it (exit 0, 128 ms), and
+// `--conversation <id>` continues the conversation in a new process with its context.
 // Worker text reaches one place, the report file of each turn (owner-only, removed by cleanup); only its path leaves
 // routr. Nothing else of the harness's output is kept: its stderr is not read, and a tool is shown by a fixed name.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -66,10 +71,33 @@ export function readEvent(line) {
   return null;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Antigravity's tool names as its `init` listed them (agy 1.4.5); its MCP tool is `mcp`, any other `other`.
+const AGY_TOOLS = new Set(["ask_custom_permission", "ask_permission", "ask_question", "browser_subagent", "command_status", "define_subagent", "find_by_name",
+  "generate_image", "grep_search", "invoke_subagent", "list_dir", "manage_subagents", "manage_task", "multi_replace_file_content", "notebook_edit",
+  "notebook_execution", "read_url_content", "replace_file_content", "run_command", "search_web", "sed_file", "send_command_input", "view_file", "wait",
+  "write_to_file"]);
+// One line of Antigravity's stream: the conversation and a turn starting (init, or the first step after a turn's
+// result: a message it queued), a tool, a turn's end with its response.
+export function agyReader() {
+  let between = true;
+  return (line) => {
+    let e; try { e = JSON.parse(line); } catch { return null; }
+    if (!e || typeof e !== "object") return null;
+    if (e.event === "init") { between = false; return { turn: true, ...(UUID.test(e.conversation_id ?? "") ? { session: e.conversation_id } : {}) }; }
+    if (e.event === "step_update") {
+      const s = e.step_update ?? {}, start = between; between = false;
+      const tool = s.step_type === "tool" && s.state === "ACTIVE" ? (s.tool_name === "call_mcp_tool" ? "mcp" : AGY_TOOLS.has(s.tool_name) ? s.tool_name : "other") : null;
+      return { ...(start ? { turn: true } : {}), ...(tool ? { tool } : { activity: true }) };
+    }
+    if (e.event === "result") { between = true; const r = e.result ?? {}; return { result: { failed: r.status !== "SUCCESS", text: typeof r.response === "string" ? cut(r.response) : null } }; }
+    return null;
+  };
+}
+
 // Codex's item types as it sends them; an MCP server's tool is `mcp`, anything else `other`.
 const CODEX_ITEMS = new Set(["commandExecution", "fileChange", "webSearch", "imageView", "dynamicToolCall", "collabAgentToolCall", "subAgentActivity", "sleep", "imageGeneration", "contextCompaction"]);
 const READY_MS = 30000;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // One line of the Codex app-server's output, for one connection: a reply to one of its requests, a request of its own,
 // or a notification read as what routr knows how to say. The turn's report is its final answer (agentMessage phase
 // final_answer), else its last agentMessage that marks no phase (a model that marks none). Commentary and partial
@@ -199,10 +227,22 @@ export const ADAPTERS = {
       };
     },
   },
+  agy: {
+    // As in a pane: --dangerously-skip-permissions, --add-dir the worker's folder, the model id (its effort in it).
+    // `--print=`: bare -p takes the next word as its prompt (p37).
+    argv: ({ model, effort, session, cwd }) => ["--print=", "--input-format", "stream-json", "--output-format", "stream-json",
+      ...plan({ kind: "agy", model, effort, cwd }).argv, ...(session ? ["--conversation", session] : [])],
+    connect: (c) => {
+      const put = (text) => writeLine(c, JSON.stringify({ event: "user", message: { content: text } }) + "\n");
+      // A message it takes while a turn runs waits for that turn to end, and runs as the next.
+      return { begin: put, send: async (text) => ((await put(text)) ? { code: "handed_to_harness", next: true } : null), line: agyReader(),
+        open: () => !c.stdin.writableEnded && !c.stdin.destroyed, done: () => c.stdin.end() };
+    },
+  },
 };
 // The harnesses that can run headless.
 export const HEADLESS_KINDS = Object.keys(ADAPTERS);
-export const headlessArgv = ({ kind = "claude", model, effort, session }) => ADAPTERS[kind].argv({ model, effort, session });
+export const headlessArgv = ({ kind = "claude", model, effort, session, cwd }) => ADAPTERS[kind].argv({ model, effort, session, cwd });
 
 // Whether a process group still has members (POSIX). Windows: never known here (the holder's job took the tree with it).
 export const groupAlive = (pgid) => { if (!Number.isInteger(pgid) || pgid <= 1 || process.platform === "win32") return false; try { process.kill(-pgid, 0); return true; } catch (e) { return e?.code === "EPERM"; } };
@@ -280,7 +320,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       beginTurn();
       let c, h;
       try {
-        c = run(HARNESSES[w.kind].executable, headlessArgv({ kind: w.kind, model: w.model, effort: w.effort, session }),
+        c = run(HARNESSES[w.kind].executable, headlessArgv({ kind: w.kind, model: w.model, effort: w.effort, session, cwd: w.cwd }),
           { cwd: w.cwd, env: harnessEnv(), stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
       } catch { endTurn("not_started", null); answer({ code: "failed", why: "harness_not_started" }); return settle(); }
       child = c;
