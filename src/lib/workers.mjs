@@ -9,10 +9,9 @@ import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, readState, readWorker
 import { HARNESSES, notReady } from "./harnesses.mjs";
 import { loadConfig } from "./config.mjs";
 import { readTask } from "./advice-file.mjs";
-import { CLOSING } from "./launch.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { answer } from "./output.mjs";
-import { OFF } from "./wording.mjs";
+import { CLOSING, OFF } from "./wording.mjs";
 import { lockIsStale, spawnSelf, takeLock } from "./runtime.mjs";
 
 const NAME = /^[a-z][a-z0-9_-]{0,31}$/;
@@ -36,6 +35,8 @@ const size = (text) => Buffer.byteLength(JSON.stringify(text));
 // Why a holder did not come up, in routr's words (the holder records a fixed code when it cannot open its channel).
 const NOT_STARTED = (p) => p.released?.why === "path_too_long" ? "the worker's socket path would be longer than this system allows (your home folder's path is too long); headless workers cannot run from this home"
   : p.released?.why === "channel_not_bound" ? "the worker's process could not open its channel"
+  : p.state === "starting" ? "the worker's process is still starting and has not answered on its channel yet"
+  : p.state === "unreachable" ? "the worker's process does not answer on its channel"
   : `the worker's process did not start (${p.state})`;
 const PATH_TOO_LONG = NOT_STARTED({ released: { why: "path_too_long" } });
 
@@ -78,7 +79,7 @@ export async function view(name, { check = true } = {}) {
   const reported = (st.turns ?? []).filter((t) => t.report).at(-1);
   return { name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, state, gen: st.gen ?? 0, turn: st.turn ?? 0,
     seconds_since_event: ago(st.last_event_at ?? st.updated_at), last_tool: st.last_tool ?? null, tasks: st.tasks ?? 0, queued: st.queued ?? 0,
-    session: st.session_id ?? null, report: reported?.report ?? null, ...(groupAlive(st.harness_pgid) ? { harness_group: st.harness_pgid } : {}),
+    session: st.session_id ?? null, report: reported?.report ?? null, ...(!RUNNING.has(state) && groupAlive(st.harness_pgid) ? { harness_group: st.harness_pgid } : {}),
     turns: (st.turns ?? []).map((t) => ({ turn: t.turn, outcome: t.outcome ?? "running", report: t.report ?? null, delivered: t.delivered ?? 0 })) };
 }
 
@@ -129,7 +130,8 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
   }
   step("holder", true, `The worker's process answers on its channel (generation ${p.gen})`);
   let r;
-  try { r = await ask(o.name, p, "start", { text: prompt }, Math.min(45000, left())); } catch (e) { r = { code: "unknown", why: e?.code ?? "no_answer" }; }
+  // Never less than the holder's own 30 seconds for Claude to name its session, whatever --timeout leaves.
+  try { r = await ask(o.name, p, "start", { text: prompt }, Math.max(35000, Math.min(45000, left()))); } catch (e) { r = { code: "unknown", why: e?.code ?? "no_answer" }; }
   out.prompt_chars = prompt.length;
   if (r.code === "prompted") {
     out.worker.session = r.session ?? null;
@@ -206,7 +208,8 @@ export async function waitCommand(args, { now = () => Date.now(), pause = sleep,
         if (t.report) out.next.push(doNext(`Read ${v.name}'s report for turn ${t.turn} (its final message; it may be cut at 1 MB), then take a first read of it against the task you gave.`, templateCommand(["routr", "check", "--brief", "<task-file>", "--report", t.report])));
         else out.next.push(doNext(`${v.name}'s turn ${t.turn} ended (${t.outcome}) without a report: look at the worker's folder and its changes yourself.`));
       }
-      if (v.state === "lost" || v.harness_group) out.next.push(doNext(`${v.name}'s process ended without settling${v.harness_group ? `, and its harness may still be running (process group ${v.harness_group})` : ""}: stop what runs of it, then clean it up.`));
+      if (v.state === "lost") out.next.push(doNext(`${v.name}'s process ended without settling${v.harness_group ? `, and its harness may still be running (process group ${v.harness_group})` : ""}: stop what runs of it, then clean it up.`));
+      else if (v.harness_group && !RUNNING.has(v.state)) out.next.push(doNext(`Something ${v.name}'s Claude started is still running in process group ${v.harness_group}: look at it (ps -g ${v.harness_group}), stop it if it is the worker's, then clean up.`));
       if (v.tasks) out.next.push(doNext(`${v.name} still has ${v.tasks} background command${v.tasks > 1 ? "s" : ""} running; it may start another turn by itself when ${v.tasks > 1 ? "they end" : "it ends"}.`));
     }
     if (running.length) out.next.push(runNext("Wait for the workers still running.", ["routr", "wait", ...running.flatMap((v) => ["--name", v.name])]));
@@ -227,6 +230,8 @@ export async function sendCommand(args, { env = process.env, settings = () => lo
     if ((o.task == null) === (o["task-file"] == null)) throw new Error("Use one of --task and --task-file");
     const name = out.name = o.names[0], w = readWorker(name);
     if (!w) throw new Error(`no headless worker named ${name}; routr workers lists them`);
+    // The worker it was asked for, by its run id: one cleaned up and launched again under that name meanwhile is not it.
+    const same = () => readWorker(name)?.id === w.id;
     const text = o["task-file"] != null ? readTask(resolve(o["task-file"])) : o.task;
     if (!text?.trim()) throw new Error("The message must not be empty");
     const message = `${text.trim()}\n\n${CLOSING}`;
@@ -235,7 +240,10 @@ export async function sendCommand(args, { env = process.env, settings = () => lo
     out.warnings.push(...(loaded.notes ?? []));
     if (config.subscriptions[w.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[w.kind].label, w.kind));
     let p = await probe(runDir(name)), r;
-    const deliver = async (op, ms) => { try { return await ask(name, p, op, { text: message }, ms); } catch (e) { return { code: "unknown", why: e?.code ?? "no_answer" }; } };
+    const deliver = async (op, ms) => {
+      if (!same()) throw new Error(`${name} was cleaned up and launched again meanwhile; nothing was sent`);
+      try { return await ask(name, p, op, { text: message }, ms); } catch (e) { return { code: "unknown", why: e?.code ?? "no_answer" }; }
+    };
     if (p.state === "alive") r = await deliver("send", 5000);
     if (p.state !== "alive" || (r?.code === "refused" && r.why === "ended")) {
       // A new holder: everything a launch checks before it starts one.
@@ -248,7 +256,8 @@ export async function sendCommand(args, { env = process.env, settings = () => lo
       if (signedOut) throw new Error(`${HARNESSES[w.kind].label} cannot take work: ${signedOut}`);
       // A holder that has just ended still answers for a moment: let it go first.
       for (let i = 0; i < 20 && p.state === "alive"; i++) { await sleep(150); p = await probe(runDir(name)); }
-      p = await locked(name, () => becomeHolder(name, { spawn }));
+      p = await locked(name, async () => { if (!same()) return { state: "replaced" }; return becomeHolder(name, { spawn }); });
+      if (p.state === "replaced") throw new Error(`${name} was cleaned up and launched again meanwhile; nothing was sent`);
       if (p.state !== "alive") throw new Error(`${name}: ${NOT_STARTED(p)}`);
       r = await deliver("send", 45000);
     }

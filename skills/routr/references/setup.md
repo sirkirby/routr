@@ -192,9 +192,10 @@ session each reading leaves. `routr skill install` links the skill into `~/.kiro
 
 ## 5. herdr (for pane workers)
 
-routr's orchestrator part runs workers in [herdr](https://herdr.dev) panes and uses herdr's own skill for pane and
-agent commands. Both belong to herdr and are installed from herdr, not bundled with routr. If `routr doctor` shows
-either missing and the user wants orchestration, offer to install them:
+For pane workers, routr's orchestrator part runs workers in [herdr](https://herdr.dev) panes and uses herdr's own
+skill for pane and agent commands. Both belong to herdr and are installed from herdr, not bundled with routr. If
+`routr doctor` shows either missing and the user wants pane workers, offer to install them; headless Claude Code
+workers need neither:
 
     curl -fsSL https://herdr.dev/install.sh | sh                 # herdr itself (see herdr.dev for brew and Windows)
     npx skills add herdrdev/herdr --skill herdr -g               # herdr's agent skill (bunx works where there is no Node)

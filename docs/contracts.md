@@ -409,20 +409,21 @@ Outside herdr (`HERDR_ENV` is not `1`), a real launch starts a headless Claude C
 plans the pane launch as before: it does not check the environment.
 
 - Required, beyond launch's own: `--kind claude`, a task (`--task-file` or `--task`, at most 3 MB with launch's
-  wrapping) with its matching `--advice`. Refused (with `error`, `state: "failed"`), before anything is written or
-  started: another kind; any of `--pane`, `--direction`, `--worktree`, `--base`, `--copy`; no task; a task too large;
+  wrapping) with its matching `--advice`. Refused (with `error`, `state: "failed"`), before a run folder is written or a
+  holder or worker started: another kind; any of `--pane`, `--direction`, `--worktree`, `--base`, `--copy`; no task; a task too large;
   a lead's sandbox it can see (`SANDBOX_RUNTIME`, `CODEX_SANDBOX`); a name whose run folder exists; a home whose socket
   path would be too long; the subscription turned off; Claude not signed in.
-- `--timeout` bounds the whole start: the holder answering (at most 15 seconds of it) and Claude taking the task (at
-  most 45 seconds of it).
+- `--timeout` (default 120000) caps the wait for the holder to answer (at most 15 seconds) and the wait for Claude to
+  take the task (between 35 and 45 seconds, whatever --timeout leaves: the holder itself answers after 30).
 - `state`: `prompted` or `failed`. `prompted` means the task was written to Claude's input and Claude named its
   session, or 30 seconds passed without one; it does not prove Claude read or accepted the task. `wait` says how the
   turn went.
 - `headline`: `routr: <name> (claude) took its task, running headless`, or the failure as for a pane launch.
 - Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "headless", run, session }` (`run`:
   the run folder; `session`: Claude's session id, or null). `start.argv` is Claude's headless command line; `ran`
-  displays it. `steps`: `reserve`, `holder`, `prompt`. A launch that stops before its holder answers removes the run
-  folder it made, and `worker` is null.
+  displays it. `steps`: `reserve`, `holder`, `prompt`. When no holder could have started, launch removes the run folder
+  it made and `worker` is null; when the holder is starting or does not answer, it keeps the folder and `worker`, and
+  `next` says to look at it with `routr workers --name <name>` before retrying.
 - `next`: `routr wait --name <name>` (run), the record template, and `routr cleanup --worker <name>` (run). A failure
   after the task was handed over warns that it may have been sent, with `routr workers --name <name>` (run) to look
   before retrying.
@@ -594,8 +595,8 @@ Never worker text. Inside a sandbox it can see, `warnings` says so.
 
 Stops a headless worker through its own process. Inputs: required: `--name`.
 
-`state`: `stopped` (Claude and its process group are gone), `still_exiting` (told to stop; not gone within six
-seconds), `absent` (not running), `lost` (its process is gone, or a group it recorded still has members),
+`state`: `stopped` (Claude and its process group are gone), `still_exiting` (told to stop; Claude not gone within six
+seconds, or something of its group still there after it went), `absent` (not running), `lost` (its process is gone, or a group it recorded still has members),
 `unreachable`, `unknown`, `failed` (refused). `ok`: true for `stopped` and `absent`. For `lost` and `unreachable`,
 `warnings` says routr never stops a process by a saved id and `next` says what to look at. Own fields: `state`,
 `name`. `next`: `routr cleanup --worker <name>` (run).

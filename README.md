@@ -83,7 +83,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | Command | What it does |
 |---|---|
 | `subagent "<brief>"` | A worker, or an agent outside herdr, is about to spawn a subagent: facts, level, worth-a-worker. The brief can also come from `--task-file <path>`. An orchestrator in herdr uses `dispatch`. |
-| `dispatch "<brief>"` | An orchestrator is about to launch a pane: the same, plus normal/fallback candidates and a capacity ranking. Give it the exact task the worker will get (`routr dispatch --task-file task.md`, saving stdout as `advice.json`); `launch --advice advice.json` requires a match. `--headroom <name>=0.9` (or `90%`) overrides a reading. |
+| `dispatch "<brief>"` | An orchestrator is about to launch a worker: the same, plus normal/fallback candidates and a capacity ranking. Give it the exact task the worker will get (`routr dispatch --task-file task.md`, saving stdout as `advice.json`); `launch --advice advice.json` requires a match. `--headroom <name>=0.9` (or `90%`) overrides a reading. |
 | `usage [cursor\|kiro]` | Each subscription's usage, candidates and capacity ranking, with no brief. `usage cursor` or `usage kiro` reads that one now. |
 | `launch` | Start one worker in its own git worktree, nested under the repo in herdr (`--base` starts it from another branch or commit): flags, model syntax, shell prompts, startup questions reported (never answered), readiness, prompt. A task requires matching `--advice`; `--dry-run` shows the plan and returns `ok: false` with `error` when a real launch would refuse. `next` holds recovery, the record template and cleanup. |
 | `wait`, `send`, `workers`, `stop` | Outside herdr, `launch` starts Claude Code workers headless: `wait` returns when one finishes a turn, with its report's path; `send` corrects it mid-turn or resumes its session with a follow-up; `workers` shows each one's state; `stop` ends one. |
@@ -171,7 +171,7 @@ For orchestration across every harness you also need [herdr](https://herdr.dev) 
 either is missing. Without herdr, `routr launch` starts Claude Code workers headless, followed with `routr wait`; the
 other harnesses need herdr for now. Sizing subagents works without it.
 
-To start an orchestration, open your lead agent in herdr and type your plan after the `routr-orchestrate` skill, which
+To start an orchestration, open your lead agent (in herdr for pane workers) and type your plan after the `routr-orchestrate` skill, which
 routr installs beside the routr skill:
 
     /routr-orchestrate <your plan or task>

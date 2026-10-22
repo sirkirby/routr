@@ -12,14 +12,15 @@
 //     owner-only folder (the socket file itself takes the umask), its path refused when over sun_path's limit.
 // Requests are framed (one JSON line each, bounded), versioned, and answered by id with a fixed code.
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { lstatSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { basename, dirname, join } from "node:path";
 import { STATE_DIR, writeJsonAtomic } from "./runtime.mjs";
 
 export const PROTO = 1;
-// One frame holds a whole task: launch and send refuse a message over MESSAGE_MAX before anything starts.
-const MAX_LINE = 4 * 1024 * 1024, HANDSHAKE_MS = 3000;
+// One frame holds a whole task: launch and send refuse a message over MESSAGE_MAX before anything starts. Until a peer
+// has proved the secret, a frame is a handshake line and is held to 1 KB.
+const MAX_LINE = 4 * 1024 * 1024, HANDSHAKE_LINE = 1024, HANDSHAKE_MS = 3000;
 export const MESSAGE_MAX = 3 * 1024 * 1024;
 // A proof or challenge is an HMAC-SHA256 in hex; nonces are 32 hex characters. Anything else is refused as it is.
 const HEX64 = /^[0-9a-f]{64}$/, NONCE = /^[0-9a-f]{32}$/;
@@ -64,10 +65,15 @@ export const ownEndpoint = (id, endpoint) => typeof endpoint === "string" && (WI
 // ---- generations --------------------------------------------------------------------------------------------------
 export const genFile = (dir, n, kind) => join(dir, `gen-${n}.${kind}`);
 export const generations = (dir) => { try { return readdirSync(dir).map((f) => Number(f.match(/^gen-(\d+)\.claim$/)?.[1])).filter((n) => n > 0).sort((a, b) => a - b); } catch { return []; } };
-// Exclusive create: two claimants of one number cannot both win, and the loser does not try the next.
+// Exclusive and whole: the claim is written to a file of its own, then linked to its name, which fails when the name
+// exists. Two claimants of one number cannot both win, the loser does not try the next, and no one reads a claim
+// half written.
 export function claim(dir, n) {
-  try { writeFileSync(genFile(dir, n, "claim"), JSON.stringify({ pid: process.pid, at: Date.now() }), { flag: "wx", mode: 0o600 }); return true; }
+  const tmp = join(dir, `.claim-${n}-${process.pid}-${randomBytes(4).toString("hex")}`);
+  writeFileSync(tmp, JSON.stringify({ pid: process.pid, at: Date.now() }), { mode: 0o600 });
+  try { linkSync(tmp, genFile(dir, n, "claim")); return true; }
   catch (e) { if (e?.code === "EEXIST") return false; throw e; }
+  finally { rmSync(tmp, { force: true }); }
 }
 export const markReady = (dir, n, info) => writeJsonAtomic(genFile(dir, n, "ready"), info);
 export const markReleased = (dir, n, info) => writeJsonAtomic(genFile(dir, n, "released"), { at: Date.now(), ...info });
@@ -75,9 +81,8 @@ export const markReleased = (dir, n, info) => writeJsonAtomic(genFile(dir, n, "r
 // What the highest generation is: none, released (it ended and said so), starting (claimed, not bound yet, its claimant
 // alive), abandoned (claimed, never bound, claimant gone: it never started a harness), alive (answered and proved the
 // secret), dead (a definite no-listener), unreachable (anything else). A claimant's live pid may be a reused one,
-// which only errs toward "starting", the safe side. A claim is created empty and written a moment later (exclusive
-// create, then the write), so a claim with no readable pid is "starting" until it is old enough to be abandoned.
-const CLAIM_GRACE_MS = 10000;
+// which only errs toward "starting", the safe side. A claim is never seen half written (claim, below); one with no
+// readable pid was not written by routr, and is unreachable: nothing is assumed about it.
 export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
   const n = generations(dir).at(-1);
   if (!n) return { state: "none", gen: 0 };
@@ -87,8 +92,7 @@ export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
   if (!ready) {
     const c = readJson(genFile(dir, n, "claim"));
     if (Number.isInteger(c?.pid)) return { state: alivePid(c.pid) ? "starting" : "abandoned", gen: n };
-    let age = Infinity; try { age = Date.now() - statSync(genFile(dir, n, "claim")).mtimeMs; } catch {}
-    return { state: age < CLAIM_GRACE_MS ? "starting" : "abandoned", gen: n };
+    return { state: "unreachable", gen: n };
   }
   try {
     const c = await connect(dir, n, ready.endpoint, { timeout });
@@ -98,16 +102,16 @@ export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
 }
 
 // ---- framing ------------------------------------------------------------------------------------------------------
-function lines(sock, onMsg, onBad) {
+function lines(sock, onMsg, onBad, max = () => MAX_LINE) {
   let buf = "";
   sock.setEncoding("utf8");
   sock.on("data", (d) => {
     buf += d;
-    if (buf.length > MAX_LINE && !buf.includes("\n")) return onBad("frame_too_large");
+    if (buf.length > max() && !buf.includes("\n")) return onBad("frame_too_large");
     let i;
     while ((i = buf.indexOf("\n")) >= 0) {
       const l = buf.slice(0, i); buf = buf.slice(i + 1);
-      if (l.length > MAX_LINE) return onBad("frame_too_large");
+      if (l.length > max()) return onBad("frame_too_large");
       let m; try { m = JSON.parse(l); } catch { return onBad("frame_unreadable"); }
       if (!m || typeof m !== "object" || Array.isArray(m)) return onBad("frame_unreadable");
       Promise.resolve().then(() => onMsg(m)).catch(() => onBad("failed"));
@@ -178,7 +182,7 @@ export function serve(dir, gen, endpoint, handle) {
       if (m.t !== "req" || !Number.isInteger(m.id) || typeof m.op !== "string") return bye("bad_request");
       let r; try { r = await handle(m.op, m); } catch { r = { code: "failed" }; }
       send(sock, { t: "res", id: m.id, ...r });
-    }, (code) => bye(code));
+    }, (code) => bye(code), () => (stage === "open" ? MAX_LINE : HANDSHAKE_LINE));
   });
   return new Promise((resolve, reject) => { server.once("error", reject); server.listen(endpoint, () => resolve(server)); });
 }

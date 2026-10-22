@@ -181,10 +181,13 @@ of herdr's flags are refused outside herdr. What that means on your machine:
 - **What it starts.** The holder starts Claude in its own process group (POSIX), in the worker's `--cwd`, with
   herdr's and the lead's session variables removed, and records that group before the task goes in. It exits once
   Claude has. On macOS and Linux, `stop` sends SIGTERM to that group (Claude ends its tool commands, which run in
-  groups of their own, on SIGTERM; measured), then SIGKILL two seconds later if Claude itself has not exited; once
-  Claude has gone, anything still in its group is sent SIGKILL. stop waits up to six seconds for Claude, and says
-  `still_exiting` if it has not gone. On Windows it runs `taskkill /T /F` on Claude, or ends Claude alone if that
-  fails. A command that detaches itself is not seen.
+  groups of their own, on SIGTERM; measured), then SIGKILL to the group two seconds later if Claude itself has not
+  exited. Tool commands in their own groups can survive a SIGKILL of Claude, and routr cannot see those. Once Claude
+  has gone, anything still in its group is not signalled again (its id may be another group's by then): stop says
+  `still_exiting`, and the group stays recorded, so resuming and cleanup refuse until it is empty. stop waits up to
+  six seconds for Claude. On Windows it runs `taskkill /T /F` on Claude, or ends Claude alone if that fails. A command
+  that detaches itself is not seen. Limit: once a recorded group has emptied, an unrelated process group given the
+  same id later blocks that worker's resume and cleanup until it ends.
 - **What it cannot see.** If the holder itself is killed, its Claude keeps working until its next output fails
   (measured on macOS); on Windows the measured stand-in harness ended with its holder, and a real Claude has not been
   measured there. On macOS and Linux, routr then reports the worker `lost`, and names the process group it recorded

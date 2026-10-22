@@ -96,7 +96,7 @@ export const COMMANDS = {
   },
   stop: {
     name: "stop",
-    description: "outside herdr: stop a headless worker through its own process (SIGTERM to Claude's process group, SIGKILL if it has not gone); never by a saved process id",
+    description: "outside herdr: stop a headless worker through its own process (macOS and Linux: SIGTERM to Claude's process group, then SIGKILL if Claude has not gone; Windows: taskkill /T); never by a saved process id",
     flags: [{ name: "--name", arg: "<name>", description: "the worker", required: true }],
   },
   share: {

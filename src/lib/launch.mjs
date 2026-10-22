@@ -7,7 +7,7 @@ import { loadConfig } from "./config.mjs";
 import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesses.mjs";
 import { dispatchAdvice, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
 import { displayCommand, doNext, launchNext, runNext, templateCommand } from "./next.mjs";
-import { OFF } from "./wording.mjs";
+import { CLOSING, OFF } from "./wording.mjs";
 import { BRANCH, clean, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
@@ -26,8 +26,6 @@ export const PROMPT_OPENING = "You are a routr worker.";
 // `rules` is the lead's process text (what the worker may and may not do, how to report, git steps): the worker reads it
 // after the task, and routr never does. Only the task is the work that `dispatch` and `--advice` judge. (Measured
 // 2026-09-26: 18 of 36 real tasks carried such text, 5 to 38% of each, and it moved Jev's readings.)
-// The last words of every launch prompt, and of every message `routr send` adds to a worker's session.
-export const CLOSING = "Finish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.";
 export function composePrompt(task, guide = WORKER_GUIDE, rules = null) {
   return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}${rules ? `\n\n${rules.trim()}` : ""}\n\n${CLOSING}`;
 }

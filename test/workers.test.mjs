@@ -169,7 +169,7 @@ test("after a failed turn, wait reports the failure once, then the turn a follow
   await w.settled("f1");
   // The worker's failed state is said once: with its turn, or by the next wait, never twice.
   const later = [w.run(["wait", "--name", "f1", "--timeout", "2000"]), w.run(["wait", "--name", "f1", "--timeout", "1000"])];
-  expect([first, ...later].filter((r) => r.headline === "routr: f1 failed").length).toBeLessThanOrEqual(1);
+  expect([first, ...later].filter((r) => r.headline === "routr: f1 failed").length).toBe(1);
   expect(later[1]).toMatchObject({ state: "idle" });
   expect(w.run(["send", "--name", "f1", "--task", "try again"]).state).toBe("resumed");
   const second = w.run(["wait", "--name", "f1", "--timeout", "20000"]);
@@ -240,6 +240,7 @@ test.skipIf(!POSIX)("a holder killed mid-turn reads as lost, and cleanup keeps t
 
 test.skipIf(!POSIX)("a process left in Claude's group after it exits keeps the worker from being resumed or removed", async () => {
   const w = world();
+  afterAll(() => { try { process.kill(Number(readFileSync(w.linger, "utf8")), "SIGKILL"); } catch {} }); // never left running
   expect(w.launch("g1", w.task(`${BRIEF} LINGER`)).state).toBe("prompted");
   w.run(["wait", "--name", "g1", "--timeout", "20000"]);
   await w.settled("g1");
@@ -247,6 +248,8 @@ test.skipIf(!POSIX)("a process left in Claude's group after it exits keeps the w
   expect([st.state, Number.isInteger(st.harness_pgid)]).toEqual(["idle", true]);
   expect(w.run(["cleanup", "--worker", "g1"]).headline).toBe(`routr: kept g1: g1's harness may still be running (process group ${st.harness_pgid})`);
   expect(w.run(["send", "--name", "g1", "--task", "x"]).error).toStartWith("g1's harness may still be running");
+  // stop does not signal a group whose Claude has gone (the id may be someone else's by then): it says so.
+  expect(w.run(["stop", "--name", "g1"])).toMatchObject({ ok: false, state: "lost" });
   process.kill(Number(readFileSync(w.linger, "utf8")), "SIGKILL");
   await until(() => { try { process.kill(-st.harness_pgid, 0); return false; } catch { return true; } });
   expect(w.run(["cleanup", "--worker", "g1"])).toMatchObject({ ok: true, state: "removed" });
@@ -263,6 +266,9 @@ test("Claude's stream as routr reads it: the session, turns, fixed tool names, b
   expect(readEvent(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "thinking out loud" }] } }))).toEqual({ activity: true });
   expect(readEvent(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "VERDICT: done" }))).toEqual({ result: { failed: false, text: "VERDICT: done" } });
   expect(readEvent(JSON.stringify({ type: "result", is_error: true }))).toEqual({ result: { failed: true, text: null } });
+  // A report is cut at 1 MB of UTF-8, never in the middle of a character.
+  const long = readEvent(JSON.stringify({ type: "result", result: "é".repeat(700000) })).result.text;
+  expect([Buffer.byteLength(long), long.endsWith("é")]).toEqual([1024 * 1024, true]);
   for (const l of ["not json", "null", JSON.stringify({ type: "rate_limit_event" }), JSON.stringify({ type: "system", subtype: "hook_started" })]) expect(readEvent(l)).toBeNull();
 });
 
@@ -271,9 +277,9 @@ test("the channel: one claimant per generation, and nothing for a peer that has 
   process.env.HOME = process.env.USERPROFILE = home;
   try {
     const dir = join(home, "run"); mkdirSync(dir, { mode: 0o700 }); writeSecret(dir);
-    // A claim not yet written (exclusive create, then the write) is a holder starting, never an abandoned one.
+    // routr never leaves a claim half written; one with no readable pid is not routr's, and nothing is assumed of it.
     writeFileSync(join(dir, "gen-1.claim"), "");
-    expect((await probe(dir)).state).toBe("starting");
+    expect((await probe(dir)).state).toBe("unreachable");
     rmSync(join(dir, "gen-1.claim"));
     expect([claim(dir, 1), claim(dir, 1), generations(dir)]).toEqual([true, false, [1]]);
     const endpoint = endpointFor("abcdef0123456789", 1);
