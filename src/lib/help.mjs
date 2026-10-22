@@ -39,7 +39,7 @@ export const COMMANDS = {
   },
   launch: {
     name: "launch",
-    description: "start a worker with matching task advice: in a herdr pane, or outside herdr a headless Claude Code worker that `routr wait` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
+    description: "start a worker with matching task advice: in a herdr pane, or outside herdr a headless Claude Code or Codex worker that `routr wait` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
     flags: [
       { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
       { name: "--name", arg: "<name>", description: "worker agent name ([a-z][a-z0-9_-]{0,31})", required: true },
@@ -55,7 +55,7 @@ export const COMMANDS = {
       { name: "--direction", arg: "<right|down>", description: "split direction", required: false, default: "right if wide else down" },
       { name: "--task", arg: "<text>", description: "task prompt string (mutually exclusive with --task-file)", required: false },
       { name: "--task-file", arg: "<path>", description: "file containing task prompt (mutually exclusive with --task; outside herdr a task is required)", required: false },
-      { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds (outside herdr: for the worker's process to start and Claude to take the task)", required: false, default: 120000 },
+      { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds (outside herdr: for the worker's process to start and the harness to take the task)", required: false, default: 120000 },
       { name: "--dry-run", arg: null, description: "plan commands without executing or writing files; advice checks can refuse with ok:false", required: false, default: false },
     ],
   },
@@ -67,7 +67,7 @@ export const COMMANDS = {
       { name: "--worktree", arg: "<branch>", description: "the worker's worktree, by the branch given to launch --worktree (name one worker: --worktree, --path, --pane, or --worker)", required: false },
       { name: "--path", arg: "<path>", description: "the worker's worktree, by its folder (one on no branch, or made by hand)", required: false },
       { name: "--pane", arg: "<id>", description: "a worker launched without --worktree: close its pane (a worktree's only pane is refused, with the command that removes the worktree). Takes no --cwd", required: false },
-      { name: "--worker", arg: "<name>", description: "a headless worker (launched outside herdr): remove its worktree (with the same checks) and then its run folder and reports, once its process and Claude's process group have ended (it cannot see a command that left them). Takes no --cwd", required: false },
+      { name: "--worker", arg: "<name>", description: "a headless worker (launched outside herdr): remove its worktree (with the same checks) and then its run folder and reports, once its process and its harness's process group have ended (it cannot see a command that left them). Takes no --cwd", required: false },
       { name: "--delete-branch", arg: null, description: "also delete the worktree's branch, once its work has landed: git deletes it only when it is merged (with --worktree, --path or --worker)", required: false, default: false },
       { name: "--dry-run", arg: null, description: "check and say what it would do; change nothing", required: false, default: false },
     ],
@@ -96,7 +96,7 @@ export const COMMANDS = {
   },
   stop: {
     name: "stop",
-    description: "outside herdr: stop a headless worker through its own process (macOS and Linux: SIGTERM to Claude's process group, then SIGKILL if Claude has not gone; Windows: taskkill /T); never by a saved process id",
+    description: "outside herdr: stop a headless worker through its own process (macOS and Linux: SIGTERM to the harness's process group, then SIGKILL if the harness has not gone; Windows: taskkill /T); never by a saved process id",
     flags: [{ name: "--name", arg: "<name>", description: "the worker", required: true }],
   },
   share: {

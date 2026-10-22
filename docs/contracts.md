@@ -405,15 +405,15 @@ a pane: needs input, or failed after reading the pane).
 
 ### launch outside herdr (headless)
 
-Outside herdr (`HERDR_ENV` is not `1`), a real launch starts a headless Claude Code worker instead of a pane. A dry run
+Outside herdr (`HERDR_ENV` is not `1`), a real launch starts a headless Claude Code or Codex worker instead of a pane. A dry run
 plans the pane launch as before: it does not check the environment.
 
-- Required, beyond launch's own: `--kind claude`, a task (`--task-file` or `--task`, at most 3 MB with launch's
+- Required, beyond launch's own: `--kind claude` or `--kind codex`, a task (`--task-file` or `--task`, at most 3 MB with launch's
   wrapping) with its matching `--advice`. Refused (with `error`, `state: "failed"`), before a run folder is written or a
   holder or worker started: another kind; `--pane` or `--direction`; no task; a task too large; a lead's sandbox it can
   see (`SANDBOX_RUNTIME`, `CODEX_SANDBOX`); a name whose run folder exists; a home whose socket path would be too long;
   with `--worktree`, a `--cwd` git finds no repository at, a branch that exists, or a worktree folder that exists; the
-  subscription turned off; Claude not signed in.
+  subscription turned off; the harness not signed in.
 - `--worktree <branch>` (with `--base`, `--copy`): launch makes the worktree with git under
   `~/.local/share/routr/worktrees`, on that new branch, and the worker runs there; `worktree` is `{ branch, base?, path,
   workspace: null }`, `cwd` its path, and `steps` add `worktree` and `copy`. git refusing to make it (a `--base` it
@@ -424,16 +424,17 @@ plans the pane launch as before: it does not check the environment.
   it keeps the worktree too, and `cleanup --worker` removes both. `--copy` paths are relative to `--cwd`, as in herdr,
   and never copied through a link or over a file the worktree has.
 - `--timeout` (default 120000) sets budgets, not a bound on the whole call: polling for the holder gets up to 15
-  seconds of it (a probe under way when that runs out finishes), and the request handing Claude the task gets between
+  seconds of it (a probe under way when that runs out finishes), and the request handing the harness the task gets between
   35 and 45 seconds (the holder itself answers after 30). The sign-in check, the lock and each channel handshake can
   add time.
-- `state`: `prompted` or `failed`. `prompted` means the task was written to Claude's input and Claude named its
-  session, or 30 seconds passed without one; it does not prove Claude read or accepted the task. `wait` says how the
-  turn went.
-- `headline`: `routr: <name> (claude) took its task, running headless`, or the failure as for a pane launch.
+- `state`: `prompted` or `failed`. `prompted` means the task reached the harness and it named its session (Claude:
+  written to its input, not proven read; Codex: its app-server started the turn, and the session is its thread id),
+  or, with the task in, 30 seconds passed without a session. A harness still starting at 30 seconds, the task not yet
+  in, is a failure saying whether it took it is not known (`not_started_in_time`). `wait` says how the turn went.
+- `headline`: `routr: <name> (<kind>) took its task, running headless`, or the failure as for a pane launch.
 - Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "headless", run, session }` (`run`:
-  the run folder; `session`: Claude's session id, or null). `start.argv` is Claude's headless command line; `ran`
-  displays it. `steps`: `reserve`, `holder`, `prompt`. When no holder could have started, launch removes the run folder
+  the run folder; `session`: the harness's session id (Codex: its thread id), or null). `start.argv` is the harness's
+  headless command line (Codex: `app-server` only; its model and effort go in the protocol); `ran` displays it. `steps`: `reserve`, `holder`, `prompt`. When no holder could have started, launch removes the run folder
   it made and `worker` is null; when the holder is starting or does not answer, it keeps the folder and `worker`, and
   `next` says to look at it with `routr workers --name <name>` before retrying.
 - `next`: `routr wait --name <name>` (run), the record template, and `routr cleanup --worker <name>` (run). A failure
@@ -515,7 +516,7 @@ Inputs:
   again there), or when git lists no worktree there but a folder is. `headline` `routr: removed worker <name>`,
   `routr: kept <name>: <why>`, `routr: would remove <folder>[ and <worktree path>]`; a worktree it could not check is refused
   ("its worktree could not be checked"). `warnings` says what it cannot see: a command the worker started that left
-  Claude's process group or detached itself (on Windows, anything once Claude has ended). For a worker launched
+  the harness's process group or detached itself (on Windows, anything once the harness has ended). For a worker launched
   without a worktree it removes only the run folder and its reports, inspects no repository, and warns that the
   worker's changes in its folder are the lead's to check. Own field: `name`.
 - Used when given: `--cwd` (default `.`), `--delete-branch`, `--dry-run`.
@@ -575,7 +576,7 @@ headless worker to wait on`.
 Own fields: `state`, `workers` (each as `workers` prints it, plus `gen`, the holder generation, and `turns` holding
 only the turns reported now: `{ turn, outcome, report, delivered }`; `outcome` is `finished`, `failed`, `no_finish`
 (the process ended without finishing the turn), `not_started`, `stopped` or `running`; `report` is a path or null;
-`delivered` counts messages written into that turn). A report is Claude's final message of that turn, cut at 1 MB; a
+`delivered` counts messages written into that turn). A report is the worker's final message of that turn (Codex: its final answer), cut at 1 MB; a
 turn can end without one. `next`: for each new report a `do` step with the `routr check` template on its path, and
 for a turn without one a `do` step to look at the worker's work yourself; a step for a worker that is `lost` or has a
 process group left; a note when background commands may start another turn; `routr wait` again (run) for the
@@ -588,14 +589,19 @@ message is the text given, with the report reminder appended, at most 3 MB.
 
 Inputs: required: `--name`, and one of `--task` or `--task-file`. Refused (`error`): an unknown worker, an empty or too
 large message, the subscription turned off; and when a new holder must start: a worker whose process does not answer,
-a process group of its still running, a sandbox it can see, a worker with no session to resume, Claude not signed in.
+a process group of its still running, a sandbox it can see, a worker with no session to resume, the harness not signed
+in.
 
-`state`: `delivered` (written into the running Claude's input: `message.code` `handed_to_harness`; not proven read),
-`queued` (that Claude's input had closed: the holder keeps the message in memory and, once that Claude has exited,
-starts a new Claude process resuming the same session with it; lost if the holder dies first), `resumed` (a new
-holder resumed the session with it: `prompted`), `refused` (the holder did not take it: `message.why` is a fixed code,
-such as `no_session`, `stopping`, `queue_full`, or `harness_ended` when the resumed Claude ended before taking it),
-`unknown` (no answer after it was handed over), `failed` (refused input).
+`state`: `delivered` (into the running worker. Claude: written into its input, `message.code` `handed_to_harness`, not
+proven read. Codex: taken by its app-server, `accepted`: steered into the running turn, or, once that turn has ended,
+started as the next turn in the same process), `queued` (the harness's input had closed: the holder keeps the message
+in memory and, once that process has exited, starts a new one resuming the same session with it; lost if the holder
+dies first), `resumed` (a new holder resumed the session with it: `prompted`), `refused` (the holder did not take it:
+`message.why` is a fixed code, such as `no_session`, `stopping`, `queue_full`, `harness_ended` when the resumed
+harness ended before taking it, `harness_refused` when Codex said no, `not_started` when Codex had not started the
+task's turn within 30 seconds, or `not_written` when its input would not take it), `unknown` (handed over and no answer came: whether it
+was taken is not known, and it is never sent again on its own; `no_reply` when Codex ended before answering;
+`headline` `routr: whether <name> took the message is not known (<why>)`), `failed` (refused input).
 
 `ok`: true for `delivered`, `queued`, `resumed`. Own fields: `state`, `name`, `message` `{ code, why? }`. `next`:
 `routr wait --name <name>` (run); for `unknown`, `routr workers --name <name>` (run) to look before sending again.
@@ -606,19 +612,20 @@ Each headless worker as its holder last recorded it, checked against whether its
 
 Inputs: used when given: `--name` (repeatable). Own fields: `workers`, each `{ name, kind, model, effort, cwd, state,
 turn, seconds_since_event, last_tool, tasks, queued, session, report, harness_group? }`. `state` is `starting`,
-`working`, `waiting` (between turns: background commands running, a message queued, or Claude exiting), `idle`,
+`working`, `waiting` (between turns: background commands running, a message queued, or the harness exiting), `idle`,
 `failed`, `stopped`, `no_task` (its process started and no task came), `lost` (its process ended mid-turn without
-settling), or `unreachable` (its channel does not answer). `last_tool` is one of Claude's tool names, `mcp`, `other`,
-or null. `report` is the path of the latest turn's report that has one, or null. `harness_group`: a process group it
-recorded that still has members (a lost worker's Claude, or a command that outlived Claude), on macOS and Linux.
+settling), or `unreachable` (its channel does not answer). `last_tool` is one of the harness's own tool names (Claude's
+tools; Codex's item types, such as `commandExecution` and `fileChange`), `mcp`, `other`, or null. `report` is the path of the latest turn's report that has one, or null. `tasks` counts Claude's background commands;
+it is 0 for Codex, which reports none. `harness_group`: a process group it
+recorded that still has members (a lost worker's harness, or a command that outlived it), on macOS and Linux.
 Never worker text. Inside a sandbox it can see, `warnings` says so.
 
 ## stop
 
 Stops a headless worker through its own process. Inputs: required: `--name`.
 
-`state`: `stopped` (Claude and its process group are gone), `still_exiting` (told to stop; Claude not gone within six
-seconds, or something of its group still there after it went), `absent` (not running), `lost` (its process is gone, or a group it recorded still has members),
+`state`: `stopped` (the harness and its process group are gone), `still_exiting` (told to stop; the harness not gone
+within six seconds, or something of its group still there after it went), `absent` (not running), `lost` (its process is gone, or a group it recorded still has members),
 `unreachable`, `unknown`, `failed` (refused). `ok`: true for `stopped` and `absent`. For `lost` and `unreachable`,
 `warnings` says routr never stops a process by a saved id and `next` says what to look at. Own fields: `state`,
 `name`. `next`: `routr cleanup --worker <name>` (run).

@@ -5,6 +5,8 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- Outside herdr, `routr launch --kind codex` starts a headless Codex worker through its app-server, on your sign-in:
+  `routr send` steers a correction into its running turn, or resumes its thread with a follow-up. (#94)
 - Outside herdr, `routr launch --worktree` gives a headless worker its own git worktree, as in herdr, and `routr cleanup
   --worker` removes it with the same checks; `routr cleanup` run outside herdr lists and removes worktrees through git.
   (#93)
