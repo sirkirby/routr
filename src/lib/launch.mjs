@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,7 +11,7 @@ import { CLOSING, OFF } from "./wording.mjs";
 import { BRANCH, clean, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
-import { ensureParent, home, spawnSelf } from "./runtime.mjs";
+import { ensureParent, home, realPath, spawnSelf } from "./runtime.mjs";
 import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
 
 // The guide is the source of this instruction, embedded at build time just like the installed skills.
@@ -263,7 +263,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         const notWaiting = async (state) => needsInput(`The ${o.kind} in the pane is ${stateWords(state)}, not waiting for a task`, await screen(), { next: [runNext("Wait until this worker is idle before repeating the launch.", ["herdr", "agent", "wait", out.pane, "--until", "idle"]), rerun()] });
         if (occupant.agent !== o.kind) return needsInput(`The pane runs ${occupant.agent}, not ${o.kind}`, await screen(), other);
         const where = occupant.foreground_cwd ?? occupant.cwd;
-        const same = (() => { try { return realpathSync(where) === realpathSync(out.cwd); } catch { return false; } })();
+        const same = (() => { try { return realPath(where) === realPath(out.cwd); } catch { return false; } })();
         if (!same) return needsInput(`The ${o.kind} in the pane works in ${where ?? "a folder herdr does not report"}, not ${out.cwd}`, await screen(), other);
         let status = occupant.agent_status ?? "unknown";
         if (status === "blocked") {
@@ -342,7 +342,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       stop = await shellReady(); if (stop) return stop;
       // Only when the shell is elsewhere: a `cd` runs the shell's directory hooks again, and a hook that asks (a dotenv
       // plugin) would ask again every time launch was retried (seen 2026-09-28).
-      const same = (() => { try { return realpathSync(shellCwd) === realpathSync(out.cwd); } catch { return false; } })();
+      const same = (() => { try { return realPath(shellCwd) === realPath(out.cwd); } catch { return false; } })();
       if (!same) { await call(["pane", "run", out.pane, SHELLS[shell].cd(out.cwd)]); await pause(); }
     }
     if (!adopted) { stop = await shellReady(out.cwd); if (stop) return stop; }

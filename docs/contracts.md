@@ -510,7 +510,8 @@ Inputs:
   has members; for a worker launch gave a worktree, it first removes the worktree as `--path` would (`--delete-branch`
   and `--dry-run` pass on), and keeps the worker whole, with that refusal's reason and `next`, when it would not;
   `worktree` and `branch` are then as for `--path`. It refuses too when the worktree at that path is on another
-  branch than the one launch made (it is someone else's). `headline` `routr: removed worker <name>`, `routr: kept
+  branch than the one launch made (it is someone else's), or when git lists no worktree there but a folder is.
+  `headline` `routr: removed worker <name>`, `routr: kept
   <name>: <why>`, `routr: would remove <folder>[ and <worktree path>]`; a worktree it could not check is refused
   ("its worktree could not be checked"). `warnings` says what it cannot see: a command the worker started that left
   Claude's process group or detached itself (on Windows, anything once Claude has ended). For a worker launched

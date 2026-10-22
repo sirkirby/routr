@@ -1,10 +1,9 @@
 // herdr, as routr uses it: the transport, reading a pane, the shell at a pane's prompt, and what gets typed into that
 // shell. `launch` (the user's panes) and `terminal` (a private session) both build on it, so neither imports the other
 // and an advice command that reads Cursor's usage never loads the launcher.
-import { realpathSync } from "node:fs";
 import { stripVTControlCharacters } from "node:util";
 import { callHerdr } from "./process-boundary.mjs";
-import { start } from "./runtime.mjs";
+import { realPath, start } from "./runtime.mjs";
 
 // A branch name launch gives `herdr worktree create`, and cleanup finds a worktree by.
 export const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,80}$/;
@@ -180,7 +179,7 @@ export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBus
       // A folder that is gone (removed while the launch waited) is a person's call, not a crash.
       let here, there;
       if (cwd && typeof shell.cwd !== "string") return fail("The pane's shell did not say which folder it is in");
-      try { here = cwd && realpathSync(shell.cwd); there = cwd && realpathSync(cwd); }
+      try { here = cwd && realPath(shell.cwd); there = cwd && realPath(cwd); }
       catch (e) { return fail(e?.code === "ENOENT" ? `The pane's folder is gone (${shell.cwd}), or the one asked for (${cwd})` : `The pane's folder cannot be read (${e?.code ?? e})`); }
       if (cwd && here !== there) return fail("Shell is at a prompt in the wrong directory");
       return { ok: true, name: shell.name, cwd: shell.cwd };

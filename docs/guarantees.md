@@ -171,7 +171,8 @@ outside herdr. What that means on your machine:
   removes the copies, the worktree (through cleanup's checks) and its branch while that still points at the commit it
   started on, as it does the run folder; what it cannot remove is a warning. When it keeps the run folder (the holder
   is starting or does not answer), it keeps the worktree too. `cleanup --worker` removes the worktree with the checks
-  of `cleanup --worktree`, through git, and only while it is still on the branch launch made. It cannot see a command
+  of `cleanup --worktree`, through git, and only while it is still on the branch launch made; a folder at that path
+  that git does not list as a worktree is kept, with the worker's record. It cannot see a command
   the worker started that left Claude's process group or detached itself (on Windows, anything once Claude has
   ended), and removes the worktree anyway: it says so in `warnings`.
 - **Where it lives.** Each worker has a run folder, `~/.local/state/routr/workers/<name>`: the worker's settings

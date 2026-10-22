@@ -13,18 +13,18 @@
 // pane was killed). Neither herdr nor git has a remove-if-unchanged, so right before the removal the commit is compared
 // with the one checked and then the panes are read again, last: a commit made after that comparison, or a worker
 // started after that read, is the limit this narrows and does not close (from the reviews of b32617a, 980f1b2, 31f9ddf).
-import { lstatSync, readFileSync, readlinkSync, realpathSync, rmSync } from "node:fs";
+import { lstatSync, readFileSync, readlinkSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { BRANCH, runHerdr } from "./herdr.mjs";
 import { count } from "./wording.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, callGit, processError, processSteps } from "./process-boundary.mjs";
-import { probe } from "./runtime.mjs";
+import { probe, realOr, realPath } from "./runtime.mjs";
 
 const herdrLine = (args) => displayCommand(["herdr", ...args]);
 const gitIn = (dir, args) => probe("git", ["-C", dir, ...args], { timeoutMs: 15000, separate: true });
-const real = (p) => { try { return realpathSync(p); } catch { return resolve(p); } };
+const real = realOr;
 const few = (list) => list.slice(0, 5).join(", ") + (list.length > 5 ? ` and ${list.length - 5} more` : "");
 
 export function parseCleanupArgs(args) {
@@ -75,7 +75,7 @@ export function sameFile(a, b) {
 // 980f1b2). `rootReal` is the worktree's real path when it was checked. Compared again here, right before the removal.
 export function dropCopy(root, source, rel, rootReal = real(root)) {
   const target = join(root, rel);
-  try { if (realpathSync(root) !== rootReal || realpathSync(dirname(target)) !== join(rootReal, dirname(rel))) return false; } catch { return false; }
+  try { if (realPath(root) !== rootReal || realPath(dirname(target)) !== join(rootReal, dirname(rel))) return false; } catch { return false; }
   if (!sameFile(target, join(source, rel))) return false;
   rmSync(target, { force: true }); return true;
 }

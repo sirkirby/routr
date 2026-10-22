@@ -196,7 +196,7 @@ test("outside herdr, a worker gets its own worktree, and cleanup --worker remove
   expect([l.ok, l.state]).toEqual([true, "prompted"]);
   const path = l.worktree.path;
   expect(l.worktree).toEqual({ branch: "work/t1", path, workspace: null });
-  expect(path.startsWith(join(realpathSync(w.home), ".local", "share", "routr", "worktrees"))).toBe(true);
+  expect(path.startsWith(join(realpathSync.native(w.home), ".local", "share", "routr", "worktrees"))).toBe(true);
   expect([l.cwd, existsSync(join(path, "x.js")), readFileSync(join(path, ".env.local"), "utf8")]).toEqual([path, true, "LOCAL=1\n"]);
   expect(g("branch", "--list", "work/t1")).toContain("work/t1");
   expect(w.run(["workers", "--name", "t1"]).workers[0].cwd).toBe(path);
@@ -216,7 +216,7 @@ test("outside herdr, a worker gets its own worktree, and cleanup --worker remove
   expect([existsSync(path), existsSync(w.runDir("t1")), g("branch", "--list", "work/t1")]).toEqual([false, false, ""]);
   // A branch that exists is refused before anything is written.
   g("branch", "taken");
-  expect(w.launch("t2", w.task(BRIEF), ["--worktree", "taken"]).error).toBe(`branch taken exists in ${realpathSync(w.work)}; choose a new branch for the worker`);
+  expect(w.launch("t2", w.task(BRIEF), ["--worktree", "taken"]).error).toBe(`branch taken exists in ${realpathSync.native(w.work)}; choose a new branch for the worker`);
   expect(existsSync(w.runDir("t2"))).toBe(false);
 }, 60000);
 
@@ -257,7 +257,7 @@ test("a launch that stops early takes back a copied folder too, and never copies
   } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
 }, 60000);
 
-test("cleanup --worker keeps a worktree that took the place of the one launch made", async () => {
+test("cleanup --worker keeps a worktree that took the place of the one launch made, or a folder git does not list", async () => {
   const w = world(), g = repo(w);
   const l = w.launch("r1", w.task(BRIEF), ["--worktree", "work/r1"]);
   expect(l.state).toBe("prompted");
@@ -267,6 +267,13 @@ test("cleanup --worker keeps a worktree that took the place of the one launch ma
   const kept = w.run(["cleanup", "--worker", "r1"]);
   expect([kept.state, kept.headline]).toEqual(["refused", `routr: kept r1: the worktree at ${l.worktree.path} is on branch other, not on work/r1: it is not the one launch made`]);
   expect(existsSync(l.worktree.path)).toBe(true);
+  // A plain folder at that path, not a worktree git lists, is not known to be the worker's either.
+  g("worktree", "remove", l.worktree.path); mkdirSync(l.worktree.path); writeFileSync(join(l.worktree.path, "notes.txt"), "mine\n");
+  const plain = w.run(["cleanup", "--worker", "r1"]);
+  expect([plain.state, plain.headline]).toEqual(["refused", `routr: kept r1: git lists no worktree at ${l.worktree.path}, yet a folder is there: routr cannot tell it is the one launch made`]);
+  expect([existsSync(join(l.worktree.path, "notes.txt")), existsSync(w.runDir("r1"))]).toEqual([true, true]);
+  rmSync(l.worktree.path, { recursive: true });
+  expect(w.run(["cleanup", "--worker", "r1"]).state).toBe("removed");
 }, 60000);
 
 test("outside herdr, cleanup lists and removes worktrees through git, and says what it cannot see", () => {
