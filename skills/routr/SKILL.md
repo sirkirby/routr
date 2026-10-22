@@ -50,7 +50,7 @@ and judge that part yourself.
   herdr, `routr launch` starts Claude Code workers headless, followed with `routr wait` (the guide's "Outside herdr"
   section).
   In herdr, never run `routr subagent` and never spawn your harness’s own subagents. Every piece you hand out,
-  research and reviews included, is a pane worker. Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
+  research and reviews included, is a routr worker (a pane worker in herdr). Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
   branch or commit) and ends with `routr cleanup`, the command in its launch result’s `next`. Never close a worker's pane to
   finish it: that leaves its worktree behind.
 - The user wants routr **set up, configured, or checked**, or **a setting changed** (a model, an effort, a reserve,

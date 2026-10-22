@@ -29,7 +29,7 @@ there is none, ask for it and stop.
 
 ## For the rest of this session
 
-- Every handoff is a pane worker: `routr dispatch` on its brief, then `routr launch --advice <that worker’s saved advice>`.
+- Every handoff is a routr worker: `routr dispatch` on its brief, then `routr launch --advice <that worker’s saved advice>`.
   Research, exploration and reviews are handoffs too, read-only ones included. Do not skip routr for work that looks small: its `worker` field
   says when to do it yourself.
 - Never hand work to your harness's own subagents (Claude Code's Agent tool, Codex's or Cursor's subagents): they all
@@ -38,8 +38,10 @@ there is none, ask for it and stop.
 - If the plan leaves a decision that is the user's, ask before launching (routr's `worker` field flags this too).
   Otherwise proceed.
 - Every worker starts with `routr launch --worktree <branch>` (`--base <ref>` to start it from another branch or
-  commit; outside herdr, without `--worktree`) and ends with `routr cleanup`, the command in its launch result’s `next`. Do not make, close or remove a
-  worker's worktree or pane with herdr or git yourself: closing its pane leaves its worktree behind.
+  commit; outside herdr, without `--worktree`) and ends with `routr cleanup`, the command in its launch result’s `next`. In herdr, do
+  not make, close or remove a worker's worktree or pane with herdr or git yourself: closing its pane leaves its worktree
+  behind. Outside herdr, prepare a separate folder for each writing worker yourself when you need one; `cleanup
+  --worker` removes only routr's run folder.
 - Planning is work too: hand out its research and reviews, even when you will wait for the result, and do one
   yourself only when routr's `worker` field says `do it yourself`. Keep for yourself what cannot be handed out:
   turning findings into the plan, the decisions that are the user's, checking each result, and integrating it.

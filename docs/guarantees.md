@@ -22,8 +22,8 @@ reading and its headline names the model that answered; only no answer starts wi
 
 `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`, `feedback`,
 `launch`, `cleanup`, `send`, `stop`, `usage cursor`, and `usage kiro` act, and each says what it did. Their read-only forms
-(`telemetry status`, `setup --show`) only read, as do `wait` and `workers` (wait keeps which turns it has reported in
-the worker's run folder).
+(`telemetry status`, `setup --show`) only read, and so does `workers`; `wait` changes nothing of yours, and writes which
+turns it has reported into the worker's own run folder.
 
 Local file writes create parent folders from the file's absolute location, including when only a relative filename
 was given. An existing directory is accepted; a file in its place or a permission error remains a failure.
@@ -54,7 +54,8 @@ was given. An existing directory is accepted; a file in its place or a permissio
   deletes a branch only when asked and `git branch -d` agrees it is merged. Limit: neither herdr nor git can remove
   only if unchanged, so a commit made, or a worker started, after cleanup's last check is not seen.
 - `cleanup --worker` removes a headless worker's run folder, its reports included, once its own process has ended
-  and no process group it recorded still has members; it never touches the repository the worker worked in.
+  and no process group it recorded still has members, under the lock a new holder is started under. It does not
+  inspect or remove the worker's repository, commits or uncommitted changes.
 - `usage cursor` drives only a private headless herdr session it makes and removes, never your own, and keeps the
   reading in `~/.cache/routr`.
 - `usage kiro` runs Kiro's own `/usage` in the system temp folder, deletes the empty session that leaves with Kiro's
@@ -157,41 +158,53 @@ Outside herdr, `routr launch --kind claude` starts the worker headless: Claude C
 your sign-in, held by one routr process of its own (its holder). Other harnesses, `--pane`, `--worktree` and the rest
 of herdr's flags are refused outside herdr. What that means on your machine:
 
-- **Where it lives.** Each worker has a run folder, `~/.local/state/routr/workers/<name>`, owner-only (0700; files
-  0600 where they hold a secret or worker text): the worker's settings (kind, model, effort, folder; never the brief or
-  the environment), the holder's state (turns, their outcomes, the last tool's fixed name, the session id), a random
-  secret, one file per holder generation, and each turn's report. The channel's socket is in
+- **Where it lives.** Each worker has a run folder, `~/.local/state/routr/workers/<name>`: the worker's settings
+  (kind, model, effort, folder; never the brief or the environment), the holder's state (turns, their outcomes, the
+  last tool's fixed name, the session id), a random secret, one file per holder generation, which turns `wait` has
+  reported, and each turn's report. On macOS and Linux the folder is made 0700, and the secret, the settings and the
+  reports 0600 (checked by the tests). On Windows it takes the access your home folder gives; routr sets and checks no
+  access rules there, and access from another account is not measured. The channel's socket is in
   `~/.local/state/routr/s`. A name is taken by making its folder; launch refuses a name whose folder exists until
   `cleanup --worker` removes it.
-- **The brief** goes from launch to the holder over the channel, and from the holder to Claude on its standard input:
-  never in a process's arguments, never on disk. A report is the only worker text routr keeps, one file per turn;
-  commands print its path, never its text. Claude's error output is not read. A tool is shown by its name only when it
-  is one of Claude's own; an MCP server's tool is `mcp` and any other `other`.
+- **The brief and your messages** go from launch or send to the holder over the channel, and from the holder to
+  Claude on its standard input: never in a process's arguments. routr keeps no copy of them. What it keeps of the
+  worker's text is each turn's report: Claude's final message of that turn, as it wrote it (cut at 1 MB), which can
+  quote the brief or anything else the worker saw. Reports stay, owner-only on macOS and Linux, until `cleanup
+  --worker` removes the run folder; commands print their paths, never their text, and they never reach the ledger or
+  telemetry. Claude keeps its own session history as it always does. Claude's error output is not read. A tool is shown
+  by its name only when it is one of Claude's own; an MCP server's tool is `mcp` and any other `other`.
 - **The channel.** Both sides prove the run's secret before any text crosses. On macOS and Linux it is a Unix socket
   in an owner-only folder; a home whose socket path would exceed the system's limit (103 bytes on macOS, 107 on
-  Linux) is refused, not moved. On Windows it is a named pipe, and Windows' default security lets other local users
-  and anonymous logons open it for reading: the handshake is what keeps them out (measured: a reader got only a
-  fixed error), not the pipe's permissions. Not tested: another local account, a remote client.
-- **What it starts.** The holder starts Claude in its own process group (POSIX) in the worker's `--cwd`, with
-  herdr's and the lead's session variables removed. It exits once Claude has. `stop` sends SIGTERM to that group, and
-  SIGKILL two seconds later if it is still there; Claude ends its own tool commands on SIGTERM, which run in groups of
-  their own. Windows: `taskkill /T` on Claude. A command Claude started that detaches itself, or one left after a
-  SIGKILL, is not seen.
-- **What it cannot see.** If the holder itself is killed, its Claude keeps working until its next output fails.
-  routr then reports the worker `lost`, names the process group it recorded while that group still has members, and
-  refuses to resume or remove the worker until it has none; it never stops a process by a saved id. A lead started
-  inside an SSH session on Windows loses its workers when that session ends (sshd's job object closes every process
-  in the session; measured). On Linux, a worker outlived an SSH logout with Ubuntu's defaults; with logind's
+  Linux) is refused before launch writes anything. On Windows it is a named pipe, and Windows' default security lets
+  other local users and anonymous logons open it for reading: the handshake is what keeps them out (measured: a reader
+  got only a fixed error), not the pipe's permissions. Not tested: another local account, a remote client.
+- **What it starts.** The holder starts Claude in its own process group (POSIX), in the worker's `--cwd`, with
+  herdr's and the lead's session variables removed, and records that group before the task goes in. It exits once
+  Claude has. On macOS and Linux, `stop` sends SIGTERM to that group (Claude ends its tool commands, which run in
+  groups of their own, on SIGTERM; measured), then SIGKILL two seconds later if Claude itself has not exited; once
+  Claude has gone, anything still in its group is sent SIGKILL. stop waits up to six seconds for Claude, and says
+  `still_exiting` if it has not gone. On Windows it runs `taskkill /T /F` on Claude, or ends Claude alone if that
+  fails. A command that detaches itself is not seen.
+- **What it cannot see.** If the holder itself is killed, its Claude keeps working until its next output fails
+  (measured on macOS); on Windows the measured stand-in harness ended with its holder, and a real Claude has not been
+  measured there. On macOS and Linux, routr then reports the worker `lost`, and names the process group it recorded
+  while that group still has members, as it does when a tool command outlives Claude. Either way it refuses to resume
+  or remove the worker until that group is empty, and it never stops a process by a saved id. A lead started inside an
+  SSH session on Windows loses its workers when that session ends (sshd's job object closes every process in the
+  session; measured). On Linux, a worker outlived an SSH logout with Ubuntu's defaults; with logind's
   `KillUserProcesses=yes` it would not (not measured).
-- **Sandboxes.** A lead's sandbox carries over to what it starts: launch and send refuse when they can see one
-  (Claude Code's Bash sandbox, Codex's), and say to run them outside it.
+- **Sandboxes.** A lead's sandbox carries over to what it starts. launch refuses when it can see one (Claude Code's
+  Bash sandbox, Codex's), and so does a send that must start a new holder; a send to a running worker goes over its
+  channel as usual. `wait`, `workers` and `stop` say when they run inside one, since it may hide a worker's channel.
 - **Sign-in.** launch and a send that starts a new holder check Claude's sign-in first, as every launch does.
 
 ## Secrets, briefs and telemetry
 
 A brief goes only to the decision models in your chosen list (or the one-call override) until one answers, and to
-the worker it is for. A key goes only to its own provider. routr never prints or logs either, and never puts them in the ledger or in telemetry: the ledger stores a brief's hash and length. Keys are kept
-only in routr's secrets file, `~/.config/routr/env`, written by `routr key set`.
+the worker it is for. A key goes only to its own provider. routr never prints or logs either, and never puts them in
+the ledger or in telemetry: the ledger stores a brief's hash and length. Keys are kept only in routr's secrets file,
+`~/.config/routr/env`, written by `routr key set`. The one worker text routr stores is a headless worker's reports,
+which can quote its brief ("Headless workers", above).
 
 The list keeps hosted choices in order and tries local Ollama choices last, because they may need to load. Hosted
 attempts have an 8-second cut inside one overall deadline: 10 seconds for hosted-only lists, 30 seconds with local.

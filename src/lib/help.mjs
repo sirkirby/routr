@@ -54,14 +54,14 @@ export const COMMANDS = {
       { name: "--copy", arg: "<path>", description: "copy an untracked file or folder from the repo into the worktree (repeatable; with --worktree)", required: false, repeatable: true },
       { name: "--direction", arg: "<right|down>", description: "split direction", required: false, default: "right if wide else down" },
       { name: "--task", arg: "<text>", description: "task prompt string (mutually exclusive with --task-file)", required: false },
-      { name: "--task-file", arg: "<path>", description: "file containing task prompt (mutually exclusive with --task)", required: false },
-      { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds", required: false, default: 120000 },
+      { name: "--task-file", arg: "<path>", description: "file containing task prompt (mutually exclusive with --task; outside herdr a task is required)", required: false },
+      { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds (outside herdr: for the worker's process to start and Claude to take the task)", required: false, default: 120000 },
       { name: "--dry-run", arg: null, description: "plan commands without executing or writing files; advice checks can refuse with ok:false", required: false, default: false },
     ],
   },
   cleanup: {
     name: "cleanup",
-    description: "finish a worker: remove the worktree `launch --worktree` made (closing its workspace), or close the pane launch split. The way to end every worker: closing a worktree's pane leaves the worktree behind. Refuses while anything runs there, and never removes uncommitted changes, files the worker made, or a commit no branch or tag holds; files copied in with --copy and left unchanged go with it, and so do files git ignores. Keeps the branch unless --delete-branch. With no worker named, lists the repo's worktrees and what it would do with each",
+    description: "finish a worker: remove the worktree `launch --worktree` made (closing its workspace), or close the pane launch split, or (`--worker`) a headless worker's run folder and reports, which inspects no repository. The way to end every worker: closing a worktree's pane leaves the worktree behind. Refuses while anything runs there, and never removes uncommitted changes, files the worker made, or a commit no branch or tag holds; files copied in with --copy and left unchanged go with it, and so do files git ignores. Keeps the branch unless --delete-branch. With no worker named, lists the repo's worktrees and what it would do with each",
     flags: [
       { name: "--cwd", arg: "<repo>", description: "the repository (the main checkout or any of its worktrees)", required: false, default: "." },
       { name: "--worktree", arg: "<branch>", description: "the worker's worktree, by the branch given to launch --worktree (name one worker: --worktree, --path, or --pane)", required: false },
@@ -77,7 +77,7 @@ export const COMMANDS = {
     description: "outside herdr: wait for headless workers; returns when one finishes a turn (with its report's path), fails, stops or is lost, or at the timeout with the ones still running; changes nothing of yours",
     flags: [
       { name: "--name", arg: "<name>", description: "a worker to wait on (repeatable)", required: false, default: "every worker still running or with a turn not yet reported", repeatable: true },
-      { name: "--timeout", arg: "<ms>", description: "how long to wait, at most 600000; the default fits inside a lead's own command time limit", required: false, default: 90000 },
+      { name: "--timeout", arg: "<ms>", description: "how long to wait, at most 600000; keep it under your own shell tool's command limit (Claude Code's default is 2 minutes)", required: false, default: 90000 },
     ],
   },
   send: {
@@ -91,12 +91,12 @@ export const COMMANDS = {
   },
   workers: {
     name: "workers",
-    description: "outside herdr: each headless worker's state, turn, seconds since its last event, last tool, session and latest report path; never its text; changes nothing",
+    description: "outside herdr: each headless worker's state, turn, seconds since its last event, last tool, session and the path of its latest report; never its text; changes nothing",
     flags: [{ name: "--name", arg: "<name>", description: "only this worker (repeatable)", required: false, repeatable: true }],
   },
   stop: {
     name: "stop",
-    description: "outside herdr: stop a headless worker through its own process (SIGTERM to its harness and what that started, then SIGKILL); never by a saved process id",
+    description: "outside herdr: stop a headless worker through its own process (SIGTERM to Claude's process group, SIGKILL if it has not gone); never by a saved process id",
     flags: [{ name: "--name", arg: "<name>", description: "the worker", required: true }],
   },
   share: {

@@ -12,16 +12,20 @@
 //     owner-only folder (the socket file itself takes the umask), its path refused when over sun_path's limit.
 // Requests are framed (one JSON line each, bounded), versioned, and answered by id with a fixed code.
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { STATE_DIR, writeJsonAtomic } from "./runtime.mjs";
 
 export const PROTO = 1;
-const MAX_LINE = 64 * 1024, HANDSHAKE_MS = 3000;
+// One frame holds a whole task: launch and send refuse a message over MESSAGE_MAX before anything starts.
+const MAX_LINE = 4 * 1024 * 1024, HANDSHAKE_MS = 3000;
+export const MESSAGE_MAX = 3 * 1024 * 1024;
+// A proof or challenge is an HMAC-SHA256 in hex; nonces are 32 hex characters. Anything else is refused as it is.
+const HEX64 = /^[0-9a-f]{64}$/, NONCE = /^[0-9a-f]{32}$/;
 const WIN = () => process.platform === "win32";
 const hmac = (key, s) => createHmac("sha256", key).update(s).digest("hex");
-const same = (a, b) => typeof a === "string" && typeof b === "string" && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const same = (a, b) => typeof a === "string" && typeof b === "string" && HEX64.test(a) && HEX64.test(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const readJson = (f) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return null; } };
 const alivePid = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } };
 const fail = (code, message = code) => Object.assign(new Error(message), { code });
@@ -42,6 +46,9 @@ const secretOf = (dir) => readFileSync(join(dir, "secret"), "utf8");
 
 // sun_path holds 104 bytes on macOS and 108 on Linux, its NUL included. A longer path is refused, never moved or cut.
 const SUN_MAX = () => (process.platform === "darwin" ? 103 : 107);
+// Whether this home's socket paths fit, checked by launch before it starts anything (the longest name a generation
+// below a million can take).
+export const socketPathFits = () => WIN() || Buffer.byteLength(join(SOCKET_DIR(), "x".repeat(8) + ".999999." + "x".repeat(6))) <= SUN_MAX();
 export function endpointFor(id, gen) {
   const r = randomBytes(8).toString("hex");
   if (WIN()) return `\\\\.\\pipe\\routr-${r}`;
@@ -50,8 +57,9 @@ export function endpointFor(id, gen) {
   return p;
 }
 // An endpoint this channel made: a pipe of routr's, or a socket in routr's own folder for this run.
+// Its folder exactly, a name of this run's own shape, and (to remove it) a socket, never a file or a link.
 export const ownEndpoint = (id, endpoint) => typeof endpoint === "string" && (WIN() ? /^\\\\\.\\pipe\\routr-[0-9a-f]{16}$/.test(endpoint)
-  : endpoint.startsWith(SOCKET_DIR()) && /^[0-9a-f]{1,8}\.\d+\.[0-9a-f]{6}$/.test(endpoint.slice(SOCKET_DIR().length + 1)) && endpoint.slice(SOCKET_DIR().length + 1).startsWith(`${id.slice(0, 8)}.`));
+  : dirname(endpoint) === SOCKET_DIR() && new RegExp(`^${id.slice(0, 8)}\\.\\d+\\.[0-9a-f]{6}$`).test(basename(endpoint)));
 
 // ---- generations --------------------------------------------------------------------------------------------------
 export const genFile = (dir, n, kind) => join(dir, `gen-${n}.${kind}`);
@@ -67,14 +75,21 @@ export const markReleased = (dir, n, info) => writeJsonAtomic(genFile(dir, n, "r
 // What the highest generation is: none, released (it ended and said so), starting (claimed, not bound yet, its claimant
 // alive), abandoned (claimed, never bound, claimant gone: it never started a harness), alive (answered and proved the
 // secret), dead (a definite no-listener), unreachable (anything else). A claimant's live pid may be a reused one,
-// which only errs toward "starting", the safe side.
+// which only errs toward "starting", the safe side. A claim is created empty and written a moment later (exclusive
+// create, then the write), so a claim with no readable pid is "starting" until it is old enough to be abandoned.
+const CLAIM_GRACE_MS = 10000;
 export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
   const n = generations(dir).at(-1);
   if (!n) return { state: "none", gen: 0 };
   const released = readJson(genFile(dir, n, "released"));
   const ready = readJson(genFile(dir, n, "ready"));
   if (released) return { state: "released", gen: n, ready, released };
-  if (!ready) { const c = readJson(genFile(dir, n, "claim")); return { state: c && alivePid(c.pid) ? "starting" : "abandoned", gen: n }; }
+  if (!ready) {
+    const c = readJson(genFile(dir, n, "claim"));
+    if (Number.isInteger(c?.pid)) return { state: alivePid(c.pid) ? "starting" : "abandoned", gen: n };
+    let age = Infinity; try { age = Date.now() - statSync(genFile(dir, n, "claim")).mtimeMs; } catch {}
+    return { state: age < CLAIM_GRACE_MS ? "starting" : "abandoned", gen: n };
+  }
   try {
     const c = await connect(dir, n, ready.endpoint, { timeout });
     const r = await c.request("ping", {}, timeout); c.close();
@@ -95,7 +110,7 @@ function lines(sock, onMsg, onBad) {
       if (l.length > MAX_LINE) return onBad("frame_too_large");
       let m; try { m = JSON.parse(l); } catch { return onBad("frame_unreadable"); }
       if (!m || typeof m !== "object" || Array.isArray(m)) return onBad("frame_unreadable");
-      onMsg(m);
+      Promise.resolve().then(() => onMsg(m)).catch(() => onBad("failed"));
     }
   });
 }
@@ -115,8 +130,9 @@ export function connect(dir, gen, endpoint, { timeout = HANDSHAKE_MS, secret } =
     sock.on("close", () => { stop(fail("ECLOSED", "closed during handshake")); for (const [, w] of waiting) w.reject(fail("ECLOSED", "closed")); waiting.clear(); });
     sock.on("connect", () => { stage = "hello"; send(sock, { t: "hello", v: PROTO, nc }); });
     lines(sock, (m) => {
+      if (m.t === "err") return stop(fail(typeof m.code === "string" && /^[a-z_]{1,32}$/.test(m.code) ? m.code : "refused", "the holder refused the connection"));
       if (stage === "hello") {
-        if (m.t !== "challenge") return stop(fail("server_unproven", "the holder did not answer the handshake"));
+        if (m.t !== "challenge" || !NONCE.test(m.ns ?? "")) return stop(fail("server_unproven", "the holder did not answer the handshake"));
         if (m.v !== PROTO) return stop(fail("proto_mismatch", "the holder speaks another protocol version"));
         if (!same(m.ps, hmac(key, `s|${gen}|${nc}|${m.ns}`))) return stop(fail("server_unproven", "the holder did not prove the run's secret"));
         stage = "proof"; send(sock, { t: "proof", pc: hmac(key, `c|${gen}|${m.ns}|${nc}`) }); return;
@@ -151,7 +167,8 @@ export function serve(dir, gen, endpoint, handle) {
     sock.on("close", () => clearTimeout(t));
     lines(sock, async (m) => {
       if (stage === "hello") {
-        if (m.t !== "hello" || typeof m.nc !== "string" || m.nc.length > 64) return bye("bad_hello");
+        if (m.t !== "hello" || !NONCE.test(m.nc ?? "")) return bye("bad_hello");
+        if (m.v !== PROTO) return bye("proto_mismatch");
         nc = m.nc; stage = "proof"; send(sock, { t: "challenge", v: PROTO, ns, ps: hmac(key, `s|${gen}|${nc}|${ns}`) }); return;
       }
       if (stage === "proof") {
@@ -167,4 +184,4 @@ export function serve(dir, gen, endpoint, handle) {
 }
 
 // A dead generation's socket file, when it is this run's: nobody listens there and only that generation used the name.
-export const removeEndpoint = (id, endpoint) => { if (!WIN() && ownEndpoint(id, endpoint) && existsSync(endpoint)) try { unlinkSync(endpoint); } catch {} };
+export const removeEndpoint = (id, endpoint) => { if (!WIN() && ownEndpoint(id, endpoint)) try { if (lstatSync(endpoint).isSocket()) unlinkSync(endpoint); } catch {} };

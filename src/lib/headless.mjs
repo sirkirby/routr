@@ -66,119 +66,144 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const p = await probe(dir);
   if (["alive", "starting", "unreachable"].includes(p.state)) return; // another holder has it, or may
   const prior = readJson(join(dir, "state.json")) ?? {};
-  // A dead generation's harness may still be working, blind: never start a second Claude on its session.
-  if (p.state === "dead" && groupAlive(prior.harness_pgid)) return;
+  // A harness an earlier generation started may still be working (its holder was killed, or a tool command outlived
+  // it): never start a second Claude on its session while that group has members.
+  if (groupAlive(prior.harness_pgid)) return;
   const n = p.gen + 1;
   if (!claim(dir, n)) return;
   if (p.state === "dead") removeEndpoint(w.id, p.ready?.endpoint);
-  let st = { format: FORMAT, turn: 0, turns: [], ...prior, gen: n, holder_pid: process.pid, harness_pid: null, harness_pgid: null, tasks: 0, queued: 0 };
+  const turns = (prior.turns ?? []).map((t) => (t.outcome ? t : { ...t, outcome: "no_finish", ended_at: new Date().toISOString() })); // a lost turn ends here
+  let st = { format: FORMAT, turn: 0, ...prior, turns, gen: n, holder_pid: process.pid, harness_pid: null, harness_pgid: null, tasks: 0, queued: 0 };
   let lastWrite = 0;
+  // Every write of the state says whether it reached the disk: the ones that record what this holder started must.
   const save = (patch = {}, { quiet = false } = {}) => {
     st = { ...st, ...patch };
     const now = Date.now();
-    if (quiet && now - lastWrite < 1000) return; // activity alone is written at most once a second
+    if (quiet && now - lastWrite < 1000) return true; // activity alone is written at most once a second
     lastWrite = now; st.updated_at = new Date(now).toISOString();
-    try { writeJsonAtomic(join(dir, "state.json"), st); } catch {}
+    try { writeJsonAtomic(join(dir, "state.json"), st); return true; } catch { return false; }
   };
   const queue = [];
-  let child = null, inTurn = false, stopping = null, settled = false, server = null, endpoint = null, started = null;
+  let child = null, inTurn = false, stopping = null, stopAsked = false, settled = false, server = null, endpoint = null, started = null;
   const turnRow = () => st.turns.at(-1);
+  const setRow = (patch) => ({ turns: [...st.turns.slice(0, -1), { ...turnRow(), ...patch }] });
   const beginTurn = () => { inTurn = true; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered: 0 }], state: "working" }); };
   const endTurn = (outcome, text) => {
     if (!inTurn) return;
     inTurn = false;
     let report = null;
     if (text) { try { mkdirSync(join(dir, "reports"), { recursive: true, mode: 0o700 }); writeFileSync(reportPath(name, st.turn), text, { mode: 0o600 }); report = reportPath(name, st.turn); } catch {} }
-    save({ turns: [...st.turns.slice(0, -1), { ...turnRow(), outcome, report, ended_at: new Date().toISOString() }], state: child ? "waiting" : st.state });
+    save({ ...setRow({ outcome, report, ended_at: new Date().toISOString() }), state: child ? "waiting" : st.state });
   };
-  const write = (text) => {
-    if (!inTurn) beginTurn(); else save({ turns: [...st.turns.slice(0, -1), { ...turnRow(), delivered: (turnRow().delivered ?? 0) + 1 }] });
-    child.stdin.write(message(text));
-  };
+  // Write a message to the harness's input: true once the write has gone through, false when the input is closed or
+  // the write failed (the harness never got it).
+  const write = (c, text) => new Promise((resolve) => {
+    if (!c || c.stdin.destroyed || c.stdin.writableEnded) return resolve(false);
+    try { c.stdin.write(message(text), (err) => resolve(!err)); } catch { resolve(false); }
+  });
   // Leave once the harness has gone and nothing waits: the outcome stays in state.json, the generation says it ended.
+  // A process group that still has members (a tool command that outlived Claude) stays recorded, and blocks a resume
+  // and cleanup until it is empty.
   const settle = () => {
     if (settled) return; settled = true;
     const last = turnRow();
-    save({ state: stopping ? "stopped" : last?.outcome === "finished" ? "idle" : st.turn ? "failed" : "no_task", harness_pid: null, holder_pid: null, queued: 0 });
-    markReleased(dir, n, { harness_exited: !child || child.exitCode != null || child.signalCode != null });
+    const pg = groupAlive(st.harness_pgid) ? st.harness_pgid : null;
+    save({ state: stopAsked ? "stopped" : last?.outcome === "finished" ? "idle" : st.turn ? "failed" : "no_task", harness_pid: null, harness_pgid: pg, holder_pid: null, queued: 0 });
+    markReleased(dir, n, { harness_exited: true, ...(pg ? { group_left: pg } : {}) });
     try { server?.close(); } catch {}
     removeEndpoint(w.id, endpoint);
     setTimeout(() => process.exit(0), 50).unref?.();
   };
 
+  // One harness process: the turn is counted before it starts, so a start that fails still gives that message an
+  // outcome. Everything it reports is bound to that process, and it is finished on `close`, once its output is read.
   const runHarness = (text, session) => {
     started = new Promise((resolve) => {
-      let answered = false;
+      let answered = false, finished = false;
       const answer = (r) => { if (!answered) { answered = true; resolve(r); } };
+      beginTurn();
+      let c;
       try {
-        child = run(HARNESSES[w.kind].executable, headlessArgv({ kind: w.kind, model: w.model, effort: w.effort, session }),
+        c = run(HARNESSES[w.kind].executable, headlessArgv({ kind: w.kind, model: w.model, effort: w.effort, session }),
           { cwd: w.cwd, env: harnessEnv(), stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
-      } catch { child = null; answer({ code: "failed", why: "harness_not_started" }); return settle(); }
-      save({ harness_pid: child.pid, harness_pgid: process.platform === "win32" ? null : child.pid, state: "working", ...(session ? {} : { session_id: null }) });
-      child.on("error", () => answer({ code: "failed", why: "harness_not_started" }));
-      child.stdin.on("error", () => {});
+      } catch { endTurn("not_started", null); answer({ code: "failed", why: "harness_not_started" }); return settle(); }
+      child = c;
+      const finish = (why) => {
+        if (finished) return; finished = true;
+        endTurn(stopAsked ? "stopped" : why, null);
+        answer({ code: "failed", why: "harness_ended" });
+        if (child === c) child = null;
+        // A message that arrived after its input closed: the next turn, on the same session.
+        if (queue.length && !stopAsked && st.session_id) { const next = queue.splice(0).join("\n\n"); save({ queued: 0 }); runHarness(next, st.session_id); return; }
+        settle();
+      };
+      c.on("error", () => { if (c.pid == null) finish("not_started"); });
+      c.stdin.on("error", () => {});
+      // What this holder started is on disk before the task goes in, or the task does not go in.
+      if (!c.pid || !save({ harness_pid: c.pid, harness_pgid: process.platform === "win32" ? null : c.pid, state: "working", ...(session ? {} : { session_id: null }) })) {
+        if (c.pid) stop(c, { group: true });
+        return finish("not_started");
+      }
       let buf = "";
-      child.stdout.setEncoding("utf8");
-      child.stdout.on("data", (d) => {
+      c.stdout.setEncoding("utf8");
+      c.stdout.on("data", (d) => {
         buf += d;
         let i;
         while ((i = buf.indexOf("\n")) >= 0) {
           const ev = readEvent(buf.slice(0, i)); buf = buf.slice(i + 1);
-          if (!ev) continue;
+          if (!ev || finished) continue;
           if (ev.turn && !inTurn) beginTurn(); // a turn the harness started itself
           if (ev.session) { save({ session_id: ev.session }); answer({ code: "prompted", session: ev.session }); }
           if (ev.tasks != null) save({ tasks: ev.tasks });
           if (ev.tool) save({ last_tool: ev.tool, last_event_at: new Date().toISOString() }, { quiet: true });
           if (ev.activity) save({ last_event_at: new Date().toISOString() }, { quiet: true });
-          if (ev.result) {
-            endTurn(ev.result.failed ? "failed" : "finished", ev.result.text);
-            // Nothing more to say to it: close its input so it ends once its background commands have.
-            if (!queue.length && !st.tasks && !child.stdin.writableEnded) child.stdin.end();
-          }
-          if (ev.tasks === 0 && !inTurn && !queue.length && !child.stdin.writableEnded) child.stdin.end();
+          if (ev.result) endTurn(ev.result.failed ? "failed" : "finished", ev.result.text);
+          // Nothing more to say to it: close its input, so it ends once its background commands have.
+          if ((ev.result || ev.tasks === 0) && !inTurn && !queue.length && !st.tasks && !c.stdin.writableEnded) c.stdin.end();
         }
       });
-      child.on("exit", () => {
-        endTurn(stopping ? "stopped" : "no_finish", null);
-        answer({ code: "failed", why: "harness_ended" });
-        child = null;
-        // A message that arrived after its input closed: the next turn, on the same session.
-        if (queue.length && !stopping && st.session_id) { const next = queue.splice(0).join("\n\n"); save({ queued: 0 }); runHarness(next, st.session_id); return; }
-        settle();
-      });
-      write(text);
+      c.on("close", () => finish("no_finish"));
+      write(c, text).then((ok) => { if (!ok) { stop(c, { group: true }); answer({ code: "failed", why: "task_not_written" }); } });
       setTimeout(() => answer({ code: "prompted", session: null }), startMs).unref?.();
     });
     return started;
   };
 
-  const stopAll = () => (stopping ??= (async () => {
-    queue.length = 0;
-    if (child) {
-      const c = child, exited = new Promise((r) => c.once("exit", r));
+  // stop: SIGTERM to the harness's group, SIGKILL after the grace (runtime's stop); once Claude has gone, a member of
+  // its group still there is sent SIGKILL too, while the group exists (its id cannot be someone else's then).
+  const stopAll = () => {
+    stopAsked = true; queue.length = 0;
+    return (stopping ??= (async () => {
+      const c = child;
+      if (!c) { settle(); return { code: "stopped" }; }
+      const closed = new Promise((r) => c.once("close", r));
       stop(c, { group: true });
-      const gone = await Promise.race([exited.then(() => true), new Promise((r) => setTimeout(() => r(false), 6000))]);
-      if (!gone) return { code: "still_exiting" };
-      return { code: "stopped" };
-    }
-    settle(); return { code: "stopped" };
-  })());
+      const gone = await Promise.race([closed.then(() => true), new Promise((r) => setTimeout(() => r(false), 6000))]);
+      const pg = process.platform === "win32" ? null : c.pid;
+      if (gone && groupAlive(pg)) { try { process.kill(-pg, "SIGKILL"); } catch {} await new Promise((r) => setTimeout(r, 300)); }
+      return { code: gone && !groupAlive(pg) ? "stopped" : "still_exiting" };
+    })());
+  };
 
   const handle = async (op, m) => {
     if (op === "ping") return { code: "ok", gen: n, state: st.state ?? null, queued: queue.length };
     if (op === "stop") return stopAll();
     if (op !== "start" && op !== "send") return { code: "refused", why: "unknown_op" };
     if (typeof m.text !== "string" || !m.text.trim()) return { code: "refused", why: "empty" };
-    if (stopping) return { code: "refused", why: "stopping" };
+    if (stopAsked) return { code: "refused", why: "stopping" };
     if (settled) return { code: "refused", why: "ended" }; // the sender starts the next generation
-    if (!child && !started) return runHarness(m.text, op === "send" || m.resume ? st.session_id : null);
-    if (child && !child.stdin.writableEnded) { write(m.text); return { code: "handed_to_harness" }; }
+    if (!child && !started) {
+      if (op === "send" && !st.session_id) return { code: "refused", why: "no_session" }; // a follow-up is not a task
+      return runHarness(m.text, op === "send" ? st.session_id : null);
+    }
+    if (child && await write(child, m.text)) { save(setRow({ delivered: (turnRow()?.delivered ?? 0) + 1 })); return { code: "handed_to_harness" }; }
+    // Its input has closed (it is finishing): the next turn, on the same session, once it has exited.
     if (queue.length >= 8) return { code: "refused", why: "queue_full" };
     queue.push(m.text); save({ queued: queue.length });
     return { code: "queued" };
   };
 
-  for (const s of ["SIGTERM", "SIGHUP", "SIGINT"]) process.on(s, () => { stopAll(); });
+  for (const sig of ["SIGTERM", "SIGHUP", "SIGINT"]) process.on(sig, () => { stopAll(); });
   try {
     endpoint = endpointFor(w.id, n);
     server = await serve(dir, n, endpoint, handle);

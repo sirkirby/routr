@@ -26,8 +26,10 @@ export const PROMPT_OPENING = "You are a routr worker.";
 // `rules` is the lead's process text (what the worker may and may not do, how to report, git steps): the worker reads it
 // after the task, and routr never does. Only the task is the work that `dispatch` and `--advice` judge. (Measured
 // 2026-09-26: 18 of 36 real tasks carried such text, 5 to 38% of each, and it moved Jev's readings.)
+// The last words of every launch prompt, and of every message `routr send` adds to a worker's session.
+export const CLOSING = "Finish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.";
 export function composePrompt(task, guide = WORKER_GUIDE, rules = null) {
-  return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}${rules ? `\n\n${rules.trim()}` : ""}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
+  return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}${rules ? `\n\n${rules.trim()}` : ""}\n\n${CLOSING}`;
 }
 
 const command = (args) => displayCommand(["herdr", ...args]);
@@ -526,7 +528,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     }
     if (createdPane && !out.ok) { out.warnings.push(`Pane ${out.pane} was left alive`); if (out.state !== "needs_input") out.next.push(doNext(`Inspect pane ${out.pane} before closing it or retrying`)); }
     if (configDir && startAttempted && !out.ok) { out.warnings.push(`Cursor config ${configDir} is retained for a possible running worker`); out.next.push(doNext(`Remove the private Cursor config ${configDir} if the launch command did not run`)); }
-    if (promptAttempted && out.state !== "prompted") { out.warnings.push("Prompt may have been submitted"); out.next.push(doNext(out.worker ? `Run routr workers --name ${out.name} before retrying` : `Inspect pane ${out.pane} before retrying`)); }
+    if (promptAttempted && out.state !== "prompted") { out.warnings.push("Prompt may have been submitted"); out.next.push(out.worker ? runNext("Look at the worker before retrying.", ["routr", "workers", "--name", out.name]) : doNext(`Inspect pane ${out.pane} before retrying`)); }
     out.headline = out.state === "planned" ? `routr: planned ${out.kind} launch, nothing ran${out.error ? `; a real launch would refuse: ${out.error}` : ""}`
       : out.state === "prompted" ? `routr: ${out.name} (${out.kind}) took its task${out.worker ? ", running headless" : ` in pane ${out.pane}`}`
       : out.state === "ready" ? `routr: ${out.name} is ready in pane ${out.pane}; no task sent`

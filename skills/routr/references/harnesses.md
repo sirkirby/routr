@@ -238,10 +238,11 @@ What `routr launch` outside herdr relies on: `claude -p --input-format stream-js
 - `result` holds the turn's final message. A command started with `run_in_background` keeps Claude running after it,
   even once stdin is closed; when that command ends, Claude starts a turn by itself (a second `init` and `result`).
   `background_tasks_changed` lists what is pending.
-- A Bash tool command that outlives Claude's 2-minute default (`BASH_DEFAULT_TIMEOUT_MS`) is moved to the background,
-  not killed, and a `-p` session waits for it before it ends.
+- With `BASH_DEFAULT_TIMEOUT_MS=15000`, a Bash tool command that ran past it was moved to the background, not killed,
+  and the `-p` session waited for it before it ended (macOS and Windows). Not measured at the 2-minute default.
 - Each tool command runs in a process group of its own. SIGTERM to Claude ends them; SIGKILL leaves them running.
-- With its reader gone (the process that held its output killed), Claude keeps working until its next write fails.
+- With its reader gone (the process that held its output killed), Claude kept working until its next write failed
+  (macOS).
 - Started from a lead's sandbox it fails: Claude Code's Bash sandbox blocks api.anthropic.com and writes outside the
   allowed folders (it sets `SANDBOX_RUNTIME`); inside Codex's workspace-write sandbox `claude` says "Not logged in"
   (Keychain hidden; it sets `CODEX_SANDBOX`).
