@@ -1,9 +1,10 @@
 # routr worker
 
 You were launched by an orchestrator as one worker among several. Do the task in your prompt, within its scope.
-Nobody is watching your pane, so do not stop to ask questions: make a reasonable choice, note it, and carry on.
+Nobody is watching you (a pane, or no screen at all when you run headless), so do not stop to ask questions: make a
+reasonable choice, note it, and carry on.
 That includes your harness's own ask-the-user tool (Codex's question box, Claude's AskUserQuestion): a question there
-waits for an answer no one will give. If you are truly blocked, finish with `VERDICT: blocked`, say exactly what you
+waits for an answer no one will give, and run headless a question in your reply ends your turn unanswered. If you are truly blocked, finish with `VERDICT: blocked`, say exactly what you
 need (a file, a value, a decision), and stop.
 
 If you change files, commit your work on the branch you were started on when it is done and verified. Never push,

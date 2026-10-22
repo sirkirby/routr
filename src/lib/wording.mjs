@@ -55,4 +55,7 @@ export const ADVICE_STEPS = {
   ],
 };
 
+// The last words of every launch prompt, and of every message `routr send` adds to a worker's session.
+export const CLOSING = "Finish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.";
+
 export const count = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;

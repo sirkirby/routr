@@ -39,7 +39,7 @@ export const COMMANDS = {
   },
   launch: {
     name: "launch",
-    description: "start a worker with matching task advice; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
+    description: "start a worker with matching task advice: in a herdr pane, or outside herdr a headless Claude Code worker that `routr wait` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
     flags: [
       { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
       { name: "--name", arg: "<name>", description: "worker agent name ([a-z][a-z0-9_-]{0,31})", required: true },
@@ -54,22 +54,50 @@ export const COMMANDS = {
       { name: "--copy", arg: "<path>", description: "copy an untracked file or folder from the repo into the worktree (repeatable; with --worktree)", required: false, repeatable: true },
       { name: "--direction", arg: "<right|down>", description: "split direction", required: false, default: "right if wide else down" },
       { name: "--task", arg: "<text>", description: "task prompt string (mutually exclusive with --task-file)", required: false },
-      { name: "--task-file", arg: "<path>", description: "file containing task prompt (mutually exclusive with --task)", required: false },
-      { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds", required: false, default: 120000 },
+      { name: "--task-file", arg: "<path>", description: "file containing task prompt (mutually exclusive with --task; outside herdr a task is required)", required: false },
+      { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds (outside herdr: for the worker's process to start and Claude to take the task)", required: false, default: 120000 },
       { name: "--dry-run", arg: null, description: "plan commands without executing or writing files; advice checks can refuse with ok:false", required: false, default: false },
     ],
   },
   cleanup: {
     name: "cleanup",
-    description: "finish a worker: remove the worktree `launch --worktree` made (closing its workspace), or close the pane launch split. The way to end every worker: closing a worktree's pane leaves the worktree behind. Refuses while anything runs there, and never removes uncommitted changes, files the worker made, or a commit no branch or tag holds; files copied in with --copy and left unchanged go with it, and so do files git ignores. Keeps the branch unless --delete-branch. With no worker named, lists the repo's worktrees and what it would do with each",
+    description: "finish a worker: remove the worktree `launch --worktree` made (closing its workspace), or close the pane launch split, or (`--worker`) a headless worker's run folder and reports, which inspects no repository. The way to end every worker: closing a worktree's pane leaves the worktree behind. Refuses while anything runs there, and never removes uncommitted changes, files the worker made, or a commit no branch or tag holds; files copied in with --copy and left unchanged go with it, and so do files git ignores. Keeps the branch unless --delete-branch. With no worker named, lists the repo's worktrees and what it would do with each",
     flags: [
       { name: "--cwd", arg: "<repo>", description: "the repository (the main checkout or any of its worktrees)", required: false, default: "." },
       { name: "--worktree", arg: "<branch>", description: "the worker's worktree, by the branch given to launch --worktree (name one worker: --worktree, --path, or --pane)", required: false },
       { name: "--path", arg: "<path>", description: "the worker's worktree, by its folder (one on no branch, or made by hand)", required: false },
       { name: "--pane", arg: "<id>", description: "a worker launched without --worktree: close its pane (a worktree's only pane is refused, with the command that removes the worktree). Takes no --cwd", required: false },
+      { name: "--worker", arg: "<name>", description: "a headless worker (launched outside herdr): remove its run folder and reports once nothing of it runs. Takes no --cwd", required: false },
       { name: "--delete-branch", arg: null, description: "also delete the worktree's branch, once its work has landed: git deletes it only when it is merged (with --worktree or --path)", required: false, default: false },
       { name: "--dry-run", arg: null, description: "check and say what it would do; change nothing", required: false, default: false },
     ],
+  },
+  wait: {
+    name: "wait",
+    description: "outside herdr: wait for headless workers; returns when one finishes a turn (with its report's path), fails, stops or is lost, or at the timeout with the ones still running; changes nothing of yours",
+    flags: [
+      { name: "--name", arg: "<name>", description: "a worker to wait on (repeatable)", required: false, default: "every worker still running or with a turn not yet reported", repeatable: true },
+      { name: "--timeout", arg: "<ms>", description: "how long to wait, at most 600000; keep it under your own shell tool's command limit (Claude Code's default is 2 minutes)", required: false, default: 90000 },
+    ],
+  },
+  send: {
+    name: "send",
+    description: "outside herdr: a correction or follow-up for a headless worker, into its running turn where the harness takes it, or as the next turn of the same session; new work is a new launch with its own advice",
+    flags: [
+      { name: "--name", arg: "<name>", description: "the worker", required: true },
+      { name: "--task", arg: "<text>", description: "the message (mutually exclusive with --task-file)", required: false },
+      { name: "--task-file", arg: "<path>", description: "file containing the message (mutually exclusive with --task)", required: false },
+    ],
+  },
+  workers: {
+    name: "workers",
+    description: "outside herdr: each headless worker's state, turn, seconds since its last event, last tool, session and the path of its latest report; never its text; changes nothing",
+    flags: [{ name: "--name", arg: "<name>", description: "only this worker (repeatable)", required: false, repeatable: true }],
+  },
+  stop: {
+    name: "stop",
+    description: "outside herdr: stop a headless worker through its own process (macOS and Linux: SIGTERM to Claude's process group, then SIGKILL if Claude has not gone; Windows: taskkill /T); never by a saved process id",
+    flags: [{ name: "--name", arg: "<name>", description: "the worker", required: true }],
   },
   share: {
     name: "share",

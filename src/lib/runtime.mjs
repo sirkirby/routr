@@ -16,6 +16,8 @@ export const home = () => (process.platform === "win32" ? process.env.USERPROFIL
 export const standalone = () => !/\.m?js$/.test(process.argv[1] ?? "");
 
 export const CACHE_DIR = () => join(home(), ".cache/routr");
+// Headless workers: each one's run folder, and the sockets of their channels (channel.mjs, headless.mjs).
+export const STATE_DIR = () => join(home(), ".local/state/routr");
 export const UPDATE_STAMP = () => join(CACHE_DIR(), "update-check");
 export const TELEMETRY_LOG = () => join(CACHE_DIR(), "telemetry.log");
 export const UPDATE_LOCK = () => join(CACHE_DIR(), "update.lock");
@@ -197,7 +199,11 @@ const owe = (c, sig) => {
   if (!reaping) { reaping = true; process.on("exit", reapPending); }
   pending.set(c, sig); c.once?.("exit", () => pending.delete(c));
 };
-export function stop(child, { platform = process.platform, via, after = later } = {}) {
+// `group: true` (off Windows) signals the child's whole process group, for a child started `detached`, which leads its
+// own group: a headless Claude runs each tool command in a group of its own, and SIGTERM to Claude ends them while
+// SIGKILL leaves them running (prototype p36, 2026-10-22), so the SIGKILL comes only after the grace. The group is
+// signalled while the child is unreaped, so its id cannot have been handed to another group.
+export function stop(child, { platform = process.platform, via, after = later, group = false } = {}) {
   if (!child || !alive(child)) return;
   if (platform === "win32" && child.pid) {
     let fell = false, tk;
@@ -221,10 +227,11 @@ export function stop(child, { platform = process.platform, via, after = later } 
       return;
     } catch {}
   }
-  try { child.kill(); } catch {}
+  const signal = (sig) => { if (group && platform !== "win32" && child.pid) { try { process.kill(-child.pid, sig); return; } catch {} } try { child.kill(sig); } catch {} };
+  signal("SIGTERM");
   if (platform !== "win32") {
-    owe(child, "SIGKILL");
-    after(KILL_GRACE_MS, () => { pending.delete(child); if (alive(child)) { try { child.kill("SIGKILL"); } catch {} } });
+    if (!group) owe(child, "SIGKILL");
+    after(KILL_GRACE_MS, () => { pending.delete(child); if (alive(child)) signal("SIGKILL"); });
   }
 }
 
@@ -233,7 +240,11 @@ export function stop(child, { platform = process.platform, via, after = later } 
 // that harness (e.g. ~/.claude/hooks/herdr-agent-state.sh, which acts only when all three are set) would report
 // routr's few-second read as an agent session in the user's pane. routr's own herdr calls (herdr.mjs runHerdr,
 // terminal.mjs) keep them: herdr needs them to find its session. Windows names are case-insensitive, hence /i.
-export const harnessEnv = (env = process.env) => Object.fromEntries(Object.entries(env).filter(([k]) => !/^HERDR_/i.test(k)));
+// The lead's own session variables go too: CLAUDECODE and Claude Code's session and messaging ones make a Claude that
+// routr starts take itself for a child of the lead's session, and CODEX_THREAD_ID ties a Codex to the lead's thread
+// (prototype p34, 2026-10-21). Sign-in and provider settings (CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_USE_BEDROCK, …) stay.
+const LEAD_SESSION = /^(?:HERDR_.*|CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(?:ENTRYPOINT|EXECPATH|SESSION_ID|SESSION_ATTENDED|CHILD_SESSION|BRIDGE_SESSION_ID|MESSAGING_SOCKET|MESSAGING_TOKEN|SSE_PORT)|CODEX_THREAD_ID)$/i;
+export const harnessEnv = (env = process.env) => Object.fromEntries(Object.entries(env).filter(([k]) => !LEAD_SESSION.test(k)));
 
 // Start routr again, detached, with `args`, and carry on without waiting: the binary itself, or `bun <script>` from a
 // source checkout. A spawn that fails later (EACCES, EMFILE) is ignored; one that fails at once returns false.

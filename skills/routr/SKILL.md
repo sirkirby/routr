@@ -41,13 +41,16 @@ and judge that part yourself.
 ## Which part applies to you
 
 - Your launch prompt says you are a **routr worker** → read `references/worker.md`; it covers sizing your subagents.
-- You are **outside herdr**, with no routr worker launch prompt, and about to spawn a subagent → read only
-  "Before you spawn a subagent" in `references/worker.md`: the rest is for routr workers.
+- You are **outside herdr**, with no routr worker launch prompt, and about to spawn a subagent for a piece of your
+  own work → read only "Before you spawn a subagent" in `references/worker.md`: the rest is for routr workers. Handing
+  work out, outside herdr too, is the orchestrator's job (next).
 - You are the **orchestrator**: you plan the work, hand it out, judge what comes back, and send it back when it
   falls short → read `references/orchestrator.md`, then `references/harnesses.md` before you launch anything. A user
-  can start a session this way by typing `/routr-orchestrate <plan>` (`$routr-orchestrate` in Codex).
+  can start a session this way by typing `/routr-orchestrate <plan>` (`$routr-orchestrate` in Codex). Outside
+  herdr, `routr launch` starts Claude Code workers headless, followed with `routr wait` (the guide's "Outside herdr"
+  section).
   In herdr, never run `routr subagent` and never spawn your harness’s own subagents. Every piece you hand out,
-  research and reviews included, is a pane worker. Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
+  research and reviews included, is a routr worker (a pane worker in herdr). Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
   branch or commit) and ends with `routr cleanup`, the command in its launch result’s `next`. Never close a worker's pane to
   finish it: that leaves its worktree behind.
 - The user wants routr **set up, configured, or checked**, or **a setting changed** (a model, an effort, a reserve,

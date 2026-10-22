@@ -24,22 +24,24 @@ there is none, ask for it and stop.
    `references/orchestrator.md` and `references/harnesses.md`, and follow them for the rest of this session.
 2. Run `routr doctor`. If it reports something that blocks advice (no key, no config), tell the user and follow
    `references/setup.md` first.
-3. Check you are in herdr: `test "${HERDR_ENV:-}" = 1`. Outside herdr you cannot launch workers in panes: say so,
-   and size each subagent you spawn with `routr subagent`. The rest of this page is for an orchestrator in herdr.
+3. Check whether you are in herdr: `test "${HERDR_ENV:-}" = 1`. Outside herdr, workers run headless (Claude Code
+   only): follow the orchestrator guide's "Outside herdr: headless workers" section where it differs from below.
 
 ## For the rest of this session
 
-- Every handoff is a pane worker: `routr dispatch` on its brief, then `routr launch --advice <that worker’s saved advice>`.
+- Every handoff is a routr worker: `routr dispatch` on its brief, then `routr launch --advice <that worker’s saved advice>`.
   Research, exploration and reviews are handoffs too, read-only ones included. Do not skip routr for work that looks small: its `worker` field
   says when to do it yourself.
 - Never hand work to your harness's own subagents (Claude Code's Agent tool, Codex's or Cursor's subagents): they all
   run on your subscription, out of the user's sight, with no ledger row. In herdr, never run `routr subagent`: it is for
-  workers sizing theirs. The outside-herdr exception above applies only outside herdr, where you cannot launch.
+  workers sizing theirs; outside herdr, hand work out with `routr launch` all the same.
 - If the plan leaves a decision that is the user's, ask before launching (routr's `worker` field flags this too).
   Otherwise proceed.
 - Every worker starts with `routr launch --worktree <branch>` (`--base <ref>` to start it from another branch or
-  commit) and ends with `routr cleanup`, the command in its launch result’s `next`. Do not make, close or remove a
-  worker's worktree or pane with herdr or git yourself: closing its pane leaves its worktree behind.
+  commit; outside herdr, without `--worktree`) and ends with `routr cleanup`, the command in its launch result’s `next`. In herdr, do
+  not make, close or remove a worker's worktree or pane with herdr or git yourself: closing its pane leaves its worktree
+  behind. Outside herdr, prepare a separate folder for each writing worker yourself when you need one; `cleanup
+  --worker` removes only routr's run folder.
 - Planning is work too: hand out its research and reviews, even when you will wait for the result, and do one
   yourself only when routr's `worker` field says `do it yourself`. Keep for yourself what cannot be handed out:
   turning findings into the plan, the decisions that are the user's, checking each result, and integrating it.

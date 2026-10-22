@@ -34,14 +34,16 @@ export function parseCleanupArgs(args) {
     const key = args[i].replace(/^--/, "");
     if (args[i] === "--dry-run") { o.dryRun = true; continue; }
     if (args[i] === "--delete-branch") { o.deleteBranch = true; continue; }
-    if (!args[i].startsWith("--") || !["cwd", "worktree", "path", "pane"].includes(key)) throw new Error(`Unknown cleanup option: ${args[i]}`);
+    if (!args[i].startsWith("--") || !["cwd", "worktree", "path", "pane", "worker"].includes(key)) throw new Error(`Unknown cleanup option: ${args[i]}`);
     if (seen.has(key)) throw new Error(`Repeated cleanup option: --${key}`);
     seen.add(key);
     if (!args[i + 1]?.trim() || /^-\S/.test(args[i + 1])) throw new Error(`--${key} requires a value`);
     if (args[i + 1].includes("\0")) throw new Error(`--${key} must not contain NUL`);
     o[key] = args[++i];
   }
-  if ([o.worktree, o.path, o.pane].filter((v) => v != null).length > 1) throw new Error("Name one worker: --worktree, --path, or --pane");
+  if ([o.worktree, o.path, o.pane, o.worker].filter((v) => v != null).length > 1) throw new Error("Name one worker: --worktree, --path, --pane, or --worker");
+  if (o.worker != null && !/^[a-z][a-z0-9_-]{0,31}$/.test(o.worker)) throw new Error("--worker must be a worker's name");
+  if (o.worker != null && (o.cwd != null || o.deleteBranch)) throw new Error("--worker takes no --cwd or --delete-branch: a headless worker's run folder is all it removes");
   if (o.worktree != null && !BRANCH.test(o.worktree)) throw new Error("--worktree must be a plain branch name");
   if (o.deleteBranch && o.worktree == null && o.path == null) throw new Error("--delete-branch goes with --worktree or --path");
   if (o.pane != null && o.cwd != null) throw new Error("--pane needs no --cwd");
@@ -203,6 +205,7 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
   try {
     const o = parseCleanupArgs(args);
     target = o.worktree ?? o.path;
+    if (o.worker != null) return await (await import("./workers.mjs")).cleanupWorker(o.worker, o, out);
     if (o.pane != null) {
       out.pane = o.pane;
       const panes = await paneList([]);

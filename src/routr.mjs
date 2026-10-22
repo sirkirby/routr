@@ -68,6 +68,15 @@ const ACT = {
   },
   // The text is an argument, never read from stdin: a pipe left open would hang.
   feedback: async (args) => { const r = await (await import("./lib/telemetry.mjs")).sendFeedback(args.join(" ")); print(r); return r.ok ? 0 : 1; },
+  // Headless workers (outside herdr). wait and workers read; send and stop act. `workers --hold` is the holder
+  // itself, which launch and send start detached; it prints nothing.
+  wait: async (args) => { print(await (await import("./lib/workers.mjs")).waitCommand(args)); return 0; },
+  workers: async (args) => {
+    if (args[0] === "--hold" && args[1]) { await (await import("./lib/headless.mjs")).hold(args[1]); return null; }
+    print(await (await import("./lib/workers.mjs")).workersCommand(args)); return 0;
+  },
+  send: async (args) => { const r = await (await import("./lib/workers.mjs")).sendCommand(args); print(r); return r.ok ? 0 : 1; },
+  stop: async (args) => { const r = await (await import("./lib/workers.mjs")).stopCommand(args); print(r); return r.ok ? 0 : 1; },
   skill: async (args) => { const r = (await import("./lib/skill-install.mjs")).installSkill({ dryRun: args.includes("--dry-run") }); print(r, 1); return r.ok ? 0 : 1; },
 };
 // Which of those a command line reaches (launch and update are dispatched first, below): `key set` and `skill install`
@@ -78,7 +87,10 @@ const acting = (a) => (Object.hasOwn(WITH_WORD, a[0]) ? a[1] === WITH_WORD[a[0]]
 if (argv[0] === "launch") process.exit(await ACT.launch(argv.slice(1)));
 if (argv.includes("--version")) { console.log((await import("./lib/version.mjs")).ROUTR_VERSION); process.exit(0); }
 if (argv[0] === "update") process.exit(await ACT.update(argv.slice(1)));
-if (acting(argv)) process.exit(await ACT[argv[0] === "doctor" ? "setup" : argv[0]](argv.slice(Object.hasOwn(WITH_WORD, argv[0]) ? 2 : 1)));
+if (acting(argv)) {
+  const code = await ACT[argv[0] === "doctor" ? "setup" : argv[0]](argv.slice(Object.hasOwn(WITH_WORD, argv[0]) ? 2 : 1));
+  if (code != null) process.exit(code); // the holder keeps running until its worker is done, then exits by itself
+} else {
 
 // The advice and file commands. `--config` and `--headroom` may stand anywhere on the line, as they always could.
 // `take` removes the first `name <value>` from `argv` and returns the value; `takeAll` every one.
@@ -157,3 +169,4 @@ if (flagLike.length) inputNotes.push(setAside
 const brief = rest.length && !setAside ? rest.join(" ").trim() : piped;
 if (!brief) { briefRefusal("empty brief"); process.exit(0); }
 print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given)));
+}

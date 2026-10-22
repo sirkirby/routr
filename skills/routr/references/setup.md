@@ -1,8 +1,9 @@
 # Setting up routr
 
 Walk the user through this. Ask before you write or install anything, and show what you are about to write.
-Requirements: the `routr` command (one standalone binary; `routr --version` shows it) and, for orchestration, herdr
-with its agent skill (step 5). The worker and subagent parts work without herdr. If `routr` is missing, install it first:
+Requirements: the `routr` command (one standalone binary; `routr --version` shows it). Orchestration across every
+harness also needs herdr with its agent skill (step 5); without herdr, an orchestrator can launch headless Claude Code
+workers, and the worker and subagent parts work as they are. If `routr` is missing, install it first:
 
 macOS and Linux:
 
@@ -189,11 +190,12 @@ and need nothing; Cursor's usage is read from its `/usage` screen in a private h
 Kiro's is read from its own `/usage` command in the background and needs nothing either; routr deletes the empty Kiro
 session each reading leaves. `routr skill install` links the skill into `~/.kiro/skills`, the only folder Kiro reads.
 
-## 5. herdr (only for orchestration)
+## 5. herdr (for pane workers)
 
-routr's orchestrator part runs workers in [herdr](https://herdr.dev) panes and uses herdr's own skill for pane and
-agent commands. Both belong to herdr and are installed from herdr, not bundled with routr. If `routr doctor` shows
-either missing and the user wants orchestration, offer to install them:
+For pane workers, routr's orchestrator part runs workers in [herdr](https://herdr.dev) panes and uses herdr's own
+skill for pane and agent commands. Both belong to herdr and are installed from herdr, not bundled with routr. If
+`routr doctor` shows either missing and the user wants pane workers, offer to install them; headless Claude Code
+workers need neither:
 
     curl -fsSL https://herdr.dev/install.sh | sh                 # herdr itself (see herdr.dev for brew and Windows)
     npx skills add herdrdev/herdr --skill herdr -g               # herdr's agent skill (bunx works where there is no Node)

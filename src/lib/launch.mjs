@@ -7,11 +7,11 @@ import { loadConfig } from "./config.mjs";
 import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesses.mjs";
 import { dispatchAdvice, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
 import { displayCommand, doNext, launchNext, runNext, templateCommand } from "./next.mjs";
-import { OFF } from "./wording.mjs";
+import { CLOSING, OFF } from "./wording.mjs";
 import { BRANCH, clean, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
-import { ensureParent, home } from "./runtime.mjs";
+import { ensureParent, home, spawnSelf } from "./runtime.mjs";
 import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
 
 // The guide is the source of this instruction, embedded at build time just like the installed skills.
@@ -27,7 +27,7 @@ export const PROMPT_OPENING = "You are a routr worker.";
 // after the task, and routr never does. Only the task is the work that `dispatch` and `--advice` judge. (Measured
 // 2026-09-26: 18 of 36 real tasks carried such text, 5 to 38% of each, and it moved Jev's readings.)
 export function composePrompt(task, guide = WORKER_GUIDE, rules = null) {
-  return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}${rules ? `\n\n${rules.trim()}` : ""}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`;
+  return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}${rules ? `\n\n${rules.trim()}` : ""}\n\n${CLOSING}`;
 }
 
 const command = (args) => displayCommand(["herdr", ...args]);
@@ -82,7 +82,7 @@ export function parseLaunchArgs(args) {
 // Inject transport and time for tests; no test needs a live pane.
 // `ready(kind)`: null when the harness is signed in, or why not (harnesses.mjs). `settings()`: the user's config.
 export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(), env = process.env, ready = notReady, settings = () => loadConfig(),
-  cursorConfigSource = join(home(), ".cursor", "cli-config.json"), tempRoot = tmpdir(), models = (kind) => HARNESSES[kind].models?.() } = {}) {
+  cursorConfigSource = join(home(), ".cursor", "cli-config.json"), tempRoot = tmpdir(), models = (kind) => HARNESSES[kind].models?.(), spawn = spawnSelf } = {}) {
   const safeRun = async (args, ms) => processSteps(out, await callHerdr(run, args, ms));
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
     ran: [], next: [], start: { executable: null, argv: [], env: {} }, steps: [], warnings: [], prompt_chars: null, unavailable: [] };
@@ -185,7 +185,17 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       if (problems.length) out.error = problems.join("; ");
       return out;
     }
-    if (env.HERDR_ENV !== "1") throw new Error("Launch requires HERDR_ENV=1 inside a Herdr pane");
+    // Outside herdr the worker runs headless (workers.mjs): its own process holds the harness, and the lead waits on it
+    // with routr wait instead of reading a pane.
+    if (env.HERDR_ENV !== "1") {
+      try { await (await import("./workers.mjs")).launchHeadless(o, out, { prompt, env, settings, ready, spawn }); }
+      finally {
+        startAttempted = out.steps.some((s) => s.step === "holder");
+        promptAttempted = out.steps.some((s) => s.step === "prompt");
+        if (out.worker) cleanupArgs = ["routr", "cleanup", "--worker", o.name];
+      }
+      return out;
+    }
     // The user turned this subscription off: it gets no work, launched by hand or not.
     const loaded = settings(), config = loaded.config ?? loaded;
     out.warnings.push(...(loaded.notes ?? []));
@@ -516,9 +526,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     }
     if (createdPane && !out.ok) { out.warnings.push(`Pane ${out.pane} was left alive`); if (out.state !== "needs_input") out.next.push(doNext(`Inspect pane ${out.pane} before closing it or retrying`)); }
     if (configDir && startAttempted && !out.ok) { out.warnings.push(`Cursor config ${configDir} is retained for a possible running worker`); out.next.push(doNext(`Remove the private Cursor config ${configDir} if the launch command did not run`)); }
-    if (promptAttempted && out.state !== "prompted") { out.warnings.push("Prompt may have been submitted"); out.next.push(doNext(`Inspect pane ${out.pane} before retrying`)); }
+    if (promptAttempted && out.state !== "prompted") { out.warnings.push("Prompt may have been submitted"); out.next.push(out.worker ? runNext("Look at the worker before retrying.", ["routr", "workers", "--name", out.name]) : doNext(`Inspect pane ${out.pane} before retrying`)); }
     out.headline = out.state === "planned" ? `routr: planned ${out.kind} launch, nothing ran${out.error ? `; a real launch would refuse: ${out.error}` : ""}`
-      : out.state === "prompted" ? `routr: ${out.name} (${out.kind}) took its task in pane ${out.pane}`
+      : out.state === "prompted" ? `routr: ${out.name} (${out.kind}) took its task${out.worker ? ", running headless" : ` in pane ${out.pane}`}`
       : out.state === "ready" ? `routr: ${out.name} is ready in pane ${out.pane}; no task sent`
       : out.state === "needs_input" ? `routr: ${out.name} needs input in pane ${out.pane}: ${out.needs_input.why}`
       : `routr: launch failed: ${out.error}`;

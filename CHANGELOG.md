@@ -9,6 +9,9 @@ A short history of what changed in each routr release, one line per change. Each
   set `ANTHROPIC_API_KEY`, routr's own Claude Code reads (sign-in status, usage) used that key instead of your
   subscription, so Claude Code could read as billed per token; a decision-model key or `ROUTR_*` variable in that
   `.env` was used too. Workers that `routr launch` starts were not affected. (#91)
+- Outside herdr, `routr launch --kind claude` starts a headless Claude Code worker on your sign-in, and `routr wait`,
+  `routr send` (a correction mid-turn, or a follow-up that resumes its session), `routr workers` and `routr stop`
+  follow it; `routr cleanup --worker` removes it. Other harnesses still need herdr. (#92)
 
 ## v0.7.0 — 2026-10-19
 

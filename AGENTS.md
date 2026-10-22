@@ -43,7 +43,8 @@ page and its tests in the same PR.
   a pane, it types commands for that pane's own shell.
 - routr writes only in its own folders and what a command was asked to write.
 - A brief goes only to the decision model and the worker it is for, and a key only to its provider. Neither is ever printed, logged, or put
-  in the ledger or telemetry.
+  in the ledger or telemetry. A headless worker's report files, its own text, may quote its brief; where they are kept and for how long is
+  `docs/guarantees.md`.
 - Telemetry is OFF unless the person turns it on; an agent never turns it on for them. A new field in a sent row is a
   `docs/telemetry.md` change in the same PR.
 - Claims in `README.md`, the guides, and `docs/evidence.md` are either measured or say they are not.

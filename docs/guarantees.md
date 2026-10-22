@@ -21,13 +21,14 @@ reading and its headline names the model that answered; only no answer starts wi
 (null in a fallback ledger row); `unavailable` is output only, never stored in the ledger or sent in telemetry.
 
 `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`, `feedback`,
-`launch`, `cleanup`, `usage cursor`, and `usage kiro` act, and each says what it did. Their read-only forms
-(`telemetry status`, `setup --show`) only read.
+`launch`, `cleanup`, `send`, `stop`, `usage cursor`, and `usage kiro` act, and each says what it did. Their read-only forms
+(`telemetry status`, `setup --show`) only read, and so does `workers`; `wait` changes nothing of yours, and writes which
+turns it has reported into the worker's own run folder.
 
 Local file writes create parent folders from the file's absolute location, including when only a relative filename
 was given. An existing directory is accepted; a file in its place or a permission error remains a failure.
 
-- `launch` drives panes in your herdr session. A task requires readable JSON advice from `routr dispatch` on that exact task
+- `launch` drives panes in your herdr session; outside herdr it starts a headless Claude Code worker (below). A task requires readable JSON advice from `routr dispatch` on that exact task
   (including `brief_sha`); missing, nonmatching or `routr subagent` advice is refused before any harness, pane or worktree call. Dry runs return
   `ok: false` with `error` on the same refusal and still plan. Matching fallback advice is accepted, including advice
   saved as UTF-8 or UTF-16LE, with or without a BOM. Launch copies all its decision-model `unavailable` entries,
@@ -52,6 +53,9 @@ was given. An existing directory is accepted; a file in its place or a permissio
   `launch --copy` brought in and goes with the worktree, as ignored files do (as with `git worktree remove`). It
   deletes a branch only when asked and `git branch -d` agrees it is merged. Limit: neither herdr nor git can remove
   only if unchanged, so a commit made, or a worker started, after cleanup's last check is not seen.
+- `cleanup --worker` removes a headless worker's run folder, its reports included, once its own process has ended
+  and no process group it recorded still has members, under the lock a new holder is started under. It does not
+  inspect or remove the worker's repository, commits or uncommitted changes.
 - `usage cursor` drives only a private headless herdr session it makes and removes, never your own, and keeps the
   reading in `~/.cache/routr`.
 - `usage kiro` runs Kiro's own `/usage` in the system temp folder, deletes the empty session that leaves with Kiro's
@@ -120,7 +124,7 @@ The binary is self-contained: the files under `skills/` are embedded at build ti
 repository checkout at run time. It reads your harness state read-only (usage sources, settings, model lists) and
 writes only:
 
-- under `~/.config/routr`, `~/.cache/routr` and `~/.local/share/routr`;
+- under `~/.config/routr`, `~/.cache/routr`, `~/.local/share/routr` and `~/.local/state/routr` (headless workers);
 - its own binary, when it updates itself;
 - the skill folders, on `skill install` (and the updater's reinstall);
 - a file at a path you name for that command (`share --out`, a `--ledger` or `--config` you give);
@@ -148,11 +152,62 @@ common-shell `command` only for the documented safe alphabet and an unquoted, no
 Unsafe template values become placeholders for the lead to fill, never expanding shell text. Execution history stays
 display only, with prompt lengths instead of prompt text.
 
+## Headless workers
+
+Outside herdr, `routr launch --kind claude` starts the worker headless: Claude Code's own `-p` stream-json mode, on
+your sign-in, held by one routr process of its own (its holder). Other harnesses, `--pane`, `--worktree` and the rest
+of herdr's flags are refused outside herdr. What that means on your machine:
+
+- **Where it lives.** Each worker has a run folder, `~/.local/state/routr/workers/<name>`: the worker's settings
+  (kind, model, effort, folder; never the brief or the environment), the holder's state (turns, their outcomes, the
+  last tool's fixed name, the session id), a random secret, one file per holder generation, which turns `wait` has
+  reported, and each turn's report. On macOS and Linux the folder is made 0700, and the secret, the settings and the
+  reports 0600 (checked by the tests). On Windows it takes the access your home folder gives; routr sets and checks no
+  access rules there, and access from another account is not measured. The channel's socket is in
+  `~/.local/state/routr/s`. A name is taken by making its folder; launch refuses a name whose folder exists until
+  `cleanup --worker` removes it.
+- **The brief and your messages** go from launch or send to the holder over the channel, and from the holder to
+  Claude on its standard input: never in a process's arguments. routr keeps no copy of them. What it keeps of the
+  worker's text is each turn's report: Claude's final message of that turn, as it wrote it (cut at 1 MB), which can
+  quote the brief or anything else the worker saw. Reports stay, owner-only on macOS and Linux, until `cleanup
+  --worker` removes the run folder; commands print their paths, never their text, and they never reach the ledger or
+  telemetry. Claude keeps its own session history as it always does. Claude's error output is not read. A tool is shown
+  by its name only when it is one of Claude's own; an MCP server's tool is `mcp` and any other `other`.
+- **The channel.** Both sides prove the run's secret before any text crosses. On macOS and Linux it is a Unix socket
+  in an owner-only folder; a home whose socket path would exceed the system's limit (103 bytes on macOS, 107 on
+  Linux) is refused before launch writes anything. On Windows it is a named pipe, and Windows' default security lets
+  other local users and anonymous logons open it for reading: the handshake is what keeps them out (measured: a reader
+  got only a fixed error), not the pipe's permissions. Not tested: another local account, a remote client.
+- **What it starts.** The holder starts Claude in its own process group (POSIX), in the worker's `--cwd`, with
+  herdr's and the lead's session variables removed, and records that group before the task goes in. It exits once
+  Claude has. On macOS and Linux, `stop` sends SIGTERM to that group (Claude ends its tool commands, which run in
+  groups of their own, on SIGTERM; measured), then SIGKILL to the group two seconds later if Claude itself has not
+  exited. Tool commands in their own groups can survive a SIGKILL of Claude, and routr cannot see those. Once Claude
+  has gone, anything still in its group is not signalled again (its id may be another group's by then): stop says
+  `still_exiting`, and the group stays recorded, so resuming and cleanup refuse until it is empty. stop waits up to
+  six seconds for Claude. On Windows it runs `taskkill /T /F` on Claude, or ends Claude alone if that fails. A command
+  that detaches itself is not seen. Limit: once a recorded group has emptied, an unrelated process group given the
+  same id later blocks that worker's resume and cleanup until it ends.
+- **What it cannot see.** If the holder itself is killed, its Claude keeps working until its next output fails
+  (measured on macOS); on Windows the measured stand-in harness ended with its holder, and a real Claude has not been
+  measured there. On macOS and Linux, routr then reports the worker `lost`, and names the process group it recorded
+  while that group still has members, as it does when a tool command outlives Claude. Either way it refuses to resume
+  or remove the worker until that group is empty, and it never stops a process by a saved id. A lead started inside an
+  SSH session on Windows loses its workers when that session ends (sshd's job object closes every process in the
+  session; measured). On Linux, a worker outlived an SSH logout with Ubuntu's defaults; with logind's
+  `KillUserProcesses=yes` it would not (not measured).
+- **Sandboxes.** A lead's sandbox carries over to what it starts. launch refuses when it can see one (Claude Code's
+  Bash sandbox, Codex's), and so does a send that must start a new holder; a send to a running worker goes over its
+  channel as usual. `wait`, `workers` and `stop` say when they run inside one, since it may hide a worker's channel.
+- **Sign-in.** launch and a send that starts a new holder check Claude's sign-in first, as every launch does.
+
 ## Secrets, briefs and telemetry
 
 A brief goes only to the decision models in your chosen list (or the one-call override) until one answers, and to
-the worker it is for. A key goes only to its own provider. routr never prints or logs either, and never puts them in the ledger or in telemetry: the ledger stores a brief's hash and length. Keys are kept
-only in routr's secrets file, `~/.config/routr/env`, written by `routr key set`.
+the worker it is for. A key goes only to its own provider. routr never prints or logs either, and never puts them in
+the ledger or in telemetry: the ledger stores a brief's hash and length. Keys are kept only in routr's secrets file,
+`~/.config/routr/env`, written by `routr key set`. The one worker text routr stores is a headless worker's reports,
+which can quote its brief ("Headless workers", above).
 
 The list keeps hosted choices in order and tries local Ollama choices last, because they may need to load. Hosted
 attempts have an 8-second cut inside one overall deadline: 10 seconds for hosted-only lists, 30 seconds with local.
@@ -174,7 +229,7 @@ turns it on for you. It sends ledger rows with no text of any kind, only from th
 
 ## Output a lead reads
 
-`subagent`, `dispatch`, `check`, `launch`, `record`, `cleanup` and `usage` always start with `ok`, `headline`,
+`subagent`, `dispatch`, `check`, `launch`, `record`, `cleanup`, `wait`, `send`, `workers`, `stop` and `usage` always start with `ok`, `headline`,
 `unavailable`, `warnings` and `next`. Follow `next` for instructions. An `error` marks refused inputs or a stopped
 command; an expected outcome such as a worker needing input has `ok: false` without `error`. Missing required
 inputs are refused even by commands that exit 0: check needs `--brief` and `--report`; record needs `--subscription`,
