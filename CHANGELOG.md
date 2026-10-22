@@ -6,8 +6,8 @@ A short history of what changed in each routr release, one line per change. Each
 ## Unreleased
 
 - Outside herdr, `routr launch --worktree` gives a headless worker its own git worktree, as in herdr, and `routr cleanup
-  --worker` removes it with the same checks; `routr cleanup` lists and removes worktrees through git when herdr is not
-  running. (#93)
+  --worker` removes it with the same checks; `routr cleanup` run outside herdr lists and removes worktrees through git.
+  (#93)
 - Outside herdr, `routr launch --kind claude` starts a headless Claude Code worker on your sign-in, and `routr wait`,
   `routr send` (a correction mid-turn, or a follow-up that resumes its session), `routr workers` and `routr stop`
   follow it; `routr cleanup --worker` removes it. Other harnesses still need herdr. (#92)

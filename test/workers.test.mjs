@@ -1,13 +1,15 @@
 // Headless workers outside herdr: launch, wait, send, workers, stop, cleanup --worker, the holder and its channel. A fake
 // `claude` stands in for Claude Code's stream-json mode, with the behaviours measured in prototypes p34 and p36.
 import { afterAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { claim, connect, endpointFor, generations, ownEndpoint, probe, serve, SOCKET_DIR, writeSecret } from "../src/lib/channel.mjs";
 import { readEvent } from "../src/lib/headless.mjs";
 import { view } from "../src/lib/workers.mjs";
+import { worktreesFromGit } from "../src/lib/cleanup.mjs";
+import { callGit } from "../src/lib/process-boundary.mjs";
 import { launch } from "../src/lib/launch.mjs";
 import { harnessEnv, start, stop } from "../src/lib/runtime.mjs";
 import { cfg, cliEnv, fakeExecutable, scratch, SCRIPT } from "./helpers.mjs";
@@ -203,7 +205,8 @@ test("outside herdr, a worker gets its own worktree, and cleanup --worker remove
   // A file the worker made keeps the worktree, and the worker's run folder with it.
   writeFileSync(join(path, "new.txt"), "work\n");
   const kept = w.run(["cleanup", "--worker", "t1"]);
-  expect([kept.ok, kept.state, kept.headline]).toEqual([false, "refused", `routr: kept t1: 1 untracked file in ${path} that the main checkout does not hold as they are`]);
+  expect([kept.ok, kept.state]).toEqual([false, "refused"]);
+  expect(kept.headline).toMatch(/^routr: kept t1: 1 untracked file in .+ that the main checkout does not hold as they are$/); // git's form of the path
   expect([existsSync(path), existsSync(w.runDir("t1"))]).toEqual([true, true]);
   rmSync(join(path, "new.txt"));
   // The copy it was given, unchanged, goes with it; the branch is kept unless --delete-branch.
@@ -228,6 +231,69 @@ test("a launch that stops before its worker starts removes the worktree and bran
   } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
   expect([g("branch", "--list", "work/t3"), g("worktree", "list").split("\n").length, existsSync(w.runDir("t3"))]).toEqual(["", 1, false]);
 }, 60000);
+
+test("a launch that stops early takes back a copied folder too, and never copies through a link in the worktree", async () => {
+  const w = world(), g = repo(w), file = w.task(BRIEF), advice = w.advise(file);
+  mkdirSync(join(w.work, "fixtures", "deep"), { recursive: true });
+  writeFileSync(join(w.work, "fixtures", "deep", "a.json"), "{}\n");
+  const saved = [process.env.HOME, process.env.USERPROFILE];
+  process.env.HOME = process.env.USERPROFILE = w.home;
+  const go = (branch, more) => launch(["--kind", "claude", "--name", "c1", "--model", "m", "--task-file", file, "--advice", advice, "--cwd", w.work, "--worktree", branch, ...more],
+    { env: {}, settings: () => cfg(), ready: async () => null, spawn: () => false });
+  try {
+    const r = await go("work/c1", ["--copy", "fixtures"]);
+    expect([r.state, r.warnings]).toEqual(["failed", []]);
+    expect([g("branch", "--list", "work/c1"), g("worktree", "list").split("\n").length]).toEqual(["", 1]);
+    if (POSIX) {
+      // A folder that is a link in the commit the worktree starts from: nothing is copied through it, and the launch
+      // leaves nothing.
+      const outside = join(w.home, "outside"); mkdirSync(outside);
+      symlinkSync(outside, join(w.work, "cfg")); g("add", "cfg"); g("commit", "-q", "-m", "link");
+      unlinkSync(join(w.work, "cfg")); mkdirSync(join(w.work, "cfg")); writeFileSync(join(w.work, "cfg", "local.json"), "{}\n");
+      const l = await go("work/c2", ["--copy", "cfg/local.json"]);
+      expect([l.state, l.error]).toEqual(["failed", expect.stringContaining("is a link or not a folder; nothing is copied through it")]);
+      expect([existsSync(join(outside, "local.json")), g("branch", "--list", "work/c2")]).toEqual([false, ""]);
+    }
+  } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
+}, 60000);
+
+test("cleanup --worker keeps a worktree that took the place of the one launch made", async () => {
+  const w = world(), g = repo(w);
+  const l = w.launch("r1", w.task(BRIEF), ["--worktree", "work/r1"]);
+  expect(l.state).toBe("prompted");
+  w.run(["wait", "--name", "r1", "--timeout", "20000"]);
+  await w.settled("r1");
+  g("worktree", "remove", l.worktree.path); g("worktree", "add", "-q", "-b", "other", l.worktree.path);
+  const kept = w.run(["cleanup", "--worker", "r1"]);
+  expect([kept.state, kept.headline]).toEqual(["refused", `routr: kept r1: the worktree at ${l.worktree.path} is on branch other, not on work/r1: it is not the one launch made`]);
+  expect(existsSync(l.worktree.path)).toBe(true);
+}, 60000);
+
+test("outside herdr, cleanup lists and removes worktrees through git, and says what it cannot see", () => {
+  const w = world(), g = repo(w);
+  const wt = join(w.home, "wt one"); g("worktree", "add", "-q", "-b", "side", wt);
+  const list = w.run(["cleanup", "--cwd", w.work]);
+  expect([list.ok, list.state, list.worktrees.map((x) => [x.branch, x.removable])]).toEqual([true, "listed", [["side", true]]]);
+  expect(list.warnings).toContain("Outside herdr, cleanup cannot see whether anything runs in a worktree's folder: it checks git's state only");
+  expect(w.run(["cleanup", "--cwd", w.work, "--path", wt, "--delete-branch"])).toMatchObject({ ok: true, state: "removed", branch: { name: "side", deleted: true } });
+  expect(existsSync(wt)).toBe(false);
+});
+
+test("git's worktree list, read as herdr's: the main checkout, branches, detached, prunable, bare, a path with spaces", async () => {
+  const sha = "a".repeat(40);
+  const text = [`worktree /repo`, `HEAD ${sha}`, `branch refs/heads/main`, ``, `worktree /wt/a b`, `HEAD ${sha}`, `branch refs/heads/work/x`, ``,
+    `worktree /wt/det`, `HEAD ${sha}`, `detached`, ``, `worktree /wt/gone`, `HEAD ${sha}`, `branch refs/heads/old`, `prunable gitdir file points to non-existent location`, ``].join("\n");
+  expect(worktreesFromGit(text)).toEqual({ source: { source_checkout_path: "/repo" }, worktrees: [
+    { path: "/repo", branch: "main", is_detached: false, is_prunable: false, is_linked_worktree: false, open_workspace_id: null },
+    { path: "/wt/a b", branch: "work/x", is_detached: false, is_prunable: false, is_linked_worktree: true, open_workspace_id: null },
+    { path: "/wt/det", branch: null, is_detached: true, is_prunable: false, is_linked_worktree: true, open_workspace_id: null },
+    { path: "/wt/gone", branch: "old", is_detached: false, is_prunable: true, is_linked_worktree: true, open_workspace_id: null }] });
+  const bare = `worktree /repo.git\nbare\n\nworktree /wt/x\nHEAD ${sha}\nbranch refs/heads/x\n`;
+  expect(worktreesFromGit(bare).worktrees.map((x) => [x.path, x.is_linked_worktree])).toEqual([["/repo.git", false], ["/wt/x", true]]);
+  // The boundary takes a bare repository's record, and a top folder whose name ends in a space, as they are.
+  expect((await callGit(async () => ({ out: bare, code: 0 }), "/repo.git", ["worktree", "list", "--porcelain"])).ok).toBe(true);
+  expect((await callGit(async () => ({ out: "/repos/project \n", code: 0 }), "/x", ["rev-parse", "--show-toplevel"])).out).toBe("/repos/project \n");
+});
 
 test("after a failed turn, wait reports the failure once, then the turn a follow-up resumes", async () => {
   const w = world();

@@ -112,13 +112,13 @@ export async function callGit(run, dir, args) {
     }
     return true;
   };
-  const top = () => { const p = out.trim(); return !/[\r\n\0]/.test(p) && (isAbsolute(p) || win32.isAbsolute(p)); };
+  const top = () => { const p = out.replace(/\r?\n$/, ""); return p.length > 0 && !/[\r\n\0]/.test(p) && (isAbsolute(p) || win32.isAbsolute(p)); };
   const valid = args[0] === "rev-parse" && args.includes("--show-toplevel") ? top()
     : args[0] === "rev-parse" ? /^[0-9a-f]{40,64}\s*$/.test(out)
     : args[0] === "status" ? !out || out.endsWith("\0") && status()
     : args[0] === "ls-files" ? !out || out.endsWith("\0") && records.every((s) => /^[A-Za-z?] /.test(s) && relative(s.slice(2)))
     : args[0] === "for-each-ref" ? !out.trim() || out.trim().split("\n").every((s) => /^refs\/(?:heads|remotes|tags)\/\S+$/.test(s))
-    : out.trim().split(/\r?\n\r?\n/).every((block) => /^worktree .+\r?\nHEAD [0-9a-f]{40,64}(?:\r?\n|$)/.test(block));
+    : out.trim().split(/\r?\n\r?\n/).every((block) => /^worktree .+\r?\n(?:HEAD [0-9a-f]{40,64}|bare)(?:\r?\n|$)/.test(block)); // a bare repository's own record has no HEAD
   if (!valid) return invalid();
   return { ok: true, code: 0, out };
 }

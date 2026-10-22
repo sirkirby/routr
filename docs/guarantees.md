@@ -165,11 +165,15 @@ your sign-in, held by one routr process of its own (its holder). Other harnesses
 outside herdr. What that means on your machine:
 
 - **Its worktree.** With `--worktree <branch>`, launch makes the worktree with git (`git worktree add -b`), under
-  `~/.local/share/routr/worktrees/<repository>-<hash>/<branch>`, on a branch that must not exist yet, from `--base`
-  or the checkout's HEAD, and copies the `--copy` files in. A launch that stops before the worker starts removes the
-  copies, the worktree, and the branch while it is still at the commit it started on, and says what it left otherwise.
-  `cleanup --worker` removes the worktree with the checks of `cleanup --worktree`, through git.
-
+  `~/.local/share/routr/worktrees/<repository>-<hash>/<branch>` (`/` and `\` in the branch become `-`), on a branch
+  that must not exist yet, from `--base` or the checkout's HEAD, and copies the `--copy` files and folders in from
+  `--cwd`, never through a link and never over a file the worktree has. When no holder could have started, launch
+  removes the copies, the worktree (through cleanup's checks) and its branch while that still points at the commit it
+  started on, as it does the run folder; what it cannot remove is a warning. When it keeps the run folder (the holder
+  is starting or does not answer), it keeps the worktree too. `cleanup --worker` removes the worktree with the checks
+  of `cleanup --worktree`, through git, and only while it is still on the branch launch made. It cannot see a command
+  the worker started that left Claude's process group or detached itself (on Windows, anything once Claude has
+  ended), and removes the worktree anyway: it says so in `warnings`.
 - **Where it lives.** Each worker has a run folder, `~/.local/state/routr/workers/<name>`: the worker's settings
   (kind, model, effort, folder; never the brief or the environment), the holder's state (turns, their outcomes, the
   last tool's fixed name, the session id), a random secret, one file per holder generation, which turns `wait` has
@@ -190,7 +194,8 @@ outside herdr. What that means on your machine:
   Linux) is refused before launch writes anything. On Windows it is a named pipe, and Windows' default security lets
   other local users and anonymous logons open it for reading: the handshake is what keeps them out (measured: a reader
   got only a fixed error), not the pipe's permissions. Not tested: another local account, a remote client.
-- **What it starts.** The holder starts Claude in its own process group (POSIX), in the worker's `--cwd`, with
+- **What it starts.** The holder starts Claude in its own process group (POSIX), in the worker's folder (its
+  worktree, or `--cwd`), with
   herdr's and the lead's session variables removed, and records that group before the task goes in. It exits once
   Claude has. On macOS and Linux, `stop` sends SIGTERM to that group (Claude ends its tool commands, which run in
   groups of their own, on SIGTERM; measured), then SIGKILL to the group two seconds later if Claude itself has not
