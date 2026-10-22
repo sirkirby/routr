@@ -11,7 +11,7 @@ import { loadConfig } from "./config.mjs";
 import { readTask } from "./advice-file.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { answer } from "./output.mjs";
-import { CLOSING, OFF } from "./wording.mjs";
+import { CLOSING, count, OFF } from "./wording.mjs";
 import { callGit } from "./process-boundary.mjs";
 import { dropCopy } from "./cleanup.mjs";
 import { ensureParent, home, lockIsStale, probe as runProbe, realOr, realPath, spawnSelf, takeLock } from "./runtime.mjs";
@@ -165,7 +165,7 @@ const andList = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs
 // Called by launch once the arguments, task and advice are checked. Every refusal comes before anything is written or
 // started; then it reserves the name, starts the holder and hands it the prompt over the channel, all within --timeout.
 // `out` is launch's answer, filled in place.
-export async function launchHeadless(o, out, { prompt, env, settings, ready, spawn }) {
+export async function launchHeadless(o, out, { prompt, env, settings, ready, spawn, checkListed = async () => {} }) {
   const step = (s, ok, detail) => out.steps.push({ step: s, ok, detail });
   if (!HEADLESS_KINDS.includes(o.kind)) throw new Error(`outside herdr, routr launch starts ${andList(HEADLESS_KINDS.map((k) => HARNESSES[k].label))} workers only; run the lead inside herdr for a ${HARNESSES[o.kind].label} worker`);
   for (const f of ["pane", "direction"]) if (o[f] != null) throw new Error(`--${f} needs herdr; outside herdr a worker runs headless, with no pane`);
@@ -181,6 +181,7 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
   if (config.subscriptions[o.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[o.kind].label, o.kind));
   const signedOut = await ready(o.kind);
   if (signedOut) throw new Error(`${HARNESSES[o.kind].label} cannot take work: ${signedOut}`);
+  await checkListed();
   const until = Date.now() + o.timeout, left = () => Math.max(1000, until - Date.now());
   // Checked now, so a flag the harness would refuse is refused before anything is written; shown once the worker's
   // folder is known (Antigravity's --add-dir names it).
@@ -415,6 +416,8 @@ export async function stopCommand(args, { env = process.env } = {}) {
       out.ok = r.code === "stopped"; out.state = ["stopped", "still_exiting"].includes(r.code) ? r.code : "unknown";
       out.headline = out.ok ? `routr: stopped ${name}` : `routr: ${name} was told to stop and has not finished exiting`;
       if (!out.ok) out.next.push(runNext("Look again in a moment.", ["routr", "workers", "--name", name]));
+      // Messages it had queued and never sent: dropped by the stop. The lead sends them again if they still apply.
+      if (Number.isInteger(r.dropped) && r.dropped > 0) out.warnings.push(`${count(r.dropped, "queued message")} ${r.dropped === 1 ? "was" : "were"} dropped by the stop and never reached ${name}: send ${r.dropped === 1 ? "it" : "them"} again with routr send if ${r.dropped === 1 ? "it still applies" : "they still apply"}`);
     } else if (["released", "none", "abandoned"].includes(p.state) && !groupAlive(pg())) {
       out.ok = true; out.state = "absent"; out.headline = `routr: ${name} is not running`;
     } else {

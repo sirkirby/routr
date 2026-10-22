@@ -287,7 +287,7 @@ export const ADAPTERS = {
     argv: ({ model, effort }) => ["acp", ...plan({ kind: "kiro", model, effort }).argv.filter((a) => a !== "chat")],
     connect: (c, { cwd, session, emit }) => {
       const { rpc, outcome, open, take } = rpcPipe(c), r = kiroReader();
-      let sid = session ?? null, ready = null, running = false;
+      let sid = session ?? null, ready = null, running = false, halted = false;
       const held = [];
       // One prompt: in once written (a turn of its own starts then), answered when that turn ends. Then the next one
       // held for it, if any.
@@ -296,10 +296,11 @@ export const ADAPTERS = {
         rpc("session/prompt", { sessionId: sid, prompt: [{ type: "text", text }] }, { written: (ok) => { if (ok) emit({ turn: true }); went(ok); } }).then((a) => {
           running = false;
           const k = outcome(a);
-          if (k === "no_reply") return; // it ended mid-turn: the holder's finish says so
+          // It ended mid-turn (the holder's finish says so), or never got the prompt (no turn started for it).
+          if (k === "no_reply" || k === "not_written") return;
           const said = r.take();
           emit({ result: { failed: k !== "ok" || a.result?.stopReason !== "end_turn", text: k === "ok" && said ? cut(said) : null } });
-          if (held.length && open()) prompt(held.shift());
+          if (held.length && open() && !halted) prompt(held.shift());
         });
       });
       const go = (k) => (k === "refused" ? "refused" : false);
@@ -320,11 +321,16 @@ export const ADAPTERS = {
         // Kiro takes no prompt while one runs: the message is held here, and goes in when that turn ends.
         send: async (text) => {
           if ((await readyWithin(ready)) !== true) return { code: "refused", why: "not_started" };
-          if (running) { held.push(text); return { code: "queued", why: "next_turn", next: true }; }
+          if (running) {
+            if (held.length >= 8) return { code: "refused", why: "queue_full" };
+            held.push(text); return { code: "queued", why: "next_turn", next: true };
+          }
           return (await prompt(text)) ? { code: "handed_to_harness", next: true } : null;
         },
         // Messages held for a turn that never came (it ended first): the holder's, to resume with.
         unsent: () => held.splice(0),
+        // Stop: nothing held goes in any more. How many were dropped.
+        drop: () => { halted = true; return held.splice(0).length; },
         line: (l) => { const ev = r.read(l); return take(ev) ? (ev.request != null ? { activity: true } : null) : ev; },
         open, done: () => c.stdin.end(),
       };
@@ -377,7 +383,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const addDelivered = (n) => save({ turns: st.turns.map((t) => (t.turn === n ? { ...t, delivered: (t.delivered ?? 0) + 1 } : t)) });
   // A harness that runs each message as a turn of its own (`queues`: Antigravity) starts one turn per waiting message;
   // the others take every message written between turns into the one turn they start.
-  const beginTurn = () => { inTurn = true; const delivered = conn?.queues ? Math.min(1, pending) : pending; pending -= delivered; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered }], state: "working" }); };
+  // `carried`: messages the turn's own prompt carries (a resume that runs them), counted on it too.
+  const beginTurn = (carried = 0) => { inTurn = true; const taken = conn?.queues ? Math.min(1, pending) : pending; pending -= taken; const delivered = taken + carried; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered }], state: "working" }); };
   const endTurn = (outcome, text) => {
     if (!inTurn) return;
     inTurn = false;
@@ -406,11 +413,13 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
 
   // One harness process: the turn is counted before it starts, so a start that fails still gives that message an
   // outcome. Everything it reports is bound to that process, and it is finished on `close`, once its output is read.
-  const runHarness = (text, session) => {
+  // `carried`: how many lead messages `text` holds (a resume of queued ones); `after`: more of them, each a turn of its
+  // own (a harness that queues), handed to it once it has taken `text`.
+  const runHarness = (text, session, { carried = 0, after = [] } = {}) => {
     started = new Promise((resolve) => {
       let answered = false, finished = false;
       const answer = (r) => { if (!answered) { answered = true; resolve(r); } };
-      beginTurn();
+      beginTurn(carried);
       let c, h;
       try {
         c = run(HARNESSES[w.kind].executable, headlessArgv({ kind: w.kind, model: w.model, effort: w.effort, session, cwd: w.cwd }),
@@ -436,7 +445,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
         if (finished) return; finished = true;
         // Messages the adapter held for a turn that never came: back to the holder, to resume with below.
         const back = h.unsent?.() ?? [];
-        if (back.length) { pending = Math.max(0, pending - back.length); queue.push(...back); save({ queued: queue.length }); }
+        if (back.length) { pending = Math.max(0, pending - back.length); queue.unshift(...back); save({ queued: queue.length }); } // older than the queue's
         // Messages it took between turns, and no turn started for them: they get one (one each, for a harness that
         // queues), ended with this process.
         if (pending && !inTurn) beginTurn();
@@ -447,9 +456,12 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
         // A message that arrived after its input closed: the next turn, on the same session, unless something of the
         // last Claude is still running in its group (never two on one session); then the message's turn is not started.
         if (queue.length && !stopAsked && st.session_id) {
-          const next = queue.splice(0).join("\n\n"); save({ queued: 0 });
-          if (!groupAlive(st.harness_pgid)) { runHarness(next, st.session_id); return; }
-          beginTurn(); endTurn("not_started", null);
+          // A harness that queues runs each message as a turn of its own, in the order they came; the others take them
+          // as one.
+          const all = queue.splice(0), each = h.queues; save({ queued: 0 });
+          const [next, after] = each ? [all[0], all.slice(1)] : [all.join("\n\n"), []];
+          if (!groupAlive(st.harness_pgid)) { runHarness(next, st.session_id, { carried: each ? 1 : all.length, after }); return; }
+          for (let i = 0; i < (each ? all.length : 1); i++) { beginTurn(each ? 1 : all.length); endTurn("not_started", null); }
         }
         settle();
       };
@@ -473,7 +485,10 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       let taskIn = false;
       h.begin(text).then((r) => {
         if (finished) return; // it ended first: finish has answered
-        if (r === true) taskIn = true;
+        if (r === true) {
+          taskIn = true;
+          for (const t of after) { pending++; h.send(t, true).then((x) => { if (!(x?.code === "handed_to_harness" || x?.code === "queued")) pending = Math.max(0, pending - 1); }); }
+        }
         else if (r === "refused") { endTurn("failed", null); answer({ code: "failed", why: "harness_refused" }); if (h.open()) h.done(); }
         else { stop(c, { group: true }); answer({ code: "failed", why: "task_not_written" }); }
       });
@@ -487,15 +502,18 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   // stop: SIGTERM to the harness's group, then SIGKILL to it after the grace while Claude is still there (runtime's
   // stop; signalled only while Claude is unreaped, so the group id is still its own). Anything of the group left once
   // Claude has gone is not signalled again (its id may be someone else's by then): it is reported, and recorded.
+  // Messages the holder or the adapter still keeps are dropped, and counted in the answer.
+  let dropped = 0;
   const stopAll = () => {
+    if (!stopAsked) { const held = conn?.drop?.() ?? 0; dropped = queue.length + held; pending = Math.max(0, pending - held); }
     stopAsked = true; queue.length = 0;
     return (stopping ??= (async () => {
       const c = child;
-      if (!c) { settle(); return { code: "stopped" }; }
+      if (!c) { settle(); return { code: "stopped", dropped }; }
       const closed = new Promise((r) => c.once("close", r));
       stop(c, { group: true });
       const gone = await Promise.race([closed.then(() => true), new Promise((r) => setTimeout(() => r(false), 6000))]);
-      return { code: gone && !groupAlive(process.platform === "win32" ? null : c.pid) ? "stopped" : "still_exiting" };
+      return { code: gone && !groupAlive(process.platform === "win32" ? null : c.pid) ? "stopped" : "still_exiting", dropped };
     })());
   };
 

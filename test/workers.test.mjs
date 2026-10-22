@@ -150,6 +150,7 @@ async function prompt(id, text) {
   out({ method: "_kiro.dev/metadata", params: { sessionId: SID, contextUsagePercentage: 1 } });
   if (text.includes("ASK")) out({ id: 900, method: "session/request_permission", params: { sessionId: SID } });
   if (text.includes("HOLD")) for (let i = 0; i < 400 && !fs.existsSync(process.env.FAKE_GATE); i++) await sleep(50);
+  if (text.includes("DIE")) process.exit(0);
   up({ sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "THOUGHT-not-the-report" } });
   for (const part of ["VERDICT: done\\nSUMMARY: kiro ", "turn " + n]) up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: part } });
   busy = false;
@@ -162,7 +163,7 @@ process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n"
   if (e.method === "initialize") out({ id: e.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
   else if (e.method === "session/new") { log({ method: e.method, cwd: p.cwd }); out({ id: e.id, result: { sessionId: SID, models: { currentModelId: a[a.indexOf("--model") + 1] } } }); }
   else if (e.method === "session/load") { log({ method: e.method, sessionId: p.sessionId, cwd: p.cwd }); up({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "an old prompt" } }); up({ sessionUpdate: "tool_call", toolCallId: "old", kind: "edit" }); up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-not-the-report" } }); out({ id: e.id, result: {} }); }
-  else if (e.method === "session/prompt") { log({ method: e.method, busy }); if (busy) out({ id: e.id, error: { code: -32603, message: "Internal error", data: "Prompt already in progress" } }); else prompt(e.id, p.prompt[0].text); }
+  else if (e.method === "session/prompt") { log({ method: e.method, busy, tag: (p.prompt[0].text.match(/TAG-\\w+/) ?? [null])[0] }); if (busy) out({ id: e.id, error: { code: -32603, message: "Internal error", data: "Prompt already in progress" } }); else prompt(e.id, p.prompt[0].text); }
 } });
 process.stdin.on("end", () => { ended = true; if (!busy) process.exit(0); });
 `;
@@ -444,6 +445,28 @@ test("a headless Kiro worker: its ACP mode, a message held for its next turn, a 
   for (const n of ["k1", "k3"]) expect(w.run(["cleanup", "--worker", n]).state).toBe("removed");
 }, 60000);
 
+test("Kiro: a stop drops the messages it holds and says so; held messages outlive an exit, each its own turn, in order", async () => {
+  const w = world(), gate = () => w.release();
+  // Stop with two held: nothing more goes in, and stop says how many were dropped.
+  expect(w.launch("k4", w.task(`${BRIEF} HOLD`), [], undefined, "kiro").state).toBe("prompted");
+  for (const t of ["one", "two"]) expect(w.run(["send", "--name", "k4", "--task", `${SENT} TAG-${t}`]).state).toBe("queued");
+  const stopped = w.run(["stop", "--name", "k4"]);
+  expect([stopped.state, stopped.warnings]).toEqual(["stopped", ["2 queued messages were dropped by the stop and never reached k4: send them again with routr send if they still apply"]]);
+  gate(); await w.settled("k4");
+  expect(rpcs(w).filter((r) => r.method === "session/prompt").length).toBe(1);
+  // Kiro exits mid-turn with two held: a new process loads the session and runs each, in the order sent, counted.
+  rmSync(w.gate, { force: true }); rmSync(join(w.home, "rpc.jsonl"), { force: true });
+  expect(w.launch("k5", w.task(`${BRIEF} HOLD DIE`, "d.md"), [], undefined, "kiro").state).toBe("prompted");
+  for (const t of ["first", "second"]) expect(w.run(["send", "--name", "k5", "--task", `${SENT} TAG-${t}`]).state).toBe("queued");
+  gate();
+  expect(await until(() => w.state("k5").turns?.length === 3 && w.state("k5").turns.every((t) => t.outcome && t.outcome !== "running"), 20000)).toBe(true);
+  await w.settled("k5");
+  expect(w.state("k5").turns.map((t) => [t.outcome, t.delivered])).toEqual([["no_finish", 0], ["finished", 1], ["finished", 1]]);
+  expect(rpcs(w).filter((r) => r.method === "session/prompt").map((r) => r.tag)).toEqual([null, "TAG-first", "TAG-second"]);
+  expect(rpcs(w).filter((r) => r.method === "session/load").length).toBe(1);
+  for (const n of ["k4", "k5"]) expect(w.run(["cleanup", "--worker", n]).state).toBe("removed");
+}, 60000);
+
 test("Kiro's ACP output as routr reads it: replies, its own requests, fixed tool kinds, the text after its last tool call, nothing while a session loads", () => {
   const r = kiroReader(), up = (update) => r.read(JSON.stringify({ jsonrpc: "2.0", method: "session/update", params: { update } }));
   expect(r.read(JSON.stringify({ jsonrpc: "2.0", id: 2, result: { stopReason: "end_turn" } }))).toEqual({ reply: { id: 2, result: { stopReason: "end_turn" }, error: null } });
@@ -709,6 +732,14 @@ test("outside herdr, launch refuses what a headless worker cannot do, before it 
     expect((await launch(args, { ...deps, settings: () => cfg({ subscriptions: { claude: { enabled: false } } }) })).error).toContain("turned off");
     const never = await launch(args, deps);
     expect([never.state, never.error, never.worker]).toEqual(["failed", "the worker's process did not start (not_started)", null]);
+    // Kiro's model list is read only once it is on and signed in: asking a signed-out harness can open its sign-in.
+    const kiro = ["--kind", "kiro", "--name", "r3", "--model", "auto", "--task-file", file, "--advice", advice, "--cwd", w.work];
+    let asked = 0; const models = async () => { asked++; return ["auto"]; };
+    await launch(kiro, { ...deps, models, ready: async () => "not signed in: run `kiro-cli login`" });
+    await launch(kiro, { ...deps, models, settings: () => cfg({ subscriptions: { kiro: { enabled: false } } }) });
+    expect(asked).toBe(0);
+    expect((await launch([...kiro.slice(0, 5), "nosuch", ...kiro.slice(6)], { ...deps, models })).error).toStartWith("kiro-cli does not list --model nosuch");
+    expect([asked, existsSync(w.runDir("r3"))]).toEqual([1, false]);
   } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
   expect(existsSync(w.runDir("r1"))).toBe(false);
   expect(existsSync(w.runDir("r2"))).toBe(false);
