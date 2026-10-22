@@ -38,10 +38,8 @@ there is none, ask for it and stop.
 - If the plan leaves a decision that is the user's, ask before launching (routr's `worker` field flags this too).
   Otherwise proceed.
 - Every worker starts with `routr launch --worktree <branch>` (`--base <ref>` to start it from another branch or
-  commit; outside herdr, without `--worktree`) and ends with `routr cleanup`, the command in its launch result’s `next`. In herdr, do
-  not make, close or remove a worker's worktree or pane with herdr or git yourself: closing its pane leaves its worktree
-  behind. Outside herdr, prepare a separate folder for each writing worker yourself when you need one; `cleanup
-  --worker` removes only routr's run folder.
+  commit) and ends with `routr cleanup`, the command in its launch result’s `next`, in herdr or not. Do not make, close
+  or remove a worker's worktree or pane with herdr or git yourself: closing its pane leaves its worktree behind.
 - Planning is work too: hand out its research and reviews, even when you will wait for the result, and do one
   yourself only when routr's `worker` field says `do it yourself`. Keep for yourself what cannot be handed out:
   turning findings into the plan, the decisions that are the user's, checking each result, and integrating it.

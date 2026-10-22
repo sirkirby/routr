@@ -122,7 +122,7 @@ test("cleanup counts processes and classifies herdr and git across read, remove 
   const worktree = { branch: "worker", path, is_linked_worktree: true };
   for (const op of ["pane-list", "worktree-list", "workspace-list", "process-info", "remove", "branch", "rev-parse", "status", "ls-files", "for-each-ref", "process-name", "pane-close"]) {
     const r = await cleanup(op.startsWith("pane") || ["workspace-list", "process-info", "process-name"].includes(op) ? ["--pane", "w2:p1"] : ["--cwd", f.dir, "--worktree", "worker", "--delete-branch"], {
-      env: {}, linked: () => true,
+      env: { HERDR_ENV: "1" }, linked: () => true,
       run: async (a) => {
         if (`${a[0]}-${a[1]}` === op || a[1] === op) return failure();
         if (a[0] === "pane" && a[1] === "list") return herdrOK({ panes: [{ pane_id: "w2:p1", workspace_id: "w2", agent_status: "unknown" }] });
@@ -368,7 +368,7 @@ test("worktree creation and removal failures keep markers out, including list an
   expect(r.state).toBe("failed"); expect(r.error).toContain("herdr_refused"); expect(JSON.stringify(r)).not.toContain(MARK);
   for (const failed of ["list", "remove", "heads"]) {
     const path = join(f.dir, "worker");
-    const r = await cleanup(["--cwd", f.dir, "--worktree", "worker"], { env: {}, linked: () => true,
+    const r = await cleanup(["--cwd", f.dir, "--worktree", "worker"], { env: { HERDR_ENV: "1" }, linked: () => true,
       run: async (a) => {
         if (a[0] === "pane" && a[1] === "list") return failed === "list" ? failure() : herdrOK({ panes: [] });
         if (a[1] === "remove") return failure();

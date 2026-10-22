@@ -328,12 +328,16 @@ the result is.
 ## Outside herdr: headless workers
 
 Outside herdr, `routr launch --kind claude` starts the worker without a pane: routr runs Claude Code's own headless
-mode on the user's sign-in, in `--cwd`, held by a routr process of its own. Dispatch, the task file, `--advice`, the
+mode on the user's sign-in, in its worktree (or `--cwd` without one), held by a routr process of its own. Dispatch, the task file, `--advice`, the
 model and effort choice, `check` and `record` are as in herdr. What differs:
 
-- **Claude Code only, no worktree yet.** Other harnesses, `--worktree`, `--pane` and the other pane flags are refused
-  outside herdr. The worker works in `--cwd` itself: give one writing worker a folder at a time, or a clone or
-  worktree you made for it, and tell it which branch to commit on. Read-only workers can share a folder.
+- **Claude Code only, worktrees as in herdr.** Other harnesses, `--pane` and `--direction` are refused outside herdr.
+  `--worktree <branch>` (with `--base` and `--copy`) works as in step 3: routr makes the git worktree itself, under
+  `~/.local/share/routr/worktrees`, and the worker runs there. The branch must be new: an existing branch, or a
+  worktree folder already there, is refused. The rule is the same too: every worker gets its own worktree, read-only
+  ones included. Outside a git repository, leave `--worktree` off: the worker then works in `--cwd`, so give one
+  writing worker that folder at a time. A `--dry-run` outside herdr still plans herdr's worktree create and does not
+  check the branch.
 - **Not from inside a sandbox.** A worker started from your sandboxed shell cannot reach its provider or routr's
   state, so launch refuses there, and so does a send that has to start the worker again. Run `routr launch`, `routr
   send` and `routr wait` as commands outside the sandbox.
@@ -359,9 +363,13 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   its session with `claude --resume` while routr may resume it (a `send` would start a second Claude on the same
   session, and routr cannot see the first). Read its reports instead.
 - **Stop and clean up.** `routr stop --name <name>` ends a worker through its own process. Every worker ends with
-  `routr cleanup --worker <name>`, the step in its launch result's `next`: it removes the run folder and its
-  reports, so read what you need first. It refuses while the worker runs. The worker's changes stay in its folder:
-  integrate them as in step 6.
+  `routr cleanup --worker <name> [--delete-branch]`, the step in its launch result's `next`: it removes the worker's
+  worktree with the checks of step 6 (and keeps everything when one fails), then its run folder and reports, so read
+  what you need first. It refuses while the worker runs. It cannot see a background command the worker started that
+  outlived it: stop those yourself first. Finish a headless worker's worktree with `cleanup --worker`, which checks its
+  process first, not with `--path`. Outside herdr, `routr cleanup --cwd <repo>` lists and removes other worktrees
+  through git, and cannot see whether something runs in a worktree's folder: run it only for work that has ended. A
+  worker launched without `--worktree` worked in `--cwd`: its changes are yours to integrate.
 - **Lost, or something left running.** If a worker's own process dies, `wait` and `workers` say `lost`. On macOS
   and Linux they name the process group its Claude ran in while that group still has members (a lost Claude, or a
   command that outlived it), and send and cleanup refuse until it is empty. routr never stops a process by a saved

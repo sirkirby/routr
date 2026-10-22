@@ -3,7 +3,7 @@
 // this on every Claude Code turn. It is the only module that imports node:child_process (a test holds every other file
 // in src/ to that), so every process routr starts gets the same platform defaults from `start` / `startSync`.
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
 
@@ -27,6 +27,14 @@ export const CLAUDE_SNAPSHOT = join(home(), ".cache/routr/claude-usage.json");
 export const CURSOR_SNAPSHOT = join(home(), ".cache/routr/cursor-usage.json");
 // Written by `routr usage kiro` the same way, read by the usage reader.
 export const KIRO_SNAPSHOT = join(home(), ".cache/routr/kiro-usage.json");
+
+// A path as the file system names it, for comparing two paths. The native call: on Windows it also expands 8.3 short
+// names and folds case, which the JS one leaves as written (measured 2026-10-22, Bun 1.4.3 on Windows 11 x64:
+// C:\PROGRA~1 stays as it is, native gives C:\Program Files; GitHub's runner hands out %TEMP% as C:\Users\RUNNER~1,
+// and git lists the long name). `realPath` throws as realpathSync does; `realOr` gives a path that cannot be read
+// resolved as written.
+export const realPath = (p) => realpathSync.native(p);
+export const realOr = (p) => { try { return realpathSync.native(p); } catch { return resolve(p); } };
 
 export function ensureParent(file, { mkdir = mkdirSync } = {}) {
   const dir = dirname(resolve(file));

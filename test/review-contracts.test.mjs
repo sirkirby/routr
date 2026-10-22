@@ -42,7 +42,7 @@ test("review 3: model-less dry runs refuse with a plan and model next step", asy
 test("review 4/5: failed refs are unreadable, dirty and untracked refusals offer git status", async () => {
   const f = fixture(), path = join(f.dir, "worker"), sha = "a".repeat(40);
   for (const mode of ["refs-fail", "refs-malformed", "dirty", "untracked", "prunable-refs", "prunable-heads"]) {
-    const r = await cleanup(["--cwd", f.dir, "--worktree", "worker"], { env: {}, linked: () => true,
+    const r = await cleanup(["--cwd", f.dir, "--worktree", "worker"], { env: { HERDR_ENV: "1" }, linked: () => true,
       run: async () => herdrOK({ source: { source_checkout_path: f.dir }, worktrees: [{ path, branch: "worker", is_linked_worktree: true, is_prunable: mode.startsWith("prunable") }] }),
       git: async (_d, a) => ({ code: mode.endsWith("fail") && a[0] === "for-each-ref" ? 1 : 0, out: a[0] === "rev-parse" ? sha : a[0] === "for-each-ref" ? mode === "refs-malformed" ? "BAD" : mode === "prunable-refs" ? null : "refs/heads/worker\n" : a[0] === "worktree" ? mode === "prunable-heads" ? "BAD" : `worktree ${path}\nHEAD ${sha}\ndetached\n` : a[0] === "status" ? mode === "dirty" ? " M a.txt\0" : mode === "untracked" ? "?? new.txt\0" : "" : "" }),
     });

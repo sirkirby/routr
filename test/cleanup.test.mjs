@@ -38,7 +38,7 @@ function fake({ worktrees = [], panes = {}, processes = {}, status = {}, flags =
   const calls = [], gits = [];
   const source = "/repo";
   const deps = {
-    env: { HERDR_PANE_ID: "w1:p1" }, linked: () => true, // the tests below that use real folders give it its real test
+    env: { HERDR_ENV: "1", HERDR_PANE_ID: "w1:p1" }, linked: () => true, // the tests below that use real folders give it its real test
     run: async (a) => {
       calls.push(a);
       if (a[0] === "worktree" && a[1] === "list") return herdrOK({ source: { source_checkout_path: source }, worktrees: [{ branch: "main", path: source, is_linked_worktree: false, open_workspace_id: "w1" }, ...worktrees] });
@@ -161,7 +161,7 @@ test("--pane closes a worker's split pane, never its worktree's only pane or a b
 });
 
 test("herdr out of reach fails with what happened, and removes nothing", async () => {
-  const r = await cleanup(["--cwd", "/repo", "--worktree", "x"], { run: async () => herdrError("connect_failed"), git: async () => { throw new Error("no git"); }, env: {} });
+  const r = await cleanup(["--cwd", "/repo", "--worktree", "x"], { run: async () => herdrError("connect_failed"), git: async () => { throw new Error("no git"); }, env: { HERDR_ENV: "1" } });
   expect(r).toMatchObject({ ok: false, state: "failed" });
   expect(r.steps[0].detail).toContain("herdr_unreachable");
 });

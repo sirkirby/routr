@@ -1,9 +1,9 @@
 // The commands for headless workers (headless.mjs): launch's start outside herdr, and `wait`, `send`, `workers`,
 // `stop` and `cleanup --worker`. Each talks to a worker's holder only through its channel (channel.mjs) and reads what
 // the holder wrote; none stops a process by a saved id. Answers carry report paths, never worker text.
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
-import { randomUUID } from "node:crypto";
+import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
 import { connect, generations, MESSAGE_MAX, probe, removeEndpoint, socketPathFits, writeSecret } from "./channel.mjs";
 import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, readState, readWorker, reserve, runDir, WORKERS_DIR } from "./headless.mjs";
 import { HARNESSES, notReady } from "./harnesses.mjs";
@@ -12,7 +12,9 @@ import { readTask } from "./advice-file.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { answer } from "./output.mjs";
 import { CLOSING, OFF } from "./wording.mjs";
-import { lockIsStale, spawnSelf, takeLock } from "./runtime.mjs";
+import { callGit } from "./process-boundary.mjs";
+import { dropCopy } from "./cleanup.mjs";
+import { ensureParent, home, lockIsStale, probe as runProbe, realOr, realPath, spawnSelf, takeLock } from "./runtime.mjs";
 
 const NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const RUNNING = new Set(["working", "waiting", "starting"]);
@@ -89,6 +91,74 @@ export async function view(name, { check = true } = {}) {
     turns: (st.turns ?? []).map((t) => ({ turn: t.turn, outcome: t.outcome ?? "running", report: t.report ?? null, delivered: t.delivered ?? 0 })) };
 }
 
+// ---- worktrees, outside herdr ----------------------------------------------------------------------------------------
+// A headless worker's own git worktree, made by routr with git (herdr makes it in a pane session): in routr's own
+// folder, one per repository and branch, its branch new and starting at --base (or the checkout's HEAD).
+const git = (dir, args) => callGit((d, a) => runProbe("git", ["-C", d, ...a], { timeoutMs: 20000, separate: true }), dir, args);
+export const WORKTREES_DIR = () => join(home(), ".local", "share", "routr", "worktrees");
+const worktreePath = (source, branch) => join(WORKTREES_DIR(), `${basename(source)}-${createHash("sha1").update(source).digest("hex").slice(0, 8)}`, branch.replace(/[\\/]/g, "-"));
+// git's one-line answer, its line ending dropped and nothing else (a folder's name may end in a space).
+const line = (out) => out.replace(/\r?\n$/, "");
+// Before anything is written: the repository, a branch not taken, a folder not there, and the commit it starts at
+// (resolved now, and given to git as that commit, so the branch starts where it was checked).
+async function planWorktree(o, cwd) {
+  const top = await git(cwd, ["rev-parse", "--show-toplevel"]);
+  if (!top.ok) throw new Error(`--worktree needs a git repository: git found none at ${cwd} (${top.code})`);
+  const source = realPath(line(top.out));
+  if ((await git(source, ["rev-parse", "--verify", "--quiet", `refs/heads/${o.worktree}`])).ok) throw new Error(`branch ${o.worktree} exists in ${source}; choose a new branch for the worker`);
+  const start = await git(source, ["rev-parse", "--verify", `${o.base ?? "HEAD"}^{commit}`]);
+  if (!start.ok) throw new Error(`${o.base ? `--base ${o.base}` : "HEAD"} is not a commit git finds in ${source}`);
+  const path = worktreePath(source, o.worktree);
+  if (existsSync(path)) throw new Error(`${path} exists; remove it with routr cleanup --cwd ${source} --path ${path}, or choose another branch`);
+  return { source, path, start: line(start.out) };
+}
+// Which folder this is, not where: a worktree removed and made again at the same path, even on the same branch, is
+// another folder (from the review of d4166f9). Device and file number, read whole (Windows' file IDs exceed 2^53).
+// Its birth time too, where the file system keeps one: Linux may give a removed folder's number to the next one made.
+const folderId = (path) => { try { const st = statSync(path, { bigint: true }); return `${st.dev}:${st.ino}:${st.birthtimeNs}`; } catch { return null; } };
+// A folder itself, reached through no link or junction on the way: its real path is the path.
+const realFolder = (p) => { try { return lstatSync(p).isDirectory() && realPath(p) === p; } catch { return false; } };
+// --copy: from the folder launch was given, to the same place in the worktree, never through a link (a folder in the
+// commit that links elsewhere) and never over a file the worktree has. Records each file it made relative to the
+// worktree, as dropCopy takes it, and each folder by its full path in the worktree.
+function copyInto(from, root, rel, made) {
+  const parts = rel.split(/[\\/]/).filter(Boolean);
+  let at = root;
+  for (const part of parts.slice(0, -1)) {
+    at = join(at, part);
+    if (!existsSync(at)) { mkdirSync(at); made.dirs.push(at); continue; }
+    const st = lstatSync(at);
+    if (st.isSymbolicLink() || !st.isDirectory()) throw new Error(`--copy ${rel}: ${at} in the worktree is a link or not a folder; nothing is copied through it`);
+  }
+  const to = join(root, ...parts);
+  if (existsSync(to) || (() => { try { lstatSync(to); return true; } catch { return false; } })()) throw new Error(`--copy ${rel}: the worktree already has it`);
+  cpSync(from, to, { recursive: true, errorOnExist: true, force: false });
+  // A link copied as a link is a file here, never a folder to walk or take back (from the review of e46d79d).
+  if (realFolder(to)) { made.dirs.push(to); for (const f of readdirSync(to, { recursive: true }).map(String)) { if (realFolder(join(to, f))) made.dirs.push(join(to, f)); else made.files.push(join(rel, f)); } }
+  else made.files.push(rel);
+}
+// The worktree a launch made and nothing ran in: its copies (unchanged ones, and the folders it made, only inside the
+// worktree and reached through no link, checked again right before each removal), the worktree through cleanup's own checks, and its branch while it still points at the commit it started
+// on (git compares and deletes in one step). The branch is this launch's only once git made the worktree: when
+// `worktree add -b` failed, a branch of that name may be another command's, made since the check (from the review of
+// 9224296), so it is left and said. Anything else left is said too.
+export async function unmakeWorktree(wt, out) {
+  const exists = async () => (await git(wt.source, ["rev-parse", "--verify", "--quiet", `refs/heads/${wt.branch}`])).ok;
+  if (!wt.added) {
+    if (await exists()) out.warnings.push(`Branch ${wt.branch} exists in ${wt.source}, but git did not make this launch's worktree, so whose branch it is cannot be told; it was left`);
+    return;
+  }
+  for (const rel of wt.files) dropCopy(wt.path, wt.copySource, rel);
+  const inside = (d) => { const r = relative(wt.path, d); return r !== "" && !r.startsWith("..") && !isAbsolute(r); };
+  for (const d of [...wt.dirs].reverse()) { if (inside(d) && realFolder(d)) { try { rmdirSync(d); } catch {} } }
+  const { cleanup } = await import("./cleanup.mjs");
+  const r = await cleanup(["--cwd", wt.source, "--path", wt.path], { env: {} });
+  const removed = ["removed", "absent"].includes(r.state);
+  const branchGone = removed && (await git(wt.source, ["update-ref", "-d", `refs/heads/${wt.branch}`, wt.start])).ok;
+  if (!removed) out.warnings.push(`The worktree ${wt.path} (branch ${wt.branch}) this launch made was left: run routr cleanup --cwd ${wt.source} --path ${wt.path}`);
+  else if (!branchGone && await exists()) out.warnings.push(`Branch ${wt.branch} this launch made was left, as it no longer points at ${wt.start}: run git -C ${wt.source} branch -d ${wt.branch} if it is not needed`);
+}
+
 // ---- launch, outside herdr -----------------------------------------------------------------------------------------
 // Called by launch once the arguments, task and advice are checked. Every refusal comes before anything is written or
 // started; then it reserves the name, starts the holder and hands it the prompt over the channel, all within --timeout.
@@ -96,13 +166,14 @@ export async function view(name, { check = true } = {}) {
 export async function launchHeadless(o, out, { prompt, env, settings, ready, spawn }) {
   const step = (s, ok, detail) => out.steps.push({ step: s, ok, detail });
   if (!HEADLESS_KINDS.includes(o.kind)) throw new Error(`outside herdr, routr launch starts ${HEADLESS_KINDS.map((k) => HARNESSES[k].label).join(", ")} workers only; run the lead inside herdr for a ${HARNESSES[o.kind].label} worker`);
-  for (const f of ["pane", "direction", "worktree", "base", "copy"]) if (o[f] != null) throw new Error(`--${f} needs herdr; outside herdr a worker runs headless in --cwd`);
+  for (const f of ["pane", "direction"]) if (o[f] != null) throw new Error(`--${f} needs herdr; outside herdr a worker runs headless, with no pane`);
   if (prompt == null) throw new Error("outside herdr a worker starts with its task: pass --task-file (or --task) and --advice");
   if (size(prompt) > MESSAGE_MAX) throw new Error(TOO_BIG);
   const sandbox = sandboxOf(env);
   if (sandbox) throw new Error(SANDBOXED(sandbox));
   if (existsSync(runDir(o.name))) throw new Error(`a worker named ${o.name} exists; finish it with routr cleanup --worker ${o.name}, or choose another --name`);
   if (!socketPathFits()) throw new Error(PATH_TOO_LONG);
+  const plannedTree = o.worktree ? await planWorktree(o, out.cwd) : null;
   const loaded = settings(), config = loaded.config ?? loaded;
   out.warnings.push(...(loaded.notes ?? []));
   if (config.subscriptions[o.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[o.kind].label, o.kind));
@@ -119,18 +190,42 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
     if (e?.code === "EPERM" || e?.code === "EACCES") throw new Error(SANDBOXED("a sandbox, or a folder routr cannot write"));
     throw e;
   }
-  // What this launch wrote, and nothing started: removed again if launch stops before a holder answers.
-  const unreserve = () => { try { rmSync(dir, { recursive: true, force: true }); } catch {} out.worker = null; };
+  // What this launch wrote, and nothing started: removed again if launch stops before a holder answers. Everything
+  // after the reservation is inside this, so a failure anywhere in it (git, a copy, a write) leaves nothing.
+  let wt = null;
+  const unreserve = async () => { if (wt) await unmakeWorktree(wt, out); try { rmSync(dir, { recursive: true, force: true }); } catch {} out.worker = null; };
   try {
-    const w = { format: FORMAT, id: randomUUID().replace(/-/g, ""), name: o.name, kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString() };
+    if (plannedTree) {
+      const { source, start } = plannedTree;
+      wt = { branch: o.worktree, base: o.base ?? null, path: plannedTree.path, source, start, copySource: out.cwd, files: [], dirs: [], added: false };
+      ensureParent(wt.path);
+      out.ran.push(displayCommand(["git", "-C", source, "worktree", "add", "-b", o.worktree, wt.path, start]));
+      const made = await git(source, ["worktree", "add", "-b", o.worktree, wt.path, start]);
+      if (!made.ok) throw new Error(`git did not make the worktree (${made.code})`);
+      wt.added = true;
+      wt.path = realPath(wt.path); // as git lists it (macOS: /tmp is /private/tmp; Windows: long names)
+      wt.folder = folderId(wt.path);
+      // A worktree holds tracked files only: --copy brings named untracked files across, at the same relative path.
+      for (const rel of o.copy ?? []) {
+        const from = join(out.cwd, rel);
+        if (!existsSync(from)) { out.warnings.push(`--copy ${rel}: not found in ${out.cwd}; skipped`); continue; }
+        copyInto(from, wt.path, rel, wt);
+        step("copy", true, `Copied ${rel} into the worktree`);
+      }
+      out.cwd = wt.path;
+      out.worktree = { branch: o.worktree, ...(o.base ? { base: o.base } : {}), path: wt.path, workspace: null };
+      step("worktree", true, `Created ${wt.path} on branch ${o.worktree}${o.base ? ` from ${o.base}` : ""}`);
+    }
+    const w = { format: FORMAT, id: randomUUID().replace(/-/g, ""), name: o.name, kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(),
+      ...(wt ? { worktree: { branch: wt.branch, base: wt.base, path: wt.path, source: wt.source, start: wt.start, folder: wt.folder } } : {}) };
     writeFileSync(join(dir, "worker.json"), JSON.stringify(w) + "\n", { mode: 0o600 });
     writeSecret(dir);
-  } catch (e) { unreserve(); throw e; }
+  } catch (e) { await unreserve(); throw e; }
   out.worker = { name: o.name, backend: "headless", run: dir, session: null };
   step("reserve", true, `Made ${dir} for ${o.name}`);
   const p = await locked(o.name, () => becomeHolder(o.name, { spawn, timeoutMs: Math.min(15000, left()) }));
   if (p.state !== "alive") {
-    if (!["starting", "unreachable"].includes(p.state)) unreserve();
+    if (!["starting", "unreachable"].includes(p.state)) await unreserve();
     else out.next.push(runNext("Look at the worker before launching it again.", ["routr", "workers", "--name", o.name]));
     throw new Error(NOT_STARTED(p));
   }
@@ -327,8 +422,10 @@ export async function stopCommand(args, { env = process.env } = {}) {
 
 // ---- cleanup --worker ------------------------------------------------------------------------------------------------
 // Removes a headless worker's run folder (its reports with it) once nothing of it runs, under the lock a new holder is
-// started under. Its work, in its folder, is the lead's to integrate: cleanup touches no repository here.
-export async function cleanupWorker(name, { dryRun = false } = {}, out) {
+// started under. A worktree launch made for it goes first, through cleanup's own checks (nothing uncommitted, no file
+// the worker made, no commit no branch holds), and the run folder stays when cleanup keeps the worktree. Without one,
+// its work, in its folder, is the lead's to integrate: cleanup touches no repository.
+export async function cleanupWorker(name, { dryRun = false, deleteBranch = false } = {}, out) {
   const step = (s, ok, detail) => out.steps.push({ step: s, ok, detail });
   const refuse = (why, next) => { out.ok = false; out.state = "refused"; out.headline = `routr: kept ${name}: ${why}`; out.next.push(...[].concat(next)); step("refused", false, why); return out; };
   out.name = name;
@@ -343,12 +440,34 @@ export async function cleanupWorker(name, { dryRun = false } = {}, out) {
     if (p.state === "unreachable") return refuse(`${name}'s process does not answer, so whether it runs is not known`, runNext("Look at it.", ["routr", "workers", "--name", name]));
     const pg = readState(name)?.harness_pgid;
     if (groupAlive(pg)) return refuse(`${name}'s harness may still be running (process group ${pg})`, doNext(`Look at process group ${pg} and stop it if it is this worker's, then run cleanup again.`));
-    if (dryRun) { out.ok = true; out.state = "planned"; out.headline = `routr: would remove ${runDir(name)}`; step("plan", true, `Would remove ${runDir(name)} and its reports`); return out; }
+    if (w.worktree) {
+      const { cleanup, worktreesFromGit } = await import("./cleanup.mjs");
+      // The worktree at that path must still be this worker's: on its branch. One put there since is someone else's.
+      const listed = await git(w.worktree.source, ["worktree", "list", "--porcelain"]);
+      const there = listed.ok ? worktreesFromGit(listed.out).worktrees.find((x) => x.is_linked_worktree && realOr(x.path) === realOr(w.worktree.path)) : null;
+      if (!listed.ok) return refuse(`git could not list the worktrees of ${w.worktree.source} (${listed.code})`, runNext("Look at them.", ["git", "-C", w.worktree.source, "worktree", "list"]));
+      const finish = doNext(`Look at ${w.worktree.path}; finish it with routr cleanup --cwd ${w.worktree.source} --path ${w.worktree.path} if it should go.`);
+      if (there && there.branch !== w.worktree.branch) return refuse(`the worktree at ${w.worktree.path} is ${there.branch ? `on branch ${there.branch}` : "detached"}, not on ${w.worktree.branch}: it is not the one launch made`, finish);
+      if (there && folderId(w.worktree.path) !== w.worktree.folder) return refuse(`the worktree at ${w.worktree.path} was made again since launch: it is not the one launch made`, finish);
+      const r = await cleanup(["--cwd", w.worktree.source, "--path", w.worktree.path, ...(deleteBranch ? ["--delete-branch"] : []), ...(dryRun ? ["--dry-run"] : [])], { env: {} });
+      out.ran.push(...r.ran); out.unavailable.push(...r.unavailable);
+      // The worker's own process and Claude's process group were checked above; what that cannot see is said here.
+      out.warnings.push(...r.warnings.filter((x) => !/cannot see whether anything runs/.test(x)),
+        `cleanup cannot see a command ${name} started that left Claude's process group or detached itself${process.platform === "win32" ? " (on Windows, anything once Claude has ended)" : ""}: stop any such command before cleanup`);
+      const why = r.steps.find((x) => x.step === "refused")?.detail;
+      if (!["removed", "absent", "planned"].includes(r.state)) return refuse(r.state === "failed" ? `its worktree could not be checked (${r.error})` : why ?? r.headline, r.next);
+      // git lists no worktree there, yet a folder is: whose it is cannot be told, so it and the worker's record stay.
+      if (r.state === "absent" && existsSync(w.worktree.path)) return refuse(`git lists no worktree at ${w.worktree.path}, yet a folder is there: routr cannot tell it is the one launch made`, doNext(`Look at ${w.worktree.path}; remove it yourself if nothing in it is needed, then run cleanup again.`));
+      out.worktree = r.worktree ?? { path: w.worktree.path, branch: w.worktree.branch };
+      if (r.branch) out.branch = r.branch;
+      for (const s of r.steps) out.steps.push(s);
+    }
+    if (dryRun) { out.ok = true; out.state = "planned"; out.headline = `routr: would remove ${runDir(name)}${w.worktree ? ` and ${w.worktree.path}` : ""}`; step("plan", true, `Would remove ${runDir(name)} and its reports`); return out; }
     for (const n of generations(runDir(name))) { try { removeEndpoint(w.id, JSON.parse(readFileSync(join(runDir(name), `gen-${n}.ready`), "utf8")).endpoint); } catch {} }
     rmSync(runDir(name), { recursive: true, force: true });
     step("remove", true, `Removed ${runDir(name)} and its reports`);
     out.ok = true; out.state = "removed"; out.headline = `routr: removed worker ${name}`;
-    out.warnings.push(`${name} worked in ${w.cwd}: its changes there are yours to check and keep`);
+    if (!w.worktree) out.warnings.push(`${name} worked in ${w.cwd}: its changes there are yours to check and keep`);
     return out;
   });
 }
