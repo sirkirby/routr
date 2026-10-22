@@ -6,7 +6,7 @@ the user informed without making them watch panes. In herdr, use the herdr skill
 this file covers only what herdr does not know.
 
 Check first: `test "${HERDR_ENV:-}" = 1`. Outside herdr there are no panes: `routr launch` starts Claude Code
-workers headless instead, and you follow them with `routr wait`. Read "Outside herdr: headless workers" (after
+and Codex workers headless instead, and you follow them with `routr wait`. Read "Outside herdr: headless workers" (after
 step 6) for what changes; everything else here applies as written.
 
 ## 1. Decide whether to launch at all
@@ -333,7 +333,8 @@ harness's own headless mode (Claude Code's `-p`, Codex's app-server) on the user
 model and effort choice, `check` and `record` are as in herdr. What differs:
 
 - **Claude Code and Codex, worktrees as in herdr.** Other harnesses, `--pane` and `--direction` are refused outside
-  herdr.
+  herdr. A headless Codex runs without `--dangerously-bypass-hook-trust`: hooks the user has not trusted in Codex do
+  not run, unlike in a pane.
   `--worktree <branch>` (with `--base` and `--copy`) works as in step 3: routr makes the git worktree itself, under
   `~/.local/share/routr/worktrees`, and the worker runs there. The branch must be new: an existing branch, or a
   worktree folder already there, is refused. The rule is the same too: every worker gets its own worktree, read-only
@@ -354,13 +355,17 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
 - **A headless worker cannot ask.** A question ends its turn, and the report holds it: answer within scope with
   `routr send`, ask the user what is theirs to answer, then send that.
 - **Send back with `routr send`.** `routr send --name <name> --task-file <file>` sends a correction into the turn
-  that is running (both harnesses read it mid-turn; Codex starts it as the next turn when the running one has just
-  ended) or, when the worker is idle, resumes its session with it as the next turn. It keeps the worker's context, so
-  this is the send-back of step 4. `state: "delivered"` means the worker took it, not that it acted on it; wait for
-  the turn's report. New work is a new launch with its own
-  advice.
+  that is running (it joins that turn; one that arrives just as the turn ends starts the next turn instead) or, when
+  the worker is idle, resumes its session with it as the next turn. It keeps the worker's context, so this is the
+  send-back of step 4. `state: "delivered"` means it reached the running worker (Claude: written to its input, not
+  proven read; Codex: accepted by its app-server), not that the worker acted on it; wait for the turn's report.
+  `state: "unknown"` means it was handed over and no answer came: look with `routr workers` before you send it again.
+  New work is a new launch with its own advice.
 - **Background commands.** A Claude worker that left a command running in the background may start another turn by
-  itself when that command ends. `wait` reports that turn like any other.
+  itself when that command ends. `wait` reports that turn like any other. Codex's background commands are not
+  tracked: routr closes its app-server once a turn ends, so a Codex worker never starts a turn by itself. What that
+  does to a command still running is not measured; one left in its process group blocks `send` and cleanup (see
+  "Lost").
 - **Look at it.** `routr workers` shows each worker's state, turn, seconds since it last did something, its last
   tool, and its latest report path, never its text. Taking a worker over interactively is not built yet: do not open
   its session with `claude --resume` or `codex resume` while routr may resume it (a `send` would start a second

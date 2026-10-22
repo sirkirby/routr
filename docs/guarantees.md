@@ -177,8 +177,8 @@ harnesses, `--pane` and `--direction` are refused outside herdr. What that means
   made: a worktree removed and made again at that path, or a folder there that git does not list as a worktree, is
   kept, with the worker's record. A copy taken from a subfolder `--cwd` is compared with the main checkout's file at
   the same path, so cleanup may keep it as the worker's. It cannot see a command the worker started that left
-  Claude's process group or detached itself (on Windows, anything once Claude has ended), and removes the worktree
-  anyway: it says so in `warnings`.
+  the harness's process group or detached itself (on Windows, anything once the harness has ended), and removes the
+  worktree anyway: it says so in `warnings`.
 - **Where it lives.** Each worker has a run folder, `~/.local/state/routr/workers/<name>`: the worker's settings
   (kind, model, effort, folder; never the brief or the environment), the holder's state (turns, their outcomes, the
   last tool's fixed name, the session id), a random secret, one file per holder generation, which turns `wait` has
@@ -198,8 +198,10 @@ harnesses, `--pane` and `--direction` are refused outside herdr. What that means
   `mcp` and any other `other`.
 - **Codex's permissions.** Codex runs with `approvalPolicy: "never"` and `sandbox: "danger-full-access"`, what
   `--yolo` is in a pane. Unlike a pane, a hook you have not trusted in Codex does not run: its app-server skips it,
-  silently (measured). A request Codex makes of routr (an approval, a question, a tool call) is declined, and the
-  turn goes on without it; none came in the measured runs.
+  silently (measured). A request Codex makes of routr (an approval, a question, a tool call) is answered with a
+  JSON-RPC error, which declines it; none came in the measured runs, so what Codex does after a decline is shown only
+  with a stand-in app-server in the tests. A message Codex was handed and did not answer before it ended is reported
+  as not known, and never sent again on its own.
 - **The channel.** Both sides prove the run's secret before any text crosses. On macOS and Linux it is a Unix socket
   in an owner-only folder; a home whose socket path would exceed the system's limit (103 bytes on macOS, 107 on
   Linux) is refused before launch writes anything. On Windows it is a named pipe, and Windows' default security lets
@@ -207,23 +209,24 @@ harnesses, `--pane` and `--direction` are refused outside herdr. What that means
   got only a fixed error), not the pipe's permissions. Not tested: another local account, a remote client.
 - **What it starts.** The holder starts the harness (`claude`, or `codex app-server`) in its own process group
   (POSIX), in the worker's folder (its worktree, or `--cwd`), with herdr's and the lead's session variables removed,
-  and records that group before the task goes in. It exits once the harness has. What follows was measured with
-  Claude; Codex is stopped the same way, and how its own commands take SIGTERM and SIGKILL is not measured. On macOS and Linux, `stop` sends SIGTERM to that group (Claude ends its tool commands, which run in
-  groups of their own, on SIGTERM; measured), then SIGKILL to the group two seconds later if Claude itself has not
-  exited. Tool commands in their own groups can survive a SIGKILL of Claude, and routr cannot see those. Once Claude
-  has gone, anything still in its group is not signalled again (its id may be another group's by then): stop says
-  `still_exiting`, and the group stays recorded, so resuming and cleanup refuse until it is empty. stop waits up to
-  six seconds for Claude. On Windows it runs `taskkill /T /F` on Claude, or ends Claude alone if that fails. A command
-  that detaches itself is not seen. Limit: once a recorded group has emptied, an unrelated process group given the
-  same id later blocks that worker's resume and cleanup until it ends.
+  and records that group before the task goes in. It exits once the harness has. On macOS and Linux, `stop` sends
+  SIGTERM to that group, then SIGKILL to the group two seconds later if the harness itself has not exited, and waits
+  up to six seconds for it. Claude ends its tool commands, which run in groups of their own, on SIGTERM; they can
+  survive a SIGKILL of Claude, and routr cannot see those (measured). How Codex's commands take SIGTERM and SIGKILL
+  is not measured. Once the harness has gone, anything still in its group is not signalled again (its id may be
+  another group's by then): stop says `still_exiting`, and the group stays recorded, so resuming and cleanup refuse
+  until it is empty. On Windows it runs `taskkill /T /F` on the harness, or ends the harness alone if that fails. A
+  command that detaches itself is not seen. Limit: once a recorded group has emptied, an unrelated process group
+  given the same id later blocks that worker's resume and cleanup until it ends.
 - **What it cannot see.** If the holder itself is killed, its Claude keeps working until its next output fails
   (measured on macOS); on Windows the measured stand-in harness ended with its holder, and a real Claude has not been
-  measured there. On macOS and Linux, routr then reports the worker `lost`, and names the process group it recorded
-  while that group still has members, as it does when a tool command outlives Claude. Either way it refuses to resume
-  or remove the worker until that group is empty, and it never stops a process by a saved id. A lead started inside an
-  SSH session on Windows loses its workers when that session ends (sshd's job object closes every process in the
-  session; measured). On Linux, a worker outlived an SSH logout with Ubuntu's defaults; with logind's
-  `KillUserProcesses=yes` it would not (not measured).
+  measured there. What a Codex app-server does when its holder dies, mid-turn or not, is not measured. On macOS and
+  Linux, routr then reports the worker `lost`, and names the process group it recorded while that group still has
+  members, as it does when a tool command outlives the harness. Either way it refuses to resume or remove the worker
+  until that group is empty, and it never stops a process by a saved id. A lead started inside an SSH session on
+  Windows loses its workers when that session ends (sshd's job object closes every process in the session;
+  measured). On Linux, a worker outlived an SSH logout with Ubuntu's defaults; with logind's `KillUserProcesses=yes`
+  it would not (not measured).
 - **Sandboxes.** A lead's sandbox carries over to what it starts. launch refuses when it can see one (Claude Code's
   Bash sandbox, Codex's), and so does a send that must start a new holder; a send to a running worker goes over its
   channel as usual. `wait`, `workers` and `stop` say when they run inside one, since it may hide a worker's channel.

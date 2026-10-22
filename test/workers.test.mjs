@@ -234,27 +234,37 @@ function codexPipe() {
   return { c, h, sent, events, answer };
 }
 
-test("Codex: a steer that arrives once the turn has ended goes in as the next turn, in the same process; a closed process answers nothing", async () => {
+test("Codex: steering follows the turn Codex names; a steer once the turn has ended goes in as the next turn; a lost answer is not known, never resent", async () => {
   const { c, h, sent, events, answer } = codexPipe();
+  const methods = () => sent.filter((x) => x.method).map((x) => x.method);
+  const note = (method, params) => h.line(JSON.stringify({ jsonrpc: "2.0", method, params }));
   const began = h.begin("the task");
+  // A message during startup waits for the task's turn, then joins it.
+  const early = h.send("early");
   await answer({ userAgent: "x" }); await answer({ thread: { id: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b" } }); await answer({ turn: { id: "t1", status: "inProgress" } });
   expect([await began, events]).toEqual([true, [{ session: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b" }]]);
-  expect(h.line(JSON.stringify({ method: "turn/completed", params: { turn: { id: "t1", status: "completed" } } }))).toEqual({ result: { failed: false, text: null } });
-  // The holder still thought the turn ran: the steer is refused, and the message starts the next turn instead.
-  const s = h.send("more", true);
+  await answer({ turnId: "t1" });
+  expect([await early, sent.at(-1).params.expectedTurnId]).toEqual([{ code: "accepted", next: false }, "t1"]);
+  // The turn has just ended, and routr has not read that yet: the steer is refused, and the message starts the next turn.
+  const late = h.send("late");
   await answer(null, { code: -32600, message: "no active turn to steer" }); await answer({ turn: { id: "t2", status: "inProgress" } });
-  expect(await s).toEqual({ code: "accepted", next: true });
-  expect(sent.filter((x) => x.method).map((x) => x.method)).toEqual(["initialize", "initialized", "thread/start", "turn/start", "turn/steer", "turn/start"]);
-  // Between turns, straight to turn/start; a steer while it runs stays in the turn.
-  const steer = h.send("again", true); await answer({ turnId: "t2" });
-  expect(await steer).toEqual({ code: "accepted", next: false });
-  // Its process gone: what was asked of it is answered as not taken.
-  const lost = h.send("late", true); c.emit("close");
-  expect(await lost).toBe(null);
-  // A thread it would not start: refused, and nothing said about a session.
+  expect(await late).toEqual({ code: "accepted", next: true });
+  expect(methods()).toEqual(["initialize", "initialized", "thread/start", "turn/start", "turn/steer", "turn/steer", "turn/start"]);
+  // Between turns, straight to turn/start; a turn Codex announces before its start is answered is the one steered.
+  expect(note("turn/completed", { turn: { id: "t2", status: "completed" } })).toEqual({ result: { failed: false, text: null }, id: "t2" });
+  const next = h.send("next");
+  await Bun.sleep(5); note("turn/started", { turn: { id: "t3" } }); await answer({ turn: { id: "t3", status: "inProgress" } });
+  expect([await next, methods().at(-1)]).toEqual([{ code: "accepted", next: true }, "turn/start"]);
+  const steer = h.send("steer"); await answer(null, { code: -32600, message: "expected turn t9, found t3" });
+  expect([sent.at(-1).params.expectedTurnId, await steer]).toEqual(["t3", { code: "refused", why: "harness_refused" }]);
+  // Handed to it, and it ended before answering: not known whether it took it.
+  const lost = h.send("lost"); await Bun.sleep(5); c.emit("close");
+  expect(await lost).toEqual({ code: "unknown", why: "no_reply" });
+  expect(await h.send("after")).toBe(null); // never written: its input is gone
+  // A thread it would not start: refused, and nothing said about a session; a send then is refused too.
   const r = codexPipe(), b = r.h.begin("x");
   await r.answer({ userAgent: "x" }); await r.answer(null, { code: -32600, message: "model not found" });
-  expect([await b, r.events]).toEqual(["refused", []]);
+  expect([await b, r.events, await r.h.send("y")]).toEqual(["refused", [], { code: "refused", why: "not_started" }]);
 });
 
 test("the brief and messages reach the harness on stdin only: never an answer, an argument, or a file but the reports", async () => {
@@ -558,15 +568,19 @@ test("Codex's app-server as routr reads it: replies, its own requests, turns, fi
   const read = codexReader(), n = (method, params) => read(JSON.stringify({ jsonrpc: "2.0", method, params }));
   expect(read(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { turnId: "t" } }))).toEqual({ reply: { id: 3, result: { turnId: "t" }, error: null } });
   expect(read(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "item/commandExecution/requestApproval", params: {} }))).toEqual({ request: 7 });
-  expect(n("turn/started", { turn: { id: "t" } })).toEqual({ turn: true });
+  expect(n("turn/started", { turn: { id: "t" } })).toEqual({ turn: true, id: "t" });
   for (const [type, tool] of [["commandExecution", "commandExecution"], ["fileChange", "fileChange"], ["mcpToolCall", "mcp"], ["somethingNew", "other"]]) expect(n("item/started", { item: { type, command: "an argument" } })).toEqual({ tool });
   expect(n("item/started", { item: { type: "agentMessage" } })).toEqual({ activity: true });
   n("item/completed", { item: { type: "agentMessage", phase: "final_answer", text: "the answer" } });
   n("item/completed", { item: { type: "agentMessage", phase: "commentary", text: "more narration" } });
-  expect(n("turn/completed", { turn: { status: "completed" } })).toEqual({ result: { failed: false, text: "the answer" } });
+  expect(n("turn/completed", { turn: { id: "t", status: "completed" } })).toEqual({ result: { failed: false, text: "the answer" }, id: "t" });
   // No phase (a model that marks none): its last message. Interrupted or failed: a failed turn.
   n("turn/started", {}); n("item/completed", { item: { type: "agentMessage", text: "one" } }); n("item/completed", { item: { type: "agentMessage", text: "two" } });
-  expect(n("turn/completed", { turn: { status: "interrupted" } })).toEqual({ result: { failed: true, text: "two" } });
+  expect(n("turn/completed", { turn: { status: "interrupted" } })).toEqual({ result: { failed: true, text: "two" }, id: null });
+  // Commentary and partial answers are never the report: interrupted after them, the turn has none.
+  n("turn/started", { turn: { id: "u" } }); n("item/completed", { item: { type: "agentMessage", phase: "commentary", text: "I am looking at the brief" } });
+  n("item/completed", { item: { type: "agentMessage", phase: "partial_answer", text: "so far" } });
+  expect(n("turn/completed", { turn: { id: "u", status: "interrupted" } })).toEqual({ result: { failed: true, text: null }, id: "u" });
   expect([read("not json"), n("thread/tokenUsage/updated", {})]).toEqual([null, null]);
 });
 

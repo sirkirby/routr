@@ -71,7 +71,8 @@ const CODEX_ITEMS = new Set(["commandExecution", "fileChange", "webSearch", "ima
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // One line of the Codex app-server's output, for one connection: a reply to one of its requests, a request of its own,
 // or a notification read as what routr knows how to say. The turn's report is its final answer (agentMessage phase
-// final_answer), else its last agentMessage (a model that marks no phase).
+// final_answer), else its last agentMessage that marks no phase (a model that marks none). Commentary and partial
+// answers are never a report: a turn interrupted after them has none (from the review of a68ca2e).
 export function codexReader() {
   let final = null, last = null;
   return (line) => {
@@ -80,17 +81,17 @@ export function codexReader() {
     if (e.id != null && !e.method) return { reply: { id: e.id, result: e.result ?? null, error: e.error ?? null } };
     if (e.id != null && typeof e.method === "string") return { request: e.id };
     const p = e.params ?? {};
-    if (e.method === "turn/started") { final = last = null; return { turn: true }; }
+    if (e.method === "turn/started") { final = last = null; return { turn: true, id: typeof p.turn?.id === "string" ? p.turn.id : null }; }
     if (e.method === "item/started" && typeof p.item?.type === "string") {
       const t = p.item.type;
       if (t === "agentMessage" || t === "reasoning" || t === "userMessage") return { activity: true };
       return { tool: t === "mcpToolCall" ? "mcp" : CODEX_ITEMS.has(t) ? t : "other" };
     }
     if (e.method === "item/completed" && p.item?.type === "agentMessage" && typeof p.item.text === "string") {
-      if (p.item.phase === "final_answer") final = p.item.text; else last = p.item.text;
+      if (p.item.phase === "final_answer") final = p.item.text; else if (p.item.phase == null) last = p.item.text;
       return { activity: true };
     }
-    if (e.method === "turn/completed") { const text = final ?? last; final = last = null; return { result: { failed: p.turn?.status !== "completed", text: text ? cut(text) : null } }; }
+    if (e.method === "turn/completed") { const text = final ?? last; final = last = null; return { result: { failed: p.turn?.status !== "completed", text: text ? cut(text) : null }, id: typeof p.turn?.id === "string" ? p.turn.id : null }; }
     return null;
   };
 }
@@ -105,8 +106,9 @@ const writeLine = (c, line) => new Promise((resolve) => {
 // What each harness needs to run headless. `argv` starts it; `connect(c, o)` binds one process of it:
 //   begin(text): the task (or a resumed session's next message) in; true once it is in, false when it never got it,
 //     "refused" when the harness answered no (a model it does not have, a session it cannot resume)
-//   send(text, inTurn): a message while it runs: { code, next } (next: it starts the next turn rather than joining
-//     this one) or null when it did not take it
+//   send(text, inTurn): a message while it runs: { code, next } once it took it (next: it starts the next turn rather
+//     than joining this one); { code: "refused" | "unknown", why } when it said no, or ended before saying (whether it
+//     took it is then not known, so it is never sent again on its own); null when it never got it (its input closed)
 //   line(l): one line of its output as an event (session, turn, tool, tasks, activity, result), or null
 //   open(): whether it can take more input; done(): nothing more to say to it, so it ends
 export const ADAPTERS = {
@@ -125,55 +127,72 @@ export const ADAPTERS = {
     // silently (p37 item 9). The model and effort go in the protocol too.
     argv: () => ["app-server", "-c", "check_for_update_on_startup=false"],
     connect: (c, { cwd, model, effort, session, emit }) => {
-      let id = 0, thread = session ?? null, turn = null, closed = false;
-      const waiting = new Map();
+      let id = 0, thread = session ?? null, turn = null, closed = false, ready = null;
+      const waiting = new Map(), ended = new Set();
+      const open = () => !closed && !c.stdin.writableEnded && !c.stdin.destroyed;
       const out = (o) => writeLine(c, JSON.stringify({ jsonrpc: "2.0", ...o }) + "\n");
-      // A request is answered by the harness, or as `not_written` / `closed` when it never got it or ended first.
+      // A request's answer: the harness's reply, or what is known without one: `not_written` (it never got it: its input
+      // had closed, or the write failed) or `no_reply` (handed to it, and it ended before answering: whether it acted
+      // on it is not known).
       const rpc = (method, params) => new Promise((resolve) => {
-        if (closed) return resolve({ error: { code: "closed" } });
+        if (!open()) return resolve({ error: { code: "not_written" } });
         const i = ++id; waiting.set(i, resolve);
         out({ id: i, method, params }).then((ok) => { if (!ok && waiting.delete(i)) resolve({ error: { code: "not_written" } }); });
       });
-      const gone = (r) => r.error?.code === "not_written" || r.error?.code === "closed";
-      c.on("close", () => { closed = true; for (const r of waiting.values()) r({ error: { code: "closed" } }); waiting.clear(); });
+      c.on("close", () => { closed = true; for (const r of waiting.values()) r({ error: { code: "no_reply" } }); waiting.clear(); });
+      const outcome = (r) => (r.result ? "ok" : ["not_written", "no_reply"].includes(r.error?.code) ? r.error.code : "refused");
       const read = codexReader();
       const opts = { cwd, model, approvalPolicy: "never", sandbox: "danger-full-access" };
+      // The running turn, as the app-server says it (turn/started, turn/completed) and as turn/start answered it, never
+      // one it has said has ended.
       const startTurn = async (text) => {
         const r = await rpc("turn/start", { threadId: thread, input: [{ type: "text", text }], ...(effort ? { effort } : {}) });
-        if (typeof r.result?.turn?.id !== "string") return false;
-        turn = r.result.turn.id; return true;
+        const k = outcome(r);
+        if (k !== "ok") return k;
+        if (typeof r.result.turn?.id !== "string") return "refused";
+        if (!ended.has(r.result.turn.id)) turn = r.result.turn.id;
+        return "ok";
       };
+      const answerFor = (k) => (k === "not_written" ? null : k === "no_reply" ? { code: "unknown", why: "no_reply" } : { code: "refused", why: "harness_refused" });
       return {
-        begin: async (text) => {
+        begin: (text) => (ready = (async () => {
+          const go = (k) => (k === "refused" ? "refused" : false); // not written, or ended before answering: not started
           const init = await rpc("initialize", { clientInfo: { name: "routr", version: "0" } });
-          if (!init.result) return gone(init) ? false : "refused";
+          if (outcome(init) !== "ok") return go(outcome(init));
           if (!(await out({ method: "initialized", params: {} }))) return false;
           const th = thread ? await rpc("thread/resume", { threadId: thread, ...opts }) : await rpc("thread/start", opts);
-          const tid = th.result?.thread?.id;
-          if (typeof tid !== "string" || !UUID.test(tid)) return gone(th) ? false : "refused";
+          if (outcome(th) !== "ok") return go(outcome(th));
+          const tid = th.result.thread?.id;
+          if (typeof tid !== "string" || !UUID.test(tid)) return "refused";
           thread = tid;
-          if (!(await startTurn(text))) return "refused";
+          const k = await startTurn(text);
+          if (k !== "ok") return go(k);
           emit({ session: thread }); return true;
-        },
-        // Into the running turn; once it has ended (or between turns), the next turn in this process.
-        send: async (text, inTurn) => {
-          if (!thread) return null;
-          if (inTurn && turn) {
+        })()),
+        // Once the task's turn has started: into the running turn; when there is none, or Codex says the turn has just
+        // ended ("no active turn"), the next turn in this process. Any other no is a refusal.
+        send: async (text) => {
+          if ((await ready) !== true) return { code: "refused", why: "not_started" };
+          if (turn) {
             const r = await rpc("turn/steer", { threadId: thread, expectedTurnId: turn, input: [{ type: "text", text }] });
-            if (r.result) return { code: "accepted", next: false };
-            if (gone(r)) return null;
+            const k = outcome(r);
+            if (k === "ok") return { code: "accepted", next: false };
+            if (k !== "refused" || !/no active turn/i.test(r.error?.message ?? "")) return answerFor(k);
           }
-          return (await startTurn(text)) ? { code: "accepted", next: true } : null;
+          const k = await startTurn(text);
+          return k === "ok" ? { code: "accepted", next: true } : answerFor(k);
         },
         // Its own requests (approvals, questions, tool calls): none came with approvalPolicy never (p37, p38); one
-        // that does is declined with a JSON-RPC error, and the turn goes on without it.
+        // that does is answered with a JSON-RPC error, which declines it.
         line: (l) => {
           const ev = read(l);
           if (ev?.reply) { const r = waiting.get(ev.reply.id); if (r) { waiting.delete(ev.reply.id); r(ev.reply); } return null; }
           if (ev?.request != null) { out({ id: ev.request, error: { code: -32601, message: "routr does not answer this for a headless worker" } }); return { activity: true }; }
+          if (ev?.turn && ev.id) turn = ev.id;
+          if (ev?.result) { if (ev.id) ended.add(ev.id); if (!ev.id || ev.id === turn) turn = null; }
           return ev;
         },
-        open: () => !c.stdin.writableEnded && !c.stdin.destroyed, done: () => c.stdin.end(),
+        open, done: () => c.stdin.end(),
       };
     },
   },
@@ -310,11 +329,16 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
         while ((i = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (!finished) onEvent(h.line(l)); }
       });
       // A harness that answered no (a model or session it does not have) ends that turn failed, and is let go.
+      let taskIn = false;
       h.begin(text).then((r) => {
-        if (r === "refused") { endTurn("failed", null); answer({ code: "failed", why: "harness_refused" }); if (h.open()) h.done(); }
-        else if (!r) { stop(c, { group: true }); answer({ code: "failed", why: "task_not_written" }); }
+        if (finished) return; // it ended first: finish has answered
+        if (r === true) taskIn = true;
+        else if (r === "refused") { endTurn("failed", null); answer({ code: "failed", why: "harness_refused" }); if (h.open()) h.done(); }
+        else { stop(c, { group: true }); answer({ code: "failed", why: "task_not_written" }); }
       });
-      setTimeout(() => answer({ code: "prompted", session: null }), startMs).unref?.();
+      // Not named its session in time: "prompted" only once the task is in (Claude: written; Codex: its turn started),
+      // else not known (from the review of a68ca2e: Codex may still be starting, the brief not yet sent).
+      setTimeout(() => answer(taskIn ? { code: "prompted", session: null } : { code: "unknown", why: "not_started_in_time" }), startMs).unref?.();
     });
     return started;
   };
@@ -354,6 +378,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       const into = inTurn ? st.turn : null, before = st.turn, c = conn;
       sending++;
       let r; try { r = await c.send(m.text, inTurn); } finally { sending--; }
+      // It said no, or ended before saying: no turn counts it, and it is not queued (it may have taken it).
+      if (r && (r.code === "refused" || r.code === "unknown")) { maybeClose(); return { code: r.code, why: r.why }; }
       if (r) {
         if (r.next !== true && into != null) addDelivered(into);
         else if (st.turn > before) addDelivered(before + 1);
@@ -362,6 +388,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
         return { code: r.code };
       }
       maybeClose();
+      // Never got it, yet its input is open: nothing would drain a queue before it exits, so it is refused.
+      if (conn === c && c.open()) return { code: "refused", why: "not_written" };
     }
     // Its input has closed (it is finishing): the next turn, on the same session, once it has exited. Asked again
     // after the write: the holder may have ended or been told to stop meanwhile.

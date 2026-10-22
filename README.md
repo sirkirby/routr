@@ -6,8 +6,8 @@ routr lets one coding agent run a team of others across the AI subscriptions you
 Codex, Cursor, Antigravity, and Kiro.
 
 **It uses what is already on your machine.** The workers are the harness CLIs you have installed and logged in to,
-started in [herdr](https://github.com/herdrdev/herdr) panes (routr is named after it), or, without herdr, Claude Code
-running headless. There are no provider API
+started in [herdr](https://github.com/herdrdev/herdr) panes (routr is named after it), or, without herdr, Claude Code and
+Codex running headless. There are no provider API
 keys to hand over, no proxy, and no new accounts: your subscriptions, your logins, your settings. Keys routr
 needs are for its own chosen decision providers, and those are optional: it can run on your own machine.
 

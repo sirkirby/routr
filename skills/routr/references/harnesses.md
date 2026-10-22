@@ -260,13 +260,13 @@ its JSON-RPC protocol on stdin and stdout (`codex app-server generate-json-schem
 - `turn/steer` with the running turn's id joins that turn: the message arrives as a user message in it. Once the
   turn has ended it is refused (-32600 "no active turn to steer"); a `turn/start` then runs the message as the next
   turn in the same process.
-- `agentMessage` items carry a `phase`; the turn's report is its `final_answer` text, or its last message when the
-  model marks none.
+- `agentMessage` items carry a `phase`; the turn's report is its `final_answer` text, or else its last message
+  that marks no phase (a model that marks none); commentary and partial answers are never the report.
 - Closing its stdin after `turn/completed` ends it at once (exit 0). A new app-server continues the thread with
   `thread/resume`, its context kept.
 - With `approvalPolicy: "never"` it asked the client nothing, a question included (asked in text, the turn completed).
   A request routr does not handle is answered with a JSON-RPC error, which declines it.
 - In a repository with a `.codex/hooks.json` the user has not trusted, the hooks did not run and nothing asked:
-  unlike a pane (where routr passes `--dangerously-bypass-hook-trust`), a headless Codex runs only the hooks the user
-  has trusted.
+  unlike a pane (where routr passes `--dangerously-bypass-hook-trust`), a headless Codex skips hooks the user has not
+  trusted (that a trusted hook runs: not measured).
 - No folder-trust question in a folder Codex has not trusted (a throwaway repository; a pane in the same folder asked).

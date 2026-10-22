@@ -244,7 +244,8 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
     return;
   }
   step("prompt", false, `The worker did not start its task (${r.why ?? r.code})`);
-  throw new Error(r.code === "unknown" ? "the task was handed to the worker's process, which did not answer; run routr workers before launching it again"
+  throw new Error(r.code === "unknown" && r.why === "not_started_in_time" ? `${HARNESSES[o.kind].label} had not started the task's turn after 30 seconds, and whether it will is not known; run routr workers before launching it again`
+    : r.code === "unknown" ? "the task was handed to the worker's process, which did not answer; run routr workers before launching it again"
     : `${HARNESSES[o.kind].label} ended before it started the task (${r.why ?? r.code})`);
 }
 
@@ -369,7 +370,7 @@ export async function sendCommand(args, { env = process.env, settings = () => lo
     out.message = { code: r.code, ...(r.why ? { why: r.why } : {}) };
     if (!SENT[r.code]) {
       out.state = r.code === "unknown" ? "unknown" : "refused";
-      out.headline = `routr: ${name} did not take the message (${r.why ?? r.code})`;
+      out.headline = r.code === "unknown" ? `routr: whether ${name} took the message is not known (${r.why ?? "no_answer"})` : `routr: ${name} did not take the message (${r.why ?? r.code})`;
       if (r.code === "unknown") out.next.push(runNext(`Whether ${name} got the message is not known: look at it before sending it again.`, ["routr", "workers", "--name", name]));
       return answer(out);
     }
