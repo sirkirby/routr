@@ -141,9 +141,10 @@ project's `.env` itself or pass it to the harness commands it runs (sign-in stat
 in its environment, exported in your shell, still reach them. A worker that `routr launch` starts runs in its pane's
 own shell, which loads what that shell is set up to load. Every process it starts goes through one place, which hides
 its console on Windows, gives harness reads an environment without herdr's pane variables, and on Windows resolves a
-command as the shell would, starting an npm `.cmd` shim's script directly. In a pane, routr types commands for that pane's own shell (POSIX `sh`, PowerShell or
-cmd), as you would. Follow-up commands have exact `argv` and a common-shell `command` only for the documented
-safe alphabet and an unquoted, non-assignment executable; otherwise `command` is null. Instructions and templates are marked `kind: "do"`, never runnable.
+command as the shell would, starting an npm `.cmd` shim's script directly. In a pane, routr types commands for that
+pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. Follow-up commands have exact `argv` and a
+common-shell `command` only for the documented safe alphabet and an unquoted, non-assignment executable; otherwise
+`command` is null. Instructions and templates are marked `kind: "do"`, never runnable.
 Unsafe template values become placeholders for the lead to fill, never expanding shell text. Execution history stays
 display only, with prompt lengths instead of prompt text.
 
