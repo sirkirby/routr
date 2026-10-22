@@ -837,6 +837,23 @@ test("a herdr call answers at its timeout even when the killed client never clos
   expect(await call).toMatchObject({ ok: false, data: { error: { code: "timeout" } } });
 });
 
+// herdr 0.9.5 types into a pane and answers nothing (exit 0, empty stdout): through the transport as the CLI gives it.
+test("through the transport, typing into a pane succeeds on exit 0 with no output; a failed exit, older JSON and other commands are as before", async () => {
+  const child = (out, err, code) => (...a) => {
+    const c = new EventEmitter(), pipe = () => Object.assign(new EventEmitter(), { destroy() {} });
+    Object.assign(c, { stdout: pipe(), stderr: pipe(), kill() {}, unref() {} });
+    setTimeout(() => { if (out) c.stdout.emit("data", out); if (err) c.stderr.emit("data", err); c.emit("close", code); }, 5);
+    return c;
+  };
+  const call = (args, out, err, code) => runHerdr(args, 1000, { via: child(out, err, code) });
+  for (const a of [["pane", "run", "w1:p1", "echo hi"], ["pane", "send-text", "w1:p1", "x"], ["pane", "send-keys", "w1:p1", "enter"], ["--session", "s", "pane", "run", "w1:p1", "x"]]) {
+    expect([a.join(" "), await call(a, "", "", 0)]).toEqual([a.join(" "), { ok: true, data: { result: {} } }]);
+    expect([a.join(" "), await call(a, '{"id":"cli:pane:run","result":{}}', "", 0)]).toEqual([a.join(" "), { ok: true, data: { result: {} } }]);
+    expect([a.join(" "), (await call(a, "", "error: no such pane", 1)).ok]).toEqual([a.join(" "), false]);
+  }
+  expect((await call(["pane", "split", "w1:p1"], "", "", 0)).code).toBe("herdr_unreachable");
+});
+
 test("launch --copy is repeatable, needs --worktree, and refuses paths outside the repository", async () => {
   const { parseLaunchArgs } = await import("./contract.mjs");
   const base = ["--kind", "codex", "--name", "w", "--model", "m"];
