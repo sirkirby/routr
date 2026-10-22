@@ -6,7 +6,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { claim, connect, endpointFor, generations, ownEndpoint, probe, serve, SOCKET_DIR, writeSecret } from "../src/lib/channel.mjs";
-import { ADAPTERS, codexReader, readEvent } from "../src/lib/headless.mjs";
+import { ADAPTERS, agyReader, codexReader, readEvent } from "../src/lib/headless.mjs";
 import { unmakeWorktree, view } from "../src/lib/workers.mjs";
 import { EventEmitter } from "node:events";
 import { Writable } from "node:stream";
@@ -97,6 +97,34 @@ process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n"
 } });
 process.stdin.on("end", () => { ended = true; if (!busy) process.exit(0); });
 `;
+// Antigravity's stream-json, as measured (p39): init with the conversation, step_update steps (a tool's name), result
+// with the response; a line written while a turn runs waits and runs as the next turn in the same process; closing
+// stdin ends it once no turn runs. HOLD, FAIL, CRASH, MCP as above.
+const FAKE_AGY = `
+const fs = require("node:fs");
+const a = process.argv.slice(2);
+if (a[0] === "models") { console.log("gemini-3.8-flash-low"); process.exit(0); }
+if (!a.includes("--input-format")) process.exit(0);
+if (process.env.FAKE_ARGV) fs.appendFileSync(process.env.FAKE_ARGV, JSON.stringify(["agy", ...a]) + "\\n");
+const conv = a.includes("--conversation") ? a[a.indexOf("--conversation") + 1] : "a67fd46b-3c80-4ed3-bf70-dc822b03ba83";
+const out = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let buf = "", busy = false, ended = false, n = 0, inited = false; const waiting = [];
+async function turn(text) {
+  if (text.includes("CRASH")) process.exit(3);
+  busy = true; n++;
+  if (!inited) { inited = true; out({ event: "init", conversation_id: conv, init: { model: "m", cwd: process.cwd(), tools: [] } }); }
+  out({ event: "step_update", step_update: { conversation_id: conv, step_index: 0, state: "DONE", step_type: "user_input" } });
+  out({ event: "step_update", step_update: { conversation_id: conv, step_index: 1, state: "ACTIVE", step_type: "tool", tool_name: text.includes("MCP") ? "call_mcp_tool" : "run_command", tool_info: { command: "an argument" } } });
+  if (text.includes("HOLD")) for (let i = 0; i < 400 && !fs.existsSync(process.env.FAKE_GATE); i++) await sleep(50);
+  out({ event: "result", result: { conversation_id: conv, status: text.includes("FAIL") ? "ERROR" : "SUCCESS", response: "VERDICT: done\\nSUMMARY: turn " + n + " of this process", num_turns: n } });
+  busy = false;
+  if (waiting.length) return turn(waiting.shift());
+  if (ended) process.exit(0);
+}
+process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const e = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1); const t = e.message.content; if (busy) waiting.push(t); else turn(t); } });
+process.stdin.on("end", () => { if (process.env.FAKE_EOF) fs.appendFileSync(process.env.FAKE_EOF, JSON.stringify({ turns: n, busy, waiting: waiting.length }) + "\\n"); ended = true; if (!busy) process.exit(0); });
+`;
 const BRIEF = "PRIVATE-BRIEF-7f3a: rename foo to bar in x.js. Check: grep bar x.js.";
 const SENT = "PRIVATE-SEND-91c2: also rename baz.";
 
@@ -105,9 +133,10 @@ function world(over = {}) {
   for (const d of [bin, work, inputs]) mkdirSync(d, { recursive: true });
   fakeExecutable(bin, "claude", FAKE_CLAUDE);
   fakeExecutable(bin, "codex", FAKE_CODEX);
+  fakeExecutable(bin, "agy", FAKE_AGY);
   const gate = join(home, "gate"), linger = join(home, "linger");
   // git's own folder too: launch --worktree and cleanup run it, as they would for a person.
-  const env = cliEnv(home, { PATH: [bin, dirname(process.execPath), dirname(Bun.which("git") ?? "git")].join(delimiter), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_RPC: join(home, "rpc.jsonl"), FAKE_ANSWERS: join(home, "answers.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, ...over });
+  const env = cliEnv(home, { PATH: [bin, dirname(process.execPath), dirname(Bun.which("git") ?? "git")].join(delimiter), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_RPC: join(home, "rpc.jsonl"), FAKE_ANSWERS: join(home, "answers.jsonl"), FAKE_EOF: join(home, "eof.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, ...over });
   for (const k of Object.keys(env)) if (/^(HERDR_|CLAUDECODE$|CLAUDE_CODE_SESSION|SANDBOX_RUNTIME$|CODEX_SANDBOX)/.test(k)) delete env[k];
   const outputs = [];
   const run = (args, extra = {}) => {
@@ -117,7 +146,7 @@ function world(over = {}) {
   };
   const task = (text, name = "task.md") => { const f = join(inputs, name); writeFileSync(f, text); return f; };
   const advise = (file) => { const a = join(home, `${file.split(/[\\/]/).pop()}.advice.json`); writeFileSync(a, JSON.stringify(run(["dispatch", "--task-file", file]))); return a; };
-  const launchW = (name, file, more = [], extra, kind = "claude") => run(["launch", "--kind", kind, "--name", name, "--model", kind === "codex" ? "gpt-6-luna" : "haiku", "--task-file", file, "--advice", advise(file), ...more], extra);
+  const launchW = (name, file, more = [], extra, kind = "claude") => run(["launch", "--kind", kind, "--name", name, "--model", { codex: "gpt-6-luna", agy: "gemini-3.8-flash-low" }[kind] ?? "haiku", "--task-file", file, "--advice", advise(file), ...more], extra);
   const runDir = (name) => join(home, ".local", "state", "routr", "workers", name);
   const state = (n) => { try { return JSON.parse(readFileSync(join(runDir(n), "state.json"), "utf8")); } catch { return {}; } };
   const settled = (n) => until(() => !["working", "waiting", "starting"].includes(state(n).state));
@@ -170,6 +199,13 @@ test("a headless Claude worker: launch, a message mid-turn, wait, a follow-up th
   expect(w.run(["cleanup", "--worker", "w1", "--cwd", w.work]).error).toBe("--worker takes no --cwd: the worker's run folder says where its worktree is");
 }, 90000);
 
+// No brief or message text in any file under the home but the test's own inputs and the reports.
+const noBriefInFiles = (w) => {
+  for (const f of filesUnder(w.home).filter((x) => !x.startsWith("inputs") && !x.split(/[\\/]/).includes("reports") && !x.startsWith("bin"))) {
+    const text = readFileSync(join(w.home, f), "utf8");
+    for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([f, m, text.includes(m)]).toEqual([f, m, false]);
+  }
+};
 const rpcs = (w) => { try { return readFileSync(join(w.home, "rpc.jsonl"), "utf8").trim().split("\n").map((x) => JSON.parse(x)); } catch { return []; } };
 
 test("a headless Codex worker: its app-server, a message steered into the running turn, wait, a follow-up that resumes its thread", async () => {
@@ -201,7 +237,7 @@ test("a headless Codex worker: its app-server, a message steered into the runnin
   expect(w.run(["wait", "--name", "c1", "--timeout", "20000"]).workers[0].turns).toMatchObject([{ turn: 2, outcome: "finished", delivered: 0 }]);
   await w.settled("c1");
   for (const o of w.outputs) for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([m, o.includes(m)]).toEqual([m, false]);
-  for (const f of ["argv.jsonl", "rpc.jsonl"]) for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([f, readFileSync(join(w.home, f), "utf8").includes(m)]).toEqual([f, false]);
+  noBriefInFiles(w);
   expect(w.run(["cleanup", "--worker", "c1"])).toMatchObject({ ok: true, state: "removed" });
 }, 60000);
 
@@ -265,6 +301,69 @@ test("Codex: steering follows the turn Codex names; a steer once the turn has en
   const r = codexPipe(), b = r.h.begin("x");
   await r.answer({ userAgent: "x" }); await r.answer(null, { code: -32600, message: "model not found" });
   expect([await b, r.events, await r.h.send("y")]).toEqual(["refused", [], { code: "refused", why: "not_started" }]);
+});
+
+test("a headless Antigravity worker: its stream-json mode, a message queued as its next turn, a follow-up that continues its conversation", async () => {
+  const w = world(), file = w.task(`${BRIEF} HOLD`);
+  const l = w.launch("a1", file, [], undefined, "agy");
+  expect([l.ok, l.state, l.headline]).toEqual([true, "prompted", "routr: a1 (agy) took its task, running headless"]);
+  expect(l.worker.session).toBe("a67fd46b-3c80-4ed3-bf70-dc822b03ba83");
+  // As in a pane: its permissions, the worker's folder, the model id; the brief only on stdin.
+  expect(l.start.argv).toEqual(["--print=", "--input-format", "stream-json", "--output-format", "stream-json", "--dangerously-skip-permissions", "--add-dir", l.cwd, "--model", "gemini-3.8-flash-low"]);
+  expect(await until(() => w.state("a1").last_tool === "run_command")).toBe(true);
+  // Mid-turn, the message waits: it runs as turn 2 of the same process, and is counted there.
+  const s = w.run(["send", "--name", "a1", "--task", SENT]);
+  expect([s.ok, s.state, s.message.code]).toEqual([true, "delivered", "handed_to_harness"]);
+  w.release();
+  expect(await until(() => w.state("a1").turns?.length === 2 && w.state("a1").turns[1].outcome === "finished")).toBe(true);
+  const done = w.run(["wait", "--name", "a1", "--timeout", "20000"]);
+  expect(done.workers[0].turns.map((t) => [t.turn, t.outcome, t.delivered])).toEqual([[1, "finished", 0], [2, "finished", 1]]);
+  expect(readFileSync(done.workers[0].turns[1].report, "utf8")).toBe("VERDICT: done\nSUMMARY: turn 2 of this process");
+  await w.settled("a1");
+  // Idle: a new process continues the conversation.
+  expect(w.run(["send", "--name", "a1", "--task", SENT]).state).toBe("resumed");
+  const argv = readFileSync(join(w.home, "argv.jsonl"), "utf8").trim().split("\n").map((x) => JSON.parse(x)).filter((x) => x[0] === "agy");
+  expect(argv.at(-1).slice(-2)).toEqual(["--conversation", "a67fd46b-3c80-4ed3-bf70-dc822b03ba83"]);
+  expect(w.run(["wait", "--name", "a1", "--timeout", "20000"]).workers[0].turns).toMatchObject([{ turn: 3, outcome: "finished" }]);
+  await w.settled("a1");
+  for (const o of w.outputs) for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([m, o.includes(m)]).toEqual([m, false]);
+  noBriefInFiles(w);
+  // Two corrections in one turn: two turns of their own, one message each, and its input open until the last has run.
+  rmSync(w.gate, { force: true }); rmSync(join(w.home, "eof.jsonl"), { force: true });
+  expect(w.launch("a3", w.task(`${BRIEF} HOLD`, "q.md"), [], undefined, "agy").state).toBe("prompted");
+  for (const t of [SENT, `${SENT} again`]) expect(w.run(["send", "--name", "a3", "--task", t]).state).toBe("delivered");
+  w.release();
+  expect(await until(() => w.state("a3").turns?.length === 3 && w.state("a3").turns.every((t) => t.outcome === "finished"))).toBe(true);
+  expect(w.state("a3").turns.map((t) => t.delivered)).toEqual([0, 1, 1]);
+  await w.settled("a3");
+  expect(readFileSync(join(w.home, "eof.jsonl"), "utf8").trim().split("\n").map((x) => JSON.parse(x))).toEqual([{ turns: 3, busy: false, waiting: 0 }]);
+  // A failed turn, and an MCP tool by its fixed name.
+  const f = w.launch("a2", w.task(`${BRIEF} FAIL MCP`, "f.md"), [], undefined, "agy");
+  expect(f.state).toBe("prompted");
+  await w.settled("a2");
+  expect(w.state("a2")).toMatchObject({ state: "failed", last_tool: "mcp", turns: [expect.objectContaining({ outcome: "failed" })] });
+  // In its own worktree: the folder it is given is the worktree's, as shown. An --effort it would refuse writes nothing.
+  repo(w);
+  expect(w.launch("a4", w.task(BRIEF, "e.md"), ["--worktree", "work/a4", "--effort", "high"], undefined, "agy").error).toBe("agy encodes effort in --model; omit --effort (agy 1.2.11 refuses one that disagrees with the id)");
+  expect(existsSync(w.runDir("a4"))).toBe(false);
+  const t = w.launch("a4", w.task(BRIEF, "e.md"), ["--worktree", "work/a4"], undefined, "agy");
+  expect(t.state).toBe("prompted");
+  const ran = readFileSync(join(w.home, "argv.jsonl"), "utf8").trim().split("\n").map((x) => JSON.parse(x)).filter((x) => x[0] === "agy").at(-1);
+  expect([t.start.argv[t.start.argv.indexOf("--add-dir") + 1], ran[ran.indexOf("--add-dir") + 1], t.cwd]).toEqual([t.worktree.path, t.worktree.path, t.worktree.path]);
+  await w.settled("a4");
+  for (const n of ["a1", "a2", "a3", "a4"]) expect(w.run(["cleanup", "--worker", n]).state).toBe("removed");
+}, 60000);
+
+test("Antigravity's stream as routr reads it: the conversation, turns it starts for queued messages, fixed tool names, the response", () => {
+  const read = agyReader(), j = (o) => read(JSON.stringify(o));
+  expect(j({ event: "init", conversation_id: "a67fd46b-3c80-4ed3-bf70-dc822b03ba83", init: {} })).toEqual({ turn: true, session: "a67fd46b-3c80-4ed3-bf70-dc822b03ba83" });
+  expect(j({ event: "step_update", step_update: { step_type: "user_input", state: "DONE" } })).toEqual({ activity: true });
+  for (const [name, tool] of [["run_command", "run_command"], ["call_mcp_tool", "mcp"], ["something_new", "other"]]) expect(j({ event: "step_update", step_update: { step_type: "tool", state: "ACTIVE", tool_name: name } })).toEqual({ tool });
+  expect(j({ event: "result", result: { status: "SUCCESS", response: "the answer" } })).toEqual({ result: { failed: false, text: "the answer" } });
+  // The first step after a result is the next turn: a message it had queued.
+  expect(j({ event: "step_update", step_update: { step_type: "user_input", state: "DONE" } })).toEqual({ turn: true, activity: true });
+  expect(j({ event: "result", result: { status: "ERROR" } })).toEqual({ result: { failed: true, text: null } });
+  expect([read("not json"), j({ event: "something" })]).toEqual([null, null]);
 });
 
 test("the brief and messages reach the harness on stdin only: never an answer, an argument, or a file but the reports", async () => {
@@ -501,7 +600,7 @@ test("a harness that ends before its session leaves a failed worker that send wi
 test("outside herdr, launch refuses what a headless worker cannot do, before it writes or starts anything", async () => {
   const w = world(), file = w.task(BRIEF), advice = w.advise(file);
   const go = (args, extra) => w.run(["launch", "--name", "r1", "--model", "m", "--task-file", file, "--advice", advice, ...args], extra);
-  expect(go(["--kind", "cursor"]).error).toBe("outside herdr, routr launch starts Claude Code and Codex workers only; run the lead inside herdr for a Cursor worker");
+  expect(go(["--kind", "cursor"]).error).toBe("outside herdr, routr launch starts Claude Code, Codex and Antigravity workers only; run the lead inside herdr for a Cursor worker");
   expect(go(["--kind", "claude", "--pane", "w1:p1"]).error).toBe("--pane needs herdr; outside herdr a worker runs headless, with no pane");
   expect(go(["--kind", "claude", "--worktree", "b"]).error).toStartWith("--worktree needs a git repository: git found none at");
   expect(w.run(["launch", "--kind", "claude", "--name", "r1", "--model", "m"]).error).toBe("outside herdr a worker starts with its task: pass --task-file (or --task) and --advice");
