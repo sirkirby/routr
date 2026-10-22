@@ -68,6 +68,7 @@ export function readEvent(line) {
 
 // Codex's item types as it sends them; an MCP server's tool is `mcp`, anything else `other`.
 const CODEX_ITEMS = new Set(["commandExecution", "fileChange", "webSearch", "imageView", "dynamicToolCall", "collabAgentToolCall", "subAgentActivity", "sleep", "imageGeneration", "contextCompaction"]);
+const READY_MS = 30000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // One line of the Codex app-server's output, for one connection: a reply to one of its requests, a request of its own,
 // or a notification read as what routr knows how to say. The turn's report is its final answer (agentMessage phase
@@ -170,9 +171,11 @@ export const ADAPTERS = {
           emit({ session: thread }); return true;
         })()),
         // Once the task's turn has started: into the running turn; when there is none, or Codex says the turn has just
-        // ended ("no active turn"), the next turn in this process. Any other no is a refusal.
+        // ended ("no active turn"), the next turn in this process. Any other no is a refusal. The wait for that turn is
+        // bounded under send's own (45 s), so a sender is never told "not known" about a message that then goes in.
         send: async (text) => {
-          if ((await ready) !== true) return { code: "refused", why: "not_started" };
+          const started = await Promise.race([ready, new Promise((r) => setTimeout(() => r("late"), READY_MS).unref?.())]);
+          if (started !== true) return { code: "refused", why: "not_started" };
           if (turn) {
             const r = await rpc("turn/steer", { threadId: thread, expectedTurnId: turn, input: [{ type: "text", text }] });
             const k = outcome(r);

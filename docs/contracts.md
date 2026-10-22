@@ -599,7 +599,7 @@ in memory and, once that process has exited, starts a new one resuming the same 
 dies first), `resumed` (a new holder resumed the session with it: `prompted`), `refused` (the holder did not take it:
 `message.why` is a fixed code, such as `no_session`, `stopping`, `queue_full`, `harness_ended` when the resumed
 harness ended before taking it, `harness_refused` when Codex said no, `not_started` when Codex had not started the
-task's turn, or `not_written` when its input would not take it), `unknown` (handed over and no answer came: whether it
+task's turn within 30 seconds, or `not_written` when its input would not take it), `unknown` (handed over and no answer came: whether it
 was taken is not known, and it is never sent again on its own; `no_reply` when Codex ended before answering;
 `headline` `routr: whether <name> took the message is not known (<why>)`), `failed` (refused input).
 

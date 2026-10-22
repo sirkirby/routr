@@ -218,7 +218,7 @@ test("Codex: a question it asks is declined and the turn goes on; a model it lac
   await w.settled("c2");
   expect(w.state("c2").turns.map((t) => t.outcome)).toEqual(["finished"]);
   const bad = w.run(["launch", "--kind", "codex", "--name", "c3", "--model", "nosuch", "--task-file", w.task(BRIEF, "b.md"), "--advice", w.advise(w.task(BRIEF, "b.md"))]);
-  expect([bad.ok, bad.state, bad.error]).toEqual([false, "failed", "Launch failed after prompt submission: Codex ended before it started the task (harness_refused)"]);
+  expect([bad.ok, bad.state, bad.error]).toEqual([false, "failed", "Launch failed after prompt submission: Codex refused the task (harness_refused)"]);
   await w.settled("c3");
   expect(w.state("c3")).toMatchObject({ state: "failed", turns: [expect.objectContaining({ outcome: "failed" })] });
   for (const n of ["c2", "c3"]) w.run(["cleanup", "--worker", n]);

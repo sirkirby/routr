@@ -246,7 +246,7 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
   step("prompt", false, `The worker did not start its task (${r.why ?? r.code})`);
   throw new Error(r.code === "unknown" && r.why === "not_started_in_time" ? `${HARNESSES[o.kind].label} had not started the task's turn after 30 seconds, and whether it will is not known; run routr workers before launching it again`
     : r.code === "unknown" ? "the task was handed to the worker's process, which did not answer; run routr workers before launching it again"
-    : `${HARNESSES[o.kind].label} ended before it started the task (${r.why ?? r.code})`);
+    : r.why === "harness_refused" ? `${HARNESSES[o.kind].label} refused the task (${r.why})` : `${HARNESSES[o.kind].label} ended before it started the task (${r.why ?? r.code})`);
 }
 
 // ---- wait ------------------------------------------------------------------------------------------------------------
@@ -350,7 +350,8 @@ export async function sendCommand(args, { env = process.env, settings = () => lo
       if (!same()) throw new Error(`${name} was cleaned up and launched again meanwhile; nothing was sent`);
       try { return await ask(name, p, op, { text: message }, ms); } catch (e) { return { code: "unknown", why: e?.code ?? "no_answer" }; }
     };
-    if (p.state === "alive") r = await deliver("send", 5000);
+    // A running worker answers at once, or within the 30 s its harness may take to start the task's turn (Codex).
+    if (p.state === "alive") r = await deliver("send", 45000);
     if (p.state !== "alive" || (r?.code === "refused" && r.why === "ended")) {
       // A new holder: everything a launch checks before it starts one.
       if (["unreachable", "starting"].includes(p.state)) throw new Error(`${name}'s process does not answer; run routr workers, and wait or stop it before sending`);
