@@ -42,7 +42,15 @@ const TOOLS = new Set(["Bash", "Read", "Edit", "MultiEdit", "Write", "Glob", "Gr
   "NotebookEdit", "NotebookRead", "ToolSearch", "Monitor", "Skill", "BashOutput", "KillShell", "ExitPlanMode"]);
 const toolName = (n) => (typeof n !== "string" ? "other" : TOOLS.has(n) ? n : n.startsWith("mcp__") ? "mcp" : "other");
 const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const REPORT_MAX = 1024 * 1024; // bytes of UTF-8; a character cut at the end is dropped
+const REPORT_MAX = 1024 * 1024; // bytes of UTF-8
+// A report over REPORT_MAX is cut there, back to the start of the character the cut fell in; one under it is kept whole.
+const cut = (text) => {
+  const b = Buffer.from(text);
+  if (b.length <= REPORT_MAX) return text;
+  let end = REPORT_MAX;
+  while (end > 0 && (b[end] & 0xc0) === 0x80) end--; // b[end] continues a character: start it after the cut instead
+  return b.subarray(0, end).toString();
+};
 // One line of Claude's stream, as what routr knows how to say: the session, a turn starting, a tool, how many
 // background tasks are running, a turn's end. Anything else is ignored.
 export function readEvent(line) {
@@ -51,7 +59,7 @@ export function readEvent(line) {
   if (e.type === "system" && e.subtype === "init") return { turn: true, ...(SESSION_ID.test(e.session_id) ? { session: e.session_id } : {}) };
   if (e.type === "system" && e.subtype === "background_tasks_changed") return { tasks: Array.isArray(e.tasks) ? e.tasks.length : 0 };
   if (e.type === "assistant") { const t = (e.message?.content ?? []).filter((c) => c?.type === "tool_use").at(-1); return t ? { tool: toolName(t.name) } : { activity: true }; }
-  if (e.type === "result") return { result: { failed: e.is_error === true, text: typeof e.result === "string" ? Buffer.from(e.result).subarray(0, REPORT_MAX).toString().replace(/\uFFFD$/, "") : null } };
+  if (e.type === "result") return { result: { failed: e.is_error === true, text: typeof e.result === "string" ? cut(e.result) : null } };
   return null;
 }
 
@@ -85,9 +93,11 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   };
   const queue = [];
   let child = null, inTurn = false, stopping = null, stopAsked = false, settled = false, server = null, endpoint = null, started = null, answering = 0;
+  // Messages written to Claude between turns: counted on the turn they start, once Claude starts it.
+  let pending = 0, refusing = null;
   const turnRow = () => st.turns.at(-1);
   const setRow = (patch) => ({ turns: [...st.turns.slice(0, -1), { ...turnRow(), ...patch }] });
-  const beginTurn = () => { inTurn = true; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered: 0 }], state: "working" }); };
+  const beginTurn = () => { inTurn = true; const delivered = pending; pending = 0; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered }], state: "working" }); };
   const endTurn = (outcome, text) => {
     if (!inTurn) return;
     inTurn = false;
@@ -151,7 +161,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       // What this holder started is on disk before the task goes in, or the task does not go in: it is stopped, and
       // the holder stays until it has closed.
       if (!save({ harness_pid: c.pid, harness_pgid: process.platform === "win32" ? null : c.pid, state: "working", ...(session ? {} : { session_id: null }) })) {
-        stop(c, { group: true }); answer({ code: "failed", why: "state_not_written" }); return;
+        refusing = "state_not_written"; stop(c, { group: true }); answer({ code: "failed", why: "state_not_written" }); return;
       }
       let buf = "";
       c.stdout.setEncoding("utf8");
@@ -166,6 +176,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
           if (ev.tasks != null) save({ tasks: ev.tasks });
           if (ev.tool) save({ last_tool: ev.tool, last_event_at: new Date().toISOString() }, { quiet: true });
           if (ev.activity) save({ last_event_at: new Date().toISOString() }, { quiet: true });
+          // A turn Claude started without saying so (no init seen) still gets its outcome.
+          if (ev.result && !inTurn) beginTurn();
           if (ev.result) endTurn(ev.result.failed ? "failed" : "finished", ev.result.text);
           // Nothing more to say to it: close its input, so it ends once its background commands have.
           if ((ev.result || ev.tasks === 0) && !inTurn && !queue.length && !st.tasks && !c.stdin.writableEnded) c.stdin.end();
@@ -198,18 +210,21 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
     if (op === "stop") return stopAll();
     if (op !== "start" && op !== "send") return { code: "refused", why: "unknown_op" };
     if (typeof m.text !== "string" || !m.text.trim()) return { code: "refused", why: "empty" };
-    if (stopAsked) return { code: "refused", why: "stopping" };
+    if (stopAsked || refusing) return { code: "refused", why: refusing ?? "stopping" };
     if (settled) return { code: "refused", why: "ended" }; // the sender starts the next generation
     if (!child && !started) {
       if (op === "send" && !st.session_id) return { code: "refused", why: "no_session" }; // a follow-up is not a task
       return runHarness(m.text, op === "send" ? st.session_id : null);
     }
-    if (child) {
-      // Between turns, a message starts the next one (Claude has not been measured to say when it does).
-      const between = !inTurn;
-      if (between) beginTurn();
-      if (await write(child, m.text)) { if (!between) save(setRow({ delivered: (turnRow()?.delivered ?? 0) + 1 })); return { code: "handed_to_harness" }; }
-      if (between) endTurn("not_started", null);
+    // Into the running Claude while its input is open: counted on the running turn, or, between turns, on the turn it
+    // starts. A write that fails changes no turn.
+    if (child && !child.stdin.writableEnded && !child.stdin.destroyed) {
+      const into = inTurn ? st.turn : null;
+      if (await write(child, m.text)) {
+        if (into != null && st.turn === into && inTurn) save(setRow({ delivered: (turnRow()?.delivered ?? 0) + 1 }));
+        else pending++;
+        return { code: "handed_to_harness" };
+      }
     }
     // Its input has closed (it is finishing): the next turn, on the same session, once it has exited. Asked again
     // after the write: the holder may have ended or been told to stop meanwhile.

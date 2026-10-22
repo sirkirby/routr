@@ -52,14 +52,14 @@ const SUN_MAX = () => (process.platform === "darwin" ? 103 : 107);
 export const socketPathFits = () => WIN() || Buffer.byteLength(join(SOCKET_DIR(), "x".repeat(8) + ".999999." + "x".repeat(6))) <= SUN_MAX();
 export function endpointFor(id, gen) {
   const r = randomBytes(8).toString("hex");
-  if (WIN()) return `\\\\.\\pipe\\routr-${r}`;
+  if (WIN()) return `\\\\.\\pipe\\routr-${id.slice(0, 8)}-${r}`;
   const p = join(privateDir(SOCKET_DIR()), `${id.slice(0, 8)}.${gen}.${r.slice(0, 6)}`);
   if (Buffer.byteLength(p) > SUN_MAX()) throw fail("path_too_long", `the worker's socket path is ${Buffer.byteLength(p)} bytes, over this system's ${SUN_MAX()}-byte limit`);
   return p;
 }
 // An endpoint this channel made: a pipe of routr's, or a socket in routr's own folder for this run.
 // Its folder exactly, a name of this run's own shape, and (to remove it) a socket, never a file or a link.
-export const ownEndpoint = (id, endpoint) => typeof endpoint === "string" && (WIN() ? /^\\\\\.\\pipe\\routr-[0-9a-f]{16}$/.test(endpoint)
+export const ownEndpoint = (id, endpoint) => typeof endpoint === "string" && (WIN() ? new RegExp(`^\\\\\\\\\\.\\\\pipe\\\\routr-${id.slice(0, 8)}-[0-9a-f]{16}$`).test(endpoint)
   : dirname(endpoint) === SOCKET_DIR() && new RegExp(`^${id.slice(0, 8)}\\.\\d+\\.[0-9a-f]{6}$`).test(basename(endpoint)));
 
 // ---- generations --------------------------------------------------------------------------------------------------
@@ -98,7 +98,12 @@ export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
     const c = await connect(dir, n, ready.endpoint, { timeout });
     const r = await c.request("ping", {}, timeout); c.close();
     return { state: "alive", gen: n, ready, ping: r };
-  } catch (e) { return { state: ["ENOENT", "ECONNREFUSED"].includes(e?.code) ? "dead" : "unreachable", gen: n, ready }; }
+  } catch (e) {
+    // A holder that has just ended closes its channel right after it says so: read again before calling it dead.
+    const late = readJson(genFile(dir, n, "released"));
+    if (late) return { state: "released", gen: n, ready, released: late };
+    return { state: ["ENOENT", "ECONNREFUSED"].includes(e?.code) ? "dead" : "unreachable", gen: n, ready };
+  }
 }
 
 // ---- framing ------------------------------------------------------------------------------------------------------

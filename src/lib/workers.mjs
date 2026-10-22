@@ -69,13 +69,13 @@ const ask = async (name, p, op, extra = {}, ms = 5000) => {
 export async function view(name, { check = true } = {}) {
   const w = readWorker(name);
   if (!w) return null;
+  // The channel first, then the state: a holder that ends between the two has written its last state by the time
+  // its generation reads released.
+  const channel = check ? (await probe(runDir(name))).state : null;
   const st = readState(name) ?? {};
   let state = st.state ?? "starting";
-  if (check) {
-    const channel = (await probe(runDir(name))).state;
-    if (RUNNING.has(state) && ["dead", "abandoned", "none"].includes(channel)) state = "lost";
-    if (channel === "unreachable") state = "unreachable";
-  }
+  if (RUNNING.has(state) && ["dead", "abandoned", "none"].includes(channel)) state = "lost";
+  if (channel === "unreachable") state = "unreachable";
   const reported = (st.turns ?? []).filter((t) => t.report).at(-1);
   return { name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, state, gen: st.gen ?? 0, turn: st.turn ?? 0,
     seconds_since_event: ago(st.last_event_at ?? st.updated_at), last_tool: st.last_tool ?? null, tasks: st.tasks ?? 0, queued: st.queued ?? 0,

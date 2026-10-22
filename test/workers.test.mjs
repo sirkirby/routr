@@ -266,9 +266,11 @@ test("Claude's stream as routr reads it: the session, turns, fixed tool names, b
   expect(readEvent(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "thinking out loud" }] } }))).toEqual({ activity: true });
   expect(readEvent(JSON.stringify({ type: "result", subtype: "success", is_error: false, result: "VERDICT: done" }))).toEqual({ result: { failed: false, text: "VERDICT: done" } });
   expect(readEvent(JSON.stringify({ type: "result", is_error: true }))).toEqual({ result: { failed: true, text: null } });
-  // A report is cut at 1 MB of UTF-8, never in the middle of a character.
-  const long = readEvent(JSON.stringify({ type: "result", result: "é".repeat(700000) })).result.text;
-  expect([Buffer.byteLength(long), long.endsWith("é")]).toEqual([1024 * 1024, true]);
+  // A report over 1 MB of UTF-8 is cut there, back to a whole character (here the cut falls inside an é); one under it
+  // is kept exactly as written, a replacement character at its end included.
+  const long = readEvent(JSON.stringify({ type: "result", result: "x" + "é".repeat(700000) })).result.text;
+  expect([Buffer.byteLength(long), long.endsWith("é"), long.includes("\uFFFD")]).toEqual([1024 * 1024 - 1, true, false]);
+  expect(readEvent(JSON.stringify({ type: "result", result: "ok\uFFFD" })).result.text).toBe("ok\uFFFD");
   for (const l of ["not json", "null", JSON.stringify({ type: "rate_limit_event" }), JSON.stringify({ type: "system", subtype: "hook_started" })]) expect(readEvent(l)).toBeNull();
 });
 

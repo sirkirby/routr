@@ -413,8 +413,10 @@ plans the pane launch as before: it does not check the environment.
   holder or worker started: another kind; any of `--pane`, `--direction`, `--worktree`, `--base`, `--copy`; no task; a task too large;
   a lead's sandbox it can see (`SANDBOX_RUNTIME`, `CODEX_SANDBOX`); a name whose run folder exists; a home whose socket
   path would be too long; the subscription turned off; Claude not signed in.
-- `--timeout` (default 120000) caps the wait for the holder to answer (at most 15 seconds) and the wait for Claude to
-  take the task (between 35 and 45 seconds, whatever --timeout leaves: the holder itself answers after 30).
+- `--timeout` (default 120000) sets budgets, not a bound on the whole call: polling for the holder gets up to 15
+  seconds of it (a probe under way when that runs out finishes), and the request handing Claude the task gets between
+  35 and 45 seconds (the holder itself answers after 30). The sign-in check, the lock and each channel handshake can
+  add time.
 - `state`: `prompted` or `failed`. `prompted` means the task was written to Claude's input and Claude named its
   session, or 30 seconds passed without one; it does not prove Claude read or accepted the task. `wait` says how the
   turn went.
