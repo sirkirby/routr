@@ -248,3 +248,25 @@ What `routr launch` outside herdr relies on: `claude -p --input-format stream-js
   (Keychain hidden; it sets `CODEX_SANDBOX`).
 - Started from a Bun process in a folder with a `.env`, Claude used that file's `ANTHROPIC_API_KEY` (`apiKeySource`
   in its `init`): Bun had loaded it. routr's release builds do not load a `.env`.
+
+## Codex headless, outside herdr (measured 2026-10-22, codex-cli 0.163.0)
+
+What `routr launch --kind codex` outside herdr relies on: `codex app-server -c check_for_update_on_startup=false`,
+its JSON-RPC protocol on stdin and stdout (`codex app-server generate-json-schema` prints it).
+
+- `initialize`, then `thread/start` with the folder, the model, `approvalPolicy: "never"` and `sandbox:
+  "danger-full-access"` (what `--yolo` is in a pane), then `turn/start` with the task as its input and the effort.
+  Nothing of the task is in the command line.
+- `turn/steer` with the running turn's id joins that turn: the message arrives as a user message in it. Once the
+  turn has ended it is refused (-32600 "no active turn to steer"); a `turn/start` then runs the message as the next
+  turn in the same process.
+- `agentMessage` items carry a `phase`; the turn's report is its `final_answer` text, or its last message when the
+  model marks none.
+- Closing its stdin after `turn/completed` ends it at once (exit 0). A new app-server continues the thread with
+  `thread/resume`, its context kept.
+- With `approvalPolicy: "never"` it asked the client nothing, a question included (asked in text, the turn completed).
+  A request routr does not handle is answered with a JSON-RPC error, which declines it.
+- In a repository with a `.codex/hooks.json` the user has not trusted, the hooks did not run and nothing asked:
+  unlike a pane (where routr passes `--dangerously-bypass-hook-trust`), a headless Codex runs only the hooks the user
+  has trusted.
+- No folder-trust question in a folder Codex has not trusted (a throwaway repository; a pane in the same folder asked).

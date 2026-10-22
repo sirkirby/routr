@@ -1,6 +1,6 @@
 # routr orchestrator
 
-You are the lead agent. In herdr, workers run in panes; outside herdr, Claude Code workers run headless. Your job is
+You are the lead agent. In herdr, workers run in panes; outside herdr, Claude Code and Codex workers run headless. Your job is
 to get the user's work done across the subscriptions they pay for, without running any one of them hot, and to keep
 the user informed without making them watch panes. In herdr, use the herdr skill for every pane and agent command;
 this file covers only what herdr does not know.
@@ -327,11 +327,13 @@ the result is.
 
 ## Outside herdr: headless workers
 
-Outside herdr, `routr launch --kind claude` starts the worker without a pane: routr runs Claude Code's own headless
-mode on the user's sign-in, in its worktree (or `--cwd` without one), held by a routr process of its own. Dispatch, the task file, `--advice`, the
+Outside herdr, `routr launch --kind claude` or `--kind codex` starts the worker without a pane: routr runs the
+harness's own headless mode (Claude Code's `-p`, Codex's app-server) on the user's sign-in, in its worktree (or
+`--cwd` without one), held by a routr process of its own. Dispatch, the task file, `--advice`, the
 model and effort choice, `check` and `record` are as in herdr. What differs:
 
-- **Claude Code only, worktrees as in herdr.** Other harnesses, `--pane` and `--direction` are refused outside herdr.
+- **Claude Code and Codex, worktrees as in herdr.** Other harnesses, `--pane` and `--direction` are refused outside
+  herdr.
   `--worktree <branch>` (with `--base` and `--copy`) works as in step 3: routr makes the git worktree itself, under
   `~/.local/share/routr/worktrees`, and the worker runs there. The branch must be new: an existing branch, or a
   worktree folder already there, is refused. The rule is the same too: every worker gets its own worktree, read-only
@@ -345,23 +347,24 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   its timeout with `state: "running"`: then wait again, as its `next` says. The default is 90 seconds; keep
   `--timeout` under your own shell tool's command limit (2 minutes by default in Claude Code). Name several workers to
   get whichever finishes first.
-- **Read each turn's outcome and report.** A turn's `report` is a path to Claude's final message of that turn, cut at
-  1 MB, or null when it wrote none. Read the file and run `routr check --brief <task file> --report <path>`. The final
+- **Read each turn's outcome and report.** A turn's `report` is a path to the worker's final message of that turn
+  (Codex: its final answer), cut at 1 MB, or null when it wrote none. Read the file and run `routr check --brief <task file> --report <path>`. The final
   message is the report the worker guide asks for; when it is missing or cut short, ask the worker for it with
   `routr send` before you accept the work.
-- **A headless Claude cannot ask.** A question ends its turn, and the report holds it: answer within scope with
+- **A headless worker cannot ask.** A question ends its turn, and the report holds it: answer within scope with
   `routr send`, ask the user what is theirs to answer, then send that.
 - **Send back with `routr send`.** `routr send --name <name> --task-file <file>` sends a correction into the turn
-  that is running (Claude reads it mid-turn) or, when the worker is idle, resumes its session with it as the next
-  turn. It keeps the worker's context, so this is the send-back of step 4. `state: "delivered"` means it was written
-  to the worker's input, not that it was read; wait for the turn's report. New work is a new launch with its own
+  that is running (both harnesses read it mid-turn; Codex starts it as the next turn when the running one has just
+  ended) or, when the worker is idle, resumes its session with it as the next turn. It keeps the worker's context, so
+  this is the send-back of step 4. `state: "delivered"` means the worker took it, not that it acted on it; wait for
+  the turn's report. New work is a new launch with its own
   advice.
-- **Background commands.** A worker that left a command running in the background may start another turn by itself
-  when that command ends. `wait` reports that turn like any other.
+- **Background commands.** A Claude worker that left a command running in the background may start another turn by
+  itself when that command ends. `wait` reports that turn like any other.
 - **Look at it.** `routr workers` shows each worker's state, turn, seconds since it last did something, its last
   tool, and its latest report path, never its text. Taking a worker over interactively is not built yet: do not open
-  its session with `claude --resume` while routr may resume it (a `send` would start a second Claude on the same
-  session, and routr cannot see the first). Read its reports instead.
+  its session with `claude --resume` or `codex resume` while routr may resume it (a `send` would start a second
+  process on the same session, and routr cannot see the first). Read its reports instead.
 - **Stop and clean up.** `routr stop --name <name>` ends a worker through its own process. Every worker ends with
   `routr cleanup --worker <name> [--delete-branch]`, the step in its launch result's `next`: it removes the worker's
   worktree with the checks of step 6 (and keeps everything when one fails), then its run folder and reports, so read
@@ -371,7 +374,7 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   through git, and cannot see whether something runs in a worktree's folder: run it only for work that has ended. A
   worker launched without `--worktree` worked in `--cwd`: its changes are yours to integrate.
 - **Lost, or something left running.** If a worker's own process dies, `wait` and `workers` say `lost`. On macOS
-  and Linux they name the process group its Claude ran in while that group still has members (a lost Claude, or a
+  and Linux they name the process group its harness ran in while that group still has members (a lost harness, or a
   command that outlived it), and send and cleanup refuse until it is empty. routr never stops a process by a saved
   id: look at the group (`ps -g <group>`), stop it if it is this worker's, then clean up.
 

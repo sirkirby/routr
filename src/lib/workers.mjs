@@ -159,13 +159,15 @@ export async function unmakeWorktree(wt, out) {
   else if (!branchGone && await exists()) out.warnings.push(`Branch ${wt.branch} this launch made was left, as it no longer points at ${wt.start}: run git -C ${wt.source} branch -d ${wt.branch} if it is not needed`);
 }
 
+const andList = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}` : xs[0]);
+
 // ---- launch, outside herdr -----------------------------------------------------------------------------------------
 // Called by launch once the arguments, task and advice are checked. Every refusal comes before anything is written or
 // started; then it reserves the name, starts the holder and hands it the prompt over the channel, all within --timeout.
 // `out` is launch's answer, filled in place.
 export async function launchHeadless(o, out, { prompt, env, settings, ready, spawn }) {
   const step = (s, ok, detail) => out.steps.push({ step: s, ok, detail });
-  if (!HEADLESS_KINDS.includes(o.kind)) throw new Error(`outside herdr, routr launch starts ${HEADLESS_KINDS.map((k) => HARNESSES[k].label).join(", ")} workers only; run the lead inside herdr for a ${HARNESSES[o.kind].label} worker`);
+  if (!HEADLESS_KINDS.includes(o.kind)) throw new Error(`outside herdr, routr launch starts ${andList(HEADLESS_KINDS.map((k) => HARNESSES[k].label))} workers only; run the lead inside herdr for a ${HARNESSES[o.kind].label} worker`);
   for (const f of ["pane", "direction"]) if (o[f] != null) throw new Error(`--${f} needs herdr; outside herdr a worker runs headless, with no pane`);
   if (prompt == null) throw new Error("outside herdr a worker starts with its task: pass --task-file (or --task) and --advice");
   if (size(prompt) > MESSAGE_MAX) throw new Error(TOO_BIG);
@@ -310,7 +312,7 @@ export async function waitCommand(args, { now = () => Date.now(), pause = sleep,
         else out.next.push(doNext(`${v.name}'s turn ${t.turn} ended (${t.outcome}) without a report: look at the worker's folder and its changes yourself.`));
       }
       if (v.state === "lost") out.next.push(doNext(`${v.name}'s process ended without settling${v.harness_group ? `, and its harness may still be running (process group ${v.harness_group})` : ""}: stop what runs of it, then clean it up.`));
-      else if (v.harness_group && !RUNNING.has(v.state)) out.next.push(doNext(`Something ${v.name}'s Claude started is still running in process group ${v.harness_group}: look at it (ps -g ${v.harness_group}), stop it if it is the worker's, then clean up.`));
+      else if (v.harness_group && !RUNNING.has(v.state)) out.next.push(doNext(`Something ${v.name}'s ${HARNESSES[v.kind]?.label ?? "harness"} started is still running in process group ${v.harness_group}: look at it (ps -g ${v.harness_group}), stop it if it is the worker's, then clean up.`));
       if (v.tasks) out.next.push(doNext(`${v.name} still has ${v.tasks} background command${v.tasks > 1 ? "s" : ""} running; it may start another turn by itself when ${v.tasks > 1 ? "they end" : "it ends"}.`));
     }
     if (running.length) out.next.push(runNext("Wait for the workers still running.", ["routr", "wait", ...running.flatMap((v) => ["--name", v.name])]));
@@ -321,8 +323,10 @@ export async function waitCommand(args, { now = () => Date.now(), pause = sleep,
 // ---- send ------------------------------------------------------------------------------------------------------------
 // A correction or follow-up for a worker launched with advice: into the running turn where the harness takes it, or as
 // the next turn of the same session (a new holder resumes it). New work is a new launch with its own advice.
-const SENT = { handed_to_harness: "written to the running worker's input (not yet proven read)", queued: "queued: it runs as the worker's next turn, in a new Claude process on the same session",
-  prompted: "the worker resumed its session with it as the next turn" };
+const SENT = { handed_to_harness: () => "written to the running worker's input (not yet proven read)",
+  accepted: () => "taken by the running worker (into its running turn, or as its next)",
+  queued: (label) => `queued: it runs as the worker's next turn, in a new ${label} process on the same session`,
+  prompted: () => "the worker resumed its session with it as the next turn" };
 export async function sendCommand(args, { env = process.env, settings = () => loadConfig(), ready = notReady, spawn } = {}) {
   const out = { ok: false, headline: "", unavailable: [], warnings: [], next: [], state: "failed", name: null };
   try {
@@ -370,7 +374,7 @@ export async function sendCommand(args, { env = process.env, settings = () => lo
       return answer(out);
     }
     out.ok = true; out.state = r.code === "prompted" ? "resumed" : r.code === "queued" ? "queued" : "delivered";
-    out.headline = `routr: ${name}: ${SENT[r.code]}`;
+    out.headline = `routr: ${name}: ${SENT[r.code](HARNESSES[w.kind].label)}`;
     out.next.push(runNext("Wait for this worker's turn to end.", ["routr", "wait", "--name", name]));
   } catch (e) { out.error = String(e?.message ?? e); out.headline = `routr: send failed: ${out.error}`; }
   return answer(out);
@@ -451,9 +455,10 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
       if (there && folderId(w.worktree.path) !== w.worktree.folder) return refuse(`the worktree at ${w.worktree.path} was made again since launch: it is not the one launch made`, finish);
       const r = await cleanup(["--cwd", w.worktree.source, "--path", w.worktree.path, ...(deleteBranch ? ["--delete-branch"] : []), ...(dryRun ? ["--dry-run"] : [])], { env: {} });
       out.ran.push(...r.ran); out.unavailable.push(...r.unavailable);
-      // The worker's own process and Claude's process group were checked above; what that cannot see is said here.
+      // The worker's own process and its harness's process group were checked above; what that cannot see is said here.
+      const label = HARNESSES[w.kind]?.label ?? "the harness";
       out.warnings.push(...r.warnings.filter((x) => !/cannot see whether anything runs/.test(x)),
-        `cleanup cannot see a command ${name} started that left Claude's process group or detached itself${process.platform === "win32" ? " (on Windows, anything once Claude has ended)" : ""}: stop any such command before cleanup`);
+        `cleanup cannot see a command ${name} started that left ${label}'s process group or detached itself${process.platform === "win32" ? ` (on Windows, anything once ${label} has ended)` : ""}: stop any such command before cleanup`);
       const why = r.steps.find((x) => x.step === "refused")?.detail;
       if (!["removed", "absent", "planned"].includes(r.state)) return refuse(r.state === "failed" ? `its worktree could not be checked (${r.error})` : why ?? r.headline, r.next);
       // git lists no worktree there, yet a folder is: whose it is cannot be told, so it and the worker's record stay.

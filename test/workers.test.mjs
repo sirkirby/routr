@@ -6,8 +6,10 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { claim, connect, endpointFor, generations, ownEndpoint, probe, serve, SOCKET_DIR, writeSecret } from "../src/lib/channel.mjs";
-import { readEvent } from "../src/lib/headless.mjs";
+import { ADAPTERS, codexReader, readEvent } from "../src/lib/headless.mjs";
 import { unmakeWorktree, view } from "../src/lib/workers.mjs";
+import { EventEmitter } from "node:events";
+import { Writable } from "node:stream";
 import { worktreesFromGit } from "../src/lib/cleanup.mjs";
 import { callGit } from "../src/lib/process-boundary.mjs";
 import { launch } from "../src/lib/launch.mjs";
@@ -54,6 +56,47 @@ process.stdin.on("data", async (d) => { buf += d; let i; while ((i = buf.indexOf
 const leave = async () => { if (process.env.FAKE_HOLD_EXIT) for (let i = 0; i < 400 && !fs.existsSync(process.env.FAKE_GATE); i++) await sleep(50); process.exit(0); };
 process.stdin.on("end", () => { ended = true; if (!busy && !tasks) leave(); });
 `;
+// Codex's app-server, as measured (p38): initialize, thread/start or thread/resume, turn/start answered at once and then
+// turn/started, items, agentMessage phases, turn/completed; turn/steer joins the running turn and is refused once it has
+// ended; closing its input ends it. It writes each request's method and settings, never its text, to FAKE_RPC, and a
+// client's answer to a request of its own to FAKE_ANSWERS. Words in the text: HOLD, FAIL, CRASH, MCP as above; ASK sends
+// a question request first; the model "nosuch" is refused.
+const FAKE_CODEX = `
+const fs = require("node:fs");
+const a = process.argv.slice(2);
+if (a[0] === "login") { console.error("Logged in using ChatGPT"); process.exit(0); }
+if (a[0] !== "app-server") process.exit(0);
+if (process.env.FAKE_ARGV) fs.appendFileSync(process.env.FAKE_ARGV, JSON.stringify(["codex", ...a]) + "\\n");
+const out = (o) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...o }) + "\\n");
+const log = (m, p) => process.env.FAKE_RPC && fs.appendFileSync(process.env.FAKE_RPC, JSON.stringify({ method: m, ...Object.fromEntries(Object.entries(p ?? {}).filter(([k]) => k !== "input")) }) + "\\n");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let thread = null, turn = null, n = 0, steered = 0, buf = "", busy = false, ended = false;
+async function run(id, text) {
+  if (text.includes("CRASH")) process.exit(3);
+  busy = true; turn = "turn-" + (++n); steered = 0;
+  out({ id, result: { turn: { id: turn, items: [], status: "inProgress" } } });
+  out({ method: "turn/started", params: { threadId: thread, turn: { id: turn, items: [], status: "inProgress" } } });
+  out({ method: "item/started", params: { threadId: thread, turnId: turn, startedAtMs: 0, item: { type: text.includes("MCP") ? "mcpToolCall" : "commandExecution", id: "c", command: "an argument" } } });
+  if (text.includes("ASK")) out({ id: 900, method: "item/tool/requestUserInput", params: { threadId: thread, turnId: turn, questions: [] } });
+  if (text.includes("HOLD")) for (let i = 0; i < 400 && !fs.existsSync(process.env.FAKE_GATE); i++) await sleep(50);
+  out({ method: "item/completed", params: { threadId: thread, turnId: turn, completedAtMs: 0, item: { type: "agentMessage", id: "m1", phase: "commentary", text: "COMMENTARY-not-the-report" } } });
+  out({ method: "item/completed", params: { threadId: thread, turnId: turn, completedAtMs: 0, item: { type: "agentMessage", id: "m2", phase: "final_answer", text: "VERDICT: done\\nSUMMARY: turn with " + steered + " steered messages" } } });
+  const t = turn; turn = null; busy = false;
+  out({ method: "turn/completed", params: { threadId: thread, turn: { id: t, items: [], status: text.includes("FAIL") ? "failed" : "completed" } } });
+  if (ended) process.exit(0);
+}
+process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const e = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
+  if (e.id != null && !e.method) { if (process.env.FAKE_ANSWERS) fs.appendFileSync(process.env.FAKE_ANSWERS, JSON.stringify(e) + "\\n"); continue; }
+  log(e.method, e.params);
+  const p = e.params ?? {};
+  if (e.method === "initialize") out({ id: e.id, result: { userAgent: "fake" } });
+  else if (e.method === "thread/start") { if (p.model === "nosuch") out({ id: e.id, error: { code: -32600, message: "model not found" } }); else { thread = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"; out({ id: e.id, result: { thread: { id: thread } } }); } }
+  else if (e.method === "thread/resume") { thread = p.threadId; out({ id: e.id, result: { thread: { id: thread } } }); }
+  else if (e.method === "turn/start") run(e.id, p.input[0].text);
+  else if (e.method === "turn/steer") { if (turn && p.expectedTurnId === turn) { steered++; out({ id: e.id, result: { turnId: turn } }); } else out({ id: e.id, error: { code: -32600, message: "no active turn to steer" } }); }
+} });
+process.stdin.on("end", () => { ended = true; if (!busy) process.exit(0); });
+`;
 const BRIEF = "PRIVATE-BRIEF-7f3a: rename foo to bar in x.js. Check: grep bar x.js.";
 const SENT = "PRIVATE-SEND-91c2: also rename baz.";
 
@@ -61,9 +104,10 @@ function world(over = {}) {
   const home = shortHome(), bin = join(home, "bin"), work = join(home, "work"), inputs = join(home, "inputs");
   for (const d of [bin, work, inputs]) mkdirSync(d, { recursive: true });
   fakeExecutable(bin, "claude", FAKE_CLAUDE);
+  fakeExecutable(bin, "codex", FAKE_CODEX);
   const gate = join(home, "gate"), linger = join(home, "linger");
   // git's own folder too: launch --worktree and cleanup run it, as they would for a person.
-  const env = cliEnv(home, { PATH: [bin, dirname(process.execPath), dirname(Bun.which("git") ?? "git")].join(delimiter), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, ...over });
+  const env = cliEnv(home, { PATH: [bin, dirname(process.execPath), dirname(Bun.which("git") ?? "git")].join(delimiter), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_RPC: join(home, "rpc.jsonl"), FAKE_ANSWERS: join(home, "answers.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, ...over });
   for (const k of Object.keys(env)) if (/^(HERDR_|CLAUDECODE$|CLAUDE_CODE_SESSION|SANDBOX_RUNTIME$|CODEX_SANDBOX)/.test(k)) delete env[k];
   const outputs = [];
   const run = (args, extra = {}) => {
@@ -73,7 +117,7 @@ function world(over = {}) {
   };
   const task = (text, name = "task.md") => { const f = join(inputs, name); writeFileSync(f, text); return f; };
   const advise = (file) => { const a = join(home, `${file.split(/[\\/]/).pop()}.advice.json`); writeFileSync(a, JSON.stringify(run(["dispatch", "--task-file", file]))); return a; };
-  const launchW = (name, file, more = [], extra) => run(["launch", "--kind", "claude", "--name", name, "--model", "haiku", "--task-file", file, "--advice", advise(file), ...more], extra);
+  const launchW = (name, file, more = [], extra, kind = "claude") => run(["launch", "--kind", kind, "--name", name, "--model", kind === "codex" ? "gpt-6-luna" : "haiku", "--task-file", file, "--advice", advise(file), ...more], extra);
   const runDir = (name) => join(home, ".local", "state", "routr", "workers", name);
   const state = (n) => { try { return JSON.parse(readFileSync(join(runDir(n), "state.json"), "utf8")); } catch { return {}; } };
   const settled = (n) => until(() => !["working", "waiting", "starting"].includes(state(n).state));
@@ -125,6 +169,92 @@ test("a headless Claude worker: launch, a message mid-turn, wait, a follow-up th
   expect(w.run(["cleanup", "--worker", "w1"])).toMatchObject({ ok: true, state: "absent" });
   expect(w.run(["cleanup", "--worker", "w1", "--cwd", w.work]).error).toBe("--worker takes no --cwd: the worker's run folder says where its worktree is");
 }, 90000);
+
+const rpcs = (w) => { try { return readFileSync(join(w.home, "rpc.jsonl"), "utf8").trim().split("\n").map((x) => JSON.parse(x)); } catch { return []; } };
+
+test("a headless Codex worker: its app-server, a message steered into the running turn, wait, a follow-up that resumes its thread", async () => {
+  const w = world(), file = w.task(`${BRIEF} HOLD`);
+  const l = w.launch("c1", file, ["--effort", "low"], undefined, "codex");
+  expect([l.ok, l.state, l.headline]).toEqual([true, "prompted", "routr: c1 (codex) took its task, running headless"]);
+  expect(l.worker).toEqual({ name: "c1", backend: "headless", run: w.runDir("c1"), session: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b" });
+  expect(l.start.argv).toEqual(["app-server", "-c", "check_for_update_on_startup=false"]);
+  // Its settings go in the protocol: what --yolo is in a pane, the model, the effort; the brief only as turn input.
+  expect(rpcs(w).map((r) => r.method)).toEqual(["initialize", "initialized", "thread/start", "turn/start"]);
+  expect(rpcs(w)[2]).toEqual({ method: "thread/start", cwd: realpathSync.native(w.work), model: "gpt-6-luna", approvalPolicy: "never", sandbox: "danger-full-access" });
+  expect(rpcs(w)[3]).toEqual({ method: "turn/start", threadId: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", effort: "low" });
+  const s = w.run(["send", "--name", "c1", "--task", SENT]);
+  expect([s.ok, s.state, s.message.code, s.headline]).toEqual([true, "delivered", "accepted", "routr: c1: taken by the running worker (into its running turn, or as its next)"]);
+  expect(rpcs(w).at(-1)).toEqual({ method: "turn/steer", threadId: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", expectedTurnId: "turn-1" });
+  expect(w.run(["workers"]).workers[0]).toMatchObject({ name: "c1", kind: "codex", state: "working", turn: 1, last_tool: "commandExecution" });
+  w.release();
+  const done = w.run(["wait", "--name", "c1", "--timeout", "20000"]);
+  expect(done.workers[0].turns).toEqual([{ turn: 1, outcome: "finished", report: join(w.runDir("c1"), "reports", "turn-1.md"), delivered: 1 }]);
+  // The report is the turn's final answer, not its commentary.
+  expect(readFileSync(done.workers[0].turns[0].report, "utf8")).toBe("VERDICT: done\nSUMMARY: turn with 1 steered messages");
+  await w.settled("c1");
+  expect(w.state("c1")).toMatchObject({ state: "idle", harness_pid: null });
+  // Idle: a new app-server resumes the thread with the follow-up as its next turn.
+  const again = w.run(["send", "--name", "c1", "--task", SENT]);
+  expect([again.state, again.message?.code]).toEqual(["resumed", "prompted"]);
+  expect(rpcs(w).filter((r) => r.method === "thread/resume")).toEqual([{ method: "thread/resume", threadId: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b", cwd: realpathSync.native(w.work), model: "gpt-6-luna", approvalPolicy: "never", sandbox: "danger-full-access" }]);
+  expect(w.run(["wait", "--name", "c1", "--timeout", "20000"]).workers[0].turns).toMatchObject([{ turn: 2, outcome: "finished", delivered: 0 }]);
+  await w.settled("c1");
+  for (const o of w.outputs) for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([m, o.includes(m)]).toEqual([m, false]);
+  for (const f of ["argv.jsonl", "rpc.jsonl"]) for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([f, readFileSync(join(w.home, f), "utf8").includes(m)]).toEqual([f, false]);
+  expect(w.run(["cleanup", "--worker", "c1"])).toMatchObject({ ok: true, state: "removed" });
+}, 60000);
+
+test("Codex: a question it asks is declined and the turn goes on; a model it lacks fails the launch", async () => {
+  const w = world();
+  expect(w.launch("c2", w.task(`${BRIEF} HOLD ASK MCP`), [], undefined, "codex").state).toBe("prompted");
+  expect(await until(() => w.state("c2").last_tool === "mcp")).toBe(true);
+  // Its question was answered with an error: declined, and the turn went on.
+  const answers = join(w.home, "answers.jsonl");
+  expect(await until(() => existsSync(answers))).toBe(true);
+  expect(readFileSync(answers, "utf8").trim().split("\n").map((x) => JSON.parse(x))).toEqual([{ jsonrpc: "2.0", id: 900, error: { code: -32601, message: "routr does not answer this for a headless worker" } }]);
+  w.release();
+  w.run(["wait", "--name", "c2", "--timeout", "20000"]);
+  await w.settled("c2");
+  expect(w.state("c2").turns.map((t) => t.outcome)).toEqual(["finished"]);
+  const bad = w.run(["launch", "--kind", "codex", "--name", "c3", "--model", "nosuch", "--task-file", w.task(BRIEF, "b.md"), "--advice", w.advise(w.task(BRIEF, "b.md"))]);
+  expect([bad.ok, bad.state, bad.error]).toEqual([false, "failed", "Launch failed after prompt submission: Codex ended before it started the task (harness_refused)"]);
+  await w.settled("c3");
+  expect(w.state("c3")).toMatchObject({ state: "failed", turns: [expect.objectContaining({ outcome: "failed" })] });
+  for (const n of ["c2", "c3"]) w.run(["cleanup", "--worker", n]);
+}, 60000);
+
+// One Codex process, driven line by line: what routr writes, and what it makes of the answers.
+function codexPipe() {
+  const c = new EventEmitter(), sent = [];
+  c.stdin = new Writable({ write(chunk, _e, cb) { sent.push(...chunk.toString().trim().split("\n").map((x) => JSON.parse(x))); cb(); } });
+  const events = [];
+  const h = ADAPTERS.codex.connect(c, { cwd: "/w", model: "m", effort: null, session: null, emit: (e) => events.push(e) });
+  const answer = async (result, error) => { await Bun.sleep(5); const q = sent.filter((x) => x.id != null && x.method).at(-1); h.line(JSON.stringify({ jsonrpc: "2.0", id: q.id, ...(error ? { error } : { result }) })); };
+  return { c, h, sent, events, answer };
+}
+
+test("Codex: a steer that arrives once the turn has ended goes in as the next turn, in the same process; a closed process answers nothing", async () => {
+  const { c, h, sent, events, answer } = codexPipe();
+  const began = h.begin("the task");
+  await answer({ userAgent: "x" }); await answer({ thread: { id: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b" } }); await answer({ turn: { id: "t1", status: "inProgress" } });
+  expect([await began, events]).toEqual([true, [{ session: "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b" }]]);
+  expect(h.line(JSON.stringify({ method: "turn/completed", params: { turn: { id: "t1", status: "completed" } } }))).toEqual({ result: { failed: false, text: null } });
+  // The holder still thought the turn ran: the steer is refused, and the message starts the next turn instead.
+  const s = h.send("more", true);
+  await answer(null, { code: -32600, message: "no active turn to steer" }); await answer({ turn: { id: "t2", status: "inProgress" } });
+  expect(await s).toEqual({ code: "accepted", next: true });
+  expect(sent.filter((x) => x.method).map((x) => x.method)).toEqual(["initialize", "initialized", "thread/start", "turn/start", "turn/steer", "turn/start"]);
+  // Between turns, straight to turn/start; a steer while it runs stays in the turn.
+  const steer = h.send("again", true); await answer({ turnId: "t2" });
+  expect(await steer).toEqual({ code: "accepted", next: false });
+  // Its process gone: what was asked of it is answered as not taken.
+  const lost = h.send("late", true); c.emit("close");
+  expect(await lost).toBe(null);
+  // A thread it would not start: refused, and nothing said about a session.
+  const r = codexPipe(), b = r.h.begin("x");
+  await r.answer({ userAgent: "x" }); await r.answer(null, { code: -32600, message: "model not found" });
+  expect([await b, r.events]).toEqual(["refused", []]);
+});
 
 test("the brief and messages reach the harness on stdin only: never an answer, an argument, or a file but the reports", async () => {
   const w = world(), l = w.launch("p1", w.task(`${BRIEF} HOLD`));
@@ -213,7 +343,7 @@ test("outside herdr, a worker gets its own worktree, and cleanup --worker remove
   expect(w.run(["cleanup", "--worker", "t1", "--dry-run"])).toMatchObject({ ok: true, state: "planned", headline: `routr: would remove ${w.runDir("t1")} and ${path}` });
   const done = w.run(["cleanup", "--worker", "t1", "--delete-branch"]);
   expect([done.ok, done.state, done.branch]).toEqual([true, "removed", { name: "work/t1", deleted: true }]);
-  expect(done.warnings.filter((x) => x.startsWith("cleanup cannot see a command t1 started that left Claude's process group or detached itself"))).toHaveLength(1);
+  expect(done.warnings.filter((x) => x.startsWith("cleanup cannot see a command t1 started that left Claude Code's process group or detached itself"))).toHaveLength(1);
   expect([existsSync(path), existsSync(w.runDir("t1")), g("branch", "--list", "work/t1")]).toEqual([false, false, ""]);
   // A branch that exists is refused before anything is written.
   g("branch", "taken");
@@ -360,7 +490,7 @@ test("a harness that ends before its session leaves a failed worker that send wi
 test("outside herdr, launch refuses what a headless worker cannot do, before it writes or starts anything", async () => {
   const w = world(), file = w.task(BRIEF), advice = w.advise(file);
   const go = (args, extra) => w.run(["launch", "--name", "r1", "--model", "m", "--task-file", file, "--advice", advice, ...args], extra);
-  expect(go(["--kind", "codex"]).error).toBe("outside herdr, routr launch starts Claude Code workers only; run the lead inside herdr for a Codex worker");
+  expect(go(["--kind", "cursor"]).error).toBe("outside herdr, routr launch starts Claude Code and Codex workers only; run the lead inside herdr for a Cursor worker");
   expect(go(["--kind", "claude", "--pane", "w1:p1"]).error).toBe("--pane needs herdr; outside herdr a worker runs headless, with no pane");
   expect(go(["--kind", "claude", "--worktree", "b"]).error).toStartWith("--worktree needs a git repository: git found none at");
   expect(w.run(["launch", "--kind", "claude", "--name", "r1", "--model", "m"]).error).toBe("outside herdr a worker starts with its task: pass --task-file (or --task) and --advice");
@@ -422,6 +552,22 @@ test.skipIf(!POSIX)("a process left in Claude's group after it exits keeps the w
   await until(() => { try { process.kill(-st.harness_pgid, 0); return false; } catch { return true; } });
   expect(w.run(["cleanup", "--worker", "g1"])).toMatchObject({ ok: true, state: "removed" });
 }, 60000);
+
+test("Codex's app-server as routr reads it: replies, its own requests, turns, fixed item names, the final answer as the report", () => {
+  const read = codexReader(), n = (method, params) => read(JSON.stringify({ jsonrpc: "2.0", method, params }));
+  expect(read(JSON.stringify({ jsonrpc: "2.0", id: 3, result: { turnId: "t" } }))).toEqual({ reply: { id: 3, result: { turnId: "t" }, error: null } });
+  expect(read(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "item/commandExecution/requestApproval", params: {} }))).toEqual({ request: 7 });
+  expect(n("turn/started", { turn: { id: "t" } })).toEqual({ turn: true });
+  for (const [type, tool] of [["commandExecution", "commandExecution"], ["fileChange", "fileChange"], ["mcpToolCall", "mcp"], ["somethingNew", "other"]]) expect(n("item/started", { item: { type, command: "an argument" } })).toEqual({ tool });
+  expect(n("item/started", { item: { type: "agentMessage" } })).toEqual({ activity: true });
+  n("item/completed", { item: { type: "agentMessage", phase: "final_answer", text: "the answer" } });
+  n("item/completed", { item: { type: "agentMessage", phase: "commentary", text: "more narration" } });
+  expect(n("turn/completed", { turn: { status: "completed" } })).toEqual({ result: { failed: false, text: "the answer" } });
+  // No phase (a model that marks none): its last message. Interrupted or failed: a failed turn.
+  n("turn/started", {}); n("item/completed", { item: { type: "agentMessage", text: "one" } }); n("item/completed", { item: { type: "agentMessage", text: "two" } });
+  expect(n("turn/completed", { turn: { status: "interrupted" } })).toEqual({ result: { failed: true, text: "two" } });
+  expect([read("not json"), n("thread/tokenUsage/updated", {})]).toEqual([null, null]);
+});
 
 test("Claude's stream as routr reads it: the session, turns, fixed tool names, background tasks, the turn's end", () => {
   const sid = "a85913d2-fe70-4450-8c5b-4ae162e7a5df";

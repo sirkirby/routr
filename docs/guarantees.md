@@ -28,7 +28,7 @@ turns it has reported into the worker's own run folder.
 Local file writes create parent folders from the file's absolute location, including when only a relative filename
 was given. An existing directory is accepted; a file in its place or a permission error remains a failure.
 
-- `launch` drives panes in your herdr session; outside herdr it starts a headless Claude Code worker (below). A task requires readable JSON advice from `routr dispatch` on that exact task
+- `launch` drives panes in your herdr session; outside herdr it starts a headless Claude Code or Codex worker (below). A task requires readable JSON advice from `routr dispatch` on that exact task
   (including `brief_sha`); missing, nonmatching or `routr subagent` advice is refused before any harness, pane or worktree call. Dry runs return
   `ok: false` with `error` on the same refusal and still plan. Matching fallback advice is accepted, including advice
   saved as UTF-8 or UTF-16LE, with or without a BOM. Launch copies all its decision-model `unavailable` entries,
@@ -161,9 +161,9 @@ display only, with prompt lengths instead of prompt text.
 
 ## Headless workers
 
-Outside herdr, `routr launch --kind claude` starts the worker headless: Claude Code's own `-p` stream-json mode, on
-your sign-in, held by one routr process of its own (its holder). Other harnesses, `--pane` and `--direction` are refused
-outside herdr. What that means on your machine:
+Outside herdr, `routr launch --kind claude` or `--kind codex` starts the worker headless: Claude Code's own `-p`
+stream-json mode, or Codex's app-server, on your sign-in, held by one routr process of its own (its holder). Other
+harnesses, `--pane` and `--direction` are refused outside herdr. What that means on your machine:
 
 - **Its worktree.** With `--worktree <branch>`, launch makes the worktree with git (`git worktree add -b`), under
   `~/.local/share/routr/worktrees/<repository>-<hash>/<branch>` (`/` and `\` in the branch become `-`), on a branch
@@ -187,21 +187,28 @@ outside herdr. What that means on your machine:
   access rules there, and access from another account is not measured. The channel's socket is in
   `~/.local/state/routr/s`. A name is taken by making its folder; launch refuses a name whose folder exists until
   `cleanup --worker` removes it.
-- **The brief and your messages** go from launch or send to the holder over the channel, and from the holder to
-  Claude on its standard input: never in a process's arguments. routr keeps no copy of them. What it keeps of the
-  worker's text is each turn's report: Claude's final message of that turn, as it wrote it (cut at 1 MB), which can
-  quote the brief or anything else the worker saw. Reports stay, owner-only on macOS and Linux, until `cleanup
+- **The brief and your messages** go from launch or send to the holder over the channel, and from the holder to the
+  harness on its standard input (Claude: a stream-json message; Codex: the app-server's `turn/start` and `turn/steer`
+  requests): never in a process's arguments. routr keeps no copy of them. What it keeps of the worker's text is each
+  turn's report: the harness's final message of that turn (Codex: its final answer), as it wrote it (cut at 1 MB),
+  which can quote the brief or anything else the worker saw. Reports stay, owner-only on macOS and Linux, until `cleanup
   --worker` removes the run folder; commands print their paths, never their text, and they never reach the ledger or
-  telemetry. Claude keeps its own session history as it always does. Claude's error output is not read. A tool is shown
-  by its name only when it is one of Claude's own; an MCP server's tool is `mcp` and any other `other`.
+  telemetry. The harness keeps its own session history as it always does. Its error output is not read. A tool is shown
+  by its name only when it is one of the harness's own (Claude's tools, Codex's item types); an MCP server's tool is
+  `mcp` and any other `other`.
+- **Codex's permissions.** Codex runs with `approvalPolicy: "never"` and `sandbox: "danger-full-access"`, what
+  `--yolo` is in a pane. Unlike a pane, a hook you have not trusted in Codex does not run: its app-server skips it,
+  silently (measured). A request Codex makes of routr (an approval, a question, a tool call) is declined, and the
+  turn goes on without it; none came in the measured runs.
 - **The channel.** Both sides prove the run's secret before any text crosses. On macOS and Linux it is a Unix socket
   in an owner-only folder; a home whose socket path would exceed the system's limit (103 bytes on macOS, 107 on
   Linux) is refused before launch writes anything. On Windows it is a named pipe, and Windows' default security lets
   other local users and anonymous logons open it for reading: the handshake is what keeps them out (measured: a reader
   got only a fixed error), not the pipe's permissions. Not tested: another local account, a remote client.
-- **What it starts.** The holder starts Claude in its own process group (POSIX), in the worker's folder (its
-  worktree, or `--cwd`), with herdr's and the lead's session variables removed, and records that group before the task goes in. It exits once
-  Claude has. On macOS and Linux, `stop` sends SIGTERM to that group (Claude ends its tool commands, which run in
+- **What it starts.** The holder starts the harness (`claude`, or `codex app-server`) in its own process group
+  (POSIX), in the worker's folder (its worktree, or `--cwd`), with herdr's and the lead's session variables removed,
+  and records that group before the task goes in. It exits once the harness has. What follows was measured with
+  Claude; Codex is stopped the same way, and how its own commands take SIGTERM and SIGKILL is not measured. On macOS and Linux, `stop` sends SIGTERM to that group (Claude ends its tool commands, which run in
   groups of their own, on SIGTERM; measured), then SIGKILL to the group two seconds later if Claude itself has not
   exited. Tool commands in their own groups can survive a SIGKILL of Claude, and routr cannot see those. Once Claude
   has gone, anything still in its group is not signalled again (its id may be another group's by then): stop says
@@ -220,7 +227,7 @@ outside herdr. What that means on your machine:
 - **Sandboxes.** A lead's sandbox carries over to what it starts. launch refuses when it can see one (Claude Code's
   Bash sandbox, Codex's), and so does a send that must start a new holder; a send to a running worker goes over its
   channel as usual. `wait`, `workers` and `stop` say when they run inside one, since it may hide a worker's channel.
-- **Sign-in.** launch and a send that starts a new holder check Claude's sign-in first, as every launch does.
+- **Sign-in.** launch and a send that starts a new holder check the harness's sign-in first, as every launch does.
 
 ## Secrets, briefs and telemetry
 
