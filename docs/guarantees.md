@@ -56,7 +56,8 @@ was given. An existing directory is accepted; a file in its place or a permissio
 - `cleanup --worker` removes a headless worker's worktree, when launch made one, with the same checks as `cleanup
   --worktree` (and keeps everything when one fails), then its run folder, its reports included, once its own process
   has ended and no process group it recorded still has members, under the lock a new holder is started under. A
-  worker launched without a worktree worked in your folder: cleanup does not inspect or touch it.
+  worker launched without a worktree worked in your folder: cleanup does not inspect or touch it. What it cannot see
+  is under "Headless workers" below.
 - Outside herdr, `cleanup --cwd`, `--worktree` and `--path` list and remove worktrees through git (`git worktree
   list`, `git worktree remove`, never `--force`), and cannot see whether anything runs in a worktree's folder: they say
   so in `warnings`.
@@ -169,12 +170,15 @@ outside herdr. What that means on your machine:
   that must not exist yet, from `--base` or the checkout's HEAD, and copies the `--copy` files and folders in from
   `--cwd`, never through a link and never over a file the worktree has. When no holder could have started, launch
   removes the copies, the worktree (through cleanup's checks) and its branch while that still points at the commit it
-  started on, as it does the run folder; what it cannot remove is a warning. When it keeps the run folder (the holder
+  started on, as it does the run folder; what it cannot remove is a warning. When git did not make the worktree, a
+  branch of that name is left alone and said: it may be another command's. When it keeps the run folder (the holder
   is starting or does not answer), it keeps the worktree too. `cleanup --worker` removes the worktree with the checks
-  of `cleanup --worktree`, through git, and only while it is still on the branch launch made; a folder at that path
-  that git does not list as a worktree is kept, with the worker's record. It cannot see a command
-  the worker started that left Claude's process group or detached itself (on Windows, anything once Claude has
-  ended), and removes the worktree anyway: it says so in `warnings`.
+  of `cleanup --worktree`, through git, and only while it is still the folder launch made, on the branch launch
+  made: a worktree removed and made again at that path, or a folder there that git does not list as a worktree, is
+  kept, with the worker's record. A copy taken from a subfolder `--cwd` is compared with the main checkout's file at
+  the same path, so cleanup may keep it as the worker's. It cannot see a command the worker started that left
+  Claude's process group or detached itself (on Windows, anything once Claude has ended), and removes the worktree
+  anyway: it says so in `warnings`.
 - **Where it lives.** Each worker has a run folder, `~/.local/state/routr/workers/<name>`: the worker's settings
   (kind, model, effort, folder; never the brief or the environment), the holder's state (turns, their outcomes, the
   last tool's fixed name, the session id), a random secret, one file per holder generation, which turns `wait` has
@@ -196,8 +200,7 @@ outside herdr. What that means on your machine:
   other local users and anonymous logons open it for reading: the handshake is what keeps them out (measured: a reader
   got only a fixed error), not the pipe's permissions. Not tested: another local account, a remote client.
 - **What it starts.** The holder starts Claude in its own process group (POSIX), in the worker's folder (its
-  worktree, or `--cwd`), with
-  herdr's and the lead's session variables removed, and records that group before the task goes in. It exits once
+  worktree, or `--cwd`), with herdr's and the lead's session variables removed, and records that group before the task goes in. It exits once
   Claude has. On macOS and Linux, `stop` sends SIGTERM to that group (Claude ends its tool commands, which run in
   groups of their own, on SIGTERM; measured), then SIGKILL to the group two seconds later if Claude itself has not
   exited. Tool commands in their own groups can survive a SIGKILL of Claude, and routr cannot see those. Once Claude

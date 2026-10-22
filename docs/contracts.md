@@ -419,7 +419,8 @@ plans the pane launch as before: it does not check the environment.
   workspace: null }`, `cwd` its path, and `steps` add `worktree` and `copy`. git refusing to make it (a `--base` it
   cannot find) is a failure with `error`. When no holder could have started, launch removes the copies, the worktree
   (through cleanup's checks) and its branch while that still points at the commit it started on, as it does the run
-  folder; what it cannot remove is a warning. When it keeps the run folder (the holder is starting or does not answer),
+  folder; what it cannot remove is a warning. When git did not make the worktree, a branch of that name is left and a
+  warning says so (it may be another command's). When it keeps the run folder (the holder is starting or does not answer),
   it keeps the worktree too, and `cleanup --worker` removes both. `--copy` paths are relative to `--cwd`, as in herdr,
   and never copied through a link or over a file the worktree has.
 - `--timeout` (default 120000) sets budgets, not a bound on the whole call: polling for the holder gets up to 15
@@ -510,9 +511,9 @@ Inputs:
   has members; for a worker launch gave a worktree, it first removes the worktree as `--path` would (`--delete-branch`
   and `--dry-run` pass on), and keeps the worker whole, with that refusal's reason and `next`, when it would not;
   `worktree` and `branch` are then as for `--path`. It refuses too when the worktree at that path is on another
-  branch than the one launch made (it is someone else's), or when git lists no worktree there but a folder is.
-  `headline` `routr: removed worker <name>`, `routr: kept
-  <name>: <why>`, `routr: would remove <folder>[ and <worktree path>]`; a worktree it could not check is refused
+  branch than the one launch made (it is someone else's), when it is not the folder launch made (removed and made
+  again there), or when git lists no worktree there but a folder is. `headline` `routr: removed worker <name>`,
+  `routr: kept <name>: <why>`, `routr: would remove <folder>[ and <worktree path>]`; a worktree it could not check is refused
   ("its worktree could not be checked"). `warnings` says what it cannot see: a command the worker started that left
   Claude's process group or detached itself (on Windows, anything once Claude has ended). For a worker launched
   without a worktree it removes only the run folder and its reports, inspects no repository, and warns that the

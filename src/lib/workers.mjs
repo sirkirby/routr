@@ -2,7 +2,7 @@
 // `stop` and `cleanup --worker`. Each talks to a worker's holder only through its channel (channel.mjs) and reads what
 // the holder wrote; none stops a process by a saved id. Answers carry report paths, never worker text.
 import { cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { connect, generations, MESSAGE_MAX, probe, removeEndpoint, socketPathFits, writeSecret } from "./channel.mjs";
 import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, readState, readWorker, reserve, runDir, WORKERS_DIR } from "./headless.mjs";
@@ -112,8 +112,13 @@ async function planWorktree(o, cwd) {
   if (existsSync(path)) throw new Error(`${path} exists; remove it with routr cleanup --cwd ${source} --path ${path}, or choose another branch`);
   return { source, path, start: line(start.out) };
 }
+// Which folder this is, not where: a worktree removed and made again at the same path, even on the same branch, is
+// another folder (from the review of d4166f9). Device and file number, read whole (Windows' file IDs exceed 2^53).
+// Its birth time too, where the file system keeps one: Linux may give a removed folder's number to the next one made.
+const folderId = (path) => { try { const st = statSync(path, { bigint: true }); return `${st.dev}:${st.ino}:${st.birthtimeNs}`; } catch { return null; } };
 // --copy: from the folder launch was given, to the same place in the worktree, never through a link (a folder in the
-// commit that links elsewhere) and never over a file the worktree has. Records each file and folder it made.
+// commit that links elsewhere) and never over a file the worktree has. Records each file it made relative to the
+// worktree, as dropCopy takes it, and each folder by its full path in the worktree.
 function copyInto(from, root, rel, made) {
   const parts = rel.split(/[\\/]/).filter(Boolean);
   let at = root;
@@ -126,23 +131,29 @@ function copyInto(from, root, rel, made) {
   const to = join(root, ...parts);
   if (existsSync(to) || (() => { try { lstatSync(to); return true; } catch { return false; } })()) throw new Error(`--copy ${rel}: the worktree already has it`);
   cpSync(from, to, { recursive: true, errorOnExist: true, force: false });
-  if (statSync(to).isDirectory()) { made.dirs.push(to); for (const f of readdirSync(to, { recursive: true }).map(String)) (statSync(join(to, f)).isDirectory() ? made.dirs : made.files).push(join(rel, f)); }
+  if (statSync(to).isDirectory()) { made.dirs.push(to); for (const f of readdirSync(to, { recursive: true }).map(String)) { if (statSync(join(to, f)).isDirectory()) made.dirs.push(join(to, f)); else made.files.push(join(rel, f)); } }
   else made.files.push(rel);
 }
-// The worktree a launch made and nothing ran in: its copies (unchanged ones), the worktree through cleanup's own checks,
-// and its branch while it still points at the commit it started on (git compares and deletes in one step). Anything
-// left is said.
-async function unmakeWorktree(wt, out) {
-  let removed = !wt.added;
-  if (wt.added) {
-    for (const rel of wt.files) dropCopy(wt.path, wt.copySource, rel);
-    for (const d of [...wt.dirs].reverse()) { try { rmdirSync(d); } catch {} }
-    const { cleanup } = await import("./cleanup.mjs");
-    const r = await cleanup(["--cwd", wt.source, "--path", wt.path], { env: {} });
-    removed = ["removed", "absent"].includes(r.state);
+// The worktree a launch made and nothing ran in: its copies (unchanged ones, and the folders it made, only inside the
+// worktree), the worktree through cleanup's own checks, and its branch while it still points at the commit it started
+// on (git compares and deletes in one step). The branch is this launch's only once git made the worktree: when
+// `worktree add -b` failed, a branch of that name may be another command's, made since the check (from the review of
+// 9224296), so it is left and said. Anything else left is said too.
+export async function unmakeWorktree(wt, out) {
+  const exists = async () => (await git(wt.source, ["rev-parse", "--verify", "--quiet", `refs/heads/${wt.branch}`])).ok;
+  if (!wt.added) {
+    if (await exists()) out.warnings.push(`Branch ${wt.branch} exists in ${wt.source}, but git did not make this launch's worktree, so whose branch it is cannot be told; it was left`);
+    return;
   }
+  for (const rel of wt.files) dropCopy(wt.path, wt.copySource, rel);
+  const inside = (d) => { const r = relative(wt.path, d); return r !== "" && !r.startsWith("..") && !isAbsolute(r); };
+  for (const d of [...wt.dirs].reverse()) { if (inside(d)) { try { rmdirSync(d); } catch {} } }
+  const { cleanup } = await import("./cleanup.mjs");
+  const r = await cleanup(["--cwd", wt.source, "--path", wt.path], { env: {} });
+  const removed = ["removed", "absent"].includes(r.state);
   const branchGone = removed && (await git(wt.source, ["update-ref", "-d", `refs/heads/${wt.branch}`, wt.start])).ok;
-  if (!removed || !branchGone) out.warnings.push(`The worktree ${wt.path} (branch ${wt.branch}) this launch made was left: run routr cleanup --cwd ${wt.source} --path ${wt.path}`);
+  if (!removed) out.warnings.push(`The worktree ${wt.path} (branch ${wt.branch}) this launch made was left: run routr cleanup --cwd ${wt.source} --path ${wt.path}`);
+  else if (!branchGone && await exists()) out.warnings.push(`Branch ${wt.branch} this launch made was left, as it no longer points at ${wt.start}: run git -C ${wt.source} branch -d ${wt.branch} if it is not needed`);
 }
 
 // ---- launch, outside herdr -----------------------------------------------------------------------------------------
@@ -190,6 +201,7 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
       if (!made.ok) throw new Error(`git did not make the worktree (${made.code})`);
       wt.added = true;
       wt.path = realPath(wt.path); // as git lists it (macOS: /tmp is /private/tmp; Windows: long names)
+      wt.folder = folderId(wt.path);
       // A worktree holds tracked files only: --copy brings named untracked files across, at the same relative path.
       for (const rel of o.copy ?? []) {
         const from = join(out.cwd, rel);
@@ -202,7 +214,7 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
       step("worktree", true, `Created ${wt.path} on branch ${o.worktree}${o.base ? ` from ${o.base}` : ""}`);
     }
     const w = { format: FORMAT, id: randomUUID().replace(/-/g, ""), name: o.name, kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(),
-      ...(wt ? { worktree: { branch: wt.branch, base: wt.base, path: wt.path, source: wt.source, start: wt.start } } : {}) };
+      ...(wt ? { worktree: { branch: wt.branch, base: wt.base, path: wt.path, source: wt.source, start: wt.start, folder: wt.folder } } : {}) };
     writeFileSync(join(dir, "worker.json"), JSON.stringify(w) + "\n", { mode: 0o600 });
     writeSecret(dir);
   } catch (e) { await unreserve(); throw e; }
@@ -431,7 +443,9 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
       const listed = await git(w.worktree.source, ["worktree", "list", "--porcelain"]);
       const there = listed.ok ? worktreesFromGit(listed.out).worktrees.find((x) => x.is_linked_worktree && realOr(x.path) === realOr(w.worktree.path)) : null;
       if (!listed.ok) return refuse(`git could not list the worktrees of ${w.worktree.source} (${listed.code})`, runNext("Look at them.", ["git", "-C", w.worktree.source, "worktree", "list"]));
-      if (there && there.branch !== w.worktree.branch) return refuse(`the worktree at ${w.worktree.path} is ${there.branch ? `on branch ${there.branch}` : "detached"}, not on ${w.worktree.branch}: it is not the one launch made`, doNext(`Look at ${w.worktree.path}; finish it with routr cleanup --cwd ${w.worktree.source} --path <path> if it should go.`));
+      const finish = doNext(`Look at ${w.worktree.path}; finish it with routr cleanup --cwd ${w.worktree.source} --path ${w.worktree.path} if it should go.`);
+      if (there && there.branch !== w.worktree.branch) return refuse(`the worktree at ${w.worktree.path} is ${there.branch ? `on branch ${there.branch}` : "detached"}, not on ${w.worktree.branch}: it is not the one launch made`, finish);
+      if (there && folderId(w.worktree.path) !== w.worktree.folder) return refuse(`the worktree at ${w.worktree.path} was made again since launch: it is not the one launch made`, finish);
       const r = await cleanup(["--cwd", w.worktree.source, "--path", w.worktree.path, ...(deleteBranch ? ["--delete-branch"] : []), ...(dryRun ? ["--dry-run"] : [])], { env: {} });
       out.ran.push(...r.ran); out.unavailable.push(...r.unavailable);
       // The worker's own process and Claude's process group were checked above; what that cannot see is said here.

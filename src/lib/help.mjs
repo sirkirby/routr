@@ -67,7 +67,7 @@ export const COMMANDS = {
       { name: "--worktree", arg: "<branch>", description: "the worker's worktree, by the branch given to launch --worktree (name one worker: --worktree, --path, --pane, or --worker)", required: false },
       { name: "--path", arg: "<path>", description: "the worker's worktree, by its folder (one on no branch, or made by hand)", required: false },
       { name: "--pane", arg: "<id>", description: "a worker launched without --worktree: close its pane (a worktree's only pane is refused, with the command that removes the worktree). Takes no --cwd", required: false },
-      { name: "--worker", arg: "<name>", description: "a headless worker (launched outside herdr): remove its worktree (with the same checks) and then its run folder and reports, once nothing of it runs. Takes no --cwd", required: false },
+      { name: "--worker", arg: "<name>", description: "a headless worker (launched outside herdr): remove its worktree (with the same checks) and then its run folder and reports, once its process and Claude's process group have ended (it cannot see a command that left them). Takes no --cwd", required: false },
       { name: "--delete-branch", arg: null, description: "also delete the worktree's branch, once its work has landed: git deletes it only when it is merged (with --worktree, --path or --worker)", required: false, default: false },
       { name: "--dry-run", arg: null, description: "check and say what it would do; change nothing", required: false, default: false },
     ],

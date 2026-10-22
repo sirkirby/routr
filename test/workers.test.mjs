@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { claim, connect, endpointFor, generations, ownEndpoint, probe, serve, SOCKET_DIR, writeSecret } from "../src/lib/channel.mjs";
 import { readEvent } from "../src/lib/headless.mjs";
-import { view } from "../src/lib/workers.mjs";
+import { unmakeWorktree, view } from "../src/lib/workers.mjs";
 import { worktreesFromGit } from "../src/lib/cleanup.mjs";
 import { callGit } from "../src/lib/process-boundary.mjs";
 import { launch } from "../src/lib/launch.mjs";
@@ -213,6 +213,7 @@ test("outside herdr, a worker gets its own worktree, and cleanup --worker remove
   expect(w.run(["cleanup", "--worker", "t1", "--dry-run"])).toMatchObject({ ok: true, state: "planned", headline: `routr: would remove ${w.runDir("t1")} and ${path}` });
   const done = w.run(["cleanup", "--worker", "t1", "--delete-branch"]);
   expect([done.ok, done.state, done.branch]).toEqual([true, "removed", { name: "work/t1", deleted: true }]);
+  expect(done.warnings.filter((x) => x.startsWith("cleanup cannot see a command t1 started that left Claude's process group or detached itself"))).toHaveLength(1);
   expect([existsSync(path), existsSync(w.runDir("t1")), g("branch", "--list", "work/t1")]).toEqual([false, false, ""]);
   // A branch that exists is refused before anything is written.
   g("branch", "taken");
@@ -236,14 +237,18 @@ test("a launch that stops early takes back a copied folder too, and never copies
   const w = world(), g = repo(w), file = w.task(BRIEF), advice = w.advise(file);
   mkdirSync(join(w.work, "fixtures", "deep"), { recursive: true });
   writeFileSync(join(w.work, "fixtures", "deep", "a.json"), "{}\n");
-  const saved = [process.env.HOME, process.env.USERPROFILE];
+  mkdirSync(join(w.work, "fixtures", "empty", "deeper"), { recursive: true });
+  const saved = [process.env.HOME, process.env.USERPROFILE], here = process.cwd();
   process.env.HOME = process.env.USERPROFILE = w.home;
   const go = (branch, more) => launch(["--kind", "claude", "--name", "c1", "--model", "m", "--task-file", file, "--advice", advice, "--cwd", w.work, "--worktree", branch, ...more],
     { env: {}, settings: () => cfg(), ready: async () => null, spawn: () => false });
   try {
+    // Run from the source checkout: the folders it took back are the worktree's, never the same names here.
+    process.chdir(w.work);
     const r = await go("work/c1", ["--copy", "fixtures"]);
     expect([r.state, r.warnings]).toEqual(["failed", []]);
     expect([g("branch", "--list", "work/c1"), g("worktree", "list").split("\n").length]).toEqual(["", 1]);
+    expect([existsSync(join(w.work, "fixtures", "empty", "deeper")), existsSync(join(w.work, "fixtures", "deep", "a.json"))]).toEqual([true, true]);
     if (POSIX) {
       // A folder that is a link in the commit the worktree starts from: nothing is copied through it, and the launch
       // leaves nothing.
@@ -254,7 +259,7 @@ test("a launch that stops early takes back a copied folder too, and never copies
       expect([l.state, l.error]).toEqual(["failed", expect.stringContaining("is a link or not a folder; nothing is copied through it")]);
       expect([existsSync(join(outside, "local.json")), g("branch", "--list", "work/c2")]).toEqual([false, ""]);
     }
-  } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
+  } finally { [process.env.HOME, process.env.USERPROFILE] = saved; process.chdir(here); }
 }, 60000);
 
 test("cleanup --worker keeps a worktree that took the place of the one launch made, or a folder git does not list", async () => {
@@ -267,6 +272,10 @@ test("cleanup --worker keeps a worktree that took the place of the one launch ma
   const kept = w.run(["cleanup", "--worker", "r1"]);
   expect([kept.state, kept.headline]).toEqual(["refused", `routr: kept r1: the worktree at ${l.worktree.path} is on branch other, not on work/r1: it is not the one launch made`]);
   expect(existsSync(l.worktree.path)).toBe(true);
+  // Made again at the same path on the worker's own branch: another folder, so not the one launch made either.
+  g("worktree", "remove", l.worktree.path); g("worktree", "add", "-q", l.worktree.path, "work/r1");
+  const again = w.run(["cleanup", "--worker", "r1"]);
+  expect([again.state, again.headline]).toEqual(["refused", `routr: kept r1: the worktree at ${l.worktree.path} was made again since launch: it is not the one launch made`]);
   // A plain folder at that path, not a worktree git lists, is not known to be the worker's either.
   g("worktree", "remove", l.worktree.path); mkdirSync(l.worktree.path); writeFileSync(join(l.worktree.path, "notes.txt"), "mine\n");
   const plain = w.run(["cleanup", "--worker", "r1"]);
@@ -275,6 +284,17 @@ test("cleanup --worker keeps a worktree that took the place of the one launch ma
   rmSync(l.worktree.path, { recursive: true });
   expect(w.run(["cleanup", "--worker", "r1"]).state).toBe("removed");
 }, 60000);
+
+test("a launch whose worktree git did not make leaves a branch of that name alone: it may be another command's", async () => {
+  const w = world(), g = repo(w), start = g("rev-parse", "HEAD");
+  g("branch", "raced");
+  const out = { warnings: [] };
+  await unmakeWorktree({ added: false, branch: "raced", source: w.work, start, path: join(w.home, "wt"), files: [], dirs: [] }, out);
+  expect([g("rev-parse", "raced"), out.warnings]).toEqual([start, [`Branch raced exists in ${w.work}, but git did not make this launch's worktree, so whose branch it is cannot be told; it was left`]]);
+  const none = { warnings: [] };
+  await unmakeWorktree({ added: false, branch: "never", source: w.work, start, path: join(w.home, "wt"), files: [], dirs: [] }, none);
+  expect(none.warnings).toEqual([]);
+});
 
 test("outside herdr, cleanup lists and removes worktrees through git, and says what it cannot see", () => {
   const w = world(), g = repo(w);
