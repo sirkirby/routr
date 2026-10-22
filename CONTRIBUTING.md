@@ -79,6 +79,14 @@ shape), and real values getting LOST (a value seen in real rows arriving as "oth
 5. Before release, on a machine that has opted in: `bun run smoke:telemetry`. It reads the real ledger, sends nothing,
    and fails on any value that would arrive as "other" or any string the endpoint would refuse.
 
+## Usage readers
+
+A reader reads a harness's own screen or answer, which an update of the harness or of herdr can change without a word
+(herdr 0.9.5 stopped answering when it types into a pane, and Cursor's reader failed for days). After changing a
+reader, and after updating a harness or herdr on a machine signed in to them: `bun run smoke:usage`. It takes a live
+reading from each subscription that is on and signed in, by its own path (no kept snapshot, no fallback), and fails
+when one cannot read.
+
 ## Changing a harness recipe
 
 `skills/routr/references/harnesses.md` and `src/lib/harnesses.mjs` record flags and failure modes that were observed.

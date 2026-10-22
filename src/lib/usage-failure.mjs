@@ -16,6 +16,15 @@ export const usageUnavailable = (rows) => rows.filter((r) => r.failure && r.sign
   .map((r) => ({ part: "usage", subscription: r.pool, source: r.source, ...usageFailure(r.failure.code),
     reading: r.kept ? "kept" : "assumed", ...(r.kept ? { reading_source: r.kept.source, age_sec: r.kept.ageSec } : {}) }));
 
+// A reader that has not produced a reading for over a day and failed its last try: said in `warnings`, not only in a
+// row's note. From the herdr 0.9.5 change of 2026-10-22: Cursor's reader failed on every try, ranking ran on the
+// assumed headroom, and the only trace was a note inside a ranked row for 89 hours.
+export const STALE_SEC = 24 * 3600;
+// One that never read anything is already `assumed` in `unavailable`; this is for one that worked and stopped. How to
+// read it by hand stays in `next`.
+export const staleReaders = (rows) => rows.filter((r) => r.failure && r.signedIn !== false && r.headroom == null && r.ageSec != null && r.ageSec >= STALE_SEC)
+  .map((r) => `${r.pool}'s usage has not been read for ${Math.round(r.ageSec / 3600)} h, and its last try failed (${r.failure.code}), so routing assumes its headroom: an update of ${r.pool} or herdr may have changed what routr reads. Run \`routr usage ${r.pool}\` to try again`);
+
 // Shared by reader diagnostics and command next steps; never tucked into a ranked row's note.
 export const USAGE_BY_HAND = {
   cursor: 'run `cursor-agent`, type /usage, read "Included N% used", and pass --headroom cursor=<1 - N/100>',
