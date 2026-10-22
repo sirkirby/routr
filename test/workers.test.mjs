@@ -258,6 +258,12 @@ test("a launch that stops early takes back a copied folder too, and never copies
       const l = await go("work/c2", ["--copy", "cfg/local.json"]);
       expect([l.state, l.error]).toEqual(["failed", expect.stringContaining("is a link or not a folder; nothing is copied through it")]);
       expect([existsSync(join(outside, "local.json")), g("branch", "--list", "work/c2")]).toEqual([false, ""]);
+      // A copied folder that is a link: taken back as a link, and nothing behind it is walked or removed.
+      const behind = join(w.home, "behind"); mkdirSync(join(behind, "empty", "deeper"), { recursive: true });
+      symlinkSync(behind, join(w.work, "linked"));
+      const k = await go("work/c3", ["--copy", "linked"]);
+      expect([k.state, k.warnings, g("branch", "--list", "work/c3")]).toEqual(["failed", [], ""]);
+      expect(existsSync(join(behind, "empty", "deeper"))).toBe(true);
     }
   } finally { [process.env.HOME, process.env.USERPROFILE] = saved; process.chdir(here); }
 }, 60000);
