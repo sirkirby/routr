@@ -597,16 +597,18 @@ a process group of its still running, a sandbox it can see, a worker with no ses
 in.
 
 `state`: `delivered` (into the running worker. Claude: written into its input, `message.code` `handed_to_harness`, not
-proven read. Antigravity: written into its input (`handed_to_harness`); it runs as the next turn once the running one
-ends, in the same process, and each message is a turn of its own, in the order sent. Kiro, between turns: its
-`session/prompt` written (`handed_to_harness`). Codex: taken by its app-server, `accepted`: steered into the running turn, or, once that turn has ended,
-started as the next turn in the same process), `queued` (the holder keeps the message in memory: for Kiro while a
-turn runs (`message.why` `next_turn`), sent as its next turn once that one ends, in the same process, one turn per
-message; otherwise when the harness's input had closed, and once that process has exited the holder starts a new one
-resuming the same session with it. A message Kiro ended before taking goes to that new process too. Lost if the holder
-dies first), `resumed` (a new holder resumed the session with it: `prompted`), `refused` (the holder did not take it:
+proven read. Antigravity and Kiro, between turns: written into its input, or Kiro's `session/prompt` written
+(`handed_to_harness`); it starts a turn of its own. Codex: taken by its app-server, `accepted`: steered into the
+running turn, or, once that turn has ended, started as the next turn in the same process), `queued` (the holder keeps
+the message in memory, at most 8. For Antigravity and Kiro while a turn runs, or older messages still wait
+(`message.why` `next_turn`): handed over as each turn ends, one turn per message, in the order sent, in the same
+process. Otherwise when the harness's input had closed: once that process has exited the holder starts a new one
+resuming the same session with it. When the process exits with messages still kept, a new one resumes with them:
+Antigravity and Kiro run each as a turn of its own, in the order sent; Claude and Codex take them together as one
+turn, whose `delivered` counts them. A process that ended before it took its task is not resumed: each kept message
+gets a turn of its own, `not_started`. Lost if the holder dies first; dropped by a stop, which says how many), `resumed` (a new holder resumed the session with it: `prompted`), `refused` (the holder did not take it:
 `message.why` is a fixed code, such as `no_session`, `stopping`, `queue_full`, `harness_ended` when the resumed
-harness ended before taking it, `harness_refused` when Codex said no or Kiro would not load its session, `queue_full` when Kiro already holds 8, `not_started` when Codex or Kiro had not started the
+harness ended before taking it, `harness_refused` when Codex said no or Kiro would not load its session, `not_started` when Codex or Kiro had not started the
 task's turn within 30 seconds, or `not_written` when its input would not take it), `unknown` (handed over and no answer came: whether it
 was taken is not known, and it is never sent again on its own; `no_reply` when Codex ended before answering;
 `headline` `routr: whether <name> took the message is not known (<why>)`), `failed` (refused input).

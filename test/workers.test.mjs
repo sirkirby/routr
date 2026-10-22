@@ -162,7 +162,7 @@ process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n"
   const p = e.params ?? {};
   if (e.method === "initialize") out({ id: e.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
   else if (e.method === "session/new") { log({ method: e.method, cwd: p.cwd }); out({ id: e.id, result: { sessionId: SID, models: { currentModelId: a[a.indexOf("--model") + 1] } } }); }
-  else if (e.method === "session/load") { log({ method: e.method, sessionId: p.sessionId, cwd: p.cwd }); up({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "an old prompt" } }); up({ sessionUpdate: "tool_call", toolCallId: "old", kind: "edit" }); up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-not-the-report" } }); out({ id: e.id, result: {} }); }
+  else if (e.method === "session/load") { log({ method: e.method, sessionId: p.sessionId, cwd: p.cwd }); if (process.env.FAKE_LOAD_DIE) process.exit(0); const ms = Number(process.env.FAKE_LOAD_MS ?? 0); if (ms) { const id = e.id; setTimeout(() => { up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-not-the-report" } }); out({ id, result: {} }); }, ms); continue; } up({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "an old prompt" } }); up({ sessionUpdate: "tool_call", toolCallId: "old", kind: "edit" }); up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-not-the-report" } }); out({ id: e.id, result: {} }); }
   else if (e.method === "session/prompt") { log({ method: e.method, busy, tag: (p.prompt[0].text.match(/TAG-\\w+/) ?? [null])[0] }); if (busy) out({ id: e.id, error: { code: -32603, message: "Internal error", data: "Prompt already in progress" } }); else prompt(e.id, p.prompt[0].text); }
 } });
 process.stdin.on("end", () => { ended = true; if (!busy) process.exit(0); });
@@ -354,9 +354,9 @@ test("a headless Antigravity worker: its stream-json mode, a message queued as i
   // As in a pane: its permissions, the worker's folder, the model id; the brief only on stdin.
   expect(l.start.argv).toEqual(["--print=", "--input-format", "stream-json", "--output-format", "stream-json", "--dangerously-skip-permissions", "--add-dir", l.cwd, "--model", "gemini-3.8-flash-low"]);
   expect(await until(() => w.state("a1").last_tool === "run_command")).toBe(true);
-  // Mid-turn, the message waits: it runs as turn 2 of the same process, and is counted there.
+  // Mid-turn, the holder keeps the message: it runs as turn 2 of the same process, and is counted there.
   const s = w.run(["send", "--name", "a1", "--task", SENT]);
-  expect([s.ok, s.state, s.message.code]).toEqual([true, "delivered", "handed_to_harness"]);
+  expect([s.ok, s.state, s.message]).toEqual([true, "queued", { code: "queued", why: "next_turn" }]);
   w.release();
   expect(await until(() => w.state("a1").turns?.length === 2 && w.state("a1").turns[1].outcome === "finished")).toBe(true);
   const done = w.run(["wait", "--name", "a1", "--timeout", "20000"]);
@@ -374,7 +374,7 @@ test("a headless Antigravity worker: its stream-json mode, a message queued as i
   // Two corrections in one turn: two turns of their own, one message each, and its input open until the last has run.
   rmSync(w.gate, { force: true }); rmSync(join(w.home, "eof.jsonl"), { force: true });
   expect(w.launch("a3", w.task(`${BRIEF} HOLD`, "q.md"), [], undefined, "agy").state).toBe("prompted");
-  for (const t of [SENT, `${SENT} again`]) expect(w.run(["send", "--name", "a3", "--task", t]).state).toBe("delivered");
+  for (const t of [SENT, `${SENT} again`]) expect(w.run(["send", "--name", "a3", "--task", t]).state).toBe("queued");
   w.release();
   expect(await until(() => w.state("a3").turns?.length === 3 && w.state("a3").turns.every((t) => t.outcome === "finished"))).toBe(true);
   expect(w.state("a3").turns.map((t) => t.delivered)).toEqual([0, 1, 1]);
@@ -465,6 +465,29 @@ test("Kiro: a stop drops the messages it holds and says so; held messages outliv
   expect(rpcs(w).filter((r) => r.method === "session/prompt").map((r) => r.tag)).toEqual([null, "TAG-first", "TAG-second"]);
   expect(rpcs(w).filter((r) => r.method === "session/load").length).toBe(1);
   for (const n of ["k4", "k5"]) expect(w.run(["cleanup", "--worker", n]).state).toBe("removed");
+}, 60000);
+
+test("Kiro: a message sent while a resumed process starts runs after the ones held before it; a resume that dies starting loses none", async () => {
+  const w = world({ FAKE_LOAD_MS: "1500" });
+  expect(w.launch("k6", w.task(`${BRIEF} HOLD DIE`), [], undefined, "kiro").state).toBe("prompted");
+  for (const t of ["first", "second"]) expect(w.run(["send", "--name", "k6", "--task", `${SENT} TAG-${t}`]).state).toBe("queued");
+  w.release();
+  // The first process exits; the new one is loading the session: a newer message waits behind the older ones.
+  expect(await until(() => rpcs(w).some((r) => r.method === "session/load"))).toBe(true);
+  expect(w.run(["send", "--name", "k6", "--task", `${SENT} TAG-third`]).state).toBe("queued");
+  expect(await until(() => w.state("k6").turns?.length === 4 && w.state("k6").turns.every((t) => t.outcome && t.outcome !== "running"), 20000)).toBe(true);
+  await w.settled("k6");
+  expect(rpcs(w).filter((r) => r.method === "session/prompt").map((r) => r.tag)).toEqual([null, "TAG-first", "TAG-second", "TAG-third"]);
+  expect(w.state("k6").turns.map((t) => [t.outcome, t.delivered])).toEqual([["no_finish", 0], ["finished", 1], ["finished", 1], ["finished", 1]]);
+  // A resume that dies before it takes its task: each held message gets a turn of its own, none dropped silently.
+  const d = world({ FAKE_LOAD_DIE: "1" });
+  expect(d.launch("k7", d.task(`${BRIEF} HOLD DIE`), [], undefined, "kiro").state).toBe("prompted");
+  for (const t of ["first", "second"]) expect(d.run(["send", "--name", "k7", "--task", `${SENT} TAG-${t}`]).state).toBe("queued");
+  d.release();
+  expect(await until(() => d.state("k7").turns?.length === 3, 20000)).toBe(true);
+  await d.settled("k7");
+  expect([d.state("k7").turns.map((t) => [t.outcome, t.delivered]), d.state("k7").queued]).toEqual([[["no_finish", 0], ["no_finish", 1], ["not_started", 1]], 0]);
+  for (const [x, n] of [[w, "k6"], [d, "k7"]]) expect(x.run(["cleanup", "--worker", n]).state).toBe("removed");
 }, 60000);
 
 test("Kiro's ACP output as routr reads it: replies, its own requests, fixed tool kinds, the text after its last tool call, nothing while a session loads", () => {
