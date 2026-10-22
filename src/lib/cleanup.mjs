@@ -43,9 +43,9 @@ export function parseCleanupArgs(args) {
   }
   if ([o.worktree, o.path, o.pane, o.worker].filter((v) => v != null).length > 1) throw new Error("Name one worker: --worktree, --path, --pane, or --worker");
   if (o.worker != null && !/^[a-z][a-z0-9_-]{0,31}$/.test(o.worker)) throw new Error("--worker must be a worker's name");
-  if (o.worker != null && (o.cwd != null || o.deleteBranch)) throw new Error("--worker takes no --cwd or --delete-branch: a headless worker's run folder is all it removes");
+  if (o.worker != null && o.cwd != null) throw new Error("--worker takes no --cwd: the worker's run folder says where its worktree is");
   if (o.worktree != null && !BRANCH.test(o.worktree)) throw new Error("--worktree must be a plain branch name");
-  if (o.deleteBranch && o.worktree == null && o.path == null) throw new Error("--delete-branch goes with --worktree or --path");
+  if (o.deleteBranch && o.worktree == null && o.path == null && o.worker == null) throw new Error("--delete-branch goes with --worktree, --path or --worker");
   if (o.pane != null && o.cwd != null) throw new Error("--pane needs no --cwd");
   return o;
 }
@@ -90,6 +90,16 @@ export function linkedWorktree(rootReal, source) {
   } catch { return false; }
 }
 
+// `git worktree list --porcelain` as herdr's `worktree list` gives it, for cleanup outside herdr: the first block is the
+// main checkout; each other one a linked worktree, with its branch (or detached), and prunable when its folder is gone.
+// No workspace is open for any of them.
+export function worktreesFromGit(text) {
+  const blocks = String(text ?? "").trim().split(/\r?\n\r?\n/).filter(Boolean);
+  const all = blocks.map((b, i) => ({ path: b.match(/^worktree (.+)$/m)?.[1], branch: b.match(/^branch refs\/heads\/(.+)$/m)?.[1] ?? null,
+    is_detached: /^detached$/m.test(b), is_prunable: /^prunable\b/m.test(b), is_linked_worktree: i > 0, open_workspace_id: null })).filter((w) => w.path);
+  return { source: { source_checkout_path: all[0]?.path }, worktrees: all };
+}
+
 // `git worktree list --porcelain`: each worktree's path and the commit git recorded for it.
 export function parseWorktreeHeads(text) {
   const heads = new Map();
@@ -103,6 +113,9 @@ export function parseWorktreeHeads(text) {
 // `run` is one herdr command, `git(dir, args)` one git command ({ out, err, code }, or null), and `linked` the
 // linked-worktree test: seams for tests.
 export async function cleanup(args, { run = runHerdr, git = gitIn, env = process.env, linked = linkedWorktree } = {}) {
+  // Outside herdr, worktrees are listed and removed through git alone (headless workers make theirs that way), and
+  // what runs in a folder is not seen: the warning says so.
+  const viaGit = env.HERDR_ENV !== "1";
   let target = null;
   const out = { ok: false, state: "failed", ran: [], next: [], steps: [], warnings: [], unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
@@ -227,7 +240,13 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
     }
 
     out.cwd = resolve(o.cwd ?? ".");
-    const list = (await herdr(["worktree", "list", "--cwd", out.cwd])).data?.result ?? {};
+    let list;
+    if (viaGit) {
+      const r = await gitRun(out.cwd, ["worktree", "list", "--porcelain"]);
+      if (!r?.ok) throw new Error(`git found no repository at ${out.cwd} it could list the worktrees of (${r?.code ?? "git_unreachable"})`);
+      list = worktreesFromGit(r.out);
+      out.warnings.push("Outside herdr, cleanup cannot see whether anything runs in a worktree's folder: it checks git's state only");
+    } else list = (await herdr(["worktree", "list", "--cwd", out.cwd])).data?.result ?? {};
     const source = list.source?.source_checkout_path ?? list.source?.repo_root;
     if (!source) throw new Error(`herdr found no git repository at ${out.cwd}`);
     const linked = (list.worktrees ?? []).filter((w) => w.is_linked_worktree);

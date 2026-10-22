@@ -331,9 +331,10 @@ Outside herdr, `routr launch --kind claude` starts the worker without a pane: ro
 mode on the user's sign-in, in `--cwd`, held by a routr process of its own. Dispatch, the task file, `--advice`, the
 model and effort choice, `check` and `record` are as in herdr. What differs:
 
-- **Claude Code only, no worktree yet.** Other harnesses, `--worktree`, `--pane` and the other pane flags are refused
-  outside herdr. The worker works in `--cwd` itself: give one writing worker a folder at a time, or a clone or
-  worktree you made for it, and tell it which branch to commit on. Read-only workers can share a folder.
+- **Claude Code only, worktrees as in herdr.** Other harnesses, `--pane` and `--direction` are refused outside herdr.
+  `--worktree <branch>` (with `--base` and `--copy`) works as in step 3: routr makes the git worktree itself, under
+  `~/.local/share/routr/worktrees`, on a new branch, and the worker runs there. The rule is the same too: every worker
+  gets its own worktree, read-only ones included.
 - **Not from inside a sandbox.** A worker started from your sandboxed shell cannot reach its provider or routr's
   state, so launch refuses there, and so does a send that has to start the worker again. Run `routr launch`, `routr
   send` and `routr wait` as commands outside the sandbox.
@@ -359,9 +360,11 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   its session with `claude --resume` while routr may resume it (a `send` would start a second Claude on the same
   session, and routr cannot see the first). Read its reports instead.
 - **Stop and clean up.** `routr stop --name <name>` ends a worker through its own process. Every worker ends with
-  `routr cleanup --worker <name>`, the step in its launch result's `next`: it removes the run folder and its
-  reports, so read what you need first. It refuses while the worker runs. The worker's changes stay in its folder:
-  integrate them as in step 6.
+  `routr cleanup --worker <name> [--delete-branch]`, the step in its launch result's `next`: it removes the worker's
+  worktree with the checks of step 6 (and keeps everything when one fails), then its run folder and reports, so read
+  what you need first. It refuses while the worker runs. Outside herdr, `routr cleanup --cwd <repo>` lists and removes
+  worktrees through git, and cannot see whether something runs in a worktree's folder: run it only for workers that
+  have ended. A worker launched without `--worktree` worked in `--cwd`: its changes are yours to integrate.
 - **Lost, or something left running.** If a worker's own process dies, `wait` and `workers` say `lost`. On macOS
   and Linux they name the process group its Claude ran in while that group still has members (a lost Claude, or a
   command that outlived it), and send and cleanup refuse until it is empty. routr never stops a process by a saved

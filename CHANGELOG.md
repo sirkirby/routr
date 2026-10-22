@@ -5,6 +5,9 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- Outside herdr, `routr launch --worktree` gives a headless worker its own git worktree, as in herdr, and `routr cleanup
+  --worker` removes it with the same checks; `routr cleanup` lists and removes worktrees through git when herdr is not
+  running. (#93)
 - The routr binary no longer loads a `.env` or `bunfig.toml` from the folder you run it in. In a project whose `.env`
   set `ANTHROPIC_API_KEY`, routr's own Claude Code reads (sign-in status, usage) used that key instead of your
   subscription, so Claude Code could read as billed per token; a decision-model key or `ROUTR_*` variable in that

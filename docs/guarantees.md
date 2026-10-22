@@ -53,9 +53,13 @@ was given. An existing directory is accepted; a file in its place or a permissio
   `launch --copy` brought in and goes with the worktree, as ignored files do (as with `git worktree remove`). It
   deletes a branch only when asked and `git branch -d` agrees it is merged. Limit: neither herdr nor git can remove
   only if unchanged, so a commit made, or a worker started, after cleanup's last check is not seen.
-- `cleanup --worker` removes a headless worker's run folder, its reports included, once its own process has ended
-  and no process group it recorded still has members, under the lock a new holder is started under. It does not
-  inspect or remove the worker's repository, commits or uncommitted changes.
+- `cleanup --worker` removes a headless worker's worktree, when launch made one, with the same checks as `cleanup
+  --worktree` (and keeps everything when one fails), then its run folder, its reports included, once its own process
+  has ended and no process group it recorded still has members, under the lock a new holder is started under. A
+  worker launched without a worktree worked in your folder: cleanup does not inspect or touch it.
+- Outside herdr, `cleanup --cwd`, `--worktree` and `--path` list and remove worktrees through git (`git worktree
+  list`, `git worktree remove`, never `--force`), and cannot see whether anything runs in a worktree's folder: they say
+  so in `warnings`.
 - `usage cursor` drives only a private headless herdr session it makes and removes, never your own, and keeps the
   reading in `~/.cache/routr`.
 - `usage kiro` runs Kiro's own `/usage` in the system temp folder, deletes the empty session that leaves with Kiro's
@@ -124,7 +128,9 @@ The binary is self-contained: the files under `skills/` are embedded at build ti
 repository checkout at run time. It reads your harness state read-only (usage sources, settings, model lists) and
 writes only:
 
-- under `~/.config/routr`, `~/.cache/routr`, `~/.local/share/routr` and `~/.local/state/routr` (headless workers);
+- under `~/.config/routr`, `~/.cache/routr`, `~/.local/share/routr` (headless workers' worktrees in its `worktrees`)
+  and `~/.local/state/routr` (headless workers);
+- in your repository's git metadata, the worktree and branch a headless `launch --worktree` adds;
 - its own binary, when it updates itself;
 - the skill folders, on `skill install` (and the updater's reinstall);
 - a file at a path you name for that command (`share --out`, a `--ledger` or `--config` you give);
@@ -155,8 +161,14 @@ display only, with prompt lengths instead of prompt text.
 ## Headless workers
 
 Outside herdr, `routr launch --kind claude` starts the worker headless: Claude Code's own `-p` stream-json mode, on
-your sign-in, held by one routr process of its own (its holder). Other harnesses, `--pane`, `--worktree` and the rest
-of herdr's flags are refused outside herdr. What that means on your machine:
+your sign-in, held by one routr process of its own (its holder). Other harnesses, `--pane` and `--direction` are refused
+outside herdr. What that means on your machine:
+
+- **Its worktree.** With `--worktree <branch>`, launch makes the worktree with git (`git worktree add -b`), under
+  `~/.local/share/routr/worktrees/<repository>-<hash>/<branch>`, on a branch that must not exist yet, from `--base`
+  or the checkout's HEAD, and copies the `--copy` files in. A launch that stops before the worker starts removes the
+  copies, the worktree, and the branch while it is still at the commit it started on, and says what it left otherwise.
+  `cleanup --worker` removes the worktree with the checks of `cleanup --worktree`, through git.
 
 - **Where it lives.** Each worker has a run folder, `~/.local/state/routr/workers/<name>`: the worker's settings
   (kind, model, effort, folder; never the brief or the environment), the holder's state (turns, their outcomes, the

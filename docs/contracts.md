@@ -410,9 +410,15 @@ plans the pane launch as before: it does not check the environment.
 
 - Required, beyond launch's own: `--kind claude`, a task (`--task-file` or `--task`, at most 3 MB with launch's
   wrapping) with its matching `--advice`. Refused (with `error`, `state: "failed"`), before a run folder is written or a
-  holder or worker started: another kind; any of `--pane`, `--direction`, `--worktree`, `--base`, `--copy`; no task; a task too large;
-  a lead's sandbox it can see (`SANDBOX_RUNTIME`, `CODEX_SANDBOX`); a name whose run folder exists; a home whose socket
-  path would be too long; the subscription turned off; Claude not signed in.
+  holder or worker started: another kind; `--pane` or `--direction`; no task; a task too large; a lead's sandbox it can
+  see (`SANDBOX_RUNTIME`, `CODEX_SANDBOX`); a name whose run folder exists; a home whose socket path would be too long;
+  with `--worktree`, a `--cwd` git finds no repository at, a branch that exists, or a worktree folder that exists; the
+  subscription turned off; Claude not signed in.
+- `--worktree <branch>` (with `--base`, `--copy`): launch makes the worktree with git under
+  `~/.local/share/routr/worktrees`, on that new branch, and the worker runs there; `worktree` is `{ branch, base?, path,
+  workspace: null }`, `cwd` its path, and `steps` add `worktree` and `copy`. git refusing to make it (a `--base` it
+  cannot find) is a failure with `error`. A launch that stops before the holder answers removes the worktree, its
+  copies, and the branch while that is still at the commit it started on; what it cannot remove is a warning.
 - `--timeout` (default 120000) sets budgets, not a bound on the whole call: polling for the holder gets up to 15
   seconds of it (a probe under way when that runs out finishes), and the request handing Claude the task gets between
   35 and 45 seconds (the holder itself answers after 30). The sign-in check, the lock and each channel handshake can
@@ -493,9 +499,14 @@ Finishes a worker: removes its worktree, or closes its pane, after checking noth
 Inputs:
 
 - Required: at most one of `--worktree <branch>`, `--path <path>`, `--pane <id>`, `--worker <name>`; `--delete-branch`
-  only with `--worktree` or `--path`; `--pane` and `--worker` take no `--cwd`. Refused (with `error`) otherwise.
+  only with `--worktree`, `--path` or `--worker`; `--pane` and `--worker` take no `--cwd`. Refused (with `error`)
+  otherwise.
+- Outside herdr (`HERDR_ENV` is not `1`), the list and `--worktree`/`--path` modes read and remove worktrees through
+  git, with the same checks, and `warnings` says cleanup cannot see whether anything runs in a worktree's folder.
 - `--worker` refuses (`refused`) while the worker runs or does not answer, or while a process group it recorded still
-  has members; `headline` `routr: removed worker <name>`, `routr: kept <name>: <why>`, `routr: would remove
+  has members; for a worker launch gave a worktree, it first removes the worktree as `--path` would (`--delete-branch`
+  and `--dry-run` pass on), and keeps the worker whole, with that refusal's reason and `next`, when it would not;
+  `worktree` and `branch` are then as for `--path`; `headline` `routr: removed worker <name>`, `routr: kept <name>: <why>`, `routr: would remove
   <folder>`; it removes only the run folder and its reports, inspects no repository, and warns that the worker's
   changes in its folder are the lead's to check. Own field: `name`.
 - Used when given: `--cwd` (default `.`), `--delete-branch`, `--dry-run`.

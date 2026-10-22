@@ -1,7 +1,7 @@
 // Headless workers outside herdr: launch, wait, send, workers, stop, cleanup --worker, the holder and its channel. A fake
 // `claude` stands in for Claude Code's stream-json mode, with the behaviours measured in prototypes p34 and p36.
 import { afterAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -60,7 +60,8 @@ function world(over = {}) {
   for (const d of [bin, work, inputs]) mkdirSync(d, { recursive: true });
   fakeExecutable(bin, "claude", FAKE_CLAUDE);
   const gate = join(home, "gate"), linger = join(home, "linger");
-  const env = cliEnv(home, { PATH: bin + delimiter + dirname(process.execPath), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, ...over });
+  // git's own folder too: launch --worktree and cleanup run it, as they would for a person.
+  const env = cliEnv(home, { PATH: [bin, dirname(process.execPath), dirname(Bun.which("git") ?? "git")].join(delimiter), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, ...over });
   for (const k of Object.keys(env)) if (/^(HERDR_|CLAUDECODE$|CLAUDE_CODE_SESSION|SANDBOX_RUNTIME$|CODEX_SANDBOX)/.test(k)) delete env[k];
   const outputs = [];
   const run = (args, extra = {}) => {
@@ -120,7 +121,7 @@ test("a headless Claude worker: launch, a message mid-turn, wait, a follow-up th
   for (const n of ["w1", "w2"]) expect(w.run(["cleanup", "--worker", n])).toMatchObject({ ok: true, state: "removed", name: n });
   expect(existsSync(w.runDir("w1"))).toBe(false);
   expect(w.run(["cleanup", "--worker", "w1"])).toMatchObject({ ok: true, state: "absent" });
-  expect(w.run(["cleanup", "--worker", "w1", "--cwd", w.work]).error).toBe("--worker takes no --cwd or --delete-branch: a headless worker's run folder is all it removes");
+  expect(w.run(["cleanup", "--worker", "w1", "--cwd", w.work]).error).toBe("--worker takes no --cwd: the worker's run folder says where its worktree is");
 }, 90000);
 
 test("the brief and messages reach the harness on stdin only: never an answer, an argument, or a file but the reports", async () => {
@@ -179,6 +180,55 @@ test("a message sent while Claude is exiting is queued, and runs as the next tur
   w.run(["cleanup", "--worker", "q1"]);
 }, 60000);
 
+// A repository for a worker's worktree: one commit, and an untracked file a launch may --copy.
+function repo(w) {
+  const g = (...a) => { const r = Bun.spawnSync([Bun.which("git"), "-C", w.work, ...a], { env: { ...w.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" } }); return r.stdout.toString().trim(); };
+  g("init", "-q", "-b", "main"); writeFileSync(join(w.work, "x.js"), "let foo = 1;\n"); g("add", "x.js"); g("commit", "-q", "-m", "init");
+  writeFileSync(join(w.work, ".env.local"), "LOCAL=1\n");
+  return g;
+}
+
+test("outside herdr, a worker gets its own worktree, and cleanup --worker removes it only once nothing of the work would be lost", async () => {
+  const w = world(), g = repo(w);
+  const l = w.launch("t1", w.task(BRIEF), ["--worktree", "work/t1", "--copy", ".env.local"]);
+  expect([l.ok, l.state]).toEqual([true, "prompted"]);
+  const path = l.worktree.path;
+  expect(l.worktree).toEqual({ branch: "work/t1", path, workspace: null });
+  expect(path.startsWith(join(realpathSync(w.home), ".local", "share", "routr", "worktrees"))).toBe(true);
+  expect([l.cwd, existsSync(join(path, "x.js")), readFileSync(join(path, ".env.local"), "utf8")]).toEqual([path, true, "LOCAL=1\n"]);
+  expect(g("branch", "--list", "work/t1")).toContain("work/t1");
+  expect(w.run(["workers", "--name", "t1"]).workers[0].cwd).toBe(path);
+  w.run(["wait", "--name", "t1", "--timeout", "20000"]);
+  await w.settled("t1");
+  // A file the worker made keeps the worktree, and the worker's run folder with it.
+  writeFileSync(join(path, "new.txt"), "work\n");
+  const kept = w.run(["cleanup", "--worker", "t1"]);
+  expect([kept.ok, kept.state, kept.headline]).toEqual([false, "refused", `routr: kept t1: 1 untracked file in ${path} that the main checkout does not hold as they are`]);
+  expect([existsSync(path), existsSync(w.runDir("t1"))]).toEqual([true, true]);
+  rmSync(join(path, "new.txt"));
+  // The copy it was given, unchanged, goes with it; the branch is kept unless --delete-branch.
+  expect(w.run(["cleanup", "--worker", "t1", "--dry-run"])).toMatchObject({ ok: true, state: "planned", headline: `routr: would remove ${w.runDir("t1")} and ${path}` });
+  const done = w.run(["cleanup", "--worker", "t1", "--delete-branch"]);
+  expect([done.ok, done.state, done.branch]).toEqual([true, "removed", { name: "work/t1", deleted: true }]);
+  expect([existsSync(path), existsSync(w.runDir("t1")), g("branch", "--list", "work/t1")]).toEqual([false, false, ""]);
+  // A branch that exists is refused before anything is written.
+  g("branch", "taken");
+  expect(w.launch("t2", w.task(BRIEF), ["--worktree", "taken"]).error).toBe(`branch taken exists in ${realpathSync(w.work)}; choose a new branch for the worker`);
+  expect(existsSync(w.runDir("t2"))).toBe(false);
+}, 60000);
+
+test("a launch that stops before its worker starts removes the worktree and branch it made", async () => {
+  const w = world(), g = repo(w), file = w.task(BRIEF), advice = w.advise(file);
+  const saved = [process.env.HOME, process.env.USERPROFILE];
+  process.env.HOME = process.env.USERPROFILE = w.home;
+  try {
+    const r = await launch(["--kind", "claude", "--name", "t3", "--model", "m", "--task-file", file, "--advice", advice, "--cwd", w.work, "--worktree", "work/t3", "--copy", ".env.local"],
+      { env: {}, settings: () => cfg(), ready: async () => null, spawn: () => false });
+    expect([r.state, r.error, r.worker, r.warnings]).toEqual(["failed", "the worker's process did not start (not_started)", null, []]);
+  } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
+  expect([g("branch", "--list", "work/t3"), g("worktree", "list").split("\n").length, existsSync(w.runDir("t3"))]).toEqual(["", 1, false]);
+}, 60000);
+
 test("after a failed turn, wait reports the failure once, then the turn a follow-up resumes", async () => {
   const w = world();
   expect(w.launch("f1", w.task(`${BRIEF} FAIL`)).state).toBe("prompted");
@@ -212,7 +262,8 @@ test("outside herdr, launch refuses what a headless worker cannot do, before it 
   const w = world(), file = w.task(BRIEF), advice = w.advise(file);
   const go = (args, extra) => w.run(["launch", "--name", "r1", "--model", "m", "--task-file", file, "--advice", advice, ...args], extra);
   expect(go(["--kind", "codex"]).error).toBe("outside herdr, routr launch starts Claude Code workers only; run the lead inside herdr for a Codex worker");
-  expect(go(["--kind", "claude", "--worktree", "b"]).error).toBe("--worktree needs herdr; outside herdr a worker runs headless in --cwd");
+  expect(go(["--kind", "claude", "--pane", "w1:p1"]).error).toBe("--pane needs herdr; outside herdr a worker runs headless, with no pane");
+  expect(go(["--kind", "claude", "--worktree", "b"]).error).toStartWith("--worktree needs a git repository: git found none at");
   expect(w.run(["launch", "--kind", "claude", "--name", "r1", "--model", "m"]).error).toBe("outside herdr a worker starts with its task: pass --task-file (or --task) and --advice");
   for (const [k, which] of [["SANDBOX_RUNTIME", "Claude Code's Bash sandbox"], ["CODEX_SANDBOX", "Codex's sandbox"]]) expect(go(["--kind", "claude"], { [k]: "1" }).error).toStartWith(`this command runs inside ${which}`);
   expect(w.run(["workers"], { SANDBOX_RUNTIME: "1" }).warnings[0]).toStartWith("this command runs inside Claude Code's Bash sandbox, which may keep it from reaching");
