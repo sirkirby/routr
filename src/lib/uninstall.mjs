@@ -5,29 +5,51 @@
 // which is this binary) is routr's, and only `routr cleanup --worker` removes one with its checks. And the worktrees a
 // headless launch made sit inside ~/.local/share/routr, so `--purge` would delete them unchecked. While any is there,
 // uninstall removes nothing and says what to run (found in the doc sweep of 2026-10-23: `--purge` removed them whole).
-import { copyFileSync, lstatSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { notOursWhy, owner, removeOwned, skillPlaces } from "./skill-install.mjs";
-import { home as userHome, standalone, start } from "./runtime.mjs";
+import { lockIsStale, home as userHome, standalone, start, takeLock, UNINSTALL_LOCK } from "./runtime.mjs";
+import { FORMAT } from "./headless.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 
 
-const dirs = (p) => { try { return readdirSync(p).filter((n) => { try { return statSync(join(p, n)).isDirectory(); } catch { return false; } }).sort(); } catch { return []; } };
-// The headless workers still here (a run folder each, running or not), and the worktrees a headless launch made: one
-// folder per repository under worktrees/, one per branch inside it.
+// A folder's entries; none when it is not there. Anything else unreadable is thrown: it is not known to be empty.
+const entries = (p) => { try { return readdirSync(p).sort(); } catch (e) { if (e?.code === "ENOENT") return []; throw Object.assign(new Error(p), { path: p }); } };
+const isDir = (p) => { try { return statSync(p).isDirectory(); } catch (e) { if (e?.code === "ENOENT") return false; throw Object.assign(new Error(p), { path: p }); } };
+const emptyTree = (p) => isDir(p) && entries(p).every((n) => emptyTree(join(p, n)));
+const NAME = /^[a-z][a-z0-9_-]{0,31}$/; // launch's --name rule, which cleanup --worker takes
+// What would stop uninstall: headless workers (a run folder launch finished writing, running or not), run folders it did
+// not finish, and anything under worktrees/ but empty folders (a worktree is <repo folder>/<branch> today; any other
+// layout is reported, never trusted), plus paths it could not read.
 export function leftovers(home = userHome()) {
-  const workers = dirs(join(home, ".local/state/routr/workers"));
+  const workers = [], unknown = [], worktrees = [], unreadable = [];
+  const dir = join(home, ".local/state/routr/workers");
+  try {
+    for (const n of entries(dir)) {
+      if (!isDir(join(dir, n))) continue; // a worker's lock file
+      let w = null; try { w = JSON.parse(readFileSync(join(dir, n, "worker.json"), "utf8")); } catch {}
+      if (NAME.test(n) && w?.format === FORMAT && w.name === n) workers.push(n); else unknown.push(join(dir, n));
+    }
+  } catch (e) { unreadable.push(e.path ?? dir); }
   const root = join(home, ".local/share/routr/worktrees");
-  const worktrees = dirs(root).flatMap((repo) => dirs(join(root, repo)).map((b) => join(root, repo, b)));
-  return { workers, worktrees };
+  try {
+    for (const repo of entries(root)) {
+      const r = join(root, repo);
+      if (!isDir(r) || existsSync(join(r, ".git"))) { worktrees.push(r); continue; }
+      for (const b of entries(r)) if (!emptyTree(join(r, b))) worktrees.push(join(r, b));
+    }
+  } catch (e) { unreadable.push(e.path ?? root); }
+  return { workers, unknown, worktrees, unreadable };
 }
 
 // Why uninstall stops, and what to run first; null when nothing stops it.
-export function blockedBy({ workers, worktrees }, purge) {
+export function blockedBy({ workers, unknown = [], worktrees, unreadable = [] }, purge) {
   const steps = [];
   if (workers.length) steps.push(`headless workers are still here (${workers.join(", ")}): finish each with \`routr cleanup --worker <name>\` (it keeps a worktree with uncommitted work; stop a running one first with \`routr stop --name <name>\`)`);
-  if (purge && worktrees.length) steps.push(`--purge would delete worktrees a headless launch made, unchecked (${worktrees.join(", ")}): finish each with \`routr cleanup --cwd <path> --path <path>\`, which keeps uncommitted work, or uninstall without --purge to keep them`);
+  if (unknown.length) steps.push(`run folders a launch did not finish writing are here (${unknown.join(", ")}): look at each, and remove it yourself once nothing of it runs`);
+  if (purge && worktrees.length) steps.push(`--purge would delete what a headless launch left under ~/.local/share/routr/worktrees, unchecked (${worktrees.join(", ")}): finish a worktree with \`routr cleanup --cwd <path> --path <path>\`, which keeps uncommitted work, look at anything else yourself, or uninstall without --purge to keep them`);
+  if (unreadable.length) steps.push(`routr could not read ${unreadable.join(", ")}, so it cannot tell whether a worker or worktree is there: look at it`);
   return steps.length ? `routr uninstall removed nothing: ${steps.join("; ")}. Then run it again` : null;
 }
 
@@ -42,12 +64,13 @@ export function uninstallPlan({ home = userHome(), purge = false, binary = null 
     else if (p.state === "theirs") notOurs.push({ path: p.path, what: p.why });
   }
   remove.push({ path: join(home, ".cache/routr"), what: "cache: the usage snapshots and the update log" });
-  // With no worker left (blockedBy), what remains here is routr's own bookkeeping: sockets and locks.
-  remove.push({ path: join(home, ".local/state/routr"), what: "state: headless workers' sockets and locks" });
   const left = leftovers(home);
   const data = [{ path: join(home, ".config/routr"), what: "your config and decision provider keys" },
     { path: join(home, ".local/share/routr"), what: left.worktrees.length ? "your ledger, and worktrees a headless launch made (yours to finish)" : "your ledger" }];
   (purge ? remove : keep).push(...data);
+  // Last: it holds the uninstall lock, which keeps a launch from starting until everything else is gone. With no worker
+  // left (blockedBy), what remains here is routr's own bookkeeping: sockets and locks.
+  remove.push({ path: join(home, ".local/state/routr"), what: "state: headless workers' sockets and locks" });
   const present = (l) => l.filter((x) => { try { lstatSync(x.path); return true; } catch { return false; } });
   let statusline = false;
   try { statusline = isOurStatusline(JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8")).statusLine?.command); } catch {}
@@ -81,9 +104,13 @@ export async function uninstall(args, { home = userHome() } = {}) {
   }
   if (dry) return { ok: true, dry_run: true, would_remove: plan.remove.map((x) => x.path), would_keep: plan.keep.map((x) => x.path), not_ours: plan.not_ours.map((x) => x.path), statusline: plan.statusline };
 
-  // Again now: the person may have been asked for minutes, and a worker launched meanwhile.
+  // Again now, under the uninstall lock: the person may have been asked for minutes, and a launch that reserves a run
+  // folder from here on sees the lock and backs out (headless.mjs reserve). The lock goes with the state folder.
+  const lock = UNINSTALL_LOCK(home);
+  try { mkdirSync(join(home, ".local/state/routr"), { recursive: true, mode: 0o700 }); } catch {}
+  if (!takeLock(lock, lockIsStale)) return { ok: false, error: `routr uninstall removed nothing: ${existsSync(lock) ? "another routr uninstall is running" : `it could not write ${lock}`}` };
   const late = blockedBy(leftovers(home), purge);
-  if (late) return { ok: false, error: late };
+  if (late) { rmSync(lock, { force: true }); return { ok: false, error: late }; }
   const removed = [], failed = [], userFiles = [];
   if (plan.statusline) try {
     // Read again now: the plan may be minutes old (a person was asked), and the entry may have been replaced since.

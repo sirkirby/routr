@@ -154,10 +154,14 @@ after a backup, and only when it runs `routr statusline`.
 and locks). It keeps `~/.config/routr` (config and keys) and `~/.local/share/routr` (the ledger, telemetry's install
 id, and any worktree a headless launch made) unless `--purge`. It removes nothing, and says what to run, while a
 headless worker's run folder is still there (its reports, and while it runs, its holder, which is the routr binary):
-`routr cleanup --worker <name>` finishes each with its checks. With `--purge` it also removes nothing while a worktree
-a headless launch made is still under `~/.local/share/routr/worktrees`, since removing that folder would delete it
-unchecked: `routr cleanup --cwd <path> --path <path>` finishes one and keeps uncommitted work, or a plain uninstall
-keeps it. Both checks run again just before anything is removed.
+`routr cleanup --worker <name>` finishes each with its checks, and a run folder a launch did not finish writing is
+named by its path for you to look at. With `--purge` it also removes nothing while anything but empty folders is
+under `~/.local/share/routr/worktrees` (a worktree a headless launch made, in whatever layout), since removing that
+folder would delete it unchecked: `routr cleanup --cwd <path> --path <path>` finishes a worktree and keeps
+uncommitted work, or a plain uninstall keeps it. A folder it cannot read stops it too: unreadable is not empty. Both
+checks run again just before anything is removed, under a lock a headless launch looks at after it reserves its run
+folder, so a launch that starts meanwhile either backs out or is seen; routr's state folder, which holds that lock,
+is removed last.
 
 ## Processes and platforms
 

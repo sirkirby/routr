@@ -18,6 +18,9 @@ export const standalone = () => !/\.m?js$/.test(process.argv[1] ?? "");
 export const CACHE_DIR = () => join(home(), ".cache/routr");
 // Headless workers: each one's run folder, and the sockets of their channels (channel.mjs, headless.mjs).
 export const STATE_DIR = () => join(home(), ".local/state/routr");
+// Held by `routr uninstall` from its last check through its removal (its pid inside); a headless launch that reserves
+// a run folder while it is held backs out (headless.mjs reserve), so neither misses the other.
+export const UNINSTALL_LOCK = (h = home()) => join(h, ".local/state/routr", "uninstalling");
 export const UPDATE_STAMP = () => join(CACHE_DIR(), "update-check");
 export const TELEMETRY_LOG = () => join(CACHE_DIR(), "telemetry.log");
 export const UPDATE_LOCK = () => join(CACHE_DIR(), "update.lock");

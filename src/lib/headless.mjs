@@ -37,11 +37,11 @@
 // continues it in a new process with its context. It runs on a private copy of its config, as in a pane.
 // Worker text reaches one place, the report file of each turn (owner-only, removed by cleanup); only its path leaves
 // routr. Nothing else of the harness's output is kept: its stderr is not read, and a tool is shown by a fixed name.
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, privateDir, probe, removeEndpoint, serve } from "./channel.mjs";
 import { HARNESSES, plan } from "./harnesses.mjs";
-import { harnessEnv, installedAt, probe as collect, start, STATE_DIR, stop, writeJsonAtomic } from "./runtime.mjs";
+import { harnessEnv, installedAt, lockIsStale, probe as collect, start, STATE_DIR, stop, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
 import { besidesHelper, groupMembers } from "./process-boundary.mjs";
 
 export const FORMAT = 1;
@@ -681,8 +681,13 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
 }
 
 // The run folder of a new worker, reserved by its name: made whole, owner-only, or refused when one exists.
+// Made first, then the uninstall lock looked at: uninstall takes its lock first, then looks for run folders, so one of
+// the two always sees the other.
 export function reserve(name) {
   privateDir(WORKERS_DIR());
   mkdirSync(runDir(name), { mode: 0o700 }); // not recursive: EEXIST when that name is taken
+  let held = false;
+  try { held = existsSync(UNINSTALL_LOCK()) && !lockIsStale(UNINSTALL_LOCK()); } catch { held = existsSync(UNINSTALL_LOCK()); }
+  if (held) { rmSync(runDir(name), { recursive: true, force: true }); throw new Error("routr is being uninstalled on this machine: no worker can start now"); }
   return runDir(name);
 }
