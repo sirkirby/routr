@@ -132,3 +132,20 @@ export function processSteps(out, result) {
   for (const step of result.next ?? []) if (!out.next.some((s) => s.why === step.why)) out.next.push(step);
   return result;
 }
+
+// A process group's members, from `ps -A -o pid=,ppid=,pgid=,command=` (macOS and Linux both print it so). Lines that
+// do not read as one are left out; a command is only ever matched against a harness's helper, never shown.
+export function groupMembers(out, pgid) {
+  const rows = [];
+  for (const l of String(out ?? "").split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s(.*)$/.exec(l);
+    if (m && Number(m[3]) === pgid) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), command: m[4].trim() });
+  }
+  return rows;
+}
+// The members that are not a harness's own helper (`command`, a pattern), nor started by one.
+export function besidesHelper(members, command) {
+  const helper = new Set(members.filter((m) => command.test(m.command)).map((m) => m.pid));
+  for (let grew = true; grew;) { grew = false; for (const m of members) if (!helper.has(m.pid) && helper.has(m.ppid)) { helper.add(m.pid); grew = true; } }
+  return members.filter((m) => !helper.has(m.pid));
+}

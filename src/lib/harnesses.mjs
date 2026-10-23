@@ -135,6 +135,10 @@ export const HARNESSES = {
     noEffort: "cursor has no separate --effort flag; choose a model id with the desired effort",
     env: (dir) => ({ CURSOR_CONFIG_DIR: dir ?? "<private-cursor-config-dir>" }),
     notes: () => ["Cursor changes its configured default model; launch uses a private copy of ~/.cursor/cli-config.json."],
+    // Its own long-lived helper, one per project folder, which outlives a headless turn in that turn's process group
+    // (observed: references/harnesses.md, "Cursor headless"). It does not count as the worker still running.
+    helper: { command: /\/cursor-agent\/versions\/[^/\s]+\/index\.js worker-server$/,
+      left: (cwd) => `Cursor's own worker-server for ${cwd} may still be running, as after any Cursor CLI run there: it is Cursor's, and routr leaves it` },
     // "✓ Logged in as <email>" / "Not logged in", and exit 0 BOTH ways: only the text tells.
     auth: { check: ["status"], signedIn: (out) => /\bLogged in as\b/.test(out) && !/\bNot logged in\b/.test(out), signIn: "run `cursor-agent login`" },
     models: () => lines("cursor-agent", ["models"], /^\s*([a-z0-9][\w.-]+) - /i),

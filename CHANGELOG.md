@@ -5,6 +5,9 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- Outside herdr, `routr launch --kind cursor` starts a headless Cursor worker, one process a turn on your sign-in: a
+  correction sent mid-turn waits and runs as its next turn on the same session, and Cursor's own worker-server, which
+  outlives each turn, no longer blocks the next turn or `cleanup --worker`. (#99)
 - Outside herdr, `routr launch --kind kiro` starts a headless Kiro worker through its ACP mode, on your sign-in: a
   correction sent mid-turn waits and runs as its next turn, and a follow-up loads its session (its protocol measured;
   not yet run end to end with a real Kiro). (#96)

@@ -310,3 +310,28 @@ effort flag passed); an explicit model id and `--effort` on `acp` are not measur
 - Kiro sends notifications of its own (`_kiro.dev/metadata` with context and credits, `_kiro.dev/commands/available`,
   `_kiro.dev/session/update`, `_kiro.dev/subagent/list_update`);
   routr ignores them. No request reached the client with `--trust-tools=*`.
+
+## Cursor headless, outside herdr (measured 2026-10-22, cursor-agent 2026.10.22-27dcf5f)
+
+What `routr launch --kind cursor` outside herdr relies on: `cursor-agent -p --output-format stream-json` with the pane's
+`--yolo`, `--trust` and `--model <id>`, on a private copy of `~/.cursor/cli-config.json` (`CURSOR_CONFIG_DIR`), as a
+pane gets.
+
+- It reads its prompt from stdin to the end before it starts: a turn is one process. Events: `system/init` (the
+  session id, a UUID), `user`, `assistant` (its text), `tool_call` started and completed (one key per tool, such as
+  `shellToolCall`), and `result` (`is_error`; `result` joins every assistant message of the turn, so routr's report
+  is the last assistant message). It exits about 0.4 s after `result`.
+- `--resume <session>` in a new process continues the session, its context kept. A correction sent mid-turn therefore
+  waits in routr's holder and runs as the next turn, in a new process (measured through routr: two corrections sent
+  during one turn ran as turns 2 and 3, one commit each; a follow-up once idle resumed the session; Cursor's own
+  transcript held each message once).
+- Its own helper: the first turn in a project folder starts `…/cursor-agent/versions/<version>/index.js worker-server`
+  (socket in `~/.cursor/projects/<folder>/worker.sock`), not detached, so it stays in that turn's process group with
+  its parent gone, and it starts `npm exec typescript-language-server` under it. Later turns in that folder reuse it.
+  It ended about five minutes after its last turn (seen twice) and outlived its folder's removal. routr recognises it
+  by that command line (and what it started by their parent) and does not count it as the worker running.
+- Just after cursor-agent closes, its group still held one process in its exit (`(node)`), gone within 100 ms: routr
+  looks at a group again for up to two seconds before it counts as running.
+- Not measured: Windows and Linux (only a fake in CI), `--worktree`, a killed holder, a background command, what the
+  worker-server does on the SIGTERM of a stop during the turn that started it, a first run in a folder Cursor has not
+  trusted without `--trust`.
