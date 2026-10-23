@@ -82,14 +82,16 @@ itself. "Did not answer its sign-in check" means the command is missing from PAT
 ## Cursor's usage is "assumed"
 
 Cursor shows usage only in its own `/usage` screen. routr reads it in a private herdr session in the background (nothing
-opens on your screen; herdr has to be installed), about once per working session, and keeps the reading in
+opens on your screen; herdr has to be installed), about once per working session, and at once after an update when
+the last try got no reading, and keeps the reading in
 `~/.cache/routr/cursor-usage.json`. Until the first reading lands, or when reading fails, Cursor is `assumed` and the
 row's `note` says why. Run `routr usage cursor` to read it now and see any error; if it cannot be read at all, pass
 `--headroom cursor=<share left>` yourself (0.9 or 90%) (the by-hand step in `next` says how to read the screen).
 
 ## Kiro's usage is "assumed"
 
-Kiro's `/usage` command takes about 10 seconds, so routr runs it in the background about once per working session, in
+Kiro's `/usage` command takes about 10 seconds, so routr runs it in the background about once per working session (and at once
+after an update when the last try got no reading), in
 the system temp folder, and keeps the reading in `~/.cache/routr/kiro-usage.json`. Each run leaves an empty saved
 session in Kiro, which routr deletes with `kiro-cli chat --delete-session`; if that fails, the reading's `note` gives
 the command. Until the first reading lands, or when reading fails, Kiro is `assumed` and the row's `note` says why.

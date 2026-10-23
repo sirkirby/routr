@@ -121,7 +121,8 @@ the command that fixes it.
     nothing is saved to the user's Kiro settings).
   - `assumed_headroom`: used only when nothing better is known. Claude, Codex, and Antigravity are read live; Cursor's
     shows only in its own `/usage` screen and Kiro's `/usage` takes about 10 s, so routr reads those two in the
-    background about once per working session (the first time during setup). The advice marks the rest `assumed`.
+    background about once per working session (the first time during setup, and at once after an update when the last
+    try got no reading). The advice marks the rest `assumed`.
     Metered remaining budget stays unknown, even with legacy `metered_rank: "with"`. `routr usage` shows each reading.
   - `billing`: `included` or `metered`, only when the harness cannot show which it is. A Codex Enterprise seat on
     flexible pricing is detected (measured: no windows, unlimited credits). So is Claude signed in with an API key,

@@ -73,7 +73,8 @@ Before launch, state the advised and chosen level, model, effort and account wit
 If the level changed, include the `ROUTR:` line from the skill. Name model and effort explicitly in the launch.
 
 Usage is read by routr itself for every subscription; you pass nothing. Cursor's and Kiro's come from a reading routr
-refreshes in the background about once per working session (its `age_sec` says how old); `routr usage cursor` or
+refreshes in the background about once per working session, and at once after an update when the last try got no
+reading (its `age_sec` says how old); `routr usage cursor` or
 `routr usage kiro` takes a fresh one now if you have reason to think it moved. `routr usage` (no name) shows what routr sees of every subscription, ranked,
 without a brief.
 
