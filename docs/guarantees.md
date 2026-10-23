@@ -85,7 +85,8 @@ routr never has to own a harness feature (a statusline slot, a hook) to get its 
   old is used instead when one exists.
 - Claude, Codex and Antigravity are read in the call (1 to 9 s, beside the decision model).
 - Cursor's own screen takes seconds more and starts Cursor, and Kiro's `/usage` takes about 10 s plus its cleanup, so
-  their readings are snapshots: when the last try is over 4 hours old, a call starts a detached `routr usage cursor`
+  their readings are snapshots: when the last try is over 4 hours old, or another routr version made it (an upgrade
+  reads again at once), a call starts a detached `routr usage cursor`
   (or `kiro`) to refresh it, says a fresh reading is being taken, and carries on without waiting (unlike the updater,
   also from a source checkout: it swaps nothing).
 

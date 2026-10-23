@@ -82,7 +82,8 @@ itself. "Did not answer its sign-in check" means the command is missing from PAT
 ## Cursor's usage is "assumed"
 
 Cursor shows usage only in its own `/usage` screen. routr reads it in a private herdr session in the background (nothing
-opens on your screen; herdr has to be installed), about once per working session, and keeps the reading in
+opens on your screen; herdr has to be installed), about once per working session and again after routr is updated,
+and keeps the reading in
 `~/.cache/routr/cursor-usage.json`. Until the first reading lands, or when reading fails, Cursor is `assumed` and the
 row's `note` says why. Run `routr usage cursor` to read it now and see any error; if it cannot be read at all, pass
 `--headroom cursor=<share left>` yourself (0.9 or 90%) (the by-hand step in `next` says how to read the screen).

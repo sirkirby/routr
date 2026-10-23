@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- After an update, `routr usage` reads Cursor and Kiro again at once: a reading an older routr tried and failed (Cursor
+  under herdr 0.9.5 with 0.7.0) was kept for up to 4 hours, so Cursor stayed `unknown` with assumed headroom until
+  `routr usage cursor` was run by hand. (#101)
+
 ## v0.8.0 — 2026-10-22
 
 [Full notes](docs/releases/v0.8.0.md)

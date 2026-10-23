@@ -486,6 +486,25 @@ test("Kiro is a snapshot like Cursor's, a monthly window that tapers the reserve
   expect(readKiro({ file, nowSec: T + 101 }).note).toContain("the last try failed: The usage source did not answer.");
 });
 
+test("a try another routr version made does not hold back the next reading: after an upgrade, the background reading starts at once", async () => {
+  // 2026-10-23: v0.7.0 failed every Cursor read (herdr 0.9.5); after the upgrade, routr usage kept that failure for
+  // hours because the failed try was under 4 hours old.
+  const dir = scratch("upgrade"), T = 1_800_000_000, failed = { ts: T - 30 * 3600, tried: T - 600, reading: null, failure: { code: "read_failed" } };
+  for (const [name, by, starts] of [["none.json", undefined, true], ["old.json", "0.7.0", true], ["same.json", "0.8.1", false]]) {
+    const file = join(dir, name), started = [];
+    writeFileSync(file, JSON.stringify({ ...failed, ...(by ? { by } : {}) }));
+    readCursor({ file, nowSec: T, refresh: () => started.push(T), off: false, version: "0.8.1" });
+    expect([name, started.length]).toEqual([name, starts ? 1 : 0]);
+    // Marked as tried by this version: the next call within the hours does not start another.
+    readCursor({ file, nowSec: T + 60, refresh: () => started.push(T + 60), off: false, version: "0.8.1" });
+    expect([name, started.length, JSON.parse(readFileSync(file, "utf8")).by]).toEqual([name, starts ? 1 : 0, "0.8.1"]);
+  }
+  // A reading taken now records the version that took it.
+  const file = join(dir, "taken.json");
+  await refreshCursor({ file, nowSec: T, version: "0.8.1", read: async () => ({ ok: true, plan: "Team", included_used_pct: 20, auto_used_pct: 24, api_used_pct: 0 }) });
+  expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ by: "0.8.1", tried: T, reading: { included_used_pct: 20 } });
+});
+
 test("Cursor is a snapshot every call reads at once, refreshed in the background about once a session", async () => {
   const dir = scratch("cursor"), file = join(dir, "cursor-usage.json"), T = 1_800_000_000;
   const started = [];
