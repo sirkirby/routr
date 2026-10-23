@@ -34,9 +34,11 @@
 //     fresh reading now and prints it raw (`routr usage <name>`). Cursor's and Kiro's readers bring herdr's terminal and
 //     their snapshot rules with them, so they load when first read: help, --version, and every command that reads no
 //     usage stay light. (Literal import paths, so the compiled binary still bundles them.)
+import { dirname } from "node:path";
 import { run } from "./runtime.mjs";
 import { billingFromSignIn, signInHint, signInState } from "./signin.mjs";
 import { readAgy, readClaude, readCodexLive, summarize, failedUsage } from "./usage.mjs";
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // The levels a help text lists after its --effort flag: "(low, medium, high, xhigh, max)", as Claude Code and Kiro print them.
 export const effortsInHelp = (help) => { const m = String(help ?? "").match(/--effort\b[^(]*\((?:e\.g\.\s*)?([a-z]+(?:,\s*[a-z]+)+)\)/i); return m ? m[1].split(/,\s*/) : null; };
@@ -135,6 +137,14 @@ export const HARNESSES = {
     noEffort: "cursor has no separate --effort flag; choose a model id with the desired effort",
     env: (dir) => ({ CURSOR_CONFIG_DIR: dir ?? "<private-cursor-config-dir>" }),
     notes: () => ["Cursor changes its configured default model; launch uses a private copy of ~/.cursor/cli-config.json."],
+    // Its own long-lived helper, one per project folder, which outlives a headless turn in that turn's process group, and
+    // the language server it starts (observed 2026-10-22: references/harnesses.md, "Cursor headless"). Cursor installs as
+    // <versions>/<v>/cursor-agent (what the command on PATH links to), and runs the helper as <versions>/<v>/node
+    // <versions>/<v>/index.js worker-server: that exact line, in that install, is the helper; neither counts as the
+    // worker still running.
+    helper: { command: (exe) => { const v = esc(dirname(dirname(exe))); return new RegExp(`^${v}/([^/\\s]+)/node ${v}/\\1/index\\.js worker-server$`); },
+      children: [/^npm exec typescript-language-server --stdio$/, /^(\S*\/)?node \S+\/node_modules\/\.bin\/typescript-language-server --stdio$/],
+      left: (cwd) => `Cursor's own worker-server for ${cwd} may still be running, as after a cursor-agent run there: it is Cursor's, and routr leaves it` },
     // "✓ Logged in as <email>" / "Not logged in", and exit 0 BOTH ways: only the text tells.
     auth: { check: ["status"], signedIn: (out) => /\bLogged in as\b/.test(out) && !/\bNot logged in\b/.test(out), signIn: "run `cursor-agent login`" },
     models: () => lines("cursor-agent", ["models"], /^\s*([a-z0-9][\w.-]+) - /i),

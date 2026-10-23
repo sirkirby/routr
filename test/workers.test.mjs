@@ -1,19 +1,20 @@
 // Headless workers outside herdr: launch, wait, send, workers, stop, cleanup --worker, the holder and its channel. A fake
 // `claude` stands in for Claude Code's stream-json mode, with the behaviours measured in prototypes p34 and p36.
 import { afterAll, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { claim, connect, endpointFor, generations, ownEndpoint, probe, serve, SOCKET_DIR, writeSecret } from "../src/lib/channel.mjs";
-import { ADAPTERS, agyReader, codexReader, kiroReader, readEvent } from "../src/lib/headless.mjs";
+import { ADAPTERS, agyReader, codexReader, cursorReader, groupAlive, groupGone, kiroReader, listGroup, readEvent } from "../src/lib/headless.mjs";
 import { unmakeWorktree, view } from "../src/lib/workers.mjs";
 import { EventEmitter } from "node:events";
 import { Writable } from "node:stream";
 import { worktreesFromGit } from "../src/lib/cleanup.mjs";
-import { callGit } from "../src/lib/process-boundary.mjs";
+import { besidesHelper, callGit, groupMembers } from "../src/lib/process-boundary.mjs";
+import { HARNESSES } from "../src/lib/harnesses.mjs";
 import { launch } from "../src/lib/launch.mjs";
-import { harnessEnv, start, stop } from "../src/lib/runtime.mjs";
+import { harnessEnv, installedAt, start, stop } from "../src/lib/runtime.mjs";
 import { cfg, cliEnv, fakeExecutable, scratch, SCRIPT } from "./helpers.mjs";
 
 // A worker's socket lives under its home, and macOS caps a socket path at 103 bytes: the test scratch folder under
@@ -167,6 +168,53 @@ process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n"
 } });
 process.stdin.on("end", () => { ended = true; if (!busy) process.exit(0); });
 `;
+// Cursor's -p stream-json, as measured (p41): it reads its prompt to EOF, then system/init (the session), user,
+// assistant messages, tool_call started/completed, and a result whose `result` joins every assistant message; it exits
+// after. --resume continues a session. Like Cursor it rewrites the config in CURSOR_CONFIG_DIR (FAKE_RPC logs where).
+// HOLD, FAIL as above.
+const FAKE_CURSOR = `
+const fs = require("node:fs"), path = require("node:path");
+const a = process.argv.slice(2);
+if (a[0] === "status") { console.log("\\u2713 Logged in as user@example.com"); process.exit(0); }
+if (a[0] === "models") { console.log("grok-4.7-medium-fast - Grok"); process.exit(0); }
+if (!a.includes("-p")) process.exit(0);
+if (process.env.FAKE_ARGV) fs.appendFileSync(process.env.FAKE_ARGV, JSON.stringify(["cursor-agent", ...a]) + "\\n");
+const dir = process.env.CURSOR_CONFIG_DIR;
+if (process.env.FAKE_RPC) fs.appendFileSync(process.env.FAKE_RPC, JSON.stringify({ method: "cursor", config_dir: dir ?? null, has_config: !!dir && fs.existsSync(path.join(dir, "cli-config.json")) }) + "\\n");
+if (dir) fs.writeFileSync(path.join(dir, "cli-config.json"), JSON.stringify({ model: { modelId: "rewritten-by-cursor" } }));
+const sid = a.includes("--resume") ? a[a.indexOf("--resume") + 1] : "680aee64-2595-41b4-8d06-f7bfd483dab9";
+const out = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let text = "";
+process.stdin.on("data", (d) => (text += d));
+process.stdin.on("end", async () => {
+  // Like Cursor's worker-server: started by the first turn in its group, as <install>/<v>/node <install>/<v>/index.js
+  // worker-server, it outlives it (HELPER, once). LINGER: a command of its own left in its group, as for Claude.
+  const { spawn } = require("node:child_process"), h = process.env.FAKE_HELPER;
+  if (text.includes("HELPER") && process.platform !== "win32" && !fs.existsSync(path.join(h, "pids"))) spawn(path.join(h, "node"), [path.join(h, "index.js"), "worker-server"], { stdio: "ignore" }).unref();
+  if (text.includes("LINGER")) spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); require('fs').writeFileSync(process.env.FAKE_LINGER, String(process.pid)); setInterval(() => {}, 1000)"], { stdio: "ignore" }).unref();
+  out({ type: "system", subtype: "init", session_id: sid, apiKeySource: "login", model: "m" });
+  out({ type: "user", message: { role: "user", content: [{ type: "text", text: "echo" }] }, session_id: sid });
+  out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Let me look first." }] }, session_id: sid });
+  out({ type: "tool_call", subtype: "started", call_id: "c", tool_call: { shellToolCall: { args: { command: "an argument" } } }, session_id: sid });
+  if (text.includes("HOLD")) for (let i = 0; i < 400 && !fs.existsSync(process.env.FAKE_GATE); i++) await sleep(50);
+  out({ type: "tool_call", subtype: "completed", call_id: "c", tool_call: { shellToolCall: {} }, session_id: sid });
+  const tag = (text.match(/TAG-\\w+/) ?? ["none"])[0], final = "VERDICT: done\\nSUMMARY: cursor " + tag;
+  out({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: final }] }, session_id: sid });
+  out({ type: "result", subtype: "success", is_error: text.includes("FAIL"), result: "Let me look first." + final, session_id: sid });
+  // Like Cursor: something of it still exiting just after it closes (TRAIL: a child that outlives it by 300 ms).
+  if (text.includes("TRAIL")) require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 300)"], { stdio: "ignore" }).unref();
+  process.exit(0);
+});
+`;
+// The fake worker-server: it starts a language server as Cursor's does (STRAY: anything else too), and they stay.
+const FAKE_HELPER = `
+const fs = require("node:fs"), path = require("node:path"), { spawn } = require("node:child_process"), h = process.env.FAKE_HELPER;
+const kids = [spawn(path.join(h, "node"), [path.join(h, "node_modules", ".bin", "typescript-language-server"), "--stdio"], { stdio: "ignore" })];
+if (process.env.FAKE_HELPER_STRAY) kids.push(spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" }));
+fs.writeFileSync(path.join(h, "pids"), JSON.stringify([process.pid, ...kids.map((k) => k.pid)]));
+setInterval(() => {}, 1000);
+`;
 const BRIEF = "PRIVATE-BRIEF-7f3a: rename foo to bar in x.js. Check: grep bar x.js.";
 const SENT = "PRIVATE-SEND-91c2: also rename baz.";
 
@@ -177,9 +225,15 @@ function world(over = {}) {
   fakeExecutable(bin, "codex", FAKE_CODEX);
   fakeExecutable(bin, "agy", FAKE_AGY);
   fakeExecutable(bin, "kiro-cli", FAKE_KIRO);
+  fakeExecutable(bin, "cursor-agent", FAKE_CURSOR);
+  // Cursor's layout: the command on PATH resolves to <install>/bin/cursor-agent here, so its versions are <install>/<v>.
+  const helper = join(realpathSync.native(home), "v1");
+  mkdirSync(join(helper, "node_modules", ".bin"), { recursive: true });
+  writeFileSync(join(helper, "index.js"), FAKE_HELPER); writeFileSync(join(helper, "node_modules", ".bin", "typescript-language-server"), "setInterval(() => {}, 1000);\n");
+  if (POSIX) symlinkSync(process.execPath, join(helper, "node"));
   const gate = join(home, "gate"), linger = join(home, "linger");
   // git's own folder too: launch --worktree and cleanup run it, as they would for a person.
-  const env = cliEnv(home, { PATH: [bin, dirname(process.execPath), dirname(Bun.which("git") ?? "git")].join(delimiter), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_RPC: join(home, "rpc.jsonl"), FAKE_ANSWERS: join(home, "answers.jsonl"), FAKE_EOF: join(home, "eof.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, ...over });
+  const env = cliEnv(home, { PATH: [bin, dirname(process.execPath), dirname(Bun.which("git") ?? "git")].join(delimiter), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_RPC: join(home, "rpc.jsonl"), FAKE_ANSWERS: join(home, "answers.jsonl"), FAKE_EOF: join(home, "eof.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, FAKE_HELPER: helper, ...over });
   for (const k of Object.keys(env)) if (/^(HERDR_|CLAUDECODE$|CLAUDE_CODE_SESSION|SANDBOX_RUNTIME$|CODEX_SANDBOX)/.test(k)) delete env[k];
   const outputs = [];
   const run = (args, extra = {}) => {
@@ -189,11 +243,14 @@ function world(over = {}) {
   };
   const task = (text, name = "task.md") => { const f = join(inputs, name); writeFileSync(f, text); return f; };
   const advise = (file) => { const a = join(home, `${file.split(/[\\/]/).pop()}.advice.json`); writeFileSync(a, JSON.stringify(run(["dispatch", "--task-file", file]))); return a; };
-  const launchW = (name, file, more = [], extra, kind = "claude", model) => run(["launch", "--kind", kind, "--name", name, "--model", model ?? { codex: "gpt-6-luna", agy: "gemini-3.8-flash-low", kiro: "auto" }[kind] ?? "haiku", "--task-file", file, "--advice", advise(file), ...more], extra);
+  const launchW = (name, file, more = [], extra, kind = "claude", model) => run(["launch", "--kind", kind, "--name", name, "--model", model ?? { codex: "gpt-6-luna", agy: "gemini-3.8-flash-low", kiro: "auto", cursor: "grok-4.7-medium-fast" }[kind] ?? "haiku", "--task-file", file, "--advice", advise(file), ...more], extra);
   const runDir = (name) => join(home, ".local", "state", "routr", "workers", name);
   const state = (n) => { try { return JSON.parse(readFileSync(join(runDir(n), "state.json"), "utf8")); } catch { return {}; } };
   const settled = (n) => until(() => !["working", "waiting", "starting"].includes(state(n).state));
-  return { home, work, gate, linger, inputs, env, run, outputs, task, advise, launch: launchW, runDir, state, settled, release: () => writeFileSync(gate, "") };
+  const helperPids = () => { try { return JSON.parse(readFileSync(join(helper, "pids"), "utf8")); } catch { return []; } };
+  // Every process run from this world's helper folder too, recorded or not.
+  const killHelper = () => { for (const pid of helperPids()) try { process.kill(pid, "SIGKILL"); } catch {} if (POSIX) Bun.spawnSync(["pkill", "-9", "-f", helper]); };
+  return { home, work, gate, linger, inputs, env, run, helperPids, killHelper, outputs, task, advise, launch: launchW, runDir, state, settled, release: () => writeFileSync(gate, "") };
 }
 const filesUnder = (dir) => readdirSync(dir, { recursive: true }).map(String).filter((f) => { try { return statSync(join(dir, f)).isFile(); } catch { return false; } });
 
@@ -530,6 +587,147 @@ test("Kiro's ACP output as routr reads it: replies, its own requests, fixed tool
   expect([r.take(), r.read(JSON.stringify({ jsonrpc: "2.0", method: "_kiro.dev/metadata", params: {} })), r.read("not json")]).toEqual(["", null, null]);
 });
 
+test("a headless Cursor worker: one process a turn on a private config copy, corrections resumed as turns of their own, in order, past Cursor's own worker-server", async () => {
+  const w = world(), userConfig = join(w.home, ".cursor", "cli-config.json"), dotfile = join(w.home, "dotfiles", "cli-config.json");
+  afterAll(w.killHelper);
+  // On macOS and Linux, a config that is a link into a dotfiles folder (from the review of 62749a5: copied as a link).
+  for (const d of [dirname(userConfig), dirname(dotfile)]) mkdirSync(d, { recursive: true });
+  writeFileSync(POSIX ? dotfile : userConfig, JSON.stringify({ model: { modelId: "the-user's" } }));
+  if (POSIX) symlinkSync(dotfile, userConfig);
+  const dotMode = statSync(POSIX ? dotfile : userConfig).mode & 0o777;
+  const l = w.launch("u1", w.task(`${BRIEF} HOLD HELPER TRAIL`), [], undefined, "cursor");
+  expect([l.ok, l.state, l.headline, l.worker.session]).toEqual([true, "prompted", "routr: u1 (cursor) took its task, running headless", "680aee64-2595-41b4-8d06-f7bfd483dab9"]);
+  expect(l.start.argv).toEqual(["-p", "--output-format", "stream-json", "--yolo", "--trust", "--model", "grok-4.7-medium-fast"]);
+  // Its own copy, in the run folder: what Cursor rewrites there never reaches the user's.
+  const conf = join(w.runDir("u1"), "cursor-config");
+  expect(await until(() => rpcs(w).some((r) => r.method === "cursor"))).toBe(true);
+  expect(rpcs(w).find((r) => r.method === "cursor")).toEqual({ method: "cursor", config_dir: conf, has_config: true });
+  if (POSIX) expect([lstatSync(join(conf, "cli-config.json")).isSymbolicLink(), statSync(join(conf, "cli-config.json")).mode & 0o077, statSync(dotfile).mode & 0o777]).toEqual([false, 0, dotMode]);
+  expect(await until(() => w.state("u1").last_tool === "shell")).toBe(true);
+  // Mid-turn: the holder keeps both messages; each runs as a turn of its own, resuming the session, in order.
+  for (const t of ["first", "second"]) {
+    const s = w.run(["send", "--name", "u1", "--task", `${SENT} TAG-${t}`]);
+    expect([s.state, s.headline]).toEqual(["queued", "routr: u1: queued: it runs as the worker's next turn, in a new Cursor process on the same session"]);
+  }
+  w.release();
+  expect(await until(() => w.state("u1").turns?.length === 3 && w.state("u1").turns.every((t) => t.outcome === "finished"), 20000)).toBe(true);
+  await w.settled("u1");
+  expect(w.state("u1").turns.map((t) => t.delivered)).toEqual([0, 1, 1]);
+  expect(w.state("u1").turns.map((t) => readFileSync(t.report, "utf8"))).toEqual(["VERDICT: done\nSUMMARY: cursor none", "VERDICT: done\nSUMMARY: cursor TAG-first", "VERDICT: done\nSUMMARY: cursor TAG-second"]);
+  const runs = readFileSync(join(w.home, "argv.jsonl"), "utf8").trim().split("\n").map((x) => JSON.parse(x)).filter((x) => x[0] === "cursor-agent");
+  expect(runs.map((x) => x.includes("--resume") ? x[x.indexOf("--resume") + 1] : null)).toEqual([null, "680aee64-2595-41b4-8d06-f7bfd483dab9", "680aee64-2595-41b4-8d06-f7bfd483dab9"]);
+  expect(JSON.parse(readFileSync(userConfig, "utf8"))).toEqual({ model: { modelId: "the-user's" } });
+  for (const o of w.outputs) for (const m of ["PRIVATE-BRIEF", "PRIVATE-SEND"]) expect([m, o.includes(m)]).toEqual([m, false]);
+  noBriefInFiles(w);
+  // The worker-server, and what it started, still run in the first turn's group: they are Cursor's, not the worker.
+  if (POSIX) expect(w.helperPids().map((pid) => { try { process.kill(pid, 0); return true; } catch { return false; } })).toEqual([true, true]);
+  const listed = w.run(["workers", "--name", "u1"]).workers[0];
+  expect(listed.harness_group).toBeUndefined();
+  const c = w.run(["cleanup", "--worker", "u1"]);
+  expect([c.state, c.warnings.includes(`Cursor's own worker-server for ${listed.cwd} may still be running, as after a cursor-agent run there: it is Cursor's, and routr leaves it`)]).toEqual(["removed", true]);
+  w.killHelper();
+  expect(existsSync(conf)).toBe(false);
+  // No config of its own to copy: refused, and nothing is left behind.
+  rmSync(userConfig);
+  const none = w.launch("u2", w.task(BRIEF, "n.md"), [], undefined, "cursor");
+  expect([none.ok, none.error, existsSync(w.runDir("u2"))]).toEqual([false, `Cursor has no config at ${userConfig}: sign in with \`cursor-agent\` first`, false]);
+}, 60000);
+
+// cleanup --worker until it removes the worker, never once more after (until asks its check again at the end).
+const removedOnce = async (w, name) => { let done = false; return until(() => done || (done = w.run(["cleanup", "--worker", name]).state === "removed")); };
+
+test("a Cursor turn that leaves a command in its group: a stop in the wait after it says still_exiting and drops the queue; one under its worker-server blocks too", async () => {
+  if (!POSIX) return; // process groups: macOS and Linux
+  const w = world(), userConfig = join(w.home, ".cursor", "cli-config.json");
+  afterAll(() => { try { process.kill(Number(readFileSync(w.linger, "utf8")), "SIGKILL"); } catch {} });
+  mkdirSync(dirname(userConfig), { recursive: true }); writeFileSync(userConfig, "{}");
+  expect(w.launch("u5", w.task(`${BRIEF} HOLD LINGER`), [], undefined, "cursor").state).toBe("prompted");
+  expect(w.run(["send", "--name", "u5", "--task", `${SENT} TAG-late`]).state).toBe("queued");
+  w.release();
+  // Its turn ends and Cursor exits; the holder looks at the group for up to 2 s, with the message still kept.
+  expect(await until(() => w.state("u5").turns?.[0]?.outcome === "finished" && existsSync(w.linger))).toBe(true);
+  await Bun.sleep(400);
+  const s = w.run(["stop", "--name", "u5"]);
+  expect([s.state, s.warnings.some((x) => x.startsWith("1 queued message was dropped"))]).toEqual(["still_exiting", true]);
+  await w.settled("u5");
+  expect(w.state("u5").turns.map((t) => t.outcome)).toEqual(["finished"]);
+  expect(w.run(["cleanup", "--worker", "u5"]).state).toBe("refused");
+  process.kill(Number(readFileSync(w.linger, "utf8")), "SIGKILL");
+  expect(await removedOnce(w, "u5")).toBe(true);
+
+  // Something under the worker-server that is not its language server counts as the worker's: the correction is not
+  // resumed, and cleanup refuses until it has gone.
+  const x = world({ FAKE_HELPER_STRAY: "1" }), conf = join(x.home, ".cursor", "cli-config.json");
+  afterAll(x.killHelper);
+  mkdirSync(dirname(conf), { recursive: true }); writeFileSync(conf, "{}");
+  expect(x.launch("u6", x.task(`${BRIEF} HOLD HELPER`), [], undefined, "cursor").state).toBe("prompted");
+  expect(x.run(["send", "--name", "u6", "--task", `${SENT} TAG-x`]).state).toBe("queued");
+  x.release();
+  expect(await until(() => x.state("u6").turns?.length === 2, 20000)).toBe(true);
+  await x.settled("u6");
+  expect(x.state("u6").turns.map((t) => t.outcome)).toEqual(["finished", "not_started"]);
+  expect(x.run(["cleanup", "--worker", "u6"]).state).toBe("refused");
+  x.killHelper();
+  expect(await removedOnce(x, "u6")).toBe(true);
+}, 60000);
+
+test("Cursor's stream as routr reads it: the session, fixed tool names, the last assistant message as the report", () => {
+  const read = cursorReader(), j = (o) => read(JSON.stringify(o));
+  expect(j({ type: "system", subtype: "init", session_id: "680aee64-2595-41b4-8d06-f7bfd483dab9" })).toEqual({ turn: true, session: "680aee64-2595-41b4-8d06-f7bfd483dab9" });
+  expect(j({ type: "assistant", message: { content: [{ type: "text", text: "Looking." }] } })).toEqual({ activity: true });
+  for (const [k, tool] of [["shellToolCall", "shell"], ["mcpToolCall", "mcp"], ["somethingNewToolCall", "other"]]) expect(j({ type: "tool_call", subtype: "started", tool_call: { [k]: {} } })).toEqual({ tool });
+  j({ type: "assistant", message: { content: [{ type: "text", text: "the answer" }] } });
+  expect(j({ type: "result", is_error: false, result: "Looking.the answer" })).toEqual({ result: { failed: false, text: "the answer" } });
+  expect(j({ type: "result", is_error: true, result: "only this" })).toEqual({ result: { failed: true, text: "only this" } });
+  expect([read("not json"), j({ type: "thinking", subtype: "delta" })]).toEqual([null, null]);
+});
+
+test("what of a process group counts as the worker still running: everything but its harness's own helper, in its install, and the language server under it", async () => {
+  const exe = "/x/.local/share/cursor-agent/versions/2026.10.22-27dcf5f/cursor-agent", v = "/x/.local/share/cursor-agent/versions";
+  const { command, children } = HARNESSES.cursor.helper, helper = command(exe), pg = 400;
+  const ps = [
+    `  400     1   400 ${v}/2026.10.22-27dcf5f/node ${v}/2026.10.22-27dcf5f/index.js worker-server`,
+    "  401   400   400 npm exec typescript-language-server --stdio    ",
+    "  402   401   400 node /x/.npm/_npx/9/node_modules/.bin/typescript-language-server --stdio",
+    "  500     1   500 /bin/sleep 60", ""].join("\n");
+  const members = groupMembers(ps, pg);
+  expect(members.map((m) => m.pid)).toEqual([400, 401, 402]);
+  expect(besidesHelper(members, helper, children)).toEqual([]);
+  // What still counts (from the review of 62749a5): a command a turn left, and what it started; anything else under the
+  // helper; a worker-server outside the install, or with its node and script from two versions.
+  const more = (rows) => groupMembers(ps + rows.join("\n"), pg);
+  expect(besidesHelper(more(["  410     1   400 /bin/sh -c npm run dev", "  411   410   400 node server.js"]), helper, children).map((m) => m.pid)).toEqual([410, 411]);
+  expect(besidesHelper(more(["  412   400   400 /bin/sh -c npm test", "  413   412   400 node /w/node_modules/.bin/typescript-language-server --stdio"]), helper, children).map((m) => m.pid)).toEqual([412, 413]);
+  expect(besidesHelper(more(["  414     1   400 /repo/test/fixtures/cursor-agent/versions/v1/node /repo/test/fixtures/cursor-agent/versions/v1/index.js worker-server"]), helper, children).map((m) => m.pid)).toEqual([414]);
+  expect(besidesHelper(more([`  415     1   400 ${v}/a/node ${v}/b/index.js worker-server`]), helper, children).map((m) => m.pid)).toEqual([415]);
+  // A line it cannot read: nothing of the group is told apart.
+  expect([groupMembers(ps + "garbage", pg), groupMembers("", pg)]).toEqual([null, []]);
+  if (!POSIX) return;
+  // On a live group: no helper for the harness, ps not answering or unreadable, an empty listing, no install found:
+  // every member counts. Only the helper and its language server, in the install, do not.
+  const c = start(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "ignore" });
+  try {
+    const live = (rows) => async () => rows.map((r) => ({ ...r, pid: r.pid === 400 ? c.pid : r.pid, ppid: r.ppid === 400 ? c.pid : r.ppid }));
+    const o = (m, installed = () => exe) => ({ members: m, installed });
+    expect(await Promise.all([groupAlive(c.pid, "claude", o(live(members))), groupAlive(c.pid, "cursor", o(live(members))), groupAlive(c.pid, "cursor", o(async () => null)),
+      groupAlive(c.pid, "cursor", o(async () => [])), groupAlive(c.pid, "cursor", o(live(members), () => null)), groupAlive(c.pid, "cursor"), groupAlive(null, "cursor")]))
+      .toEqual([true, false, true, true, true, true, false]);
+    // A listing ps did not finish (from the review of c9b049a): nothing of it is read. One it finished is.
+    const fake = join(scratch("ps-"), "ps"), line = `${c.pid} 1 ${c.pid} /x/whatever`;
+    writeFileSync(fake, `#!/bin/sh\necho "${line}"\nexit 1\n`, { mode: 0o755 });
+    expect(await listGroup(c.pid, 2000, { ps: fake })).toBeNull();
+    writeFileSync(fake, `#!/bin/sh\necho "${line}"\n`, { mode: 0o755 });
+    expect(await listGroup(c.pid, 2000, { ps: fake })).toEqual([{ pid: c.pid, ppid: 1, command: "/x/whatever" }]);
+    // Where the command on PATH is: not told when a relative or empty entry comes before it.
+    expect([installedAt("sh", { env: { PATH: "/nowhere:/bin" } }), installedAt("sh", { env: { PATH: "tools:/bin" } }), installedAt("sh", { env: { PATH: ":/bin" } })])
+      .toEqual([realpathSync.native("/bin/sh"), null, null]);
+    // A look that does not answer is bounded by what is left of the wait, and counts as running.
+    const t0 = Date.now();
+    expect(await groupGone(c.pid, "cursor", { ms: 300, members: () => new Promise(() => {}), installed: () => exe })).toBe(false);
+    expect(Date.now() - t0).toBeLessThan(2000);
+  } finally { stop(c, { group: true }); }
+});
+
 test("the brief and messages reach the harness on stdin only: never an answer, an argument, or a file but the reports", async () => {
   const w = world(), l = w.launch("p1", w.task(`${BRIEF} HOLD`));
   expect(l.state).toBe("prompted");
@@ -764,7 +962,6 @@ test("a harness that ends before its session leaves a failed worker that send wi
 test("outside herdr, launch refuses what a headless worker cannot do, before it writes or starts anything", async () => {
   const w = world(), file = w.task(BRIEF), advice = w.advise(file);
   const go = (args, extra) => w.run(["launch", "--name", "r1", "--model", "m", "--task-file", file, "--advice", advice, ...args], extra);
-  expect(go(["--kind", "cursor"]).error).toBe("outside herdr, routr launch starts Claude Code, Codex, Antigravity and Kiro workers only; run the lead inside herdr for a Cursor worker");
   expect(go(["--kind", "claude", "--pane", "w1:p1"]).error).toBe("--pane needs herdr; outside herdr a worker runs headless, with no pane");
   expect(go(["--kind", "claude", "--worktree", "b"]).error).toStartWith("--worktree needs a git repository: git found none at");
   expect(w.run(["launch", "--kind", "claude", "--name", "r1", "--model", "m"]).error).toBe("outside herdr a worker starts with its task: pass --task-file (or --task) and --advice");

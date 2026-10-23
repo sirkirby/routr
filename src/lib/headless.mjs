@@ -1,8 +1,8 @@
 // Headless workers: a worker that runs its harness's own headless mode on the user's sign-in, outside herdr, with one
 // routr process (the holder) owning it. The holder starts as a numbered generation of its worker (channel.mjs), binds
 // the channel before it starts the harness and closes it only after the harness has exited, and is the only writer of
-// the worker's state. It lives while a turn runs or one is waiting, and exits once the harness has. Claude Code, Codex,
-// Antigravity and Kiro; each harness's part is an adapter below. Claude, measured as prototypes p34 (2026-10-21) and p36 (2026-10-22,
+// the worker's state. It lives while a turn runs or one is waiting, and exits once the harness has. All five harnesses:
+// Claude Code, Codex, Antigravity, Kiro and Cursor; each harness's part is an adapter below. Claude, measured as prototypes p34 (2026-10-21) and p36 (2026-10-22,
 // Claude Code 2.1.307), routr-lab:
 //   - `claude -p --input-format stream-json --output-format stream-json` takes the brief on stdin and a message the
 //     lead sends mid-turn into the running turn. The brief never touches routr's disk or a process's arguments.
@@ -30,13 +30,19 @@
 // `agent_message_chunk` updates. A second prompt while one runs is refused ("Prompt already in progress"), so a message
 // sent mid-turn waits in the holder and goes in as the next turn, in the same process. Closing stdin ends it (exit 0,
 // 154 ms); `session/load` continues the session in a new process, after replaying its history as updates.
+// Cursor, measured as p41 (2026-10-22, cursor-agent 2026.10.22): `cursor-agent -p --output-format stream-json` reads
+// its prompt from stdin to the end, so a turn is a process: the task is written and the input closed. Its stream is
+// Claude-like (`system/init` with the session, `assistant` messages, `tool_call` started/completed, `result`), but
+// `result.result` joins every assistant message of the turn, so the report is the last one. `--resume <session>`
+// continues it in a new process with its context. It runs on a private copy of its config, as in a pane.
 // Worker text reaches one place, the report file of each turn (owner-only, removed by cleanup); only its path leaves
 // routr. Nothing else of the harness's output is kept: its stderr is not read, and a tool is shown by a fixed name.
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, privateDir, probe, removeEndpoint, serve } from "./channel.mjs";
 import { HARNESSES, plan } from "./harnesses.mjs";
-import { harnessEnv, start, STATE_DIR, stop, writeJsonAtomic } from "./runtime.mjs";
+import { harnessEnv, installedAt, probe as collect, start, STATE_DIR, stop, writeJsonAtomic } from "./runtime.mjs";
+import { besidesHelper, groupMembers } from "./process-boundary.mjs";
 
 export const FORMAT = 1;
 export const WORKERS_DIR = () => join(STATE_DIR(), "workers");
@@ -121,6 +127,27 @@ export function kiroReader() {
       if (u.sessionUpdate === "tool_call") { text = ""; return { tool: KIRO_KINDS.has(u.kind) ? u.kind : "other" }; }
       return { activity: true };
     },
+  };
+}
+
+// Cursor's tools as its `tool_call` names them (`shellToolCall`; measured); its MCP tool is `mcp`, any other `other`.
+const CURSOR_TOOLS = new Map([["shellToolCall", "shell"], ["mcpToolCall", "mcp"]]);
+// One line of Cursor's stream: the session and a turn starting, a tool, a turn's end. The report is the turn's last
+// assistant message (its `result` joins them all), else that result.
+export function cursorReader() {
+  let last = null;
+  return (line) => {
+    let e; try { e = JSON.parse(line); } catch { return null; }
+    if (!e || typeof e !== "object") return null;
+    if (e.type === "system" && e.subtype === "init") { last = null; return { turn: true, ...(UUID.test(e.session_id ?? "") ? { session: e.session_id } : {}) }; }
+    if (e.type === "assistant") {
+      const text = (e.message?.content ?? []).filter((c) => c?.type === "text" && typeof c.text === "string").map((c) => c.text).join("");
+      if (text) last = text;
+      return { activity: true };
+    }
+    if (e.type === "tool_call" && e.subtype === "started") { const k = Object.keys(e.tool_call ?? {}).find((x) => x.endsWith("ToolCall")); return { tool: CURSOR_TOOLS.get(k) ?? "other" }; }
+    if (e.type === "result") { const text = last ?? (typeof e.result === "string" ? e.result : null); last = null; return { result: { failed: e.is_error === true, text: text ? cut(text) : null } }; }
+    return null;
   };
 }
 
@@ -327,13 +354,62 @@ export const ADAPTERS = {
       };
     },
   },
+  cursor: {
+    // As in a pane: --yolo --trust and the model id (its effort in it), on the run folder's private config copy.
+    argv: ({ model, effort, session }) => ["-p", "--output-format", "stream-json", ...plan({ kind: "cursor", model, effort }).argv, ...(session ? ["--resume", session] : [])],
+    env: (dir) => ({ CURSOR_CONFIG_DIR: join(dir, "cursor-config") }),
+    connect: (c) => {
+      // The task in, and the input closed: Cursor starts once it has read to the end. A message while it runs waits in
+      // the holder, and runs as the next turn, in a new process resuming the session (one turn each).
+      const begin = async (text) => { const ok = await writeLine(c, text); if (ok) try { c.stdin.end(); } catch {} return ok; };
+      return { queues: true, begin, send: async () => null, line: cursorReader(), open: () => false, done: () => {} };
+    },
+  },
 };
 // The harnesses that can run headless.
 export const HEADLESS_KINDS = Object.keys(ADAPTERS);
 export const headlessArgv = ({ kind = "claude", model, effort, session, cwd }) => ADAPTERS[kind].argv({ model, effort, session, cwd });
 
-// Whether a process group still has members (POSIX). Windows: never known here (the holder's job took the tree with it).
-export const groupAlive = (pgid) => { if (!Number.isInteger(pgid) || pgid <= 1 || process.platform === "win32") return false; try { process.kill(-pgid, 0); return true; } catch (e) { return e?.code === "EPERM"; } };
+// Whether a process group still has members, every one counted (POSIX). Windows: never known here (the holder's job
+// took the tree with it).
+export const groupHasMembers = (pgid) => {
+  if (!Number.isInteger(pgid) || pgid <= 1 || process.platform === "win32") return false;
+  try { process.kill(-pgid, 0); return true; } catch (e) { return e?.code === "EPERM"; }
+};
+// Whether anything of a `kind` harness still runs in a process group: its members, read with the system's ps, less
+// the harness's own long-lived helper and the processes measured under it. Cursor's worker-server (measured 2026-10-22,
+// cursor-agent 2026.10.22: one per project folder, started in the group of the turn that first needs it, reused by later
+// turns, outliving them; references/harnesses.md, "Cursor headless") is told by its exact command line in the install
+// its own command resolves into, and only the language server under it is: anything else under it counts (from the
+// review of 62749a5: a path suffix, or every descendant, could hide the worker's own command). ps not answering in
+// time, output routr cannot read, no install found: every member counts.
+export const groupAlive = async (pgid, kind, { members = listGroup, installed = installedAt, timeoutMs = 5000 } = {}) => {
+  if (!groupHasMembers(pgid)) return false;
+  const helper = HARNESSES[kind]?.helper, exe = helper && installed(HARNESSES[kind].executable);
+  if (!exe) return true;
+  let timer;
+  const m = await Promise.race([members(pgid, timeoutMs), new Promise((r) => { timer = setTimeout(() => r(null), timeoutMs); })]);
+  clearTimeout(timer);
+  return !m?.length || besidesHelper(m, helper.command(exe), helper.children).length > 0;
+};
+// Whether nothing of it runs there any more, looked at again for up to `ms`: something of a harness may still be
+// exiting as it closes (measured 2026-10-22: a Cursor turn's group held a process in its exit, shown as "(node)", for
+// under 100 ms after cursor-agent closed, so every correction queued behind that turn ended not started). Each look is
+// bounded by what is left of `ms`, and none blocks the holder's answers.
+export const groupGone = async (pgid, kind, { ms = 2000, every = 100, ...o } = {}) => {
+  for (const end = Date.now() + ms; ;) {
+    if (!(await groupAlive(pgid, kind, { ...o, timeoutMs: Math.max(1, Math.min(1000, end - Date.now())) }))) return true;
+    if (Date.now() >= end) return false;
+    await new Promise((r) => setTimeout(r, every));
+  }
+};
+// The system's own ps, by its path where it has one (macOS and Linux both: /bin/ps), not whichever is first on PATH.
+const PS = existsSync("/bin/ps") ? "/bin/ps" : "ps";
+// Only a listing it finished counts (from the review of c9b049a: one that exited non-zero may stop part way).
+export const listGroup = async (pgid, timeoutMs, { ps = PS } = {}) => {
+  const r = await collect(ps, ["-A", "-o", "pid=,ppid=,pgid=,command="], { timeoutMs, separate: true });
+  return r?.code === 0 ? groupMembers(r.out, pgid) : null;
+};
 
 // The holder: `routr workers --hold <name>`, started detached by launch or send. Exits on its own; never prints.
 // `run` starts the harness (runtime's start); a test passes a fake.
@@ -345,7 +421,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const prior = readJson(join(dir, "state.json")) ?? {};
   // A harness an earlier generation started may still be working (its holder was killed, or a tool command outlived
   // it): never start a second Claude on its session while that group has members.
-  if (groupAlive(prior.harness_pgid)) return;
+  if (await groupAlive(prior.harness_pgid, w.kind)) return;
   const n = p.gen + 1;
   if (!claim(dir, n)) return;
   if (p.state === "dead") removeEndpoint(w.id, p.ready?.endpoint);
@@ -392,7 +468,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const settle = () => {
     if (settled) return; settled = true;
     const last = turnRow();
-    const pg = groupAlive(st.harness_pgid) ? st.harness_pgid : null;
+    const pg = groupHasMembers(st.harness_pgid) ? st.harness_pgid : null;
     save({ state: stopAsked ? "stopped" : last?.outcome === "finished" ? "idle" : st.turn ? "failed" : "no_task", harness_pid: null, harness_pgid: pg, holder_pid: null, queued: 0 });
     markReleased(dir, n, { harness_exited: true, ...(pg ? { group_left: pg } : {}) });
     try { server?.close(); } catch {}
@@ -413,7 +489,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       let c, h;
       try {
         c = run(HARNESSES[w.kind].executable, headlessArgv({ kind: w.kind, model: w.model, effort: w.effort, session, cwd: w.cwd }),
-          { cwd: w.cwd, env: harnessEnv(), stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
+          { cwd: w.cwd, env: { ...harnessEnv(), ...(ADAPTERS[w.kind].env?.(dir) ?? {}) }, stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
       } catch { endTurn("not_started", null); answer({ code: "failed", why: "harness_not_started" }); return settle(); }
       child = c;
       // What it says, as events: bound to this process, and ignored once it has finished.
@@ -447,18 +523,24 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
         // ends, from the same queue); the others take them as one. Not when this process ended before it took its
         // task (a resume would end the same way) or something of it still runs: then each gets a turn, not started.
         // Without a session (it ended during its first start) there is nothing to resume: they get their turns too.
-        if (queue.length && !stopAsked) {
-          const each = h.queues;
-          if (taskIn && st.session_id && !groupAlive(st.harness_pgid)) {
-            // Counted as the messages they are (a message holds paragraphs of its own: from the review of 420d69c).
-            const taken = each ? queue.splice(0, 1) : queue.splice(0);
-            save({ queued: queue.length });
-            runHarness(taken.join("\n\n"), st.session_id, { carried: taken.length }); return;
+        // Messages that come meanwhile join the queue; a stop meanwhile settles the holder itself.
+        const decide = (resumable) => {
+          if (settled) return;
+          if (queue.length && !stopAsked) {
+            const each = h.queues;
+            if (resumable) {
+              // Counted as the messages they are (a message holds paragraphs of its own: from the review of 420d69c).
+              const taken = each ? queue.splice(0, 1) : queue.splice(0);
+              save({ queued: queue.length });
+              runHarness(taken.join("\n\n"), st.session_id, { carried: taken.length }); return;
+            }
+            const all = queue.splice(0); save({ queued: 0 });
+            for (let i = 0; i < (each ? all.length : 1); i++) { beginTurn(each ? 1 : all.length); endTurn("not_started", null); }
           }
-          const all = queue.splice(0); save({ queued: 0 });
-          for (let i = 0; i < (each ? all.length : 1); i++) { beginTurn(each ? 1 : all.length); endTurn("not_started", null); }
-        }
-        settle();
+          settle();
+        };
+        if (queue.length && !stopAsked && taskIn && st.session_id) groupGone(st.harness_pgid, w.kind).then(decide);
+        else decide(false);
       };
       c.on("error", () => { if (c.pid == null) finish("not_started"); });
       c.on("close", () => finish("no_finish"));
@@ -500,11 +582,13 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
     stopAsked = true; queue.length = 0; save({ queued: 0 });
     return (stopping ??= (async () => {
       const c = child;
-      if (!c) { settle(); return { code: "stopped", dropped }; }
+      // No harness running: between its exit and what the holder does next, its group may still have members (from
+      // the review of 62749a5: reported stopped without a look).
+      if (!c) { const gone = await groupGone(st.harness_pgid, w.kind); settle(); return { code: gone ? "stopped" : "still_exiting", dropped }; }
       const closed = new Promise((r) => c.once("close", r));
       stop(c, { group: true });
       const gone = await Promise.race([closed.then(() => true), new Promise((r) => setTimeout(() => r(false), 6000))]);
-      return { code: gone && !groupAlive(process.platform === "win32" ? null : c.pid) ? "stopped" : "still_exiting", dropped };
+      return { code: gone && await groupGone(process.platform === "win32" ? null : c.pid, w.kind) ? "stopped" : "still_exiting", dropped };
     })());
   };
 

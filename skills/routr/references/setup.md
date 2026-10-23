@@ -1,9 +1,10 @@
 # Setting up routr
 
 Walk the user through this. Ask before you write or install anything, and show what you are about to write.
-Requirements: the `routr` command (one standalone binary; `routr --version` shows it). Orchestration across every
-harness also needs herdr with its agent skill (step 5); without herdr, an orchestrator can launch headless Claude Code,
-Codex, Antigravity and Kiro workers, and the worker and subagent parts work as they are. If `routr` is missing, install it first:
+Requirements: the `routr` command (one standalone binary; `routr --version` shows it). Pane workers also
+need herdr with its agent skill (step 5), and reading Cursor's usage needs herdr installed (see step 4); without herdr, an
+orchestrator can launch headless Claude Code, Codex, Cursor, Antigravity and Kiro workers, and the worker and subagent
+parts work as they are. If `routr` is missing, install it first:
 
 macOS and Linux:
 
@@ -195,7 +196,7 @@ session each reading leaves. `routr skill install` links the skill into `~/.kiro
 For pane workers, routr's orchestrator part runs workers in [herdr](https://herdr.dev) panes and uses herdr's own
 skill for pane and agent commands. Both belong to herdr and are installed from herdr, not bundled with routr. If
 `routr doctor` shows either missing and the user wants pane workers, offer to install them; headless Claude Code,
-Codex, Antigravity and Kiro workers need neither:
+Codex, Cursor, Antigravity and Kiro workers need neither:
 
     curl -fsSL https://herdr.dev/install.sh | sh                 # herdr itself (see herdr.dev for brew and Windows)
     npx skills add herdrdev/herdr --skill herdr -g               # herdr's agent skill (bunx works where there is no Node)

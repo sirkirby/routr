@@ -28,7 +28,7 @@ turns it has reported into the worker's own run folder.
 Local file writes create parent folders from the file's absolute location, including when only a relative filename
 was given. An existing directory is accepted; a file in its place or a permission error remains a failure.
 
-- `launch` drives panes in your herdr session; outside herdr it starts a headless Claude Code, Codex, Antigravity or Kiro worker (below). A task requires readable JSON advice from `routr dispatch` on that exact task
+- `launch` drives panes in your herdr session; outside herdr it starts a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker (below). A task requires readable JSON advice from `routr dispatch` on that exact task
   (including `brief_sha`); missing, nonmatching or `routr subagent` advice is refused before any harness, pane or worktree call. Dry runs return
   `ok: false` with `error` on the same refusal and still plan. Matching fallback advice is accepted, including advice
   saved as UTF-8 or UTF-16LE, with or without a BOM. Launch copies all its decision-model `unavailable` entries,
@@ -161,9 +161,9 @@ display only, with prompt lengths instead of prompt text.
 
 ## Headless workers
 
-Outside herdr, `routr launch --kind claude`, `codex`, `agy` or `kiro` starts the worker headless: Claude Code's own `-p`
-stream-json mode, Codex's app-server, Antigravity's `--print` stream-json mode, or Kiro's ACP mode, on your sign-in, held by one routr process of its own (its holder). Other
-harnesses, `--pane` and `--direction` are refused outside herdr. What that means on your machine:
+Outside herdr, `routr launch --kind claude`, `codex`, `cursor`, `agy` or `kiro` starts the worker headless: Claude Code's own `-p`
+stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one process a turn), Antigravity's `--print` stream-json mode, or Kiro's ACP mode, on your sign-in, held by one routr process of its own (its holder).
+`--pane` and `--direction` are refused outside herdr. What that means on your machine:
 
 - **Its worktree.** With `--worktree <branch>`, launch makes the worktree with git (`git worktree add -b`), under
   `~/.local/share/routr/worktrees/<repository>-<hash>/<branch>` (`/` and `\` in the branch become `-`), on a branch
@@ -188,16 +188,35 @@ harnesses, `--pane` and `--direction` are refused outside herdr. What that means
   `~/.local/state/routr/s`. A name is taken by making its folder; launch refuses a name whose folder exists until
   `cleanup --worker` removes it.
 - **The brief and your messages** go from launch or send to the holder over the channel, and from the holder to the
-  harness on its standard input (Claude and Antigravity: a stream-json message; Kiro: its ACP `session/prompt`; Codex: the app-server's `turn/start`
+  harness on its standard input (Claude and Antigravity: a stream-json message; Cursor: the message as its whole input; Kiro: its ACP `session/prompt`; Codex: the app-server's `turn/start`
   and `turn/steer` requests): never in a process's arguments. routr writes no copy of them to disk; the holder keeps a message in memory
-  only until it hands it over (Antigravity and Kiro: until the running turn ends). What it keeps of the worker's text is each
-  turn's report: the harness's final message of that turn (Codex: its final answer; Kiro: the text it wrote after its last tool call; Antigravity: its turn's
+  only until it hands it over (Cursor, Antigravity and Kiro: until the running turn ends). What it keeps of the worker's text is each
+  turn's report: the harness's final message of that turn (Codex: its final answer; Cursor: its last assistant message; Kiro: the text it wrote after its last tool call; Antigravity: its turn's
   response), as it wrote it (cut at 1 MB),
   which can quote the brief or anything else the worker saw. Reports stay, owner-only on macOS and Linux, until `cleanup
   --worker` removes the run folder; commands print their paths, never their text, and they never reach the ledger or
   telemetry. The harness keeps its own session history as it always does. Its error output is not read. A tool is shown
-  by its name only when it is one of the harness's own (Claude's tools, Codex's item types, Antigravity's tools, Kiro's tool kinds); an MCP server's tool is
+  by its name only when it is one of the harness's own (Claude's tools, Codex's item types, Antigravity's tools, Kiro's tool kinds, Cursor's shell); an MCP server's tool is
   `mcp` and any other `other`.
+- **Cursor's config and its own helper.** Cursor runs with `--yolo --trust`, as in a pane, on a private copy of
+  `~/.cursor/cli-config.json` in the run folder (owner-only on macOS and Linux; removed with it): Cursor rewrites the
+  copy, never your own (a config that is a link is copied as a file). Cursor still writes its runtime files
+  (`worker.log`, `worker.sock`) under `~/.cursor/projects/<folder>`, as any Cursor run does. The first Cursor turn
+  in a folder starts Cursor's own worker-server for that folder, with a language server under it, in that turn's
+  process group, and later turns reuse it (measured, cursor-agent 2026.10.22). For a Cursor worker only, routr reads
+  the system's process list with `ps` (every process's id, parent, group and command line; it reads every line only to check it parses, uses
+  only the rows of the worker's recorded group, and keeps and prints none of it) and tells the worker-server from the worker's own
+  commands by its exact command line, `<versions>/<v>/node <versions>/<v>/index.js worker-server`, in the install the
+  `cursor-agent` on your PATH resolves into, as `references/harnesses.md` records it; the language server under it
+  is told the same way. Those do not count as the worker still running, so they do not block a resume or `cleanup
+  --worker`; anything else under the worker-server does. An install laid out otherwise, or one routr cannot
+  tell from your PATH (none found, or a relative or empty entry before it), is not recognised, and when
+  `ps` does not answer in time or prints what routr cannot read, every member counts: either way the worker-server
+  then blocks a resume and `cleanup --worker` until it ends, as any other member would. routr never signals it once
+  its turn has ended, and `cleanup --worker` leaves it and says so. A direct `cursor-agent -p` run in that folder
+  leaves it too (seen once): it ended on its own about five minutes after its last turn once, and within two hours
+  another time (Cursor documents no idle exit), and it outlived its folder's removal. A `stop` during the turn that
+  started it signals it with that turn's group (what it does then: not measured).
 - **Kiro's permissions.** Kiro runs with `--trust-tools=*`, as in a pane, and routr tells it at `initialize` that it
   reads and writes no files and runs no terminal for it. A request Kiro makes of routr (a permission, for one) is
   declined with a JSON-RPC error. None came in the one measured protocol run, so what Kiro does after a decline is not
@@ -213,20 +232,22 @@ harnesses, `--pane` and `--direction` are refused outside herdr. What that means
   Linux) is refused before launch writes anything. On Windows it is a named pipe, and Windows' default security lets
   other local users and anonymous logons open it for reading: the handshake is what keeps them out (measured: a reader
   got only a fixed error), not the pipe's permissions. Not tested: another local account, a remote client.
-- **What it starts.** The holder starts the harness (`claude`, `codex app-server`, `agy --print=`, or `kiro-cli acp`) in its own process group
+- **What it starts.** The holder starts the harness (`claude`, `codex app-server`, `cursor-agent -p`, `agy --print=`, or `kiro-cli acp`) in its own process group
   (POSIX), in the worker's folder (its worktree, or `--cwd`), with herdr's and the lead's session variables removed,
   and records that group before the task goes in. It exits once the harness has. On macOS and Linux, `stop` sends
   SIGTERM to that group, then SIGKILL to the group two seconds later if the harness itself has not exited, and waits
   up to six seconds for it. Claude ends its tool commands, which run in groups of their own, on SIGTERM; they can
-  survive a SIGKILL of Claude, and routr cannot see those (measured). How Codex's, Antigravity's and Kiro's commands take SIGTERM and SIGKILL
+  survive a SIGKILL of Claude, and routr cannot see those (measured). How Codex's, Cursor's, Antigravity's and Kiro's commands take SIGTERM and SIGKILL
   is not measured. Once the harness has gone, anything still in its group is not signalled again (its id may be
-  another group's by then): stop says `still_exiting`, and the group stays recorded, so resuming and cleanup refuse
+  another group's by then). On stop, and before it resumes with a queued message, routr looks at the group again for
+  up to two seconds, as something of a harness may still be exiting just after it closes (measured with Cursor: under
+  100 ms). Anything left then, a harness's own helper aside (above): stop says `still_exiting`, and the group stays recorded, so resuming and cleanup refuse
   until it is empty. On Windows it runs `taskkill /T /F` on the harness, or ends the harness alone if that fails. A
   command that detaches itself is not seen. Limit: once a recorded group has emptied, an unrelated process group
   given the same id later blocks that worker's resume and cleanup until it ends.
 - **What it cannot see.** If the holder itself is killed, its Claude keeps working until its next output fails
   (measured on macOS); on Windows the measured stand-in harness ended with its holder, and a real Claude has not been
-  measured there. What a Codex app-server, Antigravity or Kiro does when its holder dies, mid-turn or not, is not measured. On macOS and
+  measured there. What a Codex app-server, Cursor, Antigravity or Kiro does when its holder dies, mid-turn or not, is not measured. On macOS and
   Linux, routr then reports the worker `lost`, and names the process group it recorded while that group still has
   members, as it does when a tool command outlives the harness. Either way it refuses to resume or remove the worker
   until that group is empty, and it never stops a process by a saved id. A lead started inside an SSH session on

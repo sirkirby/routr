@@ -3,7 +3,7 @@
 // this on every Claude Code turn. It is the only module that imports node:child_process (a test holds every other file
 // in src/ to that), so every process routr starts gets the same platform defaults from `start` / `startSync`.
 import { spawn, spawnSync } from "node:child_process";
-import { closeSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { accessSync, closeSync, constants, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
 
@@ -121,6 +121,18 @@ export function resolveCommand(cmd, { env = process.env, cwd = process.cwd(), ex
   for (const dir of String(path ?? "").split(";").map((d) => d.trim().replace(/^"(.*)"$/, "$1"))) {
     const hit = dir && tries(win32.join(dir, cmd));
     if (hit) return hit;
+  }
+  return null;
+}
+
+// POSIX: the file a bare command name runs, the first executable file of that name on PATH as a shell finds it, its
+// links followed; null when there is none, when a relative or empty PATH entry comes first (the file would depend on
+// the folder it runs in: from the review of c9b049a), and on Windows, where nothing asks yet.
+export function installedAt(cmd, { env = process.env, platform = process.platform } = {}) {
+  if (platform === "win32") return null;
+  for (const dir of String(env.PATH ?? "").split(":")) {
+    if (!dir.startsWith("/")) return null;
+    try { const p = join(dir, cmd); accessSync(p, constants.X_OK); if (statSync(p).isFile()) return realpathSync.native(p); } catch {}
   }
   return null;
 }

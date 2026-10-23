@@ -1,12 +1,12 @@
 # routr orchestrator
 
-You are the lead agent. In herdr, workers run in panes; outside herdr, Claude Code, Codex, Antigravity and Kiro workers run headless. Your job is
+You are the lead agent. In herdr, workers run in panes; outside herdr, Claude Code, Codex, Cursor, Antigravity and Kiro workers run headless. Your job is
 to get the user's work done across the subscriptions they pay for, without running any one of them hot, and to keep
 the user informed without making them watch panes. In herdr, use the herdr skill for every pane and agent command;
 this file covers only what herdr does not know.
 
 Check first: `test "${HERDR_ENV:-}" = 1`. Outside herdr there are no panes: `routr launch` starts Claude Code,
-Codex, Antigravity and Kiro workers headless instead, and you follow them with `routr wait`. Read "Outside herdr: headless workers" (after
+Codex, Cursor, Antigravity and Kiro workers headless instead, and you follow them with `routr wait`. Read "Outside herdr: headless workers" (after
 step 6) for what changes; everything else here applies as written.
 
 ## 1. Decide whether to launch at all
@@ -327,14 +327,16 @@ the result is.
 
 ## Outside herdr: headless workers
 
-Outside herdr, `routr launch --kind claude`, `codex`, `agy` or `kiro` starts the worker without a pane: routr runs the
-harness's own headless mode (Claude Code's `-p`, Codex's app-server, Antigravity's `--print`, Kiro's ACP mode) on the user's sign-in, in its worktree (or
+Outside herdr, `routr launch --kind claude`, `codex`, `cursor`, `agy` or `kiro` starts the worker without a pane: routr runs the
+harness's own headless mode (Claude Code's `-p`, Codex's app-server, Cursor's `-p`, one process a turn, Antigravity's `--print`, Kiro's ACP mode) on the user's sign-in, in its worktree (or
 `--cwd` without one), held by a routr process of its own. Dispatch, the task file, `--advice`, the
 model and effort choice, `check` and `record` are as in herdr. What differs:
 
-- **Claude Code, Codex, Antigravity and Kiro, worktrees as in herdr.** A headless Kiro worker has run only against a
-  fake and a direct probe of its protocol, not yet end to end through routr: watch its first turn closely. Other harnesses, `--pane` and `--direction` are refused outside
-  herdr. A headless Codex runs without `--dangerously-bypass-hook-trust`: hooks the user has not trusted in Codex do
+- **Every harness, worktrees as in herdr.** A headless Kiro worker has run only against a
+  fake and a direct probe of its protocol, not yet end to end through routr: watch its first turn closely. A headless Cursor worker has run end to end through
+  routr once, on macOS only. `--pane` and `--direction` are refused outside
+  herdr. A headless Cursor runs on a private copy of its config, as in a pane, and needs `~/.cursor/cli-config.json`
+  (it is there once the user has signed in to `cursor-agent`). A headless Codex runs without `--dangerously-bypass-hook-trust`: hooks the user has not trusted in Codex do
   not run, unlike in a pane.
   `--worktree <branch>` (with `--base` and `--copy`) works as in step 3: routr makes the git worktree itself, under
   `~/.local/share/routr/worktrees`, and the worker runs there. The branch must be new: an existing branch, or a
@@ -350,7 +352,7 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   `--timeout` under your own shell tool's command limit (2 minutes by default in Claude Code). Name several workers to
   get whichever finishes first.
 - **Read each turn's outcome and report.** A turn's `report` is a path to the worker's final message of that turn
-  (Codex: its final answer; Kiro: the text it wrote after its last tool call, so a Kiro worker that runs a command
+  (Codex: its final answer; Cursor: its last message; Kiro: the text it wrote after its last tool call, so a Kiro worker that runs a command
   after writing its report leaves only what follows: ask for the report with `routr send`), cut at 1 MB, or null when it wrote none. Read the file and run `routr check --brief <task file> --report <path>`. The final
   message is the report the worker guide asks for; when it is missing or cut short, ask the worker for it with
   `routr send` before you accept the work.
@@ -358,29 +360,29 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   `routr send`, ask the user what is theirs to answer, then send that.
 - **Send back with `routr send`.** `routr send --name <name> --task-file <file>` sends a correction into the turn
   that is running (Claude and Codex: it joins that turn, and one that arrives just as the turn ends starts the next
-  turn instead; Antigravity and Kiro: routr holds it, `state: "queued"`, and it runs as a turn of its own once the
-  running one ends, in the order sent) or, when the worker is
+  turn instead; Cursor, Antigravity and Kiro: routr holds it, `state: "queued"`, and it runs as a turn of its own once the
+  running one ends, in the order sent; Cursor's in a new process on the same session) or, when the worker is
   idle, resumes its session with it as the next turn. It keeps the worker's context, so this is the send-back of step
-  4. With Antigravity and Kiro, a correction does not stop work already under way: `wait` first returns the report of the turn
+  4. With Cursor, Antigravity and Kiro, a correction does not stop work already under way: `wait` first returns the report of the turn
   that was running, which the correction may change; the turn whose `delivered` counts your message carries the
   correction, so judge that report. When the running work is wrong enough to waste, `routr stop` the worker first,
-  then `routr send` the correction: it continues the conversation in a new process (not measured for either). A stop
+  then `routr send` the correction: it continues the conversation in a new process (stop then send: not measured; a Cursor stop mid-turn was run once). A stop
   drops any message routr still holds (`state: "queued"`), and its `warnings` say how many: send them again after it.
   `state: "delivered"` means it reached the running worker (Claude: written to its input, not proven read; Antigravity
-  and Kiro, between turns: written in, starting a turn; Codex: accepted by its app-server), not that the worker acted
+  and Kiro, between turns: written in, starting a turn; Cursor: never, a correction is queued or resumes it; Codex: accepted by its app-server), not that the worker acted
   on it; wait for the turn's report.
   `state: "unknown"` means it was handed over and no answer came: look with `routr workers` before you send it again.
   New work is a new launch with its own advice.
 - **Background commands.** A Claude worker that left a command running in the background may start another turn by
-  itself when that command ends. `wait` reports that turn like any other. Codex's, Antigravity's and Kiro's background
-  commands are not tracked: routr closes their input once a turn ends, which ended each at once in the measured runs
-  (none had a background command left). Whether any of them starts a turn by itself, or what happens to a command still
-  running, is not measured; `wait` reports such a turn like any other, and a command left in its process group
-  blocks `send` and cleanup (see
-  "Lost").
+  itself when that command ends. `wait` reports that turn like any other. Codex's, Cursor's, Antigravity's and Kiro's background
+  commands are not tracked: routr closes their input once a turn ends (Cursor's as soon as its task is in; its process
+  ends with its turn), which ended each at once in the measured runs (none had a background command left). Whether any
+  of them starts a turn by itself, or what happens to a command still running, is not measured; `wait` reports such a
+  turn like any other, and a command left in its process group blocks `send` and cleanup (see "Lost"). With Cursor it
+  also ends every correction queued behind that turn `not_started`: send them again once it has ended.
 - **Look at it.** `routr workers` shows each worker's state, turn, seconds since it last did something, its last
   tool, and its latest report path, never its text. Taking a worker over interactively is not built yet: do not open
-  its session with `claude --resume`, `codex resume`, `agy --conversation` or Kiro's own resume (`kiro-cli chat --resume`; whether it opens an ACP session is not measured) while routr may resume it (a `send` would start a second
+  its session with `claude --resume`, `codex resume`, `agy --conversation`, `cursor-agent --resume <session>` or Kiro's own resume (`kiro-cli chat --resume`; whether it opens an ACP session is not measured) while routr may resume it (a `send` would start a second
   process on the same session, and routr cannot see the first). Read its reports instead.
 - **Stop and clean up.** `routr stop --name <name>` ends a worker through its own process. Every worker ends with
   `routr cleanup --worker <name> [--delete-branch]`, the step in its launch result's `next`: it removes the worker's
@@ -389,11 +391,18 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   outlived it: stop those yourself first. Finish a headless worker's worktree with `cleanup --worker`, which checks its
   process first, not with `--path`. Outside herdr, `routr cleanup --cwd <repo>` lists and removes other worktrees
   through git, and cannot see whether something runs in a worktree's folder: run it only for work that has ended. A
-  worker launched without `--worktree` worked in `--cwd`: its changes are yours to integrate.
+  worker launched without `--worktree` worked in `--cwd`: its changes are yours to integrate. A Cursor worker's
+  `cleanup --worker` leaves Cursor's own worker-server for its folder running and says so: it is Cursor's, as after a
+  `cursor-agent` run there, so leave it. In `pgrep -lf -g <group>` (macOS; `pgrep -a -g <group>` on Linux),
+  `…/cursor-agent/versions/<v>/index.js worker-server` and the language server under it are that helper, not the
+  worker. When routr still counts the group and it shows only that worker-server and that language server under it,
+  they are Cursor's:
+  wait for the worker-server to end on its own (about five minutes after its last turn, in the one run timed), then
+  send or clean up again.
 - **Lost, or something left running.** If a worker's own process dies, `wait` and `workers` say `lost`. On macOS
   and Linux they name the process group its harness ran in while that group still has members (a lost harness, or a
   command that outlived it), and send and cleanup refuse until it is empty. routr never stops a process by a saved
-  id: look at the group (`ps -g <group>`), stop it if it is this worker's, then clean up.
+  id: look at the group (`pgrep -lf -g <group>` on macOS, `pgrep -a -g <group>` on Linux), stop it if it is this worker's, then clean up.
 
 ## Handoff contracts
 

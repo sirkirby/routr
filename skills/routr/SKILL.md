@@ -47,7 +47,7 @@ and judge that part yourself.
 - You are the **orchestrator**: you plan the work, hand it out, judge what comes back, and send it back when it
   falls short → read `references/orchestrator.md`, then `references/harnesses.md` before you launch anything. A user
   can start a session this way by typing `/routr-orchestrate <plan>` (`$routr-orchestrate` in Codex). Outside
-  herdr, `routr launch` starts Claude Code, Codex, Antigravity and Kiro workers headless, followed with `routr wait` (the guide's "Outside herdr"
+  herdr, `routr launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless, followed with `routr wait` (the guide's "Outside herdr"
   section).
   In herdr, never run `routr subagent` and never spawn your harness’s own subagents. Every piece you hand out,
   research and reviews included, is a routr worker (a pane worker in herdr). Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
