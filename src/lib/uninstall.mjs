@@ -109,7 +109,8 @@ export async function uninstall(args, { home = userHome() } = {}) {
   const lock = UNINSTALL_LOCK(home);
   try { mkdirSync(join(home, ".local/state/routr"), { recursive: true, mode: 0o700 }); } catch {}
   if (!takeLock(lock, lockIsStale)) return { ok: false, error: `routr uninstall removed nothing: ${existsSync(lock) ? "another routr uninstall is running" : `it could not write ${lock}`}` };
-  const late = blockedBy(leftovers(home), purge);
+  let late;
+  try { late = blockedBy(leftovers(home), purge); } catch (e) { releaseLock(lock); throw e; }
   if (late) { releaseLock(lock); return { ok: false, error: late }; }
   const removed = [], failed = [], userFiles = [];
   if (plan.statusline) try {
@@ -144,6 +145,9 @@ export async function uninstall(args, { home = userHome() } = {}) {
 // (said, not removed). `between` is for a test to act at the moment the lock is the only thing left.
 export function removeState(home, lock, { between = () => {} } = {}) {
   const root = join(home, ".local/state/routr"), removed = [], failed = [], notOurs = [];
+  // A linked state folder is unlinked, never walked: what it points at is not known to be routr's (from #104's review).
+  try { if (lstatSync(root).isSymbolicLink()) { releaseLock(lock); unlinkSync(root); removed.push(root); return { removed, failed, notOurs }; } }
+  catch (e) { if (e?.code === "ENOENT") return { removed, failed, notOurs }; failed.push(`${root}: ${String(e?.message ?? e).slice(0, 100)}`); return { removed, failed, notOurs }; }
   let names = [];
   try { names = readdirSync(root); } catch (e) { if (e?.code !== "ENOENT") failed.push(`${root}: could not read it`); return { removed, failed, notOurs }; }
   for (const n of names) if (join(root, n) !== lock) try { removePath(join(root, n)); } catch (e) { failed.push(`${join(root, n)}: ${String(e?.message ?? e).slice(0, 100)}`); }

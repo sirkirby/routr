@@ -564,6 +564,23 @@ test("a headless launch that reserves its run folder while uninstall holds its l
     expect(backedOut).toBe(true);
     expect(r.failed).toEqual([]); expect(r.notOurs).toEqual([]);
     expect(existsSync(join(home, ".local/state/routr"))).toBe(false);
+    // A backout that comes late, after uninstall removed its folder and another launch of that name made its own,
+    // leaves the new one alone.
+    mkdirSync(join(home, ".local/state/routr"), { recursive: true });
+    writeFileSync(UNINSTALL_LOCK(), String(process.pid));
+    const replace = () => { rmSync(runDir("w3"), { recursive: true }); mkdirSync(runDir("w3")); writeFileSync(join(runDir("w3"), "worker.json"), "theirs"); };
+    expect(() => reserve("w3", { beforeBackout: replace })).toThrow("being uninstalled");
+    expect(readFileSync(join(runDir("w3"), "worker.json"), "utf8")).toBe("theirs");
+    // A linked state folder is unlinked, never walked: what it points at stays.
+    if (process.platform !== "win32") {
+      const elsewhere = join(home, "elsewhere"); mkdirSync(elsewhere); writeFileSync(join(elsewhere, "important.txt"), "keep");
+      rmSync(join(home, ".local/state/routr"), { recursive: true });
+      (await import("node:fs")).symlinkSync(elsewhere, join(home, ".local/state/routr"), "dir");
+      const linked = removeState(home, join(home, ".local/state/routr", "uninstalling"));
+      expect(linked.failed).toEqual([]);
+      expect(readFileSync(join(elsewhere, "important.txt"), "utf8")).toBe("keep");
+      expect(existsSync(join(home, ".local/state/routr"))).toBe(false);
+    }
   } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
 });
 
