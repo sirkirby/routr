@@ -12,7 +12,7 @@ step 6) for what changes; everything else here applies as written.
 ## 1. Decide whether to launch at all
 
 Launching is not free: a worker pays a fixed context cost to start, and delegating work that does not split cleanly
-roughly doubles usage with no gain in quality. `routr dispatch` answers this first, in its `worker` field: do it
+roughly doubled usage with no gain in quality on the one audit measured (`docs/evidence.md`). `routr dispatch` answers this first, in its `worker` field: do it
 yourself when the work is one or two small edits, settle it with the user when the brief leaves them a decision,
 split it when the pieces are independent (then ask routr once per piece), and otherwise hand it out when it can run
 while you do something else or your own subscription is close to its reserve.
@@ -346,14 +346,17 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   writing worker that folder at a time. A `--dry-run` outside herdr still plans herdr's worktree create and does not
   check the branch.
 - **Not from inside a sandbox.** A worker started from your sandboxed shell cannot reach its provider or routr's
-  state, so launch refuses there, and so does a send that has to start the worker again. Run `routr launch`, `routr
-  send` and `routr wait` as commands outside the sandbox.
-- **Wait with routr.** `routr wait --name <name>` returns when the worker finishes a turn, fails or is lost, or at
+  state, so launch refuses there, and so does a send that has to start the worker again; run those as commands outside
+  the sandbox. A send to a worker that is running goes over its channel as usual. `wait`, `workers` and `stop` still
+  run there and warn that the sandbox may hide a worker's channel: `unreachable` then means the channel did not answer,
+  and the worker may still be running.
+- **Wait with routr.** `routr wait --name <name>` returns when the worker finishes a turn, fails, stops, is lost or
+  does not answer (`unreachable`), or at
   its timeout with `state: "running"`: then wait again, as its `next` says. The default is 90 seconds; keep
   `--timeout` under your own shell tool's command limit (2 minutes by default in Claude Code). Name several workers to
   get whichever finishes first.
 - **Read each turn's outcome and report.** A turn's `report` is a path to the worker's final message of that turn
-  (Codex: its final answer; Cursor: its last message; Kiro: the text it wrote after its last tool call, so a Kiro worker that runs a command
+  (Codex: its final answer; Cursor: its last assistant message, not the joined `result`; Kiro: the text it wrote after its last tool call, so a Kiro worker that runs a command
   after writing its report leaves only what follows: ask for the report with `routr send`), cut at 1 MB, or null when it wrote none. Read the file and run `routr check --brief <task file> --report <path>`. The final
   message is the report the worker guide asks for; when it is missing or cut short, ask the worker for it with
   `routr send` before you accept the work.

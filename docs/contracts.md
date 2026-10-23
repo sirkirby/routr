@@ -39,7 +39,8 @@ Names that mean one thing everywhere:
 - `subscription`: a subscription's name, wherever one is named (`unavailable` entries, ranked and excluded rows, a
   named usage reading).
 - `ran` and `would_run`: display lines of the herdr and git commands a command ran, and the harness command a headless
-  launch started, or in a dry run would run. Display
+  launch prepared (shown once the worker's folder is known, even when a later step stopped the start), or in a dry run
+  would run. Display
   only (prompt text replaced by its length); never something to execute. Runnable lines are only ever in `next`.
 
 `unavailable` parts and their extra fields:
@@ -119,9 +120,10 @@ free text: `screen`, what a pane showed, and only before the task was sent (afte
 routr starts the process: what leaves that point is routr's own words, and the structured herdr values below, each
 checked against a fixed shape.
 
-A headless worker's harness stream is read only by its holder. What reaches output from it is a session id (checked
-against the harness's id shape, else null), a tool name from a fixed list (else `mcp` or `other`) as `last_tool`, and
-report paths; the report text stays in its file, and the harness's stderr is not read.
+A headless worker's harness stream is read only by its holder. What reaches output from it is routr's own reading of it: a session id
+(checked against the harness's id shape, else null), a tool name from a fixed list (else `mcp` or `other`) as
+`last_tool`, turn numbers and their outcomes, the time since the last event, a count of background commands (`tasks`),
+and report paths. No free text: the report text stays in its file, and the harness's stderr is not read.
 
 Structured herdr values. Launch reports herdr's reading of an agent (`needs_input.herdr`) and builds `needs_input.why`
 from it; today it copies herdr's values as they come and interpolates them. Each is checked at the boundary, before any

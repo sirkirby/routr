@@ -174,11 +174,14 @@ routr classes each pool from the shape of what the harness reports, never from a
 
 ## How routr reads each harness's usage
 
-Each reader goes through the harness's own command or screen, never a file of its internals, and only once its
-sign-in check passes. An update of the harness, or of herdr for Cursor, can change what a reader sees without a word:
-once a reader has failed for a day, `dispatch`, `usage` and `doctor` warn and give the command to read it again.
+Each reader goes through the harness's own command or screen, and only once its sign-in check passes; the two
+fallbacks below read what the harness or routr itself wrote (Codex's session log, `routr statusline`'s snapshot). An
+update of the harness, or of herdr for Cursor, can change what a reader sees without a word: when a reader that worked
+before has no reading a day old or newer and its last try failed, `dispatch`, `usage` and `doctor` warn and give the
+command to read it again.
 
-- **Claude Code:** its own `/usage`, through `claude -p` (next section), in each call.
+- **Claude Code:** a `routr statusline` snapshot under 5 minutes old when there is one, otherwise its own `/usage`,
+  through `claude -p` (next section), in each call; an older snapshot is kept when that read fails.
 - **Codex:** its app-server's `account/rateLimits/read` (about 0.4 s, no tokens), in each call. The method is marked
   experimental, so the newest session log under `~/.codex/sessions` is the fallback.
 - **Antigravity:** `agy -p /usage --output-format json`, answered without an agent turn (0 tokens, about 2 s), in

@@ -31,7 +31,7 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
 ```
 
 Then run `routr doctor`; if it reports no key or no config, read `references/setup.md`. Someone working on routr
-itself can run it from a checkout instead: `bun src/routr.mjs`.
+itself can run it from a checkout with Bun instead (CONTRIBUTING.md says how).
 
 The advice commands change nothing of the user's and never fail: if no configured model answers, they still print
 advice, with a `no reading` headline and one entry per failed decision model in `unavailable`. Matching fallback advice is valid for

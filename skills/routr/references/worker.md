@@ -13,7 +13,8 @@ and never touch another branch or the main checkout.
 ## Before you spawn a subagent
 
 Subagents are where usage leaks: the easy default is a subagent as strong as you, and most subagent work does not
-need it. Spawn subagents only for work that can run in parallel; doing the same work yourself costs about half.
+need it. Spawn subagents only for work that can run in parallel; on the one audit measured, doing the same work yourself
+cost about half.
 
 Before each subagent, ask routr about the brief you are about to give it:
 

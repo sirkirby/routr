@@ -43,8 +43,8 @@ routr's tests (`docs/evidence.md`, "Decision models"):
   (TypeSafe's quick start shows the step: https://docs.typesafe.ai/introduction/quickstart).
 - **Cloudflare's Clef on Workers AI** (`cloudflare`): for someone who already has a Cloudflare account, or whose
   organisation does. 72 of 104 levels right, more often too high than too low. Needs a Cloudflare API token with
-  Workers AI Read, the only permission routr needs (https://dash.cloudflare.com/profile/api-tokens), and their account ID. Workers AI's free
-  daily allowance covers about 200 briefs a day. `cloudflare:clef-flash`, a smaller model, reads levels too low more often.
+  Workers AI Read, the only permission routr needs (https://dash.cloudflare.com/profile/api-tokens), and their account ID. What Workers
+  AI's free allowance covers is in `docs/evidence.md`. `cloudflare:clef-flash`, a smaller model, reads levels too low more often.
 - **Clef Flash on their own machine through Ollama** (`ollama`): free, and nothing leaves the machine. Ollama 0.40.1 or
   later, then the build `routr doctor` names: `clef-flash:9b-mxfp8` on Apple Silicon (12 GB, 5-7 s a brief on an M4
   Max), `clef-flash:9b-q8_0` elsewhere (11 GB; under a second on an NVIDIA laptop GPU). It needs a GPU or Apple
@@ -117,7 +117,7 @@ the command that fixes it.
     prints (routr keeps no model list of its own). Claude Code lists only its aliases, and its help says it also takes a
     model's full name, so for Claude an id off the list is kept as typed. The orchestrator starts from it and moves up or down with the
     work. Doctor warns when the harness no longer offers it. It cannot check a Claude id off the alias list: if Claude
-    Code stops taking one, the worker's pane says so. Kiro's are
+    Code stops taking one, a pane worker's pane says so, and a headless worker's turn fails. Kiro's are
     suggested as `auto` and `auto`: Kiro's own router, with effort left to the model (no `--effort` is passed, so
     nothing is saved to the user's Kiro settings).
   - `assumed_headroom`: used only when nothing better is known. Claude, Codex, and Antigravity are read live; Cursor's
