@@ -5,7 +5,7 @@ import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, read
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { connect, generations, MESSAGE_MAX, probe, removeEndpoint, socketPathFits, writeSecret } from "./channel.mjs";
-import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, readState, readWorker, reserve, runDir, WORKERS_DIR } from "./headless.mjs";
+import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, ownedBy, readState, readWorker, reserve, runDir, WORKERS_DIR } from "./headless.mjs";
 import { HARNESSES, notReady } from "./harnesses.mjs";
 import { loadConfig } from "./config.mjs";
 import { readTask } from "./advice-file.mjs";
@@ -183,7 +183,8 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
   // folder is known (Antigravity's --add-dir names it).
   headlessArgv({ kind: o.kind, model: o.model, effort: o.effort, cwd: plannedTree?.path ?? out.cwd });
   let dir;
-  try { dir = reserve(o.name); }
+  let token;
+  try { ({ dir, token } = reserve(o.name)); }
   catch (e) {
     if (e?.code === "EEXIST") throw new Error(`a worker named ${o.name} exists; finish it with routr cleanup --worker ${o.name}, or choose another --name`);
     if (e?.code === "EPERM" || e?.code === "EACCES") throw new Error(SANDBOXED("a sandbox, or a folder routr cannot write"));
@@ -192,7 +193,8 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
   // What this launch wrote, and nothing started: removed again if launch stops before a holder answers. Everything
   // after the reservation is inside this, so a failure anywhere in it (git, a copy, a write) leaves nothing.
   let wt = null;
-  const unreserve = async () => { if (wt) await unmakeWorktree(wt, out); try { rmSync(dir, { recursive: true, force: true }); } catch {} out.worker = null; };
+  // Only while it is still this reservation's (its token): never a folder another launch of that name made since.
+  const unreserve = async () => { if (wt) await unmakeWorktree(wt, out); try { if (ownedBy(dir, token)) rmSync(dir, { recursive: true, force: true }); } catch {} out.worker = null; };
   try {
     if (plannedTree) {
       const { source, start } = plannedTree;

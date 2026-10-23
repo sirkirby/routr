@@ -37,11 +37,12 @@
 // continues it in a new process with its context. It runs on a private copy of its config, as in a pane.
 // Worker text reaches one place, the report file of each turn (owner-only, removed by cleanup); only its path leaves
 // routr. Nothing else of the harness's output is kept: its stderr is not read, and a tool is shown by a fixed name.
-import { existsSync, mkdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, privateDir, probe, removeEndpoint, serve } from "./channel.mjs";
 import { HARNESSES, plan } from "./harnesses.mjs";
-import { folderId, harnessEnv, installedAt, lockIsStale, probe as collect, start, STATE_DIR, stop, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
+import { harnessEnv, installedAt, lockIsStale, probe as collect, start, STATE_DIR, stop, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
 import { besidesHelper, groupMembers } from "./process-boundary.mjs";
 
 export const FORMAT = 1;
@@ -682,24 +683,26 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
 
 // The run folder of a new worker, reserved by its name: made whole, owner-only, or refused when one exists.
 // Made first, then the uninstall lock looked at: uninstall takes its lock first, then looks for run folders, so one of
-// the two always sees the other.
-export function reserve(name, { beforeBackout = () => {}, beforeReturn = () => {} } = {}) {
+// the two always sees the other. Each reservation writes its own random token into its folder, exclusively, before
+// anything else: only the reservation whose token is there may remove that folder (its backout here, launch's rollback),
+// so a folder uninstall removed and another launch of that name made again is never taken for this one (from #104's
+// review; an identity by device, inode and birth time left cases where two folders looked alike).
+export const OWNER = ".reserved-by";
+export const ownedBy = (dir, token) => { try { return readFileSync(join(dir, OWNER), "utf8") === token; } catch { return false; } };
+export function reserve(name, { beforeOwn = () => {}, beforeBackout = () => {} } = {}) {
   privateDir(WORKERS_DIR());
-  mkdirSync(runDir(name), { mode: 0o700 }); // not recursive: EEXIST when that name is taken
-  const made = folderId(runDir(name), { link: true });
+  const dir = runDir(name), token = randomUUID().replace(/-/g, "");
+  mkdirSync(dir, { mode: 0o700 }); // not recursive: EEXIST when that name is taken
+  beforeOwn(); // a test acts here: as if this call paused while uninstall and another launch ran
+  try { writeFileSync(join(dir, OWNER), token, { flag: "wx", mode: 0o600 }); } // EEXIST: another reservation's folder
+  catch (e) { if (e?.code === "ENOENT") throw new Error(`${name}'s run folder was removed while launch was making it; run launch again`); throw e; }
   let held = false;
   try { held = existsSync(UNINSTALL_LOCK()) && !lockIsStale(UNINSTALL_LOCK()); } catch { held = existsSync(UNINSTALL_LOCK()); }
   if (held) {
-    beforeBackout(); // a test acts here: as if this call paused while uninstall and another launch ran
-    // Only the folder this call made, and only while it is empty: uninstall may have removed it meanwhile and a new
-    // launch of the same name made its own (from #104's review), which a late backout must not touch.
-    // Without a birth time two folders made at the same path can share an identity: then it is left, empty.
-    try { if (made && !/:(0|undefined)$/.test(made) && folderId(runDir(name), { link: true }) === made) rmdirSync(runDir(name)); } catch {}
+    beforeBackout(); // and here
+    if (ownedBy(dir, token)) { try { unlinkSync(join(dir, OWNER)); rmdirSync(dir); } catch {} } // only while empty
     try { rmdirSync(WORKERS_DIR()); } catch {} // only if empty: leave nothing that would keep uninstall's folder
     throw new Error("routr is being uninstalled on this machine: no worker can start now");
   }
-  beforeReturn(); // a test acts here too
-  // Still the folder this call made: one uninstall removed meanwhile and another launch of that name made is not ours.
-  if (!made || folderId(runDir(name), { link: true }) !== made) throw Object.assign(new Error(`a worker named ${name} exists`), { code: "EEXIST" });
-  return runDir(name);
+  return { dir, token };
 }

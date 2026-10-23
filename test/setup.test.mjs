@@ -542,51 +542,48 @@ test("routr uninstall stops while a headless worker is here, and --purge while a
 }, 30000);
 
 test("a headless launch that reserves its run folder while uninstall holds its lock backs out, so neither misses the other", async () => {
-  const { reserve, runDir } = await import("../src/lib/headless.mjs");
+  const { OWNER, ownedBy, reserve, runDir } = await import("../src/lib/headless.mjs");
   const { UNINSTALL_LOCK } = await import("../src/lib/runtime.mjs");
+  const { removeState } = await import("../src/lib/uninstall.mjs");
   const home = scratch("un-lock"), saved = [process.env.HOME, process.env.USERPROFILE];
   process.env.HOME = process.env.USERPROFILE = home;
+  const theirs = (n) => { mkdirSync(runDir(n)); writeFileSync(join(runDir(n), OWNER), "theirs"); writeFileSync(join(runDir(n), "worker.json"), "theirs"); };
   try {
     mkdirSync(join(home, ".local/state/routr"), { recursive: true });
     writeFileSync(UNINSTALL_LOCK(), String(process.pid)); // held by a live process
     expect(() => reserve("w1")).toThrow("being uninstalled");
     expect(existsSync(runDir("w1"))).toBe(false);
-    writeFileSync(UNINSTALL_LOCK(), "999999999"); // its uninstall is gone: stale
-    expect(reserve("w1")).toBe(runDir("w1"));
+    writeFileSync(UNINSTALL_LOCK(), "999999999"); // its uninstall is gone: stale, and launches go on
+    const r = reserve("w1");
+    expect(r.dir).toBe(runDir("w1")); expect(ownedBy(r.dir, r.token)).toBe(true);
     rmSync(runDir("w1"), { recursive: true });
     // While uninstall clears its state folder, the lock is the last thing in it: a launch at that moment backs out and
     // leaves nothing behind, so the folder goes; the lock is released only then.
-    const { removeState } = await import("../src/lib/uninstall.mjs");
     writeFileSync(UNINSTALL_LOCK(), String(process.pid));
     mkdirSync(join(home, ".local/state/routr/s"), { recursive: true });
     let backedOut = false;
-    const r = removeState(home, UNINSTALL_LOCK(), { between: () => { try { reserve("w2"); } catch (e) { backedOut = /being uninstalled/.test(e.message); } } });
+    const cleared = removeState(home, UNINSTALL_LOCK(), { between: () => { try { reserve("w2"); } catch (e) { backedOut = /being uninstalled/.test(e.message); } } });
     expect(backedOut).toBe(true);
-    expect(r.failed).toEqual([]); expect(r.notOurs).toEqual([]);
+    expect(cleared.failed).toEqual([]); expect(cleared.notOurs).toEqual([]);
     expect(existsSync(join(home, ".local/state/routr"))).toBe(false);
-    // A backout that comes late, after uninstall removed its folder and another launch of that name made its own,
-    // leaves the new one alone.
+    // Uninstall removed this reservation's folder and another launch of that name made its own, empty but for its token:
+    // before this one took ownership (it is refused as taken), or after (its backout leaves the other alone).
     mkdirSync(join(home, ".local/state/routr"), { recursive: true });
-    writeFileSync(UNINSTALL_LOCK(), String(process.pid));
-    const replace = () => { rmSync(runDir("w3"), { recursive: true }); mkdirSync(runDir("w3")); writeFileSync(join(runDir("w3"), "worker.json"), "theirs"); };
-    expect(() => reserve("w3", { beforeBackout: replace })).toThrow("being uninstalled");
-    expect(readFileSync(join(runDir("w3"), "worker.json"), "utf8")).toBe("theirs");
-    // Still empty, the new one is another folder by its identity (birth time included), and stays.
-    const empty = () => { rmSync(runDir("w4"), { recursive: true }); Bun.sleepSync(5); mkdirSync(runDir("w4")); };
-    expect(() => reserve("w4", { beforeBackout: empty })).toThrow("being uninstalled");
-    if (process.platform === "darwin" || process.platform === "win32") expect(existsSync(runDir("w4"))).toBe(true); // a birth time to tell them by
-    // A reservation whose folder was replaced before it returned is refused as taken, never handed back.
-    rmSync(join(home, ".local/state/routr/uninstalling"));
-    const swap = () => { rmSync(runDir("w5"), { recursive: true }); mkdirSync(runDir("w5")); writeFileSync(join(runDir("w5"), "worker.json"), "theirs"); };
-    expect(() => reserve("w5", { beforeReturn: swap })).toThrow("a worker named w5 exists");
-    expect(readFileSync(join(runDir("w5"), "worker.json"), "utf8")).toBe("theirs");
-    // An uninstall lock left by one that is gone is not taken over: uninstall says which file to remove; launches go on.
-    for (const n of ["w3", "w4", "w5"]) rmSync(runDir(n), { recursive: true, force: true });
     writeFileSync(UNINSTALL_LOCK(), "999999999");
+    expect(() => reserve("w3", { beforeOwn: () => { rmSync(runDir("w3"), { recursive: true }); theirs("w3"); } })).toThrow(/EEXIST|exists/);
+    expect(readFileSync(join(runDir("w3"), "worker.json"), "utf8")).toBe("theirs");
+    writeFileSync(UNINSTALL_LOCK(), String(process.pid));
+    expect(() => reserve("w4", { beforeBackout: () => { rmSync(runDir("w4"), { recursive: true }); theirs("w4"); } })).toThrow("being uninstalled");
+    expect(readFileSync(join(runDir("w4"), "worker.json"), "utf8")).toBe("theirs");
+    expect(ownedBy(runDir("w4"), "theirs")).toBe(true);
+    // A folder removed before this reservation could own it is said plainly.
+    writeFileSync(UNINSTALL_LOCK(), "999999999");
+    expect(() => reserve("w5", { beforeOwn: () => rmSync(runDir("w5"), { recursive: true }) })).toThrow("removed while launch was making it");
+    // An uninstall lock left by one that is gone is not taken over: uninstall says which file to remove.
+    for (const n of ["w3", "w4"]) rmSync(runDir(n), { recursive: true });
     const left = Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes", "--json"], { env: cliEnv(home) });
     expect(JSON.parse(left.stdout.toString()).error).toContain("remove that file");
-    expect(reserve("w6")).toBe(runDir("w6"));
-    rmSync(UNINSTALL_LOCK()); rmSync(runDir("w6"), { recursive: true });
+    rmSync(UNINSTALL_LOCK());
     // A linked state folder is unlinked, never walked: what it points at stays.
     if (process.platform !== "win32") {
       const elsewhere = join(home, "elsewhere"); mkdirSync(elsewhere); writeFileSync(join(elsewhere, "important.txt"), "keep");
