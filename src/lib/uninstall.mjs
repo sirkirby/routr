@@ -5,7 +5,7 @@
 // which is this binary) is routr's, and only `routr cleanup --worker` removes one with its checks. And the worktrees a
 // headless launch made sit inside ~/.local/share/routr, so `--purge` would delete them unchecked. While any is there,
 // uninstall removes nothing and says what to run (found in the doc sweep of 2026-10-23: `--purge` removed them whole).
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { notOursWhy, owner, removeOwned, skillPlaces } from "./skill-install.mjs";
@@ -70,7 +70,7 @@ export function uninstallPlan({ home = userHome(), purge = false, binary = null 
   (purge ? remove : keep).push(...data);
   // Last: it holds the uninstall lock, which keeps a launch from starting until everything else is gone. With no worker
   // left (blockedBy), what remains here is routr's own bookkeeping: sockets and locks.
-  remove.push({ path: join(home, ".local/state/routr"), what: "state: headless workers' sockets and locks" });
+  remove.push({ path: join(home, ".local/state/routr"), what: "state: headless workers' sockets and locks", state: true });
   const present = (l) => l.filter((x) => { try { lstatSync(x.path); return true; } catch { return false; } });
   let statusline = false;
   try { statusline = isOurStatusline(JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8")).statusLine?.command); } catch {}
@@ -110,7 +110,7 @@ export async function uninstall(args, { home = userHome() } = {}) {
   try { mkdirSync(join(home, ".local/state/routr"), { recursive: true, mode: 0o700 }); } catch {}
   if (!takeLock(lock, lockIsStale)) return { ok: false, error: `routr uninstall removed nothing: ${existsSync(lock) ? "another routr uninstall is running" : `it could not write ${lock}`}` };
   const late = blockedBy(leftovers(home), purge);
-  if (late) { rmSync(lock, { force: true }); return { ok: false, error: late }; }
+  if (late) { releaseLock(lock); return { ok: false, error: late }; }
   const removed = [], failed = [], userFiles = [];
   if (plan.statusline) try {
     // Read again now: the plan may be minutes old (a person was asked), and the entry may have been replaced since.
@@ -122,9 +122,11 @@ export async function uninstall(args, { home = userHome() } = {}) {
       removed.push("the statusline entry in ~/.claude/settings.json");
     }
   } catch (e) { failed.push(`~/.claude/settings.json: ${String(e?.message ?? e).slice(0, 100)}`); }
-  const done = carryOut(plan, { home });
-  removed.push(...done.removed); failed.push(...done.failed); userFiles.push(...done.userFiles);
-  const notOurs = [...plan.not_ours, ...done.notOurs];
+  let done, state;
+  try { done = carryOut(plan, { home }); state = removeState(home, lock); }
+  finally { releaseLock(lock); }
+  removed.push(...done.removed, ...state.removed); failed.push(...done.failed, ...state.failed); userFiles.push(...done.userFiles);
+  const notOurs = [...plan.not_ours, ...done.notOurs, ...state.notOurs];
   const result = { ok: !failed.length, removed, kept: plan.keep.map((x) => x.path), ...(notOurs.length ? { not_ours: notOurs.map((x) => x.path) } : {}),
     ...(userFiles.length ? { kept_files: userFiles } : {}), ...(failed.length ? { failed } : {}) };
   for (const p of removed) say(`removed ${p}`);
@@ -136,6 +138,25 @@ export async function uninstall(args, { home = userHome() } = {}) {
   return result;
 }
 
+// routr's state folder, last, whether or not the plan saw it (taking the lock may have made it): everything in it but
+// the uninstall lock, then the lock, then the folder itself, never recursively. While the lock is there a launch that
+// reserves a run folder backs out; one that comes after finds no lock and keeps its folder, which then keeps this one
+// (said, not removed). `between` is for a test to act at the moment the lock is the only thing left.
+export function removeState(home, lock, { between = () => {} } = {}) {
+  const root = join(home, ".local/state/routr"), removed = [], failed = [], notOurs = [];
+  let names = [];
+  try { names = readdirSync(root); } catch (e) { if (e?.code !== "ENOENT") failed.push(`${root}: could not read it`); return { removed, failed, notOurs }; }
+  for (const n of names) if (join(root, n) !== lock) try { removePath(join(root, n)); } catch (e) { failed.push(`${join(root, n)}: ${String(e?.message ?? e).slice(0, 100)}`); }
+  between();
+  if (failed.length) return { removed, failed, notOurs }; // the lock goes in uninstall's finally; the folder stays
+  releaseLock(lock);
+  try { rmdirSync(root); removed.push(root); }
+  catch (e) { if (e?.code === "ENOTEMPTY" || e?.code === "EEXIST") notOurs.push({ path: root, what: "written there while routr was uninstalling (a worker launched since?)" }); else failed.push(`${root}: ${String(e?.message ?? e).slice(0, 100)}`); }
+  return { removed, failed, notOurs };
+}
+// Only a lock that still holds this process's pid is ours to remove.
+export const releaseLock = (lock) => { try { if (readFileSync(lock, "utf8").trim() === String(process.pid)) unlinkSync(lock); } catch {} };
+
 // Remove what the plan lists. Each skill place is checked again right before it is touched: from the final review,
 // ownership was settled before the confirmation prompt and acted on after it, so a folder swapped in while the prompt
 // waited (a user's own skill, no manifest) lost its SKILL.md and agents/openai.yaml. A place that is no longer routr's
@@ -144,6 +165,7 @@ export async function uninstall(args, { home = userHome() } = {}) {
 export function carryOut(plan, { home = userHome() } = {}) {
   const removed = [], failed = [], userFiles = [], notOurs = [];
   for (const x of plan.remove) {
+    if (x.state) continue; // removeState, last, around the uninstall lock
     try {
       if (x.skill) {
         const now = owner(home, x.skill, x.path);

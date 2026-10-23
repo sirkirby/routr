@@ -160,8 +160,9 @@ under `~/.local/share/routr/worktrees` (a worktree a headless launch made, in wh
 folder would delete it unchecked: `routr cleanup --cwd <path> --path <path>` finishes a worktree and keeps
 uncommitted work, or a plain uninstall keeps it. A folder it cannot read stops it too: unreadable is not empty. Both
 checks run again just before anything is removed, under a lock a headless launch looks at after it reserves its run
-folder, so a launch that starts meanwhile either backs out or is seen; routr's state folder, which holds that lock,
-is removed last.
+folder, so a launch that starts meanwhile either backs out or is seen. routr's state folder, which holds that lock,
+is emptied last, the lock released only once the rest of it is gone; a worker launched after that keeps the folder,
+and uninstall says so instead of removing it.
 
 ## Processes and platforms
 

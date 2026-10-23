@@ -474,6 +474,7 @@ test("routr uninstall keeps the user's data unless purged, removes only routr's 
   expect(existsSync(join(home, ".agents/skills/routr"))).toBe(false);
   expect(existsSync(join(home, ".kiro/skills/routr"))).toBe(false);
   expect(existsSync(join(home, ".cache/routr"))).toBe(false);
+  expect(existsSync(join(home, ".local/state/routr"))).toBe(false); // made for the uninstall lock, and removed with it
   expect(existsSync(join(home, ".config/routr/config.json"))).toBe(true);
   expect(existsSync(join(home, ".kiro/skills/routr-orchestrate")) || existsSync(join(home, ".agents/skills/routr-orchestrate"))).toBe(false);
   if (linked) expect(readFileSync(join(home, ".claude/skills/routr/SKILL.md"), "utf8")).toBe("mine"); // the developer's link and its target stay
@@ -543,8 +544,8 @@ test("routr uninstall stops while a headless worker is here, and --purge while a
 test("a headless launch that reserves its run folder while uninstall holds its lock backs out, so neither misses the other", async () => {
   const { reserve, runDir } = await import("../src/lib/headless.mjs");
   const { UNINSTALL_LOCK } = await import("../src/lib/runtime.mjs");
-  const home = scratch("un-lock"), was = process.env.HOME;
-  process.env.HOME = home;
+  const home = scratch("un-lock"), saved = [process.env.HOME, process.env.USERPROFILE];
+  process.env.HOME = process.env.USERPROFILE = home;
   try {
     mkdirSync(join(home, ".local/state/routr"), { recursive: true });
     writeFileSync(UNINSTALL_LOCK(), String(process.pid)); // held by a live process
@@ -552,7 +553,18 @@ test("a headless launch that reserves its run folder while uninstall holds its l
     expect(existsSync(runDir("w1"))).toBe(false);
     writeFileSync(UNINSTALL_LOCK(), "999999999"); // its uninstall is gone: stale
     expect(reserve("w1")).toBe(runDir("w1"));
-  } finally { process.env.HOME = was; }
+    rmSync(runDir("w1"), { recursive: true });
+    // While uninstall clears its state folder, the lock is the last thing in it: a launch at that moment backs out and
+    // leaves nothing behind, so the folder goes; the lock is released only then.
+    const { removeState } = await import("../src/lib/uninstall.mjs");
+    writeFileSync(UNINSTALL_LOCK(), String(process.pid));
+    mkdirSync(join(home, ".local/state/routr/s"), { recursive: true });
+    let backedOut = false;
+    const r = removeState(home, UNINSTALL_LOCK(), { between: () => { try { reserve("w2"); } catch (e) { backedOut = /being uninstalled/.test(e.message); } } });
+    expect(backedOut).toBe(true);
+    expect(r.failed).toEqual([]); expect(r.notOurs).toEqual([]);
+    expect(existsSync(join(home, ".local/state/routr"))).toBe(false);
+  } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
 });
 
 // ---- Findings from the independent review (2026-09-21) ----

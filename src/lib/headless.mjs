@@ -37,7 +37,7 @@
 // continues it in a new process with its context. It runs on a private copy of its config, as in a pane.
 // Worker text reaches one place, the report file of each turn (owner-only, removed by cleanup); only its path leaves
 // routr. Nothing else of the harness's output is kept: its stderr is not read, and a tool is shown by a fixed name.
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, privateDir, probe, removeEndpoint, serve } from "./channel.mjs";
 import { HARNESSES, plan } from "./harnesses.mjs";
@@ -688,6 +688,10 @@ export function reserve(name) {
   mkdirSync(runDir(name), { mode: 0o700 }); // not recursive: EEXIST when that name is taken
   let held = false;
   try { held = existsSync(UNINSTALL_LOCK()) && !lockIsStale(UNINSTALL_LOCK()); } catch { held = existsSync(UNINSTALL_LOCK()); }
-  if (held) { rmSync(runDir(name), { recursive: true, force: true }); throw new Error("routr is being uninstalled on this machine: no worker can start now"); }
+  if (held) {
+    rmSync(runDir(name), { recursive: true, force: true });
+    try { rmdirSync(WORKERS_DIR()); } catch {} // only if empty: leave nothing that would keep uninstall's folder
+    throw new Error("routr is being uninstalled on this machine: no worker can start now");
+  }
   return runDir(name);
 }
