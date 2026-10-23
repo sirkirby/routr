@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.8.2 — 2026-10-23
+
+[Full notes](docs/releases/v0.8.2.md)
+
 - `routr uninstall` removes nothing while a headless worker is still there, and `--purge` nothing while a worktree a
   headless launch made is: `--purge` used to delete those worktrees with their uncommitted work, unchecked, and a
   worker's run folder and reports were left behind. It now also removes routr's own state folder. (#104)
