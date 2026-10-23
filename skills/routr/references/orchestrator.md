@@ -395,13 +395,14 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   `cleanup --worker` leaves Cursor's own worker-server for its folder running and says so: it is Cursor's, as after a
   `cursor-agent` run there, so leave it. In `pgrep -lf -g <group>` (macOS; `pgrep -a -g <group>` on Linux),
   `…/cursor-agent/versions/<v>/index.js worker-server` and the language server under it are that helper, not the
-  worker. When routr still counts the group and it shows only that helper and processes under it, they are Cursor's:
+  worker. When routr still counts the group and it shows only that worker-server and that language server under it,
+  they are Cursor's:
   wait for the worker-server to end on its own (about five minutes after its last turn, in the one run timed), then
   send or clean up again.
 - **Lost, or something left running.** If a worker's own process dies, `wait` and `workers` say `lost`. On macOS
   and Linux they name the process group its harness ran in while that group still has members (a lost harness, or a
   command that outlived it), and send and cleanup refuse until it is empty. routr never stops a process by a saved
-  id: look at the group (`pgrep -l -g <group>`), stop it if it is this worker's, then clean up.
+  id: look at the group (`pgrep -lf -g <group>` on macOS, `pgrep -a -g <group>` on Linux), stop it if it is this worker's, then clean up.
 
 ## Handoff contracts
 

@@ -209,7 +209,8 @@ stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one proces
   commands by its exact command line, `<versions>/<v>/node <versions>/<v>/index.js worker-server`, in the install the
   `cursor-agent` on your PATH resolves into, as `references/harnesses.md` records it; the language server under it
   is told the same way. Those do not count as the worker still running, so they do not block a resume or `cleanup
-  --worker`; anything else under the worker-server does. An install laid out otherwise is not recognised, and when
+  --worker`; anything else under the worker-server does. An install laid out otherwise, or one routr cannot
+  tell from your PATH (none found, or a relative or empty entry before it), is not recognised, and when
   `ps` does not answer in time or prints what routr cannot read, every member counts: either way the worker-server
   then blocks a resume and `cleanup --worker` until it ends, as any other member would. routr never signals it once
   its turn has ended, and `cleanup --worker` leaves it and says so. A direct `cursor-agent -p` run in that folder
