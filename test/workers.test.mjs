@@ -6,7 +6,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { claim, connect, endpointFor, generations, ownEndpoint, probe, serve, SOCKET_DIR, writeSecret } from "../src/lib/channel.mjs";
-import { ADAPTERS, agyReader, codexReader, cursorReader, groupAlive, groupGone, kiroReader, readEvent } from "../src/lib/headless.mjs";
+import { ADAPTERS, agyReader, codexReader, cursorReader, groupAlive, groupGone, kiroReader, listGroup, readEvent } from "../src/lib/headless.mjs";
 import { unmakeWorktree, view } from "../src/lib/workers.mjs";
 import { EventEmitter } from "node:events";
 import { Writable } from "node:stream";
@@ -14,7 +14,7 @@ import { worktreesFromGit } from "../src/lib/cleanup.mjs";
 import { besidesHelper, callGit, groupMembers } from "../src/lib/process-boundary.mjs";
 import { HARNESSES } from "../src/lib/harnesses.mjs";
 import { launch } from "../src/lib/launch.mjs";
-import { harnessEnv, start, stop } from "../src/lib/runtime.mjs";
+import { harnessEnv, installedAt, start, stop } from "../src/lib/runtime.mjs";
 import { cfg, cliEnv, fakeExecutable, scratch, SCRIPT } from "./helpers.mjs";
 
 // A worker's socket lives under its home, and macOS caps a socket path at 103 bytes: the test scratch folder under
@@ -594,6 +594,7 @@ test("a headless Cursor worker: one process a turn on a private config copy, cor
   for (const d of [dirname(userConfig), dirname(dotfile)]) mkdirSync(d, { recursive: true });
   writeFileSync(POSIX ? dotfile : userConfig, JSON.stringify({ model: { modelId: "the-user's" } }));
   if (POSIX) symlinkSync(dotfile, userConfig);
+  const dotMode = statSync(POSIX ? dotfile : userConfig).mode & 0o777;
   const l = w.launch("u1", w.task(`${BRIEF} HOLD HELPER TRAIL`), [], undefined, "cursor");
   expect([l.ok, l.state, l.headline, l.worker.session]).toEqual([true, "prompted", "routr: u1 (cursor) took its task, running headless", "680aee64-2595-41b4-8d06-f7bfd483dab9"]);
   expect(l.start.argv).toEqual(["-p", "--output-format", "stream-json", "--yolo", "--trust", "--model", "grok-4.7-medium-fast"]);
@@ -601,7 +602,7 @@ test("a headless Cursor worker: one process a turn on a private config copy, cor
   const conf = join(w.runDir("u1"), "cursor-config");
   expect(await until(() => rpcs(w).some((r) => r.method === "cursor"))).toBe(true);
   expect(rpcs(w).find((r) => r.method === "cursor")).toEqual({ method: "cursor", config_dir: conf, has_config: true });
-  if (POSIX) expect([lstatSync(join(conf, "cli-config.json")).isSymbolicLink(), statSync(join(conf, "cli-config.json")).mode & 0o077, statSync(dotfile).mode & 0o777]).toEqual([false, 0, 0o644]);
+  if (POSIX) expect([lstatSync(join(conf, "cli-config.json")).isSymbolicLink(), statSync(join(conf, "cli-config.json")).mode & 0o077, statSync(dotfile).mode & 0o777]).toEqual([false, 0, dotMode]);
   expect(await until(() => w.state("u1").last_tool === "shell")).toBe(true);
   // Mid-turn: the holder keeps both messages; each runs as a turn of its own, resuming the session, in order.
   for (const t of ["first", "second"]) {
@@ -711,6 +712,15 @@ test("what of a process group counts as the worker still running: everything but
     expect(await Promise.all([groupAlive(c.pid, "claude", o(live(members))), groupAlive(c.pid, "cursor", o(live(members))), groupAlive(c.pid, "cursor", o(async () => null)),
       groupAlive(c.pid, "cursor", o(async () => [])), groupAlive(c.pid, "cursor", o(live(members), () => null)), groupAlive(c.pid, "cursor"), groupAlive(null, "cursor")]))
       .toEqual([true, false, true, true, true, true, false]);
+    // A listing ps did not finish (from the review of c9b049a): nothing of it is read. One it finished is.
+    const fake = join(scratch("ps-"), "ps"), line = `${c.pid} 1 ${c.pid} /x/whatever`;
+    writeFileSync(fake, `#!/bin/sh\necho "${line}"\nexit 1\n`, { mode: 0o755 });
+    expect(await listGroup(c.pid, 2000, { ps: fake })).toBeNull();
+    writeFileSync(fake, `#!/bin/sh\necho "${line}"\n`, { mode: 0o755 });
+    expect(await listGroup(c.pid, 2000, { ps: fake })).toEqual([{ pid: c.pid, ppid: 1, command: "/x/whatever" }]);
+    // Where the command on PATH is: not told when a relative or empty entry comes before it.
+    expect([installedAt("sh", { env: { PATH: "/nowhere:/bin" } }), installedAt("sh", { env: { PATH: "tools:/bin" } }), installedAt("sh", { env: { PATH: ":/bin" } })])
+      .toEqual([realpathSync.native("/bin/sh"), null, null]);
     // A look that does not answer is bounded by what is left of the wait, and counts as running.
     const t0 = Date.now();
     expect(await groupGone(c.pid, "cursor", { ms: 300, members: () => new Promise(() => {}), installed: () => exe })).toBe(false);

@@ -204,8 +204,8 @@ stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one proces
   (`worker.log`, `worker.sock`) under `~/.cursor/projects/<folder>`, as any Cursor run does. The first Cursor turn
   in a folder starts Cursor's own worker-server for that folder, with a language server under it, in that turn's
   process group, and later turns reuse it (measured, cursor-agent 2026.10.22). For a Cursor worker only, routr reads
-  the system's process list with `ps` (every process's id, parent, group and command line; it looks only at the rows
-  of the worker's recorded group, and keeps and prints none of it) and tells the worker-server from the worker's own
+  the system's process list with `ps` (every process's id, parent, group and command line; it reads every line only to check it parses, uses
+  only the rows of the worker's recorded group, and keeps and prints none of it) and tells the worker-server from the worker's own
   commands by its exact command line, `<versions>/<v>/node <versions>/<v>/index.js worker-server`, in the install the
   `cursor-agent` on your PATH resolves into, as `references/harnesses.md` records it; the language server under it
   is told the same way. Those do not count as the worker still running, so they do not block a resume or `cleanup

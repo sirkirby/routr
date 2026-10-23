@@ -330,7 +330,7 @@ pane gets.
   <versions>/<v>/index.js worker-server` (socket in `~/.cursor/projects/<folder-slug>/worker.sock`), not detached, so
   it stays in that turn's process group with its parent gone. It starts `npm exec typescript-language-server --stdio`,
   which starts `node <npx cache>/node_modules/.bin/typescript-language-server --stdio`. Later turns in that folder
-  reuse it. It ended about five minutes after its last turn once (p43), and between 4 minutes and 2 hours after it
+  reuse it. It ended about five minutes after its last turn once (p43), and between 3 min 41 s and 2 hours after it
   another time (p41); Cursor documents no idle exit. It outlived its folder's removal. routr recognises exactly
   those command lines, in that install, each started by the one before, and does not count them as the worker
   running; anything else under the worker-server counts (another language server included: not measured).

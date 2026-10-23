@@ -325,7 +325,7 @@ export async function waitCommand(args, { now = () => Date.now(), pause = sleep,
         else out.next.push(doNext(`${v.name}'s turn ${t.turn} ended (${t.outcome}) without a report: look at the worker's folder and its changes yourself.`));
       }
       if (v.state === "lost") out.next.push(doNext(`${v.name}'s process ended without settling${v.harness_group ? `, and its harness may still be running (process group ${v.harness_group})` : ""}: stop what runs of it, then clean it up.`));
-      else if (v.harness_group && !RUNNING.has(v.state)) out.next.push(doNext(`Something ${v.name}'s ${HARNESSES[v.kind]?.label ?? "harness"} started is still running in process group ${v.harness_group}: look at it (ps -g ${v.harness_group}), stop it if it is the worker's, then clean up.`));
+      else if (v.harness_group && !RUNNING.has(v.state)) out.next.push(doNext(`Something ${v.name}'s ${HARNESSES[v.kind]?.label ?? "harness"} started is still running in process group ${v.harness_group}: look at it (pgrep -l -g ${v.harness_group}), stop it if it is the worker's, then clean up.`));
       if (v.tasks) out.next.push(doNext(`${v.name} still has ${v.tasks} background command${v.tasks > 1 ? "s" : ""} running; it may start another turn by itself when ${v.tasks > 1 ? "they end" : "it ends"}.`));
     }
     if (running.length) out.next.push(runNext("Wait for the workers still running.", ["routr", "wait", ...running.flatMap((v) => ["--name", v.name])]));
@@ -434,7 +434,7 @@ export async function stopCommand(args, { env = process.env } = {}) {
       out.headline = p.state === "unreachable" ? `routr: ${name}'s process does not answer`
         : `routr: ${name}'s process is gone${left ? `, and its harness may still be running (process group ${pg()})` : ""}`;
       out.warnings.push("routr stops a worker only through its own process, never by a saved process id: it cannot see whether the harness is still running");
-      out.next.push(doNext(left ? `Look at process group ${pg()} (ps -g ${pg()}) and stop it yourself if it is this worker's, then clean the worker up.` : "Clean the worker up once you are sure nothing of it runs."));
+      out.next.push(doNext(left ? `Look at process group ${pg()} (pgrep -l -g ${pg()}) and stop it yourself if it is this worker's, then clean the worker up.` : "Clean the worker up once you are sure nothing of it runs."));
     }
     out.next.push(runNext("Remove its run folder and reports once you have what you need from them.", ["routr", "cleanup", "--worker", name]));
   } catch (e) { out.error = String(e?.message ?? e); out.headline = `routr: stop failed: ${out.error}`; }

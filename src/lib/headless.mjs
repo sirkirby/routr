@@ -41,7 +41,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, privateDir, probe, removeEndpoint, serve } from "./channel.mjs";
 import { HARNESSES, plan } from "./harnesses.mjs";
-import { harnessEnv, installedAt, run as collect, start, STATE_DIR, stop, writeJsonAtomic } from "./runtime.mjs";
+import { harnessEnv, installedAt, probe as collect, start, STATE_DIR, stop, writeJsonAtomic } from "./runtime.mjs";
 import { besidesHelper, groupMembers } from "./process-boundary.mjs";
 
 export const FORMAT = 1;
@@ -405,7 +405,11 @@ export const groupGone = async (pgid, kind, { ms = 2000, every = 100, ...o } = {
 };
 // The system's own ps, by its path where it has one (macOS and Linux both: /bin/ps), not whichever is first on PATH.
 const PS = existsSync("/bin/ps") ? "/bin/ps" : "ps";
-const listGroup = async (pgid, timeoutMs) => { const out = await collect(PS, ["-A", "-o", "pid=,ppid=,pgid=,command="], { timeoutMs }); return out == null ? null : groupMembers(out, pgid); };
+// Only a listing it finished counts (from the review of c9b049a: one that exited non-zero may stop part way).
+export const listGroup = async (pgid, timeoutMs, { ps = PS } = {}) => {
+  const r = await collect(ps, ["-A", "-o", "pid=,ppid=,pgid=,command="], { timeoutMs, separate: true });
+  return r?.code === 0 ? groupMembers(r.out, pgid) : null;
+};
 
 // The holder: `routr workers --hold <name>`, started detached by launch or send. Exits on its own; never prints.
 // `run` starts the harness (runtime's start); a test passes a fake.

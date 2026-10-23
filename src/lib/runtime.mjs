@@ -126,11 +126,12 @@ export function resolveCommand(cmd, { env = process.env, cwd = process.cwd(), ex
 }
 
 // POSIX: the file a bare command name runs, the first executable file of that name on PATH as a shell finds it, its
-// links followed; null when there is none (and on Windows, where nothing asks yet).
+// links followed; null when there is none, when a relative or empty PATH entry comes first (the file would depend on
+// the folder it runs in: from the review of c9b049a), and on Windows, where nothing asks yet.
 export function installedAt(cmd, { env = process.env, platform = process.platform } = {}) {
   if (platform === "win32") return null;
   for (const dir of String(env.PATH ?? "").split(":")) {
-    if (!dir.startsWith("/")) continue;
+    if (!dir.startsWith("/")) return null;
     try { const p = join(dir, cmd); accessSync(p, constants.X_OK); if (statSync(p).isFile()) return realpathSync.native(p); } catch {}
   }
   return null;
