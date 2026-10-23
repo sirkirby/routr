@@ -20,8 +20,8 @@ You can see the ranking any time, with no brief, by running `routr usage`.
 routr reads each subscription's usage from the harness itself: how much of each usage window is used and when it
 resets. It reads usage the way the harness shows it to you, without sending it a prompt, and sends the numbers
 nowhere. Every reading shows how old it is. If routr cannot read a subscription now, it uses the last reading it
-kept, with its age, while that reading is still usable (Cursor's and Kiro's for a day, Claude's statusline snapshot and
-Codex's session log as their own sections say), and otherwise a number you set (`assumed_headroom`), and says which.
+kept, with its age (Cursor's and Kiro's for up to a day; Claude's statusline snapshot and Codex's session log however
+old), and otherwise a number you set (`assumed_headroom`), and says which.
 
 ## Your settings
 

@@ -360,11 +360,13 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   after writing its report leaves only what follows: ask for the report with `routr send`), cut at 1 MB, or null when it wrote none. Read the file and run `routr check --brief <task file> --report <path>`. The final
   message is the report the worker guide asks for; when it is missing or cut short, ask the worker for it with
   `routr send` before you accept the work.
-- **A headless worker cannot ask.** A question ends its turn, and the report holds it: answer within scope with
-  `routr send`, ask the user what is theirs to answer, then send that.
+- **A headless worker cannot ask.** A question it writes ends its turn, and the report holds it: answer within scope
+  with `routr send`, ask the user what is theirs to answer, then send that. A question the harness itself raises
+  (Codex asking its client) is declined, and the turn goes on.
 - **Send back with `routr send`.** `routr send --name <name> --task-file <file>` sends a correction into the turn
-  that is running (Claude and Codex: it joins that turn, and one that arrives just as the turn ends starts the next
-  turn instead; Cursor, Antigravity and Kiro: routr holds it, `state: "queued"`, and it runs as a turn of its own once the
+  that is running (Codex: it joins that turn, and one that arrives just as the turn ends starts the next turn instead;
+  Claude: written to its input, where Claude decides whether it joins the running turn or starts the next, not yet
+  measured through routr; Cursor, Antigravity and Kiro: routr holds it, `state: "queued"`, and it runs as a turn of its own once the
   running one ends, in the order sent; Cursor's in a new process on the same session) or, when the worker is
   idle, resumes its session with it as the next turn. It keeps the worker's context, so this is the send-back of step
   4. With Cursor, Antigravity and Kiro, a correction does not stop work already under way: `wait` first returns the report of the turn

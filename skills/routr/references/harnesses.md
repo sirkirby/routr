@@ -177,8 +177,9 @@ routr classes each pool from the shape of what the harness reports, never from a
 Each reader goes through the harness's own command or screen, and only once its sign-in check passes; the two
 fallbacks below read what the harness or routr itself wrote (Codex's session log, `routr statusline`'s snapshot). An
 update of the harness, or of herdr for Cursor, can change what a reader sees without a word: when a reader that worked
-before has no reading a day old or newer and its last try failed, `dispatch`, `usage` and `doctor` warn and give the
-command to read it again.
+before has no reading a day old or newer, its last try failed, and routing is left with the assumed headroom (no
+kept reading to use; a metered seat never), `dispatch`, `usage` and `doctor` warn and give the command to read it
+again.
 
 - **Claude Code:** a `routr statusline` snapshot under 5 minutes old when there is one, otherwise its own `/usage`,
   through `claude -p` (next section), in each call; an older snapshot is kept when that read fails.
