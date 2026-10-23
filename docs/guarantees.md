@@ -150,10 +150,14 @@ writes only:
 One exception: `uninstall` removes the `statusLine` entry an earlier routr's `setup` set in `~/.claude/settings.json`,
 after a backup, and only when it runs `routr statusline`.
 
-`uninstall` removes the binary, routr's own skills (above) and `~/.cache/routr`. It keeps `~/.config/routr` (config
-and keys) and `~/.local/share/routr` (the ledger, telemetry's install id, headless workers' worktrees) unless
-`--purge`, and does not remove `~/.local/state/routr` (headless workers' run folders and reports). Finish every
-headless worker with `routr cleanup --worker <name>` before you uninstall.
+`uninstall` removes the binary, routr's own skills (above), `~/.cache/routr` and `~/.local/state/routr` (sockets
+and locks). It keeps `~/.config/routr` (config and keys) and `~/.local/share/routr` (the ledger, telemetry's install
+id, and any worktree a headless launch made) unless `--purge`. It removes nothing, and says what to run, while a
+headless worker's run folder is still there (its reports, and while it runs, its holder, which is the routr binary):
+`routr cleanup --worker <name>` finishes each with its checks. With `--purge` it also removes nothing while a worktree
+a headless launch made is still under `~/.local/share/routr/worktrees`, since removing that folder would delete it
+unchecked: `routr cleanup --cwd <path> --path <path>` finishes one and keeps uncommitted work, or a plain uninstall
+keeps it. Both checks run again just before anything is removed.
 
 ## Processes and platforms
 
