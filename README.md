@@ -7,7 +7,7 @@ Codex, Cursor, Antigravity, and Kiro.
 
 **It uses what is already on your machine.** The workers are the harness CLIs you have installed and logged in to,
 started in [herdr](https://github.com/herdrdev/herdr) panes (routr is named after it), or, without herdr, Claude Code,
-Codex and Antigravity running headless. There are no provider API
+Codex, Antigravity and Kiro running headless. There are no provider API
 keys to hand over, no proxy, and no new accounts: your subscriptions, your logins, your settings. Keys routr
 needs are for its own chosen decision providers, and those are optional: it can run on your own machine.
 
@@ -86,7 +86,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `dispatch "<brief>"` | An orchestrator is about to launch a worker: the same, plus normal/fallback candidates and a capacity ranking. Give it the exact task the worker will get (`routr dispatch --task-file task.md`, saving stdout as `advice.json`); `launch --advice advice.json` requires a match. `--headroom <name>=0.9` (or `90%`) overrides a reading. |
 | `usage [cursor\|kiro]` | Each subscription's usage, candidates and capacity ranking, with no brief. `usage cursor` or `usage kiro` reads that one now. |
 | `launch` | Start one worker in its own git worktree, nested under the repo in herdr (`--base` starts it from another branch or commit): flags, model syntax, shell prompts, startup questions reported (never answered), readiness, prompt. A task requires matching `--advice`; `--dry-run` shows the plan and returns `ok: false` with `error` when a real launch would refuse. `next` holds recovery, the record template and cleanup. |
-| `wait`, `send`, `workers`, `stop` | Outside herdr, `launch` starts Claude Code, Codex and Antigravity workers headless: `wait` returns when one finishes a turn, with its report's path; `send` corrects it (into the running turn for Claude Code and Codex; as the next turn for Antigravity) or resumes its session with a follow-up; `workers` shows each one's state; `stop` ends one. |
+| `wait`, `send`, `workers`, `stop` | Outside herdr, `launch` starts Claude Code, Codex, Antigravity and Kiro workers headless: `wait` returns when one finishes a turn, with its report's path; `send` corrects it (into the running turn for Claude Code and Codex; as the next turn for Antigravity and Kiro) or resumes its session with a follow-up; `workers` shows each one's state; `stop` ends one. |
 | `cleanup` | Finish a worker: remove its worktree and workspace (or close its pane), never while anything it can see runs there (outside herdr it cannot see what runs in a worktree's folder) or anything in it is uncommitted. `--worker <name>` removes a headless worker's worktree, with the same checks, then its run folder and reports. Keeps the branch unless `--delete-branch` and it is merged. With no worker named, lists the repo's worktrees. `--dry-run` says what it would do. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
 | `record`, `assess` | Write one ledger line (`record --task-file <path>` checks advice against this worker’s task); read the ledger back as advice about your own settings. |
@@ -168,7 +168,7 @@ for a later reinstall unless you choose otherwise (`--purge`).
 
 For orchestration across every harness you also need [herdr](https://herdr.dev) and its agent skill
 (`npx skills add herdrdev/herdr --skill herdr -g`); setup offers to install both, and `routr doctor` tells you when
-either is missing. Without herdr, `routr launch` starts Claude Code, Codex and Antigravity workers headless, followed with
+either is missing. Without herdr, `routr launch` starts Claude Code, Codex, Antigravity and Kiro workers headless, followed with
 `routr wait`; the other harnesses need herdr for now. Sizing subagents works without it.
 
 To start an orchestration, open your lead agent (in herdr for pane workers) and type your plan after the `routr-orchestrate` skill, which

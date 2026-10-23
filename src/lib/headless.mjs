@@ -1,8 +1,8 @@
 // Headless workers: a worker that runs its harness's own headless mode on the user's sign-in, outside herdr, with one
 // routr process (the holder) owning it. The holder starts as a numbered generation of its worker (channel.mjs), binds
 // the channel before it starts the harness and closes it only after the harness has exited, and is the only writer of
-// the worker's state. It lives while a turn runs or one is waiting, and exits once the harness has. Claude Code, Codex
-// and Antigravity; each harness's part is an adapter below. Claude, measured as prototypes p34 (2026-10-21) and p36 (2026-10-22,
+// the worker's state. It lives while a turn runs or one is waiting, and exits once the harness has. Claude Code, Codex,
+// Antigravity and Kiro; each harness's part is an adapter below. Claude, measured as prototypes p34 (2026-10-21) and p36 (2026-10-22,
 // Claude Code 2.1.307), routr-lab:
 //   - `claude -p --input-format stream-json --output-format stream-json` takes the brief on stdin and a message the
 //     lead sends mid-turn into the running turn. The brief never touches routr's disk or a process's arguments.
@@ -25,6 +25,11 @@
 // the next turn in the same process (it does not join the running one). `init` names the conversation, `step_update`
 // steps name their tool, `result` holds the turn's response and status. Closing stdin ends it (exit 0, 128 ms), and
 // `--conversation <id>` continues the conversation in a new process with its context.
+// Kiro, measured as p40 (2026-10-22, kiro-cli 2.33.1): `kiro-cli acp` speaks the Agent Client Protocol (JSON-RPC on
+// stdio): `session/new`, then `session/prompt`, answered when the turn ends (`stopReason`), its text streamed as
+// `agent_message_chunk` updates. A second prompt while one runs is refused ("Prompt already in progress"), so a message
+// sent mid-turn waits in the holder and goes in as the next turn, in the same process. Closing stdin ends it (exit 0,
+// 154 ms); `session/load` continues the session in a new process, after replaying its history as updates.
 // Worker text reaches one place, the report file of each turn (owner-only, removed by cleanup); only its path leaves
 // routr. Nothing else of the harness's output is kept: its stderr is not read, and a tool is shown by a fixed name.
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -95,6 +100,30 @@ export function agyReader() {
   };
 }
 
+// Kiro's tool kinds (the Agent Client Protocol's); any other is `other`.
+const KIRO_KINDS = new Set(["read", "edit", "delete", "move", "search", "execute", "think", "fetch"]);
+// One line of Kiro's ACP output: a reply or a request of its own, or a session update read as what routr knows how to
+// say. The turn's report is the text it wrote after its last tool call; its thoughts are not kept. Updates while a
+// session loads (its history, replayed) are not this run's: `loading` says so. Kiro's own notifications are ignored.
+export function kiroReader() {
+  let text = "", loading = false;
+  return {
+    loading: (on) => { loading = on; },
+    take: () => { const t = text; text = ""; return t; },
+    read: (line) => {
+      let e; try { e = JSON.parse(line); } catch { return null; }
+      if (!e || typeof e !== "object") return null;
+      const rp = rpcLine(e);
+      if (rp) return rp;
+      if (e.method !== "session/update" || loading) return null;
+      const u = e.params?.update ?? {};
+      if (u.sessionUpdate === "agent_message_chunk" && typeof u.content?.text === "string") { text += u.content.text; return { activity: true }; }
+      if (u.sessionUpdate === "tool_call") { text = ""; return { tool: KIRO_KINDS.has(u.kind) ? u.kind : "other" }; }
+      return { activity: true };
+    },
+  };
+}
+
 // Codex's item types as it sends them; an MCP server's tool is `mcp`, anything else `other`.
 const CODEX_ITEMS = new Set(["commandExecution", "fileChange", "webSearch", "imageView", "dynamicToolCall", "collabAgentToolCall", "subAgentActivity", "sleep", "imageGeneration", "contextCompaction"]);
 const READY_MS = 30000;
@@ -107,8 +136,8 @@ export function codexReader() {
   return (line) => {
     let e; try { e = JSON.parse(line); } catch { return null; }
     if (!e || typeof e !== "object") return null;
-    if (e.id != null && !e.method) return { reply: { id: e.id, result: e.result ?? null, error: e.error ?? null } };
-    if (e.id != null && typeof e.method === "string") return { request: e.id };
+    const rp = rpcLine(e);
+    if (rp) return rp;
     const p = e.params ?? {};
     if (e.method === "turn/started") { final = last = null; return { turn: true, id: typeof p.turn?.id === "string" ? p.turn.id : null }; }
     if (e.method === "item/started" && typeof p.item?.type === "string") {
@@ -131,6 +160,34 @@ const writeLine = (c, line) => new Promise((resolve) => {
   if (!c || c.stdin.destroyed || c.stdin.writableEnded) return resolve(false);
   try { c.stdin.write(line, (err) => resolve(!err)); } catch { resolve(false); }
 });
+
+// One JSON-RPC peer on a harness's stdio (Codex's app-server, Kiro's ACP): requests matched to their replies by id,
+// and what is known without a reply: `not_written` (it never got it: its input had closed, or the write failed) or
+// `no_reply` (handed to it, and it ended before answering: whether it acted on it is not known). A request of the
+// harness's own (an approval, a question, a tool call) is answered with a JSON-RPC error, which declines it.
+const rpcLine = (e) => (e.id != null && !e.method ? { reply: { id: e.id, result: e.result ?? null, error: e.error ?? null } } : e.id != null && typeof e.method === "string" ? { request: e.id } : null);
+function rpcPipe(c) {
+  let id = 0, closed = false;
+  const waiting = new Map();
+  const open = () => !closed && !c.stdin.writableEnded && !c.stdin.destroyed;
+  const out = (o) => writeLine(c, JSON.stringify({ jsonrpc: "2.0", ...o }) + "\n");
+  // `written`: told once whether the request went in.
+  const rpc = (method, params, { written } = {}) => new Promise((resolve) => {
+    if (!open()) { written?.(false); return resolve({ error: { code: "not_written" } }); }
+    const i = ++id; waiting.set(i, resolve);
+    out({ id: i, method, params }).then((ok) => { written?.(ok); if (!ok && waiting.delete(i)) resolve({ error: { code: "not_written" } }); });
+  });
+  c.on("close", () => { closed = true; for (const r of waiting.values()) r({ error: { code: "no_reply" } }); waiting.clear(); });
+  const outcome = (r) => (r.result ? "ok" : ["not_written", "no_reply"].includes(r.error?.code) ? r.error.code : "refused");
+  // A reply or a request of its own, taken here: true. Anything else is the reader's.
+  const take = (ev) => {
+    if (ev?.reply) { const r = waiting.get(ev.reply.id); if (r) { waiting.delete(ev.reply.id); r(ev.reply); } return true; }
+    if (ev?.request != null) { out({ id: ev.request, error: { code: -32601, message: "routr does not answer this for a headless worker" } }); return true; }
+    return false;
+  };
+  return { out, rpc, outcome, open, take };
+}
+const readyWithin = (ready) => Promise.race([ready, new Promise((r) => setTimeout(() => r("late"), READY_MS).unref?.())]);
 
 // What each harness needs to run headless. `argv` starts it; `connect(c, o)` binds one process of it:
 //   begin(text): the task (or a resumed session's next message) in; true once it is in, false when it never got it,
@@ -156,20 +213,8 @@ export const ADAPTERS = {
     // silently (p37 item 9). The model and effort go in the protocol too.
     argv: () => ["app-server", "-c", "check_for_update_on_startup=false"],
     connect: (c, { cwd, model, effort, session, emit }) => {
-      let id = 0, thread = session ?? null, turn = null, closed = false, ready = null;
-      const waiting = new Map(), ended = new Set();
-      const open = () => !closed && !c.stdin.writableEnded && !c.stdin.destroyed;
-      const out = (o) => writeLine(c, JSON.stringify({ jsonrpc: "2.0", ...o }) + "\n");
-      // A request's answer: the harness's reply, or what is known without one: `not_written` (it never got it: its input
-      // had closed, or the write failed) or `no_reply` (handed to it, and it ended before answering: whether it acted
-      // on it is not known).
-      const rpc = (method, params) => new Promise((resolve) => {
-        if (!open()) return resolve({ error: { code: "not_written" } });
-        const i = ++id; waiting.set(i, resolve);
-        out({ id: i, method, params }).then((ok) => { if (!ok && waiting.delete(i)) resolve({ error: { code: "not_written" } }); });
-      });
-      c.on("close", () => { closed = true; for (const r of waiting.values()) r({ error: { code: "no_reply" } }); waiting.clear(); });
-      const outcome = (r) => (r.result ? "ok" : ["not_written", "no_reply"].includes(r.error?.code) ? r.error.code : "refused");
+      let thread = session ?? null, turn = null, ready = null;
+      const ended = new Set(), { out, rpc, outcome, open, take } = rpcPipe(c);
       const read = codexReader();
       const opts = { cwd, model, approvalPolicy: "never", sandbox: "danger-full-access" };
       // The running turn, as the app-server says it (turn/started, turn/completed) and as turn/start answered it, never
@@ -202,8 +247,7 @@ export const ADAPTERS = {
         // ended ("no active turn"), the next turn in this process. Any other no is a refusal. The wait for that turn is
         // bounded under send's own (45 s), so a sender is never told "not known" about a message that then goes in.
         send: async (text) => {
-          const started = await Promise.race([ready, new Promise((r) => setTimeout(() => r("late"), READY_MS).unref?.())]);
-          if (started !== true) return { code: "refused", why: "not_started" };
+          if ((await readyWithin(ready)) !== true) return { code: "refused", why: "not_started" };
           if (turn) {
             const r = await rpc("turn/steer", { threadId: thread, expectedTurnId: turn, input: [{ type: "text", text }] });
             const k = outcome(r);
@@ -213,12 +257,10 @@ export const ADAPTERS = {
           const k = await startTurn(text);
           return k === "ok" ? { code: "accepted", next: true } : answerFor(k);
         },
-        // Its own requests (approvals, questions, tool calls): none came with approvalPolicy never (p37, p38); one
-        // that does is answered with a JSON-RPC error, which declines it.
+        // Its own requests (approvals, questions, tool calls): none came with approvalPolicy never (p37, p38).
         line: (l) => {
           const ev = read(l);
-          if (ev?.reply) { const r = waiting.get(ev.reply.id); if (r) { waiting.delete(ev.reply.id); r(ev.reply); } return null; }
-          if (ev?.request != null) { out({ id: ev.request, error: { code: -32601, message: "routr does not answer this for a headless worker" } }); return { activity: true }; }
+          if (take(ev)) return ev.request != null ? { activity: true } : null;
           if (ev?.turn && ev.id) turn = ev.id;
           if (ev?.result) { if (ev.id) ended.add(ev.id); if (!ev.id || ev.id === turn) turn = null; }
           return ev;
@@ -234,10 +276,55 @@ export const ADAPTERS = {
       ...plan({ kind: "agy", model, effort, cwd }).argv, ...(session ? ["--conversation", session] : [])],
     connect: (c) => {
       const put = (text) => writeLine(c, JSON.stringify({ event: "user", message: { content: text } }) + "\n");
-      // A message it takes while a turn runs waits for that turn to end, and runs as a turn of its own (one per line,
-      // its help says; from the review of 31b2f18: two corrections are two turns).
+      // A message sent while a turn runs waits in the holder for that turn to end, and runs as a turn of its own (one
+      // per line, its help says, and measured: two corrections were two turns).
       return { queues: true, begin: put, send: async (text) => ((await put(text)) ? { code: "handed_to_harness", next: true } : null), line: agyReader(),
         open: () => !c.stdin.writableEnded && !c.stdin.destroyed, done: () => c.stdin.end() };
+    },
+  },
+  kiro: {
+    // As in a pane: --trust-tools=*, the model, the effort; `acp` in place of `chat`.
+    argv: ({ model, effort }) => ["acp", ...plan({ kind: "kiro", model, effort }).argv.filter((a) => a !== "chat")],
+    connect: (c, { cwd, session, emit }) => {
+      const { rpc, outcome, open, take } = rpcPipe(c), r = kiroReader();
+      let sid = session ?? null, ready = null, running = false;
+      // One prompt: in once written (a turn of its own starts then), answered when that turn ends.
+      const prompt = (text) => new Promise((went) => {
+        running = true; r.take();
+        rpc("session/prompt", { sessionId: sid, prompt: [{ type: "text", text }] }, { written: (ok) => { if (ok) emit({ turn: true }); went(ok); } }).then((a) => {
+          running = false;
+          const k = outcome(a);
+          // It ended mid-turn (the holder's finish says so), or never got the prompt (no turn started for it).
+          if (k === "no_reply" || k === "not_written") return;
+          const said = r.take();
+          emit({ result: { failed: k !== "ok" || a.result?.stopReason !== "end_turn", text: k === "ok" && said ? cut(said) : null } });
+        });
+      });
+      const go = (k) => (k === "refused" ? "refused" : false);
+      return {
+        // A message sent while a turn runs waits in the holder for that turn to end, and runs as a turn of its own.
+        queues: true,
+        begin: (text) => (ready = (async () => {
+          const init = await rpc("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
+          if (outcome(init) !== "ok") return go(outcome(init));
+          let s;
+          if (sid) { r.loading(true); s = await rpc("session/load", { sessionId: sid, cwd, mcpServers: [] }); r.loading(false); }
+          else s = await rpc("session/new", { cwd, mcpServers: [] });
+          if (outcome(s) !== "ok") return go(outcome(s));
+          if (!sid) { if (typeof s.result.sessionId !== "string" || !UUID.test(s.result.sessionId)) return "refused"; sid = s.result.sessionId; }
+          if (!(await prompt(text))) return false;
+          emit({ session: sid }); return true;
+        })()),
+        // Between turns only: Kiro takes no prompt while one runs ("Prompt already in progress"), so the holder keeps
+        // a message until the running turn ends.
+        send: async (text) => {
+          if ((await readyWithin(ready)) !== true) return { code: "refused", why: "not_started" };
+          if (running) return null; // never asked while a turn runs: the holder keeps the message (as when its input closed)
+          return (await prompt(text)) ? { code: "handed_to_harness", next: true } : null;
+        },
+        line: (l) => { const ev = r.read(l); return take(ev) ? (ev.request != null ? { activity: true } : null) : ev; },
+        open, done: () => c.stdin.end(),
+      };
     },
   },
 };
@@ -287,7 +374,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const addDelivered = (n) => save({ turns: st.turns.map((t) => (t.turn === n ? { ...t, delivered: (t.delivered ?? 0) + 1 } : t)) });
   // A harness that runs each message as a turn of its own (`queues`: Antigravity) starts one turn per waiting message;
   // the others take every message written between turns into the one turn they start.
-  const beginTurn = () => { inTurn = true; const delivered = conn?.queues ? Math.min(1, pending) : pending; pending -= delivered; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered }], state: "working" }); };
+  // `carried`: messages the turn's own prompt carries (a resume that runs them), counted on it too.
+  const beginTurn = (carried = 0) => { inTurn = true; const taken = conn?.queues ? Math.min(1, pending) : pending; pending -= taken; const delivered = taken + carried; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered }], state: "working" }); };
   const endTurn = (outcome, text) => {
     if (!inTurn) return;
     inTurn = false;
@@ -316,11 +404,12 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
 
   // One harness process: the turn is counted before it starts, so a start that fails still gives that message an
   // outcome. Everything it reports is bound to that process, and it is finished on `close`, once its output is read.
-  const runHarness = (text, session) => {
+  // `carried`: how many lead messages `text` holds (a resume of queued ones), counted on its turn.
+  const runHarness = (text, session, { carried = 0 } = {}) => {
     started = new Promise((resolve) => {
-      let answered = false, finished = false;
+      let answered = false, finished = false, taskIn = false;
       const answer = (r) => { if (!answered) { answered = true; resolve(r); } };
-      beginTurn();
+      beginTurn(carried);
       let c, h;
       try {
         c = run(HARNESSES[w.kind].executable, headlessArgv({ kind: w.kind, model: w.model, effort: w.effort, session, cwd: w.cwd }),
@@ -339,6 +428,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
         if (ev.result && !inTurn) beginTurn();
         // A turn it ended as failed once stop was asked (Codex: interrupted) was stopped.
         if (ev.result) endTurn(ev.result.failed ? (stopAsked ? "stopped" : "failed") : "finished", ev.result.text);
+        if (ev.result) nextHeld(); // a harness that queues: the next message the holder keeps, as a turn of its own
         if (ev.result || ev.tasks === 0) maybeClose();
       };
       conn = h = ADAPTERS[w.kind].connect(c, { cwd: w.cwd, model: w.model, effort: w.effort, session, emit: onEvent });
@@ -353,10 +443,20 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
         if (child === c) { child = null; conn = null; }
         // A message that arrived after its input closed: the next turn, on the same session, unless something of the
         // last Claude is still running in its group (never two on one session); then the message's turn is not started.
-        if (queue.length && !stopAsked && st.session_id) {
-          const next = queue.splice(0).join("\n\n"); save({ queued: 0 });
-          if (!groupAlive(st.harness_pgid)) { runHarness(next, st.session_id); return; }
-          beginTurn(); endTurn("not_started", null);
+        // A harness that queues runs them one turn each, in the order they came (the first now, the rest as each turn
+        // ends, from the same queue); the others take them as one. Not when this process ended before it took its
+        // task (a resume would end the same way) or something of it still runs: then each gets a turn, not started.
+        // Without a session (it ended during its first start) there is nothing to resume: they get their turns too.
+        if (queue.length && !stopAsked) {
+          const each = h.queues;
+          if (taskIn && st.session_id && !groupAlive(st.harness_pgid)) {
+            // Counted as the messages they are (a message holds paragraphs of its own: from the review of 420d69c).
+            const taken = each ? queue.splice(0, 1) : queue.splice(0);
+            save({ queued: queue.length });
+            runHarness(taken.join("\n\n"), st.session_id, { carried: taken.length }); return;
+          }
+          const all = queue.splice(0); save({ queued: 0 });
+          for (let i = 0; i < (each ? all.length : 1); i++) { beginTurn(each ? 1 : all.length); endTurn("not_started", null); }
         }
         settle();
       };
@@ -377,7 +477,6 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
         while ((i = buf.indexOf("\n")) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); if (!finished) onEvent(h.line(l)); }
       });
       // A harness that answered no (a model or session it does not have) ends that turn failed, and is let go.
-      let taskIn = false;
       h.begin(text).then((r) => {
         if (finished) return; // it ended first: finish has answered
         if (r === true) taskIn = true;
@@ -394,16 +493,41 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   // stop: SIGTERM to the harness's group, then SIGKILL to it after the grace while Claude is still there (runtime's
   // stop; signalled only while Claude is unreaped, so the group id is still its own). Anything of the group left once
   // Claude has gone is not signalled again (its id may be someone else's by then): it is reported, and recorded.
+  // Messages the holder still keeps are dropped, and counted in the answer.
+  let dropped = 0;
   const stopAll = () => {
-    stopAsked = true; queue.length = 0;
+    if (!stopAsked) dropped = queue.length;
+    stopAsked = true; queue.length = 0; save({ queued: 0 });
     return (stopping ??= (async () => {
       const c = child;
-      if (!c) { settle(); return { code: "stopped" }; }
+      if (!c) { settle(); return { code: "stopped", dropped }; }
       const closed = new Promise((r) => c.once("close", r));
       stop(c, { group: true });
       const gone = await Promise.race([closed.then(() => true), new Promise((r) => setTimeout(() => r(false), 6000))]);
-      return { code: gone && !groupAlive(process.platform === "win32" ? null : c.pid) ? "stopped" : "still_exiting" };
+      return { code: gone && !groupAlive(process.platform === "win32" ? null : c.pid) ? "stopped" : "still_exiting", dropped };
     })());
+  };
+
+  // One message into a harness that queues, between its turns: counted as waiting before it goes in, so the turn it
+  // starts takes it even when that turn begins before the write is acknowledged; taken back if it never got it.
+  const handOver = async (text) => {
+    const c = conn;
+    if (!c?.open()) return null;
+    pending++; sending++;
+    let r; try { r = await c.send(text, false); } finally { sending--; }
+    if (r?.code !== "handed_to_harness") pending = Math.max(0, pending - 1);
+    return r;
+  };
+  // The turn after a turn: the oldest message the holder keeps. One it never got goes back to the front (it resumes
+  // with the rest once the harness exits); one it refused, or ended before answering, gets a turn of its own, not run.
+  const nextHeld = async () => {
+    if (!conn?.queues || inTurn || pending || sending || stopAsked || !queue.length || !conn.open()) return;
+    const t = queue.shift(); save({ queued: queue.length });
+    const r = await handOver(t);
+    if (r?.code === "handed_to_harness") return;
+    if (!r) { if (!stopAsked) { queue.unshift(t); save({ queued: queue.length }); } return; }
+    beginTurn(1); endTurn(r.code === "unknown" ? "no_finish" : "not_started", null);
+    nextHeld();
   };
 
   const handle = async (op, m) => { answering++; try { return await answerOp(op, m); } finally { answering--; } };
@@ -418,19 +542,27 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       if (op === "send" && !st.session_id) return { code: "refused", why: "no_session" }; // a follow-up is not a task
       return runHarness(m.text, op === "send" ? st.session_id : null);
     }
+    // A harness that queues (each message a turn of its own): while a turn runs, or messages already wait, the holder
+    // keeps it, in order, and hands it over when its turn comes (nextHeld); between turns it goes in now. One queue,
+    // the holder's, for every message not yet handed over: a stop drops them all and counts them, an exit resumes
+    // them in order (from the review of 19031d3: two lists reordered and lost messages).
+    if (child && conn?.open() && conn.queues) {
+      if (inTurn || pending || sending || queue.length) {
+        if (queue.length >= 8) return { code: "refused", why: "queue_full" };
+        queue.push(m.text); save({ queued: queue.length });
+        return { code: "queued", why: "next_turn" };
+      }
+      const r = await handOver(m.text);
+      if (r) { maybeClose(); return { code: r.code, ...(r.why ? { why: r.why } : {}) }; }
+    }
     // Into the running harness while its input is open: counted on the running turn, or, between turns (or when the
     // harness says it starts the next one), on the turn it starts. A message it did not take changes no turn.
-    if (child && conn?.open()) {
+    else if (child && conn?.open()) {
       // The turn it goes into: the running one, or the next. Decided now, counted once it is in, which may be after the
       // harness has started that next turn.
       const into = inTurn ? st.turn : null, before = st.turn, c = conn;
-      // A harness that queues: the message is counted as waiting before it goes in, so the turn it starts takes it even
-      // when that turn begins before the write is acknowledged; it is taken back if the harness never got it.
-      if (c.queues) pending++;
       sending++;
       let r; try { r = await c.send(m.text, inTurn); } finally { sending--; }
-      if (c.queues && !(r?.code === "handed_to_harness")) pending = Math.max(0, pending - 1);
-      if (c.queues && r?.code === "handed_to_harness") { maybeClose(); return { code: r.code }; }
       // It said no, or ended before saying: no turn counts it, and it is not queued (it may have taken it).
       if (r && (r.code === "refused" || r.code === "unknown")) { maybeClose(); return { code: r.code, why: r.why }; }
       if (r) {

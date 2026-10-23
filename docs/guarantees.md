@@ -28,7 +28,7 @@ turns it has reported into the worker's own run folder.
 Local file writes create parent folders from the file's absolute location, including when only a relative filename
 was given. An existing directory is accepted; a file in its place or a permission error remains a failure.
 
-- `launch` drives panes in your herdr session; outside herdr it starts a headless Claude Code, Codex or Antigravity worker (below). A task requires readable JSON advice from `routr dispatch` on that exact task
+- `launch` drives panes in your herdr session; outside herdr it starts a headless Claude Code, Codex, Antigravity or Kiro worker (below). A task requires readable JSON advice from `routr dispatch` on that exact task
   (including `brief_sha`); missing, nonmatching or `routr subagent` advice is refused before any harness, pane or worktree call. Dry runs return
   `ok: false` with `error` on the same refusal and still plan. Matching fallback advice is accepted, including advice
   saved as UTF-8 or UTF-16LE, with or without a BOM. Launch copies all its decision-model `unavailable` entries,
@@ -161,8 +161,8 @@ display only, with prompt lengths instead of prompt text.
 
 ## Headless workers
 
-Outside herdr, `routr launch --kind claude`, `codex` or `agy` starts the worker headless: Claude Code's own `-p`
-stream-json mode, Codex's app-server, or Antigravity's `--print` stream-json mode, on your sign-in, held by one routr process of its own (its holder). Other
+Outside herdr, `routr launch --kind claude`, `codex`, `agy` or `kiro` starts the worker headless: Claude Code's own `-p`
+stream-json mode, Codex's app-server, Antigravity's `--print` stream-json mode, or Kiro's ACP mode, on your sign-in, held by one routr process of its own (its holder). Other
 harnesses, `--pane` and `--direction` are refused outside herdr. What that means on your machine:
 
 - **Its worktree.** With `--worktree <branch>`, launch makes the worktree with git (`git worktree add -b`), under
@@ -188,15 +188,20 @@ harnesses, `--pane` and `--direction` are refused outside herdr. What that means
   `~/.local/state/routr/s`. A name is taken by making its folder; launch refuses a name whose folder exists until
   `cleanup --worker` removes it.
 - **The brief and your messages** go from launch or send to the holder over the channel, and from the holder to the
-  harness on its standard input (Claude and Antigravity: a stream-json message; Codex: the app-server's `turn/start`
-  and `turn/steer` requests): never in a process's arguments. routr keeps no copy of them. What it keeps of the worker's text is each
-  turn's report: the harness's final message of that turn (Codex: its final answer; Antigravity: its turn's
+  harness on its standard input (Claude and Antigravity: a stream-json message; Kiro: its ACP `session/prompt`; Codex: the app-server's `turn/start`
+  and `turn/steer` requests): never in a process's arguments. routr writes no copy of them to disk; the holder keeps a message in memory
+  only until it hands it over (Antigravity and Kiro: until the running turn ends). What it keeps of the worker's text is each
+  turn's report: the harness's final message of that turn (Codex: its final answer; Kiro: the text it wrote after its last tool call; Antigravity: its turn's
   response), as it wrote it (cut at 1 MB),
   which can quote the brief or anything else the worker saw. Reports stay, owner-only on macOS and Linux, until `cleanup
   --worker` removes the run folder; commands print their paths, never their text, and they never reach the ledger or
   telemetry. The harness keeps its own session history as it always does. Its error output is not read. A tool is shown
-  by its name only when it is one of the harness's own (Claude's tools, Codex's item types, Antigravity's tools); an MCP server's tool is
+  by its name only when it is one of the harness's own (Claude's tools, Codex's item types, Antigravity's tools, Kiro's tool kinds); an MCP server's tool is
   `mcp` and any other `other`.
+- **Kiro's permissions.** Kiro runs with `--trust-tools=*`, as in a pane, and routr tells it at `initialize` that it
+  reads and writes no files and runs no terminal for it. A request Kiro makes of routr (a permission, for one) is
+  declined with a JSON-RPC error. None came in the one measured protocol run, so what Kiro does after a decline is not
+  measured.
 - **Codex's permissions.** Codex runs with `approvalPolicy: "never"` and `sandbox: "danger-full-access"`, what
   `--yolo` is in a pane. Unlike a pane, a hook you have not trusted in Codex does not run: its app-server skips it,
   silently (measured). A request Codex makes of routr (an approval, a question, a tool call) is answered with a
@@ -208,12 +213,12 @@ harnesses, `--pane` and `--direction` are refused outside herdr. What that means
   Linux) is refused before launch writes anything. On Windows it is a named pipe, and Windows' default security lets
   other local users and anonymous logons open it for reading: the handshake is what keeps them out (measured: a reader
   got only a fixed error), not the pipe's permissions. Not tested: another local account, a remote client.
-- **What it starts.** The holder starts the harness (`claude`, `codex app-server`, or `agy --print=`) in its own process group
+- **What it starts.** The holder starts the harness (`claude`, `codex app-server`, `agy --print=`, or `kiro-cli acp`) in its own process group
   (POSIX), in the worker's folder (its worktree, or `--cwd`), with herdr's and the lead's session variables removed,
   and records that group before the task goes in. It exits once the harness has. On macOS and Linux, `stop` sends
   SIGTERM to that group, then SIGKILL to the group two seconds later if the harness itself has not exited, and waits
   up to six seconds for it. Claude ends its tool commands, which run in groups of their own, on SIGTERM; they can
-  survive a SIGKILL of Claude, and routr cannot see those (measured). How Codex's and Antigravity's commands take SIGTERM and SIGKILL
+  survive a SIGKILL of Claude, and routr cannot see those (measured). How Codex's, Antigravity's and Kiro's commands take SIGTERM and SIGKILL
   is not measured. Once the harness has gone, anything still in its group is not signalled again (its id may be
   another group's by then): stop says `still_exiting`, and the group stays recorded, so resuming and cleanup refuse
   until it is empty. On Windows it runs `taskkill /T /F` on the harness, or ends the harness alone if that fails. A
@@ -221,7 +226,7 @@ harnesses, `--pane` and `--direction` are refused outside herdr. What that means
   given the same id later blocks that worker's resume and cleanup until it ends.
 - **What it cannot see.** If the holder itself is killed, its Claude keeps working until its next output fails
   (measured on macOS); on Windows the measured stand-in harness ended with its holder, and a real Claude has not been
-  measured there. What a Codex app-server or Antigravity does when its holder dies, mid-turn or not, is not measured. On macOS and
+  measured there. What a Codex app-server, Antigravity or Kiro does when its holder dies, mid-turn or not, is not measured. On macOS and
   Linux, routr then reports the worker `lost`, and names the process group it recorded while that group still has
   members, as it does when a tool command outlives the harness. Either way it refuses to resume or remove the worker
   until that group is empty, and it never stops a process by a saved id. A lead started inside an SSH session on

@@ -185,10 +185,23 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       if (problems.length) out.error = problems.join("; ");
       return out;
     }
+    // A harness that runs its default model on an id it does not know, without a word (Kiro), is checked against its
+    // own list of ids before any pane or headless worker. Kept until the harness refuses an unknown id itself.
+    const checkListed = async () => {
+      if (!HARNESSES[o.kind].unknownModelRunsDefault) return;
+      let ids; try { ids = await models(o.kind); } catch { ids = null; }
+      if (ids?.length && !ids.includes(o.model)) throw new Error(`${HARNESSES[o.kind].executable} does not list --model ${o.model}, and ${o.kind} runs its default model on an id it does not know. Its ids: \`${HARNESSES[o.kind].list}\``);
+      if (ids?.length) step("model", true, `${o.model} is in ${o.kind}'s own list`);
+      else if (env.HERDR_ENV === "1") { out.unavailable.push({ part: "model list", subscription: o.kind, code: "unreadable", why: `The ${o.kind} model list could not be read. Its model footer confirms which model started.` }); out.next.push(doNext("Look at the model footer in the pane before trusting the model choice")); }
+      else { out.unavailable.push({ part: "model list", subscription: o.kind, code: "unreadable", why: `The ${o.kind} model list could not be read, so whether ${o.kind} runs this --model is not known: a headless worker shows no model footer.` }); out.next.push(doNext(`If the model choice matters, launch again once \`${HARNESSES[o.kind].list}\` answers, or use --model auto.`)); }
+    };
     // Outside herdr the worker runs headless (workers.mjs): its own process holds the harness, and the lead waits on it
     // with routr wait instead of reading a pane.
     if (env.HERDR_ENV !== "1") {
-      try { await (await import("./workers.mjs")).launchHeadless(o, out, { prompt, env, settings, ready, spawn }); }
+      // Kiro's ACP mode takes an id it does not list too (session/new reports it as its model; p40): checked once the
+      // subscription is on and signed in (asking a signed-out harness anything can open its sign-in), before anything
+      // is written.
+      try { await (await import("./workers.mjs")).launchHeadless(o, out, { prompt, env, settings, ready, spawn, checkListed }); }
       finally {
         startAttempted = out.steps.some((s) => s.step === "holder");
         promptAttempted = out.steps.some((s) => s.step === "prompt");
@@ -280,14 +293,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         adopted = true; step("adopt", true, `${o.kind} is already running in ${out.pane}, ${status}, in ${out.cwd}: launch sends it the task (its model and effort are the ones it runs; not changed)`);
       }
     }
-    // A harness that runs its default model on an id it does not know, without a word (Kiro), is checked against its
-    // own list of ids before any pane. Kept until the harness refuses an unknown id itself.
-    if (!adopted && HARNESSES[o.kind].unknownModelRunsDefault) {
-      let ids; try { ids = await models(o.kind); } catch { ids = null; }
-      if (ids?.length && !ids.includes(o.model)) throw new Error(`${HARNESSES[o.kind].executable} does not list --model ${o.model}, and ${o.kind} runs its default model on an id it does not know. Its ids: \`${HARNESSES[o.kind].list}\``);
-      if (ids?.length) step("model", true, `${o.model} is in ${o.kind}'s own list`);
-      else { out.unavailable.push({ part: "model list", subscription: o.kind, code: "unreadable", why: `The ${o.kind} model list could not be read. Its model footer confirms which model started.` }); out.next.push(doNext("Look at the model footer in the pane before trusting the model choice")); }
-    }
+    if (!adopted) await checkListed();
     // Check Cursor's copy before creating a pane; never fall back to its account config.
     if (o.kind === "cursor" && !adopted) {
       configDir = privateDir;

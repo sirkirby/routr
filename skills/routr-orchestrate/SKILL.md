@@ -25,7 +25,7 @@ there is none, ask for it and stop.
 2. Run `routr doctor`. If it reports something that blocks advice (no key, no config), tell the user and follow
    `references/setup.md` first.
 3. Check whether you are in herdr: `test "${HERDR_ENV:-}" = 1`. Outside herdr, workers run headless (Claude Code,
-   Codex and Antigravity only): follow the orchestrator guide's "Outside herdr: headless workers" section where it differs from below.
+   Codex, Antigravity and Kiro only): follow the orchestrator guide's "Outside herdr: headless workers" section where it differs from below.
 
 ## For the rest of this session
 
