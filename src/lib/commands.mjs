@@ -3,7 +3,7 @@
 // the I/O around them. None of them may fail an agent: an error becomes output, and the caller exits 0.
 import { matchAdvice, readAdvice, readTask } from "./advice-file.mjs";
 import { answer, refusal } from "./output.mjs";
-import { doNext, recordRevisionNext } from "./next.mjs";
+import { doNext, recordRevisionNext, runNext } from "./next.mjs";
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -20,7 +20,7 @@ import { rankSubscriptions, levelExcludedWhy } from "./pick.mjs";
 import { enabledSubscriptions } from "./config.mjs";
 import { readUsage, SOURCES } from "./harnesses.mjs";
 import { failedUsage } from "./usage.mjs";
-import { USAGE_BY_HAND, usageFailure, usageUnavailable } from "./usage-failure.mjs";
+import { staleReaders, USAGE_BY_HAND, usageFailure, usageUnavailable } from "./usage-failure.mjs";
 
 const short = (e, n = 160) => e instanceof DecisionError ? e.message : String(e?.message ?? e).slice(0, n);
 
@@ -69,6 +69,7 @@ export async function adviseCommand(mode, brief, { config, notes: configNotes = 
     try {
       out.subscriptions = rankSubscriptions(advice.level, usage, config);
       out.unavailable.push(...usageUnavailable(usage).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
+      for (const s of staleReaders(usage, config)) { out.warnings.push(s.warning); out.next.push(runNext(`Try reading ${s.pool}'s usage again.`, ["routr", "usage", s.pool])); }
     } catch {
       const failure = usageFailure("internal_error");
       out.unavailable.push({ part: "usage", subscription: null, source: "routr", ...failure });
@@ -236,6 +237,11 @@ export async function usageCommand(words, config, given = {}, { read = readUsage
     const rows = reading?.excluded ? [{ pool: name, signedIn: false, note: reading.why }] : await read(readingNames, given, { sources, background: fresh ? [] : names });
     out.subscriptions = rankSubscriptions(level, rows, viewConfig);
     out.unavailable.push(...usageUnavailable(rows).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
+    // A fresh read that just worked clears its own warning; one that failed again keeps it (the retry is this call).
+    for (const s of staleReaders(rows, viewConfig).filter((x) => !(fresh && reading?.ok && x.pool === name))) {
+      out.warnings.push(s.warning);
+      if (!(fresh && s.pool === name)) out.next.push(runNext(`Try reading ${s.pool}'s usage again.`, ["routr", "usage", s.pool]));
+    }
     if (fresh && !reading?.ok && !reading?.excluded && !out.unavailable.some((u) => u.subscription === name)) {
       const kept = rows.find((r) => r.pool === name && r.headroom != null);
       out.unavailable.push({ part: "usage", subscription: name, source: sources[name].source ?? name, ...usageFailure(reading?.code), reading: kept ? "kept" : "assumed", ...(kept ? { reading_source: kept.source, age_sec: kept.ageSec } : {}) });
