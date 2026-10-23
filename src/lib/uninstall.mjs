@@ -5,11 +5,11 @@
 // which is this binary) is routr's, and only `routr cleanup --worker` removes one with its checks. And the worktrees a
 // headless launch made sit inside ~/.local/share/routr, so `--purge` would delete them unchecked. While any is there,
 // uninstall removes nothing and says what to run (found in the doc sweep of 2026-10-23: `--purge` removed them whole).
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { notOursWhy, owner, removeOwned, skillPlaces } from "./skill-install.mjs";
-import { lockIsStale, home as userHome, standalone, start, takeLock, UNINSTALL_LOCK } from "./runtime.mjs";
+import { folderId, lockIsStale, home as userHome, standalone, start, takeLock, UNINSTALL_LOCK } from "./runtime.mjs";
 import { FORMAT } from "./headless.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 
@@ -146,11 +146,23 @@ export async function uninstall(args, { home = userHome() } = {}) {
 export function removeState(home, lock, { between = () => {} } = {}) {
   const root = join(home, ".local/state/routr"), removed = [], failed = [], notOurs = [];
   // A linked state folder is unlinked, never walked: what it points at is not known to be routr's (from #104's review).
-  try { if (lstatSync(root).isSymbolicLink()) { releaseLock(lock); unlinkSync(root); removed.push(root); return { removed, failed, notOurs }; } }
-  catch (e) { if (e?.code === "ENOENT") return { removed, failed, notOurs }; failed.push(`${root}: ${String(e?.message ?? e).slice(0, 100)}`); return { removed, failed, notOurs }; }
+  // The link goes first, while the lock behind it still holds; the lock is then removed where it really is.
+  try {
+    if (lstatSync(root).isSymbolicLink()) {
+      const real = realpathSync(root);
+      unlinkSync(root); removed.push(root); releaseLock(join(real, basename(lock)));
+      return { removed, failed, notOurs };
+    }
+  } catch (e) { if (e?.code === "ENOENT") return { removed, failed, notOurs }; failed.push(`${root}: ${String(e?.message ?? e).slice(0, 100)}`); return { removed, failed, notOurs }; }
+  // Which folder it is, checked again before each removal: one swapped for another (or a link) meanwhile is left.
+  const id = folderId(root, { link: true });
   let names = [];
   try { names = readdirSync(root); } catch (e) { if (e?.code !== "ENOENT") failed.push(`${root}: could not read it`); return { removed, failed, notOurs }; }
-  for (const n of names) if (join(root, n) !== lock) try { removePath(join(root, n)); } catch (e) { failed.push(`${join(root, n)}: ${String(e?.message ?? e).slice(0, 100)}`); }
+  for (const n of names) {
+    if (join(root, n) === lock) continue;
+    if (!id || folderId(root, { link: true }) !== id) { failed.push(`${root}: it changed while routr was removing it`); break; }
+    try { removePath(join(root, n)); } catch (e) { failed.push(`${join(root, n)}: ${String(e?.message ?? e).slice(0, 100)}`); }
+  }
   between();
   if (failed.length) return { removed, failed, notOurs }; // the lock goes in uninstall's finally; the folder stays
   releaseLock(lock);

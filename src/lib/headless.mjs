@@ -37,11 +37,11 @@
 // continues it in a new process with its context. It runs on a private copy of its config, as in a pane.
 // Worker text reaches one place, the report file of each turn (owner-only, removed by cleanup); only its path leaves
 // routr. Nothing else of the harness's output is kept: its stderr is not read, and a tool is shown by a fixed name.
-import { existsSync, mkdirSync, readFileSync, rmdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, privateDir, probe, removeEndpoint, serve } from "./channel.mjs";
 import { HARNESSES, plan } from "./harnesses.mjs";
-import { harnessEnv, installedAt, lockIsStale, probe as collect, start, STATE_DIR, stop, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
+import { folderId, harnessEnv, installedAt, lockIsStale, probe as collect, start, STATE_DIR, stop, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
 import { besidesHelper, groupMembers } from "./process-boundary.mjs";
 
 export const FORMAT = 1;
@@ -686,14 +686,14 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
 export function reserve(name, { beforeBackout = () => {} } = {}) {
   privateDir(WORKERS_DIR());
   mkdirSync(runDir(name), { mode: 0o700 }); // not recursive: EEXIST when that name is taken
-  const made = statSync(runDir(name));
+  const made = folderId(runDir(name), { link: true });
   let held = false;
   try { held = existsSync(UNINSTALL_LOCK()) && !lockIsStale(UNINSTALL_LOCK()); } catch { held = existsSync(UNINSTALL_LOCK()); }
   if (held) {
     beforeBackout(); // a test acts here: as if this call paused while uninstall and another launch ran
     // Only the folder this call made, and only while it is empty: uninstall may have removed it meanwhile and a new
     // launch of the same name made its own (from #104's review), which a late backout must not touch.
-    try { const now = statSync(runDir(name)); if (now.ino === made.ino && now.dev === made.dev) rmdirSync(runDir(name)); } catch {}
+    try { if (made && folderId(runDir(name), { link: true }) === made) rmdirSync(runDir(name)); } catch {}
     try { rmdirSync(WORKERS_DIR()); } catch {} // only if empty: leave nothing that would keep uninstall's folder
     throw new Error("routr is being uninstalled on this machine: no worker can start now");
   }

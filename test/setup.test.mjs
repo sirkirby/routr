@@ -571,6 +571,10 @@ test("a headless launch that reserves its run folder while uninstall holds its l
     const replace = () => { rmSync(runDir("w3"), { recursive: true }); mkdirSync(runDir("w3")); writeFileSync(join(runDir("w3"), "worker.json"), "theirs"); };
     expect(() => reserve("w3", { beforeBackout: replace })).toThrow("being uninstalled");
     expect(readFileSync(join(runDir("w3"), "worker.json"), "utf8")).toBe("theirs");
+    // Still empty, the new one is another folder by its identity (birth time included), and stays.
+    const empty = () => { rmSync(runDir("w4"), { recursive: true }); Bun.sleepSync(5); mkdirSync(runDir("w4")); };
+    expect(() => reserve("w4", { beforeBackout: empty })).toThrow("being uninstalled");
+    if (process.platform === "darwin" || process.platform === "win32") expect(existsSync(runDir("w4"))).toBe(true); // a birth time to tell them by
     // A linked state folder is unlinked, never walked: what it points at stays.
     if (process.platform !== "win32") {
       const elsewhere = join(home, "elsewhere"); mkdirSync(elsewhere); writeFileSync(join(elsewhere, "important.txt"), "keep");
