@@ -575,6 +575,18 @@ test("a headless launch that reserves its run folder while uninstall holds its l
     const empty = () => { rmSync(runDir("w4"), { recursive: true }); Bun.sleepSync(5); mkdirSync(runDir("w4")); };
     expect(() => reserve("w4", { beforeBackout: empty })).toThrow("being uninstalled");
     if (process.platform === "darwin" || process.platform === "win32") expect(existsSync(runDir("w4"))).toBe(true); // a birth time to tell them by
+    // A reservation whose folder was replaced before it returned is refused as taken, never handed back.
+    rmSync(join(home, ".local/state/routr/uninstalling"));
+    const swap = () => { rmSync(runDir("w5"), { recursive: true }); mkdirSync(runDir("w5")); writeFileSync(join(runDir("w5"), "worker.json"), "theirs"); };
+    expect(() => reserve("w5", { beforeReturn: swap })).toThrow("a worker named w5 exists");
+    expect(readFileSync(join(runDir("w5"), "worker.json"), "utf8")).toBe("theirs");
+    // An uninstall lock left by one that is gone is not taken over: uninstall says which file to remove; launches go on.
+    for (const n of ["w3", "w4", "w5"]) rmSync(runDir(n), { recursive: true, force: true });
+    writeFileSync(UNINSTALL_LOCK(), "999999999");
+    const left = Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes", "--json"], { env: cliEnv(home) });
+    expect(JSON.parse(left.stdout.toString()).error).toContain("remove that file");
+    expect(reserve("w6")).toBe(runDir("w6"));
+    rmSync(UNINSTALL_LOCK()); rmSync(runDir("w6"), { recursive: true });
     // A linked state folder is unlinked, never walked: what it points at stays.
     if (process.platform !== "win32") {
       const elsewhere = join(home, "elsewhere"); mkdirSync(elsewhere); writeFileSync(join(elsewhere, "important.txt"), "keep");

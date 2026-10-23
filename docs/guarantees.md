@@ -162,7 +162,8 @@ uncommitted work, or a plain uninstall keeps it. A folder it cannot read stops i
 checks run again just before anything is removed, under a lock a headless launch looks at after it reserves its run
 folder, so a launch that starts meanwhile either backs out or is seen. routr's state folder, which holds that lock,
 is emptied last, the lock released only once the rest of it is gone; a worker launched after that keeps the folder,
-and uninstall says so instead of removing it.
+and uninstall says so instead of removing it. A lock an earlier uninstall left when it was stopped is never taken
+over: uninstall names the file to remove (launches treat it as free).
 
 ## Processes and platforms
 

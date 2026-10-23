@@ -108,7 +108,11 @@ export async function uninstall(args, { home = userHome() } = {}) {
   // folder from here on sees the lock and backs out (headless.mjs reserve). The lock goes with the state folder.
   const lock = UNINSTALL_LOCK(home);
   try { mkdirSync(join(home, ".local/state/routr"), { recursive: true, mode: 0o700 }); } catch {}
-  if (!takeLock(lock, lockIsStale)) return { ok: false, error: `routr uninstall removed nothing: ${existsSync(lock) ? "another routr uninstall is running" : `it could not write ${lock}`}` };
+  // Never taken over, even from a process that is gone: two uninstalls could both decide it is stale (from #104's review).
+  if (!takeLock(lock, () => false)) {
+    let gone = false; try { gone = lockIsStale(lock); } catch {}
+    return { ok: false, error: `routr uninstall removed nothing: ${!existsSync(lock) ? `it could not write ${lock}` : gone ? `an earlier routr uninstall that is no longer running left ${lock}: remove that file, then run uninstall again` : "another routr uninstall is running"}` };
+  }
   let late;
   try { late = blockedBy(leftovers(home), purge); } catch (e) { releaseLock(lock); throw e; }
   if (late) { releaseLock(lock); return { ok: false, error: late }; }

@@ -683,7 +683,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
 // The run folder of a new worker, reserved by its name: made whole, owner-only, or refused when one exists.
 // Made first, then the uninstall lock looked at: uninstall takes its lock first, then looks for run folders, so one of
 // the two always sees the other.
-export function reserve(name, { beforeBackout = () => {} } = {}) {
+export function reserve(name, { beforeBackout = () => {}, beforeReturn = () => {} } = {}) {
   privateDir(WORKERS_DIR());
   mkdirSync(runDir(name), { mode: 0o700 }); // not recursive: EEXIST when that name is taken
   const made = folderId(runDir(name), { link: true });
@@ -693,9 +693,13 @@ export function reserve(name, { beforeBackout = () => {} } = {}) {
     beforeBackout(); // a test acts here: as if this call paused while uninstall and another launch ran
     // Only the folder this call made, and only while it is empty: uninstall may have removed it meanwhile and a new
     // launch of the same name made its own (from #104's review), which a late backout must not touch.
-    try { if (made && folderId(runDir(name), { link: true }) === made) rmdirSync(runDir(name)); } catch {}
+    // Without a birth time two folders made at the same path can share an identity: then it is left, empty.
+    try { if (made && !/:(0|undefined)$/.test(made) && folderId(runDir(name), { link: true }) === made) rmdirSync(runDir(name)); } catch {}
     try { rmdirSync(WORKERS_DIR()); } catch {} // only if empty: leave nothing that would keep uninstall's folder
     throw new Error("routr is being uninstalled on this machine: no worker can start now");
   }
+  beforeReturn(); // a test acts here too
+  // Still the folder this call made: one uninstall removed meanwhile and another launch of that name made is not ours.
+  if (!made || folderId(runDir(name), { link: true }) !== made) throw Object.assign(new Error(`a worker named ${name} exists`), { code: "EEXIST" });
   return runDir(name);
 }
