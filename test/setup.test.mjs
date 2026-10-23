@@ -551,23 +551,24 @@ test("a headless launch that reserves its run folder while uninstall holds its l
   try {
     mkdirSync(join(home, ".local/state/routr"), { recursive: true });
     writeFileSync(UNINSTALL_LOCK(), String(process.pid)); // held by a live process
-    expect(() => reserve("w1")).toThrow("being uninstalled");
-    expect(existsSync(runDir("w1"))).toBe(false);
+    expect(() => reserve("w1")).toThrow("being uninstalled"); // backs out, removing nothing: uninstall's sweep does
+    rmSync(runDir("w1"), { recursive: true });
     writeFileSync(UNINSTALL_LOCK(), "999999999"); // its uninstall is gone: stale, and launches go on
     const r = reserve("w1");
     expect(r.dir).toBe(runDir("w1")); expect(ownedBy(r.dir, r.token)).toBe(true);
     rmSync(runDir("w1"), { recursive: true });
-    // While uninstall clears its state folder, the lock is the last thing in it: a launch at that moment backs out and
-    // leaves nothing behind, so the folder goes; the lock is released only then.
+    // While uninstall clears its state folder, the lock is the last thing in it: a launch at that moment backs out, and
+    // the reservation it leaves keeps uninstall's folder, which says so; the lock is released only then.
     writeFileSync(UNINSTALL_LOCK(), String(process.pid));
     mkdirSync(join(home, ".local/state/routr/s"), { recursive: true });
     let backedOut = false;
     const cleared = removeState(home, UNINSTALL_LOCK(), { between: () => { try { reserve("w2"); } catch (e) { backedOut = /being uninstalled/.test(e.message); } } });
     expect(backedOut).toBe(true);
-    expect(cleared.failed).toEqual([]); expect(cleared.notOurs).toEqual([]);
-    expect(existsSync(join(home, ".local/state/routr"))).toBe(false);
-    // Uninstall removed this reservation's folder and another launch of that name made its own, empty but for its token:
-    // before this one took ownership (it is refused as taken), or after (its backout leaves the other alone).
+    expect(cleared.failed).toEqual([]); expect(cleared.notOurs.map((x) => x.path)).toEqual([join(home, ".local/state/routr")]);
+    expect(existsSync(UNINSTALL_LOCK())).toBe(false);
+    rmSync(join(home, ".local/state/routr"), { recursive: true });
+    // Uninstall removed this reservation's folder and another launch of that name made its own: before this one took
+    // ownership, after it while uninstall still held its lock (its backout touches nothing), or after it and the lock.
     mkdirSync(join(home, ".local/state/routr"), { recursive: true });
     writeFileSync(UNINSTALL_LOCK(), "999999999");
     expect(() => reserve("w3", { beforeOwn: () => { rmSync(runDir("w3"), { recursive: true }); theirs("w3"); } })).toThrow(/EEXIST|exists/);
@@ -576,11 +577,19 @@ test("a headless launch that reserves its run folder while uninstall holds its l
     expect(() => reserve("w4", { beforeBackout: () => { rmSync(runDir("w4"), { recursive: true }); theirs("w4"); } })).toThrow("being uninstalled");
     expect(readFileSync(join(runDir("w4"), "worker.json"), "utf8")).toBe("theirs");
     expect(ownedBy(runDir("w4"), "theirs")).toBe(true);
+    writeFileSync(UNINSTALL_LOCK(), String(process.pid));
+    const late = () => { rmSync(runDir("w6"), { recursive: true }); theirs("w6"); rmSync(UNINSTALL_LOCK()); };
+    expect(() => reserve("w6", { beforeBackout: late })).toThrow("being uninstalled");
+    expect(ownedBy(runDir("w6"), "theirs")).toBe(true);
+    // Found no lock, it checks its token once more: a folder replaced before that is refused as taken.
+    const done = () => { rmSync(runDir("w7"), { recursive: true }); theirs("w7"); };
+    expect(() => reserve("w7", { beforeOwn: () => {}, afterOwn: done })).toThrow("a worker named w7 exists");
+    expect(readFileSync(join(runDir("w7"), "worker.json"), "utf8")).toBe("theirs");
     // A folder removed before this reservation could own it is said plainly.
     writeFileSync(UNINSTALL_LOCK(), "999999999");
     expect(() => reserve("w5", { beforeOwn: () => rmSync(runDir("w5"), { recursive: true }) })).toThrow("removed while launch was making it");
     // An uninstall lock left by one that is gone is not taken over: uninstall says which file to remove.
-    for (const n of ["w3", "w4"]) rmSync(runDir(n), { recursive: true });
+    for (const n of ["w3", "w4", "w6", "w7"]) rmSync(runDir(n), { recursive: true });
     const left = Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes", "--json"], { env: cliEnv(home) });
     expect(JSON.parse(left.stdout.toString()).error).toContain("remove that file");
     rmSync(UNINSTALL_LOCK());
