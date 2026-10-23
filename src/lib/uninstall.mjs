@@ -1,13 +1,35 @@
 // `routr uninstall`: remove what the installer and `routr setup` put on this machine. By default the user's own data
 // stays (config, decision provider keys, ledger), as with a typical uninstall; `--purge` removes that too. A person is shown the
 // plan and asked; an agent or a script must pass `--yes`. Worktrees and herdr panes belong to the user's repos, not to routr.
-import { copyFileSync, lstatSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+// Headless workers are the exception that stops it: a worker's run folder (its reports, and while it runs, its holder,
+// which is this binary) is routr's, and only `routr cleanup --worker` removes one with its checks. And the worktrees a
+// headless launch made sit inside ~/.local/share/routr, so `--purge` would delete them unchecked. While any is there,
+// uninstall removes nothing and says what to run (found in the doc sweep of 2026-10-23: `--purge` removed them whole).
+import { copyFileSync, lstatSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { notOursWhy, owner, removeOwned, skillPlaces } from "./skill-install.mjs";
 import { home as userHome, standalone, start } from "./runtime.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 
+
+const dirs = (p) => { try { return readdirSync(p).filter((n) => { try { return statSync(join(p, n)).isDirectory(); } catch { return false; } }).sort(); } catch { return []; } };
+// The headless workers still here (a run folder each, running or not), and the worktrees a headless launch made: one
+// folder per repository under worktrees/, one per branch inside it.
+export function leftovers(home = userHome()) {
+  const workers = dirs(join(home, ".local/state/routr/workers"));
+  const root = join(home, ".local/share/routr/worktrees");
+  const worktrees = dirs(root).flatMap((repo) => dirs(join(root, repo)).map((b) => join(root, repo, b)));
+  return { workers, worktrees };
+}
+
+// Why uninstall stops, and what to run first; null when nothing stops it.
+export function blockedBy({ workers, worktrees }, purge) {
+  const steps = [];
+  if (workers.length) steps.push(`headless workers are still here (${workers.join(", ")}): finish each with \`routr cleanup --worker <name>\` (it keeps a worktree with uncommitted work; stop a running one first with \`routr stop --name <name>\`)`);
+  if (purge && worktrees.length) steps.push(`--purge would delete worktrees a headless launch made, unchecked (${worktrees.join(", ")}): finish each with \`routr cleanup --cwd <path> --path <path>\`, which keeps uncommitted work, or uninstall without --purge to keep them`);
+  return steps.length ? `routr uninstall removed nothing: ${steps.join("; ")}. Then run it again` : null;
+}
 
 // What would be removed, as data: a test can check the plan without touching a disk.
 export function uninstallPlan({ home = userHome(), purge = false, binary = null } = {}) {
@@ -20,12 +42,16 @@ export function uninstallPlan({ home = userHome(), purge = false, binary = null 
     else if (p.state === "theirs") notOurs.push({ path: p.path, what: p.why });
   }
   remove.push({ path: join(home, ".cache/routr"), what: "cache: the usage snapshots and the update log" });
-  const data = [{ path: join(home, ".config/routr"), what: "your config and decision provider keys" }, { path: join(home, ".local/share/routr"), what: "your ledger" }];
+  // With no worker left (blockedBy), what remains here is routr's own bookkeeping: sockets and locks.
+  remove.push({ path: join(home, ".local/state/routr"), what: "state: headless workers' sockets and locks" });
+  const left = leftovers(home);
+  const data = [{ path: join(home, ".config/routr"), what: "your config and decision provider keys" },
+    { path: join(home, ".local/share/routr"), what: left.worktrees.length ? "your ledger, and worktrees a headless launch made (yours to finish)" : "your ledger" }];
   (purge ? remove : keep).push(...data);
   const present = (l) => l.filter((x) => { try { lstatSync(x.path); return true; } catch { return false; } });
   let statusline = false;
   try { statusline = isOurStatusline(JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8")).statusLine?.command); } catch {}
-  return { remove: present(remove), keep: present(keep), not_ours: notOurs, statusline };
+  return { remove: present(remove), keep: present(keep), not_ours: notOurs, statusline, blocked: blockedBy(left, purge) };
 }
 
 // A link is unlinked, never followed.
@@ -40,10 +66,14 @@ export async function uninstall(args, { home = userHome() } = {}) {
 
   // From a source checkout there is no installed binary of ours to remove: the launcher is the developer's own.
   let plan = uninstallPlan({ home, purge, binary: standalone() ? process.execPath : null });
+  if (plan.blocked) return { ok: false, error: plan.blocked };
   if (interactive) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const show = (p) => { say("\nThis removes:"); for (const x of p.remove) say(`  ${x.path}   (${x.what})`); if (p.statusline) say("  the `routr statusline` entry in ~/.claude/settings.json (a backup is kept)"); if (p.keep.length || p.not_ours.length) { say("and keeps:"); for (const x of [...p.keep, ...p.not_ours]) say(`  ${x.path}   (${x.what})`); } };
-    if (!purge && plan.keep.length && /^y/i.test((await rl.question("Also remove your config, decision provider keys, and ledger? [y/N] ")).trim())) { purge = true; plan = uninstallPlan({ home, purge, binary: standalone() ? process.execPath : null }); }
+    if (!purge && plan.keep.length && /^y/i.test((await rl.question("Also remove your config, decision provider keys, and ledger? [y/N] ")).trim())) {
+      purge = true; plan = uninstallPlan({ home, purge, binary: standalone() ? process.execPath : null });
+      if (plan.blocked) { rl.close(); return { ok: false, error: plan.blocked }; }
+    }
     show(plan);
     const go = /^y/i.test((await rl.question("\nUninstall routr? [y/N] ")).trim());
     rl.close();
@@ -51,6 +81,9 @@ export async function uninstall(args, { home = userHome() } = {}) {
   }
   if (dry) return { ok: true, dry_run: true, would_remove: plan.remove.map((x) => x.path), would_keep: plan.keep.map((x) => x.path), not_ours: plan.not_ours.map((x) => x.path), statusline: plan.statusline };
 
+  // Again now: the person may have been asked for minutes, and a worker launched meanwhile.
+  const late = blockedBy(leftovers(home), purge);
+  if (late) return { ok: false, error: late };
   const removed = [], failed = [], userFiles = [];
   if (plan.statusline) try {
     // Read again now: the plan may be minutes old (a person was asked), and the entry may have been replaced since.

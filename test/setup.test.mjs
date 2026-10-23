@@ -485,6 +485,41 @@ test("routr uninstall keeps the user's data unless purged, removes only routr's 
   expect(uninstallPlan({ home }).statusline).toBe(false);
 });
 
+test("routr uninstall stops while a headless worker is here, and --purge while a worktree a headless launch made is: it never deletes them unchecked", async () => {
+  const { uninstallPlan } = await import("../src/lib/uninstall.mjs");
+  const home = scratch("un-headless"), env = cliEnv(home);
+  for (const d of [".config/routr", ".cache/routr", ".local/state/routr/s", ".local/state/routr/workers/rev1"]) mkdirSync(join(home, d), { recursive: true });
+  writeFileSync(join(home, ".local/state/routr/workers/rev1.lock"), "");
+  const tree = join(home, ".local/share/routr/worktrees/repo-1a2b3c4d/fix-a");
+  mkdirSync(tree, { recursive: true }); writeFileSync(join(tree, "work.txt"), "uncommitted");
+  writeFileSync(join(home, ".local/share/routr/ledger.jsonl"), "");
+  const run = (...a) => Bun.spawnSync([process.execPath, SCRIPT, "uninstall", ...a], { env });
+  // A worker's run folder stops every mode, the dry run included, and nothing is removed.
+  expect(uninstallPlan({ home }).blocked).toContain("routr cleanup --worker <name>");
+  for (const a of [["--yes"], ["--yes", "--purge"], ["--dry-run"]]) {
+    const r = run(...a, "--json"), out = JSON.parse(r.stdout.toString());
+    expect(r.exitCode).toBe(1); expect(out.ok).toBe(false); expect(out.error).toContain("rev1");
+  }
+  expect(existsSync(join(home, ".cache/routr"))).toBe(true);
+  expect(existsSync(join(home, ".local/state/routr/workers/rev1"))).toBe(true);
+  // With the worker finished, --purge still stops on the worktree, and names it with the cleanup that checks it.
+  rmSync(join(home, ".local/state/routr/workers/rev1"), { recursive: true });
+  const purged = JSON.parse(run("--yes", "--purge", "--json").stdout.toString());
+  expect(purged.ok).toBe(false); expect(purged.error).toContain(tree); expect(purged.error).toContain("routr cleanup --cwd <path> --path <path>");
+  expect(readFileSync(join(tree, "work.txt"), "utf8")).toBe("uncommitted");
+  // A plain uninstall keeps ~/.local/share/routr, the worktree in it, and says so; routr's own state goes.
+  expect(uninstallPlan({ home }).keep.find((x) => x.path.endsWith(".local/share/routr")).what).toContain("worktrees");
+  const plain = run("--yes", "--json");
+  expect(plain.exitCode).toBe(0);
+  expect(readFileSync(join(tree, "work.txt"), "utf8")).toBe("uncommitted");
+  expect(existsSync(join(home, ".local/state/routr"))).toBe(false);
+  expect(existsSync(join(home, ".cache/routr"))).toBe(false);
+  // Once the worktree is finished too, --purge removes the rest.
+  rmSync(tree, { recursive: true });
+  expect(run("--yes", "--purge").exitCode).toBe(0);
+  expect(existsSync(join(home, ".local/share/routr"))).toBe(false);
+});
+
 // ---- Findings from the independent review (2026-09-21) ----
 
 test("only routr's own statusline counts as ours", async () => {

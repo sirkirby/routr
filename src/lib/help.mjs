@@ -168,9 +168,9 @@ export const COMMANDS = {
   },
   uninstall: {
     name: "uninstall",
-    description: "remove routr from this machine: the binary, both skills (routr and routr-orchestrate) and their links, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, key, and ledger unless you say otherwise. Shows the plan and asks first",
+    description: "remove routr from this machine: the binary, both skills (routr and routr-orchestrate) and their links, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one), and routr's own state. Keeps your config, key, and ledger unless you say otherwise. Removes nothing while a headless worker is still here (finish each with `routr cleanup --worker`), nor with --purge while a worktree a headless launch made is. Shows the plan and asks first",
     flags: [
-      { name: "--purge", description: "also remove your config, your decision provider's key, and ledger", required: false },
+      { name: "--purge", description: "also remove your config, your decision provider's key, and ledger (everything in ~/.local/share/routr)", required: false },
       { name: "--yes", description: "ask nothing (needed when there is no terminal)", required: false },
       { name: "--dry-run", description: "show what would be removed and kept", required: false },
       { name: "--json", arg: null, description: "output JSON instead of text", required: false, default: false },
