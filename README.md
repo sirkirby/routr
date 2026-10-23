@@ -33,8 +33,9 @@ model. routr spreads the work across what you have, and starts each piece at the
 1. **Plan.** The lead asks `routr dispatch < task.md`, on the exact task it will hand over, and gets a fixed set of narrow facts about it, plus
    each subscription's usable headroom. routr leaves the worker's model to the lead.
 2. **Build.** The lead chooses suitable model and effort options on normal accounts, then compares their capacity.
-   Fallback accounts are available when none suitably takes the task. `routr launch` starts the
-   worker in a herdr pane with that harness's flags, handling shell prompts on the way and reporting any question a harness asks at startup.
+   Fallback accounts are available when none suitably takes the task. `routr launch` starts the worker in its own
+   git worktree with that harness's flags: in a herdr pane, handling shell prompts on the way and reporting any
+   question a harness asks at startup, or, outside herdr, headless, followed with `routr wait`.
 3. **Judge.** When the worker reports, `routr check` takes a first read of the report against the brief. The lead
    then runs its own check, which is what decides.
 4. **Fix.** Work that falls short goes back to the same worker. If it falls short again, the lead relaunches it one
@@ -82,11 +83,11 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 
 | Command | What it does |
 |---|---|
-| `subagent "<brief>"` | A worker, or an agent outside herdr, is about to spawn a subagent: facts, level, worth-a-worker. The brief can also come from `--task-file <path>`. An orchestrator in herdr uses `dispatch`. |
+| `subagent "<brief>"` | A worker, or an agent outside herdr, is about to spawn a subagent: facts, level, worth-a-worker. The brief can also come from `--task-file <path>`. An orchestrator, in herdr or not, uses `dispatch`. |
 | `dispatch "<brief>"` | An orchestrator is about to launch a worker: the same, plus normal/fallback candidates and a capacity ranking. Give it the exact task the worker will get (`routr dispatch --task-file task.md`, saving stdout as `advice.json`); `launch --advice advice.json` requires a match. `--headroom <name>=0.9` (or `90%`) overrides a reading. |
 | `usage [cursor\|kiro]` | Each subscription's usage, candidates and capacity ranking, with no brief. `usage cursor` or `usage kiro` reads that one now. |
-| `launch` | Start one worker in its own git worktree, nested under the repo in herdr (`--base` starts it from another branch or commit): flags, model syntax, shell prompts, startup questions reported (never answered), readiness, prompt. A task requires matching `--advice`; `--dry-run` shows the plan and returns `ok: false` with `error` when a real launch would refuse. `next` holds recovery, the record template and cleanup. |
-| `wait`, `send`, `workers`, `stop` | Outside herdr, `launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless: `wait` returns when one finishes a turn, with its report's path; `send` corrects it (into the running turn for Claude Code and Codex; as the next turn for Cursor, Antigravity and Kiro) or resumes its session with a follow-up; `workers` shows each one's state; `stop` ends one. |
+| `launch` | Start one worker in its own git worktree (`--base` starts it from another branch or commit), with the harness's flags and model syntax: in herdr, a pane nested under the repo, handling shell prompts and reporting startup questions (never answered), then readiness and the prompt; outside herdr, headless, where no one answers a worker: it puts a question in its report. A task requires matching `--advice`; `--dry-run` shows the plan and returns `ok: false` with `error` when a real launch would refuse. `next` holds recovery, the record template and cleanup. |
+| `wait`, `send`, `workers`, `stop` | Outside herdr, `launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless: `wait` returns when one finishes a turn, with its report's path; `send` corrects it (Codex: steered into the running turn; Claude Code: written to its input, joining the running turn or starting the next as Claude decides, not yet measured through routr; Cursor, Antigravity and Kiro: as the next turn) or resumes its session with a follow-up; `workers` shows each one's state; `stop` ends one. |
 | `cleanup` | Finish a worker: remove its worktree and workspace (or close its pane), never while anything it can see runs there (outside herdr it cannot see what runs in a worktree's folder) or anything in it is uncommitted. `--worker <name>` removes a headless worker's worktree, with the same checks, then its run folder and reports. Keeps the branch unless `--delete-branch` and it is merged. With no worker named, lists the repo's worktrees. `--dry-run` says what it would do. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
 | `record`, `assess` | Write one ledger line (`record --task-file <path>` checks advice against this worker’s task); read the ledger back as advice about your own settings. |
@@ -99,8 +100,9 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `uninstall` | Remove routr: the binary, its two skills, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, keys, and ledger; `--purge` removes those too. |
 | `doctor` | Check the setup: harnesses found, live usage, every decision-list entry in order, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
-The advice commands write nothing and never block an agent: with no network or no key they still answer with a
-`no reading` headline and one entry per failed decision model in `unavailable`.
+The advice commands change nothing of yours and never block an agent: with no network or no key they still answer
+with a `no reading` headline and one entry per failed decision model in `unavailable`. What they may still write, all
+of it routr's own bookkeeping, is in [docs/guarantees.md](docs/guarantees.md).
 
 ## Install
 
@@ -132,7 +134,8 @@ never shown); run again, its menu's "Decision model" changes it:
 - **TypeSafe's Jev** (the default, and the one that reads the level most accurately on routr's tests): an
   [API key](https://console.typesafe.ai/keys).
 - **Cloudflare's Clef** on Workers AI: an [API token](https://dash.cloudflare.com/profile/api-tokens) with
-  Workers AI Read (the only permission routr needs), and your account ID. Workers AI's free daily allowance covers about 200 briefs a day.
+  Workers AI Read (the only permission routr needs), and your account ID. What Workers AI's free allowance covers is in
+  [the evidence](docs/evidence.md#decision-models).
 - **Clef Flash on your own machine**, free: [Ollama](https://ollama.com) 0.40.1 or later and
   `ollama pull clef-flash:9b-mxfp8` on Apple Silicon (12 GB; 5-7 s a brief on an M4 Max), or
   `ollama pull clef-flash:9b-q8_0` elsewhere (11 GB; under a second on an NVIDIA RTX 5090 laptop GPU). It needs a GPU
@@ -216,8 +219,9 @@ more window (Codex: from its protocol, not yet observed on a seat).
 
 [docs/evidence.md](docs/evidence.md) shows how the decisions and the scoring were measured. In short: the facts
 routr reads from a brief are decisive and came out the same on 107 of 108 repeat readings; the level is right on 29 of
-36 real worker tasks (and on 53 to 54 of 68 short labelled briefs, where it runs high); the judge questions separate good worker reports from flawed ones; workers on all four harnesses follow the
-skill; and end-to-end runs with a real lead delivered verified work across subscriptions. routr does not estimate
+36 real worker tasks (and on 53 to 54 of 68 short labelled briefs, where it runs high); the judge questions separate good worker reports from flawed ones; workers on Claude Code, Codex and Cursor follow
+the skill when the launch prompt names it; outside herdr, each harness but Kiro ran the whole headless loop once on
+a one-file task (Kiro: its protocol only); and end-to-end runs with a real lead delivered verified work across subscriptions. routr does not estimate
 or manage context; harnesses own that.
 
 ## Telemetry

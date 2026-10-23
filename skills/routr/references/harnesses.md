@@ -1,6 +1,7 @@
 # Launching each harness unattended
 
-Workers run with permissive settings because nobody watches their panes; you, the orchestrator, are the check.
+Workers run with permissive settings because nobody watches them (a pane, or no screen at all when headless); you,
+the orchestrator, are the check.
 Flags change between releases: before relying on one, run the harness's `--help`. The launch column was *measured*
 through `herdr agent start <name> --kind <kind> --pane <id> -- <flags>` (interactive sessions, 2026-09-20: each
 worker edited two files, ran a command, and reported). The last column was *measured* in earlier headless evals.
@@ -11,12 +12,14 @@ worker edited two files, ran a command, and reported). The last column was *meas
 | Codex (`codex`) | `--yolo --dangerously-bypass-hook-trust -c check_for_update_on_startup=false` (`--yolo` measured: full permissions, the user's choice for worker panes; the update check off because on 2026-09-28 Codex showed "Update available" just after herdr reported it ready, and the Enter that submitted a worker's task chose "Update now": Codex upgraded itself through Homebrew and exited; hook trust bypassed because of the hooks review below. Cost: a worker runs every enabled hook, a repository's own `.codex/hooks.json` included, without review, so rule 6 below matters more). Scoped alternative, also measured: `-s workspace-write -a never -c sandbox_workspace_write.network_access=true`. Model and effort: `-m <model> -c model_reasoning_effort=<effort>`; list with `codex debug models` | **Folder-trust dialog** ("Folder access … Trust this folder?") even with `--yolo` in a folder that is not under a trusted one (measured 0.160.0, 2026-10-08; 0.157.1 did not ask, 2026-09-28); herdr reads it as `blocked` (`trust_directory`) and `routr launch` hands it back. Trust given in a worktree applies to its repository's root, so later worktrees of that repository are not asked (measured 0.160.0, 2026-10-08). **Hooks need review**: when any enabled hook is new or changed since the user trusted it (measured: a repository's `.codex/hooks.json` never reviewed in Codex; not measured: a tool such as myco rewriting `~/.codex/hooks.json`. A worktree's project hooks are read from its repository's root, measured 0.161.0: its own copy was ignored), Codex opens this at startup with "Review hooks" selected, and herdr reads it as `idle` (rules 2026.10.01.1). Without `--dangerously-bypass-hook-trust` the Enter that submitted a worker's task opened Codex's hooks panel, herdr then said `working`, and launch reported a worker that never got its task (0.160.0 and 0.161.0, 2026-10-08). With the flag Codex starts at its input box and warns that enabled hooks may run without review. The flag is in `codex --help` of every npm release checked, 0.135.0 to 0.161.0; older releases not checked. Without network access routr answers with its fallback. `codex exec` hangs unless stdin is `< /dev/null`. While its MCP servers start, herdr already reports it `idle`; a task sent then is held (`› [Pasted Content 3102 chars]` above `Waiting for startup`) and Codex starts it by itself once ready (2026-09-28, twice). herdr calls that prompt stalled; `routr launch` waits on the agent's state and sends nothing again. |
 | Cursor (`cursor`) | `--yolo --trust` (measured: no dialog; `--yolo` is `--force`). Model: `--model <id>`; list with `cursor-agent models` | `--model` **persists as the account default**. Measured way around it: launch with `CURSOR_CONFIG_DIR=<a folder holding a copy of ~/.cursor/cli-config.json>` (via `herdr pane run`; herdr still recognises the agent, address it by pane id); the account default stayed unchanged. On Windows herdr does not see an agent a shell started, so `routr launch` sets the variable in the pane's PowerShell (or cmd) and lets `herdr agent start` run Cursor (measured on Windows 11: tracked, prompted, and the private folder removed when the pane closed). Its reported usage omits subagent tokens. Whatever `CURSOR_CONFIG_DIR` says, it writes its runtime files (`worker.log`, `worker.sock`) under `~/.cursor/projects/<the working folder>` (measured 2026-09-25); routr's usage read always works in the system temp folder, so that is one folder, reused. Subagents: Cursor's own models only. Twice (2026-09-26, with a 2.4k-character task): herdr answered the prompt with `agent_prompt_stalled` while the task sat pasted and unsent in the input box (`→ [Pasted text #1 +21 lines]`); Enter sent it. `routr launch` no longer presses keys on what the screen shows (see the rule on prompts below): it reports `needs_input`, and Enter in the pane is the fix. Does not quit on Ctrl+C: close the pane. |
 | Antigravity (`agy`) | `--dangerously-skip-permissions --add-dir <dir>` (measured: worked in the given directory, no dialog). Model: `--model <id>` ALONE: its model ids already carry the effort (`…-low|-medium|-high`). Adding an `--effort` that disagrees with the id is refused (agy 1.2.11, 2026-09-26: `invalid model selection … conflicts with --effort=high`, exit 1; earlier versions warned and ran the HIGH variant); a family id with `--effort` resolves to that variant (`gemini-3.8-flash --effort low` ran `gemini-3.8-flash-low`), so routr passes the full id and no `--effort`. `--add-dir` takes an absolute path only. List with `agy models` | **Does not see `~/.agents/skills`**: it needs the worker guide's file path in the prompt. It loads skills from `~/.gemini/config/skills` (measured 2026-10-05, agy 1.2.17; not the `~/.gemini/antigravity-cli/skills` its web docs name), and routr links its skills there: see "Where routr's skills go" below. Giving the guide's path in the prompt still works, so keep doing it. herdr can report it `idle` while it is still working: wait for the VERDICT line. agy 1.3.3 opened a "Terms of Service & Data Use" screen on both launches of 2026-10-11 (its data-sharing box comes ticked), which herdr reads as `idle`, so the task lands on that screen and launch reports `needs_input`. It is the user's to answer, never yours: ask them to run `agy` once in their own terminal, then send the task again with `launch --pane`. Headless runs without `--dangerously-skip-permissions` auto-deny shell commands and still report SUCCESS (routr's headless launch passes it: see "Antigravity headless" below). With no `--add-dir`/`--project` it ignores the current directory. |
-| Kiro (`kiro`) | `chat --trust-tools=*` (measured, Kiro CLI 2.24.1, 2026-09-28: no confirmation and no folder-trust dialog). Model: `--model <id>`; list with `kiro-cli chat --list-models`. `auto` is Kiro's own router (its docs recommend it; the footer shows `auto`, measured). Effort: `--effort <level>` on the models whose `/effort` panel offers levels (Kiro's docs: the newer Claude and GPT models); `auto` and the other models show "n/a" and ignore the flag silently (measured). `routr launch --effort auto` passes no flag | `--trust-all-tools` **asks "Kiro is running in trust all tools mode" at every start**, with "No, exit" selected, while herdr reports it idle (its rules do not recognise that screen, 2026-09-28). `--trust-tools=*` allows every built-in tool (its `/tools` list: all 14 "allowed") and asks nothing (measured 2026-09-28; MCP tools not measured), so `routr launch` passes that. **An unknown `--model` id runs the default silently**: the footer (`kiro_default · <model> · ◔ 5%`) then shows no model (2026-09-26). `routr launch` checks the id against `kiro-cli chat --list-models` before it opens a pane or starts a headless worker. Headless (`--no-interactive`) ignores `--model` altogether ("failed to set model … Method not found"). **An explicit `--effort` is remembered as the user's default for that model** in `~/.kiro/settings/cli.json` (Kiro's docs; not measured: no model on the measured account took effort). The confirmation can be turned off only globally, with the setting `chat.disableTrustAllConfirmation` (listed by `kiro-cli settings list --all`; not on Kiro's public settings page); there is no per-launch flag. Reads skills only from `~/.kiro/skills`, not `~/.agents/skills` (routr links its skills there). Quits with `/quit`. |
+| Kiro (`kiro`) | `chat --trust-tools=*` (measured, Kiro CLI 2.24.1, 2026-09-28: no confirmation and no folder-trust dialog). Model: `--model <id>`; list with `kiro-cli chat --list-models`. `auto` is Kiro's own router (its docs recommend it; the footer shows `auto`, measured). Effort: `--effort <level>` on the models whose `/effort` panel offers levels (Kiro's docs: the newer Claude and GPT models); `auto` and the other models show "n/a" and ignore the flag silently (measured). `routr launch --effort auto` passes no flag | `--trust-all-tools` **asks "Kiro is running in trust all tools mode" at every start**, with "No, exit" selected, while herdr reports it idle (its rules do not recognise that screen, 2026-09-28). `--trust-tools=*` allows every built-in tool (its `/tools` list: all 14 "allowed") and asks nothing (measured 2026-09-28; MCP tools not measured), so `routr launch` passes that. **An unknown `--model` id runs the default silently**: the footer (`kiro_default · <model> · ◔ 5%`) then shows no model (2026-09-26). `routr launch` checks the id against `kiro-cli chat --list-models` before it opens a pane or starts a headless worker. `chat --no-interactive` ignores `--model` altogether ("failed to set model … Method not found"); routr's headless worker runs `kiro-cli acp` instead, which takes it (see "Kiro headless" below). **An explicit `--effort` is remembered as the user's default for that model** in `~/.kiro/settings/cli.json` (Kiro's docs; not measured: no model on the measured account took effort). The confirmation can be turned off only globally, with the setting `chat.disableTrustAllConfirmation` (listed by `kiro-cli settings list --all`; not on Kiro's public settings page); there is no per-launch flag. Reads skills only from `~/.kiro/skills`, not `~/.agents/skills` (routr links its skills there). Quits with `/quit`. |
 
 `routr launch` encodes this table: it applies the permissive flags, the model and effort syntax, and the
 work-arounds below for the harness you name, so an ordinary launch needs none of this detail. Read here when you are
-choosing a model, when a launch does something you did not expect, or when you are launching by hand. `routr launch
---kind <k> --model <m> --dry-run` prints the exact flags it would use, and costs nothing.
+choosing a model, when a launch does something you did not expect, or when you are launching by hand. In herdr,
+`routr launch --kind <k> --model <m> --dry-run` prints the exact flags a pane gets, and costs nothing. Outside herdr a
+dry run still plans the pane launch: the headless command is in that harness's "headless" section below, and a real
+launch shows it in `ran`.
 
 ## Is it signed in? (measured 2026-09-26, signed in and signed out)
 
@@ -71,6 +74,8 @@ harness. A native `.exe` install starts as before.
 
 ## Rules that hold for every harness
 
+Rules 0, 1 and 7 are about panes, in herdr; a headless worker has no pane, screen or input box.
+
 0. **Read a new pane before typing into it.** The user's shell may ask its own question first (measured: a dotenv
    plugin asking "found '.env' file. Source it?" swallowed the launch command). routr knows no plugin by name: it
    waits for a settled shell prompt and returns any question with the screen (`needs_input`). The lasting fix is the
@@ -94,7 +99,8 @@ harness. A native `.exe` install starts as before.
 4. Before a batch, launch one unit and watch its first minutes. A batch nobody watched once burned its budget on
    invalid runs.
 5. Where the harness offers a budget cap per run, set one.
-6. One worktree per worker that writes. Keep a worker's directory away from repositories whose hooks should not fire.
+6. One worktree per worker, read-only ones included (the orchestrator guide's rule). Keep a worker's directory away
+   from repositories whose hooks should not fire.
 7. **A worker's own question box can read as working.** Codex's ask-the-user box (a text box or options above
    `enter submit   ^] skip   ⇧→ main prompt`, or folded to `? 1 question · 15s … ⇧← to answer`) sets its terminal
    title to "Action Required", which herdr reads as `blocked` (measured 2026-10-11, gpt-6.1-sol). With background
@@ -164,7 +170,36 @@ routr classes each pool from the shape of what the harness reports, never from a
 | Claude Code on usage-based Enterprise (claimed: the docs say `rate_limits` is sent only for plans with a quota; what `/usage` and `claude auth status` print there is not observed) | no `rate_limits` at all, even after a response; `/usage` lines unknown | `unknown` with a note; the user sets `billing: "metered"`. Absence is not read as "no quota": a seat-based Enterprise plan is not observed and may also send none |
 | Claude Code behind a Claude apps gateway with spend limits (claimed: docs) | `rate_limits.spend_limit`, `used_percentage` may pass 100 | `capped` |
 | Kiro on a Free plan (measured 2026-09-26, Kiro CLI 2.24.1) | `/usage`: "Estimated Usage \| resets on 2026-10-01 \| KIRO FREE", "Credits (0.00 of 50 covered in plan), 0.0%": one monthly pool that every model draws on at its own rate. Takes ~10 s and 0 credits, and leaves an empty saved session. The figure is an estimate that lagged a 0.10-credit turn | `included` |
-| Kiro on a paid plan with overage on (not observed) | unknown: any line beyond the credits line is kept in the reading's note, never parsed | `included` until measured |
+| Kiro on a paid plan with overage on (not observed) | unknown: any line beyond the credits line is counted in the reading's note ("N additional lines not read"), never copied or parsed | `included` until measured |
+
+## How routr reads each harness's usage
+
+Each reader goes through the harness's own command or screen, and only once its sign-in check passes; the two
+fallbacks below read what the harness or routr itself wrote (Codex's session log, `routr statusline`'s snapshot). An
+update of the harness, or of herdr for Cursor, can change what a reader sees without a word: when a reader that worked
+before has no reading a day old or newer, its last try failed, and routing is left with the assumed headroom (no
+kept reading to use; a metered seat never), `dispatch`, `usage` and `doctor` warn and give the command to read it
+again.
+
+- **Claude Code:** a `routr statusline` snapshot under 5 minutes old when there is one, otherwise its own `/usage`,
+  through `claude -p` (next section), in each call; an older snapshot is kept when that read fails.
+- **Codex:** its app-server's `account/rateLimits/read` (about 0.4 s, no tokens), in each call. The method is marked
+  experimental, so the newest session log under `~/.codex/sessions` is the fallback.
+- **Antigravity:** `agy -p /usage --output-format json`, answered without an agent turn (0 tokens, about 2 s), in
+  each call. About one call in six hung (measured), so routr waits 4 s, then 5 s once more, and reports two hangs as
+  a failure. It reports two pools; only the one named for Gemini, the subscription's own, counts.
+- **Cursor:** no command or file holds it, only its interactive `/usage` screen. routr opens that screen in a private
+  headless herdr session it makes for the read and then deletes (herdr installed; no herdr window needed, nothing on
+  the user's screen), on a private copy of Cursor's config, and reads only `Included N% used`; Auto and API go in the
+  note. The footer's context meter (`… · 8.7%`) is not usage. A second Enter goes in if the panel has not shown after
+  6 s. Measured on herdr 0.9.1 (2026-09-25); herdr 0.9.5 prints nothing when it types into a pane, which routr before
+  0.8.0 read as a failure. It takes seconds, so it runs in the background (below).
+- **Kiro:** `kiro-cli chat --output-format stream-json /usage` in the system temp folder (0 credits, about 10 s),
+  then Kiro's own `--delete-session` removes the empty session it leaves (about 8 s; it prints "Deleted" and exits 0
+  even for an id it never had). In the background (below).
+
+Cursor's and Kiro's readings are kept in `~/.cache/routr` and refreshed in the background when the last try is over
+4 hours old, or at once when an older routr made a try that got no reading; a call never waits for one.
 
 ## Claude Code's usage, read through its CLI (measured 2026-10-05, Claude Code 2.1.289, macOS, Max plan)
 

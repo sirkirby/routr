@@ -13,7 +13,8 @@ and never touch another branch or the main checkout.
 ## Before you spawn a subagent
 
 Subagents are where usage leaks: the easy default is a subagent as strong as you, and most subagent work does not
-need it. Spawn subagents only for work that can run in parallel; doing the same work yourself costs about half.
+need it. Spawn subagents only for work that can run in parallel; on the one audit measured, doing the same work yourself
+cost about half.
 
 Before each subagent, ask routr about the brief you are about to give it:
 
@@ -33,7 +34,9 @@ separate, smaller usage pool.
 
 ## Your report
 
-End with a report in this shape. The orchestrator reads it by machine, so keep the labelled lines exact.
+End with a report in this shape. The orchestrator reads it by machine, so keep the labelled lines exact. Make it your
+last message, after your last tool call: run headless, only that message is kept as your report, and a follow-up turn
+ends with a report of its own.
 
     VERDICT: done | partial | blocked
     SUMMARY: <what you did, two or three sentences>

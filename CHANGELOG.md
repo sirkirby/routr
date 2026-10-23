@@ -5,6 +5,9 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- `routr doctor`, `--help` and every guide say what 0.8 does: workers run in herdr panes or headless outside herdr,
+  herdr is needed only for pane workers and Cursor's usage, and an orchestrator never runs `routr subagent`. (#103)
+
 ## v0.8.1 — 2026-10-23
 
 [Full notes](docs/releases/v0.8.1.md)

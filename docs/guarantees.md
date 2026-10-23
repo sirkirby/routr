@@ -60,7 +60,8 @@ was given. An existing directory is accepted; a file in its place or a permissio
   is under "Headless workers" below.
 - Outside herdr, `cleanup --cwd`, `--worktree` and `--path` list and remove worktrees through git (`git worktree
   list`, `git worktree remove`, never `--force`), and cannot see whether anything runs in a worktree's folder: they say
-  so in `warnings`.
+  so in `warnings`. They do not close a herdr workspace open on that worktree: run cleanup for a pane worker from
+  inside herdr.
 - `usage cursor` drives only a private headless herdr session it makes and removes, never your own, and keeps the
   reading in `~/.cache/routr`.
 - `usage kiro` runs Kiro's own `/usage` in the system temp folder, deletes the empty session that leaves with Kiro's
@@ -96,7 +97,9 @@ and notes the failed attempt. A fresh usable reading stays available. When a fai
 headroom or a kept older reading, `unavailable` says which; a kept reading names its source and age. Snapshot
 readings are fresh for the four-hour refresh interval, local statusline/session-log readings for five minutes.
 A snapshot at least a day old is too old to use: its age is shown with assumed
-headroom, and age alone is not a failure. Metered accounts without known capacity are valid readings. Accounts
+headroom, and age alone is not a failure. A source whose last reading is a day old or more and whose last try
+failed is also said in `warnings` of `dispatch` and `usage`, with a step to read it again, and `doctor` lists it; a
+metered seat, which has no reading to make, is not. Metered accounts without known capacity are valid readings. Accounts
 left out by settings or sign-in status stay in `excluded`, outside the failed readings.
 
 How usage is ranked: [ranking.md](ranking.md). A reserve is never offered.
@@ -139,20 +142,29 @@ writes only:
 - the files `launch --copy` copies into a worker's worktree (which `cleanup` removes again only while they are
   unchanged);
 - temporary files it removes: the private herdr session `usage cursor` makes, the empty Kiro session `usage kiro`
-  deletes again, and the private folder each Claude `/usage` read runs in, with the empty `~/.claude/projects` folder
-  Claude makes for it, removed after a normal exit (a timed-out read can leave that one empty folder).
+  deletes again, the private folder each Claude `/usage` read runs in, with the empty `~/.claude/projects` folder
+  Claude makes for it, removed after a normal exit (a timed-out read can leave that one empty folder), and the private
+  copy of Cursor's config, in the system temp folder, that `usage cursor` and a Cursor pane launch run on (the pane's
+  shell removes the launch copy when Cursor exits; a launch that failed after Cursor started keeps it and says so).
 
 One exception: `uninstall` removes the `statusLine` entry an earlier routr's `setup` set in `~/.claude/settings.json`,
 after a backup, and only when it runs `routr statusline`.
+
+`uninstall` removes the binary, routr's own skills (above) and `~/.cache/routr`. It keeps `~/.config/routr` (config
+and keys) and `~/.local/share/routr` (the ledger, telemetry's install id, headless workers' worktrees) unless
+`--purge`, and does not remove `~/.local/state/routr` (headless workers' run folders and reports). Finish every
+headless worker with `routr cleanup --worker <name>` before you uninstall.
 
 ## Processes and platforms
 
 routr runs on macOS, Linux and Windows. It starts every process directly, never through `sh`, and with no Unix-only
 paths. The binary does not load a `.env` or `bunfig.toml` from the folder you run it in, so routr does not use a
 project's `.env` itself or pass it to the harness commands it runs (sign-in status and usage reads). Variables already
-in its environment, exported in your shell, still reach them. A worker that `routr launch` starts runs in its pane's
-own shell, which loads what that shell is set up to load. Every process it starts goes through one place, which hides
-its console on Windows, gives harness reads an environment without herdr's pane variables, and on Windows resolves a
+in its environment, exported in your shell, still reach them. A worker that `routr launch` starts in a herdr pane runs
+in that pane's own shell, which loads what that shell is set up to load. A headless worker is started directly, with
+routr's own environment (so no project `.env` either). Every process it starts goes through one place, which hides
+its console on Windows, gives harness reads and headless workers an environment without herdr's pane variables or the
+lead's own session variables (Claude Code's and Codex's), and on Windows resolves a
 command as the shell would, starting an npm `.cmd` shim's script directly. In a pane, routr types commands for that
 pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. Follow-up commands have exact `argv` and a
 common-shell `command` only for the documented safe alphabet and an unquoted, non-assignment executable; otherwise
@@ -247,7 +259,7 @@ stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one proces
   command that detaches itself is not seen. Limit: once a recorded group has emptied, an unrelated process group
   given the same id later blocks that worker's resume and cleanup until it ends.
 - **What it cannot see.** If the holder itself is killed, its Claude keeps working until its next output fails
-  (measured on macOS); on Windows the measured stand-in harness ended with its holder, and a real Claude has not been
+  (measured on macOS, in a prototype of the holder, not through routr's own); on Windows the measured stand-in harness ended with its holder, and a real Claude has not been
   measured there. What a Codex app-server, Cursor, Antigravity or Kiro does when its holder dies, mid-turn or not, is not measured. On macOS and
   Linux, routr then reports the worker `lost`, and names the process group it recorded while that group still has
   members, as it does when a tool command outlives the harness. Either way it refuses to resume or remove the worker

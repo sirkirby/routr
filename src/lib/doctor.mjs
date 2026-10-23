@@ -95,7 +95,7 @@ export function nextSteps(r) {
   for (const k of r.skill.filter((x) => x.extra?.length)) steps.push(hasExtras(k.where, k.extra));
   if (r.telemetry?.needs_attention) steps.push("Telemetry is on but not sending: `routr telemetry status` says why (last_send, daily_send), and `routr telemetry send` sends now");
   if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
-  if (!r.herdr.path) steps.push("For orchestration, install herdr (https://herdr.dev). Sizing subagents works without it");
+  if (!r.herdr.path) steps.push("For workers in herdr panes, and to read Cursor's usage, install herdr (https://herdr.dev). Without it, workers run headless");
   else if (!r.herdr.skill) steps.push("Install herdr's agent skill: npx skills add herdrdev/herdr --skill herdr -g");
   return steps;
 }
@@ -233,7 +233,7 @@ export function render(r) {
   const { notes, problems = [] } = r.config;
   const seen = r.update_seen_hours_ago == null ? "" : `, seen ${r.update_seen_hours_ago} h ago`;
   line(!r.update_available, `${r.runtime}${r.update_available ? ` · ${r.update_available} is available${seen}: run \`routr update\`` : ""}`);
-  line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: orchestration needs it (https://herdr.dev). Sizing subagents works without it"}`);
+  line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: workers in herdr panes and Cursor's usage need it (https://herdr.dev). Without it, workers run headless"}`);
   if (r.herdr.path) line(r.herdr.skill, `herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
   const base = baseVersion(ROUTR_VERSION);
   // One line per skill and version: the folders routr's copies are in, and whether they match this routr; then any copy

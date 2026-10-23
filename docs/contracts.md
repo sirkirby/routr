@@ -22,7 +22,8 @@ same five things in the same fields, first in the object:
 | `next` | list | yes | What comes next: `{ kind: "run", why, argv, command, stdout_to? }` or `{ kind: "do", why, template? }`, as today. Every step routr asks the lead to take in this run, because of this answer, is a `next` entry. Other fields explain; where they name a remedy, it is what fixes the entry they sit in, not a request to act now (see "Explanation or instruction", below). |
 | `error` | string | only on an error | Present exactly when the command stopped on an error: it refused its input (a required input missing or unusable), or something failed that the command does not report as one of its outcomes. `ok` is then false. An `ok: false` without `error` is an outcome routr reached on purpose (a worker that needs input, a refused removal, a report it could not read), described by `headline` and the command's own fields. |
 
-Acting commands (`launch`, `cleanup`) also return `state`, one word for the outcome, from a fixed list per command.
+`launch`, `cleanup`, `wait`, `send` and `stop` also return `state`, one word for the outcome, from a fixed list per
+command.
 
 Names that mean one thing everywhere:
 
@@ -37,7 +38,9 @@ Names that mean one thing everywhere:
   sent. The only place a pane's text reaches output.
 - `subscription`: a subscription's name, wherever one is named (`unavailable` entries, ranked and excluded rows, a
   named usage reading).
-- `ran` and `would_run`: display lines of the herdr and git commands a command ran, or in a dry run would run. Display
+- `ran` and `would_run`: display lines of the herdr and git commands a command ran, and the harness command a headless
+  launch prepared (shown once the worker's folder is known, even when a later step stopped the start), or in a dry run
+  would run. Display
   only (prompt text replaced by its length); never something to execute. Runnable lines are only ever in `next`.
 
 `unavailable` parts and their extra fields:
@@ -116,6 +119,11 @@ free text: `screen`, what a pane showed, and only before the task was sent (afte
 `screen` is the fixed withheld sentence, as today). Everything else a herdr or git call returns is classified where
 routr starts the process: what leaves that point is routr's own words, and the structured herdr values below, each
 checked against a fixed shape.
+
+A headless worker's harness stream is read only by its holder. What reaches output from it is routr's own reading of it: a session id
+(checked against the harness's id shape, else null), a tool name from a fixed list (else `mcp` or `other`) as
+`last_tool`, turn numbers and their outcomes, the time since the last event, a count of background commands (`tasks`),
+and report paths. No free text: the report text stays in its file, and the harness's stderr is not read.
 
 Structured herdr values. Launch reports herdr's reading of an agent (`needs_input.herdr`) and builds `needs_input.why`
 from it; today it copies herdr's values as they come and interpolates them. Each is checked at the boundary, before any
@@ -204,8 +212,8 @@ command; a second field of standing instructions competes with it, and as a fixe
 reads as boilerplate. The incident it guards against (seen 2026-10-14: an orchestrator read `worth a worker` as leave
 to spawn its own subagents) is answered as well by a `next` step in the same answer, so the text stays in the output.
 `subagent`'s steps: choose the subagent's model and effort yourself, never stronger than yourself and not your own by
-default, and report `ROUTR: <advised> → <chosen> because <reason>` when the level differs; an orchestrator in herdr
-never runs `subagent` or spawns its own subagents. `dispatch`'s steps: settle the level (refresh with
+default, and report `ROUTR: <advised> → <chosen> because <reason>` when the level differs; an orchestrator, in herdr or
+not, never runs `subagent` or spawns its own subagents. `dispatch`'s steps: settle the level (refresh with
 `routr usage --level <chosen>` if it changed, keeping this advice); choose model, effort and an eligible account,
 quality first; launch with this saved advice on the exact task (a template), telling the user what was unavailable
 when `unavailable` is not empty; record from launch's template.
@@ -237,7 +245,8 @@ moves to `subscriptions.note`, the same place as in `dispatch`.
 **A reader that stopped working.** When a subscription's last reading is over a day old and its last try failed,
 `dispatch` and `usage` add a `warnings` line saying so (its age and the failure's code, and that routing assumes its
 headroom: a harness or herdr update may have changed what routr reads) and a `next` step to try `routr usage <name>`
-again; `doctor` lists it as a step. How to read it by hand stays in `next` too. A metered seat (by its harness, or the
+again; in `doctor --json` each signed-in harness so affected carries `usage_stale` (that warning and the command
+to try again), and one that is configured and on adds it to `next_steps`. How to read it by hand stays in `next` too. A metered seat (by its harness, or the
 user's `billing`) is ranked as unknown capacity, not assumed, and gets no such line; nor does a reader that never read
 anything (already `assumed` in `unavailable`). A fresh `usage <name>` read that works clears it; one that fails again
 keeps it.
@@ -296,7 +305,8 @@ Further decisions this map makes, each for the reason given:
 ## subagent and dispatch
 
 A reading of a brief. `subagent` sizes a subagent a worker (or an agent outside herdr) is about to spawn; `dispatch`
-does the same for a pane worker and adds the subscriptions ranked by usage. The saved `dispatch` answer is the advice
+does the same for a worker `launch` starts (in a pane, or headless outside herdr) and adds the subscriptions ranked by
+usage. The saved `dispatch` answer is the advice
 file `launch --advice` and `record --advice` take.
 
 Inputs:
@@ -318,7 +328,8 @@ Inputs:
 `headline`: today's (the worker suggestion, level, kind of work, facts that bear on difficulty, `HIGH RISK`, `FIX THE
 BRIEF FIRST`, followed by the answering model and provider; or `no reading` and the fallback level). On a refusal: `routr: no advice: <error>`.
 
-Shared fields: all six. `warnings` holds config and input warnings. `next` holds `rule`'s steps and, in their
+Shared fields: all six. `warnings` holds config and input warnings, and (`dispatch`) a reader that stopped working
+("A reader that stopped working", above), with its `routr usage <name>` step in `next`. `next` holds `rule`'s steps and, in their
 situations, the steps moved out of `notes` and `subscriptions.note` ("Explanation or instruction").
 
 Own fields:
@@ -366,7 +377,8 @@ decision-model failure, `provider`.
 
 ## launch
 
-Starts a worker in a pane (a new worktree, a split, or a given pane) and sends it its task.
+Starts a worker in a herdr pane (a new worktree, a split, or a given pane), or outside herdr a headless worker
+(below), and sends it its task.
 
 Inputs:
 
@@ -393,7 +405,7 @@ sent`; `routr: <name> needs input in pane <pane>: <why>`; `routr: launch failed:
 launch, nothing ran` (adding `; a real launch would refuse: <error>`).
 
 Shared fields: all six. `unavailable`: the saved advice's `decision model` entries, a `model list` entry. `warnings`:
-harness notes (an effort the harness remembers), a skipped `--copy`, a pane or private config left behind, a prompt
+config warnings (a setting it could not use), harness notes (an effort the harness remembers), a skipped `--copy`, a pane or private config left behind, a prompt
 that may have been submitted, a rename that failed, each as a fact. `next`: as today (continue after input, record
 template with an explicit `--effort`, cleanup), plus the steps those facts call for. A startup question uses its
 answer-then-continue steps without a competing inspect-before-retry step. The startup instruction is the guide's
@@ -420,14 +432,16 @@ plans the pane launch as before: it does not check the environment.
   wrapping) with its matching `--advice`. Refused (with `error`, `state: "failed"`), before a run folder is written or a
   holder or worker started: `--pane` or `--direction`; no task; a task too large; a lead's sandbox it can
   see (`SANDBOX_RUNTIME`, `CODEX_SANDBOX`); a name whose run folder exists; a home whose socket path would be too long;
-  with `--worktree`, a `--cwd` git finds no repository at, a branch that exists, or a worktree folder that exists; the
-  subscription turned off; the harness not signed in; for Kiro, a `--model` its own list (`kiro-cli chat --list-models`)
-  does not have (read only once it is on and signed in); for Cursor, no `~/.cursor/cli-config.json` to copy ("Cursor has no
-  config at <path>: sign in with `cursor-agent` first").
+  with `--worktree`, a `--cwd` git finds no repository at, a branch that exists, a worktree folder that exists, or a
+  `--base` that is not a commit git finds; the subscription turned off; the harness not signed in; for Kiro, a
+  `--model` its own list (`kiro-cli chat --list-models`) does not have (read only once it is on and signed in). For
+  Cursor, no `~/.cursor/cli-config.json` to copy ("Cursor has no config at <path>: sign in with `cursor-agent` first")
+  is a failure with `error` found after the run folder (and any worktree) was made: launch removes them again, as for
+  any start that could not begin.
 - `--worktree <branch>` (with `--base`, `--copy`): launch makes the worktree with git under
   `~/.local/share/routr/worktrees`, on that new branch, and the worker runs there; `worktree` is `{ branch, base?, path,
-  workspace: null }`, `cwd` its path, and `steps` add `worktree` and `copy`. git refusing to make it (a `--base` it
-  cannot find) is a failure with `error`. When no holder could have started, launch removes the copies, the worktree
+  workspace: null }`, `cwd` its path, and `steps` add `worktree` and `copy`. git refusing `worktree add` is a failure
+  with `error`. When no holder could have started, launch removes the copies, the worktree
   (through cleanup's checks) and its branch while that still points at the commit it started on, as it does the run
   folder; what it cannot remove is a warning. When git did not make the worktree, a branch of that name is left and a
   warning says so (it may be another command's). When it keeps the run folder (the holder is starting or does not answer),
@@ -445,9 +459,11 @@ plans the pane launch as before: it does not check the environment.
 - `headline`: `routr: <name> (<kind>) took its task, running headless`, or the failure as for a pane launch.
 - Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "headless", run, session }` (`run`:
   the run folder; `session`: the harness's session id (Codex: its thread id; Antigravity: its conversation id; Kiro: its ACP session id), or null).
-  `start.argv` is the harness's headless command line (Codex: `app-server` only; its model and effort go in the
-  protocol; Antigravity: with the worker's folder in `--add-dir`; Kiro: `acp` with the pane's flags; Cursor: `-p --output-format stream-json` with the pane's flags, and `--resume <session>` on each later turn); it is set once the worker's folder is known: a launch
-  refused before that shows the pane command planned first, not the headless one. `ran` displays it. `steps`: `reserve`, `holder`, `prompt` (Kiro: `model` first, when its list was read). When no holder could have started, launch removes the run folder
+  `start.argv` is the harness's headless command line (Codex: `app-server` with its update check at startup off; its
+  model and effort go in the protocol; Antigravity: with the worker's folder in `--add-dir`; Kiro: `acp` with the pane's flags; Cursor: `-p --output-format stream-json` with the pane's flags, and `--resume <session>` on each later turn); it is set once the worker's folder is known: a launch
+  refused before that shows the pane command planned first, not the headless one. `ran` displays it. `start.env` is
+  `{}`: a headless Cursor runs with `CURSOR_CONFIG_DIR` set to its run folder's private config copy, which is not
+  shown there. `steps`: `reserve`, `holder`, `prompt` (Kiro: `model` first, when its list was read). When no holder could have started, launch removes the run folder
   it made and `worker` is null; when the holder is starting or does not answer, it keeps the folder and `worker`, and
   `next` says to look at it with `routr workers --name <name>` before retrying.
 - `next`: `routr wait --name <name>` (run), the record template, and `routr cleanup --worker <name>` (run). A failure
@@ -457,8 +473,8 @@ plans the pane launch as before: it does not check the environment.
 ## record
 
 Appends one row to the ledger: the advice, what the lead chose, and how it went. The only command that appends to the
-ledger. (Others keep caches of routr's own: named `usage cursor` and `usage kiro` write their usage snapshots, and any
-command that checks a harness's sign-in keeps that answer.)
+ledger. (Others write only in routr's own folders: usage snapshots and the marks of a background refresh, the
+sign-in answers a harness check keeps, and headless workers' run folders.)
 
 Inputs:
 
@@ -490,8 +506,8 @@ field). The new `ok` field is not required, so advice saved by an older routr is
 
 `headline`: `routr: recorded run <run_id> (advice <id>) in <ledger>`, or `routr: nothing recorded: <error>`.
 
-Shared fields: all six; `unavailable` is always `[]` (a file record cannot read refuses the call). `warnings`: the
-advice was not checked against a task. `next`:
+Shared fields: all six; `unavailable` is always `[]` (a file record cannot read refuses the call). `warnings`: config
+and input warnings, and that the advice was not checked against a task. `next`:
 
 - Only `done` with `check pass`: integrate the verified result, then follow launch's cleanup step when the worker
   is finished. Every other outcome: send the work back or escalate, then verify and revise the row; no cleanup yet.
@@ -527,9 +543,11 @@ Inputs:
   `worktree` and `branch` are then as for `--path`. It refuses too when the worktree at that path is on another
   branch than the one launch made (it is someone else's), when it is not the folder launch made (removed and made
   again there), or when git lists no worktree there but a folder is. `headline` `routr: removed worker <name>`,
-  `routr: kept <name>: <why>`, `routr: would remove <folder>[ and <worktree path>]`; a worktree it could not check is refused
-  ("its worktree could not be checked"). `warnings` says what it cannot see: a command the worker started that left
-  the harness's process group or detached itself (on Windows, anything once the harness has ended); for a Cursor
+  `routr: kept <name>: <why>`, `routr: would remove <folder>[ and <worktree path>]`, `routr: nothing to remove: no
+  worker <name>`; a worktree it could not check is refused ("its worktree could not be checked"), and so is a run
+  folder that is not one routr's launch wrote. For a worker launch gave a worktree, `warnings` says what it cannot
+  see: a command the worker started that left the harness's process group or detached itself (on Windows, anything
+  once the harness has ended); for a Cursor
   worker (a dry run too), that Cursor's own worker-server for its folder may still be running, which routr leaves. For a worker launched
   without a worktree it removes only the run folder and its reports, inspects no repository, and warns that the
   worker's changes in its folder are the lead's to check. Own field: `name`.
@@ -555,15 +573,15 @@ Modes and `state`:
 | `refused` | false, no `error`, including a partial run: files copied in at launch were removed, then a later check refused the worktree (its `steps` show both) |
 | `failed` | false, with `error` |
 
-`headline`: `routr: removed <path>`; `routr: closed <pane>`; `routr: nothing to remove: no worktree <name>`; `routr:
-would remove <path>` (dry run); `routr: N worktrees, M can be removed now`; `routr: kept <path or pane>: <why>`;
+`headline`: `routr: removed <path>`; `routr: closed <pane>`; `routr: nothing to remove: no worktree <name>` (or `no
+pane <pane>`); `routr: would remove <path>` or `routr: would close <pane>` (dry run); `routr: N worktrees, M can be removed now`; `routr: kept <path or pane>: <why>`;
 `routr: cleanup failed: <error>`.
 
 Shared fields: all six. `unavailable`: a `pane` or `worktree` entry when a refusal comes from a read cleanup could not
 make. `warnings`: a branch git kept, the repository's other worktrees when the named one is absent. `next`: what to
 do about a refusal, the command that removes a worktree instead of closing its only pane, the list's removal template.
 A refusal's reason, and so the headline, is routr's own sentence: "git refused `worktree remove` for <path>",
-"git kept branch <name>: it deletes only a merged branch", "<pane> is running 2 commands besides its shell", never
+"<pane> is running 2 commands besides its shell", never
 git's or herdr's text or a process's name ("Text from outside routr").
 
 Own fields: `state`, `steps`, `ran`; `cwd` (worktree modes); `pane` (pane mode); `worktrees` (list: each `{ branch,
@@ -589,11 +607,12 @@ headless worker to wait on`.
 
 Own fields: `state`, `workers` (each as `workers` prints it, plus `gen`, the holder generation, and `turns` holding
 only the turns reported now: `{ turn, outcome, report, delivered }`; `outcome` is `finished`, `failed`, `no_finish`
-(the process ended without finishing the turn), `not_started`, `stopped` or `running`; `report` is a path or null;
+(the process ended without finishing the turn), `not_started` or `stopped` (a turn still running is not reported);
+`report` is a path or null;
 `delivered` counts messages that went into that turn: for Cursor, Antigravity and Kiro, and Codex once a turn has ended, the turn the message started, not the one running when it was sent). A report is the worker's final message of that turn (Codex: its final answer; Cursor: its last assistant message; Antigravity: its `result`'s response; Kiro: the text after its last tool call), cut at 1 MB; a
 turn can end without one. `next`: for each new report a `do` step with the `routr check` template on its path, and
 for a turn without one a `do` step to look at the worker's work yourself; a step for a worker that is `lost` or has a
-process group left; a note when background commands may start another turn; `routr wait` again (run) for the
+process group left; a step saying background commands may start another turn; `routr wait` again (run) for the
 workers still running. Inside a sandbox it can see, `warnings` says the sandbox may hide a worker's channel.
 
 ## send
@@ -655,8 +674,9 @@ Stops a headless worker through its own process. Inputs: required: `--name`.
 within six seconds, or something of its group other than that helper still there two seconds after it went, a stop
 between two of its processes included), `absent` (not running), `lost` (its process is gone, or a group it recorded still has members),
 `unreachable`, `unknown`, `failed` (refused). `ok`: true for `stopped` and `absent`. For `lost` and `unreachable`,
-`warnings` says routr never stops a process by a saved id and `next` says what to look at. Own fields: `state`,
-`name`. Messages the holder still keeps (`queued`, Kiro's held ones included) are dropped by a stop, and `warnings` says
+`warnings` says routr never stops a process by a saved id and `next` says what to look at; for `still_exiting` and
+`unknown`, `next` adds `routr workers --name <name>` to look again in a moment. Inside a sandbox it can see,
+`warnings` says so, as for `wait`. Own fields: `state`, `name`. Messages the holder still keeps (`queued`, Kiro's held ones included) are dropped by a stop, and `warnings` says
 how many. `next`: `routr cleanup --worker <name>` (run).
 
 ## usage
@@ -691,7 +711,8 @@ subscription that takes <level> work is at its reserve`, adding `; N readings un
 each actual exclusion (turned off, not configured, or not signed in) and its remedy; a fresh reading can succeed while
 the subscription remains unranked. The headline includes that fact.
 
-Shared fields: all six. `warnings`: config and input warnings; Kiro's leftover usage session; a named `cursor` or
+Shared fields: all six. `warnings`: config and input warnings; a reader that stopped working ("A reader that stopped
+working", above); Kiro's leftover usage session; a named `cursor` or
 `kiro` that is not configured, so not ranked (also named in `subscriptions.excluded`). `next`, each step only in its situation ("Explanation or instruction"),
 for plain usage, `--level` and a named subscription alike:
 
@@ -703,6 +724,8 @@ for plain usage, `--level` and a named subscription alike:
 - a reading failed, live or cached (a `usage` entry in `unavailable`), for a harness with a by-hand way: read it by hand
   and pass `--headroom <name>=<share left>` (named `cursor` and `kiro` too);
 - the ranking failed (routr's `internal_error` entry): read capacity yourself before choosing an account;
+- a reader that stopped working: try it again with `routr usage <name>` (run);
+- named `kiro`, when Kiro kept an empty usage session: remove it from Kiro's saved sessions;
 - with `--level`, when there are candidates: choose from `subscriptions.candidates`, normal before fallback, and keep the
   original dispatch advice for launch and record.
 
