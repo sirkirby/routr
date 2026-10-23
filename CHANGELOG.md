@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.8.0 — 2026-10-22
+
+[Full notes](docs/releases/v0.8.0.md)
+
 - Outside herdr, `routr launch --kind cursor` starts a headless Cursor worker, one process a turn on your sign-in: a
   correction sent mid-turn waits and runs as its next turn on the same session, and Cursor's own worker-server, which
   outlives each turn, does not block the next turn or `cleanup --worker`, which leaves it running and says so (run
@@ -27,7 +31,7 @@ A short history of what changed in each routr release, one line per change. Each
   (#93)
 - Outside herdr, `routr launch --kind claude` starts a headless Claude Code worker on your sign-in, and `routr wait`,
   `routr send` (a correction mid-turn, or a follow-up that resumes its session), `routr workers` and `routr stop`
-  follow it; `routr cleanup --worker` removes it. Other harnesses still need herdr. (#92)
+  follow it; `routr cleanup --worker` removes it. (#92)
 - The routr binary no longer loads a `.env` or `bunfig.toml` from the folder you run it in. In a project whose `.env`
   set `ANTHROPIC_API_KEY`, routr's own Claude Code reads (sign-in status, usage) used that key instead of your
   subscription, so Claude Code could read as billed per token; a decision-model key or `ROUTR_*` variable in that
