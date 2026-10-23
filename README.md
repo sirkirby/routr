@@ -204,7 +204,7 @@ goes stale when models change.
 
 Usage is read live for Claude Code (from its own `/usage`, with your hooks and MCP servers off for that read; it
 costs no tokens), Codex, and Antigravity. routr does not need Claude's statusline; if you run `routr statusline` there
-anyway, a snapshot under 5 minutes old is used instead of starting Claude. Cursor's and Kiro's are read in the background about once per working session, since they take seconds. A seat with no quota reports no windows: measured on a
+anyway, a snapshot under 5 minutes old is used instead of starting Claude. Cursor's and Kiro's are read in the background about once per working session, and at once after an update when the last try got no reading, since they take seconds. A seat with no quota reports no windows: measured on a
 ChatGPT Enterprise seat, which routr detects and calls `metered`, and on Claude signed in with an API key, which
 routr reads from `claude auth status` and calls `metered` too. For any other Claude seat without windows the class
 is your `billing` setting, because Claude shows nothing to tell a seat with no quota from a plan routr has not seen

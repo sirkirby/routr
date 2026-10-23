@@ -486,23 +486,47 @@ test("Kiro is a snapshot like Cursor's, a monthly window that tapers the reserve
   expect(readKiro({ file, nowSec: T + 101 }).note).toContain("the last try failed: The usage source did not answer.");
 });
 
-test("a try another routr version made does not hold back the next reading: after an upgrade, the background reading starts at once", async () => {
+test("a try an older routr made that got no reading does not hold back the next one: after an upgrade, the background reading starts at once", async () => {
   // 2026-10-23: v0.7.0 failed every Cursor read (herdr 0.9.5); after the upgrade, routr usage kept that failure for
   // hours because the failed try was under 4 hours old.
-  const dir = scratch("upgrade"), T = 1_800_000_000, failed = { ts: T - 30 * 3600, tried: T - 600, reading: null, failure: { code: "read_failed" } };
-  for (const [name, by, starts] of [["none.json", undefined, true], ["old.json", "0.7.0", true], ["same.json", "0.8.1", false]]) {
-    const file = join(dir, name), started = [];
-    writeFileSync(file, JSON.stringify({ ...failed, ...(by ? { by } : {}) }));
-    readCursor({ file, nowSec: T, refresh: () => started.push(T), off: false, version: "0.8.1" });
-    expect([name, started.length]).toEqual([name, starts ? 1 : 0]);
-    // Marked as tried by this version: the next call within the hours does not start another.
-    readCursor({ file, nowSec: T + 60, refresh: () => started.push(T + 60), off: false, version: "0.8.1" });
-    expect([name, started.length, JSON.parse(readFileSync(file, "utf8")).by]).toEqual([name, starts ? 1 : 0, "0.8.1"]);
+  const T = 1_800_000_000, good = { included_used_pct: 20 };
+  for (const [name, read, refresh] of [["cursor", readCursor, refreshCursor], ["kiro", readKiro, refreshKiro]]) {
+    const dir = scratch(`upgrade-${name}`), failed = { ts: null, tried: T - 600, reading: null, failure: { code: "read_failed" } };
+    const starts = (file, version, at = T) => { const s = []; read({ file, nowSec: at, refresh: () => s.push(at), off: false, version }); return s.length; };
+    for (const [label, snap, n] of [
+      ["no version (0.8.0 and before)", failed, 1], ["an older version", { ...failed, by: "0.7.0" }, 1], ["a version it cannot read", { ...failed, by: "garbage" }, 1],
+      ["this version", { ...failed, by: "0.8.1" }, 0], ["a newer version", { ...failed, by: "0.9.0" }, 0],
+      ["an older version that got a reading", { ts: T - 600, tried: T - 600, by: "0.7.0", reading: good }, 0]]) {
+      const file = join(dir, `${label}.json`);
+      writeFileSync(file, JSON.stringify(snap));
+      expect([name, label, starts(file, "0.8.1")]).toEqual([name, label, n]);
+      // Once this version has tried, the 4-hour rule holds again.
+      expect([name, label, starts(file, "0.8.1", T + 60)]).toEqual([name, label, 0]);
+    }
+    // The background reading it starts fails too: that failure is this version's, so it holds back the next for 4 hours.
+    const file = join(dir, "fails-again.json");
+    writeFileSync(file, JSON.stringify(failed));
+    expect(starts(file, "0.8.1")).toBe(1);
+    await refresh({ file, nowSec: T + 5, version: "0.8.1", background: true, read: async () => ({ ok: false, ...usageFailure("read_failed") }) });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ by: "0.8.1", tried: T + 5, failure: { code: "read_failed" } });
+    expect(existsSync(`${file}.lock`)).toBe(false);
+    expect([starts(file, "0.8.1", T + 60), starts(file, "0.8.1", T + 5 + 4 * 3600 + 1)]).toEqual([0, 1]);
+    // A source checkout and an installed binary sharing the cache, both failing: the newer retries once, the older never.
+    const shared = join(dir, "shared.json");
+    writeFileSync(shared, JSON.stringify({ ...failed, by: "0.0.0-dev" }));
+    const seen = [];
+    for (let k = 0; k < 4; k++) {
+      const version = k % 2 ? "0.0.0-dev" : "0.8.1", at = T + k * 60;
+      const n = starts(shared, version, at);
+      seen.push(n);
+      if (n) await refresh({ file: shared, nowSec: at + 5, version, background: true, read: async () => ({ ok: false, ...usageFailure("read_failed") }) });
+    }
+    expect([name, seen]).toEqual([name, [1, 0, 0, 0]]);
+    // A reading taken now records the version that took it.
+    const taken = join(dir, "taken.json");
+    await refresh({ file: taken, nowSec: T, version: "0.8.1", read: async () => ({ ok: true, plan: "Team", included_used_pct: 20, auto_used_pct: 24, api_used_pct: 0, used_pct: 20, credits_used: 1, credits_total: 5 }) });
+    expect(JSON.parse(readFileSync(taken, "utf8"))).toMatchObject({ by: "0.8.1", tried: T });
   }
-  // A reading taken now records the version that took it.
-  const file = join(dir, "taken.json");
-  await refreshCursor({ file, nowSec: T, version: "0.8.1", read: async () => ({ ok: true, plan: "Team", included_used_pct: 20, auto_used_pct: 24, api_used_pct: 0 }) });
-  expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ by: "0.8.1", tried: T, reading: { included_used_pct: 20 } });
 });
 
 test("Cursor is a snapshot every call reads at once, refreshed in the background about once a session", async () => {

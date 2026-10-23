@@ -6,7 +6,7 @@ import { loadConfig } from "../src/lib/config.mjs";
 import { SCRATCH, scratch } from "./helpers.mjs";
 
 test("update picks the right release asset and compares versions like semver", async () => {
-  const { assetName, newer } = await import("../src/lib/update.mjs");
+  const { assetName } = await import("../src/lib/update.mjs"), { newer } = await import("../src/lib/version.mjs");
   expect(assetName("darwin", "arm64")).toBe("routr-darwin-arm64");
   expect(assetName("linux", "x64")).toBe("routr-linux-x64");
   expect(assetName("win32", "arm64")).toBe("routr-windows-x64.exe");
@@ -129,7 +129,7 @@ test("an update reports which skills were reinstalled, kept and failed, from the
 });
 
 test("versions compare by semver 2.0 precedence, pre-releases included", async () => {
-  const { compareVersions, newer } = await import("../src/lib/update.mjs");
+  const { compareVersions, newer } = await import("../src/lib/version.mjs");
   // Each is newer than the one before it.
   const order = ["0.4.9", "0.5.0-alpha.1", "0.5.0-alpha.beta", "0.5.0-beta", "0.5.0-beta.1", "0.5.0-beta.2", "0.5.0-beta.10", "0.5.0-beta.10.1", "0.5.0-rc.1", "0.5.0", "0.5.1-beta.1", "0.5.1", "0.10.0"];
   for (let i = 1; i < order.length; i++) {

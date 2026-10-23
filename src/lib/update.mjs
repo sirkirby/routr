@@ -8,7 +8,7 @@ import { basename, dirname, join } from "node:path";
 import { loadConfig } from "./config.mjs";
 import { CACHE_DIR, ensureParent, lockIsStale, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
 import { forgetConsentUnlessOn, hoursAgo, sendRows, telemetryStatus } from "./telemetry.mjs";
-import { ROUTR_VERSION } from "./version.mjs";
+import { newer, ROUTR_VERSION } from "./version.mjs";
 
 const REPO = "sirkirby/routr";
 // A compiled release binary has no script path of its own; a source checkout runs under Bun.
@@ -20,30 +20,6 @@ export function assetName(platform = process.platform, arch = process.arch) {
   return `routr-${os}-${arch === "arm64" ? "arm64" : "x64"}`;
 }
 
-// Semver 2.0 precedence, -1/0/1: the numeric core first; a release ranks above its own pre-releases; then the
-// pre-release identifiers one by one, numbers numerically and below words, words by ASCII order (alpha < beta < rc),
-// and a shorter set below a longer one that starts the same. Build metadata (+...) does not count. The first version
-// compared any two pre-releases as equal, so 0.5.0-beta.2 never replaced 0.5.0-beta.1.
-export function compareVersions(a, b) {
-  const parse = (v) => {
-    const s = String(v).trim().replace(/^v/, "").split("+")[0], i = s.indexOf("-"); // the first hyphen only: "rc-2" is one identifier
-    return { n: (i < 0 ? s : s.slice(0, i)).split(".").map((x) => (Number.isFinite(Number(x)) ? Number(x) : 0)), pre: i < 0 ? [] : s.slice(i + 1).split(".") };
-  };
-  const x = parse(a), y = parse(b);
-  for (let i = 0; i < 3; i++) if ((x.n[i] ?? 0) !== (y.n[i] ?? 0)) return (x.n[i] ?? 0) > (y.n[i] ?? 0) ? 1 : -1;
-  if (!x.pre.length || !y.pre.length) return x.pre.length === y.pre.length ? 0 : x.pre.length ? -1 : 1;
-  const num = (t) => /^\d+$/.test(t);
-  for (let i = 0; i < Math.min(x.pre.length, y.pre.length); i++) {
-    const p = x.pre[i], q = y.pre[i];
-    if (p === q) continue;
-    if (num(p) && num(q)) return Number(p) > Number(q) ? 1 : -1;
-    if (num(p) !== num(q)) return num(p) ? -1 : 1;
-    return p > q ? 1 : -1;
-  }
-  return Math.sign(x.pre.length - y.pre.length);
-}
-// True when a is newer than b.
-export const newer = (a, b) => compareVersions(a, b) > 0;
 
 // Which releases each update channel follows, by tag. Stable: releases only. Beta: also -beta.N and -rc.N, so a
 // beta user moves to a stable release as soon as it is the newest. Alpha is on no channel: a maintainer installs one

@@ -4,7 +4,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { olderThan, spawnSelf, takeLock, writeJsonAtomic } from "./runtime.mjs";
 import { summarize } from "./usage.mjs";
 import { usageFailure } from "./usage-failure.mjs";
-import { ROUTR_VERSION } from "./version.mjs";
+import { newer, ROUTR_VERSION } from "./version.mjs";
 
 const now = () => Date.now() / 1000;
 
@@ -15,9 +15,12 @@ const now = () => Date.now() / 1000;
 // session: when the last try is over 4 hours old, the call starts a detached `routr usage <name>` and does not wait.
 // Both are monthly pools and burn slowly, so a reading hours old routes the same (the maintainer's call, 2026-09-25).
 // `setup` and `doctor` read usage too, so a new install has its first reading before its first dispatch.
-// A try another routr version made does not count: a new routr may read what the old one could not (2026-10-23: v0.7.0
-// failed every Cursor read under herdr 0.9.5, and after the upgrade to 0.8.0, whose reader works, `routr usage` and
-// setup kept the failure for hours because a failed try was under 4 hours old). Each write says which version (`by`).
+// A try that got no reading does not count when an older routr made it (or one that did not say, 0.8.0 and before): a
+// newer routr may read what the old one could not (2026-10-23: v0.7.0 failed every Cursor read under herdr 0.9.5, and
+// after the upgrade to 0.8.0, whose reader works, `routr usage` and setup kept the failure for hours because the failed
+// try was under 4 hours old). Each write says which version (`by`). Only an older one's: a source checkout (0.0.0-dev)
+// and an installed binary sharing the cache would otherwise start a reading each time the other had tried (from the
+// review of 0298b56); this way the newer retries once and the older never does.
 const REFRESH_SEC = 4 * 3600;
 // A reading that has not been refreshed for a day is not used: refreshes are failing, and the plan may have reset
 // since (Cursor's screen shows no reset time). Past it, the subscription is assumed and the note says so.
@@ -66,7 +69,8 @@ export function readSnapshot({ name, source, windows, describe, keep, byHand, fi
       ...(failure ? { failure: usageFailure(failure.code) } : {}), ...(excluded ? { excluded: true } : {}) };
   }
   let started = false;
-  const triedHere = snap?.by === version && nowSec - (snap?.tried ?? 0) < REFRESH_SEC;
+  const olderFailed = snap && (snap.failure || snap.excluded || !snap.reading) && (snap.by == null || newer(version, snap.by));
+  const triedHere = !olderFailed && nowSec - (snap?.tried ?? 0) < REFRESH_SEC;
   if (background && !off && !triedHere && takeLock(lock, olderThan(LOCK_SEC * 1000, nowSec * 1000))) {
     // Marked before it starts, so the next call waits its turn; if the mark cannot be written, nothing is started.
     try { writeJsonAtomic(file, { ...snap, tried: nowSec, by: version }); started = refresh(); } catch {}

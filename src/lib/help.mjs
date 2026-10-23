@@ -29,7 +29,7 @@ export const COMMANDS = {
   },
   usage: {
     name: "usage",
-    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing of yours. Claude Code's is read from its own /usage (hooks and MCP servers off), or from `routr statusline`'s snapshot when one is under 5 minutes old. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session, and `routr usage kiro` runs Kiro's /usage now and deletes the empty session it leaves (routr otherwise does both in the background about once per working session)",
+    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing of yours. Claude Code's is read from its own /usage (hooks and MCP servers off), or from `routr statusline`'s snapshot when one is under 5 minutes old. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session, and `routr usage kiro` runs Kiro's /usage now and deletes the empty session it leaves (routr otherwise does both in the background about once per working session, and at once after an update when the last try got no reading)",
     args: [{ name: "[<subscription>]", description: "only this one; for cursor or kiro, read its /usage now (cursor needs herdr installed)", required: false }],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },

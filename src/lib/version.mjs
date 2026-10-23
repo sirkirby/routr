@@ -6,3 +6,28 @@ export const ROUTR_VERSION = typeof ROUTR_BUILD_VERSION === "string" ? ROUTR_BUI
 // The release a version belongs to: a pre-release (0.2.0-rc.1) and a source checkout (0.0.0-dev) carry a suffix that the
 // skill's version line does not.
 export const baseVersion = (v) => String(v ?? "").split("-")[0];
+
+// Semver 2.0 precedence, -1/0/1: the numeric core first; a release ranks above its own pre-releases; then the
+// pre-release identifiers one by one, numbers numerically and below words, words by ASCII order (alpha < beta < rc),
+// and a shorter set below a longer one that starts the same. Build metadata (+...) does not count. The first version
+// compared any two pre-releases as equal, so 0.5.0-beta.2 never replaced 0.5.0-beta.1.
+export function compareVersions(a, b) {
+  const parse = (v) => {
+    const s = String(v).trim().replace(/^v/, "").split("+")[0], i = s.indexOf("-"); // the first hyphen only: "rc-2" is one identifier
+    return { n: (i < 0 ? s : s.slice(0, i)).split(".").map((x) => (Number.isFinite(Number(x)) ? Number(x) : 0)), pre: i < 0 ? [] : s.slice(i + 1).split(".") };
+  };
+  const x = parse(a), y = parse(b);
+  for (let i = 0; i < 3; i++) if ((x.n[i] ?? 0) !== (y.n[i] ?? 0)) return (x.n[i] ?? 0) > (y.n[i] ?? 0) ? 1 : -1;
+  if (!x.pre.length || !y.pre.length) return x.pre.length === y.pre.length ? 0 : x.pre.length ? -1 : 1;
+  const num = (t) => /^\d+$/.test(t);
+  for (let i = 0; i < Math.min(x.pre.length, y.pre.length); i++) {
+    const p = x.pre[i], q = y.pre[i];
+    if (p === q) continue;
+    if (num(p) && num(q)) return Number(p) > Number(q) ? 1 : -1;
+    if (num(p) !== num(q)) return num(p) ? -1 : 1;
+    return p > q ? 1 : -1;
+  }
+  return Math.sign(x.pre.length - y.pre.length);
+}
+// True when a is newer than b.
+export const newer = (a, b) => compareVersions(a, b) > 0;
