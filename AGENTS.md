@@ -1,9 +1,9 @@
 # routr — project rules
 
 routr is a skill plus one standalone CLI that helps a lead coding agent hand work to workers on the user's own AI
-subscriptions (Claude Code, Codex, Cursor, Antigravity, Kiro), inside herdr panes. A System One model answers fixed,
-measured questions about a brief or a worker report; code adds live usage; the lead agent decides. Plain JavaScript
-(`.mjs`), developed with Bun, shipped as compiled binaries.
+subscriptions (Claude Code, Codex, Cursor, Antigravity, Kiro), in herdr panes or headless outside herdr. A System One
+model answers fixed, measured questions about a brief or a worker report; code adds live usage; the lead agent
+decides. Plain JavaScript (`.mjs`), developed with Bun, shipped as compiled binaries.
 
 ## Non-goals
 

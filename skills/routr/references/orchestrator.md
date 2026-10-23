@@ -225,8 +225,8 @@ result against the project's own standards, not just the brief.
   times out, or a worker has been working far longer than its task should take, read the last lines of its pane
   (`herdr agent read <pane> --lines 30`). A question there is yours to answer as you would a `blocked` one; the answer
   goes in with `herdr agent send-keys`, not a new prompt.
-- Get the worker's FULL report (Claude's headless `result` field is only its last message), save it, and take a
-  first read: `routr check --brief <file> --report <file>`. It flags, in a second or less (several on a local model) and the same way every time, a
+- Get the worker's FULL report and save it (in a pane, all of it, not just the tail on screen; outside herdr, the
+  turn's `report` file, below), and take a first read: `routr check --brief <file> --report <file>`. It flags, in a second or less (several on a local model) and the same way every time, a
   report that names no verification, skips part of the brief, admits gaps, reads as a symptom patch, or strays out
   of scope. It never accepts work.
 - Then run YOUR check: the diff exists and is in the right directory, the project's tests pass when you run them,

@@ -1,6 +1,6 @@
 ---
 name: routr
-description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity, Kiro) from one orchestrating agent in herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before a routr worker, or an agent outside herdr, spawns a subagent; or when asked to set up, configure, or check routr.
+description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity, Kiro) from one orchestrating agent, with workers in herdr panes or headless outside herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before a routr worker, or an agent outside herdr, spawns a subagent; or when asked to set up, configure, or check routr.
 metadata:
   version: "0.0.0-dev"
 ---
@@ -33,8 +33,8 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
 Then run `routr doctor`; if it reports no key or no config, read `references/setup.md`. Someone working on routr
 itself can run it from a checkout instead: `bun src/routr.mjs`.
 
-The advice commands write nothing and never fail: if no configured model answers, they still print advice, with a
-`no reading` headline and one entry per failed decision model in `unavailable`. Matching fallback advice is valid for
+The advice commands change nothing of the user's and never fail: if no configured model answers, they still print
+advice, with a `no reading` headline and one entry per failed decision model in `unavailable`. Matching fallback advice is valid for
 launch: read `unavailable`, tell the user in the launch line that the advice was a fallback and what was unavailable,
 and judge that part yourself.
 
@@ -49,8 +49,9 @@ and judge that part yourself.
   can start a session this way by typing `/routr-orchestrate <plan>` (`$routr-orchestrate` in Codex). Outside
   herdr, `routr launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless, followed with `routr wait` (the guide's "Outside herdr"
   section).
-  In herdr, never run `routr subagent` and never spawn your harness’s own subagents. Every piece you hand out,
-  research and reviews included, is a routr worker (a pane worker in herdr). Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
+  Never spawn your harness’s own subagents and never run `routr subagent` (it is the workers' command), in herdr or
+  not. Every piece you hand out, research and reviews included, is a routr worker (a pane worker in herdr, a headless
+  one outside it). Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
   branch or commit) and ends with `routr cleanup`, the command in its launch result’s `next`. Never close a worker's pane to
   finish it: that leaves its worktree behind.
 - The user wants routr **set up, configured, or checked**, or **a setting changed** (a model, an effort, a reserve,
@@ -82,7 +83,7 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
 - `worker`: whether the work is worth handing out at all: `do it yourself` (one or two small edits), `settle it with
   the user first` (the brief leaves them a decision), `split it across workers` (independent pieces), or `worth a
   worker`. A suggestion with its reason; you know what else is running. From `routr subagent`, a worker is a
-  subagent; from `routr dispatch`, a pane worker.
+  subagent; from `routr dispatch`, a worker you start with `routr launch`.
 - `facts`: yes / no / unclear readings of what the brief says, each with its probability: does it name where to
   work, is the approach left open, is the cause unknown, is the change cross-cutting, are concurrency or stored data
   involved, is it expensive to undo. In testing, 63 to 88% of these readings were decisive, and the same brief got

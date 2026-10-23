@@ -49,6 +49,10 @@ Workers AI Read, and account ID), and a local model is fetched with `ollama pull
 answering without a reading, but only with your fallback level. An earlier failure beside a later model's answer is
 ordinary advice; its headline names the model that answered.
 
+routr reads a provider key from `~/.config/routr/env` (what `routr key set` writes) or from your shell's environment,
+never from a project's `.env`: since 0.8.0 the binary does not load one. A key or `ROUTR_*` setting kept only in a
+project's `.env` is not seen.
+
 A Cloudflare token in your shell (`CLOUDFLARE_API_TOKEN`, as wrangler uses) wins over the one `routr key set` saved.
 If doctor says the key was refused, that token may lack the Workers AI permission: unset it for routr, or give it
 Workers AI Read.
@@ -88,11 +92,19 @@ the last try got no reading, and keeps the reading in
 row's `note` says why. Run `routr usage cursor` to read it now and see any error; if it cannot be read at all, pass
 `--headroom cursor=<share left>` yourself (0.9 or 90%) (the by-hand step in `next` says how to read the screen).
 
+## "<name>'s usage has not been read for N h"
+
+`routr dispatch` and `routr usage` warn this when a subscription's usage reader worked before, has not produced a
+reading for a day or more, and failed its last try; `routr doctor` lists it too. Routing then runs on the assumed
+headroom. The usual cause is an update of that harness or of herdr that changed what routr reads (herdr 0.9.5 did, for
+Cursor). Run the command in `next`, `routr usage <name>`: it reads now and its `unavailable` entry says why a reading
+fails. Until it reads again, pass `--headroom <name>=<share left>` yourself (0.9 or 90%).
+
 ## Kiro's usage is "assumed"
 
 Kiro's `/usage` command takes about 10 seconds, so routr runs it in the background about once per working session (and at once
 after an update when the last try got no reading), in
 the system temp folder, and keeps the reading in `~/.cache/routr/kiro-usage.json`. Each run leaves an empty saved
-session in Kiro, which routr deletes with `kiro-cli chat --delete-session`; if that fails, the reading's `note` gives
-the command. Until the first reading lands, or when reading fails, Kiro is `assumed` and the row's `note` says why.
+session in Kiro, which routr deletes with `kiro-cli chat --delete-session`; if that fails, `routr usage kiro` warns
+that Kiro kept an empty usage session: remove it from Kiro's saved sessions. Until the first reading lands, or when reading fails, Kiro is `assumed` and the row's `note` says why.
 Run `routr usage kiro` to read it now; if it cannot be read, pass `--headroom kiro=<share left>` yourself (0.9 or 90%).

@@ -54,7 +54,7 @@ review follow-ups. Run revisions are still separate telemetry rows. Local `run_i
 from both telemetry and share output, so these rows alone cannot reconcile revisions or classify rework.
 
 Each send also carries routr's version, your OS and CPU type (`darwin-arm64`), and a random install id created on
-your machine the first time you share or send feedback. The install id is not derived from anything about you or your
+your machine the first time rows are sent or you send feedback (`routr share` makes none). The install id is not derived from anything about you or your
 machine.
 
 Every field is built from an exact list of known values (harnesses, levels, verdicts, efforts, work types, fact
@@ -87,8 +87,8 @@ only what you typed, with routr's version, your OS, and your install id.
 
 Your install id is how the maintainers find your rows: `routr telemetry status` shows it. Run
 `routr feedback "please delete my telemetry"` from the same machine (the note carries the id) and they delete the rows
-by hand. If you uninstall routr or remove `~/.local/share/routr`, the id goes with it, so note it first if you may want
-your rows deleted later.
+by hand. If you run `routr uninstall --purge` or remove `~/.local/share/routr`, the id goes with it (a plain uninstall
+keeps it), so note it first if you may want your rows deleted later.
 
 ## For contributors
 

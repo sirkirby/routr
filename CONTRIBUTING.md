@@ -17,7 +17,7 @@ commit subject and, at the next tag, a line in the release notes: write it for a
 - **Standard mechanisms only**: skills, prompts, hooks. No dependence on a harness's private environment variables.
 - **The advice commands change nothing of yours and fail open.** What they may still do (foreground harness reads,
   routr's bookkeeping under `~/.cache/routr`, starting a detached job) is in [docs/guarantees.md](docs/guarantees.md).
-  Only `launch` and `cleanup` act on the user's panes and worktrees.
+  Only `launch`, `send`, `stop` and `cleanup` act on workers, the user's panes and worktrees.
 
 ## Changing a question
 
@@ -99,7 +99,9 @@ suggested settings, usage reader, skills folder, and `auth`: the status command 
 measured signed in and signed out, and never one that starts a sign-in), its row in `references/harnesses.md` (the
 launch table and the sign-in table), its status output both ways in the `STATUS` table of `test/usage.test.mjs`, and
 its name in `test/fixtures/seen-values.json`.
-Doctor, setup, launch, help, skill install and uninstall all build from the registry. When you try it in a throwaway
+Doctor, setup, launch, help, skill install and uninstall all build from the registry. To start it outside herdr it
+also needs an adapter for its own headless mode in `src/lib/headless.mjs` (measured against the harness first, as the
+others' were) and a fake for it in `test/workers.test.mjs`. When you try it in a throwaway
 home, empty `PATH` too: a harness that is not logged in there opens a browser to sign in.
 
 ## Testing an install
@@ -161,5 +163,5 @@ in the binary (`routr skill install`), so a guide change ships with the next rel
 
     bun test
 
-Tests cover the pure parts: reading answers into advice, ranking subscriptions, the ledger, help text, and the
-launch planner. Nothing in the test suite calls a model or a harness.
+Tests cover the pure parts: reading answers into advice, ranking subscriptions, the ledger, help text, the launch
+planner, and headless workers against fake harnesses. Nothing in the test suite calls a model or a real harness.

@@ -33,8 +33,8 @@ there is none, ask for it and stop.
   Research, exploration and reviews are handoffs too, read-only ones included. Do not skip routr for work that looks small: its `worker` field
   says when to do it yourself.
 - Never hand work to your harness's own subagents (Claude Code's Agent tool, Codex's or Cursor's subagents): they all
-  run on your subscription, out of the user's sight, with no ledger row. In herdr, never run `routr subagent`: it is for
-  workers sizing theirs; outside herdr, hand work out with `routr launch` all the same.
+  run on your subscription, out of the user's sight, with no ledger row. Never run `routr subagent`, in herdr or not:
+  it is for workers sizing theirs.
 - If the plan leaves a decision that is the user's, ask before launching (routr's `worker` field flags this too).
   Otherwise proceed.
 - Every worker starts with `routr launch --worktree <branch>` (`--base <ref>` to start it from another branch or

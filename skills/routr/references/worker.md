@@ -33,7 +33,9 @@ separate, smaller usage pool.
 
 ## Your report
 
-End with a report in this shape. The orchestrator reads it by machine, so keep the labelled lines exact.
+End with a report in this shape. The orchestrator reads it by machine, so keep the labelled lines exact. Make it your
+last message, after your last tool call: run headless, only that message is kept as your report, and a follow-up turn
+ends with a report of its own.
 
     VERDICT: done | partial | blocked
     SUMMARY: <what you did, two or three sentences>

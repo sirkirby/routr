@@ -6,7 +6,7 @@ export const DESCRIPTION = "routr: quick, calibrated advice for an agent that is
 export const COMMANDS = {
   subagent: {
     name: "subagent",
-    description: "a worker, or an agent outside herdr, is about to spawn a subagent → what the work demands (an orchestrator in herdr uses dispatch); unavailable names missing readings, with a no-reading headline on fallback",
+    description: "a worker, or an agent outside herdr, is about to spawn a subagent → what the work demands (an orchestrator, in herdr or not, uses dispatch); unavailable names missing readings, with a no-reading headline on fallback",
     args: [
       { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); unknown flag-led input without a stdin brief is refused; quote a multi-word inline brief containing flags", required: true },
     ],
@@ -17,7 +17,7 @@ export const COMMANDS = {
   },
   dispatch: {
     name: "dispatch",
-    description: "an orchestrator is about to launch a pane → work assessment plus eligible subscriptions and headroom; choose for quality, then compare capacity among suitable options; unavailable names failed decision-model and usage readings, with recovery actions; fresh usable readings stay available",
+    description: "an orchestrator is about to launch a worker → work assessment plus eligible subscriptions and headroom; choose for quality, then compare capacity among suitable options; unavailable names failed decision-model and usage readings, with recovery actions; fresh usable readings stay available",
     args: [
       { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); unknown flag-led input without a stdin brief is refused; quote a multi-word inline brief containing flags", required: true },
     ],

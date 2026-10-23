@@ -39,7 +39,7 @@ The first answering model in an ordered list reads each brief and report. Ask fo
 routr's tests (`docs/evidence.md`, "Decision models"):
 
 - **TypeSafe's Jev** (the default): reads the level most accurately on routr's tests (83 of 104 right). Needs a
-  TypeSafe API key; a call costs a small fraction of a cent. They create one at https://console.typesafe.ai/keys
+  TypeSafe API key. They create one at https://console.typesafe.ai/keys
   (TypeSafe's quick start shows the step: https://docs.typesafe.ai/introduction/quickstart).
 - **Cloudflare's Clef on Workers AI** (`cloudflare`): for someone who already has a Cloudflare account, or whose
   organisation does. 72 of 104 levels right, more often too high than too low. Needs a Cloudflare API token with
@@ -98,7 +98,8 @@ terminal.
 It writes `~/.config/routr/config.json` for the harnesses found, and nothing of Claude Code's (step 4). A subscription with no `--model` gets no default, and the orchestrator picks from the
 live list; one with no `--hardest` or `--reserve` gets the suggestion. An existing config is kept: setup adds
 harnesses found since, fills a missing `hardest_work` or `reserve`, and applies any flag given, leaving everything
-else alone; `--force` rewrites it (the old file is kept as `config.json.bak`). **To change a setting later**, run
+else alone. Every write keeps the old file as `config.json.bak`. `--force` rebuilds it from the suggestions, keeping
+telemetry, updates and channel, the decision models, which subscriptions are off, and account use and billing. **To change a setting later**, run
 setup with just that flag, for example `routr setup --yes --hardest cursor=strong`. A subscription that reads as
 metered when first written (billed per token, no quota: a ChatGPT Enterprise seat) gets `metered_rank` written out,
 `after` unless `--metered <name>=with` is passed. An explicit `use` takes precedence. Every value is
@@ -207,7 +208,8 @@ decision model's API itself, and the only thing the user supplies is the key (or
 
 ## 6. PATH
 
-`routr doctor` and the install script both say when `~/.local/bin` is not on the user's PATH. Offer to add it to their
+The install script says when `~/.local/bin` is not on the user's PATH (and `routr doctor` says when a harness's own
+command is installed but not on it). Offer to add it to their
 shell profile (or the user PATH on Windows), so that agents and herdr panes can run `routr` by name.
 
 ## 7. Telemetry

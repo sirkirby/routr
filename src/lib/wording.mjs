@@ -48,7 +48,7 @@ export const ADVICE_STEPS = {
   subagent: [
     "Choose the subagent model and effort from these facts and the codebase, never stronger than yourself and not your own model by default.",
     "When you settle on a different level, report ROUTR: <advised> → <chosen> because <reason>.",
-    "An orchestrator in herdr never runs routr subagent or spawns its own subagents; hand work out with routr dispatch and routr launch --advice.",
+    "An orchestrator, in herdr or not, never runs routr subagent or spawns its own subagents; hand work out with routr dispatch and routr launch --advice.",
   ],
   dispatch: [
     "Quality first: settle the level from the facts, uncertainty, user preferences and repository evidence. If it changes, refresh eligible accounts with routr usage --level <chosen>, keeping this original advice.",
