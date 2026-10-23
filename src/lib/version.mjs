@@ -6,6 +6,10 @@ export const ROUTR_VERSION = typeof ROUTR_BUILD_VERSION === "string" ? ROUTR_BUI
 // The release a version belongs to: a pre-release (0.2.0-rc.1) and a source checkout (0.0.0-dev) carry a suffix that the
 // skill's version line does not.
 export const baseVersion = (v) => String(v ?? "").split("-")[0];
+// A version as routr writes one: semver's three numbers (no leading zeros), with an optional pre-release (0.8.1,
+// 0.8.1-beta.2, 0.0.0-dev). Anything else read back from a file is no version: compareVersions orders any string.
+const N = String.raw`(?:0|[1-9]\d*)`;
+export const isVersion = (v) => typeof v === "string" && new RegExp(`^${N}\\.${N}\\.${N}(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`).test(v);
 
 // Semver 2.0 precedence, -1/0/1: the numeric core first; a release ranks above its own pre-releases; then the
 // pre-release identifiers one by one, numbers numerically and below words, words by ASCII order (alpha < beta < rc),
