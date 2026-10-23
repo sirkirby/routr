@@ -150,10 +150,21 @@ writes only:
 One exception: `uninstall` removes the `statusLine` entry an earlier routr's `setup` set in `~/.claude/settings.json`,
 after a backup, and only when it runs `routr statusline`.
 
-`uninstall` removes the binary, routr's own skills (above) and `~/.cache/routr`. It keeps `~/.config/routr` (config
-and keys) and `~/.local/share/routr` (the ledger, telemetry's install id, headless workers' worktrees) unless
-`--purge`, and does not remove `~/.local/state/routr` (headless workers' run folders and reports). Finish every
-headless worker with `routr cleanup --worker <name>` before you uninstall.
+`uninstall` removes the binary, routr's own skills (above), `~/.cache/routr` and `~/.local/state/routr` (sockets
+and locks). It keeps `~/.config/routr` (config and keys) and `~/.local/share/routr` (the ledger, telemetry's install
+id, and any worktree a headless launch made) unless `--purge`. It removes nothing, and says what to run, while a
+headless worker's run folder is still there (its reports, and while it runs, its holder, which is the routr binary):
+`routr cleanup --worker <name>` finishes each with its checks, and a run folder a launch did not finish writing is
+named by its path for you to look at. With `--purge` it also removes nothing while anything but empty folders is
+under `~/.local/share/routr/worktrees` (a worktree a headless launch made, in whatever layout), since removing that
+folder would delete it unchecked: `routr cleanup --cwd <path> --path <path>` finishes a worktree and keeps
+uncommitted work, or a plain uninstall keeps it. A folder it cannot read stops it too: unreadable is not empty. Both
+checks run again just before anything is removed, under a lock a headless launch looks at after it reserves its run
+folder, so a launch that starts meanwhile either backs out or is seen. routr's state folder, which holds that lock,
+is emptied last, the lock released only once the rest of it is gone; a worker launched after that keeps the folder,
+and so does the empty reservation of a launch that backed out after the sweep: uninstall says so instead of removing
+it. A lock an earlier uninstall left when it was stopped is never taken
+over: uninstall names the file to remove (launches treat it as free).
 
 ## Processes and platforms
 

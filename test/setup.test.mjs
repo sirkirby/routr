@@ -1,7 +1,7 @@
 // setup.mjs, doctor.mjs, uninstall.mjs: what the user sees when setting routr up and taking it down
 import { expect, test } from "bun:test";
 import { dirname, join } from "node:path";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { claudeSnapshot } from "../src/lib/usage.mjs";
 import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
@@ -474,6 +474,7 @@ test("routr uninstall keeps the user's data unless purged, removes only routr's 
   expect(existsSync(join(home, ".agents/skills/routr"))).toBe(false);
   expect(existsSync(join(home, ".kiro/skills/routr"))).toBe(false);
   expect(existsSync(join(home, ".cache/routr"))).toBe(false);
+  expect(existsSync(join(home, ".local/state/routr"))).toBe(false); // made for the uninstall lock, and removed with it
   expect(existsSync(join(home, ".config/routr/config.json"))).toBe(true);
   expect(existsSync(join(home, ".kiro/skills/routr-orchestrate")) || existsSync(join(home, ".agents/skills/routr-orchestrate"))).toBe(false);
   if (linked) expect(readFileSync(join(home, ".claude/skills/routr/SKILL.md"), "utf8")).toBe("mine"); // the developer's link and its target stay
@@ -483,6 +484,126 @@ test("routr uninstall keeps the user's data unless purged, removes only routr's 
   // Someone else's statusline is not ours to remove.
   writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ statusLine: { command: "~/mine.sh" } }));
   expect(uninstallPlan({ home }).statusline).toBe(false);
+});
+
+test("routr uninstall stops while a headless worker is here, and --purge while a worktree a headless launch made is: it never deletes them unchecked", async () => {
+  const { uninstallPlan, leftovers } = await import("../src/lib/uninstall.mjs");
+  const home = scratch("un-headless"), env = cliEnv(home);
+  for (const d of [".config/routr", ".cache/routr", ".local/state/routr/s", ".local/state/routr/workers/rev1"]) mkdirSync(join(home, d), { recursive: true });
+  writeFileSync(join(home, ".local/state/routr/workers/rev1/worker.json"), JSON.stringify({ format: 1, name: "rev1", kind: "claude", model: "m", cwd: home }));
+  writeFileSync(join(home, ".local/state/routr/workers/rev1.lock"), "");
+  const tree = join(home, ".local/share/routr/worktrees/repo-1a2b3c4d/fix-a");
+  mkdirSync(tree, { recursive: true }); writeFileSync(join(tree, "work.txt"), "uncommitted");
+  writeFileSync(join(home, ".local/share/routr/ledger.jsonl"), "");
+  const run = (...a) => Bun.spawnSync([process.execPath, SCRIPT, ...a], { env });
+  const json = (...a) => JSON.parse(run("uninstall", ...a, "--json").stdout.toString());
+  // A worker's run folder stops every mode, the dry run included, and nothing is removed.
+  expect(uninstallPlan({ home }).blocked).toContain("routr cleanup --worker <name>");
+  for (const a of [["--yes"], ["--yes", "--purge"], ["--dry-run"]]) {
+    const out = json(...a);
+    expect(out.ok).toBe(false); expect(out.error).toContain("rev1");
+  }
+  expect(existsSync(join(home, ".cache/routr"))).toBe(true);
+  // The command it names finishes the worker (once its lock is free: the fixture's has no pid, so it reads as held).
+  rmSync(join(home, ".local/state/routr/workers/rev1.lock"));
+  expect(run("cleanup", "--worker", "rev1").exitCode).toBe(0);
+  expect(existsSync(join(home, ".local/state/routr/workers/rev1"))).toBe(false);
+  // A run folder launch never finished writing is named by its path, to look at: cleanup --worker would refuse it.
+  mkdirSync(join(home, ".local/state/routr/workers/half"));
+  expect(json("--yes").error).toContain(join(home, ".local/state/routr/workers/half"));
+  rmSync(join(home, ".local/state/routr/workers/half"), { recursive: true });
+  // A folder it cannot read is not taken for an empty one.
+  if (process.platform !== "win32" && process.getuid?.() !== 0) {
+    chmodSync(join(home, ".local/state/routr/workers"), 0o000);
+    expect(leftovers(home).unreadable).toEqual([join(home, ".local/state/routr/workers")]);
+    expect(json("--yes").error).toContain("could not read");
+    chmodSync(join(home, ".local/state/routr/workers"), 0o700);
+  }
+  // With the worker finished, --purge still stops on the worktree, and names it with the cleanup that checks it.
+  const purged = json("--yes", "--purge");
+  expect(purged.ok).toBe(false); expect(purged.error).toContain(tree); expect(purged.error).toContain("routr cleanup --cwd <path> --path <path>");
+  expect(readFileSync(join(tree, "work.txt"), "utf8")).toBe("uncommitted");
+  // Another layout (a worktree straight under worktrees/) is reported too, never trusted; empty folders are not.
+  const flat = join(home, ".local/share/routr/worktrees/fix-b");
+  mkdirSync(flat); writeFileSync(join(flat, ".git"), "gitdir: elsewhere");
+  mkdirSync(join(home, ".local/share/routr/worktrees/repo-9/gone/empty"), { recursive: true });
+  expect(leftovers(home).worktrees).toEqual([flat, tree]);
+  rmSync(flat, { recursive: true });
+  // A plain uninstall keeps ~/.local/share/routr, the worktree in it, and says so; routr's own state goes.
+  expect(uninstallPlan({ home }).keep.find((x) => x.path === join(home, ".local/share/routr")).what).toContain("worktrees");
+  expect(run("uninstall", "--yes", "--json").exitCode).toBe(0);
+  expect(readFileSync(join(tree, "work.txt"), "utf8")).toBe("uncommitted");
+  expect(existsSync(join(home, ".local/state/routr"))).toBe(false);
+  expect(existsSync(join(home, ".cache/routr"))).toBe(false);
+  // Once the worktree is finished too, --purge removes the rest.
+  rmSync(tree, { recursive: true });
+  expect(run("uninstall", "--yes", "--purge").exitCode).toBe(0);
+  expect(existsSync(join(home, ".local/share/routr"))).toBe(false);
+}, 30000);
+
+test("a headless launch that reserves its run folder while uninstall holds its lock backs out, so neither misses the other", async () => {
+  const { OWNER, ownedBy, reserve, runDir } = await import("../src/lib/headless.mjs");
+  const { UNINSTALL_LOCK } = await import("../src/lib/runtime.mjs");
+  const { removeState } = await import("../src/lib/uninstall.mjs");
+  const home = scratch("un-lock"), saved = [process.env.HOME, process.env.USERPROFILE];
+  process.env.HOME = process.env.USERPROFILE = home;
+  const theirs = (n) => { mkdirSync(runDir(n)); writeFileSync(join(runDir(n), OWNER), "theirs"); writeFileSync(join(runDir(n), "worker.json"), "theirs"); };
+  try {
+    mkdirSync(join(home, ".local/state/routr"), { recursive: true });
+    writeFileSync(UNINSTALL_LOCK(), String(process.pid)); // held by a live process
+    expect(() => reserve("w1")).toThrow("being uninstalled"); // backs out, removing nothing: uninstall's sweep does
+    rmSync(runDir("w1"), { recursive: true });
+    writeFileSync(UNINSTALL_LOCK(), "999999999"); // its uninstall is gone: stale, and launches go on
+    const r = reserve("w1");
+    expect(r.dir).toBe(runDir("w1")); expect(ownedBy(r.dir, r.token)).toBe(true);
+    rmSync(runDir("w1"), { recursive: true });
+    // While uninstall clears its state folder, the lock is the last thing in it: a launch at that moment backs out, and
+    // the reservation it leaves keeps uninstall's folder, which says so; the lock is released only then.
+    writeFileSync(UNINSTALL_LOCK(), String(process.pid));
+    mkdirSync(join(home, ".local/state/routr/s"), { recursive: true });
+    let backedOut = false;
+    const cleared = removeState(home, UNINSTALL_LOCK(), { between: () => { try { reserve("w2"); } catch (e) { backedOut = /being uninstalled/.test(e.message); } } });
+    expect(backedOut).toBe(true);
+    expect(cleared.failed).toEqual([]); expect(cleared.notOurs.map((x) => x.path)).toEqual([join(home, ".local/state/routr")]);
+    expect(existsSync(UNINSTALL_LOCK())).toBe(false);
+    rmSync(join(home, ".local/state/routr"), { recursive: true });
+    // Uninstall removed this reservation's folder and another launch of that name made its own: before this one took
+    // ownership, after it while uninstall still held its lock (its backout touches nothing), or after it and the lock.
+    mkdirSync(join(home, ".local/state/routr"), { recursive: true });
+    writeFileSync(UNINSTALL_LOCK(), "999999999");
+    expect(() => reserve("w3", { beforeOwn: () => { rmSync(runDir("w3"), { recursive: true }); theirs("w3"); } })).toThrow(/EEXIST|exists/);
+    expect(readFileSync(join(runDir("w3"), "worker.json"), "utf8")).toBe("theirs");
+    writeFileSync(UNINSTALL_LOCK(), String(process.pid));
+    expect(() => reserve("w4", { beforeBackout: () => { rmSync(runDir("w4"), { recursive: true }); theirs("w4"); } })).toThrow("being uninstalled");
+    expect(readFileSync(join(runDir("w4"), "worker.json"), "utf8")).toBe("theirs");
+    expect(ownedBy(runDir("w4"), "theirs")).toBe(true);
+    writeFileSync(UNINSTALL_LOCK(), String(process.pid));
+    const late = () => { rmSync(runDir("w6"), { recursive: true }); theirs("w6"); rmSync(UNINSTALL_LOCK()); };
+    expect(() => reserve("w6", { beforeBackout: late })).toThrow("being uninstalled");
+    expect(ownedBy(runDir("w6"), "theirs")).toBe(true);
+    // Found no lock, it checks its token once more: a folder replaced before that is refused as taken.
+    const done = () => { rmSync(runDir("w7"), { recursive: true }); theirs("w7"); };
+    expect(() => reserve("w7", { beforeOwn: () => {}, afterOwn: done })).toThrow("a worker named w7 exists");
+    expect(readFileSync(join(runDir("w7"), "worker.json"), "utf8")).toBe("theirs");
+    // A folder removed before this reservation could own it is said plainly.
+    writeFileSync(UNINSTALL_LOCK(), "999999999");
+    expect(() => reserve("w5", { beforeOwn: () => rmSync(runDir("w5"), { recursive: true }) })).toThrow("removed while launch was making it");
+    // An uninstall lock left by one that is gone is not taken over: uninstall says which file to remove.
+    for (const n of ["w3", "w4", "w6", "w7"]) rmSync(runDir(n), { recursive: true });
+    const left = Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes", "--json"], { env: cliEnv(home) });
+    expect(JSON.parse(left.stdout.toString()).error).toContain("remove that file");
+    rmSync(UNINSTALL_LOCK());
+    // A linked state folder is unlinked, never walked: what it points at stays.
+    if (process.platform !== "win32") {
+      const elsewhere = join(home, "elsewhere"); mkdirSync(elsewhere); writeFileSync(join(elsewhere, "important.txt"), "keep");
+      rmSync(join(home, ".local/state/routr"), { recursive: true });
+      (await import("node:fs")).symlinkSync(elsewhere, join(home, ".local/state/routr"), "dir");
+      const linked = removeState(home, join(home, ".local/state/routr", "uninstalling"));
+      expect(linked.failed).toEqual([]);
+      expect(readFileSync(join(elsewhere, "important.txt"), "utf8")).toBe("keep");
+      expect(existsSync(join(home, ".local/state/routr"))).toBe(false);
+    }
+  } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
 });
 
 // ---- Findings from the independent review (2026-09-21) ----

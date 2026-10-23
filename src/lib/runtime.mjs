@@ -3,7 +3,7 @@
 // this on every Claude Code turn. It is the only module that imports node:child_process (a test holds every other file
 // in src/ to that), so every process routr starts gets the same platform defaults from `start` / `startSync`.
 import { spawn, spawnSync } from "node:child_process";
-import { accessSync, closeSync, constants, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
 
@@ -18,6 +18,14 @@ export const standalone = () => !/\.m?js$/.test(process.argv[1] ?? "");
 export const CACHE_DIR = () => join(home(), ".cache/routr");
 // Headless workers: each one's run folder, and the sockets of their channels (channel.mjs, headless.mjs).
 export const STATE_DIR = () => join(home(), ".local/state/routr");
+// Which folder this is, not where: a worktree removed and made again at the same path, even on the same branch, is
+// another folder (from the review of d4166f9). Device and file number, read whole (Windows' file IDs exceed 2^53).
+// Its birth time too, where the file system keeps one: Linux may give a removed folder's number to the next one made.
+// `link: true` reads the path itself, not what a link there points at.
+export const folderId = (path, { link = false } = {}) => { try { const st = (link ? lstatSync : statSync)(path, { bigint: true }); return st.isSymbolicLink() ? null : `${st.dev}:${st.ino}:${st.birthtimeNs}`; } catch { return null; } };
+// Held by `routr uninstall` from its last check through its removal (its pid inside); a headless launch that reserves
+// a run folder while it is held backs out (headless.mjs reserve), so neither misses the other.
+export const UNINSTALL_LOCK = (h = home()) => join(h, ".local/state/routr", "uninstalling");
 export const UPDATE_STAMP = () => join(CACHE_DIR(), "update-check");
 export const TELEMETRY_LOG = () => join(CACHE_DIR(), "telemetry.log");
 export const UPDATE_LOCK = () => join(CACHE_DIR(), "update.lock");

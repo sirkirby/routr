@@ -97,7 +97,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `key set [typesafe\|cloudflare]` | Store your decision model's key (TypeSafe's API key, or a Cloudflare API token and account ID): typed without echo, saved readable only by you, then tested. Ollama needs none. |
 | `update` | Update to the newest release on your update channel now (routr also does this by itself in the background, at most once a day). |
 | `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--enable`, `--disable`, `--channel`, `--decision`) and reads them first with `--show`. |
-| `uninstall` | Remove routr: the binary, its two skills, the cache, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, keys, and ledger; `--purge` removes those too. |
+| `uninstall` | Remove routr: the binary, its two skills, the cache and its own state, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, keys, and ledger; `--purge` removes those too. It removes nothing while a headless worker is still there (`cleanup --worker` finishes it), nor with `--purge` while a worktree a headless launch made is. |
 | `doctor` | Check the setup: harnesses found, live usage, every decision-list entry in order, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
 The advice commands change nothing of yours and never block an agent: with no network or no key they still answer
@@ -167,7 +167,8 @@ keeps your beta until a stable release passes it; `routr update --force` switche
     routr setup --channel stable
 
 To remove it, run `routr uninstall`. It shows what it will remove and asks first. Your config, key, and ledger stay
-for a later reinstall unless you choose otherwise (`--purge`).
+for a later reinstall unless you choose otherwise (`--purge`). Finish any headless worker first (`routr cleanup
+--worker <name>`): uninstall stops and says so while one is there.
 
 For pane workers you also need [herdr](https://herdr.dev) and its agent skill
 (`npx skills add herdrdev/herdr --skill herdr -g`); setup offers to install both, and `routr doctor` tells you when

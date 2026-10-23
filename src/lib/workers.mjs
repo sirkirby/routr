@@ -1,11 +1,11 @@
 // The commands for headless workers (headless.mjs): launch's start outside herdr, and `wait`, `send`, `workers`,
 // `stop` and `cleanup --worker`. Each talks to a worker's holder only through its channel (channel.mjs) and reads what
 // the holder wrote; none stops a process by a saved id. Answers carry report paths, never worker text.
-import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { connect, generations, MESSAGE_MAX, probe, removeEndpoint, socketPathFits, writeSecret } from "./channel.mjs";
-import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, readState, readWorker, reserve, runDir, WORKERS_DIR } from "./headless.mjs";
+import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, ownedBy, readState, readWorker, reserve, runDir, WORKERS_DIR } from "./headless.mjs";
 import { HARNESSES, notReady } from "./harnesses.mjs";
 import { loadConfig } from "./config.mjs";
 import { readTask } from "./advice-file.mjs";
@@ -14,7 +14,7 @@ import { answer } from "./output.mjs";
 import { CLOSING, count, OFF } from "./wording.mjs";
 import { callGit } from "./process-boundary.mjs";
 import { dropCopy } from "./cleanup.mjs";
-import { ensureParent, home, lockIsStale, probe as runProbe, realOr, realPath, spawnSelf, takeLock } from "./runtime.mjs";
+import { ensureParent, folderId, home, lockIsStale, probe as runProbe, realOr, realPath, spawnSelf, takeLock } from "./runtime.mjs";
 
 const NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const RUNNING = new Set(["working", "waiting", "starting"]);
@@ -112,10 +112,6 @@ async function planWorktree(o, cwd) {
   if (existsSync(path)) throw new Error(`${path} exists; remove it with routr cleanup --cwd ${source} --path ${path}, or choose another branch`);
   return { source, path, start: line(start.out) };
 }
-// Which folder this is, not where: a worktree removed and made again at the same path, even on the same branch, is
-// another folder (from the review of d4166f9). Device and file number, read whole (Windows' file IDs exceed 2^53).
-// Its birth time too, where the file system keeps one: Linux may give a removed folder's number to the next one made.
-const folderId = (path) => { try { const st = statSync(path, { bigint: true }); return `${st.dev}:${st.ino}:${st.birthtimeNs}`; } catch { return null; } };
 // A folder itself, reached through no link or junction on the way: its real path is the path.
 const realFolder = (p) => { try { return lstatSync(p).isDirectory() && realPath(p) === p; } catch { return false; } };
 // --copy: from the folder launch was given, to the same place in the worktree, never through a link (a folder in the
@@ -187,7 +183,8 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
   // folder is known (Antigravity's --add-dir names it).
   headlessArgv({ kind: o.kind, model: o.model, effort: o.effort, cwd: plannedTree?.path ?? out.cwd });
   let dir;
-  try { dir = reserve(o.name); }
+  let token;
+  try { ({ dir, token } = reserve(o.name)); }
   catch (e) {
     if (e?.code === "EEXIST") throw new Error(`a worker named ${o.name} exists; finish it with routr cleanup --worker ${o.name}, or choose another --name`);
     if (e?.code === "EPERM" || e?.code === "EACCES") throw new Error(SANDBOXED("a sandbox, or a folder routr cannot write"));
@@ -196,7 +193,8 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
   // What this launch wrote, and nothing started: removed again if launch stops before a holder answers. Everything
   // after the reservation is inside this, so a failure anywhere in it (git, a copy, a write) leaves nothing.
   let wt = null;
-  const unreserve = async () => { if (wt) await unmakeWorktree(wt, out); try { rmSync(dir, { recursive: true, force: true }); } catch {} out.worker = null; };
+  // Only while it is still this reservation's (its token): never a folder another launch of that name made since.
+  const unreserve = async () => { if (wt) await unmakeWorktree(wt, out); try { if (ownedBy(dir, token)) rmSync(dir, { recursive: true, force: true }); } catch {} out.worker = null; };
   try {
     if (plannedTree) {
       const { source, start } = plannedTree;
