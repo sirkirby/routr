@@ -200,15 +200,22 @@ stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one proces
   `mcp` and any other `other`.
 - **Cursor's config and its own helper.** Cursor runs with `--yolo --trust`, as in a pane, on a private copy of
   `~/.cursor/cli-config.json` in the run folder (owner-only on macOS and Linux; removed with it): Cursor rewrites the
-  copy, never your own. The first Cursor turn in a folder starts Cursor's own worker-server for that folder, with a
-  language server under it, in that turn's process group, and later turns reuse it (measured, cursor-agent
-  2026.10.22). routr tells it from the worker's own commands by its command line, read with the system's `ps`
-  (process ids, parents and command lines, used then and kept nowhere), as `references/harnesses.md` records it. It
-  does not count as the worker still running, so it does not block a resume or `cleanup --worker`; routr never signals
-  it once its turn has ended, and `cleanup --worker` leaves it and says so. It is what any Cursor CLI run in that
-  folder leaves: it ended on its own about five minutes after its last turn (seen twice; Cursor documents no idle
-  exit), and outlived its folder's removal. A `stop` during the turn that started it signals it with that turn's
-  group (what it does then: not measured).
+  copy, never your own (a config that is a link is copied as a file). Cursor still writes its runtime files
+  (`worker.log`, `worker.sock`) under `~/.cursor/projects/<folder>`, as any Cursor run does. The first Cursor turn
+  in a folder starts Cursor's own worker-server for that folder, with a language server under it, in that turn's
+  process group, and later turns reuse it (measured, cursor-agent 2026.10.22). For a Cursor worker only, routr reads
+  the system's process list with `ps` (every process's id, parent, group and command line; it looks only at the rows
+  of the worker's recorded group, and keeps and prints none of it) and tells the worker-server from the worker's own
+  commands by its exact command line, `<versions>/<v>/node <versions>/<v>/index.js worker-server`, in the install the
+  `cursor-agent` on your PATH resolves into, as `references/harnesses.md` records it; the language server under it
+  is told the same way. Those do not count as the worker still running, so they do not block a resume or `cleanup
+  --worker`; anything else under the worker-server does. An install laid out otherwise is not recognised, and when
+  `ps` does not answer in time or prints what routr cannot read, every member counts: either way the worker-server
+  then blocks a resume and `cleanup --worker` until it ends, as any other member would. routr never signals it once
+  its turn has ended, and `cleanup --worker` leaves it and says so. A direct `cursor-agent -p` run in that folder
+  leaves it too (seen once): it ended on its own about five minutes after its last turn once, and within two hours
+  another time (Cursor documents no idle exit), and it outlived its folder's removal. A `stop` during the turn that
+  started it signals it with that turn's group (what it does then: not measured).
 - **Kiro's permissions.** Kiro runs with `--trust-tools=*`, as in a pane, and routr tells it at `initialize` that it
   reads and writes no files and runs no terminal for it. A request Kiro makes of routr (a permission, for one) is
   declined with a JSON-RPC error. None came in the one measured protocol run, so what Kiro does after a decline is not
@@ -231,9 +238,9 @@ stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one proces
   up to six seconds for it. Claude ends its tool commands, which run in groups of their own, on SIGTERM; they can
   survive a SIGKILL of Claude, and routr cannot see those (measured). How Codex's, Cursor's, Antigravity's and Kiro's commands take SIGTERM and SIGKILL
   is not measured. Once the harness has gone, anything still in its group is not signalled again (its id may be
-  another group's by then); routr looks at the group again for up to two seconds, as something of a harness may still
-  be exiting just after it closes (measured with Cursor: under 100 ms). Anything left then, a harness's own helper
-  aside (above): stop says `still_exiting`, and the group stays recorded, so resuming and cleanup refuse
+  another group's by then). On stop, and before it resumes with a queued message, routr looks at the group again for
+  up to two seconds, as something of a harness may still be exiting just after it closes (measured with Cursor: under
+  100 ms). Anything left then, a harness's own helper aside (above): stop says `still_exiting`, and the group stays recorded, so resuming and cleanup refuse
   until it is empty. On Windows it runs `taskkill /T /F` on the harness, or ends the harness alone if that fails. A
   command that detaches itself is not seen. Limit: once a recorded group has emptied, an unrelated process group
   given the same id later blocks that worker's resume and cleanup until it ends.

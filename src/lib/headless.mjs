@@ -41,7 +41,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, privateDir, probe, removeEndpoint, serve } from "./channel.mjs";
 import { HARNESSES, plan } from "./harnesses.mjs";
-import { harnessEnv, start, startSync, STATE_DIR, stop, writeJsonAtomic } from "./runtime.mjs";
+import { harnessEnv, installedAt, run as collect, start, STATE_DIR, stop, writeJsonAtomic } from "./runtime.mjs";
 import { besidesHelper, groupMembers } from "./process-boundary.mjs";
 
 export const FORMAT = 1;
@@ -370,30 +370,42 @@ export const ADAPTERS = {
 export const HEADLESS_KINDS = Object.keys(ADAPTERS);
 export const headlessArgv = ({ kind = "claude", model, effort, session, cwd }) => ADAPTERS[kind].argv({ model, effort, session, cwd });
 
-// Whether anything of a `kind` harness still runs in a process group (POSIX). Windows: never known here (the holder's
-// job took the tree with it). A harness's own long-lived helper, and what it started, do not count: Cursor's
-// worker-server (measured 2026-10-22, cursor-agent 2026.10.22: one per project folder, started in the group of the turn
-// that first needs it, reused by later turns, still running minutes after them and after its folder was removed, as
-// after any Cursor CLI run). Its members are read with ps; when ps does not answer, every member counts.
-export const groupAlive = (pgid, kind, { members = listGroup } = {}) => {
+// Whether a process group still has members, every one counted (POSIX). Windows: never known here (the holder's job
+// took the tree with it).
+export const groupHasMembers = (pgid) => {
   if (!Number.isInteger(pgid) || pgid <= 1 || process.platform === "win32") return false;
-  try { process.kill(-pgid, 0); } catch (e) { if (e?.code !== "EPERM") return false; }
-  const helper = HARNESSES[kind]?.helper;
-  if (!helper) return true;
-  const m = members(pgid);
-  return !m || besidesHelper(m, helper.command).length > 0;
+  try { process.kill(-pgid, 0); return true; } catch (e) { return e?.code === "EPERM"; }
+};
+// Whether anything of a `kind` harness still runs in a process group: its members, read with the system's ps, less
+// the harness's own long-lived helper and the processes measured under it. Cursor's worker-server (measured 2026-10-22,
+// cursor-agent 2026.10.22: one per project folder, started in the group of the turn that first needs it, reused by later
+// turns, outliving them; references/harnesses.md, "Cursor headless") is told by its exact command line in the install
+// its own command resolves into, and only the language server under it is: anything else under it counts (from the
+// review of 62749a5: a path suffix, or every descendant, could hide the worker's own command). ps not answering in
+// time, output routr cannot read, no install found: every member counts.
+export const groupAlive = async (pgid, kind, { members = listGroup, installed = installedAt, timeoutMs = 5000 } = {}) => {
+  if (!groupHasMembers(pgid)) return false;
+  const helper = HARNESSES[kind]?.helper, exe = helper && installed(HARNESSES[kind].executable);
+  if (!exe) return true;
+  let timer;
+  const m = await Promise.race([members(pgid, timeoutMs), new Promise((r) => { timer = setTimeout(() => r(null), timeoutMs); })]);
+  clearTimeout(timer);
+  return !m?.length || besidesHelper(m, helper.command(exe), helper.children).length > 0;
 };
 // Whether nothing of it runs there any more, looked at again for up to `ms`: something of a harness may still be
 // exiting as it closes (measured 2026-10-22: a Cursor turn's group held a process in its exit, shown as "(node)", for
-// under 100 ms after cursor-agent closed, so every correction queued behind that turn ended not started).
-export const groupGone = async (pgid, kind, { ms = 2000, every = 100 } = {}) => {
-  for (const end = Date.now() + ms; groupAlive(pgid, kind);) { if (Date.now() >= end) return false; await new Promise((r) => setTimeout(r, every)); }
-  return true;
+// under 100 ms after cursor-agent closed, so every correction queued behind that turn ended not started). Each look is
+// bounded by what is left of `ms`, and none blocks the holder's answers.
+export const groupGone = async (pgid, kind, { ms = 2000, every = 100, ...o } = {}) => {
+  for (const end = Date.now() + ms; ;) {
+    if (!(await groupAlive(pgid, kind, { ...o, timeoutMs: Math.max(1, Math.min(1000, end - Date.now())) }))) return true;
+    if (Date.now() >= end) return false;
+    await new Promise((r) => setTimeout(r, every));
+  }
 };
 // The system's own ps, by its path where it has one (macOS and Linux both: /bin/ps), not whichever is first on PATH.
-const listGroup = (pgid) => {
-  try { const r = startSync(existsSync("/bin/ps") ? "/bin/ps" : "ps", ["-A", "-o", "pid=,ppid=,pgid=,command="], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "ignore"] }); return r.status === 0 ? groupMembers(r.stdout, pgid) : null; } catch { return null; }
-};
+const PS = existsSync("/bin/ps") ? "/bin/ps" : "ps";
+const listGroup = async (pgid, timeoutMs) => { const out = await collect(PS, ["-A", "-o", "pid=,ppid=,pgid=,command="], { timeoutMs }); return out == null ? null : groupMembers(out, pgid); };
 
 // The holder: `routr workers --hold <name>`, started detached by launch or send. Exits on its own; never prints.
 // `run` starts the harness (runtime's start); a test passes a fake.
@@ -405,7 +417,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const prior = readJson(join(dir, "state.json")) ?? {};
   // A harness an earlier generation started may still be working (its holder was killed, or a tool command outlived
   // it): never start a second Claude on its session while that group has members.
-  if (groupAlive(prior.harness_pgid, w.kind)) return;
+  if (await groupAlive(prior.harness_pgid, w.kind)) return;
   const n = p.gen + 1;
   if (!claim(dir, n)) return;
   if (p.state === "dead") removeEndpoint(w.id, p.ready?.endpoint);
@@ -452,7 +464,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const settle = () => {
     if (settled) return; settled = true;
     const last = turnRow();
-    const pg = groupAlive(st.harness_pgid, w.kind) ? st.harness_pgid : null;
+    const pg = groupHasMembers(st.harness_pgid) ? st.harness_pgid : null;
     save({ state: stopAsked ? "stopped" : last?.outcome === "finished" ? "idle" : st.turn ? "failed" : "no_task", harness_pid: null, harness_pgid: pg, holder_pid: null, queued: 0 });
     markReleased(dir, n, { harness_exited: true, ...(pg ? { group_left: pg } : {}) });
     try { server?.close(); } catch {}
@@ -566,7 +578,9 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
     stopAsked = true; queue.length = 0; save({ queued: 0 });
     return (stopping ??= (async () => {
       const c = child;
-      if (!c) { settle(); return { code: "stopped", dropped }; }
+      // No harness running: between its exit and what the holder does next, its group may still have members (from
+      // the review of 62749a5: reported stopped without a look).
+      if (!c) { const gone = await groupGone(st.harness_pgid, w.kind); settle(); return { code: gone ? "stopped" : "still_exiting", dropped }; }
       const closed = new Promise((r) => c.once("close", r));
       stop(c, { group: true });
       const gone = await Promise.race([closed.then(() => true), new Promise((r) => setTimeout(() => r(false), 6000))]);

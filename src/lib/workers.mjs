@@ -1,7 +1,7 @@
 // The commands for headless workers (headless.mjs): launch's start outside herdr, and `wait`, `send`, `workers`,
 // `stop` and `cleanup --worker`. Each talks to a worker's holder only through its channel (channel.mjs) and reads what
 // the holder wrote; none stops a process by a saved id. Answers carry report paths, never worker text.
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { connect, generations, MESSAGE_MAX, probe, removeEndpoint, socketPathFits, writeSecret } from "./channel.mjs";
@@ -87,7 +87,7 @@ export async function view(name, { check = true } = {}) {
   const reported = (st.turns ?? []).filter((t) => t.report).at(-1);
   return { name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, state, gen: st.gen ?? 0, turn: st.turn ?? 0,
     seconds_since_event: ago(st.last_event_at ?? st.updated_at), last_tool: st.last_tool ?? null, tasks: st.tasks ?? 0, queued: st.queued ?? 0,
-    session: st.session_id ?? null, report: reported?.report ?? null, ...(!RUNNING.has(state) && groupAlive(st.harness_pgid, w.kind) ? { harness_group: st.harness_pgid } : {}),
+    session: st.session_id ?? null, report: reported?.report ?? null, ...(!RUNNING.has(state) && await groupAlive(st.harness_pgid, w.kind) ? { harness_group: st.harness_pgid } : {}),
     turns: (st.turns ?? []).map((t) => ({ turn: t.turn, outcome: t.outcome ?? "running", report: t.report ?? null, delivered: t.delivered ?? 0 })) };
 }
 
@@ -231,7 +231,7 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
     if (o.kind === "cursor") {
       const conf = join(dir, "cursor-config");
       mkdirSync(conf, { mode: 0o700 });
-      try { cpSync(join(home(), ".cursor", "cli-config.json"), join(conf, "cli-config.json")); chmodSync(join(conf, "cli-config.json"), 0o600); }
+      try { copyFileSync(join(home(), ".cursor", "cli-config.json"), join(conf, "cli-config.json")); chmodSync(join(conf, "cli-config.json"), 0o600); }
       catch { throw new Error(`Cursor has no config at ${join(home(), ".cursor", "cli-config.json")}: sign in with \`cursor-agent\` first`); }
     }
   } catch (e) { await unreserve(); throw e; }
@@ -367,7 +367,7 @@ export async function sendCommand(args, { env = process.env, settings = () => lo
     if (p.state !== "alive" || (r?.code === "refused" && r.why === "ended")) {
       // A new holder: everything a launch checks before it starts one.
       if (["unreachable", "starting"].includes(p.state)) throw new Error(`${name}'s process does not answer; run routr workers, and wait or stop it before sending`);
-      if (groupAlive(readState(name)?.harness_pgid, w.kind)) throw new Error(`${name}'s harness may still be running (process group ${readState(name).harness_pgid}); stop what runs of it before sending`);
+      if (await groupAlive(readState(name)?.harness_pgid, w.kind)) throw new Error(`${name}'s harness may still be running (process group ${readState(name).harness_pgid}); stop what runs of it before sending`);
       const sandbox = sandboxOf(env);
       if (sandbox) throw new Error(SANDBOXED(sandbox));
       if (!readState(name)?.session_id) throw new Error(`${name} has no session to resume; launch the work again`);
@@ -419,7 +419,7 @@ export async function stopCommand(args, { env = process.env } = {}) {
     const w = readWorker(name);
     if (!w) throw new Error(`no headless worker named ${name}; routr workers lists them`);
     const p = await probe(runDir(name));
-    const pg = () => readState(name)?.harness_pgid, left = () => groupAlive(pg(), w.kind);
+    const pg = () => readState(name)?.harness_pgid, left = p.state === "alive" ? false : await groupAlive(pg(), w.kind);
     if (p.state === "alive") {
       let r; try { r = await ask(name, p, "stop", {}, 15000); } catch { r = { code: "unknown" }; }
       out.ok = r.code === "stopped"; out.state = ["stopped", "still_exiting"].includes(r.code) ? r.code : "unknown";
@@ -427,14 +427,14 @@ export async function stopCommand(args, { env = process.env } = {}) {
       if (!out.ok) out.next.push(runNext("Look again in a moment.", ["routr", "workers", "--name", name]));
       // Messages it had queued and never sent: dropped by the stop. The lead sends them again if they still apply.
       if (Number.isInteger(r.dropped) && r.dropped > 0) out.warnings.push(`${count(r.dropped, "queued message")} ${r.dropped === 1 ? "was" : "were"} dropped by the stop and never reached ${name}: send ${r.dropped === 1 ? "it" : "them"} again with routr send if ${r.dropped === 1 ? "it still applies" : "they still apply"}`);
-    } else if (["released", "none", "abandoned"].includes(p.state) && !left()) {
+    } else if (["released", "none", "abandoned"].includes(p.state) && !left) {
       out.ok = true; out.state = "absent"; out.headline = `routr: ${name} is not running`;
     } else {
       out.state = p.state === "unreachable" ? "unreachable" : "lost";
       out.headline = p.state === "unreachable" ? `routr: ${name}'s process does not answer`
-        : `routr: ${name}'s process is gone${left() ? `, and its harness may still be running (process group ${pg()})` : ""}`;
+        : `routr: ${name}'s process is gone${left ? `, and its harness may still be running (process group ${pg()})` : ""}`;
       out.warnings.push("routr stops a worker only through its own process, never by a saved process id: it cannot see whether the harness is still running");
-      out.next.push(doNext(left() ? `Look at process group ${pg()} (ps -g ${pg()}) and stop it yourself if it is this worker's, then clean the worker up.` : "Clean the worker up once you are sure nothing of it runs."));
+      out.next.push(doNext(left ? `Look at process group ${pg()} (ps -g ${pg()}) and stop it yourself if it is this worker's, then clean the worker up.` : "Clean the worker up once you are sure nothing of it runs."));
     }
     out.next.push(runNext("Remove its run folder and reports once you have what you need from them.", ["routr", "cleanup", "--worker", name]));
   } catch (e) { out.error = String(e?.message ?? e); out.headline = `routr: stop failed: ${out.error}`; }
@@ -460,7 +460,7 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
     if (["alive", "starting"].includes(p.state)) return refuse(`${name} is still running`, [runNext("Wait for it to finish.", ["routr", "wait", "--name", name]), runNext("Or stop it first.", ["routr", "stop", "--name", name])]);
     if (p.state === "unreachable") return refuse(`${name}'s process does not answer, so whether it runs is not known`, runNext("Look at it.", ["routr", "workers", "--name", name]));
     const pg = readState(name)?.harness_pgid;
-    if (groupAlive(pg, w.kind)) return refuse(`${name}'s harness may still be running (process group ${pg})`, doNext(`Look at process group ${pg} and stop it if it is this worker's, then run cleanup again.`));
+    if (await groupAlive(pg, w.kind)) return refuse(`${name}'s harness may still be running (process group ${pg})`, doNext(`Look at process group ${pg} and stop it if it is this worker's, then run cleanup again.`));
     if (w.worktree) {
       const { cleanup, worktreesFromGit } = await import("./cleanup.mjs");
       // The worktree at that path must still be this worker's: on its branch. One put there since is someone else's.
@@ -484,14 +484,14 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
       if (r.branch) out.branch = r.branch;
       for (const s of r.steps) out.steps.push(s);
     }
+    const helper = HARNESSES[w.kind]?.helper;
+    if (helper) out.warnings.push(helper.left(w.cwd));
     if (dryRun) { out.ok = true; out.state = "planned"; out.headline = `routr: would remove ${runDir(name)}${w.worktree ? ` and ${w.worktree.path}` : ""}`; step("plan", true, `Would remove ${runDir(name)} and its reports`); return out; }
     for (const n of generations(runDir(name))) { try { removeEndpoint(w.id, JSON.parse(readFileSync(join(runDir(name), `gen-${n}.ready`), "utf8")).endpoint); } catch {} }
     rmSync(runDir(name), { recursive: true, force: true });
     step("remove", true, `Removed ${runDir(name)} and its reports`);
     out.ok = true; out.state = "removed"; out.headline = `routr: removed worker ${name}`;
     if (!w.worktree) out.warnings.push(`${name} worked in ${w.cwd}: its changes there are yours to check and keep`);
-    const helper = HARNESSES[w.kind]?.helper;
-    if (helper) out.warnings.push(helper.left(w.cwd));
     return out;
   });
 }

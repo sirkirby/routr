@@ -325,13 +325,17 @@ pane gets.
   waits in routr's holder and runs as the next turn, in a new process (measured through routr: two corrections sent
   during one turn ran as turns 2 and 3, one commit each; a follow-up once idle resumed the session; Cursor's own
   transcript held each message once).
-- Its own helper: the first turn in a project folder starts `…/cursor-agent/versions/<version>/index.js worker-server`
-  (socket in `~/.cursor/projects/<folder>/worker.sock`), not detached, so it stays in that turn's process group with
-  its parent gone, and it starts `npm exec typescript-language-server` under it. Later turns in that folder reuse it.
-  It ended about five minutes after its last turn (seen twice) and outlived its folder's removal. routr recognises it
-  by that command line (and what it started by their parent) and does not count it as the worker running.
-- Just after cursor-agent closes, its group still held one process in its exit (`(node)`), gone within 100 ms: routr
-  looks at a group again for up to two seconds before it counts as running.
+- Its own helper: Cursor installs as `<versions>/<v>/cursor-agent`, which the `cursor-agent` on PATH links to
+  (`~/.local/share/cursor-agent/versions` here). The first turn in a project folder starts `<versions>/<v>/node
+  <versions>/<v>/index.js worker-server` (socket in `~/.cursor/projects/<folder-slug>/worker.sock`), not detached, so
+  it stays in that turn's process group with its parent gone. It starts `npm exec typescript-language-server --stdio`,
+  which starts `node <npx cache>/node_modules/.bin/typescript-language-server --stdio`. Later turns in that folder
+  reuse it. It ended about five minutes after its last turn once (p43), and between 4 minutes and 2 hours after it
+  another time (p41); Cursor documents no idle exit. It outlived its folder's removal. routr recognises exactly
+  those command lines, in that install, each started by the one before, and does not count them as the worker
+  running; anything else under the worker-server counts (another language server included: not measured).
+- Just after cursor-agent closes, its group still held one process in its exit (`(node)`), gone within 100 ms: on
+  stop, and before it resumes with a queued message, routr looks at a group again for up to two seconds.
 - Not measured: Windows and Linux (only a fake in CI), `--worktree`, a killed holder, a background command, what the
-  worker-server does on the SIGTERM of a stop during the turn that started it, a first run in a folder Cursor has not
-  trusted without `--trust`.
+  worker-server does on the SIGTERM of a stop during the turn that started it, whether a first run in a folder Cursor
+  has never trusted needs anything beyond `--trust`.

@@ -1,9 +1,10 @@
 # Setting up routr
 
 Walk the user through this. Ask before you write or install anything, and show what you are about to write.
-Requirements: the `routr` command (one standalone binary; `routr --version` shows it). Orchestration across every
-harness also needs herdr with its agent skill (step 5); without herdr, an orchestrator can launch headless Claude Code,
-Codex, Cursor, Antigravity and Kiro workers, and the worker and subagent parts work as they are. If `routr` is missing, install it first:
+Requirements: the `routr` command (one standalone binary; `routr --version` shows it). Pane workers also
+need herdr with its agent skill (step 5), and reading Cursor's usage needs herdr installed (step 4); without herdr, an
+orchestrator can launch headless Claude Code, Codex, Cursor, Antigravity and Kiro workers, and the worker and subagent
+parts work as they are. If `routr` is missing, install it first:
 
 macOS and Linux:
 

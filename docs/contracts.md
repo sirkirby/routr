@@ -530,7 +530,7 @@ Inputs:
   `routr: kept <name>: <why>`, `routr: would remove <folder>[ and <worktree path>]`; a worktree it could not check is refused
   ("its worktree could not be checked"). `warnings` says what it cannot see: a command the worker started that left
   the harness's process group or detached itself (on Windows, anything once the harness has ended); for a Cursor
-  worker, that Cursor's own worker-server for its folder may still be running, which routr leaves. For a worker launched
+  worker (a dry run too), that Cursor's own worker-server for its folder may still be running, which routr leaves. For a worker launched
   without a worktree it removes only the run folder and its reports, inspects no repository, and warns that the
   worker's changes in its folder are the lead's to check. Own field: `name`.
 - Used when given: `--cwd` (default `.`), `--delete-branch`, `--dry-run`.
@@ -610,9 +610,9 @@ in.
 proven read. Antigravity and Kiro, between turns: written into its input, or Kiro's `session/prompt` written
 (`handed_to_harness`); it starts a turn of its own. Cursor: never, as each turn is a process that has read its whole input. Codex: taken by its app-server, `accepted`: steered into the
 running turn, or, once that turn has ended, started as the next turn in the same process), `queued` (the holder keeps
-the message in memory, at most 8. For Cursor, Antigravity and Kiro while a turn runs, or older messages still wait
+the message in memory, at most 8. For Antigravity and Kiro while a turn runs, or older messages still wait
 (`message.why` `next_turn`): handed over as each turn ends, one turn per message, in the order sent, in the same
-process (Cursor: each in a new process resuming the session). Otherwise when the harness's input had closed: once that process has exited the holder starts a new one
+process. Otherwise (always for Cursor, whose input closes once its task is in) when the harness's input had closed: once that process has exited the holder starts a new one
 resuming the same session with it. When the process exits with messages still kept, a new one resumes with them:
 Cursor, Antigravity and Kiro run each as a turn of its own, in the order sent; Claude and Codex take them together as one
 turn, whose `delivered` counts them. Something of its process group still there as it exits is looked at again for up to
@@ -640,17 +640,20 @@ tools; Codex's item types, such as `commandExecution` and `fileChange`; Antigrav
 `mcp`, `other`, or null. `report` is the path of the latest turn's report that has one, or null. `tasks` counts Claude's background commands;
 it is 0 for Codex, Cursor, Antigravity and Kiro, which report none. `harness_group`: a process group it
 recorded that still has members (a lost worker's harness, or a command that outlived it), on macOS and Linux. A
-harness's own long-lived helper, and what it started, are not members here or wherever a command checks the group:
-Cursor's worker-server, which its first turn in a folder starts and later turns reuse, told by its command line
-(`references/harnesses.md`).
+harness's own long-lived helper is not a member here or wherever a command checks the group: Cursor's worker-server,
+which its first turn in a folder starts and later turns reuse, and the language server under it, told by their exact
+command lines in the install the `cursor-agent` on PATH resolves into (`references/harnesses.md`). Anything else
+under it is a member, and so is every member when routr cannot read the group (`ps` not answering in time, output it
+cannot read, no install found).
 Never worker text. Inside a sandbox it can see, `warnings` says so.
 
 ## stop
 
 Stops a headless worker through its own process. Inputs: required: `--name`.
 
-`state`: `stopped` (the harness and its process group are gone), `still_exiting` (told to stop; the harness not gone
-within six seconds, or something of its group still there two seconds after it went), `absent` (not running), `lost` (its process is gone, or a group it recorded still has members),
+`state`: `stopped` (the harness and its process group are gone, a harness's own helper aside: see `workers`), `still_exiting` (told to stop; the harness not gone
+within six seconds, or something of its group other than that helper still there two seconds after it went, a stop
+between two of its processes included), `absent` (not running), `lost` (its process is gone, or a group it recorded still has members),
 `unreachable`, `unknown`, `failed` (refused). `ok`: true for `stopped` and `absent`. For `lost` and `unreachable`,
 `warnings` says routr never stops a process by a saved id and `next` says what to look at. Own fields: `state`,
 `name`. Messages the holder still keeps (`queued`, Kiro's held ones included) are dropped by a stop, and `warnings` says

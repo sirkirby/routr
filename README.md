@@ -166,10 +166,10 @@ keeps your beta until a stable release passes it; `routr update --force` switche
 To remove it, run `routr uninstall`. It shows what it will remove and asks first. Your config, key, and ledger stay
 for a later reinstall unless you choose otherwise (`--purge`).
 
-For orchestration across every harness you also need [herdr](https://herdr.dev) and its agent skill
+For pane workers you also need [herdr](https://herdr.dev) and its agent skill
 (`npx skills add herdrdev/herdr --skill herdr -g`); setup offers to install both, and `routr doctor` tells you when
 either is missing. Without herdr, `routr launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless, followed with
-`routr wait`. Sizing subagents works without it.
+`routr wait`; Cursor's usage is still read through herdr, so it needs herdr installed. Sizing subagents works without it.
 
 To start an orchestration, open your lead agent (in herdr for pane workers) and type your plan after the `routr-orchestrate` skill, which
 routr installs beside the routr skill:

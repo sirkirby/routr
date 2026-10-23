@@ -133,19 +133,26 @@ export function processSteps(out, result) {
   return result;
 }
 
-// A process group's members, from `ps -A -o pid=,ppid=,pgid=,command=` (macOS and Linux both print it so). Lines that
-// do not read as one are left out; a command is only ever matched against a harness's helper, never shown.
+// A process group's members, from `ps -A -o pid=,ppid=,pgid=,command=` (macOS and Linux both print it so), or null when
+// any line does not read as one: then nothing of the group can be told apart (from the review of 62749a5: a dropped
+// line read as a gone member). A command is only ever matched against a harness's helper, never shown.
 export function groupMembers(out, pgid) {
   const rows = [];
   for (const l of String(out ?? "").split("\n")) {
+    if (!l.trim()) continue;
     const m = /^\s*(\d+)\s+(\d+)\s+(\d+)\s(.*)$/.exec(l);
-    if (m && Number(m[3]) === pgid) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), command: m[4].trim() });
+    if (!m) return null;
+    if (Number(m[3]) === pgid) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), command: m[4].trim() });
   }
   return rows;
 }
-// The members that are not a harness's own helper (`command`, a pattern), nor started by one.
-export function besidesHelper(members, command) {
+// The members that are not a harness's own helper (`command`, a pattern), nor one of the processes measured under it
+// (`children`, each started by the helper or by one of them). Anything else under it counts.
+export function besidesHelper(members, command, children = []) {
   const helper = new Set(members.filter((m) => command.test(m.command)).map((m) => m.pid));
-  for (let grew = true; grew;) { grew = false; for (const m of members) if (!helper.has(m.pid) && helper.has(m.ppid)) { helper.add(m.pid); grew = true; } }
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const m of members) if (!helper.has(m.pid) && helper.has(m.ppid) && children.some((c) => c.test(m.command))) { helper.add(m.pid); grew = true; }
+  }
   return members.filter((m) => !helper.has(m.pid));
 }
