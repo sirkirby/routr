@@ -499,6 +499,7 @@ test("a try an older routr made that got no reading does not hold back the next 
     for (const [label, snap, n] of [
       ["no version (0.8.0 and before)", failed, 1], ["an older version", { ...failed, by: "0.7.0" }, 1], ["a version it cannot read", { ...failed, by: "garbage" }, 1],
       ["a version that only looks newer", { ...failed, by: "0.9.invalid" }, 1], ["a version with a fourth number", { ...failed, by: "0.8.1.0" }, 1],
+      ["a pre-release number with a leading zero", { ...failed, by: "0.9.0-beta.01" }, 1], ["a newer pre-release", { ...failed, by: "0.9.0-beta.1" }, 0],
       ["this version", { ...failed, by: "0.8.1" }, 0], ["a newer version", { ...failed, by: "0.9.0" }, 0],
       ["an older version that got a reading", { ts: T - 600, tried: T - 600, by: "0.7.0", reading: good }, 0]]) {
       const file = join(dir, `${label}.json`);

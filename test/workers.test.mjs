@@ -23,7 +23,9 @@ const homes = [];
 const shortHome = () => { const h = mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "rw-")); homes.push(h); return h; };
 afterAll(() => { for (const h of homes) rmSync(h, { recursive: true, force: true }); });
 const POSIX = process.platform !== "win32";
-const until = async (ok, ms = 10000) => { for (let t = 0; t < ms && !ok(); t += 50) await Bun.sleep(50); return ok(); };
+// What the check saw when it held, not a second look: a state file being replaced can read empty for a moment on Windows,
+// and asking again then failed a test whose condition had held (seen in CI on e123e50).
+const until = async (ok, ms = 10000) => { for (let t = 0; t < ms; t += 50) { if (ok()) return true; await Bun.sleep(50); } return Boolean(ok()); };
 
 // Claude Code's stream-json, as measured: init (with the session), tool_use, background_tasks_changed, result; a
 // message on stdin mid-turn joins the running turn; with stdin closed it exits once no background task runs, and a
