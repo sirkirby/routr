@@ -112,7 +112,8 @@ fourth; you write the second and third.
        ~/.agents/skills/routr/references/worker.md. It is mandatory for this task: it says how to size each subagent
        before you spawn it and the exact report format the orchestrator parses.
 
-2. The task: what to do, where, what done looks like, and what is out of scope.
+2. The task: what to do, where, what done looks like, and what is out of scope. For a fix, state the rule it must
+   keep everywhere and where else that rule applies, not only the symptom you saw.
 3. How to verify it (the command to run), so the worker can check its own work.
 
 Parts 2 and 3 are the work, and they go in `--task-file`: it is what you ask routr about. Your rules for how the
@@ -236,6 +237,11 @@ result against the project's own standards, not just the brief.
   thrashes, use the evidence to change model, effort or harness and attach the relevant report. Correct missing
   context or changed requirements before blaming execution. You may change the execution within the user's account
   boundaries without asking for each adjustment; reassess the work level only when the work warrants it.
+- **Size each review round to what it found.** A decision that is the user's goes to the user; a change in behaviour
+  goes back to the builder; a trivial fix (one literal, a typo) you check yourself rather than launching another
+  round. On 2026-10-24 one orchestration (observed, not measured) spent up to three cross-vendor review rounds per
+  fix briefed as its symptom, each finding the next instance of the same gap; one round surfaced a decision that was
+  the user's, and one was spent on a single test literal.
 - Keep the user able to follow: one line when you launch (what, where, which model, why) and one line when a result
   lands (accepted, sent back, or escalated, and why).
 

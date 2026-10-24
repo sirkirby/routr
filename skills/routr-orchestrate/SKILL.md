@@ -43,6 +43,8 @@ there is none, ask for it and stop.
 - Planning is work too: hand out its research and reviews, even when you will wait for the result, and do one
   yourself only when routr's `worker` field says `do it yourself`. Keep for yourself what cannot be handed out:
   turning findings into the plan, the decisions that are the user's, checking each result, and integrating it.
+- Brief a fix by the rule it must keep everywhere, not the symptom you saw. Size each review round to what it
+  found: decisions to the user, behaviour changes back to the builder, trivial fixes checked by you.
 - One line to the user per launch and one per result, as the orchestrator guide says.
 - Follow every result’s `next`. After verification, fill launch’s record template and add `--note` and `--report`.
   Never borrow another worker’s advice. Revisions keep the original advice file; if the original task file is gone,
