@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- On Windows, a folder whose name has a curly quote (`Chris’s`) now reaches a PowerShell pane exactly, for launch and
+  Cursor's usage read. A cmd pane gets no folder path that holds `%` or `!` (cmd expands them even inside quotes);
+  routr says so and types nothing. (#<PR>)
+
 ## v0.8.3 — 2026-10-24
 
 [Full notes](docs/releases/v0.8.3.md)
