@@ -77,8 +77,10 @@ harness. A native `.exe` install starts as before.
 routr removes the lead session and herdr pane names below by exact, case-insensitive match, not by prefix. This
 covers harness reads, headless turns and the private herdr server whose shells start
 harnesses; herdr clients keep their environment to find their session. The private server still answers
-`herdr --session <name> pane list` with the pane names removed (herdr 0.9.5, checked live 2026-10-24); the private
-pane's shell environment has not been checked live. Sign-in, provider and configuration settings stay, including
+`herdr --session <name> pane list` with the pane names removed, and a shell in its pane no longer sees the lead's
+names (herdr 0.9.5, macOS zsh, checked live 2026-10-24: with `CODEX_SESSION_ID`, `CURSOR_ASKPASS_SECRET` and
+`KIRO_SESSION_ID` set for routr, `env` in the private pane showed all three before this rule covered the server and
+none after; `CODEX_HOME` passed both times, and herdr set the private session's own `HERDR_ENV` and `HERDR_SESSION`). Sign-in, provider and configuration settings stay, including
 `SUDO_ASKPASS`, `CODEX_HOME`, `CURSOR_CONFIG_DIR`, `HERDR_CONFIG_PATH`, `HERDR_LOG` and `HERDR_HOME`.
 
 | Harness | Lead session variables removed | Source and version checked |
