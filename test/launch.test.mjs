@@ -1271,3 +1271,99 @@ test("from 2026-10-11: a task that never arrived is sent again by launch, adopti
   expect(instructions(r)).toContain(templateCommand(["--cwd", process.cwd()]));
   expect(instructions(r)).not.toContain("herdr agent prompt");
 });
+
+// Trace-context carriers in a pane: only a pane launch splits gets them, as `--env` on that split (herdr 0.9.5 measured:
+// values reach the pane's shell byte for byte); a worktree's pane, an existing pane and an adopted agent get none, and
+// the launch says it passed none. A value is never shown, and never typed into a shell.
+const CARRIED = { TRACEPARENT: "00-0af7651916cd43dd8448eb211c80319c-CARRIER_MARK_TP-01", TRACESTATE: "k=CARRIER_MARK_TS,\tx=\"%y%\"", BAGGAGE: "a=CARRIER_MARK_BG;p=1,b=c d!&'" };
+const noCarrierValue = (r) => { const text = JSON.stringify(r); for (const m of ["CARRIER_MARK_TP", "CARRIER_MARK_TS", "CARRIER_MARK_BG"]) expect([m, text.includes(m)]).toEqual([m, false]); };
+const typed = (calls) => calls.filter((a) => a[0] === "pane" && ["run", "send-text", "send-keys"].includes(a[1]) || a[1] === "prompt").map((a) => a.join(" ")).join("\n");
+
+test("a pane launch splits passes each present carrier with --env on that split, shows none of their values, and types none", async () => {
+  const f = fakeHerdr();
+  const r = await launch([...launchArgs, "--task", "Task"], { ...f.deps, env: { HERDR_ENV: "1", ...CARRIED } });
+  expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w1:p2" });
+  const split = f.calls.find((a) => a[1] === "split");
+  // The real argv carries the values, as it must; one --env per carrier, after herdr's own options.
+  expect(split.slice(split.indexOf("--no-focus") + 1)).toEqual(["--env", `TRACEPARENT=${CARRIED.TRACEPARENT}`, "--env", `TRACESTATE=${CARRIED.TRACESTATE}`, "--env", `BAGGAGE=${CARRIED.BAGGAGE}`]);
+  expect(r.ran.find((c) => c.includes("pane split"))).toBe(displayCommand(["herdr", ...split.slice(0, split.indexOf("--no-focus") + 1),
+    "--env", "TRACEPARENT=<forwarded>", "--env", "TRACESTATE=<forwarded>", "--env", "BAGGAGE=<forwarded>"]));
+  expect(r.start.env).toEqual({ TRACEPARENT: "<forwarded>", TRACESTATE: "<forwarded>", BAGGAGE: "<forwarded>" });
+  expect(r.warnings.filter((w) => /TRACE|BAGGAGE|carrier/.test(w))).toEqual([]);
+  noCarrierValue(r);
+  for (const m of ["CARRIER_MARK", "TRACEPARENT", "BAGGAGE"]) expect(typed(f.calls)).not.toContain(m);
+  // Absent and empty carriers are left out, and one outside the limits is withheld with its warning; the others go.
+  const g = fakeHerdr();
+  const s = await launch(launchArgs, { ...g.deps, env: { HERDR_ENV: "1", TRACEPARENT: CARRIED.TRACEPARENT, TRACESTATE: "", BAGGAGE: "a=\x1b[2J" } });
+  expect(g.calls.find((a) => a[1] === "split").filter((x) => x === "--env")).toHaveLength(1);
+  expect(s.start.env).toEqual({ TRACEPARENT: "<forwarded>" });
+  expect(s.warnings.filter((w) => /TRACE|BAGGAGE/.test(w))).toEqual(["BAGGAGE was not passed to the worker: routr passes it only when it is at most 8192 bytes of printable ASCII or tabs"]);
+  expect(JSON.stringify(s)).not.toContain("\x1b[2J");
+  // None at all: the split is as before, and nothing is said.
+  const h = fakeHerdr();
+  const none = await launch(launchArgs, h.deps);
+  expect(h.calls.find((a) => a[1] === "split")).not.toContain("--env");
+  expect([none.start.env, none.warnings.filter((w) => /TRACE|BAGGAGE|carrier/.test(w))]).toEqual([{}, []]);
+});
+
+test("a dry run shows the split's --env by name and placeholder only", async () => {
+  const r = await launch([...launchArgs, "--direction", "down", "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); }, env: { ...CARRIED } });
+  expect(r.would_run.find((c) => c.includes("pane split"))).toBe(displayCommand(["herdr", "pane", "split", "--current", "--direction", "down", "--cwd", process.cwd(), "--no-focus",
+    "--env", "TRACEPARENT=<forwarded>", "--env", "TRACESTATE=<forwarded>", "--env", "BAGGAGE=<forwarded>"]));
+  expect(r.start.env).toEqual({ TRACEPARENT: "<forwarded>", TRACESTATE: "<forwarded>", BAGGAGE: "<forwarded>" });
+  noCarrierValue(r);
+  for (const extra of [["--worktree", "b"], ["--pane", "w1:p9"]]) {
+    const p = await launch([...launchArgs, ...extra, "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); }, env: { ...CARRIED } });
+    expect(p.would_run.join("\n")).not.toContain("--env");
+    expect(p.start.env).toEqual({});
+    expect(p.warnings.some((w) => w.includes("passed none"))).toBe(true);
+    noCarrierValue(p);
+  }
+});
+
+test("a worktree's pane, an existing pane and an adopted agent get no carriers, and launch says it passed none, never that the worker has none", async () => {
+  const here = process.cwd(), env = { HERDR_ENV: "1", ...CARRIED };
+  const wt = fakeHerdr({ reply: (a) => (a[0] === "worktree" ? herdrOK({ root_pane: { pane_id: "w1:p2" }, worktree: { path: here } }) : undefined) });
+  const pane = fakeHerdr();
+  const adopt = fakeHerdr({ reply: (a) => (a[1] === "prompt" ? herdrOK({}) : a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", interactive_ready: true, cwd: here } }) : undefined) });
+  const runs = [
+    [wt, [...launchArgs, "--worktree", "worker"], "herdr's worktree create"],
+    [pane, [...launchArgs, "--pane", "w1:p9", "--cwd", here], "an existing pane"],
+    [adopt, [...launchArgs, "--pane", "w1:p9", "--cwd", here, "--task", "Task"], "an existing pane"],
+  ];
+  for (const [f, args, why] of runs) {
+    const r = await launch(args, { ...f.deps, env });
+    expect([why, r.ok]).toEqual([why, true]);
+    const said = r.warnings.filter((w) => w.includes("passed none"));
+    expect(said).toHaveLength(1);
+    expect(said[0]).toContain(why);
+    expect(said[0]).not.toMatch(/has none|have none/);
+    expect(r.start.env).toEqual({});
+    expect(f.calls.flat().join(" ")).not.toContain("--env");
+    expect(typed(f.calls)).not.toMatch(/CARRIER_MARK|TRACEPARENT|TRACESTATE|BAGGAGE/);
+    noCarrierValue(r);
+  }
+  expect(adopt.calls.some((a) => a[1] === "start")).toBe(false);
+  // No carrier present: nothing to say.
+  const quiet = fakeHerdr();
+  expect((await launch([...launchArgs, "--pane", "w1:p9", "--cwd", here], quiet.deps)).warnings.filter((w) => w.includes("passed none"))).toEqual([]);
+});
+
+test("a screen launch returns never carries a carrier value routr holds: the needs_input screen and the failure tail are redacted", async () => {
+  const env = { HERDR_ENV: "1", ...CARRIED, TRACESTATE: "k=CARRIER_MARK_TS\x1b" }; // withheld, and still redacted
+  const shown = `TRACEPARENT=${CARRIED.TRACEPARENT}\nTRACESTATE=k=CARRIER_MARK_TS\x1b\nBAGGAGE=${CARRIED.BAGGAGE.slice(0, 10)}\n${CARRIED.BAGGAGE.slice(10)}\nfound '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)`;
+  const asks = fakeHerdr({ reply: (a) => (a[1] === "read" ? herdrOK({ text: shown }) : undefined) });
+  const r = await launch([...launchArgs, "--task", "Task"], { ...asks.deps, env });
+  expect(r.state).toBe("needs_input");
+  expect(r.screen).toContain("<carrier>");
+  expect(r.screen).toContain("Source it?");
+  noCarrierValue(r);
+  // A start herdr refuses: launch reads the pane's recent lines for the harness's own complaint, and returns them.
+  const tail = `$ claude\nTRACEPARENT=${CARRIED.TRACEPARENT} BAGGAGE=${CARRIED.BAGGAGE}\nError: bad flag`;
+  const fails = fakeHerdr({ reply: (a) => (a[1] === "start" ? herdrError("refused") : a[1] === "read" && a.includes("recent-unwrapped") ? herdrOK({ text: tail }) : undefined) });
+  const f = await launch(launchArgs, { ...fails.deps, env });
+  expect(f.state).toBe("failed");
+  expect(f.screen).toContain("Error: bad flag");
+  expect(f.screen).toContain("TRACEPARENT=<carrier> BAGGAGE=<carrier>");
+  noCarrierValue(f);
+});

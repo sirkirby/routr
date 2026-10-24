@@ -76,6 +76,7 @@ page and its tests in the same PR.
   untracked files, including `.env`.
 - A change to what telemetry sends passes `bun test` and `bun run smoke:telemetry` on an opted-in machine.
 - A change to a usage reader passes `bun test` and `bun run smoke:usage` on a machine signed in to that harness.
+- A change to worker environment handling passes `bun test` and `bun run smoke:carriers` inside a live herdr session.
 - Before spending subscription usage on an eval or a worker run: one item as a smoke test, then watch the first
   results. Verify outcomes from transcripts and session files, not from an agent's own account.
 

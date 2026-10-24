@@ -8,10 +8,10 @@ import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesse
 import { dispatchAdvice, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
 import { displayCommand, doNext, launchNext, runNext, templateCommand } from "./next.mjs";
 import { CLOSING, OFF } from "./wording.mjs";
-import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
+import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, splitArgs, waitForShell } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
-import { ensureParent, home, realPath, spawnSelf } from "./runtime.mjs";
+import { CARRIERS, carriersFrom, carrierValues, carrierWithheld, ensureParent, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
 import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
 
 // The guide is the source of this instruction, embedded at build time just like the installed skills.
@@ -31,6 +31,12 @@ export function composePrompt(task, guide = WORKER_GUIDE, rules = null) {
 }
 
 const command = (args) => displayCommand(["herdr", ...args]);
+// Trace-context carriers reach only a pane launch splits (herdr's `pane split --env`). Everywhere else this fixed
+// warning says the launch passed none: never that the worker has none (a --pane rerun into a pane routr split already
+// has them in its shell), and never with a value.
+const PASSED_NONE = (names, why) => `This launch passed none of ${names.join(", ")} to the worker: ${why}, and routr never types a carrier into a shell`;
+const NO_ENV = { worktree: "herdr's worktree create takes no environment (the pane's shell starts with whatever herdr's server has)",
+  pane: "an existing pane keeps the environment its shell, or the agent already running there, started with" };
 // The command log is printed and may be stored by whoever called launch: it carries the prompt's length, never its
 // text (the brief must not be printed, logged, or stored).
 const PANE_WITHHELD = "withheld: the prompt was already submitted, so the pane shows the task. Read the pane yourself.";
@@ -87,6 +93,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
     ran: [], next: [], start: { executable: null, argv: [], env: {} }, steps: [], warnings: [], prompt_chars: null, unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
+  // Every screen launch returns goes through here: a shell's startup line can print the trace-context carriers routr
+  // holds (any found, passed or withheld), and their values never reach output.
+  const hidden = carrierValues(env), shown = (text) => redactCarriers(text, hidden);
   let configDir, createdPane = false, startAttempted = false, touchedPane = false, promptAttempted = false, unconfirmed = false;
   // Something in the pane needs an answer that routr does not give: a shell's own question, a harness's startup
   // question, an agent that has not started. The orchestrator gets what the pane shows (withheld once the task has been
@@ -97,7 +106,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     out.ok = false; out.state = "needs_input";
     const { next: instruction, ...detail } = more;
     out.needs_input = { why, ...detail };
-    out.screen = promptAttempted ? PANE_WITHHELD : text ?? null;
+    out.screen = promptAttempted ? PANE_WITHHELD : shown(text ?? null);
     out.next.push(...(instruction == null ? resumeSteps() : Array.isArray(instruction) ? instruction : [doNext(instruction)]));
     step("needs_input", false, why); return out;
   };
@@ -155,6 +164,19 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     }
     // Known once the pane's shell has been seen; until then, this platform's usual shell.
     let shell = process.platform === "win32" ? "powershell" : "posix";
+    // The carriers this launch hands on: a pane it splits gets the ones within routr's limits, with a warning for each
+    // withheld; any other pane gets none, said once. Only names and FORWARDED reach the output.
+    const found = carriersFrom(env);
+    const paneCarriers = () => {
+      if (!o.pane && !o.worktree) {
+        out.warnings.push(...found.withheld.map(carrierWithheld));
+        out.start.env = { ...out.start.env, ...Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) };
+        return found.carriers;
+      }
+      const present = CARRIERS.filter((n) => Object.hasOwn(found.carriers, n) || found.withheld.includes(n));
+      if (present.length) out.warnings.push(PASSED_NONE(present, NO_ENV[o.worktree ? "worktree" : "pane"]));
+      return {};
+    };
     const startArgs = (pane, timeout) => o.kind === "cursor" && SHELLS[shell].cursor
       ? ["pane", "run", pane, SHELLS[shell].cursor(privateDir, p.executable, p.argv)]
       : ["agent", "start", o.name, "--kind", o.kind, "--pane", pane, "--timeout", String(timeout), "--", ...p.argv];
@@ -162,10 +184,10 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       "--until", "idle", "--until", "done", "--until", "blocked", "--timeout", String(timeout)];
     const worktreeArgs = () => ["worktree", "create", "--cwd", out.cwd, "--branch", o.worktree, ...(o.base ? ["--base", o.base] : []), "--no-focus"];
     if (o.dryRun) {
-      const pane = o.pane ?? "<new-pane>";
+      const pane = o.pane ?? "<new-pane>", carried = paneCarriers();
       out.would_run = [
         ...(o.worktree ? [command(worktreeArgs())] : []),
-        ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(["pane", "split", "--current", "--direction", o.direction ?? "<right-if-wide-else-down>", "--cwd", out.cwd, "--no-focus"])] : []),
+        ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true }))] : []),
         command(["pane", "read", pane, "--source", "visible"]),
         command(["pane", "process-info", "--pane", pane]),
         ...(o.pane ? [command(["pane", "run", pane, SHELLS[shell].cd(out.cwd)]),
@@ -209,6 +231,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       }
       return out;
     }
+    const carried = paneCarriers();
     // The user turned this subscription off: it gets no work, launched by hand or not.
     const loaded = settings(), config = loaded.config ?? loaded;
     out.warnings.push(...(loaded.notes ?? []));
@@ -217,9 +240,10 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     const signedOut = await ready(o.kind);
     if (signedOut) throw new Error(`${HARNESSES[o.kind].label} cannot take work: ${signedOut}`);
     const remaining = deadline(o.timeout, now, "Launch readiness timeout");
-    const call = async (a, tolerate = false) => {
+    // `shown`: the command as the log may carry it, when it differs from what runs (a split's carriers).
+    const call = async (a, tolerate = false, shown = a) => {
       const ms = remaining();
-      logCommand(out.ran, command(a));
+      logCommand(out.ran, command(shown));
       const r = await safeRun(a, ms);
       if (!r.ok && !tolerate) throw processError(r);
       return r;
@@ -335,7 +359,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         if (!rect) throw new Error("Caller pane geometry is unavailable");
         direction = rect.width > rect.height ? "right" : "down";
       }
-      const r = await call(["pane", "split", "--current", "--direction", direction, "--cwd", out.cwd, "--no-focus"]);
+      const r = await call(splitArgs(direction, out.cwd, carried), false, splitArgs(direction, out.cwd, carried, { shown: true }));
       out.pane = r.data.result.pane.pane_id;
       if (typeof out.pane !== "string" || !out.pane) throw new Error("Herdr split returned no pane id");
       createdPane = true;
@@ -514,7 +538,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       try {
         const a = ["pane", "read", out.pane, "--source", "recent-unwrapped", "--lines", "40"];
         logCommand(out.ran, command(a));
-        const tail = clean(paneText((await safeRun(a, 1000)).data))
+        const tail = shown(clean(paneText((await safeRun(a, 1000)).data)))
           .split("\n").filter((l) => l.trim()).slice(-8).map((l) => (l.length > 200 ? `${l.slice(0, 200)}…` : l)).join("\n");
         if (tail) out.screen = tail;
       } catch {}

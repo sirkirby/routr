@@ -14,7 +14,7 @@ import { answer } from "./output.mjs";
 import { CLOSING, count, OFF } from "./wording.mjs";
 import { callGit } from "./process-boundary.mjs";
 import { dropCopy } from "./cleanup.mjs";
-import { ensureParent, folderId, home, lockIsStale, probe as runProbe, realOr, realPath, spawnSelf, takeLock } from "./runtime.mjs";
+import { CARRIERS, carriersFrom, carrierWithheld, ensureParent, folderId, FORWARDED, home, lockIsStale, probe as runProbe, realOr, realPath, savedCarriers, spawnSelf, takeLock } from "./runtime.mjs";
 
 const NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const RUNNING = new Set(["working", "waiting", "starting"]);
@@ -85,9 +85,11 @@ export async function view(name, { check = true } = {}) {
   if (RUNNING.has(state) && ["dead", "abandoned"].includes(channel)) state = "lost";
   if (channel === "unreachable") state = "unreachable";
   const reported = (st.turns ?? []).filter((t) => t.report).at(-1);
+  // The carriers the holder withheld from its harness (its worker.json changed since launch), by name only.
+  const withheld = Array.isArray(st.carriers_withheld) ? CARRIERS.filter((n) => st.carriers_withheld.includes(n)) : [];
   return { name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, state, gen: st.gen ?? 0, turn: st.turn ?? 0,
     seconds_since_event: ago(st.last_event_at ?? st.updated_at), last_tool: st.last_tool ?? null, tasks: st.tasks ?? 0, queued: st.queued ?? 0,
-    session: st.session_id ?? null, report: reported?.report ?? null, ...(!RUNNING.has(state) && await groupAlive(st.harness_pgid, w.kind) ? { harness_group: st.harness_pgid } : {}),
+    session: st.session_id ?? null, report: reported?.report ?? null, ...(withheld.length ? { carriers_withheld: withheld } : {}), ...(!RUNNING.has(state) && await groupAlive(st.harness_pgid, w.kind) ? { harness_group: st.harness_pgid } : {}),
     turns: (st.turns ?? []).map((t) => ({ turn: t.turn, outcome: t.outcome ?? "running", report: t.report ?? null, delivered: t.delivered ?? 0 })) };
 }
 
@@ -218,9 +220,14 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
       step("worktree", true, `Created ${wt.path} on branch ${o.worktree}${o.base ? ` from ${o.base}` : ""}`);
     }
     const argv = headlessArgv({ kind: o.kind, model: o.model, effort: o.effort, cwd: out.cwd });
-    out.start = { executable: HARNESSES[o.kind].executable, argv, env: {} };
+    // The trace-context carriers in launch's environment, within routr's limits, are saved with the worker: every turn
+    // gets these, whoever starts its holder later (a `send` from another environment). Shown by name only;
+    // CURSOR_CONFIG_DIR, the run folder's, is not listed.
+    const found = carriersFrom(env);
+    out.warnings.push(...found.withheld.map(carrierWithheld));
+    out.start = { executable: HARNESSES[o.kind].executable, argv, env: Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) };
     out.ran.push(displayCommand([HARNESSES[o.kind].executable, ...argv]));
-    const w = { format: FORMAT, id: randomUUID().replace(/-/g, ""), name: o.name, kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(),
+    const w = { format: FORMAT, id: randomUUID().replace(/-/g, ""), name: o.name, kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(), carriers: found.carriers,
       ...(wt ? { worktree: { branch: wt.branch, base: wt.base, path: wt.path, source: wt.source, start: wt.start, folder: wt.folder } } : {}) };
     writeFileSync(join(dir, "worker.json"), JSON.stringify(w) + "\n", { mode: 0o600 });
     writeSecret(dir);
@@ -348,6 +355,8 @@ export async function sendCommand(args, { env = process.env, settings = () => lo
     if (!w) throw new Error(`no headless worker named ${name}; routr workers lists them`);
     // The worker it was asked for, by its run id: one cleaned up and launched again under that name meanwhile is not it.
     const same = () => readWorker(name)?.id === w.id;
+    // A holder this send starts gives its harness the carriers saved with the worker, checked again: any withheld is said.
+    out.warnings.push(...savedCarriers(w.carriers).withheld.map(carrierWithheld));
     const text = o["task-file"] != null ? readTask(resolve(o["task-file"])) : o.task;
     if (!text?.trim()) throw new Error("The message must not be empty");
     const message = `${text.trim()}\n\n${CLOSING}`;

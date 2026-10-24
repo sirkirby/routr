@@ -148,7 +148,10 @@ const ALLOWED = [
   ["lib/update.mjs", "detached updater", 'spawn(["update", "--background"])', 1],
   ["lib/uninstall.mjs", "uninstall's Windows removal", 'start("cmd", ["/c", `ping -n 4 127.0.0.1 >nul & del /f /q ${basename(aside)}`], { cwd: dirname(aside), detached: true, stdio: "ignore" })', 1],
 ].map(([file, why, call, count]) => ({ file, why, call: compact(call), count }));
-const filtered = (call) => /env:(?:\{\.\.\.)?harnessEnv\(/.test(call);
+// harnessEnv, or workerEnv for a worker's turn (harnessEnv with the checked trace-context carriers added back).
+const filtered = (call) => /env:(?:\{\.\.\.)?(?:harnessEnv|workerEnv)\(/.test(call);
+// A filter taken away: the start then gets routr's own environment, whole.
+const unfiltered = (text) => text.replaceAll("harnessEnv()", "process.env").replaceAll("workerEnv(", "leakEnv(");
 const allowed = (file, call) => ALLOWED.find((a) => a.file === file.replaceAll("\\", "/") && a.call === call);
 
 test("every process start filters the harness environment or names an exact non-harness exception", () => {
@@ -178,9 +181,9 @@ test("the inventory detects a new or renamed start and a removed filter on every
     const path = `lib/${file}.mjs`, source = readFileSync(join(import.meta.dir, "../src", path), "utf8");
     const original = calls(source, path).filter(filtered);
     expect(original.length).toBeGreaterThan(0);
-    const mutated = calls(source.replaceAll("harnessEnv()", "process.env"), path);
+    const mutated = calls(unfiltered(source), path);
     for (const call of original) {
-      const leak = call.replaceAll("harnessEnv()", "process.env");
+      const leak = unfiltered(call);
       expect(mutated).toContain(leak);
       expect(allowed(path, leak)).toBeUndefined();
     }

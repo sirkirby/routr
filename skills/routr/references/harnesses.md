@@ -132,6 +132,23 @@ Rules 0, 1 and 7 are about panes, in herdr; a headless worker has no pane, scree
    its reading); a local override in `~/.config/herdr/agent-detection/codex.toml` replaces the whole manifest and
    shadows every later update from herdr, so it is a stopgap, removed once herdr's own rules read the box.
 
+## Trace context each harness reads
+
+routr passes `TRACEPARENT`, `TRACESTATE` and `BAGGAGE` from its own environment to headless workers and to a pane it
+splits, unchanged (`docs/guarantees.md`, "Trace context"). What a harness does with an inherited one is its own, and
+only matters when that harness's own OpenTelemetry tracing is on. Read-only research, 2026-10-24: vendor docs [doc],
+official source [src], and strings in the installed binary [bin]; no session was started. No harness reads `BAGGAGE`.
+
+| Harness | Reads an inherited `TRACEPARENT` | So, for routr's workers | Source, version |
+|---|---|---|---|
+| Claude Code | Only with `-p` (and the Agent SDK), with `TRACESTATE`; an interactive session ignores it by design | Headless: yes. Pane: no | [doc] code.claude.com/docs/en/monitoring-usage; [bin] 2.1.310 |
+| Codex | In `codex exec` and `codex app-server` (the app-server also takes a per-request `trace` field, which wins), with `TRACESTATE`; an invalid value is ignored; no reader in the interactive TUI | Headless (app-server): yes. Pane: no | [src] codex-rs `otel/src/trace_context.rs`, `app-server/src/app_server_tracing.rs`; [bin] 0.164.0 |
+| Cursor | No: the string is not in the install | No | [bin] cursor-agent 2026.10.22-27dcf5f |
+| Antigravity | No: the string is not in the binary | No | [bin] agy 1.4.7 |
+| Kiro | No, in the environment or in ACP's `_meta` | No | [bin] kiro-cli 2.34.0; [doc] kiro.dev/docs/cli/acp |
+
+Whether an inherited carrier then reaches a harness's own shell commands unchanged is not measured.
+
 ## Where routr's skills go, and `/routr-orchestrate` (vendors' docs, and measured 2026-10-05 where marked)
 
 `routr skill install` installs both of routr's skills the same way: `routr`, and `routr-orchestrate` (the user types

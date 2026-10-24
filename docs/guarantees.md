@@ -176,9 +176,10 @@ in that pane's own shell, which loads what that shell is set up to load. A headl
 routr's own environment (so no project `.env` either). All process starts use shared platform defaults, which hide
 the console on Windows and resolve a command as the shell would, starting an npm `.cmd` shim's script directly.
 Harness reads, headless turns and the private herdr server each supply the shared environment filter, which removes
-herdr's pane variables and the harness lead session names in the
-[harness reference](../skills/routr/references/harnesses.md#rules-that-hold-for-every-harness), preserving sign-in,
-provider and configuration settings. A test inventories process starts: each supplies that filter or names an exact
+herdr's pane variables, the harness lead session names in the
+[harness reference](../skills/routr/references/harnesses.md#rules-that-hold-for-every-harness) and the trace-context
+carriers, preserving sign-in, provider and configuration settings; a headless turn then gets back only the carriers
+saved at launch ("Trace context", below). A test inventories process starts: each supplies that filter or names an exact
 exception for a non-harness process. Herdr clients keep their environment to find their session.
 In a pane, routr types commands for that pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. A folder
 path typed into a shell reaches it exactly (in PowerShell, curly quotes as well as `'`), or is refused before anything
@@ -210,7 +211,8 @@ stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one proces
   the harness's process group or detached itself (on Windows, anything once the harness has ended), and removes the
   worktree anyway: it says so in `warnings`.
 - **Where it lives.** Each worker has a run folder, `~/.local/state/routr/workers/<name>`: the worker's settings
-  (kind, model, effort, folder; never the brief or the environment), the holder's state (turns, their outcomes, the
+  (kind, model, effort, folder; never the brief, and of the environment only the trace-context carriers launch passed,
+  within routr's limits: "Trace context", below), the holder's state (turns, their outcomes, the
   last tool's fixed name, the session id), a random secret, one file per holder generation, which turns `wait` has
   reported, and each turn's report. On macOS and Linux the folder is made 0700, and the secret, the settings and the
   reports 0600 (checked by the tests). On Windows it takes the access your home folder gives; routr sets and checks no
@@ -288,6 +290,41 @@ stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one proces
   Bash sandbox, Codex's), and so does a send that must start a new holder; a send to a running worker goes over its
   channel as usual. `wait`, `workers` and `stop` say when they run inside one, since it may hide a worker's channel.
 - **Sign-in.** launch and a send that starts a new holder check the harness's sign-in first, as every launch does.
+
+## Trace context
+
+routr hands on the OpenTelemetry context carriers it finds in its own environment, `TRACEPARENT`, `TRACESTATE` and
+`BAGGAGE` (W3C trace context, as OpenTelemetry's "environment variables as context propagation carriers" names them),
+so a tool that reads OpenTelemetry context can link a worker to the session that launched it. Pass-through only:
+
+- **Unchanged, never made.** A carrier is passed exactly as routr found it, never parsed, changed or generated, and
+  routr sets none itself. Names are matched as your system matches them (any case on Windows); an empty one is absent.
+  routr sends nothing anywhere for this.
+- **Which workers get them.** A headless worker gets them on every turn, and a worker in a pane `routr launch` splits
+  gets them as that pane's shell starts (herdr's `pane split --env`). A worker in a worktree's pane or in an existing
+  pane (`--pane`), and an agent already running there that launch adopts, get none: herdr has no environment option for those starts, and
+  routr never types a carrier into a shell. When carriers are present, launch says it passed none, and why. A pane
+  routr split earlier already has them in its shell, so a `--pane` rerun into it is not left without them.
+- **Not for harness reads.** routr's own reads of a harness (sign-in status, usage, model lists) and its private herdr
+  session get no carrier: they are not workers.
+- **Limits.** routr passes a carrier only when every character is printable ASCII or a tab, and it is at most 512
+  bytes (`TRACEPARENT`, `TRACESTATE`) or 8192 (`BAGGAGE`). This is routr's own limit on what it hands on, not the W3C
+  grammar. One outside it is not passed, and a warning names it, never its value; the others still go.
+- **Never a value in output.** No carrier's value is printed, logged, or put in the ledger or telemetry: launch shows
+  each one passed as `<forwarded>`, in `start.env` and in the split command it shows (`--env NAME=<forwarded>`). A
+  pane's screen that launch returns (a question before the task was sent, or the last lines after a failure) has the
+  value of every carrier routr found, passed or withheld, replaced by `<carrier>`, also where the pane wrapped it
+  across lines; a value the screen drew with something inside it (a colour code) is not recognised.
+- **Headless.** Launch saves the carriers it passes in the worker's settings file, in its run folder (0600 on macOS
+  and Linux), and every turn uses those, whoever starts the next one: a `send` from another environment does not
+  change them. They are checked against the limits again each time they are read: only the three names are used, and
+  a value outside the limits, or a name saved with anything but a non-empty string (null, empty), is withheld (`send` says so; `workers` and `wait` show the names in
+  `carriers_withheld`). A worker launched before routr saved carriers gets none. `cleanup --worker` removes them with
+  the run folder.
+- **Split panes.** The values are in herdr's command line while the split runs, visible to your own processes as any
+  command line is. Once the pane's shell starts, its own startup files may still set or change these variables: that
+  is your shell's configuration, not routr's. Whether a harness reads an inherited `TRACEPARENT`, and in which mode,
+  is the harness's own: [harness reference](../skills/routr/references/harnesses.md#trace-context-each-harness-reads).
 
 ## Secrets, briefs and telemetry
 
