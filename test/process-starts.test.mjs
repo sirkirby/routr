@@ -1,26 +1,109 @@
 // Inventory the process boundary, including renamed imports and injected defaults. Like runtime's import guard,
-// this is a lexical check: computed imports/calls need review. ESLint's parser distinguishes regex from division,
-// keeps template expressions visible, and refuses malformed source instead of handing us a partial token stream.
+// this is a lexical check: computed imports/calls need review. Tests run before dependencies are installed in CI.
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { delimiter, join } from "node:path";
+import { join } from "node:path";
 
-const require = createRequire(import.meta.url);
-const { Linter } = require(require.resolve("eslint", { paths: [import.meta.dir, ...(process.env.NODE_PATH?.split(delimiter) ?? [])] }));
-const linter = new Linter();
+const syntax = new Bun.Transpiler({ loader: "js" });
+const REGEX_PREFIX = new Set(["return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield", "await", "instanceof", "extends"]);
+const CONTROL = new Set(["if", "while", "for", "with", "switch", "catch"]);
 const tokens = (source, file = "<process allowlist>") => {
-  let result;
-  const messages = linter.verify(source, {
-    languageOptions: { ecmaVersion: "latest", sourceType: "module" },
-    plugins: { inventory: { rules: { tokens: { create: (context) => ({
-      Program: () => { result = context.sourceCode.ast.tokens.map((t) => source.slice(...t.range)); },
-    }) } } } },
-    rules: { "inventory/tokens": "error" },
-  });
-  // Program is reached only after a complete parse, including strings, templates, regexes and balanced delimiters.
-  if (!result || messages.some((m) => m.fatal)) throw new Error(`cannot tokenize ${file}: ${messages[0]?.message ?? "no complete token stream"}`);
-  return result;
+  const out = [], fail = (why) => { throw new Error(`cannot tokenize ${file}: ${why}`); };
+  // Bun is the test runner, not an installed dependency. Validate syntax without executing or resolving imports;
+  // the scanner below must also finish every lexical state before it may return any calls (the #109 regression).
+  try { syntax.transformSync(source); } catch { fail("invalid JavaScript"); }
+  let i = 0;
+  const escaped = () => {
+    if (i + 1 >= source.length) fail("unfinished escape");
+    i += source[i + 1] === "\r" && source[i + 2] === "\n" ? 3 : 2;
+  };
+  const string = (quote) => {
+    const start = i++;
+    while (i < source.length) {
+      if (source[i] === "\\") { escaped(); continue; }
+      if (source[i] === quote) { out.push(source.slice(start, ++i)); return; }
+      if (/[\r\n]/.test(source[i])) fail("newline in string");
+      i++;
+    }
+    fail("unclosed string");
+  };
+  const regex = () => {
+    const start = i++; let inClass = false;
+    while (i < source.length) {
+      const c = source[i];
+      if (/[\r\n\u2028\u2029]/.test(c)) fail("newline in regex");
+      if (c === "\\") { escaped(); continue; }
+      if (c === "[" && !inClass) inClass = true;
+      else if (c === "]") inClass = false;
+      else if (c === "/" && !inClass) {
+        i++; while (/[a-z]/i.test(source[i] ?? "")) i++;
+        out.push(source.slice(start, i)); return;
+      }
+      i++;
+    }
+    fail("unclosed regex");
+  };
+  const template = () => {
+    let start = i++;
+    while (i < source.length) {
+      if (source[i] === "\\") { escaped(); continue; }
+      if (source[i] === "`") { out.push(source.slice(start, ++i)); return; }
+      if (source[i] === "$" && source[i + 1] === "{") {
+        out.push(source.slice(start, i + 2)); i += 2;
+        code(true); // leaves the interpolation's closing brace for the next literal chunk
+        start = i++;
+      } else i++;
+    }
+    fail("unclosed template");
+  };
+  const code = (interpolation = false) => {
+    const brackets = []; let previous = "", regexAllowed = true, controlEnd = false;
+    while (i < source.length) {
+      const c = source[i], next = source[i + 1];
+      if (/\s/.test(c)) { i++; continue; }
+      if ((i === 0 && source.startsWith("#!")) || (c === "/" && next === "/")) {
+        while (i < source.length && !/[\r\n\u2028\u2029]/.test(source[i])) i++;
+        continue;
+      }
+      if (c === "/" && next === "*") {
+        const end = source.indexOf("*/", i + 2);
+        if (end < 0) fail("unclosed comment");
+        i = end + 2; continue;
+      }
+      if (c === "'" || c === '"' || c === "`" || (c === "/" && regexAllowed)) {
+        if (c === "`") template(); else if (c === "/") regex(); else string(c);
+        previous = "literal"; regexAllowed = false; controlEnd = false; continue;
+      }
+      const word = /^[$_\p{ID_Start}][$\u200c\u200d\p{ID_Continue}]*/u.exec(source.slice(i))?.[0];
+      if (word) {
+        out.push(word); i += word.length;
+        regexAllowed = previous !== "." && previous !== "?." && REGEX_PREFIX.has(word);
+        previous = word; controlEnd = false; continue;
+      }
+      const number = /^(?:0[xob][\da-f_]+|\d[\d_]*(?:\.[\d_]*)?(?:e[+-]?[\d_]+)?|\.\d[\d_]*(?:e[+-]?[\d_]+)?)(?:n)?/i.exec(source.slice(i))?.[0];
+      if (number) { out.push(number); i += number.length; previous = "number"; regexAllowed = false; controlEnd = false; continue; }
+      if ("([{".includes(c)) {
+        const member = [".", "?."].includes(out.at(-2));
+        const control = c === "(" && !member && (CONTROL.has(previous) || (previous === "await" && out.at(-2) === "for"));
+        // Only a known statement block enables a regex after }. Object, function-expression and arrow bodies don't.
+        const block = c === "{" && (controlEnd || ["else", "do", "try", "finally", ";"].includes(previous) || (!previous && !interpolation) || (previous === "}" && regexAllowed));
+        brackets.push({ close: { "(": ")", "[": "]", "{": "}" }[c], control, block });
+        out.push(c); i++; previous = c; regexAllowed = true; controlEnd = false; continue;
+      }
+      if (")]}".includes(c)) {
+        if (c === "}" && interpolation && !brackets.length) return;
+        const open = brackets.pop();
+        if (open?.close !== c) fail("unbalanced brackets");
+        out.push(c); i++; previous = c; regexAllowed = open.control || open.block; controlEnd = open.control; continue;
+      }
+      const op = /^(?:>>>=|===|!==|>>>|\*\*=|&&=|\|\|=|\?\?=|<<=|>>=|=>|==|!=|<=|>=|\+\+|--|&&|\|\||\?\?|\?\.|\*\*|<<|>>|\.\.\.|[+\-*/%&|^]=)/.exec(source.slice(i))?.[0] ?? c;
+      if (!/^[.,;:?+\-*/%&|^~!=<>#]+$/.test(op)) fail("unrecognized token");
+      out.push(op); i += op.length; previous = op; regexAllowed = op !== "++" && op !== "--"; controlEnd = false;
+    }
+    if (brackets.length) fail("unbalanced brackets");
+    if (interpolation) fail("unclosed template expression");
+  };
+  code(); return out;
 };
 const compact = (s) => tokens(s).join("");
 const calls = (source, file) => {
@@ -133,8 +216,32 @@ test("literal template text is ignored but a process start in a template express
   expect(calls(source, "lib/template.mjs")).toEqual(['start("harness",[],{})']);
 });
 
+test("regex prefixes include expression keywords and operators, while division never hides a start", () => {
+  const regex = "/['\"`/\\]\\[]/g";
+  const prefixes = [
+    ...["typeof", "new", "delete", "void"].map((word) => `${word} ${regex};`),
+    `switch (value) { case ${regex}: break; }`,
+    `do ${regex}.test(text); while (ready);`,
+    `if (ready) {} else ${regex}.test(text);`,
+    `const value = "key" in ${regex};`,
+    `for (const value of ${regex}) {}`,
+    `function* values() { yield ${regex}; }`,
+    `async function value() { await ${regex}; }`,
+    ...["=", "+", "-", "*", "/", "&&", "||", "??", ","].map((op) => `let value; value ${op} ${regex};`),
+  ];
+  for (const prefix of prefixes) expect(calls(`import { start } from "./runtime.mjs"; ${prefix} start("worker", [], {});`, "lib/prefixes.mjs")).toEqual(['start("worker",[],{})']);
+  for (const left of ["value", "12", "(value)", "[value][0]", "{}", "function() {}", "value++", "obj.return", '"literal"', "`literal`"]) {
+    expect(calls(`import { start } from "./runtime.mjs"; const result = ${left} / start("worker", [], {}) / scale;`, "lib/division.mjs")).toEqual(['start("worker",[],{})']);
+  }
+});
+
+test("nested template expressions expose starts without exposing literal text or losing bracket state", () => {
+  const source = 'import { start } from "./runtime.mjs"; const value = `literal start("decoy") ${ { value: `nested ${start("nested", [], {})}` } } ${/[' + "'\"`" + ']/.test(text) ? start("outer", [], {}) : ""}`; start("after", [], {});';
+  expect(calls(source, "lib/nested.mjs")).toEqual(['start("nested",[],{})', 'start("outer",[],{})', 'start("after",[],{})']);
+});
+
 test("the inventory refuses malformed source with its filename instead of returning partial calls", () => {
-  for (const suffix of ['"unclosed', "'unclosed", "`unclosed", "/[unclosed/", "/* unclosed", "(", "[", "{", "([)]", "const value = ;"]) {
+  for (const suffix of ['"unclosed', "'unclosed", "`unclosed", "/[unclosed/", "/* unclosed", "(", "[", "{", "([)]", "const value = ;", '`outer ${`inner ${value}', '`outer ${ ({ nested: 1 })', '"escape\\', "/escape\\"]) {
     const source = `import { start } from "./runtime.mjs"; start("harness", [], {}); ${suffix}`;
     expect(() => calls(source, "lib/broken.mjs")).toThrow("lib/broken.mjs");
   }
