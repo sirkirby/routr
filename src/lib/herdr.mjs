@@ -3,7 +3,7 @@
 // and an advice command that reads Cursor's usage never loads the launcher.
 import { stripVTControlCharacters } from "node:util";
 import { callHerdr } from "./process-boundary.mjs";
-import { realPath, start } from "./runtime.mjs";
+import { FORWARDED, realPath, start } from "./runtime.mjs";
 
 // A branch name launch gives `herdr worktree create`, and cleanup finds a worktree by.
 export const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,80}$/;
@@ -142,6 +142,15 @@ export const paneView = (call, pane) => ({
   info: async () => (await call(["pane", "process-info", "--pane", pane])).data.result.process_info,
   keys: (...keys) => call(["pane", "send-keys", pane, ...keys]),
 });
+
+// A new pane beside the caller's, in `cwd`, its shell started with the trace-context carriers (runtime's, checked) as
+// `--env NAME=VALUE`: the only herdr start with an environment option (0.9.5: `worktree create` and `agent start` have
+// none). Measured 2026-10-24, herdr 0.9.5 on macOS zsh: values holding `,` `=` TAB `"` `'` `&` `!` `%` and spaces reached
+// the pane's shell byte for byte. herdr is started directly, never through a shell, so nothing here is quoted.
+// `shown: true` is the same command as output may carry it: each value replaced by FORWARDED. smoke:carriers splits
+// with this too.
+export const splitArgs = (direction, cwd, carriers = {}, { shown = false } = {}) => ["pane", "split", "--current", "--direction", direction, "--cwd", cwd, "--no-focus",
+  ...Object.entries(carriers).flatMap(([name, value]) => ["--env", `${name}=${shown ? FORWARDED : value}`])];
 
 // Measured 2026-10-24, herdr 0.9.5 on macOS: 3 of 4 worktree launches got an unreadable process-info answer
 // during zsh startup; the same pane answered later. An unreadable look proves neither readiness
