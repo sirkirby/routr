@@ -69,8 +69,8 @@ test("carriers saved with a worker are checked again on every load: unknown keys
   expect(savedCarriers({ TRACEPARENT: { toString: () => TP }, TRACESTATE: "a\x1bb", BAGGAGE: "" })).toEqual({ carriers: {}, withheld: ["TRACEPARENT", "TRACESTATE"] });
 });
 
-test("smoke:carriers' own values are hostile but valid, exactly at each limit, and its checks find a value changed by a byte", async () => {
-  const { fixtureCommand, HOSTILE, hostileCarriers, missingIn, missingInText } = await import("../scripts/smoke-carriers.mjs");
+test("smoke:carriers' own values are hostile but valid, exactly at each limit, and its checks find a value changed by a byte; the agent half uses short markers ps shows whole", async () => {
+  const { agentCarriers, fixtureCommand, HOSTILE, hostileCarriers, missingIn, missingInText } = await import("../scripts/smoke-carriers.mjs");
   const sent = hostileCarriers("t");
   expect(carriersFrom(sent)).toEqual({ carriers: sent, withheld: [] });
   expect(Object.fromEntries(Object.entries(sent).map(([k, v]) => [k, v.length]))).toEqual({ TRACEPARENT: 512, TRACESTATE: 512, BAGGAGE: 8192 });
@@ -81,13 +81,21 @@ test("smoke:carriers' own values are hostile but valid, exactly at each limit, a
   expect(missingIn({ ...sent, PATH: "/bin" }, sent)).toEqual([]);
   expect(missingIn({ ...sent, TRACESTATE: sent.TRACESTATE.slice(0, -1), BAGGAGE: undefined }, sent)).toEqual(["TRACESTATE", "BAGGAGE"]);
   expect(missingIn(null, sent)).toEqual(CARRIERS);
-  // An agent's environment, as /proc/<pid>/environ and as `ps eww <pid>` print it.
-  const proc = ["PATH=/bin", ...Object.entries(sent).map(([k, v]) => `${k}=${v}`), ""].join("\0");
-  expect(missingInText(proc, sent, { proc: true })).toEqual([]);
-  expect(missingInText(proc.replace(sent.BAGGAGE, sent.BAGGAGE.slice(1)), sent, { proc: true })).toEqual(["BAGGAGE"]);
-  const ps = `  PID TT  STAT   TIME COMMAND\n 4242 s001 S+  0:01.00 claude PATH=/bin ${Object.entries(sent).map(([k, v]) => `${k}=${v}`).join(" ")} TERM=xterm\n`;
-  expect(missingInText(ps, sent)).toEqual([]);
-  expect(missingInText(ps.replace(`TRACEPARENT=${sent.TRACEPARENT}`, `TRACEPARENT=${sent.TRACEPARENT}x`), sent)).toEqual(["TRACEPARENT"]);
+  // The agent half: short markers ps shows unambiguously, valid for routr, each found whole in /proc or ps text.
+  const marks = agentCarriers("t1");
+  expect(carriersFrom(marks)).toEqual({ carriers: marks, withheld: [] });
+  for (const v of Object.values(marks)) expect(v).toMatch(/^[A-Za-z0-9_-]+$/);
+  expect(marks.TRACEPARENT).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+  expect(agentCarriers().TRACEPARENT).not.toBe(agentCarriers().TRACEPARENT);
+  const proc = ["PATH=/bin", ...Object.entries(marks).map(([k, v]) => `${k}=${v}`), ""].join("\0");
+  expect(missingInText(proc, marks)).toEqual([]);
+  expect(missingInText(proc.replace(`BAGGAGE=${marks.BAGGAGE}`, `BAGGAGE=${marks.BAGGAGE}x`), marks)).toEqual(["BAGGAGE"]);
+  const ps = `/usr/local/bin/claude PATH=/bin ${Object.entries(marks).map(([k, v]) => `${k}=${v}`).join(" ")} TERM=xterm\n`;
+  expect(missingInText(ps, marks)).toEqual([]);
+  // Whole entries only: a longer value, or the marker under another name, is not the carrier.
+  expect(missingInText(ps.replace(`TRACEPARENT=${marks.TRACEPARENT}`, `TRACEPARENT=${marks.TRACEPARENT}0`), marks)).toEqual(["TRACEPARENT"]);
+  expect(missingInText(ps.replace("TRACESTATE=", "XTRACESTATE="), marks)).toEqual(["TRACESTATE"]);
+  expect(missingInText("", marks)).toEqual(CARRIERS);
   // What it types starts the fixture only: the runtime and the script, quoted for the pane's shell, never a carrier.
   expect(fixtureCommand("posix", "/opt/bun", "/tmp/a b/fixture.cjs")).toBe("/opt/bun '/tmp/a b/fixture.cjs'");
   expect(fixtureCommand("powershell", "C:\\bun.exe", "C:\\it's\\fixture.cjs")).toBe("& 'C:\\bun.exe' 'C:\\it''s\\fixture.cjs'");

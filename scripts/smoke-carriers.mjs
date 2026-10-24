@@ -5,10 +5,16 @@
 // 1. Splits a pane with routr's own split code, its carriers hostile but valid (`%` `"` `&` `!` `;` `,` `=` TAB and
 //    spaces, each value exactly at routr's limit), starts a small fixture in that pane's shell that writes its
 //    environment to a file, checks each value arrived byte for byte, and closes the pane.
-// 2. macOS and Linux: splits another such pane and `herdr agent start`s the installed Claude Code there with no task,
-//    reads that agent's own environment (`ps eww <pid>` on macOS, /proc/<pid>/environ on Linux), checks the values, and
-//    closes the pane. There is no ordinary way to read another process's environment on Windows, so this half is
-//    posix only. No task is sent, so no subscription is spent.
+// 2. macOS and Linux: splits another pane, its carriers short markers, and `herdr agent start`s the installed Claude
+//    Code there with no task, reads that agent's own environment (`ps eww -o command= -p <pid>` on macOS,
+//    /proc/<pid>/environ on Linux), looks for each NAME=value whole, and closes the pane. There is no ordinary way to
+//    read another process's environment on Windows, so this half is posix only. No task is sent, so no subscription is
+//    spent (Claude may stop at its folder-trust screen; its process is there all the same).
+// Why the halves differ: ps prints a process's environment as one line, entries separated by spaces, so it cannot show
+// a value holding a TAB or a space exactly, and the live run (herdr 0.9.5, macOS zsh, 2026-10-24) found the hostile
+// values at their limits missing from ps's text while short ones were there exactly. So the shell half proves the
+// bytes (its fixture writes its own environment as JSON), and the agent half proves only that the agent inherits what
+// its pane's shell has, with markers of letters, digits, `-` and `_` that ps shows unambiguously.
 // Writes only in a temporary folder it removes. Prints carrier names, never values. Exits 1 when a check fails.
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -28,14 +34,19 @@ export function hostileCarriers(tag = randomUUID().slice(0, 8)) {
     return [name, head + "x".repeat(LIMITS[name] - head.length)];
   }));
 }
+// One short marker per carrier, of characters ps shows unambiguously (letters, digits, - and _): the agent half's.
+// TRACEPARENT is shaped as a valid one (version, trace id, span id, flags) in case the harness reads it.
+export function agentCarriers(tag = randomUUID().replace(/-/g, "").slice(0, 8)) {
+  const hex = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
+  return { TRACEPARENT: `00-${hex.slice(0, 32)}-${hex.slice(32, 48)}-01`, TRACESTATE: `routr_smoke-${tag}-ts`, BAGGAGE: `routr_smoke-${tag}-bg` };
+}
 // The carriers `sent` that `got` (an environment object) does not hold exactly.
 export const missingIn = (got, sent) => Object.keys(sent).filter((name) => got?.[name] !== sent[name]);
-// A process's environment as text: /proc/<pid>/environ (NUL-separated entries), or `ps eww <pid>` (the command line,
-// then each NAME=value after a space). From ps, a value holding a space cannot be told from the next entry, so each
-// carrier is looked for whole, followed by a space or the end.
-export function missingInText(text, sent, { proc = false } = {}) {
-  if (proc) return missingIn(Object.fromEntries(text.split("\0").filter(Boolean).map((e) => [e.slice(0, e.indexOf("=")), e.slice(e.indexOf("=") + 1)])), sent);
-  return Object.keys(sent).filter((name) => { const at = text.indexOf(` ${name}=${sent[name]}`); return at < 0 || ![" ", "\n", undefined].includes(text[at + name.length + sent[name].length + 2]); });
+// The carriers `sent` (short markers: no space or TAB) not found whole as NAME=value in a process's environment as
+// text: /proc/<pid>/environ (NUL-separated entries), or ps's line (the command, then each entry after a space).
+export function missingInText(text, sent) {
+  const entries = new Set(String(text).split(/[\0\s]+/));
+  return Object.keys(sent).filter((name) => !entries.has(`${name}=${sent[name]}`));
 }
 // What is typed into the pane's shell to start the fixture: the runtime and the script, quoted for that shell.
 export const fixtureCommand = (shell, exe, script) => (shell === "posix" ? `${quote(exe)} ${quote(script)}`
@@ -51,9 +62,9 @@ async function main({ log = console.log } = {}) {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let failed = 0;
   const say = (what, missing) => { if (missing.length) failed++; log(`${what}: ${missing.length ? `FAILED (${missing.join(", ")} did not arrive exactly)` : `ok (${CARRIERS.join(", ")} arrived exactly)`}`); };
-  // A pane split with the carriers, its shell at a prompt; closed by the caller.
-  const split = async () => {
-    const pane = (await call(splitArgs("down", dir, sent))).data.result.pane.pane_id;
+  // A pane split with `carriers`, its shell at a prompt; closed by the caller.
+  const split = async (carriers) => {
+    const pane = (await call(splitArgs("down", dir, carriers))).data.result.pane.pane_id;
     let shell = "posix";
     const r = await waitForShell(paneView(call, pane), { sleep, now: () => performance.now(), remaining: deadline(30000, () => performance.now(), "the pane's shell did not come to a prompt in 30 s"), cwd: dir,
       onShell: (name) => { shell = /^(pwsh|powershell)/i.test(name) ? "powershell" : /^cmd/i.test(name) ? "cmd" : "posix"; } });
@@ -62,7 +73,7 @@ async function main({ log = console.log } = {}) {
   };
   try {
     {
-      const { pane, shell } = await split();
+      const { pane, shell } = await split(sent);
       try {
         const script = join(dir, "fixture.cjs"), out = join(dir, "env.json");
         writeFileSync(script, FIXTURE(out));
@@ -74,7 +85,8 @@ async function main({ log = console.log } = {}) {
     }
     if (process.platform === "win32") log("agent: not checked on Windows (another process's environment cannot be read there)");
     else {
-      const { pane } = await split();
+      const markers = agentCarriers();
+      const { pane } = await split(markers);
       try {
         const started = await runHerdr(["agent", "start", "routr-smoke-carriers", "--kind", "claude", "--pane", pane, "--timeout", "20000"], 25000);
         if (!started.ok && !["agent_not_ready", "timeout"].includes(started.data?.error?.code)) throw processError(started);
@@ -85,8 +97,8 @@ async function main({ log = console.log } = {}) {
           if (!pid) await sleep(250);
         }
         if (!pid) throw new Error("no agent process appeared in the pane");
-        const text = process.platform === "linux" ? readFileSync(`/proc/${pid}/environ`, "utf8") : (await probe("/bin/ps", ["eww", String(pid)], { separate: true }))?.out ?? "";
-        say(`agent (claude, pid ${pid})`, missingInText(text, sent, { proc: process.platform === "linux" }));
+        const text = process.platform === "linux" ? readFileSync(`/proc/${pid}/environ`, "utf8") : (await probe("/bin/ps", ["eww", "-o", "command=", "-p", String(pid)], { separate: true }))?.out ?? "";
+        say(`agent (claude, pid ${pid})`, missingInText(text, markers));
       } finally { await runHerdr(["pane", "close", pane], 5000); }
     }
   } catch (e) { failed++; log(`FAILED: ${e?.message ?? e}`); }
