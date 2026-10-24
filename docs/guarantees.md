@@ -174,8 +174,9 @@ project's `.env` itself or pass it to the harness commands it runs (sign-in stat
 in its environment, exported in your shell, still reach them. A worker that `routr launch` starts in a herdr pane runs
 in that pane's own shell, which loads what that shell is set up to load. A headless worker is started directly, with
 routr's own environment (so no project `.env` either). Every process it starts goes through one place, which hides
-its console on Windows, gives harness reads and headless workers an environment without herdr's pane variables or the
-lead's own session variables (Claude Code's and Codex's), and on Windows resolves a
+its console on Windows, gives harness reads, headless workers and the private herdr server an environment without
+herdr's pane variables or any harness's lead session variables listed in the
+[harness reference](../skills/routr/references/harnesses.md), and on Windows resolves a
 command as the shell would, starting an npm `.cmd` shim's script directly. In a pane, routr types commands for that
 pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. A folder path typed into a shell reaches it exactly
 (in PowerShell, curly quotes as well as `'`), or is refused before anything is typed: cmd expands `%` and `!` even

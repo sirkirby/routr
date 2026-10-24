@@ -8,6 +8,9 @@ A short history of what changed in each routr release, one line per change. Each
 - On Windows, a folder whose name has a curly quote (`Chris’s`) now reaches a PowerShell pane exactly, for launch and
   Cursor's usage read. A cmd pane gets no folder path that holds `%` or `!` (cmd expands them even inside quotes);
   routr says so and types nothing. (#109)
+- Workers and usage reads no longer inherit the lead agent's session from Codex, Cursor, Antigravity or Kiro (only
+  Claude Code's was removed before), including Cursor's sudo-prompt secret, and reads in routr's private herdr session
+  get the same filter. (#<PR>)
 
 ## v0.8.3 — 2026-10-24
 
