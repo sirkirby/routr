@@ -10,7 +10,7 @@ A short history of what changed in each routr release, one line per change. Each
   routr says so and types nothing. (#109)
 - Workers and usage reads no longer inherit the lead agent's session from Codex, Cursor, Antigravity or Kiro (before,
   only Claude Code's and Codex's thread id were removed), including Cursor's sudo-prompt secret, and reads in routr's
-  private herdr session get the same filter. (#<PR>)
+  private herdr session get the same filter. (#110)
 
 ## v0.8.3 — 2026-10-24
 
