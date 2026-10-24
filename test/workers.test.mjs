@@ -238,9 +238,12 @@ function world(over = {}) {
   // git's own folder too: launch --worktree and cleanup run it, as they would for a person.
   const env = cliEnv(home, { PATH: [bin, dirname(process.execPath), dirname(Bun.which("git") ?? "git")].join(delimiter), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_RPC: join(home, "rpc.jsonl"), FAKE_ANSWERS: join(home, "answers.jsonl"), FAKE_EOF: join(home, "eof.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, FAKE_HELPER: helper, ...over });
   for (const k of Object.keys(env)) if (/^(HERDR_|CLAUDECODE$|CLAUDE_CODE_SESSION|SANDBOX_RUNTIME$|CODEX_SANDBOX)/.test(k)) delete env[k];
+  // Inject sandbox markers only in the holder: the public launch correctly refuses a genuinely sandboxed lead.
+  const entry = over.FAKE_HOLDER_ENV ? join(home, "routr.mjs") : SCRIPT;
+  if (over.FAKE_HOLDER_ENV) writeFileSync(entry, `if (process.argv.includes("--hold")) Object.assign(process.env, JSON.parse(process.env.FAKE_HOLDER_ENV)); await import(${JSON.stringify(SCRIPT)});\n`);
   const outputs = [];
   const run = (args, extra = {}) => {
-    const r = Bun.spawnSync([process.execPath, SCRIPT, ...args], { cwd: work, env: { ...env, ...extra }, stdin: "ignore" });
+    const r = Bun.spawnSync([process.execPath, entry, ...args], { cwd: work, env: { ...env, ...extra }, stdin: "ignore" });
     const text = r.stdout.toString(); outputs.push(text, r.stderr.toString());
     try { return JSON.parse(text); } catch { return { raw: text }; }
   };
@@ -1131,9 +1134,10 @@ test("a worker is lost only when its channel and its state are of one generation
 
 test("every headless adapter removes every lead session name on its initial and resumed turns, keeping sign-in and config", async () => {
   for (const kind of Object.keys(ADAPTERS)) {
-    const w = world(), log = join(w.home, "env.jsonl");
+    const w = world({ FAKE_HOLDER_ENV: JSON.stringify({ CODEX_SANDBOX: "lead-session", codex_sandbox: "lead-session" }) }), log = join(w.home, "env.jsonl");
     if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor", "cli-config.json"), "{}"); }
     Object.assign(w.env, LEAD_ENV, Object.fromEntries(Object.entries(LEAD_ENV).map(([k, v]) => [k.toLowerCase(), v])), CONFIG_ENV, { FAKE_ENV: log });
+    delete w.env.CODEX_SANDBOX; delete w.env.codex_sandbox;
     try {
       const launched = w.launch("env", w.task(BRIEF), [], undefined, kind);
       expect([kind, launched.state, launched.error]).toEqual([kind, "prompted", undefined]);
@@ -1145,11 +1149,13 @@ test("every headless adapter removes every lead session name on its initial and 
       const rows = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
       const turns = rows.filter(({ argv }) => kind === "codex" ? argv[0] === "app-server" : kind === "kiro" ? argv[0] === "acp" : kind === "agy" ? argv.includes("--print=") : argv.includes("-p"));
       expect(turns).toHaveLength(2);
-      for (const { env } of rows) {
+      if (kind === "cursor") expect(rows.filter(({ argv }) => argv[0] === "status").length).toBeGreaterThan(0);
+      for (const row of rows) {
+        const { env } = row;
         for (const k of Object.keys(LEAD_ENV)) { expect(env).not.toHaveProperty(k); expect(env).not.toHaveProperty(k.toLowerCase()); }
         const config = { ...CONFIG_ENV };
         // Cursor deliberately replaces the config location for its worker, while every other setting passes intact.
-        if (kind === "cursor" && env.CURSOR_CONFIG_DIR !== CONFIG_ENV.CURSOR_CONFIG_DIR) config.CURSOR_CONFIG_DIR = join(w.runDir("env"), "cursor-config");
+        if (kind === "cursor" && turns.includes(row)) config.CURSOR_CONFIG_DIR = join(w.runDir("env"), "cursor-config");
         expect(env).toEqual(config);
       }
     } finally { w.run(["stop", "--name", "env"]); w.run(["cleanup", "--worker", "env"]); }

@@ -8,15 +8,18 @@ if (!SCRATCH) throw new Error("test/setup.mjs did not run: run the tests from th
 export const scratch = (name) => mkdtempSync(join(SCRATCH, `${name}-`));
 // Session names observed in the harnesses (references/harnesses.md); independent of runtime's removal rule.
 export const LEAD_ENV = Object.fromEntries([
-  "HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_PANE_ID", "herdr_other", "CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT",
+  "HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_CLIENT_SOCKET_PATH", "HERDR_SESSION", "HERDR_BIN_PATH", "HERDR_WORKSPACE_ID", "HERDR_TAB_ID", "HERDR_PANE_ID",
+  "CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT",
   "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_SESSION_ATTENDED",
   "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_BRIDGE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_SSE_PORT",
-  "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_TOOL_CALL_ID", "CURSOR_CONVERSATION_ID", "CURSOR_REQUEST_ID", "CURSOR_AGENT",
+  "CODEX_THREAD_ID", "CODEX_SESSION_ID", "CODEX_TOOL_CALL_ID", "CODEX_SANDBOX", "CODEX_SANDBOX_NETWORK_DISABLED", "CURSOR_CONVERSATION_ID", "CURSOR_REQUEST_ID", "CURSOR_AGENT",
+  "CURSOR_ASKPASS_SOCKET", "CURSOR_ASKPASS_SECRET", "CURSOR_AGENT_STORE_FILES_DIR", "CURSOR_AGENT_STORE_SHARED_PATHS", "CURSOR_SANDBOX", "AGENT_TRANSCRIPTS",
   "ANTIGRAVITY_CONVERSATION_ID", "KIRO_SESSION_ID",
 ].map((k) => [k, "lead-session"]));
 export const CONFIG_ENV = { CODEX_HOME: "/codex-config", CURSOR_CONFIG_DIR: "/cursor-config", CLAUDE_CODE_OAUTH_TOKEN: "fixture-token",
+  HERDR_CONFIG_PATH: "/herdr-config", HERDR_LOG: "debug", HERDR_HOME: "/herdr-home", herdr_other: "kept",
   CLAUDE_CODE_USE_BEDROCK: "1", ANTHROPIC_API_KEY: "fixture-key", OPENAI_API_KEY: "fixture-key", NOT_HERDR_ENV: "kept",
-  CODEX_SESSION_ID_EXTRA: "kept", CURSOR_AGENT_EXTRA: "kept", KIRO_SESSION_ID_EXTRA: "kept", ANTIGRAVITY_CONVERSATION_ID_EXTRA: "kept" };
+  SUDO_ASKPASS: "/user-askpass", CODEX_SESSION_ID_EXTRA: "kept", CURSOR_AGENT_EXTRA: "kept", KIRO_SESSION_ID_EXTRA: "kept", ANTIGRAVITY_CONVERSATION_ID_EXTRA: "kept" };
 // The CLI as a test spawns it, and the environment it gets: a scratch home, no decision provider key, and whatever `over` adds
 // (PATH: home, for a spawn that could otherwise start a harness).
 export const SCRIPT = join(import.meta.dir, "../src/routr.mjs");
