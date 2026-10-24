@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.8.3 — 2026-10-24
+
+[Full notes](docs/releases/v0.8.3.md)
+
 - The orchestrator guide says to brief a fix by the rule it must keep everywhere, not the symptom seen, and to size
   each review round to what it found: decisions to the user, behaviour changes back to the builder, trivial fixes
   checked by the lead. (#107)
