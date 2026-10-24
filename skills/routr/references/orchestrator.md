@@ -152,6 +152,8 @@ object describing what it did.
   startup. It passes each harness's own flags so none is asked (Cursor `--trust`, Kiro `--trust-tools=*`, Codex
   `--dangerously-bypass-hook-trust` for its hooks review; Codex and Claude Code still ask to trust a folder outside a
   trusted one), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
+- A cmd shell expands `%` and `!` in a folder path even inside quotes, so launch refuses (`failed`) to type such a
+  folder into one: use a folder without them, or a pane running PowerShell.
 - `--dry-run` requires `--model`, prints `would_run` and changes nothing. It returns `ok: false` and `error` when a real launch would refuse its arguments, folder, task or advice; otherwise `ok: true`. It does not check the environment, subscription settings or sign-in.
 - Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_input`, or `failed`.
   `headline` says what happened. `warnings` states facts about the call. `steps` says what it did, in order. Follow `next`: it includes

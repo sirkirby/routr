@@ -6,7 +6,7 @@ import { chmodSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { deadline, runHerdr, SHELLS, shellAlone, shellFamily, waitForShell } from "./herdr.mjs";
+import { cmdTypable, deadline, runHerdr, SHELLS, shellAlone, shellFamily, waitForShell } from "./herdr.mjs";
 import { CURSOR_SNAPSHOT, home } from "./runtime.mjs";
 import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
 import { openTerminal } from "./terminal.mjs";
@@ -58,6 +58,7 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
     if (!ready.ok) throw new Error(ready.why);
     const shell = shellFamily(ready.name);
     dir = join(tmp, `routr-cursor-${randomBytes(4).toString("hex")}`);
+    if (shell === "cmd" && !cmdTypable(dir)) { code = "cmd_path"; throw new Error(); } // before anything is typed
     mkdirSync(dir, { mode: 0o700 });
     try { copyFileSync(cursorConfig, join(dir, "cli-config.json")); chmodSync(join(dir, "cli-config.json"), 0o600); }
     catch { throw new Error(`Cursor has no config at ${cursorConfig}: sign in with \`cursor-agent\` first`); }

@@ -411,6 +411,21 @@ test("a question the private session's shell asks is not answered: the read stop
   expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
 });
 
+test("a cmd shell is never typed a temporary folder that holds % or !: the read says why and what to do, and the session goes", async () => {
+  for (const name of ["cu-100%", "cu-bang!"]) {
+    const f = fakeCursorUsage();
+    const tmp = scratch(name);
+    const run = (all) => all[3] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "cmd.exe", cwd: tmp }] } })
+      : all[3] === "create" ? herdrOK({ root_pane: { pane_id: "w1:p1" } }) : f.deps.run(all);
+    const r = await cursorUsage({ ...f.deps, tmp, run });
+    expect(r).toEqual({ ok: false, ...usageFailure("cmd_path"), read_yourself: CURSOR_BY_HAND });
+    expect(r.why).toBe("The usage read's shell is cmd, which expands % and ! even inside quotes, and the temporary folder's path holds one. Set TEMP to a folder whose path has neither, or make PowerShell the shell herdr opens.");
+    expect(f.calls.some((a) => ["run", "send-text", "send-keys"].includes(a[3]))).toBe(false);
+    expect(readdirSync(tmp)).toEqual([]); // the private folder goes with the read
+    expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
+  }
+});
+
 test("cursor-agent missing is said in seconds, not at the 90 s timeout", async () => {
   const f = fakeCursorUsage({ neverDraws: true, cursorRuns: false });
   const r = await cursorUsage(f.deps); // the default 90 s budget

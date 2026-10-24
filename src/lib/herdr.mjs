@@ -51,8 +51,17 @@ export function shellFamily(name) {
 // readiness cannot be waited on (seen on Windows 11: `agent get` said not found while Cursor sat at its prompt). There
 // the shell is given the variable first (`cursorEnv`) and herdr starts and tracks Cursor itself, as for every other
 // kind; on PowerShell a watcher removes the folder when that shell is gone, cmd leaves it (one small file in %TEMP%).
-const psq = (s) => `'${String(s).replaceAll("'", "''")}'`;
-const cmdq = (s) => `"${String(s).replaceAll('"', '""')}"`;
+// Every folder path typed into a shell goes through these, so it reaches the shell exactly or is refused.
+// PowerShell ends a single-quoted string at ' and also at the smart quotes U+2018 to U+201B, and reads any two in a row
+// as one: each is doubled (its tokenizer; a folder named "Chris’s" broke the line before). Checked by PowerShell's own
+// parser in the tests where pwsh is installed.
+const psEscape = (s) => String(s).replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&");
+const psq = (s) => `'${psEscape(s)}'`;
+// cmd expands %NAME% inside quotes, and !NAME! too when delayed expansion is on, and its prompt has no way to quote
+// either literally: a path holding one is refused before anything is typed, never typed changed.
+export const CMD_PATH = "A cmd shell expands % and ! in a folder path even inside quotes, so routr will not type this one into it. Use a folder whose path has neither, or a pane running PowerShell.";
+export const cmdTypable = (...paths) => !paths.some((p) => /[%!]/.test(String(p)));
+const cmdq = (s) => { if (!cmdTypable(s)) throw new Error(CMD_PATH); return `"${String(s).replaceAll('"', '""')}"`; };
 export const SHELLS = {
   posix: {
     cd: (dir) => `cd -- ${quote(dir)}`,
@@ -67,8 +76,8 @@ export const SHELLS = {
     // concatenation: a hashtable literal holding it failed to parse at the prompt (also seen), so it stays one line of
     // `;`-separated statements. A process WMI creates gets its own console, which showed before `-WindowStyle Hidden`
     // took effect; a Win32_ProcessStartup with ShowWindow = 0 (SW_HIDE) is the documented way to start it hidden. Not
-    // yet confirmed on Windows 11.
-    cursorEnv: (dir) => `$env:CURSOR_CONFIG_DIR=${psq(dir)}; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ${psq(dir).replaceAll("'", "''")} -Recurse -Force -ErrorAction SilentlyContinue"'; $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $si.ShowWindow = 0; ([wmiclass]'Win32_Process').Create($w, $null, $si) | Out-Null`,
+    // yet confirmed on Windows 11. The watcher's path is a string inside $w's string, so it is quoted twice.
+    cursorEnv: (dir) => `$env:CURSOR_CONFIG_DIR=${psq(dir)}; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ${psEscape(psq(dir))} -Recurse -Force -ErrorAction SilentlyContinue"'; $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $si.ShowWindow = 0; ([wmiclass]'Win32_Process').Create($w, $null, $si) | Out-Null`,
   },
   cmd: {
     cd: (dir) => `cd /d ${cmdq(dir)}`,
