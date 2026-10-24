@@ -323,7 +323,7 @@ const CURSOR_UI = "  Cursor Agent\n  Grok 4.6 High\n  /tmp";
 const CU_TMP = scratch("cu");
 
 
-function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = true, failCreate = false, spawnFails = false, sessions = null, shellAsks = null } = {}) {
+function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = true, failCreate = false, spawnFails = false, sessions = null, shellAsks = null, reply = () => undefined } = {}) {
   let stage = "shell", ticks = 0, extraEnter = false, up = 0;
   const calls = [], started = [], privateDirs = [];
   const tmp = CU_TMP, cursorConfig = join(tmp, "real-cli-config.json");
@@ -338,6 +338,8 @@ function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = 
       if (all[0] === "session") return herdrOK({});
       expect(all.slice(0, 2)).toEqual(["--session", started[0]]);
       const a = all.slice(2);
+      const override = reply(a);
+      if (override !== undefined) return override;
       if (a[0] === "workspace" && a[1] === "list") return ++up < 3 ? herdrError("server_not_running") : herdrOK({ workspaces: [] });
       if (a[0] === "workspace" && a[1] === "create") {
         expect(a).toEqual(["workspace", "create", "--cwd", tmp, "--no-focus"]);
@@ -391,6 +393,46 @@ test("cursorUsage sends a second enter if the panel is slow, and still removes t
   expect((await cursorUsage(f.deps)).ok).toBe(true);
   expect(f.calls.filter((a) => a[3] === "send-keys" && a[5] === "enter").length).toBeGreaterThanOrEqual(2);
   expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
+});
+
+test("Cursor usage waits through unreadable shell processes before starting Cursor", async () => {
+  let polls = 0;
+  const f = fakeCursorUsage({ reply: (a) => {
+    if (a[1] === "process-info" && ++polls <= 3) return herdrOK({ process_info: {} });
+    if (a[1] === "run") expect(polls).toBe(5);
+  } });
+  expect(await cursorUsage(f.deps)).toMatchObject({ ok: true, included_used_pct: 3 });
+  expect(f.calls.some((a) => a[3] === "run")).toBe(true);
+});
+
+test("Cursor usage waits until its deadline when shell processes stay unreadable and types nothing", async () => {
+  const f = fakeCursorUsage({ reply: (a) => a[1] === "process-info" ? herdrOK({ process_info: {} }) : undefined });
+  expect(await cursorUsage({ ...f.deps, timeout: 2000 })).toMatchObject({ ok: false, ...usageFailure("read_failed"), read_yourself: CURSOR_BY_HAND });
+  expect(f.deps.now()).toBe(2000);
+  expect(f.calls.some((a) => ["run", "send-text", "send-keys"].includes(a[3]))).toBe(false);
+  expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
+});
+
+test("Cursor shell readiness still stops immediately when herdr is unreachable, refuses, or loses the pane", async () => {
+  for (const code of ["server_not_running", "boom", "pane_not_found"]) {
+    const f = fakeCursorUsage({ reply: (a) => a[1] === "process-info" ? herdrError(code) : undefined });
+    expect(await cursorUsage(f.deps)).toMatchObject({ ok: false, ...usageFailure("read_failed") });
+    expect(f.deps.now()).toBe(400); // only the private server's startup wait
+    expect(f.calls.some((a) => ["run", "send-text", "send-keys"].includes(a[3]))).toBe(false);
+    expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
+  }
+});
+
+test("Cursor usage keeps waiting for its UI when shellAlone cannot read processes", async () => {
+  let started = false, unreadable = 0;
+  const f = fakeCursorUsage({ reply: (a) => {
+    if (a[1] === "run") started = true;
+    if (started && a[1] === "read" && f.deps.now() < 5000) return herdrOK({ text: "chris % " });
+    if (started && a[1] === "process-info" && ++unreadable <= 3) return herdrOK({ process_info: {} });
+  } });
+  expect(await cursorUsage(f.deps)).toMatchObject({ ok: true, included_used_pct: 3 });
+  expect(unreadable).toBeGreaterThanOrEqual(3);
+  expect(f.deps.now()).toBeGreaterThanOrEqual(5000);
 });
 
 test("cursorUsage removes the session when Cursor never draws or the session fails half way", async () => {
