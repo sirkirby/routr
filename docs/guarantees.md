@@ -177,7 +177,10 @@ routr's own environment (so no project `.env` either). Every process it starts g
 its console on Windows, gives harness reads and headless workers an environment without herdr's pane variables or the
 lead's own session variables (Claude Code's and Codex's), and on Windows resolves a
 command as the shell would, starting an npm `.cmd` shim's script directly. In a pane, routr types commands for that
-pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. Follow-up commands have exact `argv` and a
+pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. A folder path typed into a shell reaches it exactly
+(in PowerShell, curly quotes as well as `'`), or is refused before anything is typed: cmd expands `%` and `!` even
+inside quotes, so a cmd shell is never given a path holding either, and routr says to use another folder or
+PowerShell. Follow-up commands have exact `argv` and a
 common-shell `command` only for the documented safe alphabet and an unquoted, non-assignment executable; otherwise
 `command` is null. Instructions and templates are marked `kind: "do"`, never runnable.
 Unsafe template values become placeholders for the lead to fill, never expanding shell text. Execution history stays

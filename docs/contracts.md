@@ -54,7 +54,9 @@ Names that mean one thing everywhere:
 | `pane`, `worktree` | `pane` or `path` | `cleanup` (what runs in a pane, or a worktree's git state, could not be read) |
 
 Codes are the fixed lists routr already has (the decision-model failure codes, the usage failure codes) plus
-`unreadable` for a file, a model list, a pane or a worktree.
+`unreadable` for a file, a model list, a pane or a worktree. Cursor's usage read adds `cmd_path`: the private
+session's shell is cmd and the temporary folder's path holds `%` or `!`, so nothing is typed; its `why` says to set
+TEMP to a folder without them, or make PowerShell the shell herdr opens.
 
 ## Ordered decision models
 
@@ -399,6 +401,11 @@ Inputs:
 | `ready` (no task given) or `prompted` | true |
 | `needs_input` | false, no `error` |
 | `failed` | false, with `error` |
+
+In a pane whose shell is cmd, a folder launch would type there (the `--cwd` of a `--pane`, Cursor's private config
+folder) that holds `%` or `!` is refused before anything is typed: `ok: false`, `state: "failed"`, and the fixed
+`error` "A cmd shell expands % and ! in a folder path even inside quotes, so routr will not type this one into it. Use
+a folder whose path has neither, or a pane running PowerShell." A pane launch split is closed; a `--pane` is kept.
 
 `headline`: `routr: <name> (<kind>) took its task in pane <pane>`; `routr: <name> is ready in pane <pane>; no task
 sent`; `routr: <name> needs input in pane <pane>: <why>`; `routr: launch failed: <error>`; `routr: planned <kind>
