@@ -223,7 +223,9 @@ const SENT = "PRIVATE-SEND-91c2: also rename baz.";
 function world(over = {}) {
   const home = shortHome(), bin = join(home, "bin"), work = join(home, "work"), inputs = join(home, "inputs");
   for (const d of [bin, work, inputs]) mkdirSync(d, { recursive: true });
-  const recordEnv = `if (process.env.FAKE_ENV) require("node:fs").appendFileSync(process.env.FAKE_ENV, JSON.stringify({ argv: process.argv.slice(2), env: Object.fromEntries(${JSON.stringify([...Object.keys(LEAD_ENV), ...Object.keys(LEAD_ENV).map((k) => k.toLowerCase()), ...Object.keys(CONFIG_ENV), ...CARRIERS, ...CARRIERS.map((k) => k.toLowerCase())])}.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])) }) + "\\n");\n`;
+  // The child's own entries, by the names it has them under: on Windows process.env[k] finds a variable under any case,
+  // so looking each name up would record one variable under both its spellings.
+  const recordEnv = `if (process.env.FAKE_ENV) { const names = new Set(${JSON.stringify([...Object.keys(LEAD_ENV), ...Object.keys(LEAD_ENV).map((k) => k.toLowerCase()), ...Object.keys(CONFIG_ENV), ...CARRIERS, ...CARRIERS.map((k) => k.toLowerCase())])}); require("node:fs").appendFileSync(process.env.FAKE_ENV, JSON.stringify({ argv: process.argv.slice(2), env: Object.fromEntries(Object.entries(process.env).filter(([k]) => names.has(k))) }) + "\\n"); }\n`;
   fakeExecutable(bin, "claude", recordEnv + FAKE_CLAUDE);
   fakeExecutable(bin, "codex", recordEnv + FAKE_CODEX);
   fakeExecutable(bin, "agy", recordEnv + FAKE_AGY);
@@ -1217,14 +1219,21 @@ test("every headless adapter's turns get the launch's carriers, a process per tu
       // A harness read (its sign-in status, a model list) is not a worker: none.
       for (const r of rows.filter((x) => !turns.includes(x))) expect([kind, carriersIn(r.env)]).toEqual([kind, {}]);
       expect(w.state("tc").carriers_withheld).toBeUndefined();
-      // No value in any output, nor in any file routr wrote in the run folder but worker.json, which keeps them.
-      for (const o of w.outputs) expect([kind, /CARRIER_HL|sender=/.test(o)]).toEqual([kind, false]);
+      // No value in any file routr wrote in the run folder but worker.json, which keeps them.
       for (const f of filesUnder(w.runDir("tc")).filter((f) => f !== "worker.json" && !f.split(/[\\/]/).includes("reports"))) {
         expect([kind, f, readFileSync(join(w.runDir("tc"), f), "utf8").includes("CARRIER_HL")]).toEqual([kind, f, false]);
       }
-    } finally { w.run(["stop", "--name", "tc"]); w.run(["cleanup", "--worker", "tc"]); }
+      // A worker stopped while it runs, then cleaned up: those outputs are checked below with the rest.
+      rmSync(w.gate, { force: true });
+      expect([kind, w.launch("tr", w.task(`${BRIEF} HOLD`, "running.md"), [], undefined, kind).state]).toEqual([kind, "prompted"]);
+      expect([kind, w.run(["workers", "--name", "tr"]).workers[0].state]).toEqual([kind, "working"]);
+      expect([kind, w.run(["stop", "--name", "tr"]).state]).toEqual([kind, "stopped"]);
+    } finally { for (const n of ["tc", "tr"]) { w.run(["stop", "--name", n]); w.run(["cleanup", "--worker", n]); } }
+    // Every command's whole output, teardown included: no value.
+    expect(w.outputs.length).toBeGreaterThan(20);
+    for (const o of w.outputs) expect([kind, /CARRIER_HL|sender=/.test(o)]).toEqual([kind, false]);
   }
-}, 120000);
+}, 180000);
 
 test("a headless worker's saved carriers are checked on every load: a bad one is withheld and said, an older worker gets none", async () => {
   const w = world({ TRACEPARENT: LAUNCHED.TRACEPARENT, BAGGAGE: "a=\x1b[2J" }), log = join(w.home, "env.jsonl");
@@ -1257,5 +1266,14 @@ test("a headless worker's saved carriers are checked on every load: a bad one is
     expect(carriersIn(turns.at(-1).env)).toEqual({});
     expect(w.state("tb").carriers_withheld).toBeUndefined();
     expect(w.run(["workers", "--name", "tb"]).workers[0]).not.toHaveProperty("carriers_withheld");
+    // Only an absent key is absent: one saved as null (or empty) is withheld and named, not skipped without a word.
+    writeFileSync(file, JSON.stringify({ ...saved, carriers: { TRACEPARENT: LAUNCHED.TRACEPARENT, BAGGAGE: null, TRACESTATE: "" } }));
+    const n = w.run(["send", "--name", "tb", "--task", SENT]);
+    expect(n.state).toBe("resumed");
+    expect(n.warnings.filter((x) => /TRACE|BAGGAGE/.test(x))).toEqual(["TRACESTATE", "BAGGAGE"].map((c) => expect.stringContaining(`${c} was not passed to the worker`)));
+    w.run(["wait", "--name", "tb", "--timeout", "20000"]); expect(await w.settled("tb")).toBe(true);
+    expect(w.run(["workers", "--name", "tb"]).workers[0].carriers_withheld).toEqual(["TRACESTATE", "BAGGAGE"]);
+    turns = turnsOf("claude", readFileSync(log, "utf8").trim().split("\n").map((x) => JSON.parse(x)));
+    expect(carriersIn(turns.at(-1).env)).toEqual({ TRACEPARENT: LAUNCHED.TRACEPARENT });
   } finally { w.run(["stop", "--name", "tb"]); w.run(["cleanup", "--worker", "tb"]); }
 }, 60000);
