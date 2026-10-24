@@ -263,8 +263,9 @@ export function stop(child, { platform = process.platform, via, after = later, g
   }
 }
 
-// The environment for harness reads, headless turns and the private herdr server: routr's own, without herdr's pane
-// variables (HERDR_ENV, HERDR_SOCKET_PATH, HERDR_PANE_ID, ...). A harness inherits them, and herdr's integration hooks in
+// The environment for harness reads, headless turns (through workerEnv) and the private herdr server: routr's own,
+// without the trace-context carriers (below), and without herdr's pane variables (HERDR_ENV, HERDR_SOCKET_PATH,
+// HERDR_PANE_ID, ...). A harness inherits them, and herdr's integration hooks in
 // that harness (e.g. ~/.claude/hooks/herdr-agent-state.sh, which acts only when all three are set) would report
 // routr's few-second read as an agent session in the user's pane. routr's own herdr calls (herdr.mjs runHerdr,
 // terminal.mjs clients) keep them: herdr needs them to find its session. Windows names are case-insensitive, hence /i.
@@ -276,7 +277,42 @@ export function stop(child, { platform = process.platform, via, after = later, g
 // 2026-10-24 (versions and sources in references/harnesses.md). Exact names, not harness prefixes: sign-in, provider
 // and config settings (CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_USE_BEDROCK, CODEX_HOME, CURSOR_CONFIG_DIR, …) stay.
 const LEAD_SESSION = /^(?:HERDR_(?:ENV|SOCKET_PATH|CLIENT_SOCKET_PATH|SESSION|BIN_PATH|WORKSPACE_ID|TAB_ID|PANE_ID)|CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(?:ENTRYPOINT|EXECPATH|SESSION_ID|SESSION_ATTENDED|CHILD_SESSION|BRIDGE_SESSION_ID|MESSAGING_SOCKET|MESSAGING_TOKEN|SSE_PORT)|CODEX_THREAD_ID|CODEX_SESSION_ID|CODEX_TOOL_CALL_ID|CODEX_SANDBOX|CODEX_SANDBOX_NETWORK_DISABLED|CURSOR_CONVERSATION_ID|CURSOR_REQUEST_ID|CURSOR_AGENT|CURSOR_ASKPASS_SOCKET|CURSOR_ASKPASS_SECRET|CURSOR_AGENT_STORE_FILES_DIR|CURSOR_AGENT_STORE_SHARED_PATHS|CURSOR_SANDBOX|AGENT_TRANSCRIPTS|ANTIGRAVITY_CONVERSATION_ID|KIRO_SESSION_ID)$/i;
-export const harnessEnv = (env = process.env) => Object.fromEntries(Object.entries(env).filter(([k]) => !LEAD_SESSION.test(k)));
+
+// W3C trace context, as OpenTelemetry's "environment variables as context propagation carriers" names it: routr hands
+// the carriers in its own environment on to the workers it starts, unchanged, and sets, makes or reads none of them. A
+// carrier is an opaque string: kept byte for byte, never parsed. A harness read (usage, sign-in, a probe) is not a
+// worker and gets none (harnessEnv); a worker start adds the checked ones back (workerEnv).
+export const CARRIERS = ["TRACEPARENT", "TRACESTATE", "BAGGAGE"];
+const CARRIER = new RegExp(`^(?:${CARRIERS.join("|")})$`, "i");
+// routr's own limit on what it hands on, not the W3C grammar: printable ASCII and horizontal tab (Baggage's optional
+// whitespace; nothing in the three formats needs more), so no control character reaches a child's environment or
+// herdr's argv. Bytes: room for later traceparent versions, W3C's minimum tracestate to propagate, and W3C's minimum
+// baggage size, taken here as routr's maximum.
+const CARRIER_MAX = { TRACEPARENT: 512, TRACESTATE: 512, BAGGAGE: 8192 };
+const CARRIER_TEXT = /^[\t\x20-\x7e]*$/;
+// Shown in output where a carrier stands: its value never is.
+export const FORWARDED = "<forwarded>";
+export const carrierWithheld = (name) => `${name} was not passed to the worker: routr passes it only when it is at most ${CARRIER_MAX[name]} bytes of printable ASCII or tabs`;
+// { carriers, withheld }: those within the limits, by name, and the names of those present but outside them. An empty
+// value is absent. Checked by character first, so a length is a count of bytes.
+const checked = (get) => {
+  const carriers = {}, withheld = [];
+  for (const name of CARRIERS) {
+    const v = get(name);
+    if (v == null || v === "") continue;
+    if (typeof v === "string" && CARRIER_TEXT.test(v) && v.length <= CARRIER_MAX[name]) carriers[name] = v; else withheld.push(name);
+  }
+  return { carriers, withheld };
+};
+// The carriers in an environment: by exact name, and case-insensitively on Windows, as its environment is.
+export const carriersFrom = (env = process.env, { platform = process.platform } = {}) => checked((n) => (platform === "win32" ? envGet(env, n) : env[n]));
+// The carriers a worker was saved with (headless worker.json), checked again on every load: only the three names, and
+// only own keys; anything else in the object is ignored.
+export const savedCarriers = (saved) => checked((n) => (saved && typeof saved === "object" && !Array.isArray(saved) && Object.hasOwn(saved, n) ? saved[n] : undefined));
+export const harnessEnv = (env = process.env) => Object.fromEntries(Object.entries(env).filter(([k]) => !LEAD_SESSION.test(k) && !CARRIER.test(k)));
+// A worker's environment: the harness environment, the carriers it was given (checked again here, so nothing unchecked
+// is ever spread into it), then the adapter's own variables, which win for their keys.
+export const workerEnv = (carriers, extra = {}, env = process.env) => ({ ...harnessEnv(env), ...savedCarriers(carriers).carriers, ...extra });
 
 // Start routr again, detached, with `args`, and carry on without waiting: the binary itself, or `bun <script>` from a
 // source checkout. A spawn that fails later (EACCES, EMFILE) is ignored; one that fails at once returns false.
