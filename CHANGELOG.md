@@ -7,7 +7,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 - The orchestrator guide says to brief a fix by the rule it must keep everywhere, not the symptom seen, and to size
   each review round to what it found: decisions to the user, behaviour changes back to the builder, trivial fixes
-  checked by the lead. (#PR)
+  checked by the lead. (#107)
 
 ## v0.8.2 — 2026-10-23
 
