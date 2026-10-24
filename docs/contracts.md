@@ -156,6 +156,10 @@ The rule, as #82 made it for the decision-model providers:
   `herdr_refused` (herdr answered with an error), `herdr_invalid_response` (an answer without what routr asked for),
   `git_unreachable`, `git_refused` (a nonzero exit), `git_invalid_response`. herdr's own error code may choose among
   routr's codes (as launch already treats `agent_not_running` and `timeout` apart) but is never printed.
+- While launch or Cursor's usage read waits for a shell prompt, an unreadable `pane process-info` answer is waited
+  out within the command's deadline. If processes remain unreadable, the shell wait's deadline error says so (Cursor
+  still returns its fixed `read_failed` usage failure). Cursor also keeps waiting for its UI when that process read
+  is unreadable. Unreachable or refused calls still stop immediately; cleanup still refuses an unreadable pane.
 - A missing herdr executable retains `herdr_unreachable`, says herdr is not installed or not on PATH, and adds
   an installation/PATH step in `next`. Other unreachable calls say they did not answer.
 - `headline`, `warnings`, `steps[].detail`, `error`, `unavailable[].why` and `why` anywhere are built from those

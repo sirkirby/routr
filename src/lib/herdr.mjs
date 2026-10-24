@@ -143,10 +143,18 @@ export const paneView = (call, pane) => ({
   keys: (...keys) => call(["pane", "send-keys", pane, ...keys]),
 });
 
+// Measured 2026-10-24, herdr 0.9.5 on macOS: 3 of 4 worktree launches got an unreadable process-info answer
+// while zsh's startup ran brew shellenv; the same pane answered later. An unreadable look proves neither readiness
+// nor exit. Only waits use this; cleanup must still refuse when it cannot tell what runs in a pane.
+async function processesWhileWaiting(pane) {
+  try { return await pane.info(); }
+  catch (e) { if (e?.code !== "herdr_invalid_response") throw e; return null; }
+}
+
 // True when the shell is the only thing running in the pane: a command typed into it has exited, or never started.
 export async function shellAlone(pane) {
-  const info = await pane.info();
-  return (info.foreground_processes ?? []).every((p) => p.pid === info.shell_pid);
+  const info = await processesWhileWaiting(pane);
+  return info != null && (info.foreground_processes ?? []).every((p) => p.pid === info.shell_pid);
 }
 
 // A time budget for a sequence of herdr calls: `remaining()` is what is left, and throws `message` once it is spent.
@@ -167,11 +175,18 @@ export function deadline(timeout, now, message) {
 // waited out (new shells and directory hooks run short commands), unless `refuseBusy` (a pane adopted from the caller).
 // `cwd`, when given, must be where the shell is. Returns { ok: true, name, cwd } or { ok: false, why, text }.
 export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBusy = false, onShell } = {}) {
-  let previous = null;
-  const pause = () => sleep(Math.min(250, remaining()));
+  let previous = null, unreadable = false;
+  const left = () => {
+    try { return remaining(); }
+    catch (e) { if (unreadable) throw new Error("The pane's processes could not be read before the shell readiness deadline"); throw e; }
+  };
+  const pause = () => sleep(Math.min(250, left()));
   for (;;) {
+    left();
     const text = await pane.read();
-    const info = (await pane.info()) ?? {}; // no process information: the shell is waited for, like a busy one
+    const read = await processesWhileWaiting(pane);
+    unreadable = read == null;
+    const info = read ?? {}; // no process information: the shell is waited for, like a busy one
     const fail = (why) => ({ ok: false, why, text });
     const processes = info.foreground_processes ?? [];
     const shell = processes.find((p) => p.pid === info.shell_pid);

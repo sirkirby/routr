@@ -5,6 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- Launch and Cursor usage reads wait through temporarily unreadable pane processes while the shell starts. (#<PR>)
 - On Windows, a folder whose name has a curly quote (`Chris’s`) now reaches a PowerShell pane exactly, for launch and
   Cursor's usage read. A cmd pane gets no folder path that holds `%` or `!` (cmd expands them even inside quotes);
   routr says so and types nothing. (#109)

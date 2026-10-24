@@ -355,6 +355,35 @@ test("a long shell startup respects --timeout instead of an unrelated 240-poll c
   expect(f.deps.now()).toBeGreaterThan(60000);
 });
 
+test("worktree launch waits through unreadable shell processes, including the second poll", async () => {
+  let polls = 0;
+  const f = fakeHerdr({ reply: (a) => {
+    if (a[0] === "worktree") return herdrOK({ root_pane: { pane_id: "w1:p2" }, worktree: { path: process.cwd() } });
+    if (a[1] === "process-info" && [2, 3, 4].includes(++polls)) return herdrOK({ process_info: {} });
+    if (a[1] === "start") expect(polls).toBe(6); // a fresh pair of settled, readable prompt observations
+  } });
+  expect(await launch([...launchArgs, "--worktree", "worker"], f.deps)).toMatchObject({ ok: true, state: "ready" });
+  expect(f.calls.some((a) => a[1] === "start")).toBe(true);
+});
+
+test("unreadable shell processes wait until the launch deadline, say why, and authorize no typing", async () => {
+  const f = fakeHerdr({ reply: (a) => a[1] === "process-info" ? herdrOK({ process_info: {} }) : undefined });
+  const r = await launch([...launchArgs, "--timeout", "1000"], f.deps);
+  expect(r).toMatchObject({ ok: false, state: "failed", error: expect.stringContaining("pane's processes could not be read") });
+  expect(f.deps.now()).toBe(1000);
+  expect(f.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
+});
+
+test("shell readiness still stops immediately when herdr is unreachable, refuses, or loses the pane", async () => {
+  for (const code of ["server_not_running", "boom", "pane_not_found"]) {
+    const f = fakeHerdr({ reply: (a) => a[1] === "process-info" ? herdrError(code) : undefined });
+    const r = await launch([...launchArgs, "--timeout", "1000"], f.deps);
+    expect(r).toMatchObject({ ok: false, state: "failed", error: expect.stringContaining(code === "server_not_running" ? "herdr_unreachable" : "herdr_refused") });
+    expect(f.deps.now()).toBe(0);
+    expect(f.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
+  }
+});
+
 test("a prompt must settle again after an intervening foreground command", async () => {
   let polls = 0;
   const f = fakeHerdr({ reply: (a) => {
