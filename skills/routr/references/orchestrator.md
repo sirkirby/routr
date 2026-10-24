@@ -418,6 +418,12 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   command that outlived it), and send and cleanup refuse until it is empty. routr never stops a process by a saved
   id: look at the group (`pgrep -lf -g <group>` on macOS, `pgrep -a -g <group>` on Linux), stop it if it is this worker's, then clean up.
 
+## Trace context
+
+routr gives headless workers, and workers in a pane it splits, the OpenTelemetry context carriers (`TRACEPARENT`,
+`TRACESTATE`, `BAGGAGE`) from its own environment, unchanged, and sets none itself. Workers in a worktree's pane or an
+existing pane don't get them yet; launch says so. To pass context, set them on your `routr launch` command.
+
 ## Handoff contracts
 
 `dispatch` and `subagent` require a nonempty brief: inline, stdin, or `--task-file <path>`. File input replaces the

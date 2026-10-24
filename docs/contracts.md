@@ -414,13 +414,26 @@ folder) that holds `%` or `!` is refused before anything is typed: `ok: false`, 
 `error` "A cmd shell expands % and ! in a folder path even inside quotes, so routr will not type this one into it. Use
 a folder whose path has neither, or a pane running PowerShell." A pane launch split is closed; a `--pane` is kept.
 
+Trace-context carriers: the `TRACEPARENT`, `TRACESTATE` and `BAGGAGE` in launch's own environment (any case, on
+Windows; an empty one is absent) go to a pane launch splits, as `--env NAME=VALUE` on that `herdr pane split`. Each is
+passed only within routr's limits: printable ASCII or tab, at most 512 bytes (`TRACEPARENT`, `TRACESTATE`) or 8192
+(`BAGGAGE`). One outside them is not passed, and a warning names it, never its value: "`<NAME>` was not passed to the
+worker: routr passes it only when it is at most `<limit>` bytes of printable ASCII or tabs"; the others still go. A
+worktree's pane, a `--pane` and an adopted agent get none: when any is present, one warning says "This launch passed
+none of `<names>` to the worker: `<why>`, and routr never types a carrier into a shell", where `<why>` is "herdr's
+worktree create takes no environment (the pane's shell starts with whatever herdr's server has)" or "an existing pane
+keeps the environment its shell, or the agent already running there, started with". A dry run plans and warns the
+same way. No value is ever output: `start.env` lists each carrier passed as `"<forwarded>"`, and `ran` and `would_run`
+show the split's `--env NAME=<forwarded>`.
+
 `headline`: `routr: <name> (<kind>) took its task in pane <pane>`; `routr: <name> is ready in pane <pane>; no task
 sent`; `routr: <name> needs input in pane <pane>: <why>`; `routr: launch failed: <error>`; `routr: planned <kind>
 launch, nothing ran` (adding `; a real launch would refuse: <error>`).
 
 Shared fields: all six. `unavailable`: the saved advice's `decision model` entries, a `model list` entry. `warnings`:
 config warnings (a setting it could not use), harness notes (an effort the harness remembers), a skipped `--copy`, a pane or private config left behind, a prompt
-that may have been submitted, a rename that failed, each as a fact. `next`: as today (continue after input, record
+that may have been submitted, a rename that failed, a trace-context carrier withheld or not passed (above), each as a
+fact. `next`: as today (continue after input, record
 template with an explicit `--effort`, cleanup), plus the steps those facts call for. A startup question uses its
 answer-then-continue steps without a competing inspect-before-retry step. The startup instruction is the guide's
 exact rule, embedded from that single source: read the pane and its options before sending keys (the default can be
@@ -475,9 +488,11 @@ plans the pane launch as before: it does not check the environment.
   the run folder; `session`: the harness's session id (Codex: its thread id; Antigravity: its conversation id; Kiro: its ACP session id), or null).
   `start.argv` is the harness's headless command line (Codex: `app-server` with its update check at startup off; its
   model and effort go in the protocol; Antigravity: with the worker's folder in `--add-dir`; Kiro: `acp` with the pane's flags; Cursor: `-p --output-format stream-json` with the pane's flags, and `--resume <session>` on each later turn); it is set once the worker's folder is known: a launch
-  refused before that shows the pane command planned first, not the headless one. `ran` displays it. `start.env` is
-  `{}`: a headless Cursor runs with `CURSOR_CONFIG_DIR` set to its run folder's private config copy, which is not
-  shown there. `steps`: `reserve`, `holder`, `prompt` (Kiro: `model` first, when its list was read). When no holder could have started, launch removes the run folder
+  refused before that shows the pane command planned first, not the headless one. `ran` displays it. `start.env`
+  lists each trace-context carrier passed, as `"<forwarded>"`, and nothing else: a headless Cursor runs with
+  `CURSOR_CONFIG_DIR` set to its run folder's private config copy, which is not shown there. The carriers within
+  routr's limits (as for a pane launch, with the same warning for one withheld) are saved with the worker and given to
+  every turn of it, whoever starts its next holder: a `send` from another environment does not change them. `steps`: `reserve`, `holder`, `prompt` (Kiro: `model` first, when its list was read). When no holder could have started, launch removes the run folder
   it made and `worker` is null; when the holder is starting or does not answer, it keeps the folder and `worker`, and
   `next` says to look at it with `routr workers --name <name>` before retrying.
 - `next`: `routr wait --name <name>` (run), the record template, and `routr cleanup --worker <name>` (run). A failure
@@ -657,7 +672,9 @@ task's turn within 30 seconds, or `not_written` when its input would not take it
 was taken is not known, and it is never sent again on its own; `no_reply` when Codex ended before answering;
 `headline` `routr: whether <name> took the message is not known (<why>)`), `failed` (refused input).
 
-`ok`: true for `delivered`, `queued`, `resumed`. Own fields: `state`, `name`, `message` `{ code, why? }`. `next`:
+`ok`: true for `delivered`, `queued`, `resumed`. Own fields: `state`, `name`, `message` `{ code, why? }`. `warnings`
+names each trace-context carrier saved with the worker that is now outside routr's limits (its run folder changed since
+launch), with launch's fixed warning: a holder this send starts withholds it. `next`:
 `routr wait --name <name>` (run); for `unknown`, `routr workers --name <name>` (run) to look before sending again.
 
 ## workers
@@ -665,7 +682,9 @@ was taken is not known, and it is never sent again on its own; `no_reply` when C
 Each headless worker as its holder last recorded it, checked against whether its channel answers. Changes nothing.
 
 Inputs: used when given: `--name` (repeatable). Own fields: `workers`, each `{ name, kind, model, effort, cwd, state,
-turn, seconds_since_event, last_tool, tasks, queued, session, report, harness_group? }`. `state` is `starting`,
+turn, seconds_since_event, last_tool, tasks, queued, session, report, carriers_withheld?, harness_group? }`.
+`carriers_withheld`: the names of trace-context carriers its holder last withheld from the harness, because those
+saved with the worker are now outside routr's limits; present only then, never a value. `state` is `starting`,
 `working`, `waiting` (between turns: background commands running, a message queued, or the harness exiting), `idle`,
 `failed`, `stopped`, `no_task` (its process started and no task came), `lost` (its process ended mid-turn without
 settling), or `unreachable` (its channel does not answer). `last_tool` is one of the harness's own tool names (Claude's
@@ -825,6 +844,7 @@ Shared fields that are new to a command are listed as added.
 | `command` | renamed `ran` | `command` means a runnable line in `next`; this is display history |
 | `planned_command` (dry run) | renamed `would_run` | as above; says it is a plan |
 | `argv`, `env` | moved to `start.argv`, `start.env` | `argv` means a runnable command's words in `next`; this is the harness start |
+| (trace-context carriers passed) | added to `start.env`, each as `"<forwarded>"`; `ran` and `would_run` show `--env NAME=<forwarded>` | names what the worker gets; a carrier's value is never output |
 | (the harness's executable) | added as `start.executable` | the start line reads whole |
 | `steps[]`: `step`, `ok` | kept | what it did, in order |
 | `steps[].detail` | kept, built from classified codes, never herdr's message or answer | outside text reaches output only as `screen` |
