@@ -89,9 +89,10 @@ when one cannot read.
 
 ## Worker environment
 
-What a worker's process starts with is built in one place: the harness environment (no lead session or herdr pane
-variables), plus the trace-context carriers routr passes on. herdr carries the carriers into a pane it splits, and an
-update to herdr could change how. After changing worker environment handling, and after updating herdr, from a pane of
+A headless worker's process starts with an environment built in one place: the harness environment (no lead session
+or herdr pane variables), plus the trace-context carriers saved at launch. A pane worker is not given that: it
+inherits its pane shell's environment, which herdr's server starts, and routr adds only the carriers, on a pane it
+splits (`--env`). herdr carries those into the pane, and an update to herdr could change how. After changing worker environment handling, and after updating herdr, from a pane of
 a herdr session: `bun run smoke:carriers`. It splits a pane with routr's own split code and hostile but valid carriers,
 checks they reach that pane's shell byte for byte, and on macOS and Linux checks they reach a Claude Code that herdr
 starts there with no task. It spends no subscription.

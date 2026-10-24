@@ -424,7 +424,8 @@ none of `<names>` to the worker: `<why>`, and routr never types a carrier into a
 worktree create takes no environment (the pane's shell starts with whatever herdr's server has)" or "an existing pane
 keeps the environment its shell, or the agent already running there, started with". A dry run plans and warns the
 same way. No value is ever output: `start.env` lists each carrier passed as `"<forwarded>"`, and `ran` and `would_run`
-show the split's `--env NAME=<forwarded>`.
+show the split's `--env NAME=<forwarded>`. `screen` has the value of every carrier launch found, passed or withheld,
+replaced by `<carrier>`, also across the pane's line wraps.
 
 `headline`: `routr: <name> (<kind>) took its task in pane <pane>`; `routr: <name> is ready in pane <pane>; no task
 sent`; `routr: <name> needs input in pane <pane>: <why>`; `routr: launch failed: <error>`; `routr: planned <kind>
@@ -673,7 +674,7 @@ was taken is not known, and it is never sent again on its own; `no_reply` when C
 `headline` `routr: whether <name> took the message is not known (<why>)`), `failed` (refused input).
 
 `ok`: true for `delivered`, `queued`, `resumed`. Own fields: `state`, `name`, `message` `{ code, why? }`. `warnings`
-names each trace-context carrier saved with the worker that is now outside routr's limits (its run folder changed since
+names each trace-context carrier saved with the worker that is now outside routr's limits, or saved as anything but a non-empty string (its run folder changed since
 launch), with launch's fixed warning: a holder this send starts withholds it. `next`:
 `routr wait --name <name>` (run); for `unknown`, `routr workers --name <name>` (run) to look before sending again.
 

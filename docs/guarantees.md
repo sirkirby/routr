@@ -311,11 +311,14 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
   bytes (`TRACEPARENT`, `TRACESTATE`) or 8192 (`BAGGAGE`). This is routr's own limit on what it hands on, not the W3C
   grammar. One outside it is not passed, and a warning names it, never its value; the others still go.
 - **Never a value in output.** No carrier's value is printed, logged, or put in the ledger or telemetry: launch shows
-  each one passed as `<forwarded>`, in `start.env` and in the split command it shows (`--env NAME=<forwarded>`).
+  each one passed as `<forwarded>`, in `start.env` and in the split command it shows (`--env NAME=<forwarded>`). A
+  pane's screen that launch returns (a question before the task was sent, or the last lines after a failure) has the
+  value of every carrier routr found, passed or withheld, replaced by `<carrier>`, also where the pane wrapped it
+  across lines; a value the screen drew with something inside it (a colour code) is not recognised.
 - **Headless.** Launch saves the carriers it passes in the worker's settings file, in its run folder (0600 on macOS
   and Linux), and every turn uses those, whoever starts the next one: a `send` from another environment does not
   change them. They are checked against the limits again each time they are read: only the three names are used, and
-  a value outside the limits is withheld (`send` says so; `workers` and `wait` show the names in
+  a value outside the limits, or a name saved with anything but a non-empty string (null, empty), is withheld (`send` says so; `workers` and `wait` show the names in
   `carriers_withheld`). A worker launched before routr saved carriers gets none. `cleanup --worker` removes them with
   the run folder.
 - **Split panes.** The values are in herdr's command line while the split runs, visible to your own processes as any
