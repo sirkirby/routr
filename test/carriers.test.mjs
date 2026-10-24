@@ -68,3 +68,27 @@ test("carriers saved with a worker are checked again on every load: unknown keys
   expect(savedCarriers({ TRACEPARENT: 7, TRACESTATE: at(513), BAGGAGE: "k=v" })).toEqual({ carriers: { BAGGAGE: "k=v" }, withheld: ["TRACEPARENT", "TRACESTATE"] });
   expect(savedCarriers({ TRACEPARENT: { toString: () => TP }, TRACESTATE: "a\x1bb", BAGGAGE: "" })).toEqual({ carriers: {}, withheld: ["TRACEPARENT", "TRACESTATE"] });
 });
+
+test("smoke:carriers' own values are hostile but valid, exactly at each limit, and its checks find a value changed by a byte", async () => {
+  const { fixtureCommand, HOSTILE, hostileCarriers, missingIn, missingInText } = await import("../scripts/smoke-carriers.mjs");
+  const sent = hostileCarriers("t");
+  expect(carriersFrom(sent)).toEqual({ carriers: sent, withheld: [] });
+  expect(Object.fromEntries(Object.entries(sent).map(([k, v]) => [k, v.length]))).toEqual({ TRACEPARENT: 512, TRACESTATE: 512, BAGGAGE: 8192 });
+  for (const c of ["%", "\"", "&", "!", ";", ",", "=", "\t", " "]) expect([c, HOSTILE.includes(c)]).toEqual([c, true]);
+  for (const v of Object.values(sent)) expect(v).toContain(HOSTILE);
+  expect(new Set(Object.values(hostileCarriers())).size).toBe(3);
+  // The fixture's environment: exact, or each carrier that differs by a byte (or is missing) named.
+  expect(missingIn({ ...sent, PATH: "/bin" }, sent)).toEqual([]);
+  expect(missingIn({ ...sent, TRACESTATE: sent.TRACESTATE.slice(0, -1), BAGGAGE: undefined }, sent)).toEqual(["TRACESTATE", "BAGGAGE"]);
+  expect(missingIn(null, sent)).toEqual(CARRIERS);
+  // An agent's environment, as /proc/<pid>/environ and as `ps eww <pid>` print it.
+  const proc = ["PATH=/bin", ...Object.entries(sent).map(([k, v]) => `${k}=${v}`), ""].join("\0");
+  expect(missingInText(proc, sent, { proc: true })).toEqual([]);
+  expect(missingInText(proc.replace(sent.BAGGAGE, sent.BAGGAGE.slice(1)), sent, { proc: true })).toEqual(["BAGGAGE"]);
+  const ps = `  PID TT  STAT   TIME COMMAND\n 4242 s001 S+  0:01.00 claude PATH=/bin ${Object.entries(sent).map(([k, v]) => `${k}=${v}`).join(" ")} TERM=xterm\n`;
+  expect(missingInText(ps, sent)).toEqual([]);
+  expect(missingInText(ps.replace(`TRACEPARENT=${sent.TRACEPARENT}`, `TRACEPARENT=${sent.TRACEPARENT}x`), sent)).toEqual(["TRACEPARENT"]);
+  // What it types starts the fixture only: the runtime and the script, quoted for the pane's shell, never a carrier.
+  expect(fixtureCommand("posix", "/opt/bun", "/tmp/a b/fixture.cjs")).toBe("/opt/bun '/tmp/a b/fixture.cjs'");
+  expect(fixtureCommand("powershell", "C:\\bun.exe", "C:\\it's\\fixture.cjs")).toBe("& 'C:\\bun.exe' 'C:\\it''s\\fixture.cjs'");
+});
