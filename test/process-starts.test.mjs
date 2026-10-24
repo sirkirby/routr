@@ -1,10 +1,27 @@
 // Inventory the process boundary, including renamed imports and injected defaults. Like runtime's import guard,
-// this is a lexical check: computed imports/calls need review. Strings (including shell templates) are not JS calls.
+// this is a lexical check: computed imports/calls need review. ESLint's parser distinguishes regex from division,
+// keeps template expressions visible, and refuses malformed source instead of handing us a partial token stream.
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { createRequire } from "node:module";
+import { delimiter, join } from "node:path";
 
-const tokens = (source) => [...source.matchAll(/\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[\w$]+|\?\?|\S/g)].map((m) => m[0]).filter((t) => !t.startsWith("//") && !t.startsWith("/*"));
+const require = createRequire(import.meta.url);
+const { Linter } = require(require.resolve("eslint", { paths: [import.meta.dir, ...(process.env.NODE_PATH?.split(delimiter) ?? [])] }));
+const linter = new Linter();
+const tokens = (source, file = "<process allowlist>") => {
+  let result;
+  const messages = linter.verify(source, {
+    languageOptions: { ecmaVersion: "latest", sourceType: "module" },
+    plugins: { inventory: { rules: { tokens: { create: (context) => ({
+      Program: () => { result = context.sourceCode.ast.tokens.map((t) => source.slice(...t.range)); },
+    }) } } } },
+    rules: { "inventory/tokens": "error" },
+  });
+  // Program is reached only after a complete parse, including strings, templates, regexes and balanced delimiters.
+  if (!result || messages.some((m) => m.fatal)) throw new Error(`cannot tokenize ${file}: ${messages[0]?.message ?? "no complete token stream"}`);
+  return result;
+};
 const compact = (s) => tokens(s).join("");
 const calls = (source, file) => {
   const names = new Set(file === "lib/runtime.mjs" ? ["start", "startSync"] : []);
@@ -17,7 +34,7 @@ const calls = (source, file) => {
   }
   // Refuse an unhandled import shape rather than silently missing namespace member calls.
   if (/import\s+(?!\{)[^;]+from\s*["'][^"']*(?:runtime\.mjs|child_process)["']/.test(source)) throw new Error(`unhandled process import: ${file}`);
-  const ts = tokens(source);
+  const ts = tokens(source, file);
   for (let changed = true; changed;) {
     changed = false;
     for (let i = 0; i < ts.length - 3; i++) if (/^[\w$]+$/.test(ts[i]) && ts[i + 1] === "=" && names.has(ts[i + 2]) && [",", "}", ")", ";"].includes(ts[i + 3]) && !names.has(ts[i])) { names.add(ts[i]); changed = true; }
@@ -85,5 +102,40 @@ test("the inventory detects a new or renamed start and a removed filter on every
       expect(allowed(path, leak)).toBeUndefined();
     }
     expect(mutated.filter(filtered)).toEqual([]);
+  }
+});
+
+test("regex literals containing quotes and backticks cannot hide a later process start", () => {
+  const regex = "/['‘’‚‛\"`/\\]\\[]/g";
+  const prefixes = [
+    `const pattern = ${regex};`,
+    `function pattern() { return ${regex}; }`,
+    `function pattern() { throw ${regex}; }`,
+    `const pattern = () => ${regex};`,
+    `if (ready) ${regex}.test(text);`,
+    `while (ready) ${regex}.test(text);`,
+    `if (ready) {} ${regex}.test(text);`,
+    `const pattern = { test: ${regex} };`,
+    `const pattern = [${regex}];`,
+    `consume(${regex});`,
+    `const pattern = ready ? ${regex} : /other/;`,
+    `const quotient = numerator / denominator / scale;`,
+    'const pattern = /start\\("decoy"\\)/;',
+  ];
+  for (const prefix of prefixes) {
+    const source = `import { start } from "./runtime.mjs"; ${prefix} start("harness", [], {});`;
+    expect(calls(source, "lib/regex.mjs")).toEqual(['start("harness",[],{})']);
+  }
+});
+
+test("literal template text is ignored but a process start in a template expression stays visible", () => {
+  const source = 'import { start } from "./runtime.mjs"; const message = `start("literal") ${start("harness", [], {})}`;';
+  expect(calls(source, "lib/template.mjs")).toEqual(['start("harness",[],{})']);
+});
+
+test("the inventory refuses malformed source with its filename instead of returning partial calls", () => {
+  for (const suffix of ['"unclosed', "'unclosed", "`unclosed", "/[unclosed/", "/* unclosed", "(", "[", "{", "([)]", "const value = ;"]) {
+    const source = `import { start } from "./runtime.mjs"; start("harness", [], {}); ${suffix}`;
+    expect(() => calls(source, "lib/broken.mjs")).toThrow("lib/broken.mjs");
   }
 });
