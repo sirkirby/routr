@@ -42,14 +42,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, privateDir, probe, removeEndpoint, serve } from "./channel.mjs";
 import { HARNESSES, plan } from "./harnesses.mjs";
-import { harnessEnv, installedAt, lockIsStale, probe as collect, start, STATE_DIR, stop, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
+import { installedAt, lockIsStale, probe as collect, savedCarriers, start, STATE_DIR, stop, UNINSTALL_LOCK, workerEnv, writeJsonAtomic } from "./runtime.mjs";
 import { besidesHelper, groupMembers } from "./process-boundary.mjs";
 
 export const FORMAT = 1;
 export const WORKERS_DIR = () => join(STATE_DIR(), "workers");
 export const runDir = (name) => join(WORKERS_DIR(), name);
 const readJson = (f) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return null; } };
-// What launch wrote: { format, id, name, kind, model, effort, cwd, created_at }. Never the brief, never the environment.
+// What launch wrote: { format, id, name, kind, model, effort, cwd, created_at, carriers }. Never the brief, and of the
+// environment only the trace-context carriers within routr's limits, which every load checks again (savedCarriers).
 export const readWorker = (name) => { const w = readJson(join(runDir(name), "worker.json")); return w?.format === FORMAT && w.name === name ? w : null; };
 // What the holder wrote last (headless.mjs is its only writer).
 export const readState = (name) => readJson(join(runDir(name), "state.json"));
@@ -427,7 +428,11 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   if (!claim(dir, n)) return;
   if (p.state === "dead") removeEndpoint(w.id, p.ready?.endpoint);
   const turns = (prior.turns ?? []).map((t) => (t.outcome ? t : { ...t, outcome: "no_finish", ended_at: new Date().toISOString() })); // a lost turn ends here
-  let st = { format: FORMAT, turn: 0, ...prior, turns, gen: n, holder_pid: process.pid, harness_pid: null, harness_pgid: null, tasks: 0, queued: 0 };
+  // A carrier worker.json holds outside routr's limits (it changed since launch) is withheld from every turn. This
+  // process has no output: the names go in its state, which workers and wait show.
+  const { withheld } = savedCarriers(w.carriers);
+  let st = { format: FORMAT, turn: 0, ...prior, turns, gen: n, holder_pid: process.pid, harness_pid: null, harness_pgid: null, tasks: 0, queued: 0,
+    carriers_withheld: withheld.length ? withheld : undefined };
   let lastWrite = 0, later = null;
   // Every write of the state says whether it reached the disk: the ones that record what this holder started must.
   // Activity alone is written at most once a second: one that comes sooner is written when that second is up, so a
@@ -490,7 +495,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       let c, h;
       try {
         c = run(HARNESSES[w.kind].executable, headlessArgv({ kind: w.kind, model: w.model, effort: w.effort, session, cwd: w.cwd }),
-          { cwd: w.cwd, env: { ...harnessEnv(), ...(ADAPTERS[w.kind].env?.(dir) ?? {}) }, stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
+          { cwd: w.cwd, env: workerEnv(w.carriers, ADAPTERS[w.kind].env?.(dir)), stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
       } catch { endTurn("not_started", null); answer({ code: "failed", why: "harness_not_started" }); return settle(); }
       child = c;
       // What it says, as events: bound to this process, and ignored once it has finished.

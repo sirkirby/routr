@@ -14,7 +14,7 @@ import { worktreesFromGit } from "../src/lib/cleanup.mjs";
 import { besidesHelper, callGit, groupMembers } from "../src/lib/process-boundary.mjs";
 import { HARNESSES } from "../src/lib/harnesses.mjs";
 import { launch } from "../src/lib/launch.mjs";
-import { harnessEnv, installedAt, start, stop } from "../src/lib/runtime.mjs";
+import { CARRIERS, harnessEnv, installedAt, start, stop } from "../src/lib/runtime.mjs";
 import { cfg, cliEnv, CONFIG_ENV, fakeExecutable, LEAD_ENV, scratch, SCRIPT } from "./helpers.mjs";
 
 // A worker's socket lives under its home, and macOS caps a socket path at 103 bytes: the test scratch folder under
@@ -223,7 +223,7 @@ const SENT = "PRIVATE-SEND-91c2: also rename baz.";
 function world(over = {}) {
   const home = shortHome(), bin = join(home, "bin"), work = join(home, "work"), inputs = join(home, "inputs");
   for (const d of [bin, work, inputs]) mkdirSync(d, { recursive: true });
-  const recordEnv = `if (process.env.FAKE_ENV) require("node:fs").appendFileSync(process.env.FAKE_ENV, JSON.stringify({ argv: process.argv.slice(2), env: Object.fromEntries(${JSON.stringify([...Object.keys(LEAD_ENV), ...Object.keys(LEAD_ENV).map((k) => k.toLowerCase()), ...Object.keys(CONFIG_ENV)])}.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])) }) + "\\n");\n`;
+  const recordEnv = `if (process.env.FAKE_ENV) require("node:fs").appendFileSync(process.env.FAKE_ENV, JSON.stringify({ argv: process.argv.slice(2), env: Object.fromEntries(${JSON.stringify([...Object.keys(LEAD_ENV), ...Object.keys(LEAD_ENV).map((k) => k.toLowerCase()), ...Object.keys(CONFIG_ENV), ...CARRIERS, ...CARRIERS.map((k) => k.toLowerCase())])}.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])) }) + "\\n");\n`;
   fakeExecutable(bin, "claude", recordEnv + FAKE_CLAUDE);
   fakeExecutable(bin, "codex", recordEnv + FAKE_CODEX);
   fakeExecutable(bin, "agy", recordEnv + FAKE_AGY);
@@ -238,6 +238,8 @@ function world(over = {}) {
   // git's own folder too: launch --worktree and cleanup run it, as they would for a person.
   const env = cliEnv(home, { PATH: [bin, dirname(process.execPath), dirname(Bun.which("git") ?? "git")].join(delimiter), FAKE_ARGV: join(home, "argv.jsonl"), FAKE_RPC: join(home, "rpc.jsonl"), FAKE_ANSWERS: join(home, "answers.jsonl"), FAKE_EOF: join(home, "eof.jsonl"), FAKE_GATE: gate, FAKE_LINGER: linger, FAKE_HELPER: helper, ...over });
   for (const k of Object.keys(env)) if (/^(HERDR_|CLAUDECODE$|CLAUDE_CODE_SESSION|SANDBOX_RUNTIME$|CODEX_SANDBOX)/.test(k)) delete env[k];
+  // The machine's own trace context never reaches a test's routr: only what a test gives.
+  for (const k of Object.keys(env)) if (/^(TRACEPARENT|TRACESTATE|BAGGAGE)$/i.test(k) && !Object.hasOwn(over, k)) delete env[k];
   // Inject sandbox markers only in the holder: the public launch correctly refuses a genuinely sandboxed lead.
   const entry = over.FAKE_HOLDER_ENV ? join(home, "routr.mjs") : SCRIPT;
   if (over.FAKE_HOLDER_ENV) writeFileSync(entry, `if (process.argv.includes("--hold")) Object.assign(process.env, JSON.parse(process.env.FAKE_HOLDER_ENV)); await import(${JSON.stringify(SCRIPT)});\n`);
@@ -1180,3 +1182,80 @@ test.skipIf(!POSIX)("stop with group: true ends what a detached child started in
   await exited;
   expect(await until(() => { try { process.kill(g, 0); return false; } catch { return true; } }, 3000)).toBe(true);
 });
+
+// Trace-context carriers for headless workers: launch saves the ones within routr's limits with the worker, and every
+// turn gets those, whoever starts the holder: a holder `send` starts inherits the sender's environment, and must use
+// the launch's carriers, not the sender's.
+const LAUNCHED = { TRACEPARENT: "00-0af7651916cd43dd8448eb211c80319c-CARRIER_HL_TP-01", TRACESTATE: "k=CARRIER_HL_TS,\tz=\"%PATH%\"", BAGGAGE: "a=CARRIER_HL_BG;p=1,b=c d!&'" };
+const turnsOf = (kind, rows) => rows.filter(({ argv }) => kind === "codex" ? argv[0] === "app-server" : kind === "kiro" ? argv[0] === "acp" : kind === "agy" ? argv.includes("--print=") : argv.includes("-p"));
+const carriersIn = (env) => Object.fromEntries(Object.entries(env).filter(([k]) => /^(traceparent|tracestate|baggage)$/i.test(k)));
+
+test("every headless adapter's turns get the launch's carriers, a process per turn or a long-lived one, and a holder send restarts gets the launch's, not the sender's", async () => {
+  for (const kind of Object.keys(ADAPTERS)) {
+    const w = world(LAUNCHED), log = join(w.home, "env.jsonl");
+    if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor", "cli-config.json"), "{}"); }
+    w.env.FAKE_ENV = log;
+    try {
+      // HOLD: a message sent mid-turn goes to the running harness (or, for a harness that queues, its next turn in the
+      // same process; Cursor's a new process of its own).
+      const l = w.launch("tc", w.task(`${BRIEF} HOLD`), [], undefined, kind);
+      expect([kind, l.state, l.error]).toEqual([kind, "prompted", undefined]);
+      expect([kind, l.start.env]).toEqual([kind, { TRACEPARENT: "<forwarded>", TRACESTATE: "<forwarded>", BAGGAGE: "<forwarded>" }]);
+      expect(JSON.parse(readFileSync(join(w.runDir("tc"), "worker.json"), "utf8")).carriers).toEqual(LAUNCHED);
+      expect(w.run(["send", "--name", "tc", "--task", SENT], { BAGGAGE: "sender=mid-turn" }).ok).toBe(true);
+      w.release();
+      expect(w.run(["wait", "--name", "tc", "--timeout", "20000"]).state).toBe("finished");
+      expect(await w.settled("tc")).toBe(true);
+      // Idle: the sender's own carriers differ, and the holder it starts resumes with the launch's.
+      const resumed = w.run(["send", "--name", "tc", "--task-file", w.task(SENT, "more.md")], { TRACEPARENT: "00-sender-01", BAGGAGE: "sender=resume" });
+      expect([kind, resumed.state, resumed.error]).toEqual([kind, "resumed", undefined]);
+      expect(w.run(["wait", "--name", "tc", "--timeout", "20000"]).state).toBe("finished");
+      expect(await w.settled("tc")).toBe(true);
+      const rows = readFileSync(log, "utf8").trim().split("\n").map((x) => JSON.parse(x)), turns = turnsOf(kind, rows);
+      expect([kind, turns.length >= 2]).toEqual([kind, true]);
+      for (const t of turns) expect([kind, carriersIn(t.env)]).toEqual([kind, LAUNCHED]);
+      // A harness read (its sign-in status, a model list) is not a worker: none.
+      for (const r of rows.filter((x) => !turns.includes(x))) expect([kind, carriersIn(r.env)]).toEqual([kind, {}]);
+      expect(w.state("tc").carriers_withheld).toBeUndefined();
+      // No value in any output, nor in any file routr wrote in the run folder but worker.json, which keeps them.
+      for (const o of w.outputs) expect([kind, /CARRIER_HL|sender=/.test(o)]).toEqual([kind, false]);
+      for (const f of filesUnder(w.runDir("tc")).filter((f) => f !== "worker.json" && !f.split(/[\\/]/).includes("reports"))) {
+        expect([kind, f, readFileSync(join(w.runDir("tc"), f), "utf8").includes("CARRIER_HL")]).toEqual([kind, f, false]);
+      }
+    } finally { w.run(["stop", "--name", "tc"]); w.run(["cleanup", "--worker", "tc"]); }
+  }
+}, 120000);
+
+test("a headless worker's saved carriers are checked on every load: a bad one is withheld and said, an older worker gets none", async () => {
+  const w = world({ TRACEPARENT: LAUNCHED.TRACEPARENT, BAGGAGE: "a=\x1b[2J" }), log = join(w.home, "env.jsonl");
+  w.env.FAKE_ENV = log;
+  try {
+    const l = w.launch("tb", w.task(BRIEF));
+    // Launch withholds the one outside routr's limits, says so by name, and lists only the one it passes.
+    expect([l.state, l.start.env]).toEqual(["prompted", { TRACEPARENT: "<forwarded>" }]);
+    expect(l.warnings).toContain("BAGGAGE was not passed to the worker: routr passes it only when it is at most 8192 bytes of printable ASCII or tabs");
+    expect(JSON.parse(readFileSync(join(w.runDir("tb"), "worker.json"), "utf8")).carriers).toEqual({ TRACEPARENT: LAUNCHED.TRACEPARENT });
+    w.run(["wait", "--name", "tb", "--timeout", "20000"]); expect(await w.settled("tb")).toBe(true);
+    // worker.json changed since: unknown keys ignored, a non-string and a control character withheld, the rest used.
+    const file = join(w.runDir("tb"), "worker.json"), saved = JSON.parse(readFileSync(file, "utf8"));
+    writeFileSync(file, JSON.stringify({ ...saved, carriers: { TRACEPARENT: 7, TRACESTATE: "a\x1bb", BAGGAGE: "k=v", NODE_OPTIONS: "--require /x.js" } }));
+    const s = w.run(["send", "--name", "tb", "--task", SENT]);
+    expect(s.state).toBe("resumed");
+    expect(s.warnings.filter((x) => /TRACE|BAGGAGE/.test(x))).toEqual(["TRACEPARENT", "TRACESTATE"].map((n) => expect.stringContaining(`${n} was not passed to the worker`)));
+    w.run(["wait", "--name", "tb", "--timeout", "20000"]); expect(await w.settled("tb")).toBe(true);
+    // The detached holder has no output: it records the names, and workers and wait show them.
+    expect(w.state("tb").carriers_withheld).toEqual(["TRACEPARENT", "TRACESTATE"]);
+    expect(w.run(["workers", "--name", "tb"]).workers[0].carriers_withheld).toEqual(["TRACEPARENT", "TRACESTATE"]);
+    let turns = turnsOf("claude", readFileSync(log, "utf8").trim().split("\n").map((x) => JSON.parse(x)));
+    expect(turns.map((t) => carriersIn(t.env))).toEqual([{ TRACEPARENT: LAUNCHED.TRACEPARENT }, { BAGGAGE: "k=v" }]);
+    expect(turns.at(-1).env).not.toHaveProperty("NODE_OPTIONS");
+    // A worker launched before carriers were saved has none, whatever the sender's environment holds.
+    delete saved.carriers; writeFileSync(file, JSON.stringify(saved));
+    expect(w.run(["send", "--name", "tb", "--task", SENT], { ...LAUNCHED }).state).toBe("resumed");
+    w.run(["wait", "--name", "tb", "--timeout", "20000"]); expect(await w.settled("tb")).toBe(true);
+    turns = turnsOf("claude", readFileSync(log, "utf8").trim().split("\n").map((x) => JSON.parse(x)));
+    expect(carriersIn(turns.at(-1).env)).toEqual({});
+    expect(w.state("tb").carriers_withheld).toBeUndefined();
+    expect(w.run(["workers", "--name", "tb"]).workers[0]).not.toHaveProperty("carriers_withheld");
+  } finally { w.run(["stop", "--name", "tb"]); w.run(["cleanup", "--worker", "tb"]); }
+}, 60000);

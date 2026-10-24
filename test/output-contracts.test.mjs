@@ -9,6 +9,9 @@ import { callGit, callHerdr } from "../src/lib/process-boundary.mjs";
 import { usageFailure } from "../src/lib/usage-failure.mjs";
 
 const MARK = "OUTSIDE_TEXT_MARKER_9c61";
+// Trace-context carriers in routr's environment: handed on, never shown, logged or stored (docs/guarantees.md).
+const CARRIER_MARK = "CARRIER_MARKER_3b7e";
+const CARRIED = { TRACEPARENT: `00-${CARRIER_MARK}-tp-01`, TRACESTATE: `k=${CARRIER_MARK},\tz="%x%"`, BAGGAGE: `b=${CARRIER_MARK};p=1,c=d e!&'` };
 const failure = () => ({ ok: false, data: { error: { code: MARK, message: MARK }, other: MARK } });
 const base = ["--kind", "claude", "--name", "worker", "--model", "model"];
 const adviceFixture = () => {
@@ -284,6 +287,9 @@ else if (a[1] === 'prompt') { writeFileSync(process.env.FAKE_SENT, 'sent'); yes(
 else if (a[0] === 'pane' && a[1] === 'read') yes({ text: mark });
 else if (a[0] === 'pane' && a[1] === 'list') yes({ panes: mode === 'absent' ? [] : [{ pane_id: 'w2:p1', workspace_id: 'w2', agent_status: mode === 'refused' ? 'working' : 'done' }] });
 else if (a[0] === 'workspace') yes({ workspaces: [] });
+else if (a[0] === 'pane' && a[1] === 'current') yes({ pane: { pane_id: 'w1:p1' } });
+else if (a[0] === 'pane' && a[1] === 'layout') yes({ layout: { panes: [{ pane_id: 'w1:p1', rect: { width: 100, height: 40 } }] } });
+else if (a[0] === 'pane' && a[1] === 'split') { writeFileSync(process.env.FAKE_SPLIT, JSON.stringify(a)); yes({ pane: { pane_id: 'w1:p9' } }); }
 else if (a[0] === 'worktree' && a[1] === 'list') yes({ source: { source_checkout_path: process.env.FAKE_REPO }, worktrees: mode === 'absent' ? [] : [{ branch: 'worker', path: process.env.FAKE_WORKER, is_linked_worktree: true }] });
 else yes({});`);
   executable("git", `const a = process.argv.slice(4), mode = process.env.FAKE_MODE;
@@ -304,7 +310,8 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
     launch: 'state kind name pane cwd model effort start steps ran would_run prompt_chars advice worktree needs_input screen',
     record: 'id run_id ledger', cleanup: 'state steps ran cwd pane worktrees worktree branch', usage: 'level subscriptions subscription reading',
   };
-  const env = cliEnv(f.dir, { PATH: bin + delimiter + dirname(process.execPath), HERDR_ENV: "1", FAKE_CWD: f.dir, FAKE_SENT: sent, FAKE_REPO: repo, FAKE_WORKER: worker });
+  const split = join(f.dir, "split.json");
+  const env = cliEnv(f.dir, { PATH: bin + delimiter + dirname(process.execPath), HERDR_ENV: "1", FAKE_CWD: f.dir, FAKE_SENT: sent, FAKE_REPO: repo, FAKE_WORKER: worker, FAKE_SPLIT: split, ...CARRIED });
   const invoke = (command, args = [], mode = "ordinary", input) => {
     const result = Bun.spawnSync([process.execPath, SCRIPT, command, ...args], { env: { ...env, FAKE_MODE: mode }, stdin: input == null ? "ignore" : Buffer.from(input) });
     expect(result.stderr.toString()).toBe("");
@@ -312,6 +319,7 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
     const allowed = new Set(['ok', 'headline', 'unavailable', 'warnings', 'next', 'error', ...fields[command].split(' ')]);
     for (const key of Object.keys(r)) expect(allowed.has(key)).toBe(true);
     expect(withoutScreen(r)).not.toContain(MARK);
+    expect(result.stdout.toString() + result.stderr.toString()).not.toContain(CARRIER_MARK);
     return { r, code: result.exitCode };
   };
   for (const command of ["subagent", "dispatch"]) {
@@ -359,8 +367,13 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
     for (const mode of ["ordinary", "absent", "refused", "failed", "git-failed", "branch-kept"]) invoke("cleanup", [...args, ...(mode === "branch-kept" && args.includes("--worktree") ? ["--delete-branch"] : [])], mode);
     invoke("cleanup", [...args, "--dry-run"]);
   }
+  // A pane launch splits: the real split argv carries the carriers, exactly; the output shows only their names.
+  // (The fake pane never shows a shell, so the launch then stops at its timeout: the split is what is checked.)
+  const splitLaunch = invoke("launch", [...base, "--cwd", f.dir, "--direction", "right", "--timeout", "1500"]).r;
+  expect(splitLaunch.start.env).toEqual({ TRACEPARENT: "<forwarded>", TRACESTATE: "<forwarded>", BAGGAGE: "<forwarded>" });
+  expect(JSON.parse(readFileSync(split, "utf8")).slice(-6)).toEqual(Object.entries(CARRIED).flatMap(([k, v]) => ["--env", `${k}=${v}`]));
   const rows = read(f.ledger);
-  for (const value of [readFileSync(f.ledger, "utf8"), JSON.stringify(telemetryRows(rows, "local-test"))]) expect(value).not.toContain(MARK);
+  for (const value of [readFileSync(f.ledger, "utf8"), JSON.stringify(telemetryRows(rows, "local-test"))]) { expect(value).not.toContain(MARK); expect(value).not.toContain(CARRIER_MARK); }
 }, 60000); // dozens of CLI runs: the Windows CI job takes about 5 s, past bun's default limit
 
 test("classification preserves plain private-session pane reads and discards successful action prose", async () => {
