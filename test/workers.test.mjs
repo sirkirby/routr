@@ -15,7 +15,7 @@ import { besidesHelper, callGit, groupMembers } from "../src/lib/process-boundar
 import { HARNESSES } from "../src/lib/harnesses.mjs";
 import { launch } from "../src/lib/launch.mjs";
 import { harnessEnv, installedAt, start, stop } from "../src/lib/runtime.mjs";
-import { cfg, cliEnv, fakeExecutable, scratch, SCRIPT } from "./helpers.mjs";
+import { cfg, cliEnv, CONFIG_ENV, fakeExecutable, LEAD_ENV, scratch, SCRIPT } from "./helpers.mjs";
 
 // A worker's socket lives under its home, and macOS caps a socket path at 103 bytes: the test scratch folder under
 // macOS's long tmpdir would be refused (path_too_long, tested below). So these homes sit in /tmp there, removed after.
@@ -223,11 +223,12 @@ const SENT = "PRIVATE-SEND-91c2: also rename baz.";
 function world(over = {}) {
   const home = shortHome(), bin = join(home, "bin"), work = join(home, "work"), inputs = join(home, "inputs");
   for (const d of [bin, work, inputs]) mkdirSync(d, { recursive: true });
-  fakeExecutable(bin, "claude", FAKE_CLAUDE);
-  fakeExecutable(bin, "codex", FAKE_CODEX);
-  fakeExecutable(bin, "agy", FAKE_AGY);
-  fakeExecutable(bin, "kiro-cli", FAKE_KIRO);
-  fakeExecutable(bin, "cursor-agent", FAKE_CURSOR);
+  const recordEnv = `if (process.env.FAKE_ENV) require("node:fs").appendFileSync(process.env.FAKE_ENV, JSON.stringify({ argv: process.argv.slice(2), env: Object.fromEntries(${JSON.stringify([...Object.keys(LEAD_ENV), ...Object.keys(LEAD_ENV).map((k) => k.toLowerCase()), ...Object.keys(CONFIG_ENV)])}.filter((k) => process.env[k] !== undefined).map((k) => [k, process.env[k]])) }) + "\\n");\n`;
+  fakeExecutable(bin, "claude", recordEnv + FAKE_CLAUDE);
+  fakeExecutable(bin, "codex", recordEnv + FAKE_CODEX);
+  fakeExecutable(bin, "agy", recordEnv + FAKE_AGY);
+  fakeExecutable(bin, "kiro-cli", recordEnv + FAKE_KIRO);
+  fakeExecutable(bin, "cursor-agent", recordEnv + FAKE_CURSOR);
   // Cursor's layout: the command on PATH resolves to <install>/bin/cursor-agent here, so its versions are <install>/<v>.
   const helper = join(realpathSync.native(home), "v1");
   mkdirSync(join(helper, "node_modules", ".bin"), { recursive: true });
@@ -1127,6 +1128,33 @@ test("a worker is lost only when its channel and its state are of one generation
     expect((await view("v1")).state).toBe("lost");
   } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
 });
+
+test("every headless adapter removes every lead session name on its initial and resumed turns, keeping sign-in and config", async () => {
+  for (const kind of Object.keys(ADAPTERS)) {
+    const w = world(), log = join(w.home, "env.jsonl");
+    if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor", "cli-config.json"), "{}"); }
+    Object.assign(w.env, LEAD_ENV, Object.fromEntries(Object.entries(LEAD_ENV).map(([k, v]) => [k.toLowerCase(), v])), CONFIG_ENV, { FAKE_ENV: log });
+    try {
+      const launched = w.launch("env", w.task(BRIEF), [], undefined, kind);
+      expect([kind, launched.state, launched.error]).toEqual([kind, "prompted", undefined]);
+      expect(w.run(["wait", "--name", "env", "--timeout", "20000"]).state).toBe("finished");
+      expect(await w.settled("env")).toBe(true);
+      expect(w.run(["send", "--name", "env", "--task-file", w.task(SENT, "more.md")]).state).toBe("resumed");
+      expect(w.run(["wait", "--name", "env", "--timeout", "20000"]).state).toBe("finished");
+      expect(await w.settled("env")).toBe(true);
+      const rows = readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+      const turns = rows.filter(({ argv }) => kind === "codex" ? argv[0] === "app-server" : kind === "kiro" ? argv[0] === "acp" : kind === "agy" ? argv.includes("--print=") : argv.includes("-p"));
+      expect(turns).toHaveLength(2);
+      for (const { env } of rows) {
+        for (const k of Object.keys(LEAD_ENV)) { expect(env).not.toHaveProperty(k); expect(env).not.toHaveProperty(k.toLowerCase()); }
+        const config = { ...CONFIG_ENV };
+        // Cursor deliberately replaces the config location for its worker, while every other setting passes intact.
+        if (kind === "cursor" && env.CURSOR_CONFIG_DIR !== CONFIG_ENV.CURSOR_CONFIG_DIR) config.CURSOR_CONFIG_DIR = join(w.runDir("env"), "cursor-config");
+        expect(env).toEqual(config);
+      }
+    } finally { w.run(["stop", "--name", "env"]); w.run(["cleanup", "--worker", "env"]); }
+  }
+}, 90000);
 
 test("a harness gets none of the lead's session variables, and keeps its sign-in settings", () => {
   const env = { PATH: "/bin", CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s", CLAUDE_CODE_MESSAGING_TOKEN: "t", CLAUDE_PID: "1", CODEX_THREAD_ID: "c", HERDR_PANE_ID: "p",

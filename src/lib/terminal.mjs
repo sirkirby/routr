@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import { callHerdr, processError } from "./process-boundary.mjs";
 import { paneView } from "./herdr.mjs";
-import { start as startProcess } from "./runtime.mjs";
+import { harnessEnv, start as startProcess } from "./runtime.mjs";
 
 // A session routr made carries the pid of the routr that made it, so a run that was killed half way is cleaned up by
 // the next one without touching a session another routr is still using. A pid can be reused, so a session older than
@@ -21,7 +21,9 @@ const STALE_MS = 10 * 60 * 1000;
 const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } };
 const ageMs = (dir) => { try { return Date.now() - statSync(dir).mtimeMs; } catch { return 0; } };
 // A spawn can fail after it returns (EACCES, EMFILE, herdr gone since the last call): report it, never let it throw.
-const startServer = (name, failed) => { const c = startProcess("herdr", ["--session", name, "server"], { detached: true, stdio: "ignore" }); c.on("error", failed); c.unref(); };
+// Its shells start harnesses, so the server must drop the lead's session too. Measured 2026-10-24, herdr 0.9.5:
+// `--session` server and `pane list` work with every HERDR_* removed. Only the clients below keep routr's environment.
+const startServer = (name, failed) => { const c = startProcess("herdr", ["--session", name, "server"], { env: harnessEnv(), detached: true, stdio: "ignore" }); c.on("error", failed); c.unref(); };
 
 // `call(args)` runs one herdr command in the private session and throws on failure; `pane` is where to type; `read`,
 // `info` and `keys` are that pane as herdr.mjs's paneView gives it.
