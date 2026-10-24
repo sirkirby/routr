@@ -674,8 +674,9 @@ was taken is not known, and it is never sent again on its own; `no_reply` when C
 `headline` `routr: whether <name> took the message is not known (<why>)`), `failed` (refused input).
 
 `ok`: true for `delivered`, `queued`, `resumed`. Own fields: `state`, `name`, `message` `{ code, why? }`. `warnings`
-names each trace-context carrier saved with the worker that is now outside routr's limits, or saved as anything but a non-empty string (its run folder changed since
-launch), with launch's fixed warning: a holder this send starts withholds it. `next`:
+names each trace-context carrier saved with the worker that is now outside routr's limits, or saved as anything but
+a non-empty string (its run folder changed since launch), with launch's fixed warning: a holder this send starts
+withholds it. `next`:
 `routr wait --name <name>` (run); for `unknown`, `routr workers --name <name>` (run) to look before sending again.
 
 ## workers
