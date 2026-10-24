@@ -7,6 +7,8 @@ export const USAGE_FAILURES = Object.freeze({
   invalid_response: "The usage source returned a reply routr cannot read.",
   private_folder: "routr could not make a private folder for the usage read.",
   source_missing: "No usage reader is available for this subscription.",
+  // Launch says the same of a work folder (herdr's CMD_PATH); here the folder is the read's own, under TEMP.
+  cmd_path: "The usage read's shell is cmd, which expands % and ! even inside quotes, and the temporary folder's path holds one. Set TEMP to a folder whose path has neither, or make PowerShell the shell herdr opens.",
 });
 export const usageFailure = (code) => {
   code = typeof code === "string" && Object.hasOwn(USAGE_FAILURES, code) ? code : "read_failed";
