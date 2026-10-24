@@ -74,6 +74,19 @@ harness. A native `.exe` install starts as before.
 
 ## Rules that hold for every harness
 
+routr removes the lead session names below by exact, case-insensitive match, not by harness prefix, and removes all
+`HERDR_*` names too. This covers harness reads, headless turns and the private herdr server whose shells start
+harnesses; herdr clients keep their environment to find their session. The private server still answers
+`herdr --session <name> pane list` with every `HERDR_*` variable removed (herdr 0.9.5, checked live 2026-10-24).
+
+| Harness | Lead session variables removed | Source and version checked |
+|---|---|---|
+| Claude Code | `CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_BRIDGE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_CODE_SSE_PORT` | Prototype p34, 2026-10-21; Claude Code 2.1.306 to 2.1.308 |
+| Codex | `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CODEX_TOOL_CALL_ID` | codex-rs source, Codex 0.164.0; 2026-10-24 |
+| Cursor | `CURSOR_CONVERSATION_ID`, `CURSOR_REQUEST_ID`, `CURSOR_AGENT` | Installed bundle, cursor-agent 2026.10.22; 2026-10-24 |
+| Antigravity | `ANTIGRAVITY_CONVERSATION_ID` | Installed binary, agy 1.4.7; 2026-10-24 |
+| Kiro | `KIRO_SESSION_ID` | Installed binary, kiro-cli 2.34.0; 2026-10-24 |
+
 Rules 0, 1 and 7 are about panes, in herdr; a headless worker has no pane, screen or input box.
 
 0. **Read a new pane before typing into it.** The user's shell may ask its own question first (measured: a dotenv
@@ -263,12 +276,6 @@ two only tell the reader whether "no windows" came before or after a response, w
 
 ## Claude Code headless, outside herdr (measured 2026-10-21 and 2026-10-22, Claude Code 2.1.306 to 2.1.308)
 
-routr removes the lead's `CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_CODE_ENTRYPOINT`,
-`CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_CODE_CHILD_SESSION`,
-`CLAUDE_CODE_BRIDGE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN` and
-`CLAUDE_CODE_SSE_PORT` before starting a harness: they identify the lead's session (prototype p34, 2026-10-21).
-Sign-in and provider settings remain, including `CLAUDE_CODE_OAUTH_TOKEN` and `CLAUDE_CODE_USE_BEDROCK`.
-
 What `routr launch` outside herdr relies on: `claude -p --input-format stream-json --output-format stream-json
 --verbose` with the permissive flags, model and effort as in a pane.
 
@@ -292,10 +299,6 @@ What `routr launch` outside herdr relies on: `claude -p --input-format stream-js
 
 ## Codex headless, outside herdr (measured 2026-10-22, codex-cli 0.163.0)
 
-Codex sets `CODEX_THREAD_ID`, `CODEX_SESSION_ID` and `CODEX_TOOL_CALL_ID` in the environment of its shell
-commands (codex-rs source, Codex 0.164.0, checked 2026-10-24). routr removes these lead session names before starting
-any harness; `CODEX_HOME` and sign-in or provider settings still pass.
-
 What `routr launch --kind codex` outside herdr relies on: `codex app-server -c check_for_update_on_startup=false`,
 its JSON-RPC protocol on stdin and stdout (`codex app-server generate-json-schema` prints it).
 
@@ -318,9 +321,6 @@ its JSON-RPC protocol on stdin and stdout (`codex app-server generate-json-schem
 
 ## Antigravity headless, outside herdr (measured 2026-10-22, agy 1.4.5)
 
-Antigravity sets `ANTIGRAVITY_CONVERSATION_ID` in the environment of its shell commands (installed binary,
-agy 1.4.7, checked 2026-10-24). routr removes this lead session name before starting any harness.
-
 What `routr launch --kind agy` outside herdr relies on: `agy --print= --input-format stream-json --output-format
 stream-json` with the pane's `--dangerously-skip-permissions`, `--add-dir <folder>` and `--model <id>`.
 
@@ -341,9 +341,6 @@ stream-json` with the pane's `--dangerously-skip-permissions`, `--add-dir <folde
 
 ## Kiro headless, outside herdr (its protocol measured directly 2026-10-22, kiro-cli 2.33.1; the loop through routr not yet run with a real Kiro)
 
-Kiro sets `KIRO_SESSION_ID` in the environment of its shell commands (installed binary, kiro-cli 2.34.0,
-checked 2026-10-24). routr removes this lead session name before starting any harness.
-
 What `routr launch --kind kiro` outside herdr relies on: `kiro-cli acp` with the pane's `--trust-tools=*`, `--model`
 and `--effort`, speaking the Agent Client Protocol (JSON-RPC on stdin and stdout). Measured with `--model auto` only (no
 effort flag passed); an explicit model id and `--effort` on `acp` are not measured.
@@ -363,15 +360,6 @@ effort flag passed); an explicit model id and `--effort` on `acp` are not measur
   routr ignores them. No request reached the client with `--trust-tools=*`.
 
 ## Cursor headless, outside herdr (measured 2026-10-22, cursor-agent 2026.10.22-27dcf5f)
-
-Cursor sets `CURSOR_CONVERSATION_ID`, `CURSOR_REQUEST_ID` and `CURSOR_AGENT` in the environment of its shell
-commands (installed bundle, cursor-agent 2026.10.22, checked 2026-10-24). routr removes these lead session names
-before starting any harness; `CURSOR_CONFIG_DIR` still passes (a worker gets its own config copy, below).
-
-These names are matched exactly and case-insensitively for Windows, not by harness prefix. All `HERDR_*` names
-are also removed. This applies to harness reads, headless turns and the private herdr server whose shells start
-harnesses; routr's herdr client calls keep their environment to find their session. The private server still answers
-`herdr --session <name> pane list` with every `HERDR_*` variable removed (herdr 0.9.5, checked live 2026-10-24).
 
 What `routr launch --kind cursor` outside herdr relies on: `cursor-agent -p --output-format stream-json` with the pane's
 `--yolo`, `--trust` and `--model <id>`, on a private copy of `~/.cursor/cli-config.json` (`CURSOR_CONFIG_DIR`), as a
