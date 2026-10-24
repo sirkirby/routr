@@ -74,6 +74,28 @@ harness. A native `.exe` install starts as before.
 
 ## Rules that hold for every harness
 
+routr removes the lead session and herdr pane names below by exact, case-insensitive match, not by prefix. This
+covers harness reads, headless turns and the private herdr server whose shells start
+harnesses; herdr clients keep their environment to find their session. The private server still answers
+`herdr --session <name> pane list` with the pane names removed, and a shell in its pane no longer sees the lead's
+names (herdr 0.9.5, macOS zsh, checked live 2026-10-24: with `CODEX_SESSION_ID`, `CURSOR_ASKPASS_SECRET` and
+`KIRO_SESSION_ID` set for routr, `env` in the private pane showed all three before this rule covered the server and
+none after; `CODEX_HOME` passed both times, and herdr set the private session's own `HERDR_ENV` and `HERDR_SESSION`). Sign-in, provider and configuration settings stay, including
+`SUDO_ASKPASS`, `CODEX_HOME`, `CURSOR_CONFIG_DIR`, `HERDR_CONFIG_PATH`, `HERDR_LOG` and `HERDR_HOME`.
+
+| Harness | Lead session variables removed | Source and version checked |
+|---|---|---|
+| Claude Code | `CLAUDECODE`, `CLAUDE_PID`, `CLAUDE_EFFORT`, `CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`, `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_SESSION_ATTENDED`, `CLAUDE_CODE_CHILD_SESSION`, `CLAUDE_CODE_BRIDGE_SESSION_ID`, `CLAUDE_CODE_MESSAGING_SOCKET`, `CLAUDE_CODE_MESSAGING_TOKEN`, `CLAUDE_CODE_SSE_PORT` | Measured child session inheritance, 2026-10-21 to 2026-10-22; Claude Code 2.1.306 to 2.1.308 |
+| Codex | `CODEX_THREAD_ID`, `CODEX_SESSION_ID`, `CODEX_TOOL_CALL_ID`, `CODEX_SANDBOX`, `CODEX_SANDBOX_NETWORK_DISABLED` | codex-rs source; installed 0.164.0 binary disassembly sets sandbox child environment (`seatbelt`, network-disabled `1`); 2026-10-24 |
+| Cursor | `CURSOR_CONVERSATION_ID`, `CURSOR_REQUEST_ID`, `CURSOR_AGENT`, `CURSOR_ASKPASS_SOCKET`, `CURSOR_ASKPASS_SECRET`, `CURSOR_AGENT_STORE_FILES_DIR`, `CURSOR_AGENT_STORE_SHARED_PATHS`, `CURSOR_SANDBOX`, `AGENT_TRANSCRIPTS` | Installed bundle's command environment and shell snapshot filter, cursor-agent 2026.10.22; 2026-10-24 |
+| Antigravity | `ANTIGRAVITY_CONVERSATION_ID` | Installed binary, agy 1.4.7; 2026-10-24 |
+| Kiro | `KIRO_SESSION_ID` | Installed binary, kiro-cli 2.34.0; 2026-10-24 |
+| herdr panes | `HERDR_ENV`, `HERDR_SOCKET_PATH`, `HERDR_CLIENT_SOCKET_PATH`, `HERDR_SESSION`, `HERDR_BIN_PATH`, `HERDR_WORKSPACE_ID`, `HERDR_TAB_ID`, `HERDR_PANE_ID` | Installed binary's pane environment name block, herdr 0.9.5; 2026-10-24 |
+
+**Not checked:** whether agy 1.4.7 assigns `ANTIGRAVITY_LS_ADDRESS` and `ANTIGRAVITY_CSRF_TOKEN` to tool commands.
+Both names occur in the installed binary, and its embedded plugin shell instructions expect them in the shell
+environment; static inspection did not establish the command assignment. They are not removed by this rule.
+
 Rules 0, 1 and 7 are about panes, in herdr; a headless worker has no pane, screen or input box.
 
 0. **Read a new pane before typing into it.** The user's shell may ask its own question first (measured: a dotenv

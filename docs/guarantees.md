@@ -173,14 +173,17 @@ paths. The binary does not load a `.env` or `bunfig.toml` from the folder you ru
 project's `.env` itself or pass it to the harness commands it runs (sign-in status and usage reads). Variables already
 in its environment, exported in your shell, still reach them. A worker that `routr launch` starts in a herdr pane runs
 in that pane's own shell, which loads what that shell is set up to load. A headless worker is started directly, with
-routr's own environment (so no project `.env` either). Every process it starts goes through one place, which hides
-its console on Windows, gives harness reads and headless workers an environment without herdr's pane variables or the
-lead's own session variables (Claude Code's and Codex's), and on Windows resolves a
-command as the shell would, starting an npm `.cmd` shim's script directly. In a pane, routr types commands for that
-pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. A folder path typed into a shell reaches it exactly
-(in PowerShell, curly quotes as well as `'`), or is refused before anything is typed: cmd expands `%` and `!` even
-inside quotes, so a cmd shell is never given a path holding either, and routr says to use another folder or
-PowerShell. Follow-up commands have exact `argv` and a
+routr's own environment (so no project `.env` either). All process starts use shared platform defaults, which hide
+the console on Windows and resolve a command as the shell would, starting an npm `.cmd` shim's script directly.
+Harness reads, headless turns and the private herdr server each supply the shared environment filter, which removes
+herdr's pane variables and the harness lead session names in the
+[harness reference](../skills/routr/references/harnesses.md#rules-that-hold-for-every-harness), preserving sign-in,
+provider and configuration settings. A test inventories process starts: each supplies that filter or names an exact
+exception for a non-harness process. Herdr clients keep their environment to find their session.
+In a pane, routr types commands for that pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. A folder
+path typed into a shell reaches it exactly (in PowerShell, curly quotes as well as `'`), or is refused before anything
+is typed: cmd expands `%` and `!` even inside quotes, so a cmd shell is never given a path holding either, and routr
+says to use another folder or PowerShell. Follow-up commands have exact `argv` and a
 common-shell `command` only for the documented safe alphabet and an unquoted, non-assignment executable; otherwise
 `command` is null. Instructions and templates are marked `kind: "do"`, never runnable.
 Unsafe template values become placeholders for the lead to fill, never expanding shell text. Execution history stays

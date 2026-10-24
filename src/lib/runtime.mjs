@@ -263,15 +263,19 @@ export function stop(child, { platform = process.platform, via, after = later, g
   }
 }
 
-// The environment for a harness read (`run`, `probe`): routr's own, without herdr's pane variables (HERDR_ENV,
-// HERDR_SOCKET_PATH, HERDR_PANE_ID, ...). Inside a herdr pane a harness inherits them, and herdr's integration hooks in
+// The environment for harness reads, headless turns and the private herdr server: routr's own, without herdr's pane
+// variables (HERDR_ENV, HERDR_SOCKET_PATH, HERDR_PANE_ID, ...). A harness inherits them, and herdr's integration hooks in
 // that harness (e.g. ~/.claude/hooks/herdr-agent-state.sh, which acts only when all three are set) would report
 // routr's few-second read as an agent session in the user's pane. routr's own herdr calls (herdr.mjs runHerdr,
-// terminal.mjs) keep them: herdr needs them to find its session. Windows names are case-insensitive, hence /i.
+// terminal.mjs clients) keep them: herdr needs them to find its session. Windows names are case-insensitive, hence /i.
 // The lead's own session variables go too: CLAUDECODE and Claude Code's session and messaging ones make a Claude that
 // routr starts take itself for a child of the lead's session, and CODEX_THREAD_ID ties a Codex to the lead's thread
-// (prototype p34, 2026-10-21). Sign-in and provider settings (CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_USE_BEDROCK, …) stay.
-const LEAD_SESSION = /^(?:HERDR_.*|CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(?:ENTRYPOINT|EXECPATH|SESSION_ID|SESSION_ATTENDED|CHILD_SESSION|BRIDGE_SESSION_ID|MESSAGING_SOCKET|MESSAGING_TOKEN|SSE_PORT)|CODEX_THREAD_ID)$/i;
+// (measured 2026-10-21: a child otherwise inherited the lead identity). Herdr 0.9.5 binary strings list the eight pane
+// names: config (HERDR_CONFIG_PATH, HERDR_HOME, HERDR_LOG) must stay so server and clients use the same settings.
+// The other harness session names were checked in vendor source and installed binaries
+// 2026-10-24 (versions and sources in references/harnesses.md). Exact names, not harness prefixes: sign-in, provider
+// and config settings (CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_USE_BEDROCK, CODEX_HOME, CURSOR_CONFIG_DIR, …) stay.
+const LEAD_SESSION = /^(?:HERDR_(?:ENV|SOCKET_PATH|CLIENT_SOCKET_PATH|SESSION|BIN_PATH|WORKSPACE_ID|TAB_ID|PANE_ID)|CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(?:ENTRYPOINT|EXECPATH|SESSION_ID|SESSION_ATTENDED|CHILD_SESSION|BRIDGE_SESSION_ID|MESSAGING_SOCKET|MESSAGING_TOKEN|SSE_PORT)|CODEX_THREAD_ID|CODEX_SESSION_ID|CODEX_TOOL_CALL_ID|CODEX_SANDBOX|CODEX_SANDBOX_NETWORK_DISABLED|CURSOR_CONVERSATION_ID|CURSOR_REQUEST_ID|CURSOR_AGENT|CURSOR_ASKPASS_SOCKET|CURSOR_ASKPASS_SECRET|CURSOR_AGENT_STORE_FILES_DIR|CURSOR_AGENT_STORE_SHARED_PATHS|CURSOR_SANDBOX|AGENT_TRANSCRIPTS|ANTIGRAVITY_CONVERSATION_ID|KIRO_SESSION_ID)$/i;
 export const harnessEnv = (env = process.env) => Object.fromEntries(Object.entries(env).filter(([k]) => !LEAD_SESSION.test(k)));
 
 // Start routr again, detached, with `args`, and carry on without waiting: the binary itself, or `bun <script>` from a

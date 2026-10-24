@@ -1,9 +1,13 @@
 // runtime.mjs: every process routr starts, and the environment a harness read gets
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, win32 } from "node:path";
 import { cmdArg, cmdLine, ensureParent, harnessEnv, npmShimScript, probe, resolveCommand, run, start, startOptions, startSync, stop, windowsCommand } from "../src/lib/runtime.mjs";
-import { cliEnv, fakeExecutable, npmShim, scratch } from "./helpers.mjs";
+import * as runtime from "../src/lib/runtime.mjs";
+import { openTerminal } from "../src/lib/terminal.mjs";
+import { runHerdr } from "../src/lib/herdr.mjs";
+import { cliEnv, CONFIG_ENV, fakeExecutable, LEAD_ENV, npmShim, scratch } from "./helpers.mjs";
 
 test("the Windows fake herdr forwards a multiline worker prompt without a batch-shell parse", () => {
   const dir = scratch("fake-herdr-prompt"), root = "C:\\fake-tools";
@@ -76,26 +80,72 @@ test("every start hides its console on Windows, whatever the caller passed, and 
   ]);
 });
 
-test("a harness read's environment drops herdr's pane variables and keeps everything else", () => {
+test("a harness read's environment drops only herdr's pane variables and keeps its settings", () => {
   const env = { PATH: "/bin", HOME: "/h", HERDR_ENV: "1", HERDR_SOCKET_PATH: "/s", HERDR_PANE_ID: "p", herdr_other: "x", NOT_HERDR_ENV: "kept" };
-  expect(harnessEnv(env)).toEqual({ PATH: "/bin", HOME: "/h", NOT_HERDR_ENV: "kept" });
+  expect(harnessEnv(env)).toEqual({ PATH: "/bin", HOME: "/h", herdr_other: "x", NOT_HERDR_ENV: "kept" });
   expect(env.HERDR_PANE_ID).toBe("p"); // the caller's copy is untouched
 });
 
-test("run and probe start their command without herdr's pane variables (a bun child prints what it got)", async () => {
-  const names = ["HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_PANE_ID", "ROUTR_TEST_MARK"], saved = names.map((k) => process.env[k]);
-  Object.assign(process.env, { HERDR_ENV: "1", HERDR_SOCKET_PATH: "/tmp/herdr.sock", HERDR_PANE_ID: "w1:p1", ROUTR_TEST_MARK: "kept" });
+test("run and probe remove every harness's lead session names, in either case, while keeping sign-in and config (a bun child prints what it got)", async () => {
+  const lead = { ...LEAD_ENV, ...Object.fromEntries(Object.entries(LEAD_ENV).map(([k, v]) => [k.toLowerCase(), v])) };
+  const env = { ...lead, ...CONFIG_ENV }, names = Object.keys(env), saved = names.map((k) => process.env[k]);
+  Object.assign(process.env, env);
   try {
-    const keys = ["-e", "process.stdout.write(JSON.stringify(Object.keys(process.env)))"];
+    const keys = ["-e", "process.stdout.write(JSON.stringify(process.env))"];
     const viaRun = JSON.parse(await run(process.execPath, keys, { timeoutMs: 15000 }));
     const viaProbe = JSON.parse((await probe(process.execPath, keys)).out);
     for (const got of [viaRun, viaProbe]) {
-      expect(got.filter((k) => /^HERDR_/i.test(k))).toEqual([]);
-      expect(got).toContain("ROUTR_TEST_MARK");
-      expect(got.some((k) => /^path$/i.test(k))).toBe(true); // Windows spells it Path
+      for (const k of Object.keys(lead)) expect(got).not.toHaveProperty(k);
+      expect(got).toMatchObject(CONFIG_ENV);
+      expect(Object.keys(got).some((k) => /^path$/i.test(k))).toBe(true); // Windows spells it Path
     }
+    expect(harnessEnv(env)).toEqual(CONFIG_ENV);
   } finally {
     names.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; });
+  }
+});
+
+test("the private herdr server removes every lead session name before its shells inherit them and keeps herdr's settings", async () => {
+  const env = { ...LEAD_ENV, ...Object.fromEntries(Object.entries(LEAD_ENV).map(([k, v]) => [k.toLowerCase(), v])), ...CONFIG_ENV };
+  const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]])), starts = [];
+  Object.assign(process.env, env);
+  const spawn = spyOn(runtime, "start").mockImplementation((cmd, args, opts) => {
+    starts.push({ cmd, args, opts, env: { ...(opts.env ?? process.env) } });
+    return Object.assign(new EventEmitter(), { unref() {} });
+  });
+  let terminal;
+  try {
+    terminal = await openTerminal({ cwd: "/work", remaining: () => 1000, sleep: async () => {}, run: async (args) => {
+      if (args[0] === "session" && args[1] === "list") return { ok: true, data: { sessions: [] } };
+      return { ok: true, data: { result: args.includes("create") ? { root_pane: { pane_id: "w1:p1" } } : { workspaces: [] } } };
+    } });
+    expect(starts).toHaveLength(1);
+    expect(starts[0].cmd).toBe("herdr");
+    expect(starts[0].args).toEqual(["--session", expect.stringMatching(/^routr-scratch-/), "server"]);
+    for (const k of Object.keys(env).filter((k) => !Object.hasOwn(CONFIG_ENV, k))) expect(starts[0].env).not.toHaveProperty(k);
+    expect(starts[0].env).toMatchObject(CONFIG_ENV);
+    await terminal.close();
+  } finally {
+    await terminal?.close(); spawn.mockRestore();
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
+test("herdr's real client transport keeps pane and config variables at its process boundary", async () => {
+  const env = { ...LEAD_ENV, ...CONFIG_ENV }, saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, env);
+  const starts = [];
+  try {
+    const result = await runHerdr(["pane", "list"], 1000, { via: (cmd, args, opts) => {
+      starts.push({ cmd, args, env: Object.fromEntries(Object.keys(env).map((k) => [k, (opts.env ?? process.env)[k]])) });
+      const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() });
+      queueMicrotask(() => { child.stdout.emit("data", JSON.stringify({ result: { panes: [] } })); child.emit("close", 0); });
+      return child;
+    } });
+    expect(result.ok).toBe(true);
+    expect(starts).toEqual([{ cmd: "herdr", args: ["pane", "list"], env }]);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
   }
 });
 
