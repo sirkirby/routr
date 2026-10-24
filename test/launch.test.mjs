@@ -384,6 +384,47 @@ test("shell readiness still stops immediately when herdr is unreachable, refuses
   }
 });
 
+test("shell readiness reports its deadline when a herdr call consumes the remaining time", async () => {
+  for (const unreadable of [false, true]) for (const op of ["read", "process-info"]) {
+    let polls = 0;
+    const f = fakeHerdr({ reply: async (a, ms) => {
+      if (a[1] === op && polls >= 1 && f.deps.now() < 1000) { await f.deps.sleep(ms); return herdrError("timeout"); }
+      if (a[1] === "process-info") { polls++; return unreadable ? herdrOK({ process_info: {} }) : shellInfo([{ pid: 2 }]); }
+    } });
+    const r = await launch([...launchArgs, "--timeout", "1000"], f.deps);
+    expect(r.error).toBe(unreadable ? "The pane's processes could not be read before the shell readiness deadline" : "Launch readiness timeout");
+    expect(f.deps.now()).toBe(1000);
+    expect(f.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
+  }
+});
+
+test("shell readiness starts no herdr read with less than 50 ms left, before either call", async () => {
+  for (const unreadable of [false, true]) for (const op of ["read", "process-info"]) {
+    let polls = 0, shortCalls = 0, advanced = false;
+    const f = fakeHerdr({ reply: async (a, ms) => {
+      if (["read", "process-info"].includes(a[1]) && ms < 50) shortCalls++;
+      if (a[1] === "process-info") { polls++; return unreadable ? herdrOK({ process_info: {} }) : shellInfo([{ pid: 2 }]); }
+      if (a[1] === "read" && polls === 1 && op === "process-info" && !advanced) { advanced = true; await f.deps.sleep(20); }
+    } });
+    const r = await launch([...launchArgs, "--timeout", op === "process-info" ? "310" : "280"], f.deps);
+    expect(r.error).toBe(unreadable ? "The pane's processes could not be read before the shell readiness deadline" : "Launch readiness timeout");
+    expect(shortCalls).toBe(0);
+    expect(polls).toBe(1);
+    expect(f.deps.now()).toBe(op === "process-info" ? 270 : 250);
+  }
+});
+
+test("shell readiness preserves early herdr timeouts and non-timeout failures even at its deadline", async () => {
+  for (const [code, elapsed] of [["timeout", 20], ["server_not_running", 1000], ["boom", 1000]]) {
+    const f = fakeHerdr({ reply: async (a) => {
+      if (a[1] === "process-info") { await f.deps.sleep(elapsed); return herdrError(code); }
+    } });
+    const r = await launch([...launchArgs, "--timeout", "1000"], f.deps);
+    expect(r.error).toContain(code === "boom" ? "herdr_refused" : "herdr_unreachable");
+    expect(f.deps.now()).toBe(elapsed);
+  }
+});
+
 test("a prompt must settle again after an intervening foreground command", async () => {
   let polls = 0;
   const f = fakeHerdr({ reply: (a) => {

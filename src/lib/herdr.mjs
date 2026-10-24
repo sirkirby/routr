@@ -144,7 +144,7 @@ export const paneView = (call, pane) => ({
 });
 
 // Measured 2026-10-24, herdr 0.9.5 on macOS: 3 of 4 worktree launches got an unreadable process-info answer
-// while zsh's startup ran brew shellenv; the same pane answered later. An unreadable look proves neither readiness
+// during zsh startup; the same pane answered later. An unreadable look proves neither readiness
 // nor exit. Only waits use this; cleanup must still refuse when it cannot tell what runs in a pane.
 async function processesWhileWaiting(pane) {
   try { return await pane.info(); }
@@ -157,12 +157,13 @@ export async function shellAlone(pane) {
   return info != null && (info.foreground_processes ?? []).every((p) => p.pid === info.shell_pid);
 }
 
-// A time budget for a sequence of herdr calls: `remaining()` is what is left, and throws `message` once it is spent.
+// A time budget for a sequence of herdr calls: `remaining(minimum)` is what is left, and throws `message` when less
+// than minimum (default 1 ms) remains. A wait can stop before giving herdr a timeout too short to answer.
 export function deadline(timeout, now, message) {
   const began = now();
-  return () => {
+  return (minimum = 1) => {
     const ms = Math.floor(timeout - (now() - began));
-    if (!Number.isFinite(ms) || ms <= 0) throw new Error(message);
+    if (!Number.isFinite(ms) || ms < minimum) throw new Error(message);
     return ms;
   };
 }
@@ -176,15 +177,21 @@ export function deadline(timeout, now, message) {
 // `cwd`, when given, must be where the shell is. Returns { ok: true, name, cwd } or { ok: false, why, text }.
 export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBusy = false, onShell } = {}) {
   let previous = null, unreadable = false;
-  const left = () => {
-    try { return remaining(); }
+  const left = (minimum = 1) => {
+    try { return remaining(minimum); }
     catch (e) { if (unreadable) throw new Error("The pane's processes could not be read before the shell readiness deadline"); throw e; }
+  };
+  // Near the deadline, a poll's pause can leave herdr only a few ms to answer. Do not start a
+  // read with less than 50 ms; if a read spends the deadline, report that deadline, not an unreachable herdr.
+  const look = async (read) => {
+    left(50);
+    try { return await read(); }
+    catch (e) { if (e?.timedOut) left(); throw e; }
   };
   const pause = () => sleep(Math.min(250, left()));
   for (;;) {
-    left();
-    const text = await pane.read();
-    const read = await processesWhileWaiting(pane);
+    const text = await look(() => pane.read());
+    const read = await look(() => processesWhileWaiting(pane));
     unreadable = read == null;
     const info = read ?? {}; // no process information: the shell is waited for, like a busy one
     const fail = (why) => ({ ok: false, why, text });

@@ -18,7 +18,7 @@ export function processFailure(tool, args, code, missing = false) {
     : `${tool} refused ${command} (${code}).`;
   return { ok: false, code, why, ...(missing ? { missing: true, next: [doNext("Install herdr or put its executable on PATH, then retry this command")] } : {}) };
 }
-export const processError = (r) => Object.assign(new Error(r.why), { code: r.code });
+export const processError = (r) => Object.assign(new Error(r.why), { code: r.code, timedOut: r.data?.error?.code === "timeout" });
 const QUIET = new Set(["pane run", "pane send-text", "pane send-keys"]);
 export function herdrResult(args, r) {
   if (r?.ok !== true) {
