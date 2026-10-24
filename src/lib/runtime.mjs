@@ -293,22 +293,41 @@ const CARRIER_TEXT = /^[\t\x20-\x7e]*$/;
 // Shown in output where a carrier stands: its value never is.
 export const FORWARDED = "<forwarded>";
 export const carrierWithheld = (name) => `${name} was not passed to the worker: routr passes it only when it is at most ${CARRIER_MAX[name]} bytes of printable ASCII or tabs`;
-// { carriers, withheld }: those within the limits, by name, and the names of those present but outside them. An empty
-// value is absent. Checked by character first, so a length is a count of bytes.
-const checked = (get) => {
+// { carriers, withheld }: those within the limits, by name, and the names of those present but outside them.
+// `present(v)` says whether a value counts as there at all. Checked by character first, so a length is a count of bytes.
+const checked = (get, present = (v) => v != null && v !== "") => {
   const carriers = {}, withheld = [];
   for (const name of CARRIERS) {
     const v = get(name);
-    if (v == null || v === "") continue;
-    if (typeof v === "string" && CARRIER_TEXT.test(v) && v.length <= CARRIER_MAX[name]) carriers[name] = v; else withheld.push(name);
+    if (!present(v, name)) continue;
+    if (typeof v === "string" && v !== "" && CARRIER_TEXT.test(v) && v.length <= CARRIER_MAX[name]) carriers[name] = v; else withheld.push(name);
   }
   return { carriers, withheld };
 };
-// The carriers in an environment: by exact name, and case-insensitively on Windows, as its environment is.
-export const carriersFrom = (env = process.env, { platform = process.platform } = {}) => checked((n) => (platform === "win32" ? envGet(env, n) : env[n]));
+// The carriers in an environment: by exact name, and case-insensitively on Windows, as its environment is. An empty
+// value is absent, as an unset variable.
+const carrierIn = (env, name, platform) => (platform === "win32" ? envGet(env, name) : env[name]);
+export const carriersFrom = (env = process.env, { platform = process.platform } = {}) => checked((n) => carrierIn(env, n, platform));
 // The carriers a worker was saved with (headless worker.json), checked again on every load: only the three names, and
-// only own keys; anything else in the object is ignored.
-export const savedCarriers = (saved) => checked((n) => (saved && typeof saved === "object" && !Array.isArray(saved) && Object.hasOwn(saved, n) ? saved[n] : undefined));
+// only own keys; anything else in the object is ignored. Only an absent key is absent: launch saves no other kind, so
+// one present that is not a non-empty string (null, "", a number) was changed since, and is withheld and named.
+const own = (saved, n) => saved && typeof saved === "object" && !Array.isArray(saved) && Object.hasOwn(saved, n);
+export const savedCarriers = (saved) => checked((n) => (own(saved, n) ? saved[n] : undefined), (v, n) => own(saved, n));
+// Every carrier value present in an environment, within routr's limits or not: what pane text is redacted of.
+export const carrierValues = (env = process.env, { platform = process.platform } = {}) => CARRIERS.map((n) => carrierIn(env, n, platform)).filter((v) => typeof v === "string" && v !== "");
+// Pane text (a screen routr returns) with each of `values` replaced by a fixed placeholder. A pane wraps a long line at
+// its width, and a terminal may show a TAB as spaces: a value is matched across line breaks, a TAB as spaces too.
+// A value split by anything else the screen drew (a colour code inside it) is not matched.
+export const CARRIER_SHOWN = "<carrier>";
+export function redactCarriers(text, values) {
+  if (typeof text !== "string" || !values?.length) return text;
+  // Longest first, so a value inside another is not replaced in part.
+  for (const v of [...values].sort((a, b) => b.length - a.length)) {
+    const pattern = [...v].map((c) => (c === "\t" ? "[\t ]+" : c.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&"))).join("(?:\r?\n)?");
+    text = text.replace(new RegExp(pattern, "g"), CARRIER_SHOWN);
+  }
+  return text;
+}
 export const harnessEnv = (env = process.env) => Object.fromEntries(Object.entries(env).filter(([k]) => !LEAD_SESSION.test(k) && !CARRIER.test(k)));
 // A worker's environment: the harness environment, the carriers it was given (checked again here, so nothing unchecked
 // is ever spread into it), then the adapter's own variables, which win for their keys.

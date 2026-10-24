@@ -11,7 +11,7 @@ import { CLOSING, OFF } from "./wording.mjs";
 import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, splitArgs, waitForShell } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
-import { CARRIERS, carriersFrom, carrierWithheld, ensureParent, FORWARDED, home, realPath, spawnSelf } from "./runtime.mjs";
+import { CARRIERS, carriersFrom, carrierValues, carrierWithheld, ensureParent, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
 import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
 
 // The guide is the source of this instruction, embedded at build time just like the installed skills.
@@ -93,6 +93,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
     ran: [], next: [], start: { executable: null, argv: [], env: {} }, steps: [], warnings: [], prompt_chars: null, unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
+  // Every screen launch returns goes through here: a shell's startup line can print the trace-context carriers routr
+  // holds (any found, passed or withheld), and their values never reach output.
+  const hidden = carrierValues(env), shown = (text) => redactCarriers(text, hidden);
   let configDir, createdPane = false, startAttempted = false, touchedPane = false, promptAttempted = false, unconfirmed = false;
   // Something in the pane needs an answer that routr does not give: a shell's own question, a harness's startup
   // question, an agent that has not started. The orchestrator gets what the pane shows (withheld once the task has been
@@ -103,7 +106,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     out.ok = false; out.state = "needs_input";
     const { next: instruction, ...detail } = more;
     out.needs_input = { why, ...detail };
-    out.screen = promptAttempted ? PANE_WITHHELD : text ?? null;
+    out.screen = promptAttempted ? PANE_WITHHELD : shown(text ?? null);
     out.next.push(...(instruction == null ? resumeSteps() : Array.isArray(instruction) ? instruction : [doNext(instruction)]));
     step("needs_input", false, why); return out;
   };
@@ -535,7 +538,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       try {
         const a = ["pane", "read", out.pane, "--source", "recent-unwrapped", "--lines", "40"];
         logCommand(out.ran, command(a));
-        const tail = clean(paneText((await safeRun(a, 1000)).data))
+        const tail = shown(clean(paneText((await safeRun(a, 1000)).data)))
           .split("\n").filter((l) => l.trim()).slice(-8).map((l) => (l.length > 200 ? `${l.slice(0, 200)}…` : l)).join("\n");
         if (tail) out.screen = tail;
       } catch {}

@@ -1348,3 +1348,22 @@ test("a worktree's pane, an existing pane and an adopted agent get no carriers, 
   const quiet = fakeHerdr();
   expect((await launch([...launchArgs, "--pane", "w1:p9", "--cwd", here], quiet.deps)).warnings.filter((w) => w.includes("passed none"))).toEqual([]);
 });
+
+test("a screen launch returns never carries a carrier value routr holds: the needs_input screen and the failure tail are redacted", async () => {
+  const env = { HERDR_ENV: "1", ...CARRIED, TRACESTATE: "k=CARRIER_MARK_TS\x1b" }; // withheld, and still redacted
+  const shown = `TRACEPARENT=${CARRIED.TRACEPARENT}\nTRACESTATE=k=CARRIER_MARK_TS\x1b\nBAGGAGE=${CARRIED.BAGGAGE.slice(0, 10)}\n${CARRIED.BAGGAGE.slice(10)}\nfound '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)`;
+  const asks = fakeHerdr({ reply: (a) => (a[1] === "read" ? herdrOK({ text: shown }) : undefined) });
+  const r = await launch([...launchArgs, "--task", "Task"], { ...asks.deps, env });
+  expect(r.state).toBe("needs_input");
+  expect(r.screen).toContain("<carrier>");
+  expect(r.screen).toContain("Source it?");
+  noCarrierValue(r);
+  // A start herdr refuses: launch reads the pane's recent lines for the harness's own complaint, and returns them.
+  const tail = `$ claude\nTRACEPARENT=${CARRIED.TRACEPARENT} BAGGAGE=${CARRIED.BAGGAGE}\nError: bad flag`;
+  const fails = fakeHerdr({ reply: (a) => (a[1] === "start" ? herdrError("refused") : a[1] === "read" && a.includes("recent-unwrapped") ? herdrOK({ text: tail }) : undefined) });
+  const f = await launch(launchArgs, { ...fails.deps, env });
+  expect(f.state).toBe("failed");
+  expect(f.screen).toContain("Error: bad flag");
+  expect(f.screen).toContain("TRACEPARENT=<carrier> BAGGAGE=<carrier>");
+  noCarrierValue(f);
+});

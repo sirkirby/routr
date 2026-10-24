@@ -1,7 +1,7 @@
 // The W3C trace-context carriers routr hands on to the workers it starts: which it takes, the transport limits, and
 // the two environments (a harness read gets none; a worker start gets the checked ones, its adapter's own keys winning).
 import { expect, test } from "bun:test";
-import { CARRIERS, carriersFrom, carrierWithheld, harnessEnv, savedCarriers, workerEnv } from "../src/lib/runtime.mjs";
+import { CARRIERS, carriersFrom, carrierValues, carrierWithheld, harnessEnv, redactCarriers, savedCarriers, workerEnv } from "../src/lib/runtime.mjs";
 
 const TP = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
 const at = (n) => "a".repeat(n);
@@ -66,7 +66,10 @@ test("carriers saved with a worker are checked again on every load: unknown keys
   expect(savedCarriers({ TRACEPARENT: TP, NODE_OPTIONS: "--require /evil.js", traceparent: "x", __proto__: { BAGGAGE: "inherited" } }))
     .toEqual({ carriers: { TRACEPARENT: TP }, withheld: [] });
   expect(savedCarriers({ TRACEPARENT: 7, TRACESTATE: at(513), BAGGAGE: "k=v" })).toEqual({ carriers: { BAGGAGE: "k=v" }, withheld: ["TRACEPARENT", "TRACESTATE"] });
-  expect(savedCarriers({ TRACEPARENT: { toString: () => TP }, TRACESTATE: "a\x1bb", BAGGAGE: "" })).toEqual({ carriers: {}, withheld: ["TRACEPARENT", "TRACESTATE"] });
+  expect(savedCarriers({ TRACEPARENT: { toString: () => TP }, TRACESTATE: "a\x1bb", BAGGAGE: "" })).toEqual({ carriers: {}, withheld: ["TRACEPARENT", "TRACESTATE", "BAGGAGE"] });
+  // Only an absent key is absent: one present that is not a non-empty string (null, empty, a number) is withheld and named.
+  for (const v of [null, "", 0, false, undefined]) expect([v, savedCarriers({ BAGGAGE: v, TRACEPARENT: TP })]).toEqual([v, { carriers: { TRACEPARENT: TP }, withheld: ["BAGGAGE"] }]);
+  expect(workerEnv({ BAGGAGE: null, TRACEPARENT: TP }, {}, { PATH: "/bin" })).toEqual({ PATH: "/bin", TRACEPARENT: TP });
 });
 
 test("smoke:carriers' own values are hostile but valid, exactly at each limit, and its checks find a value changed by a byte; the agent half uses short markers ps shows whole", async () => {
@@ -99,4 +102,24 @@ test("smoke:carriers' own values are hostile but valid, exactly at each limit, a
   // What it types starts the fixture only: the runtime and the script, quoted for the pane's shell, never a carrier.
   expect(fixtureCommand("posix", "/opt/bun", "/tmp/a b/fixture.cjs")).toBe("/opt/bun '/tmp/a b/fixture.cjs'");
   expect(fixtureCommand("powershell", "C:\\bun.exe", "C:\\it's\\fixture.cjs")).toBe("& 'C:\\bun.exe' 'C:\\it''s\\fixture.cjs'");
+});
+
+test("pane text leaves routr with every carrier value routr holds replaced, withheld ones too, even wrapped across lines", () => {
+  const env = { TRACEPARENT: TP, TRACESTATE: "", BAGGAGE: "k=v,\tz=1 2", OTHER: "kept" };
+  // The values present, within routr's limits or not; an empty one is not a value.
+  expect(carrierValues(env)).toEqual([TP, "k=v,\tz=1 2"]);
+  expect(carrierValues({ BAGGAGE: "a\x1bb".repeat(3000) })).toEqual(["a\x1bb".repeat(3000)]);
+  expect(carrierValues({ traceparent: TP }, { platform: "win32" })).toEqual([TP]);
+  expect(carrierValues({ traceparent: TP }, { platform: "linux" })).toEqual([]);
+  const values = carrierValues(env);
+  expect(redactCarriers(`$ env\nTRACEPARENT=${TP}\nBAGGAGE=k=v,\tz=1 2\nkept\nSource it? [y/N]`, values))
+    .toBe("$ env\nTRACEPARENT=<carrier>\nBAGGAGE=<carrier>\nkept\nSource it? [y/N]");
+  // A pane wraps a long line at its width, and a terminal may show a TAB as spaces.
+  expect(redactCarriers(`TRACEPARENT=${TP.slice(0, 20)}\n${TP.slice(20, 40)}\r\n${TP.slice(40)} done`, values)).toBe("TRACEPARENT=<carrier> done");
+  expect(redactCarriers("BAGGAGE=k=v,    z=1 2", values)).toBe("BAGGAGE=<carrier>");
+  expect(redactCarriers("nothing here", values)).toBe("nothing here");
+  expect(redactCarriers("x", [])).toBe("x");
+  expect(redactCarriers(null, values)).toBe(null);
+  // A value with regular-expression characters is matched as itself.
+  expect(redactCarriers("a.*b and aXXb", ["a.*b"])).toBe("<carrier> and aXXb");
 });
