@@ -1027,6 +1027,18 @@ test("launch refuses a cmd pane before typing anything when a folder it would ty
   expect(c.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
   expect(c.calls.some((a) => a[1] === "close")).toBe(true); // the unused pane goes
   expect(readdirSync(root)).toEqual(["source.json"]);
+  // Cursor into the caller's pane, its shell elsewhere: the work folder is safe and the private folder is not. The refusal
+  // comes before the `cd`, not between it and the variable, and the caller's pane stays.
+  for (const name of ["cmd-pct%", "cmd-bang!"]) {
+    const temp = scratch(name), config = join(temp, "source.json");
+    writeFileSync(config, '{"model":"original"}');
+    const p = fakeHerdr({ kind: "cursor", reply: cmdShell(SCRATCH) });
+    const rp = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--pane", "w1:p1", "--cwd", process.cwd(), "--task", "Task"],
+      { ...p.deps, cursorConfigSource: config, tempRoot: temp });
+    expect(rp).toMatchObject({ ok: false, state: "failed", error: CMD_PATH, pane: "w1:p1" });
+    expect(p.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt", "close"].includes(a[1]))).toBe(false);
+    expect(readdirSync(temp)).toEqual(["source.json"]); // the unused private config is removed
+  }
 });
 
 test("waitForShell: ready at a settled prompt; stops at any question, a busy adopted pane, or the wrong folder", async () => {
