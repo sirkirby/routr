@@ -913,11 +913,120 @@ test("launch types each shell's own syntax: Cursor's private config is set and r
   // The line without the hidden startup ($si) was run on Windows 11: the watcher appeared, and the folder was gone once
   // the shell exited. The startup with ShowWindow = 0 is the documented way to hide its console; not yet confirmed there.
   expect(SHELLS.powershell.cursorEnv(dir)).toBe(`$env:CURSOR_CONFIG_DIR='${dir}'; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ''${dir}'' -Recurse -Force -ErrorAction SilentlyContinue"'; $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $si.ShowWindow = 0; ([wmiclass]'Win32_Process').Create($w, $null, $si) | Out-Null`);
-  expect(SHELLS.powershell.cd("C:\\it's here")).toBe("Set-Location -LiteralPath 'C:\\it''s here'");
   expect(SHELLS.cmd.cursorEnv(dir)).toBe(`set "CURSOR_CONFIG_DIR=${dir}"`);
   expect(SHELLS.cmd.cd("C:\\a b")).toBe('cd /d "C:\\a b"');
   expect(SHELLS.posix.cursor("/tmp/x", "cursor-agent", ["--trust"])).toMatch(/^env CURSOR_CONFIG_DIR=\/tmp\/x sh -c 'trap .*cursor-agent --trust'$/);
   expect(SHELLS.posix.cd("/a b")).toBe("cd -- '/a b'");
+});
+
+// PowerShell's tokenizer opens and closes a single-quoted string at any of five characters, the ASCII ' and U+2018 to
+// U+201B, and reads two of them in a row as the second one. A model of that, to read each typed line back to its path.
+const PS_QUOTES = "'\u2018\u2019\u201A\u201B";
+const psString = (line, at) => {
+  expect(PS_QUOTES).toContain(line[at]);
+  let value = "";
+  for (let i = at + 1; i < line.length; i++) {
+    if (!PS_QUOTES.includes(line[i])) { value += line[i]; continue; }
+    if (i + 1 === line.length || !PS_QUOTES.includes(line[i + 1])) return { value, end: i + 1 };
+    value += line[++i];
+  }
+  throw new Error(`Unterminated string in ${line}`);
+};
+// What each line hands PowerShell: the folder of `cd`, the variable `cursorEnv` sets, and the folder its watcher removes,
+// read from the -Command text the watcher process gets once $w is built (with some pid for $PID).
+const psPaths = (cd, env) => {
+  const set = "Set-Location -LiteralPath ";
+  expect(cd.startsWith(set)).toBe(true);
+  const at = psString(cd, set.length);
+  expect(at.end).toBe(cd.length);
+  const head = "$env:CURSOR_CONFIG_DIR=";
+  expect(env.startsWith(head)).toBe(true);
+  const variable = psString(env, head.length);
+  const w = "; $w = ";
+  expect(env.slice(variable.end, variable.end + w.length)).toBe(w);
+  const left = psString(env, variable.end + w.length);
+  const pid = " + $PID + ";
+  expect(env.slice(left.end, left.end + pid.length)).toBe(pid);
+  const right = psString(env, left.end + pid.length);
+  expect(env.slice(right.end)).toStartWith("; $si = ");
+  const inner = (`${left.value}1${right.value}`).match(/ -Command "(.*)"$/)?.[1];
+  const remove = "Remove-Item -LiteralPath ";
+  const from = inner.indexOf(remove) + remove.length;
+  const watched = psString(inner, from);
+  expect(inner.slice(watched.end)).toBe(" -Recurse -Force -ErrorAction SilentlyContinue");
+  return { cd: at.value, env: variable.value, watcher: watched.value };
+};
+const QUOTED_PATHS = ["C:\\it's here", ...[..."\u2018\u2019\u201A\u201B"].map((q) => `C:\\Users\\Chris${q}s`),
+  "C:\\it's Chris\u2019s", "C:\\''\u2018\u2019 end'", "C:\\plain"];
+
+test("a folder path typed into PowerShell reaches it exactly: ' and the four smart quotes are doubled, again inside the watcher", async () => {
+  const { SHELLS } = await import("../src/lib/herdr.mjs");
+  const ps = SHELLS.powershell;
+  expect(ps.cd("C:\\it's here")).toBe("Set-Location -LiteralPath 'C:\\it''s here'");
+  for (const q of "\u2018\u2019\u201A\u201B") expect(ps.cd(`C:\\Chris${q}s`)).toBe(`Set-Location -LiteralPath 'C:\\Chris${q}${q}s'`);
+  expect(ps.cd("C:\\it's Chris\u2019s")).toBe("Set-Location -LiteralPath 'C:\\it''s Chris\u2019\u2019s'");
+  // The watcher's path sits in a string inside a string: quoted for the inner one, then each quote doubled for the outer.
+  const dir = "C:\\Temp\\it's Chris\u2019s";
+  expect(ps.cursorEnv(dir)).toBe(`$env:CURSOR_CONFIG_DIR='C:\\Temp\\it''s Chris\u2019\u2019s'; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ''C:\\Temp\\it''''s Chris\u2019\u2019\u2019\u2019s'' -Recurse -Force -ErrorAction SilentlyContinue"'; $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $si.ShowWindow = 0; ([wmiclass]'Win32_Process').Create($w, $null, $si) | Out-Null`);
+  for (const path of QUOTED_PATHS) expect(psPaths(ps.cd(path), ps.cursorEnv(path))).toEqual({ cd: path, env: path, watcher: path });
+});
+
+// PowerShell's own parser, where it is installed (the Windows CI job has pwsh): each line is parsed, never run. $w is
+// rebuilt from its parsed parts, the way the line would build it, and the watcher's -Command text is parsed in turn.
+const PWSH = Bun.which("pwsh");
+const PARSE_TYPED = `$ErrorActionPreference = 'Stop'
+function Parse($text) { $e = $null; $ast = [System.Management.Automation.Language.Parser]::ParseInput($text, [ref]$null, [ref]$e); if ($e.Count) { throw $e[0].Message }; $ast }
+function PathOf($ast, $name) {
+  $c = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq $name }, $true)
+  $el = $c.CommandElements
+  for ($i = 0; $i -lt $el.Count; $i++) { if ($el[$i] -is [System.Management.Automation.Language.CommandParameterAst] -and $el[$i].ParameterName -eq 'LiteralPath') { return $el[$i + 1].Value } }
+}
+$sets = (Parse $env:ROUTR_TYPED_ENV).FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true)
+$variable = ($sets | Where-Object { $_.Left.Extent.Text -eq '$env:CURSOR_CONFIG_DIR' }).Right.Expression.Value
+$w = ($sets | Where-Object { $_.Left.Extent.Text -eq '$w' }).Right
+$parts = $w.FindAll({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -or $n -is [System.Management.Automation.Language.VariableExpressionAst] }, $true) | Sort-Object { $_.Extent.StartOffset }
+$line = -join ($parts | ForEach-Object { if ($_ -is [System.Management.Automation.Language.VariableExpressionAst]) { '1' } else { $_.Value } })
+if ($line -notmatch ' -Command "(.*)"$') { throw 'no -Command' }
+[pscustomobject]@{ cd = (PathOf (Parse $env:ROUTR_TYPED_CD) 'Set-Location'); env = $variable; watcher = (PathOf (Parse $Matches[1]) 'Remove-Item') } | ConvertTo-Json -Compress -EscapeHandling EscapeNonAscii`;
+
+test.skipIf(!PWSH)("PowerShell itself parses each typed line back to the exact folder path, the watcher's too", async () => {
+  const { SHELLS } = await import("../src/lib/herdr.mjs");
+  for (const path of QUOTED_PATHS) {
+    const r = Bun.spawnSync([PWSH, "-NoProfile", "-NonInteractive", "-Command", PARSE_TYPED],
+      { env: { ...process.env, ROUTR_TYPED_CD: SHELLS.powershell.cd(path), ROUTR_TYPED_ENV: SHELLS.powershell.cursorEnv(path) } });
+    expect(r.stderr.toString()).toBe("");
+    expect(JSON.parse(r.stdout.toString())).toEqual({ cd: path, env: path, watcher: path });
+  }
+}, 60000);
+
+test("a folder path with % or ! is never typed into cmd: it would expand even inside quotes", async () => {
+  const { CMD_PATH, SHELLS } = await import("../src/lib/herdr.mjs");
+  expect(CMD_PATH).toBe("A cmd shell expands % and ! in a folder path even inside quotes, so routr will not type this one into it. Use a folder whose path has neither, or a pane running PowerShell.");
+  for (const path of ["C:\\100%", "C:\\%PATH%", "C:\\hi!", "C:\\!x!"]) {
+    expect(() => SHELLS.cmd.cd(path)).toThrow(CMD_PATH);
+    expect(() => SHELLS.cmd.cursorEnv(path)).toThrow(CMD_PATH);
+  }
+  expect(SHELLS.cmd.cd("C:\\it's ^&")).toBe('cd /d "C:\\it\'s ^&"');
+});
+
+test("launch refuses a cmd pane before typing anything when a folder it would type there holds % or !", async () => {
+  const { CMD_PATH } = await import("../src/lib/herdr.mjs");
+  const cmdShell = (cwd) => (a) => a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "cmd.exe", cwd }] } }) : undefined;
+  // --pane: the shell is elsewhere, so launch would `cd` to the work folder.
+  const work = scratch("cmd-100%");
+  const f = fakeHerdr({ reply: cmdShell(process.cwd()) });
+  const r = await launch([...launchArgs, "--pane", "w1:p1", "--cwd", work, "--task", "Task"], f.deps);
+  expect(r).toMatchObject({ ok: false, state: "failed", error: CMD_PATH });
+  expect(f.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
+  // Cursor: its private folder would be typed into the variable, and the temporary folder holds a !.
+  const root = scratch("cmd-bang!"), source = join(root, "source.json");
+  writeFileSync(source, '{"model":"original"}');
+  const c = fakeHerdr({ kind: "cursor", reply: cmdShell(process.cwd()) });
+  const rc = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--task", "Task"], { ...c.deps, cursorConfigSource: source, tempRoot: root });
+  expect(rc).toMatchObject({ ok: false, state: "failed", error: CMD_PATH });
+  expect(c.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
+  expect(c.calls.some((a) => a[1] === "close")).toBe(true); // the unused pane goes
+  expect(readdirSync(root)).toEqual(["source.json"]);
 });
 
 test("waitForShell: ready at a settled prompt; stops at any question, a busy adopted pane, or the wrong folder", async () => {

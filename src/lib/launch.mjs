@@ -8,7 +8,7 @@ import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesse
 import { dispatchAdvice, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
 import { displayCommand, doNext, launchNext, runNext, templateCommand } from "./next.mjs";
 import { CLOSING, OFF } from "./wording.mjs";
-import { BRANCH, clean, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
+import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, waitForShell } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
 import { ensureParent, home, realPath, spawnSelf } from "./runtime.mjs";
@@ -343,15 +343,19 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     }
     // A pane given with --pane may be a worktree's own: cleanup then says to clean up the worktree instead.
     cleanupArgs ??= ["routr", "cleanup", "--pane", out.pane];
+    // Every folder this launch will type into a cmd shell is checked as soon as the shell is known, so a refusal comes
+    // before anything is typed, not between a `cd` and the variable.
+    const typable = () => { if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(o.kind === "cursor" ? [privateDir] : []))) throw new Error(CMD_PATH); };
     // A pane we split already opened in --cwd; one adopted from the caller must be checked before we type `cd`.
     if (o.pane && !adopted) {
       stop = await shellReady(); if (stop) return stop;
+      typable();
       // Only when the shell is elsewhere: a `cd` runs the shell's directory hooks again, and a hook that asks (a dotenv
       // plugin) would ask again every time launch was retried (seen 2026-09-28).
       const same = (() => { try { return realPath(shellCwd) === realPath(out.cwd); } catch { return false; } })();
       if (!same) { await call(["pane", "run", out.pane, SHELLS[shell].cd(out.cwd)]); await pause(); }
     }
-    if (!adopted) { stop = await shellReady(out.cwd); if (stop) return stop; }
+    if (!adopted) { stop = await shellReady(out.cwd); if (stop) return stop; typable(); }
     if (o.kind === "cursor" && SHELLS[shell].cursorEnv && !adopted) {
       await call(["pane", "run", out.pane, SHELLS[shell].cursorEnv(privateDir)]);
       await pause();
