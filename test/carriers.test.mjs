@@ -123,3 +123,38 @@ test("pane text leaves routr with every carrier value routr holds replaced, with
   // A value with regular-expression characters is matched as itself.
   expect(redactCarriers("a.*b and aXXb", ["a.*b"])).toBe("<carrier> and aXXb");
 });
+
+test("smoke:carriers reads an agent's environment only once the process is the harness, by its argv0 or its executable", async () => {
+  const { argv0Of, isHarness } = await import("../scripts/smoke-carriers.mjs");
+  expect(argv0Of("/Users/u/.local/bin/claude --dangerously-skip-permissions\n")).toBe("/Users/u/.local/bin/claude");
+  expect(argv0Of("claude\0--resume\0x\0", { proc: true })).toBe("claude");
+  expect(argv0Of("")).toBe(null);
+  const installed = "/Users/u/.local/share/claude/versions/2.1.310";
+  expect(isHarness({ argv0: "claude" }, { installed })).toBe(true);
+  expect(isHarness({ argv0: "/Users/u/.local/bin/claude" }, { installed })).toBe(true);
+  expect(isHarness({ argv0: installed }, { installed })).toBe(true); // started by its resolved path
+  expect(isHarness({ argv0: "node", exe: installed }, { installed })).toBe(true);
+  // A wrapper, a shell or a helper in front of it is not it.
+  for (const argv0 of ["sh", "/usr/bin/env", "node", "claude-wrapper", "/opt/claude/bin/node", null]) expect([argv0, isHarness({ argv0 }, { installed })]).toEqual([argv0, false]);
+  expect(isHarness({ argv0: "node", exe: "/usr/bin/node" }, { installed: null })).toBe(false);
+});
+
+test("smoke:carriers closes every pane it made, even when a shell stops at a question, and fails naming a pane it could not close", async () => {
+  const { smokeCarriers } = await import("../scripts/smoke-carriers.mjs");
+  const calls = [], lines = [];
+  const herdr = async (a) => {
+    calls.push(a);
+    if (a[1] === "split") return { ok: true, data: { result: { pane: { pane_id: `w1:p${calls.filter((c) => c[1] === "split").length + 6}` } } } };
+    if (a[1] === "process-info") return { ok: true, data: { result: { process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh", cwd: "/" }] } } } };
+    if (a[1] === "read") return { ok: true, data: { result: { text: "found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)" } } };
+    if (a[1] === "close") return { ok: false, code: "herdr_refused", why: "herdr refused pane close (herdr_refused)", data: {} };
+    throw new Error(`unexpected ${a.join(" ")}`);
+  };
+  const failed = await smokeCarriers({ herdr, env: { HERDR_ENV: "1" }, log: (l) => lines.push(l) });
+  expect(failed).toBeGreaterThan(0);
+  expect(calls.filter((a) => a[1] === "close")).toEqual([["pane", "close", "w1:p7"]]);
+  expect(lines.join("\n")).toContain("the pane's shell: The shell asked a question before its prompt");
+  expect(lines.join("\n")).toContain("could not close pane w1:p7");
+  expect(lines.join("\n")).not.toContain("routr-smoke-"); // never a carrier value
+  expect(await smokeCarriers({ herdr, env: {}, log: () => {} })).toBe(1); // outside herdr: nothing done
+});
