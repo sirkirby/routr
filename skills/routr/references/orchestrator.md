@@ -113,8 +113,7 @@ fourth; you write the second and third.
        before you spawn it and the exact report format the orchestrator parses.
 
 2. The task: what to do, where, what done looks like, and what is out of scope. For a fix, state the rule it must
-   keep everywhere and where else that rule applies, not only the symptom you saw: a fix briefed as its symptom
-   comes back fixed in that one place.
+   keep everywhere and where else that rule applies, not only the symptom you saw.
 3. How to verify it (the command to run), so the worker can check its own work.
 
 Parts 2 and 3 are the work, and they go in `--task-file`: it is what you ask routr about. Your rules for how the
