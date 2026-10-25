@@ -62,10 +62,30 @@ test("a launch needing shell input logs only a fixed why code with its completed
 });
 
 import { Glob } from "bun";
+function hasLiteralWarning(source) {
+  // Small backstop, beside the runtime warning/event proof: ignore comments and quoted examples, then inspect
+  // top-level items of warnings.push(...) and warnings arrays. Literals inside warning(code, text) are coded.
+  const tokens = source.match(/\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`|[A-Za-z_$][\w$]*|[^\s]/g)?.filter((t) => !t.startsWith("//") && !t.startsWith("/*")) ?? [];
+  for (let i = 0; i < tokens.length; i++) {
+    if (tokens[i] !== "warnings") continue;
+    const start = tokens[i + 1] === "." && tokens[i + 2] === "push" && tokens[i + 3] === "(" ? i + 3
+      : [":", "="].includes(tokens[i + 1]) && tokens[i + 2] === "[" ? i + 2 : null;
+    if (start == null) continue;
+    let depth = 1;
+    for (let j = start + 1; j < tokens.length && depth; j++) {
+      const token = tokens[j];
+      if (depth === 1 && /^["'`]/.test(token)) return true;
+      if (["(", "[", "{"].includes(token)) depth++;
+      else if ([")", "]", "}"].includes(token)) depth--;
+    }
+  }
+  return false;
+}
 test("warning code names in shipped source match the single stable table", () => {
   const calls = new Set();
   for (const file of new Glob("src/**/*.mjs").scanSync({ cwd: join(import.meta.dir, "..") })) {
     const text = readFileSync(join(import.meta.dir, "..", file), "utf8");
+    expect({ file, uncoded: hasLiteralWarning(text) }).toEqual({ file, uncoded: false });
     for (const match of text.matchAll(/\bwarning\("([a-z_]+)"/g)) { expect(warnings.WARNING_CODES).toHaveProperty(match[1]); calls.add(match[1]); }
   }
   expect([...calls].sort()).toEqual(Object.keys(warnings.WARNING_CODES).sort());
@@ -249,17 +269,6 @@ test("gauge identity failures report a fixed status before folding or claiming a
   });
 });
 
-test("an unsampled holder queues a supplied fresh subscription reading at turn completion, without logs or spans", () => {
-  const f = install("http://127.0.0.1:4318"), worker = { name: "fixture", kind: "claude", cwd: f.opts.home, launch: { sampled: false }, carriers: { TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00" } };
-  const row = summarize({ pool: "claude", source: "statusline", ts: 1700000000, nowSec: 1700000001, windows: [{ name: "five_hour", usedPct: 25 }] });
-  const turn = workerTurn(worker, 1, { env: {}, otel: f.opts });
-  turn.observeUsage(row); turn.state("idle", "working"); turn.end("finished", 1);
-  expect(spansIn(f)).toEqual([]); expect(logsIn(f)).toEqual([]);
-  expect(readdirSync(join(f.root, "metrics"))).toHaveLength(1);
-  const revoked = workerTurn(worker, 2, { env: {}, otel: f.opts }); revoked.observeUsage(row); writeFileSync(f.opts.configPath, "{}"); revoked.end("finished", 1);
-  expect(readdirSync(join(f.root, "metrics"))).toHaveLength(1);
-});
-
 import { readCodexLive } from "../src/lib/usage.mjs";
 test("a live session-log fallback preserves the snapshot time when its app-server refresh fails", async () => {
   const f = install("http://127.0.0.1:4318"), saved = summarize({ pool: "codex", source: "session log", ts: 1700000000, nowSec: 1700000001, windows: [{ name: "primary", usedPct: 25 }] });
@@ -268,4 +277,11 @@ test("a live session-log fallback preserves the snapshot time when its app-serve
   await commandTrace("usage", { config: f.config, env: {}, otel: f.opts }, () => usageSpans(async () => [row]));
   const files = readdirSync(join(f.root, "metrics")); expect(files).toHaveLength(1);
   expect(JSON.parse(readFileSync(join(f.root, "metrics", files[0]))).time).toBe(1700000000000);
+});
+
+test("warning source backstop rejects bare literals in pushes and array literals, including multiline and later items", () => {
+  for (const source of ['out.warnings.push("uncoded")', "warnings.push(\n'uncoded'\n)", 'warnings: ["uncoded"]', 'warnings: [warning("code", "coded"), "uncoded"]', 'out.warnings.push(warning("code", "coded"), `uncoded`)', 'out.warnings = ["uncoded"]'])
+    expect(hasLiteralWarning(source)).toBe(true);
+  for (const source of ['out.warnings.push(warning("code", "coded"))', 'warnings: [warning("code", "coded"), ...notes]', '// out.warnings.push("comment")', 'const example = \'warnings: ["quoted"]\''])
+    expect(hasLiteralWarning(source)).toBe(false);
 });

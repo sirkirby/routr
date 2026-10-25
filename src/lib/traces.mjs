@@ -217,13 +217,10 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
     }
   } catch {} // Missing context, malformed state or optional observation cannot change a turn.
   let ended = false;
-  const observations = [];
   const transitions = [], queueLogs = (events) => { if (events.length) session.queue("logs", encodeLogs(events.map(([from, to, timeUnixNano]) => logRecord(span, "routr.worker.state", {
     "routr.worker.state.from": from, "routr.worker.state.to": to }, timeUnixNano)), { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: OTEL_ATTRIBUTES })); };
   return {
     generated: Boolean(span),
-    // A holder may supply a reading it already has; never start a harness read merely to emit a metric.
-    observeUsage(row) { try { if (!ended && session?.on) usageObservations(row, observations); } catch {} },
     carriers: span ? spanCarriers(saved, span, inherited) : saved,
     state(from, to) {
       try {
@@ -246,7 +243,6 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
         session.queue("traces", encodeTraces([span], { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: TRACE_ATTRIBUTES }));
         queueLogs(transitions);
       } catch {} // Disk, consent or encoder failure never fails, delays or retries a worker turn.
-      finally { for (const observation of observations) session.queue("metrics", observation); }
     },
   };
 }

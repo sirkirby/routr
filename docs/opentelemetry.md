@@ -526,8 +526,8 @@ The only metric is custom **`routr.subscription.headroom`**, a Gauge with unit *
 subscription allowance as a double ratio **0..1**. This name is routr's own, with no upstream stability guarantee.
 Counts and durations can be derived by receivers from spans; routr sends no other metrics. With export on, fresh
 usage observations are collected regardless of the parent trace's sampling flag; an unsampled parent suppresses
-spans and logs, never this gauge. Holders use the same collector for readings they already have; they do not start
-subscription reads to manufacture points.
+spans and logs, never this gauge. Headless holders emit turn spans and state-transition logs; they do not collect
+headroom observations.
 
 | Attribute | Type | Values |
 |---|---|---|
