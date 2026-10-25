@@ -423,8 +423,15 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
 ## Trace context
 
 routr gives headless workers, and workers in a pane it makes (a split or a new worktree), the OpenTelemetry context
-carriers (`TRACEPARENT`, `TRACESTATE`, `BAGGAGE`) from its own environment, unchanged, and sets none itself. Workers in
-an existing pane don't get them; launch says so. To pass context, set them on your `routr launch` command.
+carriers (`TRACEPARENT`, `TRACESTATE`, `BAGGAGE`) from its environment. With export off they pass unchanged. With
+export on, a sampled launch passes its launch span as the parent; an invalid inherited parent starts a new trace
+and drops inherited tracestate. Existing panes keep their own environment; launch says it passed none. Every pane
+routr opens sets all three names, empty for a carrier it does not pass, excluding herdr's stale server context.
+
+On `dispatch`, `subagent` and `launch`, pass `--lead-session <your session id>` when routr cannot read your id from
+the harness environment and you know it. Never invent an id. This joins the lead to its launches in the person's
+OpenTelemetry receiver; it is separate from a worker's own conversation id. Never turn on OpenTelemetry export for
+the user unasked. The [published schema](../../../docs/opentelemetry.md#signals) describes what is sent.
 
 ## Handoff contracts
 

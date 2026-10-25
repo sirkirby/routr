@@ -169,12 +169,12 @@ async function askOne(state, questions, { config, deadlineMs, env = process.env,
     const j = P.unwrap(raw);
     if (!j) throw new DecisionError(t, P.errorCode?.(raw) ?? "invalid_response");
     const answers = readAnswers(j?.answers, questions, t);
-    const usage = object(j.usage) ? Object.fromEntries(Object.entries(j.usage).filter(([k, v]) => ["input_tokens", "output_tokens", "total_tokens"].includes(k) && Number.isSafeInteger(v) && v >= 0)) : undefined;
+    const usage = object(j.usage) ? Object.fromEntries(Object.entries(j.usage).filter(([k, v]) => ["input_tokens", "output_tokens", "total_tokens", "cache_read.input_tokens", "cache_write.input_tokens", "reasoning.output_tokens"].includes(k) && Number.isSafeInteger(v) && v >= 0)) : undefined;
     const model = P.identity(j.model) ? j.model : t.model;
     // A validated identity can still be an unmeasured version. Keep the fallback profile for reading its answers,
     // but only claim a measurement for the model that answered, not the pin or alias it was requested through.
     const profile = isModel(t.provider, model) ? P.models[model] : null;
-    return { model, provider: t.provider, answers: normalize(answers, { native: P.nativeConfidence }), usage, latencyMs,
+    return { model, request_model: t.model, ...(P.identity(j.model) ? { response_model: j.model } : {}), provider: t.provider, answers: normalize(answers, { native: P.nativeConfidence }), usage, latencyMs,
       profile: profile ?? t.profile, measured: Boolean(profile) || (model === t.model && Boolean(t.measured)) };
   }
 }

@@ -413,3 +413,23 @@ pane gets.
 - Not measured: Windows and Linux (only a fake in CI), `--worktree`, a killed holder, a background command, what the
   worker-server does on the SIGTERM of a stop during the turn that started it, whether a first run in a folder Cursor
   has never trusted needs anything beyond `--trust`.
+
+## Lead and pane session identity
+
+Measured 2026-10-25 against each harness's own record (Stage 2 probes):
+
+| Harness | Environment source | Recorded id format and identity |
+|---|---|---|
+| Claude Code | `CLAUDE_CODE_SESSION_ID` | UUIDv4 from Claude Code's own session record |
+| Codex 0.164.0 | `CODEX_THREAD_ID` | UUIDv7, equal to `session_meta.payload.id` in its rollout file: Codex's session id |
+| Cursor 2026.10.22 | `CURSOR_CONVERSATION_ID` | UUIDv4, equal to its conversation id |
+| Antigravity 1.4.7 | `ANTIGRAVITY_CONVERSATION_ID` | UUIDv4, equal to its conversation id |
+| Kiro | none measured | Known explicit `--lead-session` only; ambient `KIRO_SESSION_ID` is not an admitted source |
+
+Each environment source is checked against its harness's format. When none matches, `--lead-session` can supply a
+known UUIDv4/UUIDv7 or a strict 16–64 character lowercase hex id; routr never invents one. Herdr's `agent_session`
+comes from harness hooks: Claude, Codex and Cursor at session start, Antigravity at first invocation, Kiro never.
+The value can lag or be null (Codex was null in the probe). Launch and cleanup read it once and accept only a
+format-checked non-null value of kind `id`. A pane/terminal match establishes terminal continuity only: shell
+respawn can retain that terminal id and restore allocates a new one. It does not prove agent or conversation
+continuity.

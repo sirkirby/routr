@@ -230,9 +230,9 @@ export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usag
 // and dispatch leaves it out (pick.mjs). `billing(name, { fresh })`: `{ billing, not }`, what its sign-in answer said
 // about billing (signin.mjs, kept beside `why`'s answer) or null, and, when it was asked again, why it is not signed
 // in now (null when it is).
-export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFor } = {}) {
+export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFor, observe = (read) => read() } = {}) {
   const signedOut = (name, note) => ({ ...summarize({ pool: name, source: "sign-in check", note }), signedIn: false });
-  return Promise.all(names.map(async (name) => {
+  return Promise.all(names.map((name) => observe(async () => {
     const src = sources[name], source = src?.source ?? name;
     try {
       // Signed in first: a number the caller read cannot put work on a harness that cannot take it (launch refuses it).
@@ -251,7 +251,7 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
       if (b?.not) return signedOut(name, b.not);
       return withBilling(name, u, b?.billing);
     } catch { return failedUsage(name, source); }
-  }));
+  })));
 }
 
 // What the harness's sign-in status says about billing: the kept answer, or with `fresh` its status check run again

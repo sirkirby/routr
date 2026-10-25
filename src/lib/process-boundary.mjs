@@ -3,6 +3,7 @@
 import { isAbsolute, win32 } from "node:path";
 import { doNext } from "./next.mjs";
 import { KINDS } from "./harnesses.mjs";
+import { sessionId } from "./trace-context.mjs";
 const states = new Set(["idle", "working", "blocked", "done"]);
 export const agentState = (s) => states.has(s) ? s : "unknown";
 export const stateWords = (s) => s === "unknown" ? "in a state routr does not know" : s;
@@ -38,7 +39,14 @@ export function herdrResult(args, r) {
   if ((data == null || data === "") && QUIET.has(key)) return { ok: true, data: { result: {} } };
   if ((data == null || data === "") && key !== "pane read") return { ...processFailure("herdr", args, "herdr_unreachable"), data: {} };
   if ((!data || typeof data !== "object" || Array.isArray(data)) && key !== "pane read") return invalid();
-  if (key === "agent get") {
+  if (key === "pane get") {
+    const p = v?.pane;
+    if (!id(p?.pane_id)) return invalid();
+    const sid = p.agent_session?.kind === "id" ? sessionId(p.agent_session.value) : null;
+    data = { result: { pane: { pane_id: p.pane_id,
+      ...(typeof p.terminal_id === "string" && /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/.test(p.terminal_id) ? { terminal_id: p.terminal_id } : {}),
+      ...(sid ? { agent_session: { kind: "id", value: sid } } : {}) } } };
+  } else if (key === "agent get") {
     if (!v || typeof v !== "object") return invalid();
     const g = v.agent;
     if (g != null && (typeof g !== "object" || Array.isArray(g))) return invalid();

@@ -1168,3 +1168,17 @@ worktree state, never proof that a worktree is safe. A model list read that thro
 
 An unreadable ref check is an unreadable check, not an unheld commit. Cleanup states which read failed and offers
 the corresponding git inspection command. An explain answer without a state adds no disagreement to a blocked reading.
+
+## Lead session identity
+
+`dispatch`, `subagent` and `launch` accept optional `--lead-session <id>`. Supply your actual session id when routr
+cannot read it from the measured harness environment; never invent one. It accepts UUIDv4, UUIDv7 or 16–64 lowercase
+hex characters and refuses malformed explicit values. A valid measured environment source takes precedence. The
+flag changes no command result field: it supplies `routr.lead.session_id` only when OpenTelemetry export is on and
+the command records a span. The [published schema](opentelemetry.md#signals) lists the environment sources, lineage,
+launch index and every sent attribute. Export-off command behavior and carrier forwarding are unchanged.
+
+Headless worker metadata may contain `launch: { launch_id, traceId, spanId }` while exporting a sampled launch.
+Later commands validate those ids before adding a link. This is local worker metadata, not a public command field,
+and does not add anything to the record template. `workers` and `wait` may queue traces and start the sender when
+export is on. A dry-run launch may queue its planned span and index then, without executing its launch plan.

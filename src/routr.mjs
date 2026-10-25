@@ -104,6 +104,7 @@ const levelFlags = argv.filter((word) => /^--level(?:=|$)/.test(word)).length;
 const take = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv.splice(i, 2)[1] : undefined; };
 const takeAll = (name) => { const r = []; while (argv.includes(name)) r.push(take(name)); return r; };
 const configPath = take("--config");
+const leadSession = ["dispatch", "subagent"].includes(argv[0]) ? take("--lead-session") : undefined;
 // --headroom cursor=0.97 : usage the caller read itself (repeatable); it overrides any reading
 // Every --headroom is taken off the line, even an empty one, so none can end up in the brief. A share (0.97) or a
 // percent (97%) is read; anything else is said in the answer, never dropped without a word.
@@ -120,7 +121,7 @@ if (["subagent", "dispatch", "check", "record", "assess", "share", "doctor", "us
 
 const commands = () => import("./lib/commands.mjs");
 const ADVISE = {
-  check: async () => print(withNotes(await (await commands()).checkCommand({ brief: take("--brief"), report: take("--report") }, { config: loaded().config, warnings: loaded().notes }))),
+  check: async () => print(withNotes(await (await commands()).checkCommand({ brief: take("--brief"), report: take("--report") }, { config: loaded().config, warnings: loaded().notes, otel: { configPath } }))),
   assess: async () => console.log((await commands()).assessCommand({ ledger: take("--ledger") }, loaded().config)),
   share: async () => console.log((await commands()).shareCommand({ ledger: take("--ledger"), out: take("--out") }, loaded().config)),
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]
@@ -130,9 +131,9 @@ const ADVISE = {
     const o = Object.fromEntries(["advice", "subscription", "model", "effort", "level", "verdict", "check", "seconds", "attempts", "note", "ledger", "report", "project"].map((f) => [f, take(`--${f}`)]));
     o.task_file = taskFile ?? (comparing ? "" : undefined);
     o.run_id = take("--run-id") ?? (revising ? "" : undefined); o.causes = takeAll("--cause");
-    print((await commands()).recordCommand(o, takeAll("--subagent"), loaded().config, { warnings: [...loaded().notes, ...inputNotes] })); // never blocks the agent; the config resolves a "default" effort
+    print((await commands()).recordCommand(o, takeAll("--subagent"), loaded().config, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } })); // never blocks the agent; the config resolves a "default" effort
   },
-  usage: async () => print(withNotes(await (await commands()).usageCommand(rest, loaded().config, given, { warnings: loaded().notes })), 1), // never blocks an agent
+  usage: async () => print(withNotes(await (await commands()).usageCommand(rest, loaded().config, given, { warnings: loaded().notes, otel: { configPath } })), 1), // never blocks an agent
   doctor: async () => (await import("./lib/doctor.mjs")).doctor({ json: rest.includes("--json"), configPath }),
 };
 if (ADVISE[mode]) { await ADVISE[mode](); process.exit(0); }
@@ -142,6 +143,8 @@ const { doNext } = await import("./lib/next.mjs");
 const briefRefusal = (error) => print({ ok: false, headline: `routr: no advice: ${error}`, unavailable: [], warnings: [...loaded().notes, ...inputNotes],
   next: [doNext("Supply the exact task: quote an inline brief, pipe it on stdin, or use this file form.", `routr ${mode} --task-file <path>`)], error });
 
+if (leadSession !== undefined && !(await import("./lib/trace-context.mjs")).sessionId(leadSession)) { briefRefusal("--lead-session requires a measured UUIDv4/UUIDv7 or a 16–64 character lowercase hex id"); process.exit(0); }
+
 // File input is explicit: a missing value is refused rather than accidentally reading stdin or advising on a flag.
 if (rest.includes("--task-file")) {
   const at = rest.indexOf("--task-file");
@@ -149,7 +152,7 @@ if (rest.includes("--task-file")) {
     if (rest.length !== 2 || at !== 0) throw new Error("--task-file takes one path; quote the whole inline brief if it contains --task-file, or use --task-file <path>");
     const brief = (await import("./lib/advice-file.mjs")).readTask(rest[1]).trim();
     if (!brief) throw new Error("--task-file: the task must not be empty");
-    print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given)));
+    print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given, { lead: leadSession, otel: { configPath } })));
   } catch (e) { briefRefusal(e.message); }
   process.exit(0);
 }
@@ -172,5 +175,5 @@ if (flagLike.length) inputNotes.push(setAside
   : `${flagLike.join(" ")} looks like ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} does not take; read as part of the brief`);
 const brief = rest.length && !setAside ? rest.join(" ").trim() : piped;
 if (!brief) { briefRefusal("empty brief"); process.exit(0); }
-print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given)));
+print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given, { lead: leadSession, otel: { configPath } })));
 }

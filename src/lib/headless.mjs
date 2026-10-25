@@ -37,6 +37,7 @@
 // continues it in a new process with its context. It runs on a private copy of its config, as in a pane.
 // Worker text reaches one place, the report file of each turn (owner-only, removed by cleanup); only its path leaves
 // routr. Nothing else of the harness's output is kept: its stderr is not read, and a tool is shown by a fixed name.
+import { linkWorker } from "./traces.mjs";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -51,7 +52,7 @@ export const runDir = (name) => join(WORKERS_DIR(), name);
 const readJson = (f) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return null; } };
 // What launch wrote: { format, id, name, kind, model, effort, cwd, created_at, carriers }. Never the brief, and of the
 // environment only the trace-context carriers within routr's limits, which every load checks again (savedCarriers).
-export const readWorker = (name) => { const w = readJson(join(runDir(name), "worker.json")); return w?.format === FORMAT && w.name === name ? w : null; };
+export const readWorker = (name) => { const w = readJson(join(runDir(name), "worker.json")); if (w?.format !== FORMAT || w.name !== name) return null; linkWorker(w); return w; };
 // What the holder wrote last (headless.mjs is its only writer).
 export const readState = (name) => readJson(join(runDir(name), "state.json"));
 export const reportPath = (name, turn) => join(runDir(name), "reports", `turn-${turn}.md`);

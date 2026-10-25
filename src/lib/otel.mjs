@@ -1,4 +1,5 @@
 // The OTLP boundary: consent, encoding, queue and detached delivery. Separate from anonymous outcome telemetry (V10).
+import { LaunchIndex } from "./launch-index.mjs";
 import { otelSwitch } from "./otel-settings.mjs";
 export { otelEndpoint, otelSwitch } from "./otel-settings.mjs";
 import { request as httpRequest, validateHeaderName } from "node:http";
@@ -37,6 +38,7 @@ export function otelHeaders(file = SECRETS_FILE) {
 
 // Stage 2 prep amendment, core semconv 1.44.0: an application process is an instance. No identity file for traces/logs.
 const PROCESS_INSTANCE_ID = randomUUID();
+export const OTEL_RESOURCE_ATTRIBUTES = Object.freeze({ "service.name": "string", "service.version": "string", "os.type": "string", "service.instance.id": "string", "routr.otel.schema": "string" });
 export const otelResource = ({ platform = process.platform } = {}) => resource(PROCESS_INSTANCE_ID, platform);
 
 // Stage 3's gauge has one stream per install, independent of whichever sender process holds the lock. Its UUIDv5
@@ -66,7 +68,7 @@ const resource = (id, platform) => {
   if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("invalid service instance id");
   return { "service.name": "routr", "service.version": ROUTR_VERSION,
     "os.type": ({ win32: "windows", sunos: "solaris", aix: "aix", darwin: "darwin", linux: "linux", freebsd: "freebsd", openbsd: "openbsd" })[platform] ?? "unknown",
-    "service.instance.id": id }; // The next change adds routr.otel.schema here, and schemaUrl at the batch below.
+    "service.instance.id": id, "routr.otel.schema": "genai@9ffc7e00;semconv@1.44.0;routr@1" };
 };
 
 export function otlpValue(v) {
@@ -167,7 +169,10 @@ export function otelSession(config, env = process.env, opts = {}) {
       try {
         const size = Buffer.byteLength(JSON.stringify(requestBody) + "\n");
         if (queued(p, signal).reduce((n, f) => n + f.size, 0) + size > 2 * capBytes) marker("ceiling");
-        else write(join(p.root, signal, `${now()}-${initial.consent.slice(0, 8)}-${randomUUID()}.json`), requestBody, { mkdir: false, mode: 0o600 });
+        else {
+          write(join(p.root, signal, `${now()}-${initial.consent.slice(0, 8)}-${randomUUID()}.json`), requestBody, { mkdir: false, mode: 0o600 });
+          startOtelSender(opts); return true;
+        }
       } catch { marker("write_failed"); }
       startOtelSender(opts);
     } catch {} // V10: even a full disk must not change the command's result or duration by waiting on delivery
@@ -255,6 +260,7 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
   const save = () => { if (!held()) throw new Error("sender stopped"); write(p.state, st, { mkdir: false, mode: 0o600, preserveOnError: true }); };
   const remove = (file, code) => { if (!held()) throw 0; countDrop(st, code); save(); if (!held()) throw 0; unlinkSync(file); };
   const sweep = async () => {
+    if (held()) new LaunchIndex({ home, now }).sweep();
     if (!held()) return;
     // Sweep against configured consent even with a process-local off switch: that switch revokes no other process's
     // batches. Removing/changing the setting does (V4). Backoff belongs to that generation too.

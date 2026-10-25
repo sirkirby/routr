@@ -77,10 +77,10 @@ per-install id, under the convention's namespace `4d63009a-8d0f-11ee-aad7-4c796e
 install across sender processes. That per-install file is created exclusively, only for the gauge, in an existing
 state folder. Its creation never makes folders or writes while uninstall is running. No gauge is emitted yet.
 
-No hostname or username is added. The schema URL and the `routr.otel.schema` attribute arrive with the signals in
-a later change. Encoding uses the OTLP JSON mapping: hexadecimal trace/span ids, decimal-string nanoseconds,
-lowerCamelCase fields, integer enums, and the resource, instrumentation scope and AnyValue nesting. Delivery sends
-the queued JSON bytes unchanged.
+No hostname or username is added. The Signals section below pins the resource schema URL and the mixed
+`routr.otel.schema` identity. Encoding uses the OTLP JSON mapping: hexadecimal trace/span ids, decimal-string
+nanoseconds, lowerCamelCase fields, integer enums, and resource, scope and AnyValue nesting. Delivery sends the
+queued JSON bytes unchanged.
 
 ## Delivery
 
@@ -167,9 +167,216 @@ no oldest age and zero totals.
 
 ## Signals
 
-Spans arrive in a later change. No spans, logs or metrics are emitted yet. Configuration, encoding, queueing and
-delivery are available for those signals.
+routr emits traces from `dispatch`, `subagent`, `check`, `usage`, `launch`, `send`, `wait`, `workers`, `stop`,
+`cleanup` and `record`. `statusline` and housekeeping commands (setup, doctor, key, update, uninstall, telemetry,
+share, assess, feedback and skill installation) emit nothing. No logs, metrics or headless turn spans are emitted yet.
 
-This export is separate from [anonymous telemetry](telemetry.md): its own setting, consent, state, queue, sender
-and destination. Later signals will carry repository names, relative paths and ids to your endpoint. There is no
-brief, prompt, report, worker text or secret capture option. routr never configures a harness's own telemetry.
+The GenAI convention is pinned to `open-telemetry/semantic-conventions-genai`
+`9ffc7e00c639be7712e544e3e54331e885dccf84` (2026-10-21), whose manifest depends on core semantic conventions
+v1.44.0. The resource has `schemaUrl: https://opentelemetry.io/schemas/1.44.0`. The instrumentation scope has **no
+schema URL**: no published schema describes that GenAI commit together with routr's attributes; GenAI's README
+schema guidance at the pin is still TODO. The resource attribute `routr.otel.schema` identifies the mixed schema as
+`genai@9ffc7e00;semconv@1.44.0;routr@1`. The resource above accompanies every span; the scope is `routr`, with its
+running version. Each process has its own `service.instance.id`, without an identity file.
+
+### Parentage and workers
+
+Sampling is ParentBased(AlwaysOn). A valid inherited `TRACEPARENT` supplies a command's parent. The W3C parser
+rejects version ff, uppercase hex, malformed fields and all-zero ids; v00 has exactly four fields, while a higher
+version can append fields after the first four. An absent or invalid parent starts a sampled trace; its inherited
+`TRACESTATE` is then dropped. A valid unsampled parent produces no records or launch index and retains its carriers
+unchanged. Transport limits still apply ([guarantees](guarantees.md#trace-context)).
+
+With export on and a sampled launch, workers get `TRACEPARENT` naming `routr launch`. Valid-parent `TRACESTATE` and
+`BAGGAGE` pass unchanged; routr adds no baggage member. Export off, including either process off switch, keeps
+pass-through behavior. Headless workers' first process and pane workers get this launch context. Existing panes
+and adopted agents keep their own environment; launch says it passed none. Every pane routr opens sets **all three
+carrier names**, empty where none is passed. A herdr worktree's first pane comes from the server environment,
+which can hold stale context; routr replaces it with a pane carrying these explicit entries before starting the
+worker. Shell startup files may still change the environment.
+
+Lineage is **lead → routr launch → worker** by parentage, with later routr commands linked to the launch. Each
+harness reads inherited context differently, by mode: [measured harness reference](../skills/routr/references/harnesses.md#trace-context-each-harness-reads).
+Routr does not enable or configure a harness's telemetry. Pane workers have no turn span in routr: their launch
+places them by repository, branch and worktree, which a receiver can join to that harness's session. At launch end
+and cleanup, routr reads herdr's `agent_session` once; a validated non-null `id` becomes `gen_ai.conversation.id` on
+that command. The hook can lag or report null; routr never waits for an id.
+
+`routr.lead.session_id` is the lead's id, separate from the worker's conversation. Routr checks the measured
+Claude Code, Codex, Cursor and Antigravity environment sources first. If none is valid, `--lead-session` on
+`dispatch`, `subagent` or `launch` can supply a known UUIDv4, UUIDv7 or lowercase hexadecimal id of 16–64 characters.
+An invalid explicit id is refused; an absent one is omitted. No session id is invented. Kiro has no measured
+ambient source. Formats and measurement dates are in the harness reference.
+
+### Spans
+
+All command spans are INTERNAL (kind 1); decision calls are CLIENT (kind 3). A successful operation leaves status
+unset. A final failure sets ERROR (code 2) and a classified `error.type`; retries or an earlier failed provider
+recovered by a backup do not mark the recovered operation as failed. No exception or provider wording is exported.
+Decision providers are `typesafe`, `cloudflare` and `ollama`, describing the platform routr contacted, not the
+model's author. Future worker invocation spans will use Claude Code `anthropic`, Codex `openai`, Cursor `cursor`,
+Antigravity `gcp.gen_ai` and Kiro `kiro` as routr's best knowledge of the platform; those turn spans are not emitted
+in this schema version.
+
+| Span | Kind | Parent / links | Attributes beyond identity |
+|---|---|---|---|
+| `routr dispatch`, `routr subagent` | INTERNAL | inherited or new root | question-set version; assessment probabilities, level score and work type; candidate subscription names; unavailable codes; lead session id |
+| `classify {gen_ai.request.model}` | CLIENT | decision command | operation `classify` (a custom operation: System One is not a chat-completion API), provider, requested model, reply-named model, observed token usage, final error type |
+| `routr check` | INTERNAL | inherited or new root; classify child | question-set version; check probabilities; flag codes; unavailable codes |
+| `routr usage` | INTERNAL | inherited or new root | level only when explicitly given; per-subscription reading children |
+| `routr usage {subscription}` | INTERNAL | reading command | subscription, usage state and source; final error type |
+| `routr launch` | INTERNAL | inherited or new root; recovery rerun links to original launch | kind, backend, launch state and id, worker name, model as given, effort, advice match, lead session, forwarded carrier names, available pane conversation id |
+| `routr send` | INTERNAL | inherited or new root; matched launch link | send state |
+| `routr wait` | INTERNAL | inherited or new root; link per matched launch | wait state |
+| `routr workers` | INTERNAL | inherited or new root; link per matched launch | workers state |
+| `routr stop` | INTERNAL | inherited or new root; matched launch link | stop state |
+| `routr cleanup` | INTERNAL | inherited or new root; matched launch link | cleanup state; available pane conversation id |
+| `routr record` | INTERNAL | inherited or new root; unique advice launch link | record state; exact outcome projection below |
+
+`gen_ai.request.model` belongs only to the classify span. The launch model is `routr.model`, shape-checked as a
+worker model is in anonymous telemetry, rather than validated against a model registry. The requested decision
+model and a provider-recognized model **named in its reply** are distinct; routr never echoes the request as
+`gen_ai.response.model`. Unknown token counts are omitted, never fabricated as zero. Observed input and output
+counts may be zero; cache and reasoning detail counts are emitted only when positive. Cache counts are part of
+input and reasoning counts part of output; no total token attribute is emitted.
+
+`record` projects exactly verdict, check, level, attempts, seconds, causes, subscription, resolved effort,
+`effort_from` and advice id, alongside identity and command state. It shares anonymous telemetry's pick/shape
+helpers: unknown enum values become `other`. No record model, note, report, subagent text, run id or ledger path
+is sent. A worker verdict of partial or blocked is data about the run, not failure of a successful record command.
+
+### Launch index
+
+Only an exporting, sampled launch with a queued span writes `~/.local/state/routr/launches/<UUIDv4>.json` (0600,
+folder 0700 on macOS/Linux; existing Windows home permissions apply). It holds the launch/advice ids, backend,
+canonical repository URL, hash of git's common directory, branch, hash of the native real worktree path, pane and
+terminal ids or worker id, trace/span ids, creation time and eventually a cleanup time. Native paths are not stored
+there. Headless `worker.json` also stores that launch context, revalidated before linking.
+
+Later commands link only on exactly one match: record by its eight-character advice id; cleanup by project hash
+plus branch, native real path hash, or pane id **and current terminal id**. A pane's terminal id proves terminal
+continuity only, never the same process, agent or conversation; restore assigns a new terminal id. Zero matches,
+ambiguous advice, reused panes or a wrong repository give no link. Headless commands use their worker's saved
+launch context. Links carry only trace/span ids. `record` can link after cleanup, including revisions.
+
+A `--pane` recovery rerun reuses an unfinished entry only for the same advice, pane and terminal. It emits a new
+command span linked to the original launch; it never replaces that entry's original context. A new terminal or
+advice creates a new launch entry. Cleanup marks `finished_at` rather than deleting entries. Launch and the sender
+sweep entries 30 days after creation and only remove routr's UUID filenames. Export off and unsampled commands
+write no index. Missing folders, revoked consent, uninstall and write failures never change command results.
+
+### Attribute allow-list
+
+Each name below has one wire type. Every span also carries the available repository identity: a credential-free
+canonical HTTPS repository URL without `.git` (known SSH remotes are converted; unsafe forms omitted), branch only
+when on a branch, cwd relative to its checkout, and worktree relative to the project root when inside it or its
+name otherwise. Outside a repository, path attributes are omitted. Absolute paths and detached-HEAD ref names are
+never sent. Repository names, relative paths and ids **are sent** to your endpoint; anonymous telemetry does not
+send them. Model/effort and outcome fields typed by a lead are projected through the shared pick/shape checks.
+
+<!-- span-attributes -->
+| Attribute | Type | Meaning |
+|---|---|---|
+| `service.name` | `string` | As defined above |
+| `service.version` | `string` | As defined above |
+| `os.type` | `string` | As defined above |
+| `service.instance.id` | `string` | As defined above |
+| `routr.otel.schema` | `string` | As defined above |
+| `routr.lead.session_id` | `string` | As defined above |
+| `routr.question_set.version` | `string` | As defined above |
+| `routr.candidates` | `string[]` | As defined above |
+| `routr.unavailable` | `string[]` | As defined above |
+| `vcs.repository.url.full` | `string` | As defined above |
+| `vcs.ref.head.name` | `string` | As defined above |
+| `routr.cwd` | `string` | As defined above |
+| `routr.worktree` | `string` | As defined above |
+| `routr.kind` | `string` | As defined above |
+| `routr.backend` | `string` | As defined above |
+| `routr.launch.id` | `string` | As defined above |
+| `gen_ai.agent.name` | `string` | As defined above |
+| `gen_ai.conversation.id` | `string` | As defined above |
+| `routr.model` | `string` | As defined above |
+| `routr.advice.matched` | `boolean` | As defined above |
+| `routr.carriers.forwarded` | `string[]` | As defined above |
+| `routr.assessment.names_location` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.approach_open` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.cause_unknown` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.cross_cutting` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.concurrency_or_data` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.hard_to_reverse` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.tiny` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.separable` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.needs_user` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.states_check` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.standalone` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.level` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.high_blast_radius` | `double` | Assessment score, probability or registered work type |
+| `routr.assessment.work_type` | `string` | Assessment score, probability or registered work type |
+| `routr.check.states_verification` | `double` | Check probability or classified flag codes |
+| `routr.check.covers_brief` | `double` | Check probability or classified flag codes |
+| `routr.check.admits_gaps` | `double` | Check probability or classified flag codes |
+| `routr.check.symptom_patch` | `double` | Check probability or classified flag codes |
+| `routr.check.out_of_scope` | `double` | Check probability or classified flag codes |
+| `routr.check.flags` | `string[]` | Check probability or classified flag codes |
+| `gen_ai.operation.name` | `string` | As defined above |
+| `gen_ai.provider.name` | `string` | As defined above |
+| `gen_ai.request.model` | `string` | As defined above |
+| `gen_ai.response.model` | `string` | As defined above |
+| `gen_ai.usage.input_tokens` | `int` | Observed token count |
+| `gen_ai.usage.output_tokens` | `int` | Observed token count |
+| `gen_ai.usage.cache_read.input_tokens` | `int` | Observed token count |
+| `gen_ai.usage.cache_write.input_tokens` | `int` | Observed token count |
+| `gen_ai.usage.reasoning.output_tokens` | `int` | Observed token count |
+| `routr.usage.state` | `string` | Classified command or reading outcome |
+| `routr.usage.source` | `string` | As defined above |
+| `routr.launch.state` | `string` | Classified command or reading outcome |
+| `routr.send.state` | `string` | Classified command or reading outcome |
+| `routr.wait.state` | `string` | Classified command or reading outcome |
+| `routr.workers.state` | `string` | Classified command or reading outcome |
+| `routr.stop.state` | `string` | Classified command or reading outcome |
+| `routr.cleanup.state` | `string` | Classified command or reading outcome |
+| `routr.record.state` | `string` | Classified command or reading outcome |
+| `routr.verdict` | `string` | As defined above |
+| `routr.check` | `string` | As defined above |
+| `routr.level` | `string` | As defined above |
+| `routr.attempts` | `int` | As defined above |
+| `routr.seconds` | `double` | As defined above |
+| `routr.causes` | `string[]` | As defined above |
+| `routr.subscription` | `string` | As defined above |
+| `routr.effort` | `string` | As defined above |
+| `routr.effort_from` | `string` | As defined above |
+| `routr.advice.id` | `string` | As defined above |
+| `error.type` | `string` | As defined above |
+<!-- /span-attributes -->
+
+### Span error codes
+
+<!-- span-errors -->
+`no_key`, `secrets_unreadable`, `key_refused`, `model_missing`, `model_unsupported`, `timeout`, `unreachable`, `provider_error`, `invalid_response`, `daily_allowance`, `internal_error`, `attempt_unknown`, `read_failed`, `no_response`, `private_folder`, `source_missing`, `cmd_path`, `unreadable`, `refused`, `failed`, `_OTHER`
+<!-- /span-errors -->
+
+Decision codes describe missing/refused keys, unreadable secrets, missing/unsupported models, allowance, timeout,
+reachability, provider status, invalid response and internal errors. Usage codes describe missing/unreadable
+sources, no response, private-folder and cmd-path failures. `unreadable` covers required files, `refused` a refused
+operation, `failed` a classified command failure, and `_OTHER` any unclassified error. Codes contain no error text.
+
+Assessment fact and check probabilities range from 0 to 1; the assessment level score ranges from 0 to 2. Work
+types and flags come from routr's fixed question set. Candidates and subscription are harness registry names.
+Usage state is `excluded`, `kept`, `given`, `live` or `assumed`; source is a registered usage source, `sign-in check`,
+`given by caller`, `none` or `other`. Backend is `pane` or `headless`. Command states come from their documented
+outcomes, with `done`/`failed` when the command has no separate state. Effort and outcome enum values match
+[anonymous telemetry's projection](telemetry.md), with causes from record's contract and effort origin `given`,
+`model id` or `config default`. IDs are format-checked. Missing optional attributes are omitted.
+
+### Content and delivery limits
+
+Never sent: a brief, report, note, prompt, model reply, pane screen, header value, key, baggage value or other free
+text. `TRACEPARENT` ids enter only span parentage, and saved launch context supplies later links. No carrier value
+is an attribute or span name. There is no content-capture option. Resource text cannot be supplied through
+`OTEL_RESOURCE_ATTRIBUTES`. Queue files contain complete OTLP requests; resending can duplicate records with the
+same span ids. Receivers that count spans or aggregate durations must account for that delivery behavior.
+
+This export has its own setting, consent, state, queue, sender and destination, separate from
+[anonymous telemetry](telemetry.md). `bun run smoke:otel` checks decoded fixture traces against a loopback receiver,
+without a subscription; it can target `ROUTR_SMOKE_OTLP_ENDPOINT`. In live herdr it additionally exercises a fixture
+pane. It is an explicit smoke command, never part of `bun test`.

@@ -1,3 +1,5 @@
+import { commandTrace, launchCarriers, adviceForLaunch, completeLaunch } from "./traces.mjs";
+import { sessionId } from "./trace-context.mjs";
 import { randomUUID } from "node:crypto";
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +13,7 @@ import { CLOSING, OFF } from "./wording.mjs";
 import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, splitArgs, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
-import { CARRIERS, carriersFrom, carrierValues, carrierWithheld, ensureParent, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
+import { CARRIERS, carrierValues, carrierWithheld, ensureParent, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
 import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
 
 // The guide is the source of this instruction, embedded at build time just like the installed skills.
@@ -50,7 +52,7 @@ export function logCommand(log, text) {
 
 export function parseLaunchArgs(args) {
   const o = { timeout: 120000, dryRun: false };
-  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "timeout", "advice"];
+  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "timeout", "advice", "lead-session"];
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
@@ -66,6 +68,7 @@ export function parseLaunchArgs(args) {
     if (args[i + 1].includes("\0")) throw new Error(`--${key} must not contain NUL`);
     o[key] = args[++i];
   }
+  if (o["lead-session"] != null && !sessionId(o["lead-session"])) throw new Error("--lead-session requires a measured UUIDv4/UUIDv7 or a 16–64 character lowercase hex id");
   if (!Object.hasOwn(HARNESSES, o.kind)) throw kindError();
   if (o.worktree && o.pane) throw new Error("--worktree creates its own pane; do not pass --pane with it");
   if (o.copy && !o.worktree) throw new Error("--copy only makes sense with --worktree");
@@ -85,7 +88,7 @@ export function parseLaunchArgs(args) {
 
 // Inject transport and time for tests; no test needs a live pane.
 // `ready(kind)`: null when the harness is signed in, or why not (harnesses.mjs). `settings()`: the user's config.
-export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(), env = process.env, ready = notReady, settings = () => loadConfig(),
+async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(), env = process.env, ready = notReady, settings = () => loadConfig(),
   cursorConfigSource = join(home(), ".cursor", "cli-config.json"), tempRoot = tmpdir(), models = (kind) => HARNESSES[kind].models?.(), spawn = spawnSelf } = {}) {
   const safeRun = async (args, ms) => processSteps(out, await callHerdr(run, args, ms));
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
@@ -148,7 +151,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         const advice = dispatchAdvice(readAdvice(resolve(o.advice)));
         out.advice = { file: o.advice, matches: false };
         matchAdvice(advice, task);
-        out.advice.matches = true;
+        out.advice.matches = true; adviceForLaunch(advice.id);
         out.unavailable.push(...savedDecisionFailures(advice));
         recordOptions = { ...o, advice: resolve(o.advice), ...(o["task-file"] ? { "task-file": resolve(o["task-file"]) } : {}) };
       } catch (e) { problem = e.message; }
@@ -165,7 +168,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     // The carriers this launch hands on: a pane it splits (beside the caller, or in a worktree) gets the ones within
     // routr's limits, with a warning for each withheld; an existing pane gets none, said once. Only names and FORWARDED
     // reach the output.
-    const found = carriersFrom(env);
+    const found = launchCarriers(env);
     const paneCarriers = () => {
       if (!o.pane) {
         out.warnings.push(...found.withheld.map(carrierWithheld));
@@ -580,4 +583,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       attempted: startAttempted || promptAttempted, planned, submitted: promptAttempted, failed: out.state === "failed" });
   }
   return out;
+}
+
+export function launch(args, opts = {}) {
+  const config = (opts.settings ?? (() => loadConfig()))();
+  return commandTrace("launch", { config: config.config ?? config, ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: args[args.indexOf("--lead-session") + 1] }, async () => { const r = await launchBody(args, opts); await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane") }); return r; });
 }
