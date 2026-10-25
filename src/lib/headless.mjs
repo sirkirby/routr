@@ -472,13 +472,14 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   // send that failed discards it only once no other send is still on its way in and none that got in carried it, or
   // the turn a pending send starts would get a span other than the context Codex was given. What a send carried is
   // what its own requests took (`carrying`, through every await of the send), never what is prepared when its answer
-  // comes: an answer that arrives after its turn has ended keeps nothing of the next.
+  // comes: an answer that arrives after its turn has ended keeps nothing of the next. The check runs after every answer,
+  // a success too: a failed send's context, kept while an earlier send was still out, goes once that one has answered.
   const carrying = new AsyncLocalStorage(), kept = new WeakSet();
   const turnTrace = () => { const t = (trace ??= newTurnTrace(st.turn + (inTurn ? 0 : 1))); carrying.getStore()?.add(t); return t; };
   const turnCarriers = () => turnTrace().carriers;
   const requestCarriers = () => { const t = turnTrace(); return t.generated ? t.carriers : {}; };
   const carryingSend = (send) => { const carried = new Set(); return [carried, carrying.run(carried, async () => send())]; };
-  const sent = (carried, ok) => { if (ok) for (const t of carried) kept.add(t); else if (!inTurn && trace && !sending && !kept.has(trace)) trace = null; };
+  const sent = (carried, ok) => { if (ok) for (const t of carried) kept.add(t); if (!inTurn && trace && !sending && !kept.has(trace)) trace = null; };
   const setRow = (patch) => ({ turns: [...st.turns.slice(0, -1), { ...turnRow(), ...patch }] });
   // One more message written into turn `n`, whether or not that turn is still running.
   const addDelivered = (n) => save({ turns: st.turns.map((t) => (t.turn === n ? { ...t, delivered: (t.delivered ?? 0) + 1 } : t)) });

@@ -79,10 +79,11 @@ let thread = null, turn = null, n = 0, steered = 0, buf = "", busy = false, ende
 async function run(id, text) {
   if (text.includes("CRASH")) process.exit(3);
   // FAKE_REPLY_GATE: a later turn runs at once, its start answered only once the gate is written; a start that comes
-  // meanwhile is refused just after that answer.
+  // meanwhile is refused just after that answer (or at once, with FAKE_REPLY_REFUSE_FIRST).
   const gate = () => fs.existsSync(process.env.FAKE_REPLY_GATE);
   if (process.env.FAKE_REPLY_GATE && n > 0 && !gate()) {
-    if (held) { while (!gate()) await sleep(50); await sleep(300); return out({ id, error: { code: -32600, message: "a turn is already starting" } }); }
+    // FAKE_REPLY_REFUSE_FIRST: refused at once instead, before the held answer goes.
+    if (held) { if (!process.env.FAKE_REPLY_REFUSE_FIRST) { while (!gate()) await sleep(50); await sleep(300); } return out({ id, error: { code: -32600, message: "a turn is already starting" } }); }
     held = id; fs.writeFileSync(process.env.FAKE_REPLY_GATE + "-pending", "");
   }
   if (process.env.FAKE_START_GATE && n > 0) {
@@ -143,7 +144,7 @@ async function turn(text) {
   out({ event: "result", result: { conversation_id: conv, status: text.includes("FAIL") ? "ERROR" : "SUCCESS", response: "VERDICT: done\\nSUMMARY: turn " + n + " of this process", num_turns: n } });
   busy = false;
   if (waiting.length) return turn(waiting.shift());
-  if (ended && !held) process.exit(0);
+  if (ended) process.exit(0);
 }
 process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const e = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1); const t = e.message.content; if (busy) waiting.push(t); else turn(t); } });
 process.stdin.on("end", () => { if (process.env.FAKE_EOF) fs.appendFileSync(process.env.FAKE_EOF, JSON.stringify({ turns: n, busy, waiting: waiting.length }) + "\\n"); ended = true; if (!busy) process.exit(0); });
@@ -178,7 +179,7 @@ async function prompt(id, text) {
   for (const part of ["VERDICT: done\\nSUMMARY: kiro ", "turn " + n]) up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: part } });
   busy = false;
   out({ id, result: { stopReason: text.includes("FAIL") ? "refusal" : "end_turn" } });
-  if (ended && !held) process.exit(0);
+  if (ended) process.exit(0);
 }
 process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const e = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
   if (e.id != null && !e.method) { if (process.env.FAKE_ANSWERS) fs.appendFileSync(process.env.FAKE_ANSWERS, JSON.stringify(e) + "\\n"); continue; }
@@ -1673,10 +1674,28 @@ test("a failed earlier Codex send keeps the prepared turn context a later pendin
   } finally { writeFileSync(w.env.FAKE_START_GATE, ""); w.release(); peer?.close(); w.run(["stop", "--name", "swapped"]); await w.settled("swapped"); w.run(["cleanup", "--worker", "swapped"]); }
 }, 30000);
 
+test("each fake harness that queues or prompts finishes a turn whose input ended before the turn did", async () => {
+  // Input closed while the turn still runs: the harness ends the turn, then exits cleanly.
+  const dir = scratch("fake-eof"), gate = join(dir, "gate");
+  const cases = [["codex", FAKE_CODEX, ["app-server"], { id: 1, method: "turn/start", params: { input: [{ text: "HOLD" }] } }, "turn/completed"],
+    ["agy", FAKE_AGY, ["--print=", "--input-format", "stream-json"], { event: "user", message: { content: "HOLD" } }, "\"result\""],
+    ["kiro", FAKE_KIRO, ["acp"], { jsonrpc: "2.0", id: 1, method: "session/prompt", params: { sessionId: "s", prompt: [{ type: "text", text: "HOLD" }] } }, "stopReason"]];
+  for (const [name, code, args, line, done] of cases) {
+    const script = join(dir, `${name}.cjs`); writeFileSync(script, code); rmSync(gate, { force: true });
+    const p = Bun.spawn([process.execPath, script, ...args], { stdin: "pipe", stdout: "pipe", stderr: "pipe", env: { ...process.env, FAKE_GATE: gate } });
+    p.stdin.write(JSON.stringify(line) + "\n"); p.stdin.end();
+    await Bun.sleep(300); writeFileSync(gate, "");
+    expect([name, await p.exited, await new Response(p.stderr).text()]).toEqual([name, 0, ""]);
+    expect([name, (await new Response(p.stdout).text()).includes(done)]).toEqual([name, true]);
+  }
+}, 30000);
+
 test("an earlier request's late success keeps only the context it carried, not the next turn's", async () => {
   // The first send starts turn 2 and its reply comes only after turn 2 has ended and a second send, carrying turn 3's
-  // context, is waiting; that one then fails. The third send's turn must not get the failed send's context.
-  const w = traceWorld({ FAKE_STEER_NEXT: "1" }); w.env.FAKE_REPLY_GATE = join(w.home, "reply-gate");
+  // context, is waiting; that one fails, after the first's success or before it. The third send's turn must not get
+  // the failed send's context.
+  for (const refuseFirst of [false, true]) {
+  const w = traceWorld({ FAKE_STEER_NEXT: "1", ...(refuseFirst ? { FAKE_REPLY_REFUSE_FIRST: "1" } : {}) }); w.env.FAKE_REPLY_GATE = join(w.home, "reply-gate");
   const starts = () => rpcs(w).filter((r) => r.worker && r.method === "turn/start");
   let peer;
   try {
@@ -1689,17 +1708,19 @@ test("an earlier request's late success keeps only the context it carried, not t
     const second = peer.request("send", { text: `${SENT} second` }, 20000); second.catch(() => {});
     expect(await until(() => starts().length === 3)).toBe(true);
     const failed = starts().at(-1).trace;
+    if (refuseFirst) expect(await second).toMatchObject({ code: "refused" });
     writeFileSync(w.env.FAKE_REPLY_GATE, "");
     expect(await first).toMatchObject({ code: "accepted" });
-    expect(await second).toMatchObject({ code: "refused" });
+    if (!refuseFirst) expect(await second).toMatchObject({ code: "refused" });
     expect((await peer.request("send", { text: `${SENT} third` }, 20000)).code).toMatch(/accepted|queued/); peer.close(); peer = null;
     expect(await w.settled("late")).toBe(true);
     const turns = w.spans().filter((s) => s.name === "invoke_agent late").sort((a, b) => wireAttrs(a)["routr.turn"] - wireAttrs(b)["routr.turn"]);
     expect(turns).toHaveLength(3);
-    expect(spanCarrier(turns[2])).not.toBe(failed.traceparent);
+    expect([refuseFirst, spanCarrier(turns[2])]).not.toEqual([refuseFirst, failed.traceparent]);
     expect(spanCarrier(turns[2])).toBe(starts().at(-1).trace.traceparent);
   } finally { writeFileSync(w.env.FAKE_REPLY_GATE, ""); w.release(); peer?.close(); w.run(["stop", "--name", "late"]); await w.settled("late"); w.run(["cleanup", "--worker", "late"]); }
-}, 40000);
+  }
+}, 80000);
 
 test("a refused concurrent Codex send preserves the first send's prepared turn context", async () => {
   const w = traceWorld({ FAKE_STEER_NEXT: "1" });
