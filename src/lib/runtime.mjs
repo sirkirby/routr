@@ -58,16 +58,16 @@ export function ensureParent(file, { mkdir = mkdirSync } = {}) {
 
 // A temp file, then rename. Keep the existing remove-and-rename fallback for callers that need it on Windows.
 // OTel V10 retry state opts out: a failed replacement must retain its previous recorded backoff.
-export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, rename = renameSync } = {}) {
+export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync } = {}) {
   if (mkdir) ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(value) + "\n", { mode });
+  writeFileSync(tmp, JSON.stringify(value, null, indent) + "\n", { mode });
   try { rename(tmp, file); }
   catch (e) { if (preserveOnError) throw e; try { unlinkSync(file); } catch {} rename(tmp, file); }
 }
 
 // Take a lock file, or say someone else holds it. Exclusive create, so two processes in a burst cannot both win; the
-// file holds the taker's pid. A lock `stale(file)` calls abandoned is taken over. An unwritable folder means no lock,
+// file holds the taker's pid and random token. A lock `stale(file)` calls abandoned is taken over. An unwritable folder means no lock,
 // never a lock on every try.
 const locksHere = new Map();
 export const lockToken = (file) => locksHere.get(realOr(file));

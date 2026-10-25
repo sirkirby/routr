@@ -147,6 +147,14 @@ test("atomic writes keep the explicit mode option", () => {
   expect(JSON.parse(readFileSync(file))).toEqual({});
 });
 
+test("atomic writes can indent hand-edited settings while keeping the compact default", () => {
+  const file = join(scratch("atomic-indent"), "config.json"), value = { otel: { endpoint: "https://example.test" } };
+  writeJsonAtomic(file, value, { indent: 2 });
+  expect(readFileSync(file, "utf8")).toBe('{\n  "otel": {\n    "endpoint": "https://example.test"\n  }\n}\n');
+  writeJsonAtomic(file, value);
+  expect(readFileSync(file, "utf8")).toBe('{"otel":{"endpoint":"https://example.test"}}\n');
+});
+
 test("atomic writes can preserve the old file and throw on failed replacement", () => {
   const file = join(scratch("otel-atomic-failure"), "sender.json"); writeFileSync(file, '{"attempt":3}');
   let calls = 0;
@@ -626,7 +634,7 @@ test("setup publishes config through the shared atomic writer without truncating
   const inspect = async () => ({ config: { exists: true, subscriptions: [] }, harnesses: {}, decision: [{ works: true }], next_steps: [],
     skill: ["routr", "routr-orchestrate"].map((name) => ({ name, where: `~/.agents/skills/${name}`, version: ROUTR_VERSION })) });
   const r = await setup(["--yes", "--json", "--config", f.configPath, "--channel", "beta"], { inspect, interactive: false, env: {}, otelHome: f.home,
-    writeConfig: (file, value) => writeJsonAtomic(file, value, { rename: (from, to) => {
+    writeConfig: (file, value, options) => writeJsonAtomic(file, value, { ...options, rename: (from, to) => {
       expect(readFileSync(to, "utf8")).toBe(before); expect(JSON.parse(readFileSync(from)).update_channel).toBe("beta"); replacements++; renameSync(from, to);
     } }) });
   expect(r.ok).toBe(true); expect(replacements).toBe(1); expect(JSON.parse(readFileSync(f.configPath)).update_channel).toBe("beta");
@@ -671,6 +679,7 @@ test("doctor flags an enabled but missing queue with a setup repair command", ()
   const f = install(); mkdirSync(join(f.home, ".config/routr"), { recursive: true }); writeJsonAtomic(join(f.home, ".config/routr/config.json"), f.config);
   const run = (...args) => Bun.spawnSync([process.execPath, SCRIPT, "doctor", ...args], { env: cliEnv(f.home, { PATH: f.home }), stdin: "ignore" }).stdout.toString();
   const r = JSON.parse(run("--json"));
+  expect(readFileSync(f.configPath, "utf8")).toContain('\n  "otel": {\n    "endpoint":');
   expect(r.otel).toMatchObject({ on: true, can_queue: false }); expect(r.next_steps.some((s) => s.includes("OpenTelemetry") && s.includes("routr setup"))).toBe(true);
   expect(run()).toMatch(/!! OpenTelemetry export on[^\n]*routr setup/);
   expect(existsSync(f.root)).toBe(false);
