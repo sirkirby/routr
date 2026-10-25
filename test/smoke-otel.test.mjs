@@ -68,9 +68,10 @@ test("the pane smoke owns a split immediately and permits only one creation atte
 });
 
 test("smoke inventory matches the exact home, including Windows paths, and rejects incomplete listings", () => {
-  const rows = smokeProcessRows(' 10 1 /bun /repo/routr.mjs --otel-sender --config /tmp/ro-one/config.json\n 11 1 /bun /tmp/ro-one/routr.mjs workers --hold fixture\n 12 1 /bun /tmp/ro-one-more/routr.mjs workers --hold fixture\n');
-  expect(smokeProcessesIn(rows, "/tmp/ro-one").map((r) => r.pid)).toEqual([10, 11]);
-  expect(smokeProcessRows("10 1 valid\ntruncated")).toBeNull();
+  // This fixture is ps output, even when CI runs on Windows and the default parser expects CIM JSON.
+  const rows = smokeProcessRows(' 10 1 /bun /repo/routr.mjs --otel-sender --config /tmp/ro-one/config.json\n 11 1 /bun /tmp/ro-one/routr.mjs workers --hold fixture\n 12 1 /bun /tmp/ro-one-more/routr.mjs workers --hold fixture\n', "linux");
+  expect(smokeProcessesIn(rows, "/tmp/ro-one", { platform: "linux" }).map((r) => r.pid)).toEqual([10, 11]);
+  expect(smokeProcessRows("10 1 valid\ntruncated", "linux")).toBeNull();
   const win = smokeProcessRows(JSON.stringify([{ ProcessId: 20, ParentProcessId: 1, CommandLine: 'bun.exe routr.mjs --otel-sender --config "C:\\Temp Dir\\RO-one\\config.json"' }]), "win32");
   expect(smokeProcessesIn(win, "c:\\temp dir\\ro-one", { platform: "win32" }).map((r) => r.pid)).toEqual([20]);
   expect(smokeProcessesIn(win, "c:\\temp dir\\ro", { platform: "win32" })).toEqual([]);
@@ -78,7 +79,7 @@ test("smoke inventory matches the exact home, including Windows paths, and rejec
 });
 
 test("failure teardown closes the owned pane, stops children and workers, kills owned processes, then verifies absence", async () => {
-  let rows = [{ pid: 10, ppid: 1, command: "bun routr.mjs --otel-sender --config /tmp/ro-one/config.json" }, { pid: 11, ppid: 1, command: "bun /tmp/ro-one/routr.mjs workers --hold fixture" }, { pid: 12, ppid: 1, command: "bun /tmp/ro-one/bin/fixture.mjs" }, { pid: 98, ppid: 1, command: "cat /tmp/ro-one/config.json" }, { pid: 99, ppid: 1, command: "bun /tmp/ro-other/routr.mjs --otel-sender" }];
+  let rows = [{ pid: 10, ppid: 1, command: "bun routr.mjs --otel-sender --config /tmp/ro-one/config.json" }, { pid: 11, ppid: 1, command: "bun /tmp/ro-one/routr.mjs workers --hold fixture" }, { pid: 12, ppid: 1, command: `"${process.execPath}" /tmp/ro-one/bin/fixture.mjs` }, { pid: 98, ppid: 1, command: "cat /tmp/ro-one/config.json" }, { pid: 99, ppid: 1, command: "bun /tmp/ro-other/routr.mjs --otel-sender" }];
   const killed = [], closed = [], child = { pid: 40, exitCode: null, signalCode: null }; let stopped = 0, listed = 0;
   const errors = await teardownSmoke({ home: "/tmp/ro-one", children: new Set([child]), pane: "w1:p2", closePane: async (p) => { closed.push(p); return { ok: true }; }, stopWorker: async () => { stopped++; } }, {
     list: async () => { listed++; return rows; }, kill: (pid) => { killed.push(pid); rows = rows.filter((r) => r.pid !== pid); }, stopChild: (c) => { c.exitCode = 0; }, pause: async () => {}, attempts: 2,

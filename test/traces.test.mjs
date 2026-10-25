@@ -443,9 +443,10 @@ test("every command's queue, launch index and worker metadata exclude content an
   for (const command of ["dispatch", "subagent", "check", "usage", "record", "launch", "send", "wait", "workers", "stop", "cleanup"]) expect(names).toContain(`routr ${command}`);
   const index = new LaunchIndex({ home: x.home }); expect(index.entries()).toHaveLength(1);
   // worker.json intentionally holds native cwd and checked carriers; its remaining metadata must hold no content.
-  const prior = process.env.HOME, fits = spyOn(channel, "socketPathFits").mockReturnValue(true); let saved;
+  const prior = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }, fits = spyOn(channel, "socketPathFits").mockReturnValue(true); let saved;
   try {
-    process.env.HOME = x.home;
+    // Windows CI, PR #115: runtime.home() reads USERPROFILE; HOME alone reserved metadata in the wrong home.
+    process.env.HOME = process.env.USERPROFILE = x.home;
     const r = await launch(["--kind", "claude", "--name", "metadata", "--model", "fixture", "--cwd", x.home, "--task-file", brief, "--advice", advice], { ...opts, ready: async () => null, spawn: () => {
       saved = JSON.parse(readFileSync(join(x.home, ".local/state/routr/workers/metadata/worker.json"), "utf8")); return false;
     } });
@@ -455,7 +456,7 @@ test("every command's queue, launch index and worker metadata exclude content an
     expect(carriers.TRACEPARENT).toBe(`00-${metadata.launch.traceId}-${metadata.launch.spanId}-01`);
     for (const marker of [...markers, x.home]) expect(JSON.stringify(metadata)).not.toContain(marker);
     for (const marker of markers.filter((_, i) => ![2, 3].includes(i))) expect(JSON.stringify(saved)).not.toContain(marker);
-  } finally { fits.mockRestore(); if (prior == null) delete process.env.HOME; else process.env.HOME = prior; }
+  } finally { fits.mockRestore(); for (const [key, value] of Object.entries(prior)) if (value == null) delete process.env[key]; else process.env[key] = value; }
 
   for (const dir of [join(x.home, ".cache/routr/otel"), index.dir])
     for (const file of readdirSync(dir, { recursive: true }).map(String).filter((n) => n.endsWith(".json")))
