@@ -165,7 +165,8 @@ async function runSetup({ config, args = [], answers = [], found = ["agy", "curs
       decision: [{ works: keyWorks }], next_steps: [] };
   };
   const queue = [...answers];
-  const question = async (q) => { asked.push(q.trim()); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); };
+  // These scenarios keep export off; the exporter tests drive its new consent question separately.
+  const question = async (q) => { asked.push(q.trim()); if (q.startsWith("Export OpenTelemetry to your own endpoint?")) return "n"; if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); };
   const r = await setup(["--config", path, "--json", ...args], { inspect, question, interactive: true, env,
     install: () => installs.push(1), share: (on) => shared.push(on), key: async () => { keys.push(1); return { ok: false, error: "none given" }; }, hasKey: (p) => keysSaved.includes(p), print, efforts, ...(isStandalone ? { isStandalone } : {}) });
   const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;

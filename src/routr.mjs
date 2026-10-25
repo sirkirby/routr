@@ -6,6 +6,10 @@
 // Advice writes nothing of the user's and fails open; launch reports failures as JSON and exits nonzero.
 // Each command's code is loaded only when that command runs: `statusline` runs on every Claude Code turn.
 const argv = process.argv.slice(2);
+if (argv[0] === "--otel-sender") {
+  await (await import("./lib/otel.mjs")).sendOtel({ configPath: argv[1] === "--config" ? argv[2] : undefined });
+  process.exit(0);
+}
 const asksHelp = (args) => args.includes("--help") || args.includes("-h");
 if (argv[0] === "statusline" && !asksHelp(argv)) { (await import("./lib/statusline.mjs")).statusline(); process.exit(0); }
 

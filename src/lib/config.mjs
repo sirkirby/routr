@@ -5,6 +5,7 @@ import { LEVELS } from "./questions.mjs";
 import { HARDEST, NO_CONFIG, RESERVE } from "./wording.mjs";
 import { home } from "./runtime.mjs";
 import { DEFAULT_PROVIDER, decisionSettings } from "./providers.mjs";
+import { otelSwitch } from "./otel.mjs";
 
 export const CONFIG_PATH = join(home(), ".config/routr/config.json");
 export const DEFAULTS = {
@@ -46,6 +47,11 @@ export function loadConfig(path = CONFIG_PATH) {
     decision: decisionSetting(raw.decision, notes), auto_update: raw.auto_update !== false, update_channel: DEFAULTS.update_channel, telemetry: raw.telemetry === true, prefer: {}, subscriptions: {} };
   if (UPDATE_CHANNELS.includes(raw.update_channel)) config.update_channel = raw.update_channel;
   else if (raw.update_channel !== undefined) notes.push(`update_channel: ${JSON.stringify(raw.update_channel)} is not one of ${UPDATE_CHANNELS.join(", ")}, using stable: routr setup --channel stable|beta`);
+  if (raw.otel !== undefined) {
+    const setting = otelSwitch({ otel: raw.otel }, {});
+    if (setting.on) config.otel = { endpoint: setting.endpoint, consent: setting.consent };
+    else notes.push(`OpenTelemetry export is off: ${setting.why_off}; set an endpoint with routr setup --otel-endpoint <url>`);
+  }
   for (const [k, v] of Object.entries(raw.prefer ?? DEFAULTS.prefer)) isLevel(v) ? (config.prefer[k] = v) : notes.push(`prefer.${k}: "${v}" is not a level, ignored`);
   for (const [name, s] of Object.entries(raw.subscriptions ?? {})) {
     // The two settings that decide where work may go are the user's: a missing or invalid one is a problem to fix, and

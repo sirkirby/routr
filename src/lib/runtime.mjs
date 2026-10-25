@@ -57,10 +57,10 @@ export function ensureParent(file, { mkdir = mkdirSync } = {}) {
 
 // Written whole or not at all (a temp file, then a rename): a reader never sees half a file. Windows will not rename
 // over an existing file, so it is removed first there.
-export function writeJsonAtomic(file, value) {
-  ensureParent(file);
+export function writeJsonAtomic(file, value, { mkdir = true, mode = 0o600 } = {}) {
+  if (mkdir) ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(value) + "\n");
+  writeFileSync(tmp, JSON.stringify(value) + "\n", { mode });
   try { renameSync(tmp, file); } catch { try { unlinkSync(file); } catch {} renameSync(tmp, file); }
 }
 

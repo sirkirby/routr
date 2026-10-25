@@ -19,6 +19,7 @@ import { decisionTarget, decisionTargets, decisionSettings, PROVIDER_NAMES, PROV
 import { secretsFor } from "./systemone.mjs";
 import { CANCEL, createUI } from "./tui.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
+import { newOtelConsent, otelEndpoint, otelStatus, prepareOtel, startOtelSender } from "./otel.mjs";
 
 // `--model claude=sonnet --model codex=<id>`: repeatable name=id pairs.
 export function parseModels(args) {
@@ -76,9 +77,9 @@ export function parseSwitches(args) {
   return out;
 }
 // `routr setup --show`: the settings as routr reads them, for an agent to see before it changes one. Asks no harness.
-export function showSettings(path) {
+export function showSettings(path, opts = {}) {
   const { config, notes } = loadConfig(path);
-  return { ok: true, config: path, exists: existsSync(path), ...config, ...(notes.length ? { notes } : {}) };
+  return { ok: true, config: path, exists: existsSync(path), ...config, otel: otelStatus(config, opts.env, opts), ...(notes.length ? { notes } : {}) };
 }
 export const parseReserve = (args) => parsePairs(args, "--reserve", parseShare, "<0..1, or a percent>");
 // `--channel beta|stable`: which releases updates follow. A setting, not an update flag, so the daily update keeps it.
@@ -129,21 +130,25 @@ export async function meteredRanks(fresh, harnesses, ranks, ask) {
 // in the tui's accessible mode, or `ui`, a ready-made tui), each harness's effort levels (`efforts`), and each step that
 // writes outside the config (the skill, the telemetry state, the key), and whether a provider's key is saved (`hasKey`).
 export async function setup(args, { inspect: look = inspect, question, interactive: tty = Boolean(process.stdin.isTTY), env = process.env,
-  install = installSkill, share: shareOn = setTelemetry, key = setKey, hasKey = (provider) => { try { secretsFor(provider, { env }); return true; } catch { return false; } }, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI, isStandalone = standalone } = {}) {
+  install = installSkill, share: shareOn = setTelemetry, key = setKey, hasKey = (provider) => { try { secretsFor(provider, { env }); return true; } catch { return false; } }, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI, isStandalone = standalone, otelStart = startOtelSender, otelHome } = {}) {
   const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   const path = flag("--config") ?? CONFIG_PATH;
   const interactive = tty && !args.includes("--yes");
   const say = (s) => { if (!args.includes("--json")) print(s); };
   const did = [], skipped = [];
+  let otelEndpointValue;
+  const otelOff = args.includes("--otel-off"), otelSet = args.includes("--otel-endpoint");
+  if (otelOff && otelSet) return { ok: false, error: "choose --otel-endpoint or --otel-off, not both" };
+  if (otelSet) try { otelEndpointValue = otelEndpoint(flag("--otel-endpoint")); } catch (e) { return { ok: false, error: e.message }; }
   let models, ranks, hardest, reserves, efforts, switches, uses, channel, decision;
   try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); channel = parseChannel(args); decision = parseDecision(args, skipped); } catch (e) { return { ok: false, error: e.message }; }
   // The legacy flag remains a setter; explicit --use wins when both flags name the same account.
   uses = { ...Object.fromEntries(Object.entries(ranks).map(([n, rank]) => [n, rank === "with" ? "normal" : "fallback"])), ...uses };
   // Whether any setting flag was given, read once here, before a guided run adds its choices to the same maps.
-  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches, ...uses }).length > 0 || channel !== undefined || decision !== undefined;
+  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches, ...uses }).length > 0 || channel !== undefined || decision !== undefined || otelSet || otelOff;
   // --show only reads: with a change flag beside it, an agent could take the settings printed for the change made.
   if (args.includes("--show")) return flagged || args.includes("--force")
-    ? { ok: false, error: "--show only reads your settings: run the change without it, then --show again to see it" } : showSettings(path);
+    ? { ok: false, error: "--show only reads your settings: run the change without it, then --show again to see it" } : showSettings(path, { home: otelHome, env });
 
   const guidedRun = interactive && !flagged;
   // Scripted answers (a test, or a caller with its own line reader) drive the tui's accessible mode: numbered questions.
@@ -257,6 +262,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches); Object.assign(ranks, choices.ranks);
     Object.assign(uses, choices.uses);
     if (choices.channel) channel = choices.channel;
+    if (choices.otelEndpoint !== undefined) otelEndpointValue = choices.otelEndpoint;
     if (choices.decision) { decision = choices.decision; for (const entry of decision) await keyFor(entry); }
   }
 
@@ -279,7 +285,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // and their channel, the decision model, and which subscriptions are turned off.
   if (!config) {
     config = { ...starterConfig(found, models, ranks), ...(typeof old?.telemetry === "boolean" ? { telemetry: old.telemetry } : {}), ...(typeof old?.auto_update === "boolean" ? { auto_update: old.auto_update } : {}),
-      ...(UPDATE_CHANNELS.includes(old?.update_channel) ? { update_channel: old.update_channel } : {}), ...(old?.decision ? { decision: old.decision } : {}),
+      ...(UPDATE_CHANNELS.includes(old?.update_channel) ? { update_channel: old.update_channel } : {}), ...(old?.decision ? { decision: old.decision } : {}), ...(old?.otel ? { otel: old.otel } : {}),
       // A sure_at the person set is theirs; 0.8 was Jev's, written by an older setup, and now follows the model.
       ...(typeof old?.sure_at === "number" && old.sure_at !== 0.8 ? { sure_at: old.sure_at } : {}) };
     if (old?.sure_at === 0.8) did.push(`dropped sure_at 0.8, an older setup's default: it now follows the decision model (if you chose 0.8 yourself, put "sure_at": 0.8 back in ${path})`);
@@ -292,6 +298,12 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models, ranks).subscriptions[n] };
   // Then every choice onto its subscription, new or old; what changed on an old one is said.
   const changed = [];
+  const otelChanged = otelOff || otelEndpointValue !== undefined;
+  if (otelChanged) {
+    if (otelOff) delete config.otel;
+    else config.otel = { endpoint: otelEndpointValue, consent: newOtelConsent() };
+    changed.push(`OpenTelemetry export ${otelOff ? "off" : "on"}`);
+  }
   const put = (n, k, v) => {
     const sub = config.subscriptions[n];
     if (!sub || v === undefined || sub[k] === v) return;
@@ -347,6 +359,10 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
     did.push(`wrote ${path}${fresh.length ? ` with ${fresh.join(", ")}` : changed.length ? "" : " (no harness found yet: run `routr setup` again after installing one)"}`);
   } else skipped.push(`config ${path} already covers every harness found: kept as it is`);
+  if (otelChanged) {
+    if (!otelOff) prepareOtel({ home: otelHome });
+    otelStart({ home: otelHome, configPath: path }); // V4: only the sender removes old-consent files, including on off
+  }
   if (channelMoved) did.push(channelNote(channel, ROUTR_VERSION, isStandalone(), updatesOff(config, { isStandalone, env }))); // what happens next; setup itself updates nothing
   skipped.push(...leftOut);
 
