@@ -160,6 +160,26 @@ test("--pane closes a worker's split pane, never its worktree's only pane or a b
   expect(f.calls.filter((a) => a[1] === "close")).toHaveLength(1);
 });
 
+// A launch's worktree workspace: launch splits herdr's root pane (w5:p1) and closes it, so the agent's pane (w5:p2) is not
+// the first one herdr made, and is the workspace's only pane.
+test("a worktree whose agent pane is not the one herdr first opened is still found and removed by --worktree; --pane on it still refuses", async () => {
+  const f = fake({ worktrees: [wt("split", { open_workspace_id: "w5" })], panes: { w5: [idle("w5:p2", "done")] } });
+  f.deps.run = ((run) => async (a) => (a[0] === "pane" && a[1] === "list" && a.length === 2 ? herdrOK({ panes: [{ ...idle("w5:p2", "done"), workspace_id: "w5" }] }) : run(a)))(f.deps.run);
+  const solo = await cleanup(["--pane", "w5:p2"], f.deps);
+  expect(solo).toMatchObject({ ok: false, state: "refused" });
+  expect(solo.headline).toContain("only pane of worktree /wt/split");
+  expect(solo.next.find((n) => n.kind === "run").command).toBe("routr cleanup --cwd /repo --path /wt/split");
+  expect(f.calls.filter((a) => a[1] === "close")).toEqual([]);
+  const r = await cleanup(["--cwd", "/repo", "--worktree", "split"], f.deps);
+  expect(r).toMatchObject({ ok: true, state: "removed", worktree: { branch: "split", workspace: "w5" } });
+  expect(f.calls).toContainEqual(["pane", "list", "--workspace", "w5"]);
+  expect(f.calls).toContainEqual(["worktree", "remove", "--workspace", "w5"]);
+  // The agent still working in that pane keeps the worktree, as in any worktree.
+  const busy = fake({ worktrees: [wt("split", { open_workspace_id: "w5" })], panes: { w5: [idle("w5:p2", "working")] } });
+  expect((await cleanup(["--cwd", "/repo", "--worktree", "split"], busy.deps)).state).toBe("refused");
+  expect(busy.calls.some((a) => a[1] === "remove")).toBe(false);
+});
+
 test("herdr out of reach fails with what happened, and removes nothing", async () => {
   const r = await cleanup(["--cwd", "/repo", "--worktree", "x"], { run: async () => herdrError("connect_failed"), git: async () => { throw new Error("no git"); }, env: { HERDR_ENV: "1" } });
   expect(r).toMatchObject({ ok: false, state: "failed" });

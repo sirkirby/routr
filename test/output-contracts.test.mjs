@@ -84,6 +84,17 @@ test("typing into a pane is a success when herdr answers exit 0 with nothing, as
   expect((await callHerdr(async () => ({ ok: false, data: { error: { code: "herdr_failed", message: MARK } } }), ["pane", "run", "w1:p1", "x"], 10)).ok).toBe(false);
 });
 
+test("workspace list keeps each workspace's checkout path, a source checkout's too, and nothing else of it", async () => {
+  const r = await callHerdr(async () => ({ ok: true, data: { result: { workspaces: [
+    { workspace_id: "wEW", label: MARK, worktree: { checkout_path: "/tmp/smoke/repo", is_linked_worktree: false, label: MARK } },
+    { workspace_id: "w5", worktree: { checkout_path: "/wt/b", is_linked_worktree: true, repo_root: "/tmp/smoke/repo" } },
+    { workspace_id: "w1" }, { workspace_id: "w2", worktree: { checkout_path: `relative/${MARK}` } }] } } }), ["workspace", "list"], 10);
+  expect(r).toEqual({ ok: true, data: { result: { workspaces: [
+    { workspace_id: "wEW", worktree: { is_linked_worktree: false, checkout_path: "/tmp/smoke/repo" } },
+    { workspace_id: "w5", worktree: { is_linked_worktree: true, checkout_path: "/wt/b", repo_root: "/tmp/smoke/repo" } },
+    { workspace_id: "w1" }, { workspace_id: "w2" }] } } });
+});
+
 test("pane process-info keeps only shell vocabulary and drops private process names at callHerdr", async () => {
   const cwd = scratch("process-info"), privateName = `${MARK}_process`, privateArgv = `${MARK}_argv0`;
   const r = await callHerdr(async () => shellInfo([

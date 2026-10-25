@@ -81,8 +81,9 @@ export function herdrResult(args, r) {
   } else if (key === "workspace list") {
     if (!Array.isArray(v?.workspaces)) return invalid();
     if (v.workspaces.some((w) => !id(w?.workspace_id) || (w.worktree?.is_linked_worktree && !absolutePath(w.worktree.checkout_path)))) return invalid();
-    data = { result: { workspaces: v.workspaces.map((w) => ({ workspace_id: w.workspace_id, ...(w.worktree?.is_linked_worktree ? { worktree: {
-      is_linked_worktree: true, checkout_path: w.worktree.checkout_path, ...(absolutePath(w.worktree.repo_root) ? { repo_root: w.worktree.repo_root } : {}) } } : {}) })) } };
+    // A checkout path is kept for every workspace that has one, a source checkout's too (smoke:carriers finds its own by it).
+    data = { result: { workspaces: v.workspaces.map((w) => ({ workspace_id: w.workspace_id, ...(absolutePath(w.worktree?.checkout_path) ? { worktree: {
+      is_linked_worktree: w.worktree.is_linked_worktree === true, checkout_path: w.worktree.checkout_path, ...(absolutePath(w.worktree.repo_root) ? { repo_root: w.worktree.repo_root } : {}) } } : {}) })) } };
   } else if (key === "agent prompt" || key === "agent wait") {
     // Only lifecycle values are permitted to escape a prompt/wait answer.
     data = { result: { ...(v?.state != null ? { state: agentState(v.state) } : {}) } };

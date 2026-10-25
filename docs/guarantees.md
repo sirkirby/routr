@@ -300,18 +300,25 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
 - **Unchanged, never made.** A carrier is passed exactly as routr found it, never parsed, changed or generated, and
   routr sets none itself. Names are matched as your system matches them (any case on Windows); an empty one is absent.
   routr sends nothing anywhere for this.
-- **Which workers get them.** A headless worker gets them on every turn, and a worker in a pane `routr launch` splits
-  gets them as that pane's shell starts (herdr's `pane split --env`). A worker in a worktree's pane or in an existing
-  pane (`--pane`), and an agent already running there that launch adopts, get none: herdr has no environment option for those starts, and
+- **Which workers get them.** A headless worker gets them on every turn, and a worker in a pane `routr launch` makes
+  gets them as that pane's shell starts (herdr's `pane split --env`): a pane beside yours, or the pane in a new
+  worktree. For a worktree, launch splits the pane herdr opened with the worktree and closes that first pane, because
+  herdr's worktree create takes no environment. A worker in an existing pane (`--pane`), and an agent already running
+  there that launch adopts, get none: that pane's shell, or that agent, already started with its own environment, and
   routr never types a carrier into a shell. When carriers are present, launch says it passed none, and why. A pane
   routr split earlier already has them in its shell, so a `--pane` rerun into it is not left without them.
+- **Never the herdr server's.** A pane herdr makes starts from the environment herdr's server started with, which can
+  hold a trace context from another session. So every pane launch makes gets all three names: the value routr passes,
+  or an empty value for each one it does not pass, absent or withheld. OpenTelemetry treats an empty carrier as
+  absent, so a worker in such a pane gets exactly routr's context, or none.
 - **Not for harness reads.** routr's own reads of a harness (sign-in status, usage, model lists) and its private herdr
   session get no carrier: they are not workers.
 - **Limits.** routr passes a carrier only when every character is printable ASCII or a tab, and it is at most 512
   bytes (`TRACEPARENT`, `TRACESTATE`) or 8192 (`BAGGAGE`). This is routr's own limit on what it hands on, not the W3C
   grammar. One outside it is not passed, and a warning names it, never its value; the others still go.
 - **Never a value in output.** No carrier's value is printed, logged, or put in the ledger or telemetry: launch shows
-  each one passed as `<forwarded>`, in `start.env` and in the split command it shows (`--env NAME=<forwarded>`). A
+  each one passed as `<forwarded>`, in `start.env` and in the split command it shows (`--env NAME=<forwarded>`; an
+  empty one shows as `--env NAME=`, as it is). A
   pane's screen that launch returns (a question before the task was sent, or the last lines after a failure) has the
   value of every carrier routr found, passed or withheld, replaced by `<carrier>`, also where the pane wrapped it
   across lines; a value the screen drew with something inside it (a colour code) is not recognised.

@@ -8,7 +8,7 @@ import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesse
 import { dispatchAdvice, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
 import { displayCommand, doNext, launchNext, runNext, templateCommand } from "./next.mjs";
 import { CLOSING, OFF } from "./wording.mjs";
-import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, splitArgs, waitForShell } from "./herdr.mjs";
+import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, splitArgs, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
 import { CARRIERS, carriersFrom, carrierValues, carrierWithheld, ensureParent, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
@@ -31,12 +31,10 @@ export function composePrompt(task, guide = WORKER_GUIDE, rules = null) {
 }
 
 const command = (args) => displayCommand(["herdr", ...args]);
-// Trace-context carriers reach only a pane launch splits (herdr's `pane split --env`). Everywhere else this fixed
-// warning says the launch passed none: never that the worker has none (a --pane rerun into a pane routr split already
-// has them in its shell), and never with a value.
-const PASSED_NONE = (names, why) => `This launch passed none of ${names.join(", ")} to the worker: ${why}, and routr never types a carrier into a shell`;
-const NO_ENV = { worktree: "herdr's worktree create takes no environment (the pane's shell starts with whatever herdr's server has)",
-  pane: "an existing pane keeps the environment its shell, or the agent already running there, started with" };
+// Trace-context carriers reach only a pane launch splits (herdr's `pane split --env`), beside the caller or in a new
+// worktree. In an existing pane (--pane, an adopted agent) this fixed warning says the launch passed none: never that the
+// worker has none (a --pane rerun into a pane routr split already has them in its shell), and never with a value.
+const PASSED_NONE = (names) => `This launch passed none of ${names.join(", ")} to the worker: an existing pane keeps the environment its shell, or the agent already running there, started with, and routr never types a carrier into a shell`;
 // The command log is printed and may be stored by whoever called launch: it carries the prompt's length, never its
 // text (the brief must not be printed, logged, or stored).
 const PANE_WITHHELD = "withheld: the prompt was already submitted, so the pane shows the task. Read the pane yourself.";
@@ -164,17 +162,18 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     }
     // Known once the pane's shell has been seen; until then, this platform's usual shell.
     let shell = process.platform === "win32" ? "powershell" : "posix";
-    // The carriers this launch hands on: a pane it splits gets the ones within routr's limits, with a warning for each
-    // withheld; any other pane gets none, said once. Only names and FORWARDED reach the output.
+    // The carriers this launch hands on: a pane it splits (beside the caller, or in a worktree) gets the ones within
+    // routr's limits, with a warning for each withheld; an existing pane gets none, said once. Only names and FORWARDED
+    // reach the output.
     const found = carriersFrom(env);
     const paneCarriers = () => {
-      if (!o.pane && !o.worktree) {
+      if (!o.pane) {
         out.warnings.push(...found.withheld.map(carrierWithheld));
         out.start.env = { ...out.start.env, ...Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) };
         return found.carriers;
       }
       const present = CARRIERS.filter((n) => Object.hasOwn(found.carriers, n) || found.withheld.includes(n));
-      if (present.length) out.warnings.push(PASSED_NONE(present, NO_ENV[o.worktree ? "worktree" : "pane"]));
+      if (present.length) out.warnings.push(PASSED_NONE(present));
       return {};
     };
     const startArgs = (pane, timeout) => o.kind === "cursor" && SHELLS[shell].cursor
@@ -182,11 +181,10 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       : ["agent", "start", o.name, "--kind", o.kind, "--pane", pane, "--timeout", String(timeout), "--", ...p.argv];
     const promptArgs = (pane, timeout) => ["agent", "prompt", pane, prompt, "--wait", "--until", "working",
       "--until", "idle", "--until", "done", "--until", "blocked", "--timeout", String(timeout)];
-    const worktreeArgs = () => ["worktree", "create", "--cwd", out.cwd, "--branch", o.worktree, ...(o.base ? ["--base", o.base] : []), "--no-focus"];
     if (o.dryRun) {
       const pane = o.pane ?? "<new-pane>", carried = paneCarriers();
       out.would_run = [
-        ...(o.worktree ? [command(worktreeArgs())] : []),
+        ...(o.worktree ? [command(worktreeArgs(out.cwd, o.worktree, o.base)), command(splitArgs("right", "<worktree-path>", carried, { pane: "<root-pane>", shown: true })), command(["pane", "close", "<root-pane>"])] : []),
         ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true }))] : []),
         command(["pane", "read", pane, "--source", "visible"]),
         command(["pane", "process-info", "--pane", pane]),
@@ -249,6 +247,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       return r;
     };
     const pane = () => paneView(call, out.pane); // the pane id is known only once it is split or adopted
+    const herdrCall = (a, shown, tolerate = false) => call(a, tolerate, shown); // as herdr.mjs's splitPane takes it
     const readPane = async () => { touchedPane = true; return pane().read(); };
     const pause = async () => sleep(Math.min(250, remaining()));
     let shellCwd = null;
@@ -331,16 +330,16 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       // The rule for workers: each gets its own git worktree. herdr opens it as a workspace NESTED under the repository
       // in the sidebar, so the lead's tab stays clean and even a read-only worker cannot touch the main checkout.
       // --base starts its branch at another commit (stacked work, a reviewer of one commit); herdr takes it as is.
-      const r = await call(worktreeArgs());
+      const r = await call(worktreeArgs(out.cwd, o.worktree, o.base));
       const w = r.data?.result;
       if (!r.ok || typeof w?.root_pane?.pane_id !== "string" || typeof w?.worktree?.path !== "string") {
         throw new Error("herdr worktree create returned an answer routr cannot read (herdr_invalid_response)");
       }
-      out.pane = w.root_pane.pane_id; out.cwd = w.worktree.path;
+      const root = w.root_pane.pane_id; out.cwd = w.worktree.path;
       out.worktree = { branch: o.worktree, ...(o.base ? { base: o.base } : {}), path: w.worktree.path, workspace: w.workspace?.workspace_id ?? null };
       // How this worker is finished: never by closing its pane, which closes the workspace and leaves the worktree.
       cleanupArgs = ["routr", "cleanup", "--cwd", repoCwd, "--worktree", o.worktree];
-      step("worktree", true, `Created ${out.cwd} on branch ${o.worktree}${o.base ? ` from ${o.base}` : ""}, workspace ${out.worktree.workspace}, pane ${out.pane}`);
+      step("worktree", true, `Created ${out.cwd} on branch ${o.worktree}${o.base ? ` from ${o.base}` : ""}, workspace ${out.worktree.workspace}, root pane ${root}`);
       // A worktree holds tracked files only. --copy brings named untracked files or folders (a local config, test data)
       // across from the main checkout, at the same relative path.
       for (const rel of o.copy ?? []) {
@@ -349,8 +348,19 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         ensureParent(to); cpSync(from, to, { recursive: true });
         step("copy", true, `Copied ${rel} into the worktree`);
       }
-    }
-    if (!out.pane) {
+      // The worker gets a pane of launch's own, with its carriers, never the root pane herdr opened (worktreePane);
+      // cleanup --worktree finds the workspace whichever pane is left in it.
+      let opened;
+      try { opened = await worktreePane(herdrCall, root, out.cwd, carried); }
+      catch (e) { throw new Error(`launch created the worktree ${out.cwd} but could not open the worker's pane in it (${e?.message ?? e}); remove the worktree with ${displayCommand(cleanupArgs)}`); }
+      out.pane = opened.pane;
+      step("split", true, `Created ${out.pane}, right of ${root}, in the worktree`);
+      // A root pane left open makes the worker's pane one of two in its workspace, and cleanup --pane (which a later
+      // --pane rerun would give) closes a pane that is not a worktree's only one: the worktree would be left behind
+      // (from the review of fff9446). Nothing runs yet, so the launch ends here, and its cleanup is the worktree's.
+      if (!opened.closed) throw new Error(`launch created the worktree ${out.cwd} but could not close ${root}, the shell pane herdr opened with it, so its workspace has an extra shell pane; no agent was started. Remove the worktree with ${displayCommand(cleanupArgs)}`);
+      step("close_root", true, `Closed ${root}, the shell pane herdr opened with the worktree`);
+    } else if (!out.pane) {
       let direction = o.direction;
       if (!direction) {
         const current = (await call(["pane", "current", "--current"])).data.result.pane;
@@ -359,9 +369,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         if (!rect) throw new Error("Caller pane geometry is unavailable");
         direction = rect.width > rect.height ? "right" : "down";
       }
-      const r = await call(splitArgs(direction, out.cwd, carried), false, splitArgs(direction, out.cwd, carried, { shown: true }));
-      out.pane = r.data.result.pane.pane_id;
-      if (typeof out.pane !== "string" || !out.pane) throw new Error("Herdr split returned no pane id");
+      out.pane = await splitPane(herdrCall, direction, out.cwd, carried);
       createdPane = true;
       step("split", true, `Created ${out.pane}, ${direction}`);
     }

@@ -1,9 +1,14 @@
 // The W3C trace-context carriers routr hands on to the workers it starts: which it takes, the transport limits, and
 // the two environments (a harness read gets none; a worker start gets the checked ones, its adapter's own keys winning).
 import { expect, test } from "bun:test";
+import { existsSync, rmSync } from "node:fs";
+import { displayCommand } from "../src/lib/next.mjs";
 import { CARRIERS, carriersFrom, carrierValues, carrierWithheld, harnessEnv, redactCarriers, savedCarriers, workerEnv } from "../src/lib/runtime.mjs";
 
 const TP = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+// No smoke carrier value in what the smoke printed: its hostile values and its agent markers. Its own folder's name
+// (routr-smoke-carriers-…) and paths under it may appear: they are what a person needs to clean up by hand.
+const noSmokeValue = (lines) => { const text = lines.join("\n"); expect([/routr-smoke-[0-9a-f]{8}-(TRACEPARENT|TRACESTATE|BAGGAGE)/.test(text), text.includes("routr_smoke-"), text.includes("%PATH%")]).toEqual([false, false, false]); };
 const at = (n) => "a".repeat(n);
 
 test("the three carriers are the W3C trace-context names, read as found; an empty one is absent", () => {
@@ -148,13 +153,216 @@ test("smoke:carriers closes every pane it made, even when a shell stops at a que
     if (a[1] === "process-info") return { ok: true, data: { result: { process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh", cwd: "/" }] } } } };
     if (a[1] === "read") return { ok: true, data: { result: { text: "found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)" } } };
     if (a[1] === "close") return { ok: false, code: "herdr_refused", why: "herdr refused pane close (herdr_refused)", data: {} };
+    if (a[0] === "workspace" && a[1] === "list") return { ok: true, data: { result: { workspaces: [] } } };
     throw new Error(`unexpected ${a.join(" ")}`);
   };
-  const failed = await smokeCarriers({ herdr, env: { HERDR_ENV: "1" }, log: (l) => lines.push(l) });
+  const failed = await smokeCarriers({ herdr, git: async () => ({ code: 1 }), env: { HERDR_ENV: "1" }, log: (l) => lines.push(l) });
   expect(failed).toBeGreaterThan(0);
   expect(calls.filter((a) => a[1] === "close")).toEqual([["pane", "close", "w1:p7"]]);
   expect(lines.join("\n")).toContain("the pane's shell: The shell asked a question before its prompt");
   expect(lines.join("\n")).toContain("could not close pane w1:p7");
-  expect(lines.join("\n")).not.toContain("routr-smoke-"); // never a carrier value
+  noSmokeValue(lines);
   expect(await smokeCarriers({ herdr, env: {}, log: () => {} })).toBe(1); // outside herdr: nothing done
+});
+
+test("smoke:carriers' worktree half leaves one carrier out, and expects it empty in the pane, whatever herdr's server has", async () => {
+  const { hostileCarriers, leftOut, missingIn } = await import("../scripts/smoke-carriers.mjs");
+  const sent = hostileCarriers();
+  const { passed, expected } = leftOut(sent);
+  expect(Object.keys(passed)).toEqual(["TRACEPARENT", "BAGGAGE"]);
+  expect(expected).toEqual({ ...passed, TRACESTATE: "" });
+  // The server's own value showing through is a failure; so is the variable missing altogether.
+  expect(missingIn({ ...passed, TRACESTATE: "" }, expected)).toEqual([]);
+  expect(missingIn({ ...passed, TRACESTATE: "server=1" }, expected)).toEqual(["TRACESTATE"]);
+  expect(missingIn(passed, expected)).toEqual(["TRACESTATE"]);
+});
+
+test("smoke:carriers' worktree half runs routr's worktree steps in a throwaway repository, reads the new pane's shell, and removes the worktree", async () => {
+  const { smokeCarriers } = await import("../scripts/smoke-carriers.mjs");
+  const { mkdtempSync, readFileSync, realpathSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const tree = realpathSync.native(mkdtempSync(join(tmpdir(), "routr-smoke-tree-")));
+  const calls = [], gits = [], lines = [];
+  let envs = {};
+  const ok = (result) => ({ ok: true, data: { result } });
+  const herdr = async (a) => {
+    calls.push(a);
+    // The first half's pane stops at a shell question; the worktree's pane is at a prompt in the worktree.
+    if (a[1] === "split" && a[2] === "--current") return ok({ pane: { pane_id: "w1:p7" } });
+    if (a[0] === "worktree" && a[1] === "create") return ok({ root_pane: { pane_id: "w5:p1" }, worktree: { path: tree }, workspace: { workspace_id: "w5" } });
+    if (a[1] === "split" && a[2] === "w5:p1") {
+      // As herdr: each --env sets the pane's shell variable, an empty value included.
+      envs = Object.fromEntries(a.flatMap((x, i) => (a[i - 1] === "--env" ? [[x.slice(0, x.indexOf("=")), x.slice(x.indexOf("=") + 1)]] : [])));
+      return ok({ pane: { pane_id: "w5:p2" } });
+    }
+    if (a[1] === "close") return ok({});
+    if (a[0] === "pane" && a[1] === "list") return ok({ panes: [{ pane_id: "w5:p2" }] });
+    if (a[1] === "process-info") return ok({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh", cwd: a[3] === "w5:p2" ? tree : "/" }] } });
+    if (a[1] === "read") return ok({ text: a[2] === "w5:p2" ? "chris % " : "found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)" });
+    if (a[1] === "run" && a[2] === "w5:p2") {
+      // The fixture, played: it writes the shell's environment where its script says.
+      const script = a[3].match(/'([^']+\.cjs)'|(\S+\.cjs)/).slice(1).find(Boolean);
+      const out = JSON.parse(readFileSync(script, "utf8").match(/writeFileSync\(("[^"]+")/)[1]);
+      writeFileSync(out, JSON.stringify({ PATH: "/bin", ...envs }));
+      return ok({});
+    }
+    if (a[0] === "worktree" && a[1] === "remove") { rmSync(tree, { recursive: true, force: true }); return ok({}); }
+    if (a[0] === "workspace" && a[1] === "list") return ok({ workspaces: [] });
+    throw new Error(`unexpected ${a.join(" ")}`);
+  };
+  try {
+    const failed = await smokeCarriers({ herdr, git: async (dir, a) => { gits.push([dir, ...a]); return { code: 0 }; }, env: { HERDR_ENV: "1" }, log: (l) => lines.push(l) });
+    expect(failed).toBe(1); // the first half's shell question only
+    expect(lines.join("\n")).toContain("worktree pane, posix shell, one carrier empty: ok");
+    // The repository is a throwaway one in the smoke's own temporary folder, never the checkout it runs from.
+    const repo = gits[0][0];
+    expect(repo).toContain("routr-smoke-carriers-");
+    expect(repo).not.toBe(process.cwd());
+    expect(gits.map((g) => g[1])).toEqual(["init", "-c"]);
+    // routr's own steps, in order: worktree create in that repository, the root split with the carriers, the root closed.
+    const at = (pred) => calls.findIndex(pred);
+    expect(calls[at((a) => a[0] === "worktree")].slice(0, 4)).toEqual(["worktree", "create", "--cwd", repo]);
+    expect(at((a) => a[2] === "w5:p1" && a[1] === "split")).toBeLessThan(at((a) => a[1] === "close" && a[2] === "w5:p1"));
+    expect(envs.TRACESTATE).toBe("");
+    expect(envs.TRACEPARENT.length).toBe(512);
+    // Torn down: the worktree with its workspace, never its pane alone; the repository with the temporary folder.
+    expect(calls.at(-2)).toEqual(["worktree", "remove", "--workspace", "w5"]);
+    expect(calls.some((a) => a[1] === "close" && a[2] === "w5:p2")).toBe(false);
+    expect(existsSync(repo)).toBe(false);
+    noSmokeValue(lines);
+  } finally { rmSync(tree, { recursive: true, force: true }); }
+});
+
+test("smoke:carriers finds the workspaces inside its own folder by checkout path, as this platform compares paths", async () => {
+  const { workspacesIn } = await import("../scripts/smoke-carriers.mjs");
+  const { join, resolve } = await import("node:path");
+  // By path, never by name: the folder itself, or anything under it; a sibling sharing its prefix is not inside. Built
+  // with this platform's path functions, so the case means the same everywhere.
+  const root = resolve("/t", "smoke-1");
+  const list = [{ workspace_id: "wEW", worktree: { checkout_path: join(root, "repo"), is_linked_worktree: false } }, { workspace_id: "wX", worktree: { checkout_path: join(`${root}-other`, "repo") } },
+    { workspace_id: "w1", worktree: { checkout_path: resolve("/Users/u/repo") } }, { workspace_id: "w2" }, { workspace_id: "w3", worktree: { checkout_path: root } }];
+  expect(workspacesIn(list, root)).toEqual(["wEW", "w3"]);
+  // Windows paths as Windows compares them: any case, either slash; another drive or a sibling is not inside.
+  const win = [["c:/t/smoke-1/repo", true], ["C:\\T\\SMOKE-1", true], ["C:\\T\\smoke-1\\", true], ["C:\\T\\smoke-1-other\\repo", false], ["D:\\T\\smoke-1\\repo", false], ["C:\\T", false]];
+  expect(workspacesIn(win.map(([p], i) => ({ workspace_id: `w${i}`, worktree: { checkout_path: p } })), "C:\\T\\smoke-1", { platform: "win32" })).toEqual(win.flatMap(([, inside], i) => (inside ? [`w${i}`] : [])));
+  // Elsewhere, case is part of the name: a folder differing only in case is another folder.
+  expect(workspacesIn([{ workspace_id: "w1", worktree: { checkout_path: "/T/smoke-1/repo" } }], "/t/smoke-1", { platform: "linux" })).toEqual([]);
+});
+
+// A herdr and a git for the smoke's teardown. `create`: "ok", "refused" (nothing made) or "made" (refused, but it made
+// the worktree and its workspace, as the repository's own list and herdr's workspaces show). `listed`: whether git can
+// list the repository's worktrees. The worktree is a real folder herdr's remove deletes, unless `removeFails`.
+// `listFails`: how many of herdr's first workspace lists fail; `treeWorkspace`: whether a worktree made by a failed create
+// has a workspace open (git's remove deletes its folder when it has none).
+async function teardown({ create = "ok", removeFails = false, closeFails = false, listed = true, listFails = 0, treeWorkspace = true } = {}) {
+  const { smokeCarriers } = await import("../scripts/smoke-carriers.mjs");
+  const { mkdtempSync, readFileSync, realpathSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { dirname, join } = await import("node:path");
+  const tree = realpathSync.native(mkdtempSync(join(tmpdir(), "routr-smoke-tree-")));
+  const calls = [], lines = [];
+  let repo = null, envs = {};
+  const ok = (result) => ({ ok: true, data: { result } });
+  const made = create !== "refused";
+  const herdr = async (a) => {
+    calls.push(a);
+    if (a[0] === "worktree" && a[1] === "create") {
+      repo = a[a.indexOf("--cwd") + 1];
+      return create === "ok" ? ok({ root_pane: { pane_id: "w5:p1" }, worktree: { path: tree }, workspace: { workspace_id: "w5" } }) : { ok: false, code: "herdr_refused", data: {} };
+    }
+    // As herdr 0.9.5 with no workspace open for the source: worktree create opened one for the throwaway repository too.
+    if (a[0] === "workspace" && a[1] === "list" && listFails-- > 0) return { ok: false, code: "herdr_unreachable", data: {} };
+    if (a[0] === "workspace" && a[1] === "list") return ok({ workspaces: [{ workspace_id: "w1", worktree: { checkout_path: process.cwd(), is_linked_worktree: false } },
+      ...(repo ? [{ workspace_id: "wEW", worktree: { checkout_path: repo, is_linked_worktree: false } }] : []),
+      ...(made && treeWorkspace ? [{ workspace_id: "w5", worktree: { checkout_path: tree, is_linked_worktree: true, repo_root: repo } }] : []),
+      { workspace_id: "wY", worktree: { checkout_path: join(`${dirname(repo ?? "/x")}-other`, "repo") } }] });
+    if (a[0] === "workspace" && a[1] === "close") return closeFails ? { ok: false, code: "herdr_refused", data: {} } : ok({});
+    if (a[1] === "split" && a[2] === "--current") return ok({ pane: { pane_id: "w1:p7" } });
+    if (a[1] === "split") { envs = Object.fromEntries(a.flatMap((x, i) => (a[i - 1] === "--env" ? [[x.slice(0, x.indexOf("=")), x.slice(x.indexOf("=") + 1)]] : []))); return ok({ pane: { pane_id: "w5:p2" } }); }
+    if (a[1] === "close") return ok({});
+    if (a[1] === "list") return ok({ panes: [{ pane_id: "w5:p2" }] });
+    if (a[1] === "process-info") return ok({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh", cwd: a[3] === "w5:p2" ? tree : "/" }] } });
+    if (a[1] === "read") return ok({ text: a[2] === "w5:p2" ? "chris % " : "found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)" });
+    if (a[1] === "run") {
+      const script = a[3].match(/'([^']+\.cjs)'|(\S+\.cjs)/).slice(1).find(Boolean);
+      writeFileSync(JSON.parse(readFileSync(script, "utf8").match(/writeFileSync\(("[^"]+")/)[1]), JSON.stringify(envs));
+      return ok({});
+    }
+    if (a[0] === "worktree" && a[1] === "remove") { if (removeFails) return { ok: false, code: "herdr_refused", data: {} }; rmSync(tree, { recursive: true, force: true }); return ok({}); }
+    throw new Error(`unexpected ${a.join(" ")}`);
+  };
+  const gits = [];
+  const git = async (dir, a) => (gits.push(a), a[0] === "worktree" && a[1] === "remove" ? (rmSync(tree, { recursive: true, force: true }), { code: 0, out: "" }) : a[0] === "worktree" && a[1] === "list" ? (listed ? { code: 0, out: `worktree ${dir}\nHEAD ${"a".repeat(40)}\nbranch refs/heads/main\n\n${made ? `worktree ${tree}\nHEAD ${"a".repeat(40)}\nbranch refs/heads/x\n` : ""}` } : { code: 128, out: "" }) : { code: 0, out: "" });
+  const failed = await smokeCarriers({ herdr, git, env: { HERDR_ENV: "1" }, log: (l) => lines.push(l) });
+  const dir = dirname(repo);
+  return { failed, calls, gits, lines, text: lines.join("\n"), repo, tree, dir, done: () => { rmSync(dir, { recursive: true, force: true }); rmSync(tree, { recursive: true, force: true }); } };
+}
+const closes = (calls) => calls.filter((a) => a[0] === "workspace" && a[1] === "close");
+const removes = (calls) => calls.filter((a) => a[0] === "worktree" && a[1] === "remove");
+
+test("smoke:carriers' teardown closes only the workspaces inside its folder, after the worktree, then removes the folder", async () => {
+  for (const create of ["ok", "refused"]) {
+    const t = await teardown({ create });
+    try {
+      // The first half's shell question; and a failed create.
+      expect([create, t.failed]).toEqual([create, create === "ok" ? 1 : 2]);
+      // Only the throwaway repository's workspace: never the caller's, never a sibling folder's.
+      expect(closes(t.calls)).toEqual([["workspace", "close", "wEW"]]);
+      expect(removes(t.calls)).toEqual(create === "ok" ? [["worktree", "remove", "--workspace", "w5"]] : []);
+      if (create === "ok") expect(t.calls.indexOf(removes(t.calls)[0])).toBeLessThan(t.calls.indexOf(closes(t.calls)[0]));
+      expect(existsSync(t.dir)).toBe(false);
+      noSmokeValue(t.lines);
+    } finally { t.done(); }
+  }
+  const t = await teardown({ closeFails: true });
+  try {
+    expect(t.failed).toBe(2);
+    expect(t.text).toContain("could not close workspace wEW");
+    expect(existsSync(t.repo)).toBe(true); // a workspace is still open on it
+    expect(t.text).toContain(t.dir);
+  } finally { t.done(); }
+});
+
+test("smoke:carriers' teardown keeps the repository, and names it and the worktree, when a removal failed or cannot be known", async () => {
+  // herdr refused the removal: the repository holds the git metadata its retry needs.
+  const refused = await teardown({ removeFails: true });
+  try {
+    expect(existsSync(refused.repo)).toBe(true);
+    expect(refused.text).toContain(`could not remove the worktree at ${refused.tree}`);
+    expect(refused.text).toContain(refused.repo);
+    expect(refused.text).toContain(displayCommand(["herdr", "worktree", "remove", "--workspace", "w5"]));
+    noSmokeValue(refused.lines);
+  } finally { refused.done(); }
+  // worktree create failed after making the worktree: the repository's own list finds it, herdr's list its workspace.
+  const made = await teardown({ create: "made" });
+  try {
+    expect(removes(made.calls)).toEqual([["worktree", "remove", "--workspace", "w5"]]);
+    expect(existsSync(made.dir)).toBe(false);
+  } finally { made.done(); }
+  // ... and when herdr's workspaces cannot be listed, whether that worktree has a workspace open is not known: neither
+  // git nor herdr removes it (git's remove would leave the workspace open, outside the folder), and the repository stays.
+  const blind = await teardown({ create: "made", listFails: 1 });
+  try {
+    expect(removes(blind.calls)).toEqual([]);
+    expect(blind.gits.filter((a) => a[1] === "remove")).toEqual([]);
+    expect(existsSync(blind.repo)).toBe(true);
+    // Paths in prose are shown as they are; a command is shown as displayCommand quotes it (a backslash, a space).
+    for (const t of [blind.repo, blind.tree, displayCommand(["herdr", "workspace", "list"]), "herdr worktree remove --workspace <id>", displayCommand(["git", "-C", blind.repo, "worktree", "remove", blind.tree])]) expect([t, blind.text.includes(t)]).toEqual([t, true]);
+    noSmokeValue(blind.lines);
+  } finally { blind.done(); }
+  // Only a listing that answered and shows no workspace for it lets git remove it.
+  const bare = await teardown({ create: "made", treeWorkspace: false });
+  try {
+    expect(removes(bare.calls)).toEqual([]);
+    expect(bare.gits.filter((a) => a[1] === "remove")).toEqual([["worktree", "remove", bare.tree]]);
+    expect(existsSync(bare.dir)).toBe(false);
+  } finally { bare.done(); }
+  // ... and when git's own list cannot be read, whether anything was made is not known: the repository stays.
+  const unknown = await teardown({ create: "refused", listed: false });
+  try {
+    expect(removes(unknown.calls)).toEqual([]);
+    expect(existsSync(unknown.repo)).toBe(true);
+    expect(unknown.text).toContain(unknown.repo);
+  } finally { unknown.done(); }
 });

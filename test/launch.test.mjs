@@ -945,7 +945,7 @@ test("launch --base starts the worktree's branch at that commit, and every launc
   const r = await launch([...launchArgs, "--cwd", "/", "--worktree", "stacked", "--base", "feat/one"], f.deps);
   expect(f.calls[0]).toEqual(["worktree", "create", "--cwd", resolve("/"), "--branch", "stacked", "--base", "feat/one", "--no-focus"]);
   expect(cleanupStep(r)?.argv).toEqual(["routr", "cleanup", "--cwd", resolve("/"), "--worktree", "stacked"]);
-  expect(r).toMatchObject({ ok: true, pane: "w5:p1", worktree: { branch: "stacked", base: "feat/one", path: process.cwd(), workspace: "w5" } });
+  expect(r).toMatchObject({ ok: true, pane: "w1:p2", worktree: { branch: "stacked", base: "feat/one", path: process.cwd(), workspace: "w5" } });
   // A split pane is closed by cleanup; a relaunch into a pane gets the pane's line (cleanup redirects a worktree's own).
   expect(cleanupStep(await launch(launchArgs, fakeHerdr().deps))?.command).toBe("routr cleanup --pane w1:p2");
   const kept = await launch([...launchArgs, "--task", "Task"], fakeHerdr({ reply: (a) => a[1] === "start" ? herdrError("boom") : undefined }).deps);
@@ -1272,12 +1272,28 @@ test("from 2026-10-11: a task that never arrived is sent again by launch, adopti
   expect(instructions(r)).not.toContain("herdr agent prompt");
 });
 
-// Trace-context carriers in a pane: only a pane launch splits gets them, as `--env` on that split (herdr 0.9.5 measured:
-// values reach the pane's shell byte for byte); a worktree's pane, an existing pane and an adopted agent get none, and
-// the launch says it passed none. A value is never shown, and never typed into a shell.
+// Trace-context carriers in a pane: every pane launch makes (a split beside the caller, or a worktree's) gets them, as
+// `--env` on its split (herdr 0.9.5 measured: values reach the pane's shell byte for byte), and each one routr does not
+// have as an empty `--env`, so the herdr server's own never reaches the worker; an existing pane and an adopted agent
+// get none, and the launch says it passed none. A value is never shown, and never typed into a shell.
 const CARRIED = { TRACEPARENT: "00-0af7651916cd43dd8448eb211c80319c-CARRIER_MARK_TP-01", TRACESTATE: "k=CARRIER_MARK_TS,\tx=\"%y%\"", BAGGAGE: "a=CARRIER_MARK_BG;p=1,b=c d!&'" };
 const noCarrierValue = (r) => { const text = JSON.stringify(r); for (const m of ["CARRIER_MARK_TP", "CARRIER_MARK_TS", "CARRIER_MARK_BG"]) expect([m, text.includes(m)]).toEqual([m, false]); };
 const typed = (calls) => calls.filter((a) => a[0] === "pane" && ["run", "send-text", "send-keys"].includes(a[1]) || a[1] === "prompt").map((a) => a.join(" ")).join("\n");
+
+test("split arguments name all three carriers: a forwarded value, or empty for one routr does not have; shown, only names", async () => {
+  const { splitArgs } = await import("../src/lib/herdr.mjs");
+  const base = ["pane", "split", "--current", "--direction", "right", "--cwd", "/w", "--no-focus"];
+  expect(splitArgs("right", "/w", CARRIED)).toEqual([...base, "--env", `TRACEPARENT=${CARRIED.TRACEPARENT}`, "--env", `TRACESTATE=${CARRIED.TRACESTATE}`, "--env", `BAGGAGE=${CARRIED.BAGGAGE}`]);
+  // Absent or withheld (the caller passes only what it forwards): an empty value, which OpenTelemetry reads as absent.
+  expect(splitArgs("right", "/w", { BAGGAGE: CARRIED.BAGGAGE })).toEqual([...base, "--env", "TRACEPARENT=", "--env", "TRACESTATE=", "--env", `BAGGAGE=${CARRIED.BAGGAGE}`]);
+  expect(splitArgs("right", "/w")).toEqual([...base, "--env", "TRACEPARENT=", "--env", "TRACESTATE=", "--env", "BAGGAGE="]);
+  // Shown: a forwarded value is FORWARDED; an empty one has nothing to hide.
+  expect(splitArgs("right", "/w", { TRACEPARENT: CARRIED.TRACEPARENT }, { shown: true })).toEqual([...base, "--env", "TRACEPARENT=<forwarded>", "--env", "TRACESTATE=", "--env", "BAGGAGE="]);
+  // A split of a named pane (a worktree's root) names it in place of --current.
+  expect(splitArgs("right", "/w", {}, { pane: "w5:p1" }).slice(0, 4)).toEqual(["pane", "split", "w5:p1", "--direction"]);
+  // Only the three names, whatever else the object holds.
+  expect(splitArgs("right", "/w", { LD_PRELOAD: "/evil.so", TRACEPARENT: "x" }).join(" ")).not.toContain("LD_PRELOAD");
+});
 
 test("a pane launch splits passes each present carrier with --env on that split, shows none of their values, and types none", async () => {
   const f = fakeHerdr();
@@ -1292,17 +1308,21 @@ test("a pane launch splits passes each present carrier with --env on that split,
   expect(r.warnings.filter((w) => /TRACE|BAGGAGE|carrier/.test(w))).toEqual([]);
   noCarrierValue(r);
   for (const m of ["CARRIER_MARK", "TRACEPARENT", "BAGGAGE"]) expect(typed(f.calls)).not.toContain(m);
-  // Absent and empty carriers are left out, and one outside the limits is withheld with its warning; the others go.
+  // Absent and empty carriers are passed empty, and one outside the limits is withheld with its warning and passed empty
+  // too; the others go. start.env lists only the forwarded.
   const g = fakeHerdr();
   const s = await launch(launchArgs, { ...g.deps, env: { HERDR_ENV: "1", TRACEPARENT: CARRIED.TRACEPARENT, TRACESTATE: "", BAGGAGE: "a=\x1b[2J" } });
-  expect(g.calls.find((a) => a[1] === "split").filter((x) => x === "--env")).toHaveLength(1);
+  const gs = g.calls.find((a) => a[1] === "split");
+  expect(gs.slice(gs.indexOf("--no-focus") + 1)).toEqual(["--env", `TRACEPARENT=${CARRIED.TRACEPARENT}`, "--env", "TRACESTATE=", "--env", "BAGGAGE="]);
+  expect(s.ran.find((c) => c.includes("pane split"))).toContain(displayCommand(["--env", "TRACEPARENT=<forwarded>", "--env", "TRACESTATE=", "--env", "BAGGAGE="]));
   expect(s.start.env).toEqual({ TRACEPARENT: "<forwarded>" });
   expect(s.warnings.filter((w) => /TRACE|BAGGAGE/.test(w))).toEqual(["BAGGAGE was not passed to the worker: routr passes it only when it is at most 8192 bytes of printable ASCII or tabs"]);
   expect(JSON.stringify(s)).not.toContain("\x1b[2J");
-  // None at all: the split is as before, and nothing is said.
+  // None at all: all three are passed empty, so the pane does not inherit the herdr server's, and nothing is said.
   const h = fakeHerdr();
   const none = await launch(launchArgs, h.deps);
-  expect(h.calls.find((a) => a[1] === "split")).not.toContain("--env");
+  const hs = h.calls.find((a) => a[1] === "split");
+  expect(hs.slice(hs.indexOf("--no-focus") + 1)).toEqual(["--env", "TRACEPARENT=", "--env", "TRACESTATE=", "--env", "BAGGAGE="]);
   expect([none.start.env, none.warnings.filter((w) => /TRACE|BAGGAGE|carrier/.test(w))]).toEqual([{}, []]);
 });
 
@@ -1312,22 +1332,24 @@ test("a dry run shows the split's --env by name and placeholder only", async () 
     "--env", "TRACEPARENT=<forwarded>", "--env", "TRACESTATE=<forwarded>", "--env", "BAGGAGE=<forwarded>"]));
   expect(r.start.env).toEqual({ TRACEPARENT: "<forwarded>", TRACESTATE: "<forwarded>", BAGGAGE: "<forwarded>" });
   noCarrierValue(r);
-  for (const extra of [["--worktree", "b"], ["--pane", "w1:p9"]]) {
-    const p = await launch([...launchArgs, ...extra, "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); }, env: { ...CARRIED } });
-    expect(p.would_run.join("\n")).not.toContain("--env");
-    expect(p.start.env).toEqual({});
-    expect(p.warnings.some((w) => w.includes("passed none"))).toBe(true);
-    noCarrierValue(p);
-  }
+  // A worktree's pane is split from its root pane, with the same carriers; an existing pane gets none, and is told so.
+  const w = await launch([...launchArgs, "--worktree", "b", "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); }, env: { TRACEPARENT: CARRIED.TRACEPARENT } });
+  expect(w.would_run.find((c) => c.includes("pane split"))).toBe(displayCommand(["herdr", "pane", "split", "<root-pane>", "--direction", "right", "--cwd", "<worktree-path>", "--no-focus",
+    "--env", "TRACEPARENT=<forwarded>", "--env", "TRACESTATE=", "--env", "BAGGAGE="]));
+  expect([w.start.env, w.warnings.some((x) => x.includes("passed none"))]).toEqual([{ TRACEPARENT: "<forwarded>" }, false]);
+  noCarrierValue(w);
+  const p = await launch([...launchArgs, "--pane", "w1:p9", "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); }, env: { ...CARRIED } });
+  expect(p.would_run.join("\n")).not.toContain("--env");
+  expect(p.start.env).toEqual({});
+  expect(p.warnings.some((x) => x.includes("passed none"))).toBe(true);
+  noCarrierValue(p);
 });
 
-test("a worktree's pane, an existing pane and an adopted agent get no carriers, and launch says it passed none, never that the worker has none", async () => {
+test("an existing pane and an adopted agent get no carriers, and launch says it passed none, never that the worker has none", async () => {
   const here = process.cwd(), env = { HERDR_ENV: "1", ...CARRIED };
-  const wt = fakeHerdr({ reply: (a) => (a[0] === "worktree" ? herdrOK({ root_pane: { pane_id: "w1:p2" }, worktree: { path: here } }) : undefined) });
   const pane = fakeHerdr();
   const adopt = fakeHerdr({ reply: (a) => (a[1] === "prompt" ? herdrOK({}) : a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", interactive_ready: true, cwd: here } }) : undefined) });
   const runs = [
-    [wt, [...launchArgs, "--worktree", "worker"], "herdr's worktree create"],
     [pane, [...launchArgs, "--pane", "w1:p9", "--cwd", here], "an existing pane"],
     [adopt, [...launchArgs, "--pane", "w1:p9", "--cwd", here, "--task", "Task"], "an existing pane"],
   ];
@@ -1347,6 +1369,107 @@ test("a worktree's pane, an existing pane and an adopted agent get no carriers, 
   // No carrier present: nothing to say.
   const quiet = fakeHerdr();
   expect((await launch([...launchArgs, "--pane", "w1:p9", "--cwd", here], quiet.deps)).warnings.filter((w) => w.includes("passed none"))).toEqual([]);
+});
+
+// A worktree's own fake: herdr opens workspace w5 with root pane w5:p1 in `path`; a split of w5:p1 makes w5:p2.
+const worktreeHerdr = (path, { kind, split, close, also = () => undefined } = {}) => fakeHerdr({ kind, reply: (a) => {
+  if (a[0] === "worktree") return herdrOK({ root_pane: { pane_id: "w5:p1" }, worktree: { path }, workspace: { workspace_id: "w5" } });
+  if (a[1] === "split") return split?.(a) ?? (a[2] === "w5:p1" ? herdrOK({ pane: { pane_id: "w5:p2" } }) : herdrError("not_the_root"));
+  if (a[1] === "close") return close?.(a);
+  if (a[1] === "process-info") return shellInfo([{ pid: 1, cwd: path }]);
+  return also(a);
+} });
+
+test("a worktree launch opens the worker's pane itself: split of the root pane in the worktree, with the carriers, then the root closed", async () => {
+  const repo = scratch("wt-carriers-repo"), path = scratch("wt-carriers-tree");
+  writeFileSync(join(repo, ".env.test"), "x=1");
+  let copiedBeforeSplit = null;
+  const f = worktreeHerdr(path, { split: (a) => { copiedBeforeSplit = existsSync(join(path, ".env.test")); return undefined; } });
+  const r = await launch([...launchArgs, "--cwd", repo, "--worktree", "b", "--copy", ".env.test", "--task", "Task"], { ...f.deps, env: { HERDR_ENV: "1", TRACEPARENT: CARRIED.TRACEPARENT, BAGGAGE: CARRIED.BAGGAGE } });
+  expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w5:p2", cwd: path, worktree: { branch: "b", path, workspace: "w5" } });
+  // The order: worktree create, the copy, a split of the root pane in the worktree, the root's close, then the agent.
+  const at = (pred) => f.calls.findIndex(pred);
+  const split = f.calls[at((a) => a[1] === "split")];
+  expect(split).toEqual(["pane", "split", "w5:p1", "--direction", "right", "--cwd", path, "--no-focus",
+    "--env", `TRACEPARENT=${CARRIED.TRACEPARENT}`, "--env", "TRACESTATE=", "--env", `BAGGAGE=${CARRIED.BAGGAGE}`]);
+  expect(copiedBeforeSplit).toBe(true);
+  expect(at((a) => a[0] === "worktree")).toBe(0);
+  expect(at((a) => a[1] === "split")).toBe(1);
+  expect(f.calls[2]).toEqual(["pane", "close", "w5:p1"]);
+  const start = f.calls.find((a) => a[1] === "start");
+  expect(start.slice(start.indexOf("--pane"), start.indexOf("--pane") + 2)).toEqual(["--pane", "w5:p2"]);
+  // Nothing after the close goes to the root pane: the agent never starts there.
+  expect(f.calls.slice(3).filter((a) => a.includes("w5:p1"))).toEqual([]);
+  expect(r.ran.slice(0, 3)).toEqual([displayCommand(["herdr", "worktree", "create", "--cwd", repo, "--branch", "b", "--no-focus"]),
+    displayCommand(["herdr", "pane", "split", "w5:p1", "--direction", "right", "--cwd", path, "--no-focus", "--env", "TRACEPARENT=<forwarded>", "--env", "TRACESTATE=", "--env", "BAGGAGE=<forwarded>"]),
+    displayCommand(["herdr", "pane", "close", "w5:p1"])]);
+  expect(r.start.env).toEqual({ TRACEPARENT: "<forwarded>", BAGGAGE: "<forwarded>" });
+  expect(r.warnings.filter((w) => /passed none|TRACE|BAGGAGE/.test(w))).toEqual([]);
+  expect(cleanupStep(r)?.argv).toEqual(["routr", "cleanup", "--cwd", repo, "--worktree", "b"]);
+  noCarrierValue(r);
+  expect(typed(f.calls)).not.toMatch(/CARRIER_MARK|TRACEPARENT|TRACESTATE|BAGGAGE/);
+  // Cursor (started with pane run, not agent start) gets the same pane.
+  const src = join(scratch("wt-cursor"), "source.json"); writeFileSync(src, "{}");
+  const c = worktreeHerdr(path, { kind: "cursor", also: (a) => (a[1] === "get" && c.calls.some((x) => x[1] === "run") ? herdrOK({ agent: { agent: "cursor", agent_status: "idle" } }) : undefined) });
+  const cr = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--cwd", repo, "--worktree", "c"], { ...c.deps, cursorConfigSource: src, tempRoot: scratch("wt-cursor-tmp") });
+  expect(cr).toMatchObject({ ok: true, pane: "w5:p2" });
+  expect(c.calls.filter((a) => a[1] === "run").map((a) => a[2])).toEqual(["w5:p2"]);
+  expect(c.calls.slice(3).filter((a) => a.includes("w5:p1"))).toEqual([]);
+});
+
+test("a worktree launch whose split, or close of the root pane, fails fails before any agent starts, saying the worktree was made and how to remove it", async () => {
+  const path = process.cwd(), env = { HERDR_ENV: "1", ...CARRIED };
+  const failed = worktreeHerdr(path, { split: () => herdrError("split_failed") });
+  const r = await launch([...launchArgs, "--cwd", "/", "--worktree", "b"], { ...failed.deps, env });
+  noCarrierValue(r);
+  expect(r).toMatchObject({ ok: false, state: "failed" });
+  expect(r.error).toContain(`created the worktree ${path}`);
+  expect(r.error).toContain(displayCommand(["routr", "cleanup", "--cwd", resolve("/"), "--worktree", "b"]));
+  expect(cleanupStep(r)?.argv).toEqual(["routr", "cleanup", "--cwd", resolve("/"), "--worktree", "b"]);
+  // Neither the root pane (it is the workspace's only pane: closing it would leave the worktree) nor any agent.
+  expect(failed.calls.filter((a) => a[1] === "close" || a[1] === "start")).toEqual([]);
+  // A root pane left open would make the worker's pane one of two, which cleanup --pane would close, leaving the
+  // worktree: nothing runs yet, so the launch ends there, and only the worktree's cleanup is given.
+  const kept = worktreeHerdr(path, { close: () => herdrError("boom") });
+  const k = await launch([...launchArgs, "--cwd", "/", "--worktree", "b", "--task", "Task"], { ...kept.deps, env });
+  expect(k).toMatchObject({ ok: false, state: "failed" });
+  expect(k.error).toContain(`created the worktree ${path}`);
+  expect(k.error).toContain("extra shell pane");
+  expect(k.error).toContain("w5:p1");
+  expect(k.error).toContain(displayCommand(["routr", "cleanup", "--cwd", resolve("/"), "--worktree", "b"]));
+  expect(k.next.filter((n) => n.kind === "run" && n.argv[1] === "cleanup").map((n) => n.argv)).toEqual([["routr", "cleanup", "--cwd", resolve("/"), "--worktree", "b"]]);
+  expect(instructions(k)).not.toContain("--pane");
+  expect(kept.calls.filter((a) => ["start", "run", "prompt", "send-keys"].includes(a[1]))).toEqual([]);
+  expect(kept.calls.filter((a) => a[1] === "close")).toEqual([["pane", "close", "w5:p1"]]); // the new pane is not closed: that would close the workspace
+  noCarrierValue(k);
+});
+
+test("a --pane launch into a pane of a worktree's workspace keeps the pane's own cleanup, and reads no workspace", async () => {
+  const f = fakeHerdr();
+  const r = await launch([...launchArgs, "--pane", "w5:p2", "--cwd", process.cwd()], f.deps);
+  expect(r).toMatchObject({ ok: true, state: "ready", pane: "w5:p2" });
+  expect(cleanupStep(r)?.argv).toEqual(["routr", "cleanup", "--pane", "w5:p2"]); // cleanup --pane redirects a worktree's only pane itself
+  expect(f.calls.some((a) => a[1] === "list")).toBe(false);
+});
+
+test("a worktree launch whose agent never becomes ready fails without a carrier value, its pane's last lines redacted", async () => {
+  const path = process.cwd(), tail = `$ claude\nTRACEPARENT=${CARRIED.TRACEPARENT} BAGGAGE=${CARRIED.BAGGAGE}\nError: gone`;
+  const f = worktreeHerdr(path, { also: (a) => (a[1] === "wait" && f.calls.some((c) => c[1] === "start") ? herdrError("agent_not_running")
+    : a[1] === "read" && a.includes("recent-unwrapped") ? herdrOK({ text: tail }) : undefined) });
+  const r = await launch([...launchArgs, "--worktree", "b", "--task", "Task"], { ...f.deps, env: { HERDR_ENV: "1", ...CARRIED } });
+  expect(r).toMatchObject({ ok: false, state: "failed", pane: "w5:p2" });
+  expect(r.screen).toContain("TRACEPARENT=<carrier> BAGGAGE=<carrier>");
+  noCarrierValue(r);
+});
+
+test("a worktree dry run plans the same steps, with no values and no pane ids", async () => {
+  const r = await launch([...launchArgs, "--worktree", "b", "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); }, env: { ...CARRIED } });
+  expect(r.would_run.slice(0, 3)).toEqual([displayCommand(["herdr", "worktree", "create", "--cwd", process.cwd(), "--branch", "b", "--no-focus"]),
+    displayCommand(["herdr", "pane", "split", "<root-pane>", "--direction", "right", "--cwd", "<worktree-path>", "--no-focus", "--env", "TRACEPARENT=<forwarded>", "--env", "TRACESTATE=<forwarded>", "--env", "BAGGAGE=<forwarded>"]),
+    displayCommand(["herdr", "pane", "close", "<root-pane>"])]);
+  expect(r.would_run.find((c) => c.includes("agent start"))).toContain(displayCommand(["--pane", "<new-pane>"]));
+  expect(r.would_run.join("\n")).not.toContain("pane current");
+  noCarrierValue(r);
 });
 
 test("a screen launch returns never carries a carrier value routr holds: the needs_input screen and the failure tail are redacted", async () => {

@@ -414,18 +414,29 @@ folder) that holds `%` or `!` is refused before anything is typed: `ok: false`, 
 `error` "A cmd shell expands % and ! in a folder path even inside quotes, so routr will not type this one into it. Use
 a folder whose path has neither, or a pane running PowerShell." A pane launch split is closed; a `--pane` is kept.
 
+A `--worktree` launch opens the worker's pane itself. `ran` shows, in order: `herdr worktree create`, then (after any
+`--copy`) `herdr pane split <root pane> --direction right --cwd <worktree path> --no-focus --env …`, a split of the
+pane herdr opened with the worktree, then `herdr pane close <root pane>`; the agent starts in the new pane, which is
+`pane`. A dry run's `would_run` shows the same three with `<root-pane>` and `<worktree-path>`. When the split, or the
+close of the root pane, fails, the launch fails before any agent starts (`state: "failed"`): `error` says the worktree
+was created (after a failed close, also that its workspace has an extra shell pane, naming it) and gives the
+`routr cleanup --cwd <repo> --worktree <branch>` that removes it, which is also the cleanup step in `next`. A launch
+never goes on with two panes in a worktree's workspace, where `routr cleanup --pane` would close the worker's pane and
+leave the worktree.
+
 Trace-context carriers: the `TRACEPARENT`, `TRACESTATE` and `BAGGAGE` in launch's own environment (any case, on
-Windows; an empty one is absent) go to a pane launch splits, as `--env NAME=VALUE` on that `herdr pane split`. Each is
-passed only within routr's limits: printable ASCII or tab, at most 512 bytes (`TRACEPARENT`, `TRACESTATE`) or 8192
-(`BAGGAGE`). One outside them is not passed, and a warning names it, never its value: "`<NAME>` was not passed to the
-worker: routr passes it only when it is at most `<limit>` bytes of printable ASCII or tabs"; the others still go. A
-worktree's pane, a `--pane` and an adopted agent get none: when any is present, one warning says "This launch passed
-none of `<names>` to the worker: `<why>`, and routr never types a carrier into a shell", where `<why>` is "herdr's
-worktree create takes no environment (the pane's shell starts with whatever herdr's server has)" or "an existing pane
-keeps the environment its shell, or the agent already running there, started with". A dry run plans and warns the
-same way. No value is ever output: `start.env` lists each carrier passed as `"<forwarded>"`, and `ran` and `would_run`
-show the split's `--env NAME=<forwarded>`. `screen` has the value of every carrier launch found, passed or withheld,
-replaced by `<carrier>`, also across the pane's line wraps.
+Windows; an empty one is absent) go to every pane launch splits (beside the caller, or in a new worktree), as
+`--env NAME=VALUE` on that `herdr pane split`. Each is passed only within routr's limits: printable ASCII or tab, at
+most 512 bytes (`TRACEPARENT`, `TRACESTATE`) or 8192 (`BAGGAGE`). One outside them is not passed, and a warning names
+it, never its value: "`<NAME>` was not passed to the worker: routr passes it only when it is at most `<limit>` bytes of
+printable ASCII or tabs"; the others still go. Every split names all three: each one not passed, absent or withheld,
+is `--env NAME=` (empty), so the pane does not inherit one from herdr's server; OpenTelemetry treats an empty carrier
+as absent. A `--pane` and an adopted agent get none: when any is present, one warning says "This launch passed none
+of `<names>` to the worker: an existing pane keeps the environment its shell, or the agent already running there,
+started with, and routr never types a carrier into a shell". A dry run plans and warns the same way. No value is ever
+output: `start.env` lists each carrier passed as `"<forwarded>"` (and none that is empty), and `ran` and `would_run`
+show the split's `--env NAME=<forwarded>`, or `--env NAME=` for an empty one. `screen` has the value of every carrier
+launch found, passed or withheld, replaced by `<carrier>`, also across the pane's line wraps.
 
 `headline`: `routr: <name> (<kind>) took its task in pane <pane>`; `routr: <name> is ready in pane <pane>; no task
 sent`; `routr: <name> needs input in pane <pane>: <why>`; `routr: launch failed: <error>`; `routr: planned <kind>
@@ -846,7 +857,7 @@ Shared fields that are new to a command are listed as added.
 | `command` | renamed `ran` | `command` means a runnable line in `next`; this is display history |
 | `planned_command` (dry run) | renamed `would_run` | as above; says it is a plan |
 | `argv`, `env` | moved to `start.argv`, `start.env` | `argv` means a runnable command's words in `next`; this is the harness start |
-| (trace-context carriers passed) | added to `start.env`, each as `"<forwarded>"`; `ran` and `would_run` show `--env NAME=<forwarded>` | names what the worker gets; a carrier's value is never output |
+| (trace-context carriers passed) | added to `start.env`, each as `"<forwarded>"`; `ran` and `would_run` show `--env NAME=<forwarded>`, and `--env NAME=` for one not passed | names what the worker gets; a carrier's value is never output |
 | (the harness's executable) | added as `start.executable` | the start line reads whole |
 | `steps[]`: `step`, `ok` | kept | what it did, in order |
 | `steps[].detail` | kept, built from classified codes, never herdr's message or answer | outside text reaches output only as `screen` |

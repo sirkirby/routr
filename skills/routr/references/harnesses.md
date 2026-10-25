@@ -135,7 +135,7 @@ Rules 0, 1 and 7 are about panes, in herdr; a headless worker has no pane, scree
 ## Trace context each harness reads
 
 routr passes `TRACEPARENT`, `TRACESTATE` and `BAGGAGE` from its own environment to headless workers and to a pane it
-splits, unchanged (`docs/guarantees.md`, "Trace context"). What a harness does with an inherited one is its own, and
+makes (a split, or a new worktree's), unchanged (`docs/guarantees.md`, "Trace context"). What a harness does with an inherited one is its own, and
 only matters when that harness's own OpenTelemetry tracing is on. Read-only research, 2026-10-24: vendor docs [doc],
 official source [src], and strings in the installed binary [bin]; no session was started. No harness reads `BAGGAGE`.
 

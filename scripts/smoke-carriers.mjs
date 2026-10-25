@@ -12,18 +12,30 @@
 //    spent (Claude may stop at its folder-trust screen; its process is there all the same). The environment read is
 //    the harness's own: the process started as `claude`, or running the file `claude` on PATH resolves to; a wrapper
 //    in front of it, or no such process, fails the check.
-// Every pane it made is closed at the end, however the run went; a pane it could not close is named, and fails it.
+// 3. Makes a throwaway git repository in its temporary folder (never the checkout it runs from), and opens a worker's
+//    pane in a new worktree of it with routr's own worktree steps (worktree create, a split of the root pane with the
+//    carriers, the root closed), one carrier left out. Checks the workspace holds only the new pane, that the new pane's
+//    shell got the values byte for byte and the one left out empty (not the herdr server's own), then removes the
+//    worktree and its workspace with `herdr worktree remove`, and the repository with the temporary folder. With no
+//    workspace open for a repository, herdr's worktree create opens one for the source checkout too (seen 2026-10-25,
+//    herdr 0.9.5: a workspace on the throwaway repository, not a linked worktree, one shell pane), so every workspace
+//    whose checkout is inside the temporary folder is closed before the folder goes, found by its checkout path, and
+//    no other. launch does not do this: a lead's repository has its workspace open already.
+// Every pane it made is closed at the end, however the run went; a pane it could not close is named, and fails it, and
+// so does a worktree it could not remove.
 // Why the halves differ: ps prints a process's environment as one line, entries separated by spaces, so it cannot show
 // a value holding a TAB or a space exactly, and the live run (herdr 0.9.5, macOS zsh, 2026-10-24) found the hostile
 // values at their limits missing from ps's text while short ones were there exactly. So the shell half proves the
 // bytes (its fixture writes its own environment as JSON), and the agent half proves only that the agent inherits what
 // its pane's shell has, with markers of letters, digits, `-` and `_` that ps shows unambiguously.
-// Writes only in a temporary folder it removes. Prints carrier names, never values. Exits 1 when a check fails.
+// Writes only in a temporary folder it removes, and the worktree herdr makes for its repository, which it removes. Prints carrier names, never values. Exits 1 when a check fails.
 import { randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
-import { deadline, paneView, quote, runHerdr, splitArgs, waitForShell } from "../src/lib/herdr.mjs";
+import { basename, isAbsolute, join, posix, win32 } from "node:path";
+import { deadline, paneView, quote, runHerdr, splitArgs, waitForShell, worktreeArgs, worktreePane } from "../src/lib/herdr.mjs";
+import { worktreesFromGit } from "../src/lib/cleanup.mjs";
+import { displayCommand } from "../src/lib/next.mjs";
 import { processError } from "../src/lib/process-boundary.mjs";
 import { CARRIERS, carriersFrom, installedAt, probe, realOr } from "../src/lib/runtime.mjs";
 
@@ -42,6 +54,25 @@ export function hostileCarriers(tag = randomUUID().slice(0, 8)) {
 export function agentCarriers(tag = randomUUID().replace(/-/g, "").slice(0, 8)) {
   const hex = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "");
   return { TRACEPARENT: `00-${hex.slice(0, 32)}-${hex.slice(32, 48)}-01`, TRACESTATE: `routr_smoke-${tag}-ts`, BAGGAGE: `routr_smoke-${tag}-bg` };
+}
+// The worktree half's carriers: `sent` without `left` (one routr does not have), and what the pane's shell must then
+// hold: the others exactly, and `left` empty, whatever the herdr server has.
+export function leftOut(sent, left = "TRACESTATE") {
+  const passed = Object.fromEntries(Object.entries(sent).filter(([name]) => name !== left));
+  return { passed, expected: { ...passed, [left]: "" } };
+}
+// The ids of the workspaces (`workspace list`'s) whose checkout is `dir` or inside it: by path, never by name.
+// Compared as routr compares paths, through each one's real path, and with the platform's own rules: on Windows any
+// case and either slash, a path on another drive never inside. `platform` is a test seam; a real path is read only on
+// the platform this runs on.
+export function workspacesIn(workspaces, dir, { platform = process.platform } = {}) {
+  const P = platform === "win32" ? win32 : posix, canon = (p) => (platform === process.platform ? realOr(p) : p);
+  const under = (p) => {
+    if (typeof p !== "string" || !P.isAbsolute(p)) return false;
+    const rel = P.relative(canon(dir), canon(p));
+    return rel === "" || (!rel.startsWith("..") && !P.isAbsolute(rel));
+  };
+  return (workspaces ?? []).filter((w) => under(w?.worktree?.checkout_path)).map((w) => w.workspace_id);
 }
 // The carriers `sent` that `got` (an environment object) does not hold exactly.
 export const missingIn = (got, sent) => Object.keys(sent).filter((name) => got?.[name] !== sent[name]);
@@ -67,8 +98,9 @@ export const isHarness = ({ argv0, exe = null }, { name = "claude", installed = 
   return exe === installed || (Boolean(argv0) && (argv0 === installed || (isAbsolute(argv0) && realOr(argv0) === installed)));
 };
 
-// The check itself; `herdr` (the transport), `env` and `log` are seams the tests give.
-export async function smokeCarriers({ herdr = runHerdr, env = process.env, log = console.log } = {}) {
+const gitIn = (dir, args) => probe("git", ["-C", dir, ...args], { separate: true });
+// The check itself; `herdr` (the transport), `git(dir, args)`, `env` and `log` are seams the tests give.
+export async function smokeCarriers({ herdr = runHerdr, git = gitIn, env = process.env, log = console.log } = {}) {
   if (env.HERDR_ENV !== "1") { log("smoke:carriers runs inside a herdr pane (HERDR_ENV=1); nothing done"); return 1; }
   const dir = realpathSync.native(mkdtempSync(join(tmpdir(), "routr-smoke-carriers-")));
   const sent = hostileCarriers();
@@ -78,15 +110,27 @@ export async function smokeCarriers({ herdr = runHerdr, env = process.env, log =
   const panes = [];
   let failed = 0;
   const say = (what, missing) => { if (missing.length) failed++; log(`${what}: ${missing.length ? `FAILED (${missing.join(", ")} did not arrive exactly)` : `ok (${CARRIERS.join(", ")} arrived exactly)`}`); };
+  // `pane`'s shell at a prompt in `cwd`: its family.
+  const shellOf = async (pane, cwd, what = "the pane's shell") => {
+    let shell = "posix";
+    const r = await waitForShell(paneView(call, pane), { sleep, now: () => performance.now(), remaining: deadline(30000, () => performance.now(), `${what} did not come to a prompt in 30 s`), cwd,
+      onShell: (name) => { shell = /^(pwsh|powershell)/i.test(name) ? "powershell" : /^cmd/i.test(name) ? "cmd" : "posix"; } });
+    if (!r.ok) throw new Error(`${what}: ${r.why}`);
+    return shell;
+  };
   // A pane split with `carriers`, its shell at a prompt.
   const split = async (carriers) => {
     const pane = (await call(splitArgs("down", dir, carriers))).data.result.pane.pane_id;
     panes.push(pane);
-    let shell = "posix";
-    const r = await waitForShell(paneView(call, pane), { sleep, now: () => performance.now(), remaining: deadline(30000, () => performance.now(), "the pane's shell did not come to a prompt in 30 s"), cwd: dir,
-      onShell: (name) => { shell = /^(pwsh|powershell)/i.test(name) ? "powershell" : /^cmd/i.test(name) ? "cmd" : "posix"; } });
-    if (!r.ok) throw new Error(`the pane's shell: ${r.why}`);
-    return { pane, shell };
+    return { pane, shell: await shellOf(pane, dir) };
+  };
+  // Starts the fixture in `pane`'s shell; the environment it saw, or null if it wrote none within 15 s.
+  const envIn = async (pane, shell, name) => {
+    const script = join(dir, `${name}.cjs`), out = join(dir, `${name}.json`);
+    writeFileSync(script, FIXTURE(out));
+    await call(["pane", "run", pane, fixtureCommand(shell, process.execPath, script)]);
+    for (let i = 0; i < 60; i++) { await sleep(250); try { return JSON.parse(readFileSync(out, "utf8")); } catch {} }
+    return null;
   };
   // The harness's own process among the pane's foreground ones, once it is there; null if none is within 10 s.
   const harnessIn = async (pane) => {
@@ -107,11 +151,7 @@ export async function smokeCarriers({ herdr = runHerdr, env = process.env, log =
     if (carriersFrom(sent).withheld.length) throw new Error("the smoke's own carriers are outside routr's limits");
     {
       const { pane, shell } = await split(sent);
-      const script = join(dir, "fixture.cjs"), out = join(dir, "env.json");
-      writeFileSync(script, FIXTURE(out));
-      await call(["pane", "run", pane, fixtureCommand(shell, process.execPath, script)]);
-      let got = null;
-      for (let i = 0; i < 60 && !got; i++) { await sleep(250); try { got = JSON.parse(readFileSync(out, "utf8")); } catch {} }
+      const got = await envIn(pane, shell, "split");
       say(`split pane, ${shell} shell`, got ? missingIn(got, sent) : CARRIERS);
     }
     if (process.platform === "win32") log("agent: not checked on Windows (another process's environment cannot be read there)");
@@ -131,7 +171,66 @@ export async function smokeCarriers({ herdr = runHerdr, env = process.env, log =
       let r; try { r = await herdr(["pane", "close", pane], 5000); } catch { r = { ok: false, code: "herdr_unreachable" }; }
       if (!r?.ok) { failed++; log(`FAILED: could not close pane ${pane} (${r?.code ?? "no answer"}); close it yourself`); }
     }
-    rmSync(dir, { recursive: true, force: true });
+  }
+  // The worktree half, on its own: a failure above does not skip it. Its pane is never closed by itself (that would
+  // close the workspace and leave the worktree); removing the worktree closes the workspace.
+  const repo = join(dir, "repo");
+  let workspace = null, tree = null, created = false;
+  try {
+    const branch = `routr-smoke-${randomUUID().slice(0, 8)}`;
+    mkdirSync(repo);
+    for (const a of [["init", "-q"], ["-c", "user.name=routr smoke", "-c", "user.email=smoke@routr.invalid", "commit", "-q", "--allow-empty", "-m", "routr smoke"]]) {
+      const r = await git(repo, a);
+      if (r?.code !== 0) throw new Error(`git ${a.includes("init") ? "init" : "commit"} in the throwaway repository failed`);
+    }
+    created = true; // from here on, herdr may have made a worktree whatever it answers
+    const made = (await call(worktreeArgs(repo, branch))).data?.result;
+    workspace = made?.workspace?.workspace_id ?? null; tree = made?.worktree?.path ?? null;
+    if (typeof made?.root_pane?.pane_id !== "string" || !workspace || !tree) throw new Error("herdr worktree create returned an answer this check cannot read");
+    const { passed, expected } = leftOut(sent);
+    const { pane, closed } = await worktreePane((a, _shown, tolerate) => (tolerate ? herdr(a, 15000) : call(a)), made.root_pane.pane_id, tree, passed);
+    if (!closed) { failed++; log(`FAILED: could not close the worktree's root pane ${made.root_pane.pane_id}`); }
+    const left = ((await call(["pane", "list", "--workspace", workspace])).data?.result?.panes ?? []).map((p) => p.pane_id);
+    if (left.length !== 1 || left[0] !== pane) { failed++; log(`FAILED: the worktree's workspace holds ${left.length} panes, not only the new one`); }
+    const shell = await shellOf(pane, tree, "the worktree pane's shell");
+    const got = await envIn(pane, shell, "worktree");
+    say(`worktree pane, ${shell} shell, one carrier empty`, got ? missingIn(got, expected) : CARRIERS);
+  } catch (e) { failed++; log(`FAILED: worktree: ${e?.message ?? e}`); }
+  finally {
+    // The folder goes only once nothing in it is still in use: the worktree removed (its git metadata is in the
+    // repository, so a removal that failed or cannot be known keeps the repository for the retry), and every workspace
+    // on the folder closed. Each part kept is named, with its exact path.
+    let keep = false;
+    const fail = (why) => { failed++; keep = true; log(`FAILED: ${why}`); };
+    // herdr's workspaces, or null when it did not give a list: never an empty one in its place.
+    const listWorkspaces = async () => { try { const r = await herdr(["workspace", "list"], 5000); const all = r?.ok ? r.data?.result?.workspaces : null; return Array.isArray(all) ? all : null; } catch { return null; } };
+    // What a create that failed, or answered unusably, made: the repository's own worktree list says (it is new, so
+    // any linked worktree is this run's), and herdr's workspaces which one is that worktree's.
+    if (created && !tree) {
+      const r = await git(repo, ["worktree", "list", "--porcelain"]);
+      if (r?.code === 0 && typeof r.out === "string") tree = worktreesFromGit(r.out).worktrees.find((w) => w.is_linked_worktree)?.path ?? null;
+      else fail(`git could not list the worktrees of the throwaway repository at ${repo}, so whether herdr made one is not known; it is kept: look with ${displayCommand(["git", "-C", repo, "worktree", "list"])}`);
+    }
+    // A worktree with no workspace known is removed through git only once herdr's list answered and shows none for it:
+    // git's remove would leave an open workspace behind, outside the folder, where nothing here would close it.
+    let placed = true;
+    if (tree && !workspace) { const all = await listWorkspaces(); placed = all != null; workspace = all && (workspacesIn(all, tree)[0] ?? null); }
+    if (tree && !placed) {
+      fail(`herdr's workspaces could not be listed, so whether the worktree at ${tree} has a workspace open is not known; the throwaway repository at ${repo} is kept for it: find its workspace with ${displayCommand(["herdr", "workspace", "list"])} and remove it with herdr worktree remove --workspace <id>, or if it has none, ${displayCommand(["git", "-C", repo, "worktree", "remove", tree])}; then remove the folder ${dir}`);
+    } else if (tree) {
+      // Through herdr when the worktree has a workspace (that closes it too), else through git; never forced.
+      const retry = workspace ? ["herdr", "worktree", "remove", "--workspace", workspace] : ["git", "-C", repo, "worktree", "remove", tree];
+      let ok = false;
+      try { ok = workspace ? (await herdr(retry.slice(1), 15000))?.ok === true : (await git(repo, retry.slice(3)))?.code === 0; } catch {}
+      if (!ok || existsSync(tree)) fail(`could not remove the worktree at ${tree}; the throwaway repository at ${repo} is kept for it: remove it with ${displayCommand(retry)}, then the folder ${dir}`);
+    }
+    const all = await listWorkspaces(), own = all && workspacesIn(all, dir);
+    if (own == null) fail(`could not list herdr's workspaces to close any on the throwaway repository; ${dir} is kept: close any workspace on it, then remove it`);
+    for (const id of own ?? []) {
+      let r; try { r = await herdr(["workspace", "close", id], 5000); } catch { r = { ok: false, code: "herdr_unreachable" }; }
+      if (!r?.ok) fail(`could not close workspace ${id}, on the throwaway repository (${r?.code ?? "no answer"}); ${dir} is kept: close it with ${displayCommand(["herdr", "workspace", "close", id])}, then remove the folder`);
+    }
+    if (!keep) rmSync(dir, { recursive: true, force: true });
   }
   return failed;
 }

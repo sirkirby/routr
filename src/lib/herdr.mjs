@@ -3,7 +3,7 @@
 // and an advice command that reads Cursor's usage never loads the launcher.
 import { stripVTControlCharacters } from "node:util";
 import { callHerdr } from "./process-boundary.mjs";
-import { FORWARDED, realPath, start } from "./runtime.mjs";
+import { CARRIERS, FORWARDED, realPath, start } from "./runtime.mjs";
 
 // A branch name launch gives `herdr worktree create`, and cleanup finds a worktree by.
 export const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,80}$/;
@@ -143,14 +143,46 @@ export const paneView = (call, pane) => ({
   keys: (...keys) => call(["pane", "send-keys", pane, ...keys]),
 });
 
-// A new pane beside the caller's, in `cwd`, its shell started with the trace-context carriers (runtime's, checked) as
-// `--env NAME=VALUE`: the only herdr start with an environment option (0.9.5: `worktree create` and `agent start` have
-// none). Measured 2026-10-24, herdr 0.9.5 on macOS zsh: values holding `,` `=` TAB `"` `'` `&` `!` `%` and spaces reached
-// the pane's shell byte for byte. herdr is started directly, never through a shell, so nothing here is quoted.
-// `shown: true` is the same command as output may carry it: each value replaced by FORWARDED. smoke:carriers splits
-// with this too.
-export const splitArgs = (direction, cwd, carriers = {}, { shown = false } = {}) => ["pane", "split", "--current", "--direction", direction, "--cwd", cwd, "--no-focus",
-  ...Object.entries(carriers).flatMap(([name, value]) => ["--env", `${name}=${shown ? FORWARDED : value}`])];
+// A new pane, in `cwd`: beside the caller's (`--current`), or beside `pane` (a worktree's root pane, which launch then
+// closes). Its shell gets each trace-context carrier as `--env NAME=VALUE`, from `carriers` (runtime's, checked): the
+// only herdr start with an environment option (0.9.5: `worktree create` and `agent start` have none). Measured
+// 2026-10-24, herdr 0.9.5 on macOS zsh: values holding `,` `=` TAB `"` `'` `&` `!` `%` and spaces reached the pane's
+// shell byte for byte. A pane starts from the herdr server's environment, and herdr's pane filter keeps the three names
+// (herdr 0.9.5's source, read 2026-10-25): so each of the three routr does not forward, absent or withheld, is passed
+// empty, and the worker never gets a context the server inherited when it started, from another trace. OpenTelemetry's
+// environment-carrier rules read an empty value as absent. herdr is started directly, never through a shell, so nothing
+// here is quoted. `shown: true` is the same command as output may carry it: each forwarded value replaced by FORWARDED
+// (an empty one has nothing to hide). smoke:carriers splits with this too.
+export const splitArgs = (direction, cwd, carriers = {}, { shown = false, pane = null } = {}) => ["pane", "split", ...(pane ? [pane] : ["--current"]),
+  "--direction", direction, "--cwd", cwd, "--no-focus",
+  ...CARRIERS.flatMap((name) => ["--env", `${name}=${!Object.hasOwn(carriers, name) ? "" : shown ? FORWARDED : carriers[name]}`])];
+
+// One split through `call(args, shown, tolerate)` (one herdr command, which throws on failure unless `tolerate`; `shown`
+// is the command as output may carry it): the new pane's id.
+export async function splitPane(call, direction, cwd, carriers, { pane = null } = {}) {
+  const r = await call(splitArgs(direction, cwd, carriers, { pane }), splitArgs(direction, cwd, carriers, { pane, shown: true }));
+  const id = r.data?.result?.pane?.pane_id;
+  if (typeof id !== "string" || !id) throw new Error("Herdr split returned no pane id");
+  return id;
+}
+
+// `herdr worktree create`, as launch gives it: a new worktree on `branch` (from `base`, as herdr takes it), opened as a
+// workspace with one shell pane, its root pane.
+export const worktreeArgs = (cwd, branch, base = null) => ["worktree", "create", "--cwd", cwd, "--branch", branch, ...(base ? ["--base", base] : []), "--no-focus"];
+// The worker's pane in a worktree herdr just opened. herdr opens the root pane from its server's environment (worktree
+// create takes none), which can hold a trace context the server inherited from another trace; so the worker's pane is
+// a split of the root pane, in the worktree, with routr's carriers (splitArgs), and the root pane is closed after it:
+// closing a workspace's only pane closes the workspace. Measured 2026-10-25, herdr 0.9.5 on macOS: the split's shell
+// had the values byte for byte, and the close left the workspace open with only the new pane. Throws when the split
+// fails; a close that fails leaves an extra shell pane and is returned, not thrown, for the caller to decide (launch
+// ends there; smoke:carriers fails its check): { pane, closed }.
+// `call` as splitPane's. smoke:carriers runs this too.
+export async function worktreePane(call, root, cwd, carriers) {
+  const pane = await splitPane(call, "right", cwd, carriers, { pane: root });
+  const close = ["pane", "close", root];
+  let closed = null; try { closed = await call(close, close, true); } catch {}
+  return { pane, closed: closed?.ok === true };
+}
 
 // Measured 2026-10-24, herdr 0.9.5 on macOS: 3 of 4 worktree launches got an unreadable process-info answer
 // during zsh startup; the same pane answered later. An unreadable look proves neither readiness
