@@ -5,7 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
-- OpenTelemetry export now traces orchestration and decisions, joins workers to their launches and lead sessions, and publishes every sent field. (#<PR>)
+- OpenTelemetry export now traces orchestration and decisions, joins workers to their launches and lead sessions, and publishes every sent field. (#115)
 - You can configure OpenTelemetry export to your own endpoint, with secret headers, delivery status and a detached sender that retries queued batches. (#114)
 - Workers in a `--worktree` launch's pane now get the OpenTelemetry trace context too, and no pane launch opens picks
   up a stale one from the herdr server: each carrier routr does not pass is set empty there. (#113)
