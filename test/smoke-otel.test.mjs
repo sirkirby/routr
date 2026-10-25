@@ -1,10 +1,33 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { encodeTraces } from "../src/lib/otel.mjs";
-import { checkSmokeTraces, fixtureHarness, fixturePaneRun, smokeParent } from "../scripts/smoke-otel.mjs";
+import { checkSmokeTraces, fixtureHarness, fixturePaneRun, smokeOtel, smokeParent, guardSmoke, SMOKE_ACTIVE, smokeProcessRows, smokeProcessesIn, teardownSmoke } from "../scripts/smoke-otel.mjs";
 
 const span = { traceId: "4bf92f3577b34da6a3ce929d0e0e4736", spanId: "1234567890abcdef", parentSpanId: "00f067aa0ba902b7", flags: 1, name: "routr usage", kind: 1, startTimeUnixNano: "1", endTimeUnixNano: "2", attributes: {} };
 const batch = (s = span) => encodeTraces([s], { schemaUrl: "https://opentelemetry.io/schemas/1.44.0" });
+test("smoke refuses any arguments and inherited markers before invoking its runner", async () => {
+  let called = 0; const log = [], run = async () => { called++; return 0; };
+  for (const args of [["--otel-sender"], ["--help"], ["anything"]]) expect(await guardSmoke(run, { args, env: {}, log: (s) => log.push(s) })).toBe(1);
+  for (const value of ["1", "", "0"]) expect(await guardSmoke(run, { args: [], env: { [SMOKE_ACTIVE]: value }, log: (s) => log.push(s) })).toBe(1);
+  expect(called).toBe(0); expect(log).toHaveLength(6);
+  expect(await smokeOtel({ args: ["--otel-sender"], env: {}, log: () => {} }, { run })).toBe(1);
+  expect(called).toBe(0);
+  expect(await smokeOtel({ args: [], env: {}, log: () => {} }, { run })).toBe(0);
+  expect(called).toBe(1);
+});
+test("smoke marks its own process and children, refuses nested entry, and restores the marker after failure", async () => {
+  const prior = process.env[SMOKE_ACTIVE], log = [], env = {};
+  try {
+    delete process.env[SMOKE_ACTIVE];
+    const code = await guardSmoke(async ({ env: childEnv }) => {
+      expect(process.env[SMOKE_ACTIVE]).toBe("1"); expect(childEnv[SMOKE_ACTIVE]).toBe("1");
+      return guardSmoke(() => { throw new Error("nested smoke ran"); }, { args: [], env: {}, log: (s) => log.push(s) });
+    }, { args: [], env, log: (s) => log.push(s) });
+    expect(code).toBe(1); expect(process.env[SMOKE_ACTIVE]).toBeUndefined(); expect(env).toEqual({});
+    expect(await guardSmoke(async () => { throw new Error("fixture failure"); }, { args: [], env, log: (s) => log.push(s) })).toBe(1);
+    expect(process.env[SMOKE_ACTIVE]).toBeUndefined();
+  } finally { if (prior == null) delete process.env[SMOKE_ACTIVE]; else process.env[SMOKE_ACTIVE] = prior; }
+});
 test("smoke's decoder verifies wire types, parentage, links, counts, duplicates and all never-sent content", () => {
   const opts = { counts: { "routr usage": 1 }, parent: smokeParent, markers: ["PRIVATE_MARKER"] };
   expect(checkSmokeTraces([batch()], opts).unique).toBe(1);
@@ -27,4 +50,50 @@ test("the pane smoke starts only its absolute fixture and accepts herdr's empty 
   expect(await run(["agent", "start", "worker", "--kind", "claude", "--pane", "w1:p2", "--", "--model", "unused"])).toEqual({ ok: true, data: { result: {} } });
   expect(calls).toEqual([["pane", "run", "w1:p2", "'/bun path' '/fixture path.mjs'"]]);
   expect((await run(["agent", "get", "w1:p2"])).data.result.agent.agent_status).toBe("idle");
+});
+
+test("the pane smoke owns a split immediately and permits only one creation attempt", async () => {
+  const calls = [], owned = [], run = fixturePaneRun("/fixture.mjs", { onPane: (p) => owned.push(p), run: async (args) => {
+    calls.push(args); return { ok: true, data: { result: { pane: { pane_id: "w1:p2" } } } };
+  } });
+  await run(["pane", "split", "--direction", "right"]);
+  expect(owned).toEqual(["w1:p2"]);
+  await expect(run(["pane", "split", "--direction", "right"])).rejects.toThrow("one pane");
+  for (const args of [["worktree", "create"], ["workspace", "create"], ["tab", "create"]]) await expect(run(args)).rejects.toThrow("one pane");
+  expect(calls).toHaveLength(1);
+  const failedCalls = [], failed = fixturePaneRun("/fixture.mjs", { run: async (a) => { failedCalls.push(a); throw new Error("split's reply lost"); } });
+  await expect(failed(["pane", "split"])).rejects.toThrow("reply lost");
+  await expect(failed(["pane", "split"])).rejects.toThrow("one pane");
+  expect(failedCalls).toHaveLength(1);
+});
+
+test("smoke inventory matches the exact home, including Windows paths, and rejects incomplete listings", () => {
+  const rows = smokeProcessRows(' 10 1 /bun /repo/routr.mjs --otel-sender --config /tmp/ro-one/config.json\n 11 1 /bun /tmp/ro-one/routr.mjs workers --hold fixture\n 12 1 /bun /tmp/ro-one-more/routr.mjs workers --hold fixture\n');
+  expect(smokeProcessesIn(rows, "/tmp/ro-one").map((r) => r.pid)).toEqual([10, 11]);
+  expect(smokeProcessRows("10 1 valid\ntruncated")).toBeNull();
+  const win = smokeProcessRows(JSON.stringify([{ ProcessId: 20, ParentProcessId: 1, CommandLine: 'bun.exe routr.mjs --otel-sender --config "C:\\Temp Dir\\RO-one\\config.json"' }]), "win32");
+  expect(smokeProcessesIn(win, "c:\\temp dir\\ro-one", { platform: "win32" }).map((r) => r.pid)).toEqual([20]);
+  expect(smokeProcessesIn(win, "c:\\temp dir\\ro", { platform: "win32" })).toEqual([]);
+  expect(smokeProcessRows("not json", "win32")).toBeNull();
+});
+
+test("failure teardown closes the owned pane, stops children and workers, kills owned processes, then verifies absence", async () => {
+  let rows = [{ pid: 10, ppid: 1, command: "bun routr.mjs --otel-sender --config /tmp/ro-one/config.json" }, { pid: 11, ppid: 1, command: "bun /tmp/ro-one/routr.mjs workers --hold fixture" }, { pid: 12, ppid: 1, command: "bun /tmp/ro-one/bin/fixture.mjs" }, { pid: 98, ppid: 1, command: "cat /tmp/ro-one/config.json" }, { pid: 99, ppid: 1, command: "bun /tmp/ro-other/routr.mjs --otel-sender" }];
+  const killed = [], closed = [], child = { pid: 40, exitCode: null, signalCode: null }; let stopped = 0, listed = 0;
+  const errors = await teardownSmoke({ home: "/tmp/ro-one", children: new Set([child]), pane: "w1:p2", closePane: async (p) => { closed.push(p); return { ok: true }; }, stopWorker: async () => { stopped++; } }, {
+    list: async () => { listed++; return rows; }, kill: (pid) => { killed.push(pid); rows = rows.filter((r) => r.pid !== pid); }, stopChild: (c) => { c.exitCode = 0; }, pause: async () => {}, attempts: 2,
+  });
+  expect(errors).toEqual([]); expect(closed).toEqual(["w1:p2"]); expect(stopped).toBe(1); expect(killed).toEqual([10, 11, 12]); expect(listed).toBeGreaterThanOrEqual(2);
+});
+
+test("teardown fails on survivors, unreadable process state or a pane it cannot close", async () => {
+  const row = { pid: 10, ppid: 1, command: "bun routr.mjs --otel-sender --config /tmp/ro-one/config.json" };
+  expect(await teardownSmoke({ home: "/tmp/ro-one" }, { list: async () => [row], kill: () => {}, pause: async () => {}, attempts: 1 })).not.toEqual([]);
+  expect(await teardownSmoke({ home: "/tmp/ro-one" }, { list: async () => null })).not.toEqual([]);
+  expect(await teardownSmoke({ home: "/tmp/ro-one", pane: "w1:p2", closePane: async () => ({ ok: false }) }, { list: async () => [] })).not.toEqual([]);
+  // Holders normally name their home only in the environment: their own claim pids are checked too, without killing a reused pid.
+  const holder = { pid: 30, ppid: 1, command: "bun /repo/routr.mjs workers --hold fixture" }, killed = [];
+  expect(await teardownSmoke({ home: "/tmp/ro-one", holderPids: new Set([30]) }, { list: async () => [holder], kill: (pid) => killed.push(pid), pause: async () => {}, attempts: 1 })).not.toEqual([]);
+  expect(killed).toEqual([]);
+  expect(await teardownSmoke({ home: "/tmp/ro-one", holderPids: new Set([30]) }, { list: async () => [{ ...holder, command: "unrelated process" }] })).toEqual([]);
 });

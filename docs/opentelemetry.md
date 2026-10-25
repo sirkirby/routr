@@ -381,3 +381,14 @@ This export has its own setting, consent, state, queue, sender and destination, 
 [anonymous telemetry](telemetry.md). `bun run smoke:otel` checks decoded fixture traces against a loopback receiver,
 without a subscription; it can target `ROUTR_SMOKE_OTLP_ENDPOINT`. In live herdr it additionally exercises a fixture
 pane. It is an explicit smoke command, never part of `bun test`.
+
+The smoke accepts no arguments and refuses an inherited `ROUTR_SMOKE_OTEL_ACTIVE` marker. It sets that marker in
+its own process and children before creating resources. Its pane adapter permits one split attempt and records
+ownership immediately, before readiness can fail. The pane half stays in-process because herdr's agent registry
+cannot recognize the fixture; it starts the absolute fixture through pane operations, never a real harness.
+Teardown closes that pane, stops fixture holders through their channels and kills owned sender/fixture processes.
+It then checks process command lines for its exact temp home (including `--otel-sender` and `workers --hold`) and
+checks the holder pids recorded in its own claims. Unreadable inventory or a survivor fails the smoke and retains
+the home for inspection. A reused pid belonging to another command is never signalled. Success is reported only
+after teardown. In-process queueing and every other background caller start routr's own source
+entry resolved from its runtime module, or its compiled binary, independently of the importing script.
