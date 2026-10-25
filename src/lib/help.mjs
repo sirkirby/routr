@@ -72,7 +72,7 @@ export const COMMANDS = {
       { name: "--pane", arg: "<id>", description: "a worker launched without --worktree: close its pane (a worktree's only pane is refused, with the command that removes the worktree). Takes no --cwd", required: false },
       { name: "--worker", arg: "<name>", description: "a headless worker (launched outside herdr): remove its worktree (with the same checks) and then its run folder and reports, once its process and its harness's process group have ended (it cannot see a command that left them). Takes no --cwd", required: false },
       { name: "--delete-branch", arg: null, description: "also delete the worktree's branch, once its work has landed: git deletes it only when it is merged (with --worktree, --path or --worker)", required: false, default: false },
-      { name: "--dry-run", arg: null, description: "check and say what it would do; change nothing", required: false, default: false },
+      { name: "--dry-run", arg: null, description: "check and say what it would do; with export off, change nothing; when export is on, may queue records and start the detached sender", required: false, default: false },
     ],
   },
   wait: {
@@ -94,7 +94,7 @@ export const COMMANDS = {
   },
   workers: {
     name: "workers",
-    description: "outside herdr: each headless worker's state, turn, seconds since its last event, last tool, session and the path of its latest report; never its text; changes nothing",
+    description: "outside herdr: each headless worker's state, turn, seconds since its last event, last tool, session and the path of its latest report; never its text; with export off, changes nothing; when export is on, may queue records and start the detached sender",
     flags: [{ name: "--name", arg: "<name>", description: "only this worker (repeatable)", required: false, repeatable: true }],
   },
   stop: {
@@ -161,7 +161,7 @@ export const COMMANDS = {
       { name: "--enable", arg: "<subscription>", description: "let routr hand work to this subscription again (it kept its settings while off); repeatable", required: false, repeatable: true },
       { name: "--disable", arg: "<subscription>", description: "turn a subscription off: routr gives it no work, and it keeps its settings; repeatable", required: false, repeatable: true },
       { name: "--channel", arg: "stable|beta", description: "which releases updates install: stable (the default), or beta for beta and release-candidate builds too (a newer stable release still wins). Read by `routr update` and the daily update; nothing moves you back to an older stable by itself", required: false },
-      { name: "--otel-endpoint", arg: "<url>", description: "turn on OpenTelemetry export to your endpoint (https, or http on loopback; no userinfo or query). Fresh consent every time. Only when the person asks; --yes alone never enables it. No spans yet: docs/opentelemetry.md", required: false },
+      { name: "--otel-endpoint", arg: "<url>", description: "turn on OpenTelemetry export to your endpoint (https, or http on loopback; no userinfo or query). Fresh consent every time. Only when the person asks; --yes alone never enables it. Sends traces, logs and a subscription headroom gauge; repository names, relative paths and ids; never briefs, reports or secrets. Schema: https://github.com/sirkirby/routr/blob/main/docs/opentelemetry.md", required: false },
       { name: "--otel-off", description: "turn OpenTelemetry export off; the detached sender removes old batches. Cannot be combined with --otel-endpoint", required: false },
       { name: "--decision", arg: "<provider>[:<model>],...", description: "ordered decision models (for example typesafe,cloudflare:clef-flash); first answer wins. Local Ollama models run after all hosted entries because they may need to load. Hosted attempts have an 8 s cut within one overall deadline (10 s hosted-only, 30 s with local). Choices: typesafe (Jev, the default), cloudflare (Clef on your Cloudflare account; cloudflare:clef-flash is its smaller model), or ollama (Clef Flash on this machine, free). Only models routr has measured (docs/evidence.md); the key is set apart, by the person, with routr key set", required: false },
       { name: "--show", arg: null, description: "print your settings and OpenTelemetry delivery status as routr reads them, and change nothing (asks no harness)", required: false },

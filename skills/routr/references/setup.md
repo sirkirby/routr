@@ -189,8 +189,8 @@ with hidden input or a pipe, for comma-separated OTLP `name=value` headers. `doc
 status and whether headers are set, absent or invalid. `--otel-off` revokes queued batches through the detached
 sender. `--yes` alone never turns it on. `DO_NOT_TRACK` and CI do not turn it off; `OTEL_SDK_DISABLED=true` or
 `ROUTR_OTEL=0` do. After reinstall, a valid endpoint can remain on while its queue folders are missing: ordinary
-`routr setup` repairs them without changing consent. No signals are emitted yet; later signals will carry
-repository names, relative paths and ids. See
+`routr setup` repairs them without changing consent. Export sends traces, logs and a subscription headroom gauge, including
+repository names, relative paths and ids; never briefs, reports or secrets. See
 [OpenTelemetry](https://github.com/sirkirby/routr/blob/main/docs/opentelemetry.md).
 
 ## 4. Claude usage (only if Claude Code is a subscription)

@@ -163,7 +163,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
     return "done";
   };
   const askOtel = async () => {
-    ui.line("OpenTelemetry sends to your endpoint. Later signals will carry repository names, relative paths and ids. No spans are emitted yet. Set authentication separately with routr key set otel-headers.", { dim: true });
+    ui.line("OpenTelemetry sends traces, logs and a subscription headroom gauge to your endpoint, including repository names, relative paths and ids; never briefs, reports or secrets. Schema: https://github.com/sirkirby/routr/blob/main/docs/opentelemetry.md. Set authentication separately with routr key set otel-headers.", { dim: true });
     const v = await ui.confirm({ message: "Export OpenTelemetry to your own endpoint?", initial: false });
     if (v === CANCEL || v === BACK || !v) return v;
     const endpoint = await ui.text({ message: "OpenTelemetry endpoint", initial: "", parse: otelEndpoint });

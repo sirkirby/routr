@@ -313,6 +313,8 @@ When you finish a long run, mention `routr assess`, and that `routr feedback "<t
 
 ## 6. Integrate and clean up
 
+With export on, `workers`, `wait` and `cleanup --dry-run` may queue records and start the detached OpenTelemetry sender.
+
 A worker that writes commits its work on its own branch inside its worktree (tell it so in the task) and never pushes.
 Every worker is finished with `routr cleanup`, the command in its launch result’s `next`, once you have verified its work
 and it has nothing left to do. Do not close a worker's pane instead: a worktree's workspace normally has that one
