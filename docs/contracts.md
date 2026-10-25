@@ -421,10 +421,7 @@ pane herdr opened with the worktree, then `herdr pane close <root pane>`; the ag
 launch fails (`state: "failed"`), and `error` says the worktree was created and gives the `routr cleanup --cwd <repo>
 --worktree <branch>` that removes it. When the close fails the launch goes on, with the warning "Could not close
 `<root pane>`, the shell pane herdr opened with the worktree: its workspace has an extra shell pane (herdr pane close
-`<root pane>`)". The cleanup step in `next` is `routr cleanup --cwd <repo> --worktree <branch>` for a `--worktree`
-launch; for a `--pane` in a linked worktree's workspace (herdr's `pane list` and `workspace list` say so) it is
-`routr cleanup --cwd <repo root> --path <checkout path>`, so a second pane in that workspace cannot leave the worktree
-behind; for any other pane, `routr cleanup --pane <pane>`.
+`<root pane>`)".
 
 Trace-context carriers: the `TRACEPARENT`, `TRACESTATE` and `BAGGAGE` in launch's own environment (any case, on
 Windows; an empty one is absent) go to every pane launch splits (beside the caller, or in a new worktree), as
