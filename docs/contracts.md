@@ -114,6 +114,42 @@ request to judge missing readings applies only to true fallback or unavailable u
   With no provider it uses the first configured entry that needs a key, skipping local models. A local-only list
   reports that it needs no key. Its test asks only the named provider, independent of overrides.
 
+### OpenTelemetry setup, headers and status
+
+`setup --otel-endpoint <url>` writes `otel: { endpoint, consent }` and starts the detached sender. It accepts HTTPS,
+or HTTP on loopback, without userinfo, query or fragment. It normalises trailing slashes, keeps a path prefix and
+appends `/v1/traces`, `/v1/logs` or `/v1/metrics` per signal. Every setting of the endpoint creates fresh consent,
+even for the same URL. `setup --otel-off` removes the entire setting and starts the sender to discard old batches.
+The flags are mutually exclusive. Neither flag deletes queue files. `--show` refuses either change flag beside it.
+`--yes` alone never enables export. The guided question asks the person and defaults to skipping it.
+
+`key set otel-headers` takes one hidden or piped OTLP headers list: comma-separated `name=value` pairs split at the
+first equals sign, with spaces and tabs around parts trimmed and percent escapes decoded once. Names must be HTTP
+header tokens, and decoded values visible ASCII, spaces or tabs. Duplicate names are compared without case.
+Malformed escapes, control characters and reserved names (`content-type`, `content-length`, `host`,
+`transfer-encoding`, `connection`, `accept-encoding`) are refused without printing their values.
+It stores a lossless, percent-encoded `ROUTR_OTEL_HEADERS` in the owner-only secrets file, without a test call or an
+environment override. Its success result is `{ ok: true, key: "otel-headers", file, headers: "set" }`; its failure
+result is `{ ok: false, key: "otel-headers", error }` with fixed wording and no rejected value. It changes no config.
+
+`doctor` and `setup --show` both return `otel` from the same read-only status builder:
+
+| Field | Meaning |
+|---|---|
+| `on`, `why_off` | Whether this process may export; a fixed off reason, or null when on |
+| `endpoint_origin` | The URL origin only, without its path; null when no valid endpoint is active |
+| `headers` | `"set"` or `"not set"`; never names or values |
+| `last_export` | null, or `{ at, ok, sent, refused, error }`: ISO time, success, accepted batches, rejected records or dropped batch, fixed failure code or null |
+| `queued_files` | Waiting batch files, excluding atomic temporary files and in-flight claims |
+| `oldest_age_sec` | Age of the oldest waiting batch by file time, clamped at zero; null when empty |
+| `dropped_total` | Lifetime lost batches and explicitly rejected records |
+| `dropped_by_code` | Lifetime counts by fixed code; also includes `partial_warning` and `response_unreadable` diagnostics, which do not increase `dropped_total` |
+
+Doctor prints the same values in text too. Status reads create no files and start no sender. `DO_NOT_TRACK` and CI
+do not disable this export; `OTEL_SDK_DISABLED=true` (any case), `ROUTR_OTEL=0`, or no valid endpoint/consent do.
+Uninstall adds `otel_sender_running: true` and a fixed `note` when a sender is running; Windows keeps its binary
+until the sender exits. Delivery and the resource are described in [OpenTelemetry](opentelemetry.md).
+
 ## Text from outside routr
 
 AGENTS.md lets outside text reach output only where a command's contract names it. This contract names one place for
