@@ -213,6 +213,12 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
       return refuse("usage: --level takes one of basic, standard, strong, once; eligibility was not refreshed");
     level = words[at + 1]; words.splice(at, 2);
   }
+  // The background refresh's lock token, handed over by the call that took the lock (snapshot.mjs).
+  const tokenAt = words.indexOf("--lock-token"), token = tokenAt === -1 ? undefined : words[tokenAt + 1];
+  if (tokenAt !== -1) {
+    if (!words.includes("--background") || words.lastIndexOf("--lock-token") !== tokenAt || !token || token.startsWith("-")) return refuse("usage: --lock-token is routr's own, for its background refresh only");
+    words.splice(tokenAt, 2);
+  }
   const flags = words.filter((w) => w.startsWith("-")), configured = Object.keys(config.subscriptions);
   const [name, ...extra] = words.filter((w) => !w.startsWith("-"));
   const unknown = flags.filter((f) => f !== "--json" && f !== "--background");
@@ -224,7 +230,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
   try {
     let reading = null; const readingStart = Date.now();
     if (fresh) {
-      try { reading = await fresh({ background: flags.includes("--background") }); } catch { reading = { ok: false, ...usageFailure("read_failed") }; }
+      try { reading = await fresh({ background: flags.includes("--background"), ...(token ? { token } : {}) }); } catch { reading = { ok: false, ...usageFailure("read_failed") }; }
       out.ok = reading?.ok === true;
       if (name === "kiro" && reading?.note) out.warnings.push(warning("kiro_session_left", "Kiro kept an empty usage session"));
       if (name === "kiro" && reading?.note) out.next.push(doNext("Inspect Kiro's saved sessions to remove the empty usage session"));

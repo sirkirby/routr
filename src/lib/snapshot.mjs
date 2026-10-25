@@ -1,7 +1,7 @@
 // A usage reading that takes seconds, kept as a snapshot every call reads in milliseconds and refreshed in the
 // background. Cursor's (cursor-usage.mjs) and Kiro's (kiro-usage.mjs) are read this way.
-import { readFileSync, rmSync } from "node:fs";
-import { olderThan, spawnSelf, takeLock, writeJsonAtomic } from "./runtime.mjs";
+import { readFileSync } from "node:fs";
+import { adoptLock, lockToken, olderThan, releaseFileLock, spawnSelf, takeLock, whileLockOwned, writeJsonAtomic } from "./runtime.mjs";
 import { summarize } from "./usage.mjs";
 import { usageFailure } from "./usage-failure.mjs";
 import { isVersion, newer, ROUTR_VERSION } from "./version.mjs";
@@ -33,13 +33,19 @@ const readJson = (file) => {
   catch (e) { return e?.code === "ENOENT" ? {} : { failure: usageFailure(e instanceof SyntaxError ? "invalid_response" : "read_failed") }; }
 };
 const noRefresh = () => process.env.ROUTR_NO_REFRESH === "1"; // tests: nothing detached, nothing written
-const startRefresh = (name) => spawnSelf(["usage", name, "--background"]);
+// The refresh is handed the lock its starter took, by token: it publishes and releases only while that lock is still its own.
+const startRefresh = (name, token) => spawnSelf(["usage", name, "--background", "--lock-token", token]);
 
 // `routr usage <name>`: read now and keep the reading. A failed read keeps the last good one, whose age then says how
 // old it is. Only the background reading (`--background`) holds the refresh lock, so only it releases it: a reading
-// asked for by hand must not free a lock a background reading still holds.
+// asked for by hand must not free a lock a background reading still holds. The background reading takes over the lock
+// by the token its starter handed it, or reads nothing; it writes its snapshot and releases only while the lock is still
+// that one (from the review of 14a45ca: one paused past the lock's age overwrote a newer snapshot and removed the newer
+// refresh's lock).
 // `ready()` gates the read: null to go ahead, or a harness not signed in. That is an exclusion, never a read failure.
-export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`, nowSec = now(), background = false, ready, version = ROUTR_VERSION }) {
+export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`, nowSec = now(), background = false, token, ready, version = ROUTR_VERSION }) {
+  const owned = background && adoptLock(lock, token);
+  if (background && !owned) return { ok: false, ...usageFailure("read_failed") };
   try {
     let r;
     try {
@@ -50,18 +56,17 @@ export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`,
     // A reader returns a code, never prose for the cache. This also classifies unexpected failures from a reader.
     if (r?.ok !== true && !r?.excluded) r = { ok: false, ...usageFailure(r?.code), ...(r?.note ? { note: r.note } : {}) };
     const last = readJson(file).snapshot;
-    try {
-      writeJsonAtomic(file, r.ok ? { ts: nowSec, tried: nowSec, by: version, reading: keep(r) }
-        : { ts: Number.isFinite(last?.ts) ? last.ts : null, tried: nowSec, by: version, reading: last?.reading ? keep(last.reading) : null,
-          ...(r.excluded ? { excluded: true } : { failure: usageFailure(r.code) }) });
-    } catch {}
+    const publish = () => writeJsonAtomic(file, r.ok ? { ts: nowSec, tried: nowSec, by: version, reading: keep(r) }
+      : { ts: Number.isFinite(last?.ts) ? last.ts : null, tried: nowSec, by: version, reading: last?.reading ? keep(last.reading) : null,
+        ...(r.excluded ? { excluded: true } : { failure: usageFailure(r.code) }) });
+    try { if (background) whileLockOwned(lock, token, publish); else publish(); } catch {}
     return r;
-  } finally { if (background) try { rmSync(lock, { force: true }); } catch {} }
+  } finally { if (owned) releaseFileLock(lock, token); }
 }
 
 // `background: false` reads without starting a refresh: doctor, for a harness installed but not in the config.
 // `windows(reading)` and `describe(reading)` turn the kept reading into the usage row; `byHand` is said when reading fails.
-export function readSnapshot({ name, source, windows, describe, keep, byHand, file, lock = `${file}.lock`, nowSec = now(), refresh = () => startRefresh(name), background = true, off = noRefresh(), version = ROUTR_VERSION }) {
+export function readSnapshot({ name, source, windows, describe, keep, byHand, file, lock = `${file}.lock`, nowSec = now(), refresh = (token) => startRefresh(name, token), background = true, off = noRefresh(), version = ROUTR_VERSION }) {
   const cached = readJson(file);
   let snap = cached.snapshot ?? (cached.failure ? { failure: cached.failure } : null);
   // Drop the old raw error field on reads and writes; it is never interpreted or copied forward.
@@ -75,8 +80,9 @@ export function readSnapshot({ name, source, windows, describe, keep, byHand, fi
   const triedHere = !olderFailed && nowSec - (snap?.tried ?? 0) < REFRESH_SEC;
   if (background && !off && !triedHere && takeLock(lock, olderThan(LOCK_SEC * 1000, nowSec * 1000))) {
     // Marked before it starts, so the next call waits its turn; if the mark cannot be written, nothing is started.
-    try { writeJsonAtomic(file, { ...snap, tried: nowSec, by: version }); started = refresh(); } catch {}
-    if (!started) try { rmSync(lock, { force: true }); } catch {}
+    const token = lockToken(lock);
+    try { writeJsonAtomic(file, { ...snap, tried: nowSec, by: version }); started = refresh(token); } catch {}
+    if (!started) releaseFileLock(lock, token);
   }
   const r = snap?.reading, age = snap?.ts == null ? null : nowSec - snap.ts;
   const ws = r ? windows(r) : [];

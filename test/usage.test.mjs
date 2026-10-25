@@ -1,7 +1,7 @@
 // usage readers: Claude's statusline, Codex, Cursor's screen, Kiro's /usage, the background snapshots, and `routr usage`
 import { expect, test } from "bun:test";
 import { basename, dirname, join } from "node:path";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { usageFailure } from "../src/lib/usage-failure.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { tmpdir } from "node:os";
@@ -552,7 +552,8 @@ test("a try an older routr made that got no reading does not hold back the next 
   for (const [name, read, refresh] of [["cursor", readCursor, refreshCursor], ["kiro", readKiro, refreshKiro]]) {
     const good = readings[name];
     const dir = scratch(`upgrade-${name}`), failed = { ts: null, tried: T - 600, reading: null, failure: { code: "read_failed" } };
-    const starts = (file, version, at = T) => { const s = []; read({ file, nowSec: at, refresh: () => s.push(at), off: false, version }); return s.length; };
+    let token;
+    const starts = (file, version, at = T) => { const s = []; read({ file, nowSec: at, refresh: (t) => s.push(token = t), off: false, version }); return s.length; };
     for (const [label, snap, n] of [
       ["no version (0.8.0 and before)", failed, 1], ["an older version", { ...failed, by: "0.7.0" }, 1], ["a version it cannot read", { ...failed, by: "garbage" }, 1],
       ["a version that only looks newer", { ...failed, by: "0.9.invalid" }, 1], ["a version with a fourth number", { ...failed, by: "0.8.1.0" }, 1],
@@ -572,7 +573,7 @@ test("a try an older routr made that got no reading does not hold back the next 
     const file = join(dir, "fails-again.json");
     writeFileSync(file, JSON.stringify(failed));
     expect(starts(file, "0.8.1")).toBe(1);
-    await refresh({ file, nowSec: T + 5, version: "0.8.1", background: true, read: async () => ({ ok: false, ...usageFailure("read_failed") }) });
+    await refresh({ file, nowSec: T + 5, version: "0.8.1", background: true, token, read: async () => ({ ok: false, ...usageFailure("read_failed") }) });
     expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ by: "0.8.1", tried: T + 5, failure: { code: "read_failed" } });
     expect(existsSync(`${file}.lock`)).toBe(false);
     expect([starts(file, "0.8.1", T + 60), starts(file, "0.8.1", T + 5 + 4 * 3600 + 1)]).toEqual([0, 1]);
@@ -584,7 +585,7 @@ test("a try an older routr made that got no reading does not hold back the next 
       const version = k % 2 ? "0.0.0-dev" : "0.8.1", at = T + k * 60;
       const n = starts(shared, version, at);
       seen.push(n);
-      if (n) await refresh({ file: shared, nowSec: at + 5, version, background: true, read: async () => ({ ok: false, ...usageFailure("read_failed") }) });
+      if (n) await refresh({ file: shared, nowSec: at + 5, version, background: true, token, read: async () => ({ ok: false, ...usageFailure("read_failed") }) });
     }
     expect([name, seen]).toEqual([name, [1, 0, 0, 0]]);
     // A reading taken now records the version that took it.
@@ -623,13 +624,20 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
   const kept = read(T + 20001);
   expect(kept.headroom).toBeCloseTo(0.34, 9);
   expect(kept.note).toContain("the last try failed: routr could not read this usage source.");
-  // Only the background reading releases the lock: one asked for by hand must not free a lock it does not hold.
+  // Only the background reading releases the lock, and only with the token it was handed: one asked for by hand, or
+  // one handed no token, must not free a lock it does not hold. One handed no token reads and writes nothing.
   const byHand = join(dir, "byhand.json"), held = `${byHand}.lock`;
   writeFileSync(held, "");
   await refreshCursor({ file: byHand, nowSec: T, read: async () => screen });
-  expect(existsSync(held)).toBe(true);
-  await refreshCursor({ file: byHand, nowSec: T, read: async () => screen, background: true });
-  expect(existsSync(held)).toBe(false);
+  expect(existsSync(held)).toBe(true); rmSync(byHand);
+  let reads = 0;
+  await refreshCursor({ file: byHand, nowSec: T, read: async () => { reads++; return screen; }, background: true });
+  expect([existsSync(held), existsSync(byHand), reads]).toEqual([true, false, 0]);
+  rmSync(held); const handed = [];
+  readCursor({ file: byHand, nowSec: T, refresh: (token) => handed.push(token), off: false });
+  expect(handed).toEqual([JSON.parse(readFileSync(held, "utf8")).token]);
+  await refreshCursor({ file: byHand, nowSec: T, read: async () => screen, background: true, token: handed[0] });
+  expect([existsSync(held), JSON.parse(readFileSync(byHand, "utf8")).reading.included_used_pct]).toEqual([false, 66]);
   // Never read, and the try failed: assumed, with how to read it by hand.
   const never = join(dir, "never.json");
   await refreshCursor({ file: never, nowSec: T, read: async () => ({ ok: false, ...usageFailure("read_failed"), read_yourself: CURSOR_BY_HAND }) });
@@ -673,6 +681,35 @@ test("the refresh lock lets one caller in at a time and gives up a lock left by 
   expect(takeLock(lock, stale(Date.now() + 121 * 1000))).toBe(true); // older than any reading can take
   expect(JSON.parse(readFileSync(lock, "utf8"))).toMatchObject({ pid: process.pid, token: expect.stringMatching(/^[a-f0-9-]{36}$/) });
   expect(takeLock(join(dir, "missing", "x.lock"), stale())).toBe(false); // cannot write: no lock, so no refresh
+});
+
+test("a background refresh that resumes after another took its lock over publishes nothing and keeps the newer lock", async () => {
+  const T = 1_800_000_000, later = T + 4 * 3600 + 200;
+  const screens = { cursor: (pct) => ({ ok: true, plan: "Team", included_used_pct: pct, auto_used_pct: 0, api_used_pct: 0 }),
+    kiro: (pct) => ({ ok: true, plan: "Free", credits_used: pct, credits_limit: 100, used_pct: pct, resets_at: T + 86400 }) };
+  for (const [name, read, refresh] of [["cursor", readCursor, refreshCursor], ["kiro", readKiro, refreshKiro]]) {
+    const dir = scratch("refresh-takeover"), file = join(dir, "usage.json"), lock = `${file}.lock`, handed = [];
+    const start = (nowSec) => read({ file, nowSec, refresh: (token) => handed.push(token), off: false });
+    const used = () => JSON.stringify(JSON.parse(readFileSync(file, "utf8")).reading);
+    start(T);
+    // The first refresh is slow: past the lock's age, another call takes the lock over and starts its own.
+    await refresh({ file, nowSec: T + 5, background: true, token: handed[0], read: async () => { start(later); return screens[name](10); } });
+    expect(handed).toHaveLength(2);
+    expect(JSON.parse(readFileSync(file, "utf8")).tried).toBe(later); // the newer mark stands
+    expect(used()).not.toContain("10");
+    expect(JSON.parse(readFileSync(lock, "utf8")).token).toBe(handed[1]); // the newer refresh's lock stays
+    await refresh({ file, nowSec: later + 5, background: true, token: handed[1], read: async () => screens[name](70) });
+    expect(used()).toContain("70"); expect(existsSync(lock)).toBe(false);
+  }
+});
+
+test("a background usage refresh gets its lock token from the command line", async () => {
+  const c = cfg(); let seen;
+  const sources = { cursor: { source: "cursor /usage", check: async (o) => { seen = o; return { ok: false, ...usageFailure("read_failed") }; } } };
+  await usageCommand(["cursor", "--background", "--lock-token", "fixture-token"], c, {}, { sources, read: async () => [] });
+  expect(seen).toMatchObject({ background: true, token: "fixture-token" });
+  const r = await usageCommand(["cursor", "--lock-token", "fixture-token"], c, {}, { sources, read: async () => [] });
+  expect(r.ok).toBe(false); expect(r.error).toContain("--lock-token");
 });
 
 test("routr usage ranks what it sees without a brief, and a name narrows it or opens the harness's screen", async () => {
@@ -869,8 +906,8 @@ test("a harness that is not signed in is never read, and dispatch leaves it out 
 });
 test("a background reading of a harness that is not signed in never starts it, keeps why, and gives the lock back", async () => {
   const dir = scratch("gate"), file = join(dir, "kiro-usage.json"), lock = `${file}.lock`;
-  writeFileSync(lock, "");
-  const r = await refreshKiro({ file, background: true, ready: async () => "not signed in: kiro-cli login", read: async () => { throw new Error("must not read"); } });
+  expect(takeLock(lock, () => false, { token: "handed-token" })).toBe(true);
+  const r = await refreshKiro({ file, background: true, token: "handed-token", ready: async () => "not signed in: kiro-cli login", read: async () => { throw new Error("must not read"); } });
   expect(r).toMatchObject({ ok: false, excluded: true, why: "not signed in: kiro-cli login" });
   expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ excluded: true });
   expect(JSON.parse(readFileSync(file, "utf8")).failure).toBeUndefined();
