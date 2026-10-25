@@ -3,7 +3,7 @@
 // this on every Claude Code turn. It is the only module that imports node:child_process (a test holds every other file
 // in src/ to that), so every process routr starts gets the same platform defaults from `start` / `startSync`.
 import { spawn, spawnSync } from "node:child_process";
-import { accessSync, closeSync, constants, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
@@ -83,25 +83,37 @@ export function releaseFileLock(file, token = lockToken(file)) {
     const key = realOr(file); unlinkSync(file); if (locksHere.get(key) === token) locksHere.delete(key); return true;
   } catch { return false; }
 }
-export function takeLock(file, stale, { token = randomUUID(), rename = renameSync } = {}) {
-  const make = () => {
-    const fd = openSync(file, "wx", 0o600);
-    try { writeFileSync(fd, JSON.stringify({ pid: process.pid, token })); } finally { closeSync(fd); }
-    locksHere.set(realOr(file), token);
+export function takeLock(file, stale, { token = randomUUID(), rename = renameSync, write = writeFileSync } = {}) {
+  const create = (path, id) => {
+    const fd = openSync(path, "wx", 0o600);
+    try { try { write(fd, JSON.stringify({ pid: process.pid, token: id })); } finally { closeSync(fd); } }
+    catch (e) { try { unlinkSync(path); } catch {} throw e; }
   };
+  const make = () => { create(file, token); locksHere.set(realOr(file), token); };
   try { make(); return true; } catch (e) { if (e?.code !== "EEXIST") return false; }
-  const aside = `${file}.stale.${randomUUID()}`;
+  // Review A: serialize the observation AND move, so a delayed taker never moves a live replacement. This guard
+  // covers only synchronous file operations, not the job; a crashed guard expires after five seconds. No hard links.
+  const guard = `${file}.takeover`, guardToken = randomUUID(), began = Date.now(), guardAge = 5000;
+  const guarded = () => Date.now() - began < guardAge && lockOwned(guard, guardToken);
+  const moveStale = (path, move, isStale, allowed = () => true) => {
+    const observed = readFileSync(path, "utf8");
+    if (!isStale(path) || !allowed()) return false;
+    const aside = `${path}.stale.${randomUUID()}`;
+    move(path, aside);
+    // An unexpected replacement is somebody else's file, including on filesystems without hard links: leave it.
+    if (readFileSync(aside, "utf8") !== observed) return false;
+    unlinkSync(aside); return true;
+  };
   try {
-    const observed = readFileSync(file, "utf8");
-    if (!stale(file)) return false;
-    rename(file, aside); // Review 1: move atomically, then prove we moved the stale generation we actually observed.
-    if (readFileSync(aside, "utf8") !== observed) {
-      try { linkSync(aside, file); } catch {} // exclusively restore a newer owner; never overwrite another lock
-      return false;
+    try { create(guard, guardToken); }
+    catch (e) {
+      if (e?.code !== "EEXIST" || !moveStale(guard, renameSync, olderThan(guardAge))) return false;
+      create(guard, guardToken);
     }
+    if (!moveStale(file, rename, stale, guarded) || !guarded()) return false;
     make(); return true;
   } catch { return false; }
-  finally { try { unlinkSync(aside); } catch {} }
+  finally { releaseFileLock(guard, guardToken); }
 }
 // The updater's lock is only taken over when its owner is gone: age alone would let a slow download be overlapped by a
 // second swap. A lock with no readable pid (written by an older routr) falls back to age.

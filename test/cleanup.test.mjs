@@ -19,6 +19,13 @@ test("git status -z: changes, untracked files, and a rename's second path", () =
   expect(parseStatus("")).toEqual({ changed: [], untracked: [] });
 });
 
+test("worker cleanup rechecks lock ownership after its asynchronous checks, before worktree removal", async () => {
+  const f = fake({ worktrees: [{ branch: "feat/a", path: "/worker", is_linked_worktree: true }] });
+  const r = await cleanup(["--cwd", "/repo", "--path", "/worker"], { ...f.deps, assertOwned: () => { throw new Error("worker lock was taken over"); } });
+  expect(r).toMatchObject({ ok: false, state: "failed", error: "worker lock was taken over" });
+  expect(f.gits.some(([, command, operation]) => command === "worktree" && operation === "remove")).toBe(false);
+});
+
 test("a copy is the same bytes, or the same link; anything else is not", () => {
   const d = scratch("same");
   writeFileSync(join(d, "a"), "x"); writeFileSync(join(d, "b"), "x"); writeFileSync(join(d, "c"), "y");

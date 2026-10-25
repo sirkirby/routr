@@ -112,7 +112,7 @@ export function parseWorktreeHeads(text) {
 
 // `run` is one herdr command, `git(dir, args)` one git command ({ out, err, code }, or null), and `linked` the
 // linked-worktree test: seams for tests.
-export async function cleanup(args, { run = runHerdr, git = gitIn, env = process.env, linked = linkedWorktree } = {}) {
+export async function cleanup(args, { run = runHerdr, git = gitIn, env = process.env, linked = linkedWorktree, assertOwned = () => {} } = {}) {
   // Outside herdr, worktrees are listed and removed through git alone (headless workers make theirs that way), and
   // what runs in a folder is not seen: the warning says so.
   const viaGit = env.HERDR_ENV !== "1";
@@ -286,6 +286,7 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
       return out;
     }
     for (const rel of c.copies) {
+      assertOwned(); // Review A: headless worker cleanup keeps its lock through asynchronous checks, up to each action.
       if (!dropCopy(w.path, source, rel, c.rootReal)) return refuse(`A copy in ${w.path} changed, or is reached through a link, since cleanup checked it`, doNext("Look at the changed copy, then run cleanup again."));
     }
     if (c.copies.length) step("copies", true, `Removed ${c.copies.length} unchanged file${c.copies.length > 1 ? "s" : ""} copied in at launch`);
@@ -293,6 +294,7 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
     if (c.head && (await headOf(w.path)) !== c.head) return refuse(`${w.path} moved to another commit since cleanup checked it`, runNext("Recheck the worktree at its current commit.", ["routr", "cleanup", ...args]));
     if (w.open_workspace_id) { const b = await busyIn(w.open_workspace_id); if (b) return refuse(b.why, b.next); }
     // Never --force: if anything changed since the check, herdr and git refuse and the worktree stays.
+    assertOwned();
     if (w.open_workspace_id) {
       const r = await herdr(["worktree", "remove", "--workspace", w.open_workspace_id], true);
       if (!r.ok) return refuse(`herdr refused worktree remove for ${w.path} (${r.code})`, inspect("Read the worktree after removal was refused.", ["git", "-C", w.path, "status"]));
@@ -306,6 +308,7 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
     if (w.branch) {
       if (o.deleteBranch) {
         // -d, never -D: git deletes only a branch merged into the checkout's current branch (or its upstream).
+        assertOwned();
         const d = await gitRun(source, ["branch", "-d", w.branch]);
         out.branch = { name: w.branch, deleted: d?.code === 0 };
         if (d?.code === 0) step("branch", true, `Deleted branch ${w.branch}`);

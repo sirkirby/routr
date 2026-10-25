@@ -46,14 +46,17 @@ const PATH_TOO_LONG = NOT_STARTED({ released: { why: "path_too_long" } });
 // a send is starting a new holder in. Taken over only when its taker has gone (runtime's lock).
 async function locked(name, fn) {
   const file = join(WORKERS_DIR(), `${name}.lock`);
-  for (let i = 0; i < 50 && !takeLock(file, lockIsStale); i++) await sleep(100);
+  let took = false;
+  for (let i = 0; i < 50 && !(took = takeLock(file, lockIsStale)); i++) await sleep(100);
   const token = lockToken(file);
-  if (!lockOwned(file, token)) throw new Error(`another routr command is starting or removing ${name}; run it again in a moment`);
-  try { return await fn(); } finally { releaseFileLock(file, token); }
+  // Review A: checks await channels and git. A lock at entry is insufficient: fence the action with this token too.
+  const assertOwned = () => { if (!took || !lockOwned(file, token)) throw new Error(`the worker lock for ${name} is held by another routr command; run it again in a moment`); };
+  try { assertOwned(); return await fn(assertOwned); } finally { if (took) releaseFileLock(file, token); }
 }
 // Start the next holder of a worker (launch, or send to an idle one) and wait until its channel answers. Under the lock.
-async function becomeHolder(name, { spawn = spawnSelf, timeoutMs = 15000 } = {}) {
+async function becomeHolder(name, { spawn = spawnSelf, timeoutMs = 15000, assertOwned = () => {} } = {}) {
   const before = generations(runDir(name)).at(-1) ?? 0;
+  assertOwned();
   if (!spawn(["workers", "--hold", name])) return { state: "not_started" };
   const until = Date.now() + timeoutMs;
   let p;
@@ -243,7 +246,7 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
   } catch (e) { await unreserve(); throw e; }
   out.worker = { name: o.name, backend: "headless", run: dir, session: null };
   step("reserve", true, `Made ${dir} for ${o.name}`);
-  const p = await locked(o.name, () => becomeHolder(o.name, { spawn, timeoutMs: Math.min(15000, left()) }));
+  const p = await locked(o.name, (assertOwned) => becomeHolder(o.name, { spawn, timeoutMs: Math.min(15000, left()), assertOwned }));
   if (p.state !== "alive") {
     if (!["starting", "unreachable"].includes(p.state)) await unreserve();
     else out.next.push(runNext("Look at the worker before launching it again.", ["routr", "workers", "--name", o.name]));
@@ -383,7 +386,7 @@ export async function sendCommand(args, { env = process.env, settings = () => lo
       if (signedOut) throw new Error(`${HARNESSES[w.kind].label} cannot take work: ${signedOut}`);
       // A holder that has just ended still answers for a moment: let it go first.
       for (let i = 0; i < 20 && p.state === "alive"; i++) { await sleep(150); p = await probe(runDir(name)); }
-      p = await locked(name, async () => { if (!same()) return { state: "replaced" }; return becomeHolder(name, { spawn }); });
+      p = await locked(name, async (assertOwned) => { if (!same()) return { state: "replaced" }; return becomeHolder(name, { spawn, assertOwned }); });
       if (p.state === "replaced") throw new Error(`${name} was cleaned up and launched again meanwhile; nothing was sent`);
       if (p.state !== "alive") throw new Error(`${name}: ${NOT_STARTED(p)}`);
       r = await deliver("send", 45000);
@@ -465,7 +468,7 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
     if (existsSync(runDir(name))) return refuse("its folder is not one routr's launch wrote", doNext(`Look at ${runDir(name)} yourself.`));
     out.ok = true; out.state = "absent"; out.headline = `routr: nothing to remove: no worker ${name}`; return out;
   }
-  return locked(name, async () => {
+  return locked(name, async (assertOwned) => {
     const w = readWorker(name);
     const p = await probe(runDir(name));
     if (["alive", "starting"].includes(p.state)) return refuse(`${name} is still running`, [runNext("Wait for it to finish.", ["routr", "wait", "--name", name]), runNext("Or stop it first.", ["routr", "stop", "--name", name])]);
@@ -481,7 +484,7 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
       const finish = doNext(`Look at ${w.worktree.path}; finish it with routr cleanup --cwd ${w.worktree.source} --path ${w.worktree.path} if it should go.`);
       if (there && there.branch !== w.worktree.branch) return refuse(`the worktree at ${w.worktree.path} is ${there.branch ? `on branch ${there.branch}` : "detached"}, not on ${w.worktree.branch}: it is not the one launch made`, finish);
       if (there && folderId(w.worktree.path) !== w.worktree.folder) return refuse(`the worktree at ${w.worktree.path} was made again since launch: it is not the one launch made`, finish);
-      const r = await cleanup(["--cwd", w.worktree.source, "--path", w.worktree.path, ...(deleteBranch ? ["--delete-branch"] : []), ...(dryRun ? ["--dry-run"] : [])], { env: {} });
+      const r = await cleanup(["--cwd", w.worktree.source, "--path", w.worktree.path, ...(deleteBranch ? ["--delete-branch"] : []), ...(dryRun ? ["--dry-run"] : [])], { env: {}, assertOwned });
       out.ran.push(...r.ran); out.unavailable.push(...r.unavailable);
       // The worker's own process and its harness's process group were checked above; what that cannot see is said here.
       const label = HARNESSES[w.kind]?.label ?? "the harness";
@@ -498,7 +501,9 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
     const helper = HARNESSES[w.kind]?.helper;
     if (helper) out.warnings.push(helper.left(w.cwd));
     if (dryRun) { out.ok = true; out.state = "planned"; out.headline = `routr: would remove ${runDir(name)}${w.worktree ? ` and ${w.worktree.path}` : ""}`; step("plan", true, `Would remove ${runDir(name)} and its reports`); return out; }
-    for (const n of generations(runDir(name))) { try { removeEndpoint(w.id, JSON.parse(readFileSync(join(runDir(name), `gen-${n}.ready`), "utf8")).endpoint); } catch {} }
+    assertOwned();
+    for (const n of generations(runDir(name))) { assertOwned(); try { removeEndpoint(w.id, JSON.parse(readFileSync(join(runDir(name), `gen-${n}.ready`), "utf8")).endpoint); } catch {} }
+    assertOwned();
     rmSync(runDir(name), { recursive: true, force: true });
     step("remove", true, `Removed ${runDir(name)} and its reports`);
     out.ok = true; out.state = "removed"; out.headline = `routr: removed worker ${name}`;
