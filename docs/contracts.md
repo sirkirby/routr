@@ -1191,8 +1191,9 @@ attribute. Export-off command behavior and carrier forwarding are unchanged.
 
 Headless worker metadata saves `launch: { launch_id, traceId, spanId }` for a recorded sampled launch, or
 `launch: { sampled: false }` when an enabled launch inherits an unsampled parent. With export off at launch,
-`launch` is absent: turns recorded after opt-in start separate sampled root traces. An explicit unsampled decision
-keeps turns silent through later export changes. Later commands link only validated recorded launch ids. This is
+`launch` is absent: the saved valid parent still supplies sampling and parentage after opt-in; only no valid
+parent creates sampled roots. An explicit unsampled decision or a valid unsampled saved parent keeps turns silent
+through later export changes. Later commands link only validated recorded launch ids. This is
 local worker metadata, not a public command field, and does not add anything to the record template. `workers` and `wait` may queue traces and start the sender when
 export is on. A dry-run launch may queue its planned span then, without executing its launch plan.
 

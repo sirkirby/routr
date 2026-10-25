@@ -29,7 +29,10 @@ again before its POST. A request already in flight can finish under the consent 
 propagation stays unchanged. `OTEL_EXPORTER_OTLP_*` variables do not configure routr, and
 `OTEL_RESOURCE_ATTRIBUTES` does not add resource attributes. `DO_NOT_TRACK` and CI do **not** turn this export off.
 
-Export is intended for the default config, `~/.config/routr/config.json`. There is one queue per install, while
+Export is intended for the default config, `~/.config/routr/config.json`. Headless holders always read this default
+config on each turn; they do not inherit a launch command's `--config` path. A launch using another config can
+record its own span while its holder records no turns if the default config has export off.
+There is one queue per install, while
 consent belongs to a config file. A sender started with another `--config` removes batches made under a different
 consent, including batches from the default config. Separate config files do not give you separate queues.
 
@@ -202,13 +205,18 @@ carriers. The worker's `launch` metadata distinguishes three cases: a recorded l
 `{ launch_id, traceId, spanId }`; an enabled launch whose parent was unsampled saves `{ sampled: false }`;
 a launch with export off saves no `launch` field. Recorded launches keep their child turns. An unsampled launch
 keeps its sampling decision across export off/on: its turns record nothing, and its saved carriers pass unchanged.
-When a worker was launched with export off, each turn begun after export is enabled is a sampled root of its own
-new trace, with no launch parent or `routr.launch.id`. This is ParentBased(AlwaysOn) without a parent; a saved
-carrier from the off launch supplies neither its parent nor its sampling decision. Each turn captures fresh export
+When a worker was launched with export off, its saved valid `TRACEPARENT` still supplies ParentBased sampling:
+an unsampled parent keeps every later turn silent, and a sampled parent parents later turns directly, without a
+recorded launch between them. Only an absent or invalid saved parent starts a separate sampled root for each
+turn after opt-in, ParentBased(AlwaysOn) with no parent. These turns have no `routr.launch.id`.
+This also applies to older worker settings with no `launch` field. Each turn captures fresh export
 state and consent; its queue call re-reads them before writing. A holder started while export is off can emit
 turns begun after it is enabled. A turn whose consent changed writes nothing. Each finished turn writes its own
-batch immediately, while the harness may still be alive; export failure never changes its outcome or waits on
-network delivery. A message taken into a running turn adds to that turn, without creating another span.
+batch after its report and outcome are saved, in a deferred callback while the holder is alive; export failure
+never changes its outcome or waits on network delivery. Git identity is captured once when the holder starts,
+before it takes any turn. A message taken into a running turn adds to that turn, without creating another span.
+Spans remain in memory until queued: killing a holder loses its unqueued spans, including its in-flight turn's
+span. The next holder marks that interrupted turn `no_finish` in local state and does not reconstruct its span.
 
 The process environment carries the span that started that process: the launch for the first process, and the
 turn for a later process resuming the session. When no launch context was recorded, a process started for a
@@ -216,16 +224,24 @@ recorded root turn gets that turn's span. Cursor starts a process per turn and g
 for its first process. A running process keeps its original environment. Codex's requests carry the current
 turn's `trace: {traceparent, tracestate}`, which takes precedence over the environment. Kiro's `session/prompt`
 carries the turn through ACP's reserved `_meta.traceparent`, `_meta.tracestate` and `_meta.baggage`; `session/new`
-and `session/load` carry the process's context there. Absent carriers are omitted. With export off or a
-persisted unsampled launch decision, saved carrier values stay unchanged. `TRACESTATE` is forwarded only with a
+and `session/load` carry the process's context there. These protocol fields are sent only for context routr
+generated: a turn span, or the recorded launch span for the first process. With export off or an unsampled
+parent, requests carry neither Codex `trace` nor Kiro `_meta`; their process environments retain the saved
+carriers unchanged. Absent carriers are omitted. `TRACESTATE` is forwarded only with a
 valid inherited parent when routr generates context, and `BAGGAGE` remains unchanged.
 
 With its own tracing enabled, headless Claude nests under the span that started its process: the launch
 initially, or the resuming turn after a restart; a process started for a root turn nests under that root. Codex
 nests under each turn through its request field. Cursor,
 Antigravity and Kiro read no context in the researched versions, so their own telemetry, if any, is not joined.
-ACP reserves the keys routr sends to Kiro; Kiro's consumption is unmeasured. Routr's fixture tests verify the
-channels it writes, without claiming a new live measurement of harness tracing. Each
+ACP reserves the keys routr sends to Kiro; research finds that Kiro does not read them.
+The lead measured request acceptance on 2026-10-25 without sending a prompt: Codex 0.164.0 `codex app-server`
+answered `initialize` and `thread/start` normally with request-level `trace: {traceparent, tracestate}`;
+Kiro 2.34.0 `kiro-cli acp` answered `session/new` normally with
+`_meta: {traceparent, tracestate, baggage}`. This measures acceptance, not joined telemetry. Acceptance with
+these fields on other methods, including `turn/start` and `session/prompt`, is unmeasured; no prompt was sent
+because it would spend usage. Codex reading the request context is established by source research; Kiro does
+not read context, per the binary research. Routr's fixture tests verify the channels it writes. Each
 harness reads inherited context differently, by mode: [measured harness reference](../skills/routr/references/harnesses.md#trace-context-each-harness-reads).
 Routr does not enable or configure a harness's telemetry. Pane workers have no turn span in routr: their launch
 places them by repository, branch and worktree, which a receiver can join to that harness's session. At launch end
@@ -260,7 +276,7 @@ protocol; it is not an upstream measurement of local IPC.
 | `routr usage` | INTERNAL | inherited or new root | level only when explicitly given; per-subscription reading children |
 | `routr usage {subscription}` | INTERNAL | reading command | subscription, usage state and source; final error type |
 | `routr launch` | INTERNAL | inherited or new root; recovery rerun links to original launch | kind, backend, launch state and id, worker name, model as given, effort, advice match, lead session, forwarded carrier names, available pane conversation id |
-| `invoke_agent {gen_ai.agent.name}` | CLIENT | saved `routr launch`, or new root when launch export was off | operation `invoke_agent`, provider, worker name, available harness conversation id, model selector, turn number, outcome and message count; observed classified token counts only; final error type |
+| `invoke_agent {gen_ai.agent.name}` | CLIENT | saved `routr launch`; otherwise saved sampled parent, or a new root without a valid parent | `vcs.repository.url.full`, `vcs.ref.head.name`, `routr.cwd`, `routr.worktree`; `gen_ai.operation.name=invoke_agent`, `gen_ai.provider.name`, `gen_ai.agent.name`, available `gen_ai.conversation.id`; `routr.kind`, `routr.backend=headless`, available `routr.launch.id`, `routr.model`, `routr.effort`, `routr.turn`, `routr.turn.outcome`, `routr.turn.messages`; final `error.type`; classified observed `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_write.input_tokens`, `gen_ai.usage.reasoning.output_tokens` only (current adapters expose none). |
 | `routr send` | INTERNAL | inherited or new root; matched launch link | send state |
 | `routr wait` | INTERNAL | inherited or new root; link per matched launch | wait state |
 | `routr workers` | INTERNAL | inherited or new root; link per matched launch | workers state |
