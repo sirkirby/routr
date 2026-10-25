@@ -370,7 +370,16 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       createdPane = true;
       step("split", true, `Created ${out.pane}, ${direction}`);
     }
-    // A pane given with --pane may be a worktree's own: cleanup then says to clean up the worktree instead.
+    // A pane given with --pane in a linked worktree's workspace is finished by removing the worktree, as cleanup's own
+    // refusal for a worktree's only pane says: with another pane beside it (a root pane a worktree launch could not
+    // close), cleanup --pane would close the worker's pane and leave the worktree (from the review of fff9446). Each read
+    // gets its own short allowance; one herdr does not answer leaves the pane's own line, which cleanup --pane checks.
+    if (o.pane && !cleanupArgs) {
+      const ask = async (a) => { logCommand(out.ran, command(a)); try { const r = await safeRun(a, 2000); return r.ok ? r.data?.result : null; } catch { return null; } };
+      const ws = (await ask(["pane", "list"]))?.panes?.find((x) => x.pane_id === out.pane)?.workspace_id;
+      const tree = ws ? (await ask(["workspace", "list"]))?.workspaces?.find((x) => x.workspace_id === ws)?.worktree : null;
+      if (tree?.is_linked_worktree) cleanupArgs = ["routr", "cleanup", "--cwd", tree.repo_root ?? tree.checkout_path, "--path", tree.checkout_path];
+    }
     cleanupArgs ??= ["routr", "cleanup", "--pane", out.pane];
     // Every folder this launch will type into a cmd shell is checked as soon as the shell is known, so a refusal comes
     // before anything is typed, not between a `cd` and the variable.

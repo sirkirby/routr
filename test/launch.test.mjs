@@ -241,7 +241,7 @@ test("an existing occupied pane receives no input and is never closed", async ()
   const f = fakeHerdr({ foreground: true });
   const r = await launch([...launchArgs, "--pane", "w1:p9"], f.deps);
   expect(r.state).toBe("needs_input");
-  expect(f.calls.every((a) => ["get", "read", "process-info"].includes(a[1]))).toBe(true); // looks, never types
+  expect(f.calls.every((a) => ["get", "read", "process-info", "list"].includes(a[1]))).toBe(true); // looks, never types
 });
 
 test("startup timeout fails without ever prompting or closing the pane", async () => {
@@ -1419,8 +1419,10 @@ test("a worktree launch opens the worker's pane itself: split of the root pane i
 
 test("a worktree launch whose split fails fails, says the worktree was made and how to remove it; a failed close of the root pane only warns", async () => {
   const path = process.cwd();
+  const env = { HERDR_ENV: "1", ...CARRIED };
   const failed = worktreeHerdr(path, { split: () => herdrError("split_failed") });
-  const r = await launch([...launchArgs, "--cwd", "/", "--worktree", "b"], failed.deps);
+  const r = await launch([...launchArgs, "--cwd", "/", "--worktree", "b"], { ...failed.deps, env });
+  noCarrierValue(r);
   expect(r).toMatchObject({ ok: false, state: "failed" });
   expect(r.error).toContain(`created the worktree ${path}`);
   expect(r.error).toContain(displayCommand(["routr", "cleanup", "--cwd", resolve("/"), "--worktree", "b"]));
@@ -1428,11 +1430,48 @@ test("a worktree launch whose split fails fails, says the worktree was made and 
   // Neither the root pane (it is the workspace's only pane: closing it would leave the worktree) nor any agent.
   expect(failed.calls.filter((a) => a[1] === "close" || a[1] === "start")).toEqual([]);
   const kept = worktreeHerdr(path, { close: () => herdrError("boom") });
-  const k = await launch([...launchArgs, "--worktree", "b"], kept.deps);
+  const k = await launch([...launchArgs, "--worktree", "b"], { ...kept.deps, env });
   expect(k).toMatchObject({ ok: true, state: "ready", pane: "w5:p2" });
+  noCarrierValue(k);
   expect(k.warnings.join(" ")).toContain("w5:p1");
   expect(k.warnings.join(" ")).toContain("extra shell pane");
   expect(kept.calls.find((a) => a[1] === "start")).toContain("w5:p2");
+});
+
+test("a worktree launch whose agent never becomes ready fails without a carrier value, its pane's last lines redacted", async () => {
+  const path = process.cwd(), tail = `$ claude\nTRACEPARENT=${CARRIED.TRACEPARENT} BAGGAGE=${CARRIED.BAGGAGE}\nError: gone`;
+  const f = worktreeHerdr(path, { also: (a) => (a[1] === "wait" && f.calls.some((c) => c[1] === "start") ? herdrError("agent_not_running")
+    : a[1] === "read" && a.includes("recent-unwrapped") ? herdrOK({ text: tail }) : undefined) });
+  const r = await launch([...launchArgs, "--worktree", "b", "--task", "Task"], { ...f.deps, env: { HERDR_ENV: "1", ...CARRIED } });
+  expect(r).toMatchObject({ ok: false, state: "failed", pane: "w5:p2" });
+  expect(r.screen).toContain("TRACEPARENT=<carrier> BAGGAGE=<carrier>");
+  noCarrierValue(r);
+});
+
+// A root pane launch could not close leaves a second pane in the worktree's workspace, so cleanup --pane would close the
+// worker's pane and leave the worktree: a --pane launch into a linked worktree's workspace gives the worktree's cleanup.
+test("after a failed close of the root pane and a stop at a question, the --pane rerun's cleanup removes the worktree, not the pane", async () => {
+  const path = process.cwd(), question = "found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)";
+  const first = worktreeHerdr(path, { close: () => herdrError("boom"), also: (a) => (a[1] === "read" ? herdrOK({ text: question }) : undefined) });
+  const r = await launch([...launchArgs, "--cwd", "/", "--worktree", "b"], { ...first.deps, env: { HERDR_ENV: "1", ...CARRIED } });
+  expect(r).toMatchObject({ state: "needs_input", pane: "w5:p2" });
+  expect(r.warnings.join(" ")).toContain("extra shell pane");
+  expect(cleanupStep(r)?.argv).toEqual(["routr", "cleanup", "--cwd", resolve("/"), "--worktree", "b"]);
+  const again = r.next.find((n) => n.kind === "run" && n.argv[1] === "launch").argv;
+  expect(again.slice(-4)).toEqual(["--pane", "w5:p2", "--cwd", path]);
+  // The rerun: herdr lists both panes in workspace w5, a linked worktree of /repo.
+  const workspaces = (worktree) => (a) => (a[1] === "list" && a[0] === "pane" ? herdrOK({ panes: [{ pane_id: "w5:p1", workspace_id: "w5" }, { pane_id: "w5:p2", workspace_id: "w5" }] })
+    : a[0] === "workspace" && a[1] === "list" ? herdrOK({ workspaces: [{ workspace_id: "w5", ...(worktree ? { worktree } : {}) }] }) : undefined);
+  const rerun = fakeHerdr({ reply: workspaces({ is_linked_worktree: true, checkout_path: path, repo_root: "/repo" }) });
+  const s = await launch(again.slice(2), rerun.deps);
+  expect(s).toMatchObject({ ok: true, state: "ready", pane: "w5:p2" });
+  expect(cleanupStep(s)?.argv).toEqual(["routr", "cleanup", "--cwd", "/repo", "--path", path]);
+  expect(rerun.calls.some((a) => a[1] === "close")).toBe(false);
+  // A pane in an ordinary workspace, or one herdr cannot place, keeps its own line, as before.
+  for (const reply of [workspaces(null), workspaces({ is_linked_worktree: false, checkout_path: path }), () => undefined]) {
+    const plain = fakeHerdr({ reply });
+    expect(cleanupStep(await launch(again.slice(2), plain.deps))?.argv).toEqual(["routr", "cleanup", "--pane", "w5:p2"]);
+  }
 });
 
 test("a worktree dry run plans the same steps, with no values and no pane ids", async () => {
