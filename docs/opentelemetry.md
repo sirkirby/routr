@@ -198,23 +198,31 @@ worker. Shell startup files may still change the environment.
 
 Headless turn lineage is **lead → routr launch → invoke_agent turns**, with later routr commands linked to the
 launch. A holder uses only the launch context saved in its worker settings, never the sender's or lead's current
-carriers. Without a saved sampled launch there is no turn lineage to export. Each turn captures fresh export
+carriers. The worker's `launch` metadata distinguishes three cases: a recorded launch saves
+`{ launch_id, traceId, spanId }`; an enabled launch whose parent was unsampled saves `{ sampled: false }`;
+a launch with export off saves no `launch` field. Recorded launches keep their child turns. An unsampled launch
+keeps its sampling decision across export off/on: its turns record nothing, and its saved carriers pass unchanged.
+When a worker was launched with export off, each turn begun after export is enabled is a sampled root of its own
+new trace, with no launch parent or `routr.launch.id`. This is ParentBased(AlwaysOn) without a parent; a saved
+carrier from the off launch supplies neither its parent nor its sampling decision. Each turn captures fresh export
 state and consent; its queue call re-reads them before writing. A holder started while export is off can emit
 turns begun after it is enabled. A turn whose consent changed writes nothing. Each finished turn writes its own
 batch immediately, while the harness may still be alive; export failure never changes its outcome or waits on
 network delivery. A message taken into a running turn adds to that turn, without creating another span.
 
 The process environment carries the span that started that process: the launch for the first process, and the
-turn for a later process resuming the session. Cursor starts a process per turn and gets that turn's span even
+turn for a later process resuming the session. When no launch context was recorded, a process started for a
+recorded root turn gets that turn's span. Cursor starts a process per turn and gets that turn's span even
 for its first process. A running process keeps its original environment. Codex's requests carry the current
 turn's `trace: {traceparent, tracestate}`, which takes precedence over the environment. Kiro's `session/prompt`
 carries the turn through ACP's reserved `_meta.traceparent`, `_meta.tracestate` and `_meta.baggage`; `session/new`
-and `session/load` carry the process's context there. Absent carriers are omitted. With export off or an
-unsampled parent, saved carrier values stay unchanged. `TRACESTATE` is forwarded only with a valid inherited
-parent when routr generates context, and `BAGGAGE` remains unchanged.
+and `session/load` carry the process's context there. Absent carriers are omitted. With export off or a
+persisted unsampled launch decision, saved carrier values stay unchanged. `TRACESTATE` is forwarded only with a
+valid inherited parent when routr generates context, and `BAGGAGE` remains unchanged.
 
 With its own tracing enabled, headless Claude nests under the span that started its process: the launch
-initially, or the resuming turn after a restart. Codex nests under each turn through its request field. Cursor,
+initially, or the resuming turn after a restart; a process started for a root turn nests under that root. Codex
+nests under each turn through its request field. Cursor,
 Antigravity and Kiro read no context in the researched versions, so their own telemetry, if any, is not joined.
 ACP reserves the keys routr sends to Kiro; Kiro's consumption is unmeasured. Routr's fixture tests verify the
 channels it writes, without claiming a new live measurement of harness tracing. Each
@@ -252,7 +260,7 @@ protocol; it is not an upstream measurement of local IPC.
 | `routr usage` | INTERNAL | inherited or new root | level only when explicitly given; per-subscription reading children |
 | `routr usage {subscription}` | INTERNAL | reading command | subscription, usage state and source; final error type |
 | `routr launch` | INTERNAL | inherited or new root; recovery rerun links to original launch | kind, backend, launch state and id, worker name, model as given, effort, advice match, lead session, forwarded carrier names, available pane conversation id |
-| `invoke_agent {gen_ai.agent.name}` | CLIENT | saved `routr launch` | operation `invoke_agent`, provider, worker name, available harness conversation id, model selector, turn number, outcome and message count; observed classified token counts only; final error type |
+| `invoke_agent {gen_ai.agent.name}` | CLIENT | saved `routr launch`, or new root when launch export was off | operation `invoke_agent`, provider, worker name, available harness conversation id, model selector, turn number, outcome and message count; observed classified token counts only; final error type |
 | `routr send` | INTERNAL | inherited or new root; matched launch link | send state |
 | `routr wait` | INTERNAL | inherited or new root; link per matched launch | wait state |
 | `routr workers` | INTERNAL | inherited or new root; link per matched launch | workers state |

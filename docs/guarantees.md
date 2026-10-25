@@ -350,11 +350,13 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
   across lines; a value the screen drew with something inside it (a colour code) is not recognised.
 - **Headless.** Launch saves the carriers it passes in the worker's settings file, in its run folder (0600 on macOS
   and Linux), and every turn starts from those, whoever starts the next one: a `send` from another environment does not
-  replace them. With a sampled saved launch and export on, the holder emits one child `invoke_agent` span per
-  completed turn, re-checking consent on each write. The first process gets the launch span; a resumed process
-  gets the turn that starts it; Cursor gets the turn for every process. Codex requests carry the turn in `trace`;
+  replace them. With export on, the holder emits one `invoke_agent` span per completed turn, re-checking consent
+  on each write: a child of its saved sampled launch, or a separate sampled root when launch export was off.
+  An enabled launch whose parent was unsampled saves that decision, and its turns stay unrecorded across export
+  changes. Export-off launches save no sampling decision. The first process gets the launch span; a resumed process
+  gets the turn that starts it; a process started for a recorded root turn gets that root; Cursor gets the turn for every process. Codex requests carry the turn in `trace`;
   Kiro prompts use ACP `_meta`, with session creation/loading carrying the process context. A message into a
-  running turn creates no new span. An existing process keeps its environment. Export off or unsampled parentage
+  running turn creates no new span. An existing process keeps its environment. Export off or a saved unsampled launch decision
   keeps saved carrier values unchanged. Queue failures leave turns unchanged.
   [OpenTelemetry nesting and measurement limits](opentelemetry.md#parentage-and-workers) describe each harness. They are checked against the limits again each time they are read: only the three names are used, and
   a value outside the limits, or a name saved with anything but a non-empty string (null, empty), is withheld (`send` says so; `workers` and `wait` show the names in

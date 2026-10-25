@@ -228,12 +228,12 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
     // The trace-context carriers in launch's environment, within routr's limits, are saved with the worker: every turn
     // gets these, whoever starts its holder later (a `send` from another environment). Shown by name only;
     // CURSOR_CONFIG_DIR, the run folder's, is not listed.
-    const found = launchCarriers(env);
+    const found = launchCarriers(env), launchTrace = currentLaunch(config, env);
     out.warnings.push(...launchCarrierWarnings(found));
     out.start = { executable: HARNESSES[o.kind].executable, argv, env: Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) };
     out.ran.push(displayCommand([HARNESSES[o.kind].executable, ...argv]));
     const w = { format: FORMAT, id: randomUUID().replace(/-/g, ""), name: o.name, kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(), carriers: found.carriers,
-      ...(currentLaunch() ? { launch: currentLaunch() } : {}),
+      ...(launchTrace ? { launch: launchTrace } : {}),
       ...(wt ? { worktree: { branch: wt.branch, base: wt.base, path: wt.path, source: wt.source, start: wt.start, folder: wt.folder } } : {}) };
     writeFileSync(join(dir, "worker.json"), JSON.stringify(w) + "\n", { mode: 0o600 });
     writeSecret(dir);

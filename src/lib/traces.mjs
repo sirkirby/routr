@@ -1,7 +1,7 @@
 // Only this boundary builds shipped spans. Raw command output never enters an OTLP encoder.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
-import { encodeTraces, otelSession } from "./otel.mjs";
+import { encodeTraces, otelSession, otelSwitch } from "./otel.mjs";
 import { loadConfig } from "./config.mjs";
 import { carriersFrom, carrierWithheld, savedCarriers } from "./runtime.mjs";
 import { parseTraceparent, leadSession, sessionId } from "./trace-context.mjs";
@@ -51,7 +51,12 @@ function link(entry) {
   if (!c.span.links.some((l) => l.traceId === v.traceId && l.spanId === v.spanId)) c.span.links.push({ traceId: v.traceId, spanId: v.spanId });
   c.matched.add(v.launch_id);
 }
-export const currentLaunch = () => { const c = context.getStore(); return c?.command === "launch" ? { launch_id: c.launchId, traceId: c.span.traceId, spanId: c.span.spanId } : null; };
+export function currentLaunch(config, env = process.env) {
+  const c = context.getStore();
+  if (c?.command === "launch") return { launch_id: c.launchId, traceId: c.span.traceId, spanId: c.span.spanId };
+  // Off is no sampling decision. Retain an enabled launch's unsampled parent even when a later holder opts in.
+  return otelSwitch(config, env).on && parseTraceparent(carriersFrom(env).carriers.TRACEPARENT)?.sampled === false ? { sampled: false } : null;
+}
 export function linkWorker(worker) { try { const c = context.getStore(); if (c && ["send", "wait", "workers", "stop", "cleanup"].includes(c.command)) link(worker.launch); } catch {} }
 export function adviceForLaunch(id) { const c = context.getStore(); if (c?.command === "launch" && /^[a-f0-9]{8}$/.test(id)) c.adviceId = id; }
 async function paneFacts(pane, run) {
@@ -169,7 +174,7 @@ export function launchCarriers(env) {
 export const launchCarrierWarnings = (found) => found.withheld.map((n) => found.launchSpan && n === "TRACEPARENT"
   ? "The inherited TRACEPARENT exceeded routr's forwarding limits; the worker gets this routr launch span instead"
   : carrierWithheld(n));
-// Stage 2 W3-3: each turn captures fresh consent; its queue call checks it again. A holder has no lead carriers.
+// Stage 2 W3-3: fresh consent per turn. Missing launch means export was off: root turns; an explicit unsampled launch stays silent.
 const WORKER_PROVIDERS = { claude: "anthropic", codex: "openai", cursor: "cursor", agy: "gcp.gen_ai", kiro: "kiro" };
 export function workerTurn(worker, number, { env = process.env, otel = {} } = {}) {
   const saved = savedCarriers(worker.carriers).carriers;
@@ -177,12 +182,12 @@ export function workerTurn(worker, number, { env = process.env, otel = {} } = {}
   try {
     const launch = launchContext(worker.launch); inherited = parseTraceparent(saved.TRACEPARENT);
     session = otelSession(loadConfig(otel.configPath).config, env, otel);
-    if (session.on && launch && inherited?.sampled !== false && WORKER_PROVIDERS[worker.kind] && /^[a-z][a-z0-9_-]{0,31}$/.test(worker.name)) {
-      span = { name: `invoke_agent ${worker.name}`, kind: 3, traceId: launch.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: launch.spanId,
+    if (session.on && (launch || !Object.hasOwn(worker, "launch")) && WORKER_PROVIDERS[worker.kind] && /^[a-z][a-z0-9_-]{0,31}$/.test(worker.name)) {
+      span = { name: `invoke_agent ${worker.name}`, kind: 3, traceId: launch?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"), ...(launch ? { parentSpanId: launch.spanId } : {}),
         flags: 1, startTimeUnixNano: nanos(), attributes: {} };
       put(span, traceIdentity(worker.cwd).attributes);
       put(span, { "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": WORKER_PROVIDERS[worker.kind], "gen_ai.agent.name": worker.name,
-        "routr.kind": worker.kind, "routr.backend": "headless", "routr.launch.id": launch.launch_id, "routr.model": modelName(worker.model), "routr.effort": pick(worker.effort, EFFORTS), "routr.turn": number });
+        "routr.kind": worker.kind, "routr.backend": "headless", "routr.launch.id": launch?.launch_id, "routr.model": modelName(worker.model), "routr.effort": pick(worker.effort, EFFORTS), "routr.turn": number });
     }
   } catch {} // Missing context, malformed state or optional observation cannot change a turn.
   let ended = false;

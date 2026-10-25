@@ -574,12 +574,11 @@ test("turn queueing checks live consent; off holders can emit after opt-in, with
   expect(attrs(x.spans()[0])).toMatchObject({ "routr.turn": 3, "routr.turn.messages": 1 });
 });
 
-test("turns preserve saved carriers and emit nothing off, unsampled, without launch context or under process off switches", () => {
-  for (const mode of ["off", "unsampled", "missing", "malformed", "disabled", "sdk"]) {
+test("turns preserve saved carriers and emit nothing off, unsampled, with malformed launch context or under process off switches", () => {
+  for (const mode of ["off", "unsampled", "malformed", "disabled", "sdk"]) {
     const x = exporting(), w = tracedWorker(x), env = {};
     if (mode === "off") writeFileSync(x.otel.configPath, JSON.stringify({ ...x.config, otel: undefined }));
-    if (mode === "unsampled") w.carriers.TRACEPARENT = parent.slice(0, -2) + "00";
-    if (mode === "missing") delete w.launch;
+    if (mode === "unsampled") { w.launch = { sampled: false }; w.carriers.TRACEPARENT = parent.slice(0, -2) + "00"; }
     if (mode === "malformed") w.launch.traceId = "0".repeat(32);
     if (mode === "disabled") env.ROUTR_OTEL = "0";
     if (mode === "sdk") env.OTEL_SDK_DISABLED = "TRUE";
@@ -587,6 +586,12 @@ test("turns preserve saved carriers and emit nothing off, unsampled, without lau
     expect(t.carriers).toEqual(w.carriers);
     t.end("finished", 1);
     expect(x.spans()).toHaveLength(0); expect(x.spawned).toHaveLength(0);
+    if (mode === "unsampled") {
+      // The persisted decision remains authoritative even if carriers are later removed or changed.
+      w.carriers = { TRACEPARENT: parent };
+      workerTurn(w, 2, { env: {}, otel: x.otel }).end("finished", 1);
+      expect(x.spans()).toHaveLength(0);
+    }
   }
 });
 
@@ -613,4 +618,16 @@ test("a generated turn context drops orphan tracestate when its saved parent is 
   expect(t.carriers.TRACEPARENT).toMatch(/^00-4bf92f3577b34da6a3ce929d0e0e4736-[a-f0-9]{16}-01$/);
   expect(t.carriers).not.toHaveProperty("TRACESTATE");
   expect(t.carriers.BAGGAGE).toBe("a=PRIVATE_BAGGAGE");
+});
+
+test("absent launch metadata starts sampled root turns even with an unsampled carrier saved while export was off", () => {
+  const x = exporting(), w = tracedWorker(x);
+  delete w.launch; w.carriers.TRACEPARENT = parent.slice(0, -2) + "00";
+  for (const n of [2, 3]) workerTurn(w, n, { env: { TRACEPARENT: parent }, otel: x.otel }).end("finished", 1);
+  expect(x.spans()).toHaveLength(2);
+  expect(new Set(x.spans().map((s) => s.traceId)).size).toBe(2);
+  for (const s of x.spans()) {
+    expect(s.parentSpanId).toBeUndefined(); expect(s.flags).toBe(1); expect(s.traceId).not.toBe(parent.split("-")[1]);
+    expect(attrs(s)).not.toHaveProperty("routr.launch.id");
+  }
 });

@@ -137,6 +137,7 @@ Rules 0, 1 and 7 are about panes, in herdr; a headless worker has no pane, scree
 routr forwards saved `TRACEPARENT`, `TRACESTATE` and `BAGGAGE`; with export on, sampled launches and headless
 turns supply the context described in [the schema](../../../docs/opentelemetry.md#parentage-and-workers).
 A process gets its cause: launch for the first, resuming turn for a later process, turn for every Cursor process.
+Without a recorded launch, each recorded turn starts its own sampled root trace; a process it starts gets that root.
 A running process keeps that environment. Protocol requests can carry the current turn separately. Routr never
 enables a harness's own tracing. Read-only research, 2026-10-24: vendor docs [doc], official source [src], and
 installed binary strings [bin]; no session was started. Fixture tests verify routr's channels, not live consumption.
@@ -150,8 +151,9 @@ installed binary strings [bin]; no session was started. Fixture tests verify rou
 | Kiro | Environment; ACP reserved `_meta.traceparent`, `_meta.tracestate`, `_meta.baggage` on `session/prompt` for the turn, on `session/new`/`session/load` for the process | No reader in environment or ACP found: its own telemetry is not joined. ACP reserves these keys; Kiro consuming what routr sends is unmeasured | [bin] kiro-cli 2.34.0; [doc] kiro.dev/docs/cli/acp; agentclientprotocol.com/protocol/extensibility |
 
 No researched harness reads `BAGGAGE`. Pane workers have no turn spans and get launch context in a new pane's
-environment; neither Claude nor Codex reads it in interactive mode. Export off or an unsampled parent preserves
-saved carrier values unchanged.
+environment; neither Claude nor Codex reads it in interactive mode. Export off or a persisted unsampled launch
+decision preserves saved carrier values unchanged. An off launch saves no sampling decision, so later opt-in can
+record root turns even when that launch forwarded an unsampled carrier.
 
 Whether an inherited carrier then reaches a harness's own shell commands unchanged is not measured.
 

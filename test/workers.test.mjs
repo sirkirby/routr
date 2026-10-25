@@ -1430,3 +1430,75 @@ test("revoked consent or a failed holder queue write cannot change a completed t
     } finally { w.release(); w.run(["stop", "--name", "silent"]); await w.settled("silent"); w.run(["cleanup", "--worker", "silent"]); }
   }
 }, 90000);
+
+test("workers launched with export off record independent root turns after opt-in and give resumed processes their turn context", async () => {
+  for (const kind of Object.keys(ADAPTERS)) {
+    const saved = { TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", TRACESTATE: "vendor=PRIVATE_STATE", BAGGAGE: "a=PRIVATE_BAGGAGE" };
+    const w = traceWorld(saved); w.env.FAKE_ENV = join(w.home, "env.jsonl");
+    if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor/cli-config.json"), "{}"); }
+    writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: undefined }));
+    try {
+      expect([kind, w.launch("roots", w.task(BRIEF), [], undefined, kind).ok]).toEqual([kind, true]);
+      expect(await w.settled("roots")).toBe(true);
+      expect(JSON.parse(readFileSync(join(w.runDir("roots"), "worker.json"), "utf8"))).not.toHaveProperty("launch");
+      expect(w.spans()).toEqual([]);
+      writeFileSync(w.configPath, JSON.stringify(w.config));
+      for (const text of [`${SENT} HOLD`, SENT]) {
+        expect(w.run(["send", "--name", "roots", "--task", text], { TRACEPARENT: "00-" + "a".repeat(32) + "-" + "b".repeat(16) + "-01" }).ok).toBe(true);
+        w.release(); expect(await w.settled("roots")).toBe(true);
+      }
+      const turns = w.spans().filter((s) => s.name === "invoke_agent roots").sort((a, b) => wireAttrs(a)["routr.turn"] - wireAttrs(b)["routr.turn"]);
+      expect([kind, turns.length]).toEqual([kind, 2]);
+      expect(turns.map((s) => wireAttrs(s)["routr.turn"])).toEqual([2, 3]);
+      expect(new Set(turns.map((s) => s.traceId)).size).toBe(2);
+      for (const t of turns) {
+        expect(t.parentSpanId).toBeUndefined(); expect(t.flags).toBe(1);
+        expect(t.traceId).not.toBe("4bf92f3577b34da6a3ce929d0e0e4736"); expect(t.traceId).not.toBe("a".repeat(32));
+        expect(wireAttrs(t)).not.toHaveProperty("routr.launch.id");
+        expect(wireAttrs(t)).toMatchObject({ "routr.turn.outcome": "finished", "routr.turn.messages": 1 });
+      }
+      const processes = turnsOf(kind, readFileSync(w.env.FAKE_ENV, "utf8").trim().split("\n").map(JSON.parse));
+      expect(processes).toHaveLength(3); expect(carriersIn(processes[0].env)).toEqual(saved);
+      expect(processes.slice(1).map((p) => carriersIn(p.env))).toEqual(turns.map((s) => ({ TRACEPARENT: spanCarrier(s), BAGGAGE: saved.BAGGAGE })));
+      expect(JSON.stringify(w.batches())).not.toMatch(/PRIVATE-BRIEF|PRIVATE-SEND|PRIVATE_STATE|PRIVATE_BAGGAGE/);
+    } finally { w.release(); w.run(["stop", "--name", "roots"]); await w.settled("roots"); w.run(["cleanup", "--worker", "roots"]); }
+  }
+}, 60000);
+
+test("an unsampled launch saves its sampling decision and every adapter keeps it through export off and on", async () => {
+  for (const kind of Object.keys(ADAPTERS)) {
+    const saved = { TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00", TRACESTATE: "vendor=PRIVATE_STATE", BAGGAGE: "a=PRIVATE_BAGGAGE" };
+    const w = traceWorld(saved); w.env.FAKE_ENV = join(w.home, "env.jsonl");
+    if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor/cli-config.json"), "{}"); }
+    try {
+      expect(w.launch("unsampled", w.task(BRIEF), [], undefined, kind).ok).toBe(true); expect(await w.settled("unsampled")).toBe(true);
+      const worker = JSON.parse(readFileSync(join(w.runDir("unsampled"), "worker.json"), "utf8"));
+      expect(worker.launch).toEqual({ sampled: false }); expect(w.spans()).toEqual([]);
+      for (const on of [false, true]) {
+        writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: on ? w.config.otel : undefined }));
+        expect(w.run(["send", "--name", "unsampled", "--task", SENT], { TRACEPARENT: "00-" + "a".repeat(32) + "-" + "b".repeat(16) + "-01" }).ok).toBe(true);
+        expect(await w.settled("unsampled")).toBe(true);
+      }
+      expect(w.spans().filter((s) => s.name.startsWith("invoke_agent "))).toEqual([]);
+      const processes = turnsOf(kind, readFileSync(w.env.FAKE_ENV, "utf8").trim().split("\n").map(JSON.parse));
+      expect(processes).toHaveLength(3);
+      for (const p of processes) expect(carriersIn(p.env)).toEqual(saved);
+    } finally { w.run(["stop", "--name", "unsampled"]); await w.settled("unsampled"); w.run(["cleanup", "--worker", "unsampled"]); }
+  }
+}, 60000);
+
+test("an initially off holder records its first later automatic turn as a root, even with an unsampled saved carrier", async () => {
+  const parent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00", w = traceWorld({ TRACEPARENT: parent });
+  w.env.FAKE_ENV = join(w.home, "env.jsonl");
+  writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: undefined }));
+  try {
+    expect(w.launch("later-root", w.task(`${BRIEF} HOLD BACKGROUND`)).ok).toBe(true);
+    expect(JSON.parse(readFileSync(join(w.runDir("later-root"), "worker.json"), "utf8"))).not.toHaveProperty("launch");
+    writeFileSync(w.configPath, JSON.stringify(w.config)); w.release(); expect(await w.settled("later-root")).toBe(true);
+    const turns = w.spans().filter((s) => s.name === "invoke_agent later-root");
+    expect(turns).toHaveLength(1); expect(wireAttrs(turns[0])).toMatchObject({ "routr.turn": 2, "routr.turn.messages": 0 });
+    expect(turns[0].parentSpanId).toBeUndefined(); expect(turns[0].traceId).not.toBe(parent.split("-")[1]);
+    const processes = turnsOf("claude", readFileSync(w.env.FAKE_ENV, "utf8").trim().split("\n").map(JSON.parse));
+    expect(processes).toHaveLength(1); expect(processes[0].env.TRACEPARENT).toBe(parent);
+  } finally { w.release(); w.run(["stop", "--name", "later-root"]); await w.settled("later-root"); w.run(["cleanup", "--worker", "later-root"]); }
+}, 30000);

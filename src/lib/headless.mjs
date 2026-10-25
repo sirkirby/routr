@@ -505,7 +505,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       const answer = (r) => { if (!answered) { answered = true; resolve(r); } };
       beginTurn(carried, carried ? 0 : 1);
       // W3-2: environment records the cause of this process, never a later message into an existing process.
-      const processCarriers = w.kind === "cursor" || st.turn > 1 ? turnCarriers() : savedCarriers(w.carriers).carriers;
+      const processCarriers = w.kind === "cursor" || st.turn > 1 || w.launch == null ? turnCarriers() : savedCarriers(w.carriers).carriers;
       let c, h;
       try {
         c = run(HARNESSES[w.kind].executable, headlessArgv({ kind: w.kind, model: w.model, effort: w.effort, session, cwd: w.cwd }),
