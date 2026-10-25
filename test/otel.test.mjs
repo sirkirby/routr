@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 import { ROUTR_VERSION } from "../src/lib/version.mjs";
 import { writeJsonAtomic } from "../src/lib/runtime.mjs";
+import { carryOut, uninstall } from "../src/lib/uninstall.mjs";
+import { COMMANDS, formatCommandHelp } from "../src/lib/help.mjs";
+import { briefSha, read as readLedger } from "../src/lib/ledger.mjs";
+import { telemetryRows } from "../src/lib/telemetry.mjs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { setup, showSettings } from "../src/lib/setup.mjs";
 import { guided } from "../src/lib/setup-guided.mjs";
@@ -100,6 +104,12 @@ test("no-mkdir atomic writes cannot recreate a removed queue", () => {
   expect(JSON.parse(readFileSync(file))).toEqual({ a: 1 });
 });
 
+test("a failed atomic rename preserves the old retry state", () => {
+  const file = join(scratch("otel-atomic-failure"), "sender.json"); writeFileSync(file, '{"attempt":3}');
+  expect(() => writeJsonAtomic(file, { attempt: 4 }, { rename: () => { throw Object.assign(new Error("full disk"), { code: "ENOSPC" }); } })).toThrow();
+  expect(JSON.parse(readFileSync(file))).toEqual({ attempt: 3 });
+});
+
 test("sessions do nothing off, and queue only under the consent they started with without deleting files", () => {
   const f = install(), offHome = scratch("otel-off"), offSpawns = [];
   const off = otel.otelSession({}, {}, { home: offHome, spawn: (...v) => offSpawns.push(v) });
@@ -125,6 +135,9 @@ test("sessions do nothing off, and queue only under the consent they started wit
 });
 
 test("setup rotates consent on every explicit endpoint, off removes only the setting, and show reports status", async () => {
+  expect(formatCommandHelp(COMMANDS.setup)).toContain("--otel-endpoint <url>");
+  expect(formatCommandHelp(COMMANDS.setup)).toContain("--otel-off");
+  expect(formatCommandHelp(COMMANDS.key)).toContain("otel-headers");
   const f = install(), starts = [];
   const inspect = async () => ({ config: { exists: existsSync(f.configPath), subscriptions: [] }, harnesses: {}, decision: [{ works: true }], next_steps: [],
     skill: ["routr", "routr-orchestrate"].map((name) => ({ name, where: `~/.agents/skills/${name}`, version: ROUTR_VERSION })) });
@@ -176,12 +189,12 @@ test("the sender claims batches, POSTs JSON with saved headers, deletes accepted
   const r = await receiver((req, res) => { res.end("{}"); });
   try {
     const f = install(r.endpoint); otel.prepareOtel(f.opts);
-    writeSecrets({ ROUTR_OTEL_HEADERS: otel.parseOtelHeaders("Authorization=Bearer%20HEADER_MARKER%2C%3D%27").stored }, join(f.home, ".config/routr/env"));
+    writeSecrets({ ROUTR_OTEL_HEADERS: otel.parseOtelHeaders(" 'name = ends%27, Authorization=Bearer%20HEADER_MARKER%2C%3D%27, x=one%252Ctwo, tab=a%09b ").stored }, join(f.home, ".config/routr/env"));
     const body = otel.encodeTraces([], { resource: otel.otelResource({ home: f.home }) });
     otel.otelSession(f.config, {}, f.opts).queue("traces", body);
     await otel.sendOtel({ ...f.opts, env: { ROUTR_OTEL_HEADERS: "ignored=ambient" } });
     expect(r.requests).toHaveLength(1);
-    expect(r.requests[0]).toMatchObject({ url: "/prefix/v1/traces", headers: { authorization: "Bearer HEADER_MARKER,='", "content-type": "application/json", "accept-encoding": "identity" }, body: JSON.stringify(body) + "\n" });
+    expect(r.requests[0]).toMatchObject({ url: "/prefix/v1/traces", headers: { "'name": "ends'", authorization: "Bearer HEADER_MARKER,='", x: "one%2Ctwo", tab: "a\tb", "content-type": "application/json", "accept-encoding": "identity" }, body: JSON.stringify(body) + "\n" });
     expect(readdirSync(join(f.root, "traces"))).toEqual([]);
     expect(otel.otelStatus(f.config, {}, f.opts)).toMatchObject({ last_export: { ok: true, sent: 1, refused: 0, error: null }, headers: "set", queued_files: 0 });
     expect(readFileSync(join(f.root, "sender.json"), "utf8")).not.toContain("HEADER_MARKER");
@@ -222,11 +235,11 @@ test("retriable responses persist jittered backoff and Retry-After across sender
 });
 
 test("redirects and other non-retriable statuses drop once, with fixed codes and no response bodies", async () => {
-  for (const status of [301, 400, 401, 404, 500, 501]) {
-    const r = await receiver((req, res) => { res.statusCode = status; res.setHeader("Location", "/must-not-follow"); res.end("HEADER_MARKER"); });
+  for (const status of [101, 301, 400, 401, 404, 500, 501]) {
+    const r = await receiver((req, res) => { res.statusCode = status; res.setHeader("Location", "/must-not-follow"); if (status === 101) { res.setHeader("Connection", "Upgrade"); res.setHeader("Upgrade", "other"); } res.end("HEADER_MARKER"); });
     try {
       const f = install(r.endpoint); otel.prepareOtel(f.opts); otel.otelSession(f.config, {}, f.opts).queue("traces", {});
-      await otel.sendOtel(f.opts);
+      await otel.sendOtel({ ...f.opts, timeoutMs: 30 });
       expect(r.requests).toHaveLength(1);
       expect(otel.otelStatus(f.config, {}, f.opts)).toMatchObject({ queued_files: 0, dropped_total: 1, dropped_by_code: { [`http_${status}`]: 1 } });
       expect(readFileSync(join(f.root, "sender.json"), "utf8")).not.toContain("HEADER_MARKER");
@@ -341,3 +354,156 @@ test("hanging endpoints do not delay queueing; requests time out and stop with p
     expect(existsSync(join(f.root, "sender.lock"))).toBe(false);
   } finally { await r.close(); }
 });
+
+test("uninstall reports a running sender and its in-flight timeout cannot recreate removed folders", async () => {
+  let received;
+  const arrived = new Promise((resolve) => { received = resolve; }), r = await receiver(() => received());
+  let child;
+  try {
+    const f = install(r.endpoint); otel.prepareOtel(f.opts); otel.otelSession(f.config, {}, f.opts).queue("traces", {});
+    child = Bun.spawn([process.execPath, SCRIPT, "--otel-sender", "--config", f.configPath], { env: cliEnv(f.home), stdout: "ignore", stderr: "pipe" });
+    await arrived;
+    const began = performance.now();
+    const result = await uninstall(["--yes", "--json"], { home: f.home });
+    expect(performance.now() - began).toBeLessThan(1000);
+    expect(result).toMatchObject({ ok: true, otel_sender_running: true });
+    expect(result.note).toContain("OpenTelemetry sender");
+    expect(existsSync(f.root)).toBe(false);
+    expect(await child.exited).toBe(0);
+    expect(existsSync(f.root)).toBe(false); expect(existsSync(join(f.home, ".local/state/routr"))).toBe(false);
+  } finally { child?.kill(); await r.close(); }
+}, 20_000);
+
+test("Windows uninstall leaves the binary for a running sender and says when it can be removed", () => {
+  const home = scratch("otel-uninstall-win"), binary = join(home, "routr.exe"); writeFileSync(binary, "fixture");
+  const result = carryOut({ remove: [{ path: binary, binary: true }], not_ours: [] }, { home, platform: "win32", senderRunning: true });
+  expect(result.removed).toEqual([]); expect(result.userFiles).toContain(binary); expect(existsSync(binary)).toBe(true);
+});
+
+test("uninstall checks for a sender again under its lock before removing files", async () => {
+  const home = scratch("otel-uninstall-race"); let checks = 0;
+  const r = await uninstall(["--yes", "--json"], { home, senderStatus: () => {
+    checks++; if (checks === 1) return false;
+    expect(existsSync(join(home, ".local/state/routr/uninstalling"))).toBe(true); return true;
+  } });
+  expect(checks).toBe(2); expect(r).toMatchObject({ ok: true, otel_sender_running: true });
+});
+
+test("saved header values stay out of every command's whole output, queued batches, ledger and telemetry rows", () => {
+  const f = install(), marker = "PRIVATE_OTEL_HEADER_MARKER_917d", config = join(f.home, ".config/routr/config.json"), ledger = join(f.home, "ledger.jsonl"), advice = join(f.home, "advice.json");
+  mkdirSync(join(f.home, ".config/routr"), { recursive: true });
+  writeFileSync(config, JSON.stringify({ ...f.config, subscriptions: {}, telemetry: false, auto_update: false }));
+  writeSecrets({ ROUTR_OTEL_HEADERS: `authorization=${marker}` }, join(f.home, ".config/routr/env"));
+  writeFileSync(advice, JSON.stringify({ id: "safe-advice", brief_sha: briefSha("safe task"), mode: "dispatch", level: "standard", facts: {} }));
+  const cases = [
+    ["dispatch", "safe task"], ["subagent", "safe task"], ["check", "--brief", advice, "--report", advice], ["doctor", "--json"], ["doctor"], ["setup", "--show"],
+    ["key", "set", "otel-headers"], ["launch", "--dry-run"], ["cleanup", "--dry-run"], ["workers"], ["wait", "--timeout", "1"], ["send"], ["stop"], ["usage"],
+    ["record", "--advice", advice, "--ledger", ledger, "--subscription", "codex", "--model", "fixture", "--effort", "low", "--verdict", "done", "--check", "pass"],
+    ["assess", "--ledger", ledger], ["share", "--ledger", ledger, "--out", join(f.home, "share.jsonl")], ["telemetry", "status"], ["feedback"], ["skill", "install", "--dry-run"], ["uninstall", "--dry-run", "--json"], ["update", "--help"], ["statusline"]
+  ];
+  expect(new Set(cases.map((a) => a[0])).size).toBe(Object.keys(COMMANDS).length);
+  for (const args of cases) {
+    const result = Bun.spawnSync([process.execPath, SCRIPT, ...args], { env: cliEnv(f.home, { PATH: f.home, ROUTR_OTEL_HEADERS: marker }), stdin: Buffer.from(`authorization=${marker}\n`) });
+    expect(result.stdout.toString() + result.stderr.toString()).not.toContain(marker);
+  }
+  expect(readFileSync(ledger, "utf8")).not.toContain(marker);
+  expect(JSON.stringify(telemetryRows(readLedger(ledger), "test-install"))).not.toContain(marker);
+  otel.prepareOtel(f.opts); otel.otelSession(f.config, {}, f.opts).queue("traces", otel.encodeTraces([], { resource: otel.otelResource({ home: f.home }) }));
+  for (const name of readdirSync(join(f.root, "traces"))) expect(readFileSync(join(f.root, "traces", name), "utf8")).not.toContain(marker);
+}, 20_000);
+
+test("each off switch leaves the command API completely inert", () => {
+  for (const [config, env] of [[{}, {}], [{ otel: { endpoint: "https://example.test" } }, {}], [{ otel: { endpoint: "https://example.test", consent: "bad" } }, {}],
+    [{ otel: { endpoint: "https://example.test", consent: "a".repeat(32) } }, { OTEL_SDK_DISABLED: "TRUE" }], [{ otel: { endpoint: "https://example.test", consent: "a".repeat(32) } }, { ROUTR_OTEL: "0" }]]) {
+    const home = scratch("otel-inert"), starts = [], session = otel.otelSession(config, env, { home, spawn: (args) => starts.push(args) });
+    expect(session.on).toBe(false); session.queue("traces", {});
+    expect(readdirSync(home)).toEqual([]); expect(starts).toEqual([]);
+  }
+});
+
+test("all four retriable HTTP codes honour HTTP-date Retry-After and a successful retry resets progression", async () => {
+  for (const status of [429, 502, 503, 504]) {
+    let time = Date.now(); const retryAt = new Date(time + 5000).toUTCString();
+    const r = await receiver((req, res, n) => { if (n === 1) { res.statusCode = status; res.setHeader("Retry-After", retryAt); } res.end("{}"); });
+    try {
+      const f = install(r.endpoint); otel.prepareOtel(f.opts); otel.otelSession(f.config, {}, f.opts).queue("traces", {});
+      const opts = { ...f.opts, now: () => time, random: () => 0 };
+      await otel.sendOtel(opts);
+      expect(JSON.parse(readFileSync(join(f.root, "sender.json")))).toMatchObject({ attempt: 1, next_attempt_at: Date.parse(retryAt) });
+      time = Date.parse(retryAt); await otel.sendOtel(opts);
+      expect(r.requests).toHaveLength(2); expect(JSON.parse(readFileSync(join(f.root, "sender.json")))).toMatchObject({ attempt: 0, next_attempt_at: null });
+    } finally { await r.close(); }
+  }
+});
+
+test("network failures retry, and a state failure after acceptance stops before another batch", async () => {
+  const r = await receiver((req, res, n) => { if (n === 1) req.socket.destroy(); else res.end("{}"); });
+  try {
+    const f = install(r.endpoint); otel.prepareOtel(f.opts); const session = otel.otelSession(f.config, {}, f.opts); session.queue("traces", {});
+    let time = Date.now(); const opts = { ...f.opts, now: () => time };
+    await otel.sendOtel(opts);
+    expect(otel.otelStatus(f.config, {}, f.opts).last_export.error).toBe("network");
+    time = JSON.parse(readFileSync(join(f.root, "sender.json"))).next_attempt_at; session.queue("traces", {});
+    await otel.sendOtel({ ...opts, write: (file, value, options) => { if (value.last_export?.ok) throw new Error("state unwritable"); writeJsonAtomic(file, value, options); } });
+    expect(r.requests).toHaveLength(2);
+    expect(readdirSync(join(f.root, "traces")).filter((n) => n.endsWith(".sending"))).toHaveLength(1);
+    await otel.sendOtel(opts); expect(r.requests).toHaveLength(4);
+  } finally { await r.close(); }
+});
+
+test("queue age follows file times through forward and backward clock jumps", async () => {
+  const r = await receiver((req, res) => res.end("{}"));
+  try {
+    const f = install(r.endpoint), time = Date.now(); otel.prepareOtel(f.opts);
+    otel.otelSession(f.config, {}, { ...f.opts, now: () => 1 }).queue("traces", {});
+    expect(otel.otelStatus(f.config, {}, { ...f.opts, now: () => time - 86400_000 }).oldest_age_sec).toBe(0);
+    await otel.sendOtel({ ...f.opts, now: () => time }); expect(r.requests).toHaveLength(1);
+    otel.otelSession(f.config, {}, { ...f.opts, now: () => time + 100 * 365 * 86400_000 }).queue("traces", {});
+    await otel.sendOtel({ ...f.opts, now: () => time + 8 * 86400_000 });
+    expect(r.requests).toHaveLength(1); expect(otel.otelStatus(f.config, {}, f.opts).dropped_by_code).toEqual({ cap: 1 });
+  } finally { await r.close(); }
+});
+
+test("a live sender protects its claim and a batch written during its request starts no second sender", async () => {
+  let arrived, finish;
+  const received = new Promise((resolve) => { arrived = resolve; });
+  const r = await receiver((req, res, n) => { if (n === 1) { finish = () => res.end("{}"); arrived(); } else res.end("{}"); });
+  try {
+    const f = install(r.endpoint); otel.prepareOtel(f.opts); const session = otel.otelSession(f.config, {}, f.opts); session.queue("traces", {});
+    const sender = otel.sendOtel(f.opts); await received;
+    const claimed = readdirSync(join(f.root, "traces")).find((n) => n.endsWith(".sending")); expect(claimed).toBeDefined();
+    session.queue("traces", {}); expect(f.spawned).toHaveLength(1);
+    await otel.sendOtel(f.opts); expect(r.requests).toHaveLength(1); expect(existsSync(join(f.root, "traces", claimed))).toBe(true);
+    finish(); await sender; expect(r.requests).toHaveLength(2);
+  } finally { finish?.(); await r.close(); }
+});
+
+test("the sender's one-minute life is monotonic and permits only the request already in flight to finish", async () => {
+  let elapsed = 0;
+  const r = await receiver((req, res) => { elapsed = 60_001; res.end("{}"); });
+  try {
+    const f = install(r.endpoint); otel.prepareOtel(f.opts); const session = otel.otelSession(f.config, {}, f.opts); session.queue("traces", {}); session.queue("traces", {});
+    await otel.sendOtel({ ...f.opts, monotonic: () => elapsed });
+    expect(r.requests).toHaveLength(1); expect(otel.otelStatus(f.config, {}, f.opts).queued_files).toBe(1);
+  } finally { await r.close(); }
+});
+
+test("the sender repairs signal folders inside an existing cache but never recreates a removed cache", async () => {
+  const f = install(); otel.prepareOtel(f.opts);
+  rmSync(join(f.root, "traces"), { recursive: true });
+  await otel.sendOtel(f.opts); expect(existsSync(join(f.root, "traces"))).toBe(true);
+  rmSync(f.root, { recursive: true });
+  await otel.sendOtel(f.opts); expect(existsSync(f.root)).toBe(false);
+});
+
+test("queue writers racing the sender's removals lose no complete batches", async () => {
+  const r = await receiver((req, res) => res.end("{}")), f = install(r.endpoint); otel.prepareOtel(f.opts);
+  const children = Array.from({ length: 4 }, () => Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/otel-child.mjs"), "queue"], { env: cliEnv(f.home, { ROUTR_TEST_QUEUE_COUNT: "100" }), stdout: "ignore", stderr: "pipe" }));
+  let active = children.length;
+  const exits = children.map(async (c) => { try { expect(await c.exited).toBe(0); } finally { active--; } });
+  try {
+    while (active) { await otel.sendOtel(f.opts); await new Promise((resolve) => setTimeout(resolve, 1)); }
+    await Promise.all(exits); await otel.sendOtel(f.opts);
+    expect(r.requests).toHaveLength(400); expect(otel.otelStatus(f.config, {}, f.opts).dropped_total).toBe(0);
+  } finally { for (const c of children) c.kill(); await r.close(); }
+}, 20_000);

@@ -119,15 +119,26 @@ const readConfig = (file) => { try { return JSON.parse(readFileSync(file, "utf8"
 function queued(p, signal) {
   const dir = join(p.root, signal);
   return names(dir).filter((n) => BATCH.test(n)).flatMap((name) => {
-    const file = join(dir, name), st = lstatSync(file);
-    return st.isFile() ? [{ file, name, signal, size: st.size, mtime: st.mtimeMs, nonce: name.match(BATCH)[2] }] : [];
+    const file = join(dir, name);
+    try {
+      const st = lstatSync(file);
+      return st.isFile() ? [{ file, name, signal, size: st.size, mtime: st.mtimeMs, nonce: name.match(BATCH)[2] }] : [];
+    } catch (e) { if (e?.code === "ENOENT") return []; throw e; } // W3-10: a sender can claim/remove between list and stat
   }).sort((a, b) => a.mtime - b.mtime || a.name.localeCompare(b.name));
 }
-export function prepareOtel({ home = userHome() } = {}) {
+export function prepareOtel({ home = userHome(), sender = false } = {}) {
   const p = paths(home);
-  if (existsSync(p.uninstall)) return false;
-  for (const name of [...SIGNALS, "drops"]) mkdirSync(join(p.root, name), { recursive: true, mode: 0o700 });
-  return !existsSync(p.uninstall);
+  try {
+    if (existsSync(p.uninstall)) return false;
+    if (!sender) mkdirSync(p.root, { recursive: true, mode: 0o700 });
+    if (!lstatSync(p.root).isDirectory()) return false;
+    for (const name of [...SIGNALS, "drops"]) {
+      if (existsSync(p.uninstall)) return false;
+      const dir = join(p.root, name);
+      try { mkdirSync(dir, { mode: 0o700 }); } catch (e) { if (e?.code !== "EEXIST" || !lstatSync(dir).isDirectory()) throw e; }
+    }
+    return !existsSync(p.uninstall);
+  } catch { return false; }
 }
 export const otelSenderRunning = (home = userHome()) => {
   try { const p = paths(home); return existsSync(p.lock) && !olderThan(5 * 60_000)(p.lock) && !lockIsStale(p.lock); } catch { return false; }
@@ -143,8 +154,8 @@ export function startOtelSender({ home = userHome(), configPath, spawn = spawnSe
 // The command seam: start captures consent without any I/O. End re-reads it, writes once, starts detached, returns.
 export function otelSession(config, env = process.env, opts = {}) {
   const initial = otelSwitch(config, env);
-  if (!initial.on) return { queue() {} };
-  return { queue(signal, requestBody) {
+  if (!initial.on) return { on: false, queue() {} };
+  return { on: true, queue(signal, requestBody) {
     try {
       const { home = userHome(), configPath, write = writeJsonAtomic, capBytes = CAP, now = Date.now } = opts, p = paths(home);
       const current = otelSwitch(readConfig(configPath ?? p.config), env);
@@ -166,7 +177,7 @@ export function otelStatus(config, env = process.env, { home = userHome(), now =
   try { files = SIGNALS.flatMap((s) => queued(p, s)); } catch {}
   try { if (Object.keys(otelHeaders(p.secrets)).length) headers = "set"; } catch {}
   return { on: sw.on, why_off: sw.why_off, endpoint_origin: sw.endpoint ? new URL(sw.endpoint).origin : null, headers,
-    last_export: st.last_export ?? null, queued_files: files.length, oldest_age_sec: files.length ? Math.max(0, Math.floor((now() - Math.min(...files.map((f) => f.mtime))) / 1000)) : null,
+    last_export: st.last_export ?? null, queued_files: files.length, oldest_age_sec: files.length ? Math.max(0, Math.floor((now() - files.reduce((oldest, f) => Math.min(oldest, f.mtime), Infinity)) / 1000)) : null,
     dropped_total: st.dropped_total ?? 0, dropped_by_code: st.dropped_by_code ?? {} };
 }
 
@@ -190,6 +201,7 @@ function postOtel(url, body, headers, timeoutMs) {
       });
       // A wall deadline, including DNS, connection and a trickling body; socket inactivity alone is not a deadline.
       timer = setTimeout(() => { finish({ error: "timeout" }); req.destroy(); }, timeoutMs);
+      req.on("upgrade", (res, socket) => { finish({ status: res.statusCode }); socket.destroy(); });
       req.on("error", () => finish({ error: "network" }));
       req.end(body);
     } catch { finish({ error: "network" }); req?.destroy(); }
@@ -218,10 +230,11 @@ const retryAfterMs = (value, now) => {
   if (/^\d+$/.test(value)) return Number.isSafeInteger(Number(value) * 1000) ? Number(value) * 1000 : 0;
   const t = Date.parse(value); return Number.isFinite(t) ? Math.max(0, t - now) : 0;
 };
-export async function sendOtel({ home = userHome(), configPath, env = process.env, write = writeJsonAtomic, timeoutMs = 10_000, now = Date.now, random = Math.random, capBytes = CAP, release = unlinkSync, began = performance.now() } = {}) {
+export async function sendOtel({ home = userHome(), configPath, env = process.env, write = writeJsonAtomic, timeoutMs = 10_000, now = Date.now, random = Math.random, capBytes = CAP, release = unlinkSync, monotonic = () => performance.now(), began = monotonic() } = {}) {
   const p = paths(home), configFile = configPath ?? p.config;
   if (existsSync(p.uninstall)) return;
-  if (!existsSync(p.root) && (!otelSwitch(readConfig(configFile), env).on || !prepareOtel({ home }))) return;
+  if (!existsSync(p.root)) return; // V4: a delayed detached start after uninstall must not recreate the cache
+  if (otelSwitch(readConfig(configFile), env).on && !prepareOtel({ home, sender: true })) return;
   if (!takeLock(p.lock, (f) => olderThan(5 * 60_000)(f) || lockIsStale(f))) return;
   const lockId = folderId(p.lock, { link: true });
   let healthy = true;
@@ -266,7 +279,7 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
     }
     save(); // prove backoff can be recorded before making the first request
     sweep();
-    while (held() && performance.now() - began < 60_000) {
+    while (held() && monotonic() - began < 60_000) {
       const sw = otelSwitch(readConfig(configFile), env);
       if (!sw.on || st.next_attempt_at > now()) break;
       const file = SIGNALS.flatMap((s) => queued(p, s))[0];
@@ -301,7 +314,7 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
   // W3-10: a command may have observed the held lock just after the empty read. Release, then rescan; preserve the
   // original monotonic lifetime and the persisted backoff, so neither a busy writer nor a clock jump extends it.
   try {
-    if (healthy && !existsSync(p.uninstall) && performance.now() - began < 60_000 && !(st.next_attempt_at > now()) && otelSwitch(readConfig(configFile), env).on && SIGNALS.some((s) => queued(p, s).length))
-      return sendOtel({ home, configPath, env, write, timeoutMs, now, random, capBytes, release, began });
+    if (healthy && !existsSync(p.uninstall) && monotonic() - began < 60_000 && !(st.next_attempt_at > now()) && otelSwitch(readConfig(configFile), env).on && SIGNALS.some((s) => queued(p, s).length))
+      return sendOtel({ home, configPath, env, write, timeoutMs, now, random, capBytes, release, monotonic, began });
   } catch {}
 }

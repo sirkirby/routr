@@ -8,7 +8,7 @@ const home = process.env.HOME, configPath = join(home, "config.json"), mode = pr
 if (mode === "queue") {
   const session = otelSession(JSON.parse(readFileSync(configPath)), {}, { home, configPath, spawn: () => true });
   const resource = otelResource({ home });
-  for (let i = 0; i < 10; i++) session.queue("traces", { resourceSpans: [{ resource, i }] });
+  for (let i = 0; i < Number(process.env.ROUTR_TEST_QUEUE_COUNT ?? 10); i++) session.queue("traces", { resourceSpans: [{ resource, i }] });
   console.log(resource["service.instance.id"]);
 } else {
   await sendOtel({ home, configPath, env: {}, write: (file, value, opts) => {
