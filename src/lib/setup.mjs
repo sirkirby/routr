@@ -362,12 +362,12 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   if (changed.length) did.push(`changed ${changed.join(", ")}`);
   if (!r.config.exists || args.includes("--force") || fresh.length || changed.length) {
     if (r.config.exists) copyFileSync(path, `${path}.bak`);
-    writeConfig(path, config, { indent: 2, preserveOnError: true }); // Review 3: never expose a missing-config window to the sender.
+    writeConfig(path, config, { indent: 2, preserveOnError: true }); // Never expose a missing-config window to the sender.
     did.push(`wrote ${path}${fresh.length ? ` with ${fresh.join(", ")}` : changed.length ? "" : " (no harness found yet: run `routr setup` again after installing one)"}`);
   } else skipped.push(`config ${path} already covers every harness found: kept as it is`);
   repairQueue(config);
   if (otelChanged) {
-    otelStart({ home: otelHome, configPath: path }); // V4: only the sender removes old-consent files, including on off
+    otelStart({ home: otelHome, configPath: path }); // Only the sender removes old-consent files, including on off
   }
   if (channelMoved) did.push(channelNote(channel, ROUTR_VERSION, isStandalone(), updatesOff(config, { isStandalone, env }))); // what happens next; setup itself updates nothing
   skipped.push(...leftOut);

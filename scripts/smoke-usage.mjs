@@ -20,9 +20,9 @@ const LIVE = {
   kiro: () => kiroUsage(),
   agy: () => readAgy(),
 };
-// A reading as routing would take it: a seat its own sign-in says is billed per token (Claude with a key) is metered,
-// as is one the user's `billing` says is; a reader's own report of something it could not clean up is a failure.
-// A failed read is a failure whatever the billing: only a reading that worked is taken as metered (from the review of 59545ef).
+// A reading as routing would take it: a seat its own sign-in says is billed per token (Claude with a key) is
+// metered, as is one the user's `billing` says is; a reader's own report of something it could not clean up is
+// a failure. A failed read is a failure whatever the billing: only a reading that worked is taken as metered.
 const said = (r, billing) => (!r ? "FAILED (no reading)" : r.ok === false ? `FAILED (${r.code})` : r.failure ? `FAILED (${r.failure.code})`
   : r.ok === true && r.note ? `FAILED (cleanup: ${r.note})`
   : r.headroom != null ? `ok: ${Math.round(r.headroom * 100)}% left` : r.class === "metered" || billing === "metered" ? "ok: metered" : "FAILED (no reading)");

@@ -44,7 +44,7 @@ test("telemetry status reads the last daily send and explains scheduling without
       `import { dailyTelemetrySend } from './src/lib/telemetry.mjs'; console.log(JSON.stringify(dailyTelemetrySend(${JSON.stringify(config)}, process.env, true, ${now})))`],
     { env: { ...env, ...switches } }).stdout.toString());
     writeFileSync(state, JSON.stringify({ opted_in_at: "2026-09-24T00:00:00.000Z" }));
-    // Opted in, auto-update off: the job still runs for the send. ROUTR_NO_UPDATE stops updates, never a send (from the review of #40).
+    // Opted in, auto-update off: the job still runs for the send. ROUTR_NO_UPDATE stops updates, never a send.
     writeFileSync(log, JSON.stringify({ at: "2026-09-25T12:00:02.000Z", ok: true, sent: 3 }) + "\n");
     expect(daily(yes)).toMatchObject({ can_run: true, problem: null, running: false, last_run: "2026-09-25T12:00:00.000Z", next_run: "2026-09-26T12:00:00.000Z" });
     expect(daily(yes).started_by).toContain("dispatch");
@@ -95,8 +95,7 @@ test("telemetry rows carry what tuning needs, never text or anything that points
   expect(h.outcome.verdict).toBe("other");
   expect(h.subagents).toEqual([{ advised: "strong", model: "other" }]);
   expect(JSON.stringify(h)).not.toMatch(/acme|billing|Stripe/);
-  expect(telemetryRows([5, null, { ts: "x" }, row()], "install-a")).toHaveLength(1);                   // a line that is not a row is skipped
-  // No shape admits a path, URL, email, token, or a project name where only a known value belongs (the review's cases).
+  expect(telemetryRows([5, null, { ts: "x" }, row()], "install-a")).toHaveLength(1);                   // A line that is not a row is skipped No shape admits a path, URL, email, token, or a project name where only a known value belongs.
   const [p] = telemetryRows([row({ question_set: "https://acme.internal/q", jev_model: "chris@acme.com",
     advised: { level: "standard", sure: true, work_type: "fix-the-acme-payments-webhook", facts: { approach_open: 0.9, acme_payments_secret_project: 0.5 } },
     chose: { subscription: "acme-corp-enterprise", model: "/Users/chris/Repos/acme-secret", effort: "ghp_16C7e42F292c6912E7710c838347Ae178B4a", level: "standard" },
@@ -364,7 +363,7 @@ test("the commands telemetry status names as starting the daily job are the ones
   expect(JSON.parse(started[1])).toEqual(DAILY_STARTERS);
 });
 
-test("from the core review: each provider finding stays fixed", async () => {
+test("each provider finding stays fixed", async () => {
   const { ask, readSecretsFile, secretsFor, writeSecrets } = await import("../src/lib/systemone.mjs");
   const { decisionTarget, ollamaHost } = await import("../src/lib/providers.mjs");
   const { loadConfig } = await import("../src/lib/config.mjs");

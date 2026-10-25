@@ -34,8 +34,8 @@ export function advise(a, c, profile = decisionTarget(null, {}).profile) {
     if (reading === "unclear") unclear.push(k);
     if (f.about === "brief" && reading === "no") briefSteps.push(doNext(`Fix the brief: ${f.say[1]}, then dispatch it again`));
   }
-  // Said as it was decided: the more likely of two, the lower of two equally likely, or the rounded score when the model
-  // gave no spread at all (from the review of #42). The record quoted is the answering model's own (its profile).
+  // Said as it was decided: the more likely of two, the lower of two equally likely, or the rounded score when
+  // the model gave no spread at all. The record quoted is the answering model's own (its profile).
   const tie = between && probs[topTwo[0]] === probs[topTwo[1]];
   const t = profile.torn, off = [t.low && "too low", t.high && "too high"].filter(Boolean);
   const record = `on ${t.of} real tasks it was the right level ${t.right} times${off.length ? `, and when it was wrong it was one level ${off.join(" or ")}` : ""}`;

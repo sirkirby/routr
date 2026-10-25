@@ -128,7 +128,7 @@ export async function decisionSpan(config, run) {
 const usageState = (row) => row.signedIn === false ? "excluded" : row.kept ? "kept" : row.given ? "given" : row.ageSec != null ? "live" : "assumed";
 function usageObservations(row, observations) {
   if (!subscriptions.includes(row?.pool) || usageState(row) !== "live" || !Number.isFinite(row.headroom)) return;
-  // Stage 3 review decision 2: metrics have their own consent, independent of trace sampling.
+  // Metrics have their own consent, independent of trace sampling.
   for (const w of row.windows ?? []) {
     if (!Number.isFinite(w.usedPct)) continue;
     const observation = headroomObservation({ subscription: row.pool, window: w.name, value: Math.min(1, Math.max(0, 1 - w.usedPct / 100)), time: usageReadingTime(row, w) });
@@ -192,10 +192,11 @@ export function launchCarriers(env) {
 export const launchCarrierWarnings = (found) => found.withheld.map((n) => found.launchSpan && n === "TRACEPARENT"
   ? warning("launch_parent_replaced", "The inherited TRACEPARENT exceeded routr's forwarding limits; the worker gets this routr launch span instead")
   : carrierWithheld(n));
-// Stage 2 W3-3 and review 2b2: fresh consent per turn; missing launch uses saved-parent sampling, or a root without one.
+// Headless turn consent: fresh consent per turn; missing launch uses saved-parent sampling, or a root
+// without one.
 export const WORKER_STATES = Object.freeze(["starting", "working", "waiting", "idle", "failed", "stopped", "no_task"]);
 const WORKER_PROVIDERS = { claude: "anthropic", codex: "openai", cursor: "cursor", agy: "gcp.gen_ai", kiro: "kiro" };
-// Read identity only for a generated turn, once per holder: export-off startup performs no git reads (review A).
+// Read identity only for a generated turn, once per holder: export-off startup performs no git reads.
 export function workerTracing(worker, options = {}) {
   let identity;
   const getIdentity = () => (identity ??= traceIdentity(worker.cwd).attributes);

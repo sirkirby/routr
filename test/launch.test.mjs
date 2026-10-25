@@ -225,8 +225,8 @@ test("a question at startup is never answered: herdr's reading and the screen go
     expect(f.calls.filter((a) => a[1] === "send-keys")).toHaveLength(0);
     expect(() => parseLaunchArgs([...launchArgs, "--trust", "auto"])).toThrow("Unknown launch option: --trust");
   }
-  // From the review of #47: herdr's explanation is extra; when it errors, throws, or comes back in another shape, the
-  // confirmed block is still reported as needs_input, with the screen and the registry's note.
+  // Herdr's explanation is extra; when it errors, throws, or comes back in another shape, the confirmed block is
+  // still reported as needs_input, with the screen and the registry's note.
   for (const explain of [() => herdrError("invalid_request"), () => { throw new Error("herdr went away"); }, () => herdrOK({ nothing: true })]) {
     const f = fakeHerdr({ trust: claudeTrust, notReady: true, reply: (a) => (a[1] === "explain" ? explain() : undefined) });
     const r = await launch([...launchArgs, "--task", "Task"], f.deps);
@@ -466,7 +466,7 @@ test("a pane adopted at a shell already in --cwd gets no cd: its directory hooks
   expect(elsewhere.calls.some((a) => a[1] === "run" && a[3].includes("cd"))).toBe(true); // still moved when it is not there
 });
 
-test("from the review of #48: an agent of another kind in a pane launch did not make is never offered for closing", async () => {
+test("an agent of another kind in a pane launch did not make is never offered for closing", async () => {
   let started = false;
   const f = fakeHerdr({ reply: (a) => { if (a[1] === "start") started = true; if (a[1] === "get" && started) return herdrOK({ agent: { agent: "codex", agent_status: "idle" } }); } });
   const passed = await launch([...launchArgs, "--pane", "w1:p9", "--cwd", process.cwd()], f.deps);
@@ -488,7 +488,7 @@ test("--pane adopts only an idle agent of the kind asked for, in --cwd; anything
   expect(r).toMatchObject({ ok: true, state: "prompted", pane: "w1:p9" });
   expect(r.steps.map((st) => st.step)).toContain("adopt");
   expect(adopt.calls.some((a) => ["start", "run", "send-keys", "wait"].includes(a[1]))).toBe(false); // no shell, no second agent, no wait
-  // From the review of #48: another kind, another folder, a working or a blocked agent are never sent the task.
+  // Another kind, another folder, a working or a blocked agent are never sent the task.
   for (const [agent, why] of [[{ agent: "codex" }, "The pane runs codex, not claude"], [{ cwd: SCRATCH }, `works in ${SCRATCH}`],
     [{ agent_status: "working" }, "is working, not waiting for a task"], [{ agent_status: "blocked" }, "is waiting at a question"],
     [{ agent_status: "idle", interactive_ready: false }, "is idle but not ready for input, not waiting for a task"]]) {
@@ -585,8 +585,8 @@ test("an adopted agent's rename that hangs costs only the name: the task is sent
   expect(order.indexOf("rename")).toBeGreaterThan(order.indexOf("prompt"));
 });
 
-// From the reviews of this change: waiting on an agent launch did not start (unknown, or working, to idle) could hand a
-// busy worker a second task, since one wait can see it work and finish. An adopted agent is decided from one reading.
+// Waiting on an agent launch did not start (unknown, or working, to idle) could hand a busy worker a second
+// task, since one wait can see it work and finish. An adopted agent is decided from one reading.
 test("an adopted agent that herdr does not read idle is refused from one reading, never waited on", async () => {
   for (const [gets, explains, state] of [[["unknown", "idle"], [explained("idle")], "unknown"], [["working", "idle"], [explained("idle")], "working"],
     [["blocked", "idle"], [explained("working", "osc_title_working")], "working"], [["blocked", "idle"], [explained("unknown")], "unknown"]]) {
@@ -604,9 +604,9 @@ test("an adopted agent that herdr does not read idle is refused from one reading
   expect(s.needs_input.why).toContain("is working, not waiting for a task");
 });
 
-// An agent launch started itself has no task yet, so its start is waited through: a stale block (get blocked, explain
-// idle) is not a question, and if the two readings still disagree when the time runs out, wherever it runs out (from
-// the review of f8a30f9: inside a call, with each command taking time), the block is reported, not a timeout.
+// An agent launch started itself has no task yet, so its start is waited through: a stale block (get blocked,
+// explain idle) is not a question, and if the two readings still disagree when the time runs out, wherever it
+// runs out (inside a call, with each command taking time), the block is reported, not a timeout.
 test("for an agent launch started, a stale block is waited through, and a disagreement at the deadline is needs_input", async () => {
   const codex = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task"];
   for (const gets of [["blocked", "idle"], ["working", "working", "idle"]]) {
@@ -632,8 +632,8 @@ test("for an agent launch started, a stale block is waited through, and a disagr
   expect(late.steps.at(-1).detail).toContain("Launch readiness timeout");
 });
 
-// From the final review: the saved disagreement (get blocked, explain idle) was cleared only when an agent was read, so
-// an agent that then vanished left it standing, and the deadline reported a block nobody saw any more as needs_input.
+// The saved disagreement (get blocked, explain idle) was cleared only when an agent was read, so an agent that
+// then vanished left it standing, and the deadline reported a block nobody saw any more as needs_input.
 test("an agent that vanishes after a stale block lets the readiness timeout fail, not report the old block", async () => {
   const codex = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task", "--timeout", "6000"];
   let gets = 0;
@@ -647,8 +647,8 @@ test("an agent that vanishes after a stale block lets the readiness timeout fail
   expect(r.steps.at(-1).detail).toContain("Launch readiness timeout");
 });
 
-// From the final review: an adopted agent was renamed after its task even when the outcome read found another agent
-// in the pane (or none), so the name could go to someone else's agent. The rename now needs the identity confirmed.
+// An adopted agent was renamed after its task even when the outcome read found another agent in the pane (or
+// none), so the name could go to someone else's agent. The rename now needs the identity confirmed.
 test("an adopted agent is not renamed when the outcome read cannot confirm it is the agent prompted", async () => {
   for (const after of [herdrOK({ agent: { agent: "claude", agent_status: "working", cwd: process.cwd() } }), herdrOK({})]) {
     let prompted = false;
@@ -692,7 +692,7 @@ test("Kiro: a model id it does not list is refused before any pane, from its own
   expect(f.calls).toHaveLength(0); // no pane, no worktree
   const ok = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...fakeKiro().deps, models: async () => ["auto", "glm-5"] });
   expect(ok).toMatchObject({ ok: true, state: "prompted" });
-  // From the review of #48: a list that cannot be read is said, never passed over in silence.
+  // A list that cannot be read is said, never passed over in silence.
   const unread = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...fakeKiro().deps, models: async () => null });
   expect(unread.unavailable).toContainEqual(expect.objectContaining({ part: "model list", subscription: "kiro" }));
 });
@@ -891,8 +891,8 @@ unixOnly("transport timeouts return a timeout code, even if the subprocess print
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-// From the final review: runHerdr answered only on `close`, so a client that held its pipes after the kill (on Windows
-// herdr behind cmd.exe, where the kill reaches cmd.exe alone) kept the call pending past its timeout. The timeout now
+// RunHerdr answered only on `close`, so a client that held its pipes after the kill (on Windows herdr behind
+// cmd.exe, where the kill reaches cmd.exe alone) kept the call pending past its timeout. The timeout now
 // answers by itself; only the child is killed (never its tree: it may have started the user's herdr server).
 test("a herdr call answers at its timeout even when the killed client never closes its pipes", async () => {
   const child = new EventEmitter(), pipe = () => Object.assign(new EventEmitter(), { destroyed: false, destroy() { this.destroyed = true; } });
@@ -1186,7 +1186,7 @@ test("a prompt herdr says stalled is never sent again: launch waits on the agent
   expect(asks).toMatchObject({ prompts: 1, keys: 0, r: { state: "needs_input" } });
 });
 
-test("from the review of #46: a worker seen starting counts even if it is done by the status read; the wait leaves time for the reads after it; the brief stays off the output", async () => {
+test("a worker seen starting counts even if it is done by the status read; the wait leaves time for the reads after it; the brief stays off the output", async () => {
   // Seen working by the wait, finished by the time launch reads its state: it took the task.
   let prompts = 0;
   const quick = fakeHerdr({ kind: "codex", reply: (a) => {

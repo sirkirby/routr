@@ -51,10 +51,10 @@ export function starterConfig(found, models = {}, ranks = {}) {
 
 // routr's own copies of its skills (an entry without a name is the routr skill; one not marked `ours: false` is routr's).
 const mine = (r) => r.skill.filter((k) => k.ours !== false);
-// The skills routr installs whose shared copy (~/.agents/skills/<name>, which Codex and Cursor read) is not there. Each
-// is required on its own: from the final review, any harness copy of routr's satisfied this check, so a deleted shared
-// copy went unreported while Claude's survived. A shared place holding something not routr's is not missing (installing
-// cannot fix it): it has its own line and next step.
+// The skills routr installs whose shared copy (~/.agents/skills/<name>, which Codex and Cursor read) is not
+// there. Each is required on its own: any harness copy of routr's satisfied this check, so a deleted shared
+// copy went unreported while Claude's survived. A shared place holding something not routr's is not missing
+// (installing cannot fix it): it has its own line and next step.
 export const SHARED_AT = (n) => `~/.agents/skills/${n}`;
 export const skillsMissing = (r) => SKILLS.filter((n) => !r.skill.some((k) => (k.name ?? "routr") === n && k.where === SHARED_AT(n)));
 // routr's copies that lack one of the files it ships (a SKILL.md with no openai.yaml, say), and harness folders set up

@@ -1,4 +1,4 @@
-// The OTLP boundary: consent, encoding, queue and detached delivery. Separate from anonymous outcome telemetry (V10).
+// The OTLP boundary: consent, encoding, queue and detached delivery. Separate from anonymous outcome telemetry.
 import { SUBSCRIPTIONS, USAGE_WINDOWS, signalAttributes } from "./otel-schema.mjs";
 export { USAGE_WINDOWS } from "./otel-schema.mjs";
 import { LaunchIndex } from "./launch-index.mjs";
@@ -15,9 +15,9 @@ import { home as userHome, lockIsStale, lockOwned, olderThan, releaseFileLock, s
 import { ROUTR_VERSION } from "./version.mjs";
 
 const RESERVED_HEADERS = new Set(["content-type", "content-length", "host", "transfer-encoding", "connection", "accept-encoding", "content-encoding", "te", "upgrade", "expect", "trailer", "keep-alive"]);
-// W3-5: only RFC3986's unreserved bytes survive storage, including in names. Quote stripping cannot alter a secret.
+// Only RFC3986's unreserved bytes survive storage, including in names. Quote stripping cannot alter a secret.
 const escaped = (s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-const trimHeader = (s) => s.replace(/^[ \t]+|[ \t]+$/g, ""); // W3-5: trim() would silently admit edge VT/FF or Unicode spaces
+const trimHeader = (s) => s.replace(/^[ \t]+|[ \t]+$/g, ""); // trim() would silently admit edge VT/FF or Unicode spaces
 export function parseOtelHeaders(text) {
   try {
     if (typeof text !== "string" || !trimHeader(text) || /[\r\n]/.test(text)) throw 0;
@@ -35,16 +35,16 @@ export function parseOtelHeaders(text) {
 }
 export function otelHeaders(file = SECRETS_FILE) {
   const text = readSecretsFile(file).ROUTR_OTEL_HEADERS;
-  return text === undefined ? {} : parseOtelHeaders(text).headers; // V11: never read the environment for this secret
+  return text === undefined ? {} : parseOtelHeaders(text).headers; // Never read the environment for this secret
 }
 
-// Stage 2 prep amendment, core semconv 1.44.0: an application process is an instance. No identity file for traces/logs.
+// Core semconv 1.44.0: an application process is an instance. No identity file for traces/logs.
 const PROCESS_INSTANCE_ID = randomUUID();
 export const OTEL_RESOURCE_ATTRIBUTES = Object.freeze({ "service.name": "string", "service.version": "string", "os.type": "string", "service.instance.id": "string", "routr.otel.schema": "string" });
 export const otelResource = ({ platform = process.platform } = {}) => resource(PROCESS_INSTANCE_ID, platform);
 
-// Stage 3's gauge has one stream per install, independent of whichever sender process holds the lock. Its UUIDv5
-// uses the convention's namespace and the persisted UUID's UTF-8 text as the name (Stage 2 prep).
+// The headroom gauge has one stream per install, independent of whichever sender process holds the lock. Its
+// UUIDv5 uses the convention's namespace and the persisted UUID's UTF-8 text as the name.
 export function otelGaugeInstanceId({ home = userHome() } = {}) {
   const id = installInstanceId(home);
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id)) throw new Error("invalid installation id");
@@ -57,8 +57,8 @@ function installInstanceId(home) {
   const permitted = () => { if (existsSync(UNINSTALL_LOCK(home)) || !lstatSync(dir).isDirectory()) throw new Error("gauge identity unavailable during uninstall or without its state folder"); };
   permitted();
   try { return readFileSync(file, "utf8").trim(); } catch (e) { if (e?.code !== "ENOENT") throw e; }
-  // Exclusive publication of a complete id: opening the final file with wx exposes an empty file to the other first
-  // run (W3-8). A hard link creates exclusively too, but no reader can see the id before its bytes are written.
+  // Exclusive publication of a complete id: opening the final file with wx exposes an empty file to the other
+  // first run. A hard link creates exclusively too, but no reader can see the id before its bytes are written.
   const tmp = `${file}.tmp.${process.pid}.${randomUUID()}`;
   permitted();
   writeFileSync(tmp, randomUUID(), { flag: "wx", mode: 0o600 });
@@ -100,7 +100,7 @@ function spanJson(s, attributeTypes) {
   if (s.status) out.status = { code: integer(s.status.code), ...(s.status.message ? { message: s.status.message } : {}) };
   return out;
 }
-// Resource, scope and AnyValue are signal-independent: logs and metrics reuse these parts in Stage 3.
+// Resource, scope and AnyValue are signal-independent: logs and metrics reuse these parts.
 export function encodeTraces(spans, { resource: r, scope, schemaUrl, attributeTypes } = {}) {
   return { resourceSpans: [{ resource: { attributes: otlpAttributes(r ?? otelResource()) },
     ...(schemaUrl ? { schemaUrl } : {}), scopeSpans: [{ scope: otlpScope(scope), spans: spans.map((s) => spanJson(s, attributeTypes)) }] }] };
@@ -135,7 +135,7 @@ const paths = (home = userHome()) => {
   return { root, lock: join(root, "sender.lock"), state: join(root, "sender.json"), secrets: join(home, ".config/routr/env"), config: join(home, ".config/routr/config.json"), uninstall: UNINSTALL_LOCK(home) };
 };
 const names = (dir) => { try { return readdirSync(dir); } catch (e) { if (e?.code === "ENOENT") return []; throw e; } };
-// Review D: an absent config revokes export; a failed read or parse gives no evidence about consent and stops a sweep.
+// An absent config revokes export; a failed read or parse gives no evidence about consent and stops a sweep.
 const readConfig = (file, missing = {}) => { try { const v = JSON.parse(readFileSync(file, "utf8")); return v && typeof v === "object" && !Array.isArray(v) ? v : null; } catch (e) { return e?.code === "ENOENT" ? missing : null; } };
 const statPresent = (file, stat = lstatSync) => { try { return stat(file); } catch (e) { if (e?.code === "ENOENT") return null; throw e; } };
 function queued(p, signal) {
@@ -145,7 +145,7 @@ function queued(p, signal) {
     try {
       const st = lstatSync(file);
       return st.isFile() ? [{ file, name, signal, size: st.size, mtime: st.mtimeMs, nonce: name.match(BATCH)[2] }] : [];
-    } catch (e) { if (e?.code === "ENOENT") return []; throw e; } // W3-10: a sender can claim/remove between list and stat
+    } catch (e) { if (e?.code === "ENOENT") return []; throw e; } // A sender can claim/remove between list and stat
   }).sort((a, b) => a.mtime - b.mtime || a.name.localeCompare(b.name));
 }
 export function prepareOtel({ home = userHome(), sender = false } = {}) {
@@ -196,7 +196,7 @@ export function otelSession(config, env = process.env, opts = {}) {
         }
       } catch { marker("write_failed"); }
       startOtelSender(opts);
-    } catch {} // V10: even a full disk must not change the command's result or duration by waiting on delivery
+    } catch {} // Even a full disk must not change the command's result or duration by waiting on delivery
   } };
 }
 
@@ -267,9 +267,9 @@ const retryAfterMs = (value, now) => {
 };
 export async function sendOtel({ home = userHome(), configPath, env = process.env, write = writeJsonAtomic, timeoutMs = 10_000, now = Date.now, random = Math.random, capBytes = CAP, release, stat = lstatSync, monotonic = () => performance.now(), began = monotonic(), beganWall = now(), sweepOnly = false } = {}) {
   const p = paths(home), configFile = configPath ?? p.config;
-  if (!readConfig(configFile)) return; // Review 2: unknown config is not a revocation; leave every queued file alone
+  if (!readConfig(configFile)) return; // Unknown config is not a revocation; leave every queued file alone
   if (existsSync(p.uninstall)) return;
-  if (!existsSync(p.root)) return; // V4: a delayed detached start after uninstall must not recreate the cache
+  if (!existsSync(p.root)) return; // A delayed detached start after uninstall must not recreate the cache
   if (otelSwitch(readConfig(configFile), env).on && !prepareOtel({ home, sender: true })) return;
   const token = randomUUID();
   if (!takeLock(p.lock, (f) => olderThan(5 * 60_000)(f) || lockIsStale(f), { token })) return;
@@ -299,9 +299,9 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
     if (held()) new LaunchIndex({ home, now }).sweep();
     if (!held()) return;
     // Sweep against configured consent even with a process-local off switch: that switch revokes no other process's
-    // batches. Removing/changing the setting does (V4). Backoff belongs to that generation too.
-    // Review 3: editors and the legacy Windows replacement can briefly hide the config. Confirm ENOENT before
-    // revoking a generation; this delay belongs only to the detached sender, never to a command's queue write.
+    // batches. Removing/changing the setting does. Backoff belongs to that generation too. editors and the
+    // legacy Windows replacement can briefly hide the config. Confirm ENOENT before revoking a generation; this
+    // delay belongs only to the detached sender, never to a command's queue write.
     const missing = Symbol(); let config = readConfig(configFile, missing);
     if (config === missing) { await new Promise((resolve) => setTimeout(resolve, 250)); config = readConfig(configFile); }
     if (!config) throw new Error("config unreadable");
@@ -331,7 +331,7 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
     }
   };
   try {
-    // W3-10: lock ownership, not a file's age, proves there is no other sender's in-flight claim to disturb.
+    // Lock ownership, not a file's age, proves there is no other sender's in-flight claim to disturb.
     for (const signal of SIGNALS) for (const name of names(join(p.root, signal))) {
       if (!name.endsWith(".sending") || !BATCH.test(name.slice(0, -8))) continue;
       const file = join(p.root, signal, name);
@@ -355,9 +355,9 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
       if (file.signal === "metrics") try { gaugeResource = resource(otelGaugeInstanceId({ home }), process.platform); }
       catch {
         st.last_export = { at: new Date(now()).toISOString(), ok: false, sent: 0, refused: 0, error: "gauge_identity_unavailable" };
-        save(); healthy = false; break; // Stage 3 review 6: no folding or claims until the stream's identity is known.
+        save(); healthy = false; break; // No folding or claims until the stream's identity is known.
       }
-      // Stage 3 decision 19: only this lock owner folds observations and writes each install/window stream.
+      // Only this lock owner folds observations and writes each install/window stream.
       const metrics = file.signal === "metrics" ? metricBatch(sw.consent.slice(0, 8)) : null;
       if (metrics && !metrics.length) continue;
       const files = metrics ? metrics.map((m) => m.file) : [file];
@@ -373,8 +373,8 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
         resource: gaugeResource, schemaUrl: "https://opentelemetry.io/schemas/1.44.0" }))) : readFileSync(`${file.file}.sending`);
       if (!held()) break;
       const reply = await postOtel(new URL(`${sw.endpoint}/v1/${file.signal}`), body, headers, timeoutMs);
-      // Review E: acknowledge the response under this lock before reading consent again. A broken config must stop
-      // the next claim, not turn an accepted batch into an unnecessary resend.
+      // Acknowledge the response under this lock before reading consent again. A broken config must stop the next
+      // claim, not turn an accepted batch into an unnecessary resend.
       const ok = reply.status >= 200 && reply.status < 300, retry = Boolean(reply.error) || [429, 502, 503, 504].includes(reply.status);
       const code = reply.error ?? `http_${reply.status}`, partial = ok ? accepted(reply, file.signal) : {};
       st.last_export = { at: new Date(now()).toISOString(), ok, sent: ok ? 1 : 0, refused: !ok && !retry ? 1 : 0, error: ok ? null : code };
@@ -399,8 +399,9 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
     if (!lockOwned(p.lock, token)) healthy = false;
     else try { if (release) release(p.lock); else releaseFileLock(p.lock, token); } catch { healthy = false; }
   }
-  // W3-10: a command may have observed the held lock just after the empty read. Release, then rescan; preserve the
-  // original monotonic lifetime and the persisted backoff, so neither a busy writer nor a clock jump extends it.
+  // A command may have observed the held lock just after the empty read. Release, then rescan; preserve the
+  // original monotonic lifetime and the persisted backoff, so neither a busy writer nor a clock jump extends
+  // it.
   try {
     if (!healthy || sweepOnly || existsSync(p.uninstall) || !within(60_000)) return;
     const config = readConfig(configFile); if (!config) return;

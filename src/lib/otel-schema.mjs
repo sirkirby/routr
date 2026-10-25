@@ -12,7 +12,8 @@ export const TRACE_ATTRIBUTES = Object.freeze({ "routr.lead.session_id": "string
   ...Object.fromEntries(["launch", "send", "wait", "workers", "stop", "cleanup", "record"].map((k) => [`routr.${k}.state`, "string"])),
   "routr.verdict": "string", "routr.check": "string", "routr.level": "string", "routr.attempts": "int", "routr.seconds": "double", "routr.causes": "string[]", "routr.subscription": "string", "routr.effort": "string", "routr.effort_from": "string", "routr.advice.id": "string", "error.type": "string" });
 export const typed = (value, type) => type === "string" ? typeof value === "string" : type === "boolean" ? typeof value === "boolean" : type === "string[]" ? Array.isArray(value) && value.every((v) => typeof v === "string") : type === "int" ? Number.isSafeInteger(value) && value >= 0 : typeof value === "number" && Number.isFinite(value);
-// Stage 3 / semconv pin section 6: structured events use eventName, with no body or event.name attribute.
+// The pinned log semantic conventions define structured events: use eventName, with no body or event.name
+// attribute.
 export const LOG_EVENTS = Object.freeze({
   "routr.needs_input": { severityNumber: 13, severityText: "WARN", attributes: { "routr.needs_input.why": "string" } },
   "routr.warning": { severityNumber: 13, severityText: "WARN", attributes: { "routr.warning.code": "string" } },

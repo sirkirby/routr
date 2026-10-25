@@ -1,4 +1,4 @@
-// Consent and endpoint checks on the config's hot path: no I/O, encoder, HTTP or secrets imports (review 16).
+// Consent and endpoint checks on the config's hot path: no I/O, encoder, HTTP or secrets imports.
 export function otelEndpoint(value) {
   try {
     if (typeof value !== "string" || /[\s?#\\]/.test(value)) throw 0;

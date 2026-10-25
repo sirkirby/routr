@@ -260,9 +260,9 @@ test("a download that stops sending fails as a stall, and leaves the old binary 
   await expect(streamDownload("http://fake.invalid/x", "x", () => {}, { fetchFn: silent, stallMs: 100 })).rejects.toThrow("the download of x stalled: no data for 100 ms");
 });
 
-// From review: each read raced against one shared abort promise stayed attached to it, so Bun kept every chunk until the
-// download ended (80 x 1 MiB: RSS +72 MB between chunk 10 and 80; with the fix +23 MB, as a bare read loop does).
-// Counted exactly here: weak references to the chunks already handled, after a full collection.
+// Each read raced against one shared abort promise stayed attached to it, so Bun kept every chunk until the
+// download ended (80 x 1 MiB: RSS +72 MB between chunk 10 and 80; with the fix +23 MB, as a bare read loop
+// does). Counted exactly here: weak references to the chunks already handled, after a full collection.
 test("a streamed download lets go of each chunk once it is written", async () => {
   const { streamDownload } = await import("../src/lib/update.mjs");
   const N = 200, refs = [];
@@ -308,9 +308,9 @@ test("an update that finds a newer binary already in place removes its download"
   expect(readdirSync(dir)).toEqual(["routr"]);
 });
 
-// From review: a fixed `${self}.download` opened with "w" followed a link to the binary itself, so a checksum mismatch
-// overwrote it and said "Nothing was changed", and a match installed a link to itself; an unrelated file there was
-// overwritten and removed. Each run now stages under its own name, created exclusively.
+// A fixed `${self}.download` opened with "w" followed a link to the binary itself, so a checksum mismatch
+// overwrote it and said "Nothing was changed", and a match installed a link to itself; an unrelated file there
+// was overwritten and removed. Each run now stages under its own name, created exclusively.
 test("an update never writes through or removes a file it did not create beside the binary", async () => {
   const { downloadTo, update } = await import("../src/lib/update.mjs");
   const { lstatSync, symlinkSync } = await import("node:fs");
@@ -347,8 +347,8 @@ test("an update never writes through or removes a file it did not create beside 
   }
 });
 
-// From review: writeSync's count was ignored, so a short write (a real 4-byte file size limit) left a truncated binary
-// whose hash was taken from the whole chunk: it passed the checksum and was installed.
+// WriteSync's count was ignored, so a short write (a real 4-byte file size limit) left a truncated binary whose
+// hash was taken from the whole chunk: it passed the checksum and was installed.
 test("a download writes every byte, hashes only what was written, and fails when a write makes no progress", async () => {
   const { update } = await import("../src/lib/update.mjs");
   const { writeSync } = await import("node:fs");
@@ -369,7 +369,7 @@ test("a download writes every byte, hashes only what was written, and fails when
   expect(readdirSync(dir)).toEqual(["routr"]);
 });
 
-// From review: a run killed mid-download left its staging file for good. The next run under the lock clears those, and
+// A run killed mid-download left its staging file for good. The next run under the lock clears those, and
 // nothing else: only regular files named exactly as routr names them, beside this binary.
 test("an update clears staging files a killed run left, and nothing else; a look (--check) touches nothing", async () => {
   const { update } = await import("../src/lib/update.mjs");

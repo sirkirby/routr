@@ -14,7 +14,8 @@ export { CLAUDE_SNAPSHOT };
 export const CODEX_SESSIONS = join(home(), ".codex/sessions");
 const now = () => Date.now() / 1000;
 
-// Source time is internal provenance, not a new command field. Stage 3 must not timestamp a cached read as now.
+// Source time is internal provenance, not a new command field. Headroom observations must not timestamp a
+// cached read as now.
 const readingTimes = new WeakMap(), windowTimes = new WeakMap();
 export const usageReadingTime = (row, window) => windowTimes.get(window) ?? readingTimes.get(row);
 export const withUsageReadingTime = (row, time) => { if (Number.isSafeInteger(time) && time > 0) readingTimes.set(row, time); return row; };
@@ -32,7 +33,7 @@ export function summarize({ pool, source, ts = null, windows = [], note, cls, no
   const live = windows.map((w) => {
     if (!Number.isFinite(w.resetsAt) || w.resetsAt <= 0 || w.resetsAt >= nowSec) return w;
     const reset = { ...w, usedPct: 0 };
-    // Stage 3 review 3: the inferred empty window starts at its reset, never back at the source snapshot's time.
+    // The inferred empty window starts at its reset, never back at the source snapshot's time.
     windowTimes.set(reset, Math.round(w.resetsAt * 1000)); return reset;
   });
   const headroom = Math.min(...live.map((w) => Math.max(0, 1 - w.usedPct / 100)));
@@ -172,8 +173,8 @@ export function parseClaudeReset(text, nowSec = now(), maxSec = Infinity) {
     const y = [year - 1, year, year + 1].filter((x) => d <= new Date(Date.UTC(x, mo + 1, 0)).getUTCDate())
       .sort((a, b) => Math.abs(Date.UTC(a, mo, d, h, mi) / 1000 - nowSec) - Math.abs(Date.UTC(b, mo, d, h, mi) / 1000 - nowSec))[0];
     const at = y == null ? null : wallTimes(y, mo, d, h, mi, m[6]).at(-1);
-    // The text shows minutes only, and "3:59pm" may mean any second of that minute: the reset is taken as the minute's
-    // END (+59 s), so a full window is never rolled over up to a minute early, headroom invented (from the final review).
+    // The text shows minutes only, and "3:59pm" may mean any second of that minute: the reset is taken as the
+    // minute's END (+59 s), so a full window is never rolled over up to a minute early, headroom invented.
     const end = at == null ? null : at / 1000 + 59;
     return end != null && Math.abs(end - nowSec) <= maxSec ? end : null;
   } catch { return null; } // a zone Intl does not know
@@ -277,9 +278,9 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT, nowSec = 
       answered = true; why = "Claude's /usage shows no usage windows for this seat";
     }
   }
-  // Claude answered and shows no windows: that is this seat's reading now, ahead of any snapshot. An old snapshot from
-  // before a switch to an API key or a metered seat would rank the previous subscription's windows, exhausted ones
-  // included (from the final review); the snapshot is only for a live read that failed.
+  // Claude answered and shows no windows: that is this seat's reading now, ahead of any snapshot. An old snapshot
+  // from before a switch to an API key or a metered seat would rank the previous subscription's windows,
+  // exhausted ones included; the snapshot is only for a live read that failed.
   if (answered) return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: NO_WINDOWS_AFTER_ANSWER,
     note: `${why}. A plan with no quota (usage-based Enterprise) shows none: a seat with no quota is set with \`billing: "metered"\` for claude in the config` });
   // The statusline's reading however old (its age is shown), as before this reader existed; else nothing, and why.

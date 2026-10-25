@@ -224,7 +224,7 @@ test("setup: a harness installed but not signed in is listed, greyed, with what 
   expect(again.left).toBe(0);
 });
 
-test("from the review: one set up but signed out is never asked anything and is not turned on, and a run that changes nothing still says who was left out", async () => {
+test("one set up but signed out is never asked anything and is not turned on, and a run that changes nothing still says who was left out", async () => {
   const called = [];
   const efforts = async (n) => { called.push(n); return ["low", "medium", "high"]; };
   const config = { telemetry: false, subscriptions: { cursor: { hardest_work: "standard", reserve: 0.1, use: "normal" }, kiro: { hardest_work: "standard", reserve: 0.1, enabled: false }, codex: { hardest_work: "strong", reserve: 0.2 } } };
@@ -297,7 +297,7 @@ test("setup: a harness whose list is a sample (Claude Code's aliases) takes an i
   const x = await runSetup({ config, found: ["claude"], models: { claude: ["fable", "opus", "sonnet"] }, answers: ["", "", "", "claude-fable-5", "1", "b", "b", "7"] });
   expect(x.asked.some((a) => a.includes("claude-fable-5 (as typed)"))).toBe(true);
   expect(x.saved.subscriptions.claude.default_model).toBe("claude-fable-5");
-  // Opened again, the saved id is just current: off a sample list is not gone (from the review).
+  // Opened again, the saved id is just current: off a sample list is not gone.
   const again = await runSetup({ config: x.saved, found: ["claude"], models: { claude: ["fable", "opus", "sonnet"] }, answers: ["", "", "", "b", "b", "b", "7"] });
   const shown = again.asked.find((a) => a.startsWith("Claude Code: everyday model"));
   expect(shown).toContain("claude-fable-5 (current)");
@@ -368,7 +368,7 @@ test("the decision model: --decision writes it, a key is the person's to set, an
 const { PROVIDER_NAMES: PN, modelsHere: MH } = await import("../src/lib/providers.mjs");
 const PROVIDER_ORDER = PN.flatMap((p) => MH(p).map((m) => `${p}:${m}`));
 
-test("from the setup review: each decision-model finding stays fixed", async () => {
+test("each decision-model finding stays fixed", async () => {
   const cf = { telemetry: false, decision: { provider: "cloudflare" }, subscriptions: { agy: { hardest_work: "standard", reserve: 0.1 } } };
   // The provider that failed, then another model on it: its key is asked once, not twice.
   const x = await runSetup({ config: cf, found: ["agy"], keyWorks: false, answers: ["3", "1", "7"] }); // Clef Flash; then Save on the menu
@@ -607,7 +607,7 @@ test("a headless launch that reserves its run folder while uninstall holds its l
   } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
 });
 
-// ---- Findings from the independent review (2026-09-21) ----
+// ---- Setup regression cases (2026-09-21) ----
 
 test("only routr's own statusline counts as ours", async () => {
   const { isOurStatusline } = await import("../src/lib/statusline.mjs");
@@ -680,7 +680,7 @@ test("setup, run again: a subscription's settings are a list you come back to af
   expect(x.saved.subscriptions.cursor).toMatchObject({ hardest_work: "strong", reserve: 0.2 });
 });
 
-test("setup fixes from the independent review: each finding stays fixed", async () => {
+test("each finding stays fixed", async () => {
   // --disable on a first run: the harness found now is added, turned off ("set up, but keep agy off").
   const first = await runSetup({ args: ["--yes", "--disable", "agy"] });
   expect(first.saved.subscriptions.agy.enabled).toBe(false);
@@ -851,7 +851,7 @@ test("the update channel is a setting: --channel writes it, says what happens ne
   expect(menu.left).toBe(0);
   expect(menu.asked[0]).toContain("Update channel (stable: stable releases, or beta builds too)");
   expect(said.join("\n")).toContain("Updates      stable channel");
-  expect(said.join("\n")).toMatch(/update channel: stable \S+ beta/); // the review of what is saved
+  expect(said.join("\n")).toMatch(/update channel: stable \S+ beta/); // The review of what is saved
   expect(menu.saved).toEqual({ ...config, update_channel: "beta" });
   expect(menu.r.did).toContain('changed update_channel set to "beta"');
 });

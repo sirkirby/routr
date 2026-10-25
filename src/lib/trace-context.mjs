@@ -7,7 +7,7 @@ export function parseTraceparent(value) {
   return { traceId: m[2], spanId: m[3], sampled: Boolean(parseInt(m[4], 16) & 1) };
 }
 
-// Stage 2 probes, 2026-10-25: Codex's thread is UUIDv7; Claude's own record and Cursor/Antigravity use UUIDv4.
+// Probes on 2026-10-25: Codex's thread is UUIDv7; Claude's own record and Cursor/Antigravity use UUIDv4.
 const uuid = (version) => new RegExp(`^[a-f0-9]{8}-[a-f0-9]{4}-${version}[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$`);
 const SOURCES = [["CLAUDE_CODE_SESSION_ID", uuid(4)], ["CODEX_THREAD_ID", uuid(7)], ["CURSOR_CONVERSATION_ID", uuid(4)], ["ANTIGRAVITY_CONVERSATION_ID", uuid(4)]];
 export const sessionId = (id) => typeof id === "string" && (uuid("[47]").test(id) || /^[a-f0-9]{16,64}$/.test(id)) ? id : null;

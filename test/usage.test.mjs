@@ -130,8 +130,8 @@ test("Claude's reset times read in their own zone, across DST, midnight and noon
     expect([bad, parseClaudeReset(bad, OCT5)]).toEqual([bad, null]);
 });
 
-// From the final review: "resets Oct 5 at 3:59pm" was read as 3:59:00, so for up to a minute before the real reset a
-// full window was rolled over and its headroom invented. The reset is the minute's end.
+// "resets Oct 5 at 3:59pm" was read as 3:59:00, so for up to a minute before the real reset a full window was
+// rolled over and its headroom invented. The reset is the minute's end.
 test("a full Claude window is not rolled over during the minute its reset shows", () => {
   const read = utc(2026, 9, 5, 19, 59, 30); // 3:59:30pm in Detroit
   const full = parseClaudeUsage("Current session: 100% used · resets Oct 5 at 3:59pm (America/Detroit)", read);
@@ -243,8 +243,8 @@ test("Claude's live read fails open: the old snapshot however old, else the assu
   // It answered, and showed no windows: the seat may have no quota; doctor's step keys on the reason.
   const bare = await read(claudeAnswer("You are using an API key"), missing);
   expect(bare).toMatchObject({ headroom: null, class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER }); expect(bare.note).toContain('billing: "metered"');
-  // From the final review: Claude answered and shows no windows (now an API key or a metered seat), while an old
-  // snapshot still holds the previous subscription's exhausted windows. The answer wins: that snapshot is not ranked.
+  // Claude answered and shows no windows (now an API key or a metered seat), while an old snapshot still holds
+  // the previous subscription's exhausted windows. The answer wins: that snapshot is not ranked.
   writeFileSync(file, JSON.stringify({ ts: OCT5 - 3 * 3600, rate_limits: { seven_day: { used_percentage: 100, resets_at: OCT5 + 86400 } }, answered: true }));
   const switched = await read(claudeAnswer("You are using an API key"));
   expect(switched).toMatchObject({ source: "claude /usage", headroom: null, class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER });
@@ -547,7 +547,7 @@ test("a try an older routr made that got no reading does not hold back the next 
   // 2026-10-23: v0.7.0 failed every Cursor read (herdr 0.9.5); after the upgrade, routr usage kept that failure for
   // hours because the failed try was under 4 hours old.
   const T = 1_800_000_000;
-  // A reading each harness keeps (from the review of 6f3eaed: one shape for both left Kiro's unreadable).
+  // A reading each harness keeps (one shape for both left Kiro's unreadable).
   const readings = { cursor: { plan: "Team", included_used_pct: 20, auto_used_pct: 24, api_used_pct: 0 }, kiro: { plan: "Free", credits_used: 10, credits_limit: 50, used_pct: 20, resets_at: T + 10 * 86400 } };
   for (const [name, read, refresh] of [["cursor", readCursor, refreshCursor], ["kiro", readKiro, refreshKiro]]) {
     const good = readings[name];
@@ -737,9 +737,9 @@ test("Claude's sign-in status says how it bills: an API key is metered, a subscr
   for (const p of ["bedrock", "vertex", "foundry", "anthropicAws", "anthropicGoogleCloud", "mantle"])
     expect([p, billing(JSON.stringify({ loggedIn: true, authMethod: "third_party", apiProvider: p }), 0)?.billing]).toEqual([p, "metered"]);
   expect(billing(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "gateway" }), 0)).toBeNull();
-  // From the review: only the providers and auth methods Claude Code's code sets count; anything else, or anything
-  // not a string, is no reading, and no reason carries text from the answer.
-  // An explicit null provider is not an absent one (from the second review): no reading. Absent is first-party.
+  // Only the providers and auth methods Claude Code's code sets count; anything else, or anything not a string,
+  // is no reading, and no reason carries text from the answer. An explicit null provider is not an absent one :
+  // no reading. Absent is first-party.
   for (const p of ["FixtureCompany", "evil <x>", "", false, 42, {}, [], ["bedrock"], null])
     expect([p, billing(JSON.stringify({ loggedIn: true, authMethod: "api_key", apiProvider: p }), 0)]).toEqual([p, null]);
   expect(billing(JSON.stringify({ loggedIn: true, authMethod: "api_key" }), 0)).toMatchObject({ billing: "metered" });

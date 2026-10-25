@@ -18,9 +18,9 @@ import { join } from "node:path";
 
 export const SECRETS_FILE = join(home(), ".config/routr/env");
 
-// Ollama's own variable for where its server listens (`ollama serve` reads it), read the way Ollama's own client reads
-// it (envconfig.Host): a bare host or host:port is http on 11434; a URL with a scheme and no port takes the scheme's own
-// (80, 443); a path is kept. From the core review: http://127.0.0.1:11500/ was turned into an invalid URL.
+// Ollama's own variable for where its server listens (`ollama serve` reads it), read the way Ollama's own
+// client reads it (envconfig.Host): a bare host or host:port is http on 11434; a URL with a scheme and no port
+// takes the scheme's own (80, 443); a path is kept. For example, http://127.0.0.1:11500/ was turned into an invalid URL.
 export function ollamaHost(env = process.env) {
   const raw = (env.OLLAMA_HOST ?? "").trim();
   const [scheme, rest] = raw.includes("://") ? raw.split(/:\/\/(.*)/s) : ["http", raw];
@@ -33,7 +33,7 @@ export function ollamaHost(env = process.env) {
 // The oldest Ollama that runs Clef Flash: 0.40.0 answered every request on Windows with "Clef: non-finite logit", on
 // the GPU and on the CPU, and 0.40.3 answered (2026-10-11, RTX 5090 laptop); 0.40.1's notes name the fix (ollama#18777).
 export const OLLAMA_MIN = "0.40.1";
-// A pre-release comes before its release: 0.40.1-rc1 is older than 0.40.1 (from the review), 0.41.0-rc1 is not.
+// A pre-release comes before its release: 0.40.1-rc1 is older than 0.40.1, 0.41.0-rc1 is not.
 export const olderThan = (v, min) => {
   const [core, pre] = String(v).split(/-(.*)/s), a = core.split(".").map((x) => parseInt(x, 10)), b = min.split(".").map(Number);
   for (let i = 0; i < b.length; i++) { const x = Number.isNaN(a[i]) ? 0 : a[i] ?? 0; if (x !== b[i]) return x < b[i]; }
@@ -124,8 +124,8 @@ export const PROVIDERS = {
     // Whether it can answer, without asking it anything: the server is up and the model is pulled. Null when ready,
     // otherwise what to do. Setup says it instead of a generic "install, then pull" (seen in a real terminal).
     ready: async (model, env = process.env, fetchFn = fetch) => {
-      // Both asked at once, so a slow version answer adds no wait of its own (from the review). A version Ollama does not
-      // give is not held against it: the request itself then says what is wrong.
+      // Both asked at once, so a slow version answer adds no wait of its own. A version Ollama does not give is not
+      // held against it: the request itself then says what is wrong.
       const [tags, old] = await Promise.all([
         fetchFn(`${ollamaHost(env)}/api/tags`, { signal: AbortSignal.timeout(3000) }).then((r) => r.json()).catch(() => null),
         ollamaTooOld(env, fetchFn),
@@ -155,8 +155,8 @@ export const PROVIDERS = {
 };
 
 export const PROVIDER_NAMES = Object.keys(PROVIDERS);
-// Names come from a config file, a flag, or the environment: only the registry's own entries count ("constructor" and
-// "__proto__" are properties of every object, from the core review).
+// Names come from a config file, a flag, or the environment: only the registry's own entries count
+// ("constructor" and "__proto__" are properties of every object).
 export const isProvider = (p) => typeof p === "string" && Object.hasOwn(PROVIDERS, p);
 export const isModel = (p, m) => isProvider(p) && typeof m === "string" && Object.hasOwn(PROVIDERS[p].models, m);
 export const DEFAULT_PROVIDER = "typesafe";
