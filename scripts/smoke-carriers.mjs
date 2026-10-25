@@ -16,7 +16,11 @@
 //    pane in a new worktree of it with routr's own worktree steps (worktree create, a split of the root pane with the
 //    carriers, the root closed), one carrier left out. Checks the workspace holds only the new pane, that the new pane's
 //    shell got the values byte for byte and the one left out empty (not the herdr server's own), then removes the
-//    worktree and its workspace with `herdr worktree remove`, and the repository with the temporary folder.
+//    worktree and its workspace with `herdr worktree remove`, and the repository with the temporary folder. With no
+//    workspace open for a repository, herdr's worktree create opens one for the source checkout too (seen 2026-10-25,
+//    herdr 0.9.5: a workspace on the throwaway repository, not a linked worktree, one shell pane), so every workspace
+//    whose checkout is inside the temporary folder is closed before the folder goes, found by its checkout path, and
+//    no other. launch does not do this: a lead's repository has its workspace open already.
 // Every pane it made is closed at the end, however the run went; a pane it could not close is named, and fails it, and
 // so does a worktree it could not remove.
 // Why the halves differ: ps prints a process's environment as one line, entries separated by spaces, so it cannot show
@@ -28,7 +32,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join, sep } from "node:path";
 import { deadline, paneView, quote, runHerdr, splitArgs, waitForShell, worktreeArgs, worktreePane } from "../src/lib/herdr.mjs";
 import { processError } from "../src/lib/process-boundary.mjs";
 import { CARRIERS, carriersFrom, installedAt, probe, realOr } from "../src/lib/runtime.mjs";
@@ -54,6 +58,11 @@ export function agentCarriers(tag = randomUUID().replace(/-/g, "").slice(0, 8)) 
 export function leftOut(sent, left = "TRACESTATE") {
   const passed = Object.fromEntries(Object.entries(sent).filter(([name]) => name !== left));
   return { passed, expected: { ...passed, [left]: "" } };
+}
+// The ids of the workspaces (`workspace list`'s) whose checkout is `dir` or inside it: by path, never by name.
+export function workspacesIn(workspaces, dir) {
+  const under = (p) => typeof p === "string" && [p, realOr(p)].some((q) => q === dir || q.startsWith(dir.endsWith(sep) ? dir : dir + sep));
+  return (workspaces ?? []).filter((w) => under(w?.worktree?.checkout_path)).map((w) => w.workspace_id);
 }
 // The carriers `sent` that `got` (an environment object) does not hold exactly.
 export const missingIn = (got, sent) => Object.keys(sent).filter((name) => got?.[name] !== sent[name]);
@@ -179,6 +188,13 @@ export async function smokeCarriers({ herdr = runHerdr, git = gitIn, env = proce
     if (workspace) {
       let r; try { r = await herdr(["worktree", "remove", "--workspace", workspace], 15000); } catch { r = { ok: false, code: "herdr_unreachable" }; }
       if (!r?.ok) { failed++; log(`FAILED: could not remove the worktree at ${tree} (${r?.code ?? "no answer"}); remove it yourself: herdr worktree remove --workspace ${workspace}`); }
+    }
+    let own = null;
+    try { const r = await herdr(["workspace", "list"], 5000); if (r?.ok) own = workspacesIn(r.data?.result?.workspaces, dir); } catch {}
+    if (own == null) { failed++; log("FAILED: could not list herdr's workspaces to close the throwaway repository's; look for one on a folder in the system's temporary folder"); }
+    for (const id of own ?? []) {
+      let r; try { r = await herdr(["workspace", "close", id], 5000); } catch { r = { ok: false, code: "herdr_unreachable" }; }
+      if (!r?.ok) { failed++; log(`FAILED: could not close workspace ${id}, on the throwaway repository (${r?.code ?? "no answer"}); close it yourself: herdr workspace close ${id}`); }
     }
     rmSync(dir, { recursive: true, force: true });
   }

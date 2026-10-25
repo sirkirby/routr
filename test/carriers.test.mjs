@@ -202,6 +202,7 @@ test("smoke:carriers' worktree half runs routr's worktree steps in a throwaway r
       return ok({});
     }
     if (a[0] === "worktree" && a[1] === "remove") return ok({});
+    if (a[0] === "workspace" && a[1] === "list") return ok({ workspaces: [] });
     throw new Error(`unexpected ${a.join(" ")}`);
   };
   try {
@@ -220,9 +221,65 @@ test("smoke:carriers' worktree half runs routr's worktree steps in a throwaway r
     expect(envs.TRACESTATE).toBe("");
     expect(envs.TRACEPARENT.length).toBe(512);
     // Torn down: the worktree with its workspace, never its pane alone; the repository with the temporary folder.
-    expect(calls.at(-1)).toEqual(["worktree", "remove", "--workspace", "w5"]);
+    expect(calls.at(-2)).toEqual(["worktree", "remove", "--workspace", "w5"]);
     expect(calls.some((a) => a[1] === "close" && a[2] === "w5:p2")).toBe(false);
     expect(existsSync(repo)).toBe(false);
     expect(lines.join("\n")).not.toContain("routr-smoke-"); // never a carrier value
+  } finally { rmSync(tree, { recursive: true, force: true }); }
+});
+
+test("smoke:carriers closes every workspace whose checkout is inside its own folder, found by checkout path, and only those, whether the worktree half passed or failed", async () => {
+  const { smokeCarriers, workspacesIn } = await import("../scripts/smoke-carriers.mjs");
+  const { mkdtempSync, realpathSync, rmSync, writeFileSync, readFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { dirname, join } = await import("node:path");
+  // By path, never by name: the folder itself, or anything under it; a sibling sharing its prefix is not inside.
+  const list = [{ workspace_id: "wEW", worktree: { checkout_path: "/t/smoke-1/repo", is_linked_worktree: false } }, { workspace_id: "wX", worktree: { checkout_path: "/t/smoke-1-other/repo" } },
+    { workspace_id: "w1", worktree: { checkout_path: "/Users/u/repo" } }, { workspace_id: "w2" }, { workspace_id: "w3", worktree: { checkout_path: "/t/smoke-1" } }];
+  expect(workspacesIn(list, "/t/smoke-1")).toEqual(["wEW", "w3"]);
+  const tree = realpathSync.native(mkdtempSync(join(tmpdir(), "routr-smoke-tree-")));
+  const run = async ({ createFails = false, closeFails = false } = {}) => {
+    const calls = [], lines = [];
+    let repo = null, envs = {};
+    const ok = (result) => ({ ok: true, data: { result } });
+    const herdr = async (a) => {
+      calls.push(a);
+      if (a[0] === "worktree" && a[1] === "create") {
+        repo = a[a.indexOf("--cwd") + 1];
+        return createFails ? { ok: false, code: "herdr_refused", data: {} } : ok({ root_pane: { pane_id: "w5:p1" }, worktree: { path: tree }, workspace: { workspace_id: "w5" } });
+      }
+      // As herdr 0.9.5 with no workspace open for the source: worktree create opened one for the throwaway repository too.
+      if (a[0] === "workspace" && a[1] === "list") return ok({ workspaces: [{ workspace_id: "w1", worktree: { checkout_path: process.cwd(), is_linked_worktree: false } },
+        ...(repo ? [{ workspace_id: "wEW", worktree: { checkout_path: repo, is_linked_worktree: false } }] : []), { workspace_id: "wY", worktree: { checkout_path: `${dirname(repo ?? "/x")}-other/repo` } }] });
+      if (a[0] === "workspace" && a[1] === "close") return closeFails ? { ok: false, code: "herdr_refused", data: {} } : ok({});
+      if (a[1] === "split" && a[2] === "--current") return ok({ pane: { pane_id: "w1:p7" } });
+      if (a[1] === "split") { envs = Object.fromEntries(a.flatMap((x, i) => (a[i - 1] === "--env" ? [[x.slice(0, x.indexOf("=")), x.slice(x.indexOf("=") + 1)]] : []))); return ok({ pane: { pane_id: "w5:p2" } }); }
+      if (a[1] === "close") return ok({});
+      if (a[1] === "list") return ok({ panes: [{ pane_id: "w5:p2" }] });
+      if (a[1] === "process-info") return ok({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh", cwd: a[3] === "w5:p2" ? tree : "/" }] } });
+      if (a[1] === "read") return ok({ text: a[2] === "w5:p2" ? "chris % " : "found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)" });
+      if (a[1] === "run") {
+        const script = a[3].match(/'([^']+\.cjs)'|(\S+\.cjs)/).slice(1).find(Boolean);
+        writeFileSync(JSON.parse(readFileSync(script, "utf8").match(/writeFileSync\(("[^"]+")/)[1]), JSON.stringify(envs));
+        return ok({});
+      }
+      if (a[0] === "worktree" && a[1] === "remove") return ok({});
+      throw new Error(`unexpected ${a.join(" ")}`);
+    };
+    const failed = await smokeCarriers({ herdr, git: async () => ({ code: 0 }), env: { HERDR_ENV: "1" }, log: (l) => lines.push(l) });
+    return { failed, calls, lines };
+  };
+  try {
+    for (const createFails of [false, true]) {
+      const { failed, calls } = await run({ createFails });
+      expect([createFails, failed]).toEqual([createFails, createFails ? 2 : 1]); // the first half's shell question, and a failed create
+      // Only the throwaway repository's workspace: never the caller's, never a sibling folder's.
+      expect(calls.filter((a) => a[0] === "workspace" && a[1] === "close")).toEqual([["workspace", "close", "wEW"]]);
+      // After the worktree's removal (when there was one), before the folder went.
+      if (!createFails) expect(calls.findIndex((a) => a[1] === "remove")).toBeLessThan(calls.findIndex((a) => a[0] === "workspace" && a[1] === "close"));
+    }
+    const { failed, lines } = await run({ closeFails: true });
+    expect(failed).toBe(2);
+    expect(lines.join("\n")).toContain("could not close workspace wEW");
   } finally { rmSync(tree, { recursive: true, force: true }); }
 });
