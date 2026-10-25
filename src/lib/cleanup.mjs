@@ -1,18 +1,18 @@
-// cleanup: finish a worker in one call, so its worktree and pane do not outlive it. The guide used to give this as two
-// herdr steps, close the pane and then `herdr worktree remove`, and that order cannot work: a launch's worktree pane
-// is its workspace's only pane, closing it closes the workspace, and herdr's remove finds a worktree only by an open
-// workspace (measured on herdr 0.9.3, 2026-10-07: `workspace_not_found`, worktree left on disk). One lead's repository
-// held 25 such worktrees, none with an open workspace. routr checks, removes, and says what it kept.
-//
-// What a removal keeps: a worktree is removed only when it has no change git sees, no file git is told not to
-// check, every untracked file in it is an exact copy of the same file in the main checkout (what `launch --copy` put
-// there), and the commit it is on is held by a branch or tag (a branch is kept unless --delete-branch is given and git
-// agrees it is merged). Files git ignores go with the folder, as `git worktree remove` does: checking them would
-// refuse nearly every worktree (node_modules, build output), so the guide tells the lead. Nothing runs in it either:
-// herdr's remove closes the workspace and stops whatever is running there without asking (measured: a `sleep` in the
-// pane was killed). Neither herdr nor git has a remove-if-unchanged, so right before the removal the commit is compared
-// with the one checked and then the panes are read again, last: a commit made after that comparison, or a worker
-// started after that read, is the limit this narrows and does not close (from the reviews of b32617a, 980f1b2, 31f9ddf).
+// Cleanup: finish a worker in one call, so its worktree and pane do not outlive it. The guide used to give this
+// as two herdr steps, close the pane and then `herdr worktree remove`, and that order cannot work: a launch's
+// worktree pane is its workspace's only pane, closing it closes the workspace, and herdr's remove finds a
+// worktree only by an open workspace (measured on herdr 0.9.3, 2026-10-07: `workspace_not_found`, worktree left
+// on disk). One lead's repository held 25 such worktrees, none with an open workspace. routr checks, removes,
+// and says what it kept. What a removal keeps: a worktree is removed only when it has no change git sees, no
+// file git is told not to check, every untracked file in it is an exact copy of the same file in the main
+// checkout (what `launch --copy` put there), and the commit it is on is held by a branch or tag (a branch is
+// kept unless --delete-branch is given and git agrees it is merged). Files git ignores go with the folder, as
+// `git worktree remove` does: checking them would refuse nearly every worktree (node_modules, build output), so
+// the guide tells the lead. Nothing runs in it either: herdr's remove closes the workspace and stops whatever
+// is running there without asking (measured: a `sleep` in the pane was killed). Neither herdr nor git has a
+// remove-if-unchanged, so right before the removal the commit is compared with the one checked and then the
+// panes are read again, last: a commit made after that comparison, or a worker started after that read, is the
+// limit this narrows and does not close.
 import { warning } from "./warnings.mjs";
 import { commandTrace, cleanupLink } from "./traces.mjs";
 import { loadConfig } from "./config.mjs";
@@ -73,9 +73,9 @@ export function sameFile(a, b) {
   } catch { return false; }
 }
 
-// Remove one file copied in at launch, only if it is still that copy and is reached through no link: a folder swapped
-// for a link, the worktree's own included, would aim the removal at the main checkout (from the reviews of b32617a and
-// 980f1b2). `rootReal` is the worktree's real path when it was checked. Compared again here, right before the removal.
+// Remove one file copied in at launch, only if it is still that copy and is reached through no link: a folder
+// swapped for a link, the worktree's own included, would aim the removal at the main checkout. `rootReal` is
+// the worktree's real path when it was checked. Compared again here, right before the removal.
 export function dropCopy(root, source, rel, rootReal = real(root)) {
   const target = join(root, rel);
   try { if (realPath(root) !== rootReal || realPath(dirname(target)) !== join(rootReal, dirname(rel))) return false; } catch { return false; }
@@ -146,7 +146,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
           next: [doNext("Answer the worker’s question if within scope, or let it finish before cleanup."), runNext("Wait until this worker is idle, then run cleanup again.", ["herdr", "agent", "wait", p.pane_id, "--until", "idle"])] };
       }
       if (["idle", "done"].includes(p.agent_status)) continue;
-      // Not knowing what runs there is not knowing it is safe (from the review of b32617a).
+      // Not knowing what runs there is not knowing it is safe.
       const r = await herdr(["pane", "process-info", "--pane", p.pane_id], true);
       const info = r.ok ? r.data?.result?.process_info : null;
       if (!Array.isArray(info?.foreground_processes)) { missing("pane", p.pane_id); return { why: `Could not read what runs in ${p.pane_id}`, next: inspect("Look at the pane before deciding whether cleanup is safe.", ["herdr", "pane", "read", p.pane_id]) }; }
@@ -156,7 +156,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
     return null;
   };
 
-  // A pane list herdr did not give whole is not an empty one (from the review of 980f1b2).
+  // A pane list herdr did not give whole is not an empty one.
   const paneList = async (args) => {
     const panes = (await herdr(["pane", "list", ...args])).data?.result?.panes;
     if (!Array.isArray(panes) || panes.some((p) => typeof p?.pane_id !== "string")) throw new Error("herdr pane list: no pane list in its answer");
@@ -164,8 +164,8 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
   };
   const busyIn = async (workspace) => busy(await paneList(["--workspace", workspace]));
   const headOf = async (dir) => { const r = await gitRun(dir, ["rev-parse", "--verify", "HEAD"]); if (r?.code !== 0) missing("worktree", dir); return r?.code === 0 ? r.out.trim() : null; };
-  // Whether a branch, remote branch or tag holds `rev`. Always asked, of the commit the worktree is on now: one on a
-  // branch when herdr listed it can have been detached since (from the review of b32617a).
+  // Whether a branch, remote branch or tag holds `rev`. Always asked, of the commit the worktree is on now: one
+  // on a branch when herdr listed it can have been detached since.
   const refArgs = (rev) => ["for-each-ref", "--contains", rev, "--count=1", "--format=%(refname)", "refs/heads", "refs/remotes", "refs/tags"];
   const held = async (dir, rev, path = dir) => {
     const on = await gitRun(dir, refArgs(rev));
@@ -179,9 +179,9 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
 
   // What stands between a worktree and its removal. Returns { why, next } or { copies } (untracked exact copies).
   const check = async (w, source) => {
-    // Where the worktree is, fixed before anything else is awaited, and shown to be a linked worktree and not the main
-    // checkout: a folder swapped for a link to the main checkout would otherwise be checked, and its copies removed,
-    // as the worker's (from the review of 31f9ddf).
+    // Where the worktree is, fixed before anything else is awaited, and shown to be a linked worktree and not the
+    // main checkout: a folder swapped for a link to the main checkout would otherwise be checked, and its
+    // copies removed, as the worker's.
     const rootReal = w.is_prunable ? null : real(w.path);
     if (rootReal && !linked(rootReal, source)) return { why: `${w.path} is not a linked worktree of ${source}`, next: inspect("Check the repository’s actual worktrees.", ["git", "-C", source, "worktree", "list"]) };
     if (w.open_workspace_id) { const b = await busyIn(w.open_workspace_id); if (b) return b; }
@@ -235,7 +235,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
       }
       const b = await busy([p]); if (b) return refuse(b.why, b.next);
       if (o.dryRun) { out.ok = true; out.state = "planned"; step("plan", true, `Would close ${o.pane}`); return out; }
-      // Again, right before closing: a worker may have started since (from the review of 980f1b2).
+      // Again, right before closing: a worker may have started since.
       const now = (await paneList([])).find((x) => x.pane_id === o.pane);
       if (now) { const again = await busy([now]); if (again) return refuse(again.why, again.next); }
       await herdr(["pane", "close", o.pane]);
@@ -290,7 +290,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
       return out;
     }
     for (const rel of c.copies) {
-      assertOwned(); // Review A: headless worker cleanup keeps its lock through asynchronous checks, up to each action.
+      assertOwned(); // Headless worker cleanup keeps its lock through asynchronous checks, up to each action.
       if (!dropCopy(w.path, source, rel, c.rootReal)) return refuse(`A copy in ${w.path} changed, or is reached through a link, since cleanup checked it`, doNext("Look at the changed copy, then run cleanup again."));
     }
     if (c.copies.length) step("copies", true, `Removed ${c.copies.length} unchanged file${c.copies.length > 1 ? "s" : ""} copied in at launch`);

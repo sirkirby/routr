@@ -29,9 +29,9 @@ again before its POST. A request already in flight can finish under the consent 
 propagation stays unchanged. `OTEL_EXPORTER_OTLP_*` variables do not configure routr, and
 `OTEL_RESOURCE_ATTRIBUTES` does not add resource attributes. `DO_NOT_TRACK` and CI do **not** turn this export off.
 
-Export is intended for the default config, `~/.config/routr/config.json`. Headless holders always read this default
-config on each turn; they do not inherit a launch command's `--config` path. A launch using another config can
-record its own span while its holder records no turns if the default config has export off.
+Export is intended for the default config, `~/.config/routr/config.json`. `launch` does not accept `--config`;
+headless holders also read the default config on each turn. For commands that accept `--config`, their own signals
+use that file's export setting; it does not change the config used by a headless holder.
 There is one queue per install, while
 consent belongs to a config file. A sender started with another `--config` removes batches made under a different
 consent, including batches from the default config. Separate config files do not give you separate queues.

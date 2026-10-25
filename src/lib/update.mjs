@@ -76,13 +76,14 @@ export const DOWNLOAD_STALL_MS = 30_000;
 export const DOWNLOAD_MAX_MS = 30 * 60_000;
 const span = (ms) => (ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`);
 
-// Fetch `url` and hand each chunk of its body to `onChunk` as it arrives: nothing holds the whole binary in memory (the
-// old download buffered it with arrayBuffer()). The stall timer restarts with every chunk and also covers the wait for
-// the server's answer; the backstop runs from the start. Either one aborts the request through its signal (fetch then
-// rejects, or a body read fails) and cancels the body (a pending read then ends), and the error says which it was.
-// No read is raced against a long-lived promise: from review, in Bun 1.3.13 every read raced against one shared abort
-// promise stayed attached to it, so an 80 x 1 MiB transfer kept all 80 chunks (RSS +72 MB between chunk 10 and 80).
-// `fetchFn` is the seam a test drives with a fake stream; like fetch, it must honour the signal.
+// Fetch `url` and hand each chunk of its body to `onChunk` as it arrives: nothing holds the whole binary in
+// memory (the old download buffered it with arrayBuffer()). The stall timer restarts with every chunk and also
+// covers the wait for the server's answer; the backstop runs from the start. Either one aborts the request
+// through its signal (fetch then rejects, or a body read fails) and cancels the body (a pending read then
+// ends), and the error says which it was. No read is raced against a long-lived promise: in Bun 1.3.13 every
+// read raced against one shared abort promise stayed attached to it, so an 80 x 1 MiB transfer kept all 80
+// chunks (RSS +72 MB between chunk 10 and 80). `fetchFn` is the seam a test drives with a fake stream; like
+// fetch, it must honour the signal.
 export async function streamDownload(url, name, onChunk, { fetchFn = fetch, stallMs = DOWNLOAD_STALL_MS, maxMs = DOWNLOAD_MAX_MS } = {}) {
   const ac = new AbortController();
   let failure = null, stall = null, reader = null;
@@ -113,12 +114,13 @@ export async function streamDownload(url, name, onChunk, { fetchFn = fetch, stal
   } finally { clearTimeout(stall); clearTimeout(backstop); }
 }
 
-// Stream the release binary into `file`, hashing as it goes, and return its sha256 hex. `file` is created exclusively
-// ("wx" fails on any existing path, a link included): from review, opening a fixed `${self}.download` with "w" followed
-// a link to the binary itself and overwrote it on a checksum mismatch that then said "Nothing was changed". Every byte
-// of a chunk is written before the next (writeSync may write fewer than asked; from review, a short write under a
-// 4-byte file size limit installed a truncated binary that passed, because the whole chunk was hashed), and only the
-// bytes written are hashed. `write` (writeSync) is the seam a test drives with partial writes.
+// Stream the release binary into `file`, hashing as it goes, and return its sha256 hex. `file` is created
+// exclusively ("wx" fails on any existing path, a link included): opening a fixed `${self}.download` with "w"
+// followed a link to the binary itself and overwrote it on a checksum mismatch that then said "Nothing was
+// changed". Every byte of a chunk is written before the next (writeSync may write fewer than asked; a short
+// write under a 4-byte file size limit installed a truncated binary that passed, because the whole chunk was
+// hashed), and only the bytes written are hashed. `write` (writeSync) is the seam a test drives with partial
+// writes.
 export async function downloadTo(url, name, file, { write = writeSync, ...opts } = {}) {
   const hash = createHash("sha256"), fd = openSync(file, "wx"); // from here on `file` is this call's own
   const put = (chunk) => {
@@ -149,17 +151,17 @@ export function sweepStaging(self) {
   }
 }
 
-// The version of the binary now at `self`, asked of it (`--version`), or null when it gives none. From the final review:
-// the update compared against the running process's version, so an older detached update overwrote a newer one a
-// person had installed by hand meanwhile; the swap now compares against what is actually there.
+// The version of the binary now at `self`, asked of it (`--version`), or null when it gives none. Comparing an update
+// against the running process's version could let an older detached update overwrite a newer one a person
+// had installed by hand meanwhile; the swap now compares against what is actually there.
 export function installedVersion(self, spawn = startSync) {
   try { const v = String(spawn(self, ["--version"], { encoding: "utf8", timeout: 15000 })?.stdout ?? "").trim(); return /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(v) ? v.replace(/^v/, "") : null; }
   catch { return null; }
 }
 
-// What `routr skill install` (the new binary's, which prints its result as JSON) did, from that JSON rather than its
-// exit status alone. From the final review: skills it kept (not routr's, or holding files routr did not write) were
-// reported as reinstalled. Installed, kept and failed are each said, with what to do about a kept one.
+// What `routr skill install` (the new binary's, which prints its result as JSON) did, from that JSON rather
+// than its exit status alone. Skills it kept (not routr's, or holding files routr did not write) were reported
+// as reinstalled. Installed, kept and failed are each said, with what to do about a kept one.
 export function skillOutcome(res) {
   let j = null; try { j = JSON.parse(String(res?.stdout ?? "")); } catch {}
   if (!j || typeof j !== "object") return { skill_reinstalled: res?.status === 0 };
@@ -169,8 +171,8 @@ export function skillOutcome(res) {
     ...(kept.length ? { skill_repair: `routr's skills were not reinstalled at ${kept.map((k) => `${k.where} (${k.why})`).join("; ")}. Move or clear each, then run \`routr skill install\`` } : {}) };
 }
 
-// Manual `routr update` takes the same lock as the daily job (backgroundUpdate), so the two never swap at once. From
-// the final review: the manual path bypassed the lock. A look (--check) swaps nothing and takes none. `lock` is a seam.
+// Manual `routr update` takes the same lock as the daily job (backgroundUpdate), so the two never swap at once.
+// A manual update must not bypass the daily job's lock. A look (--check) swaps nothing and takes none. `lock` is a seam.
 export async function lockedUpdate(opts = {}, { lock = LOCK(), run = update } = {}) {
   if (opts.checkOnly) return run(opts);
   try { ensureParent(lock); } catch {}
@@ -224,7 +226,7 @@ export async function update({ checkOnly = false, force = false, base = process.
         if (there && !newer(out.latest, there)) return { ...out, ok: true, installed: there,
           note: `the routr at ${self} is already ${there}${there === out.latest ? "" : `, newer than ${out.latest}`} (installed since this run started): not replaced. \`routr update --force\` installs ${out.latest}` };
       }
-      // Review A: a download can outlive its lock. Prove the captured token at the irreversible action, after awaits.
+      // A download can outlive its lock. Prove the captured token at the irreversible action, after awaits.
       if (!owned()) throw new Error("the update lock was taken over; nothing was changed");
       swapBinary(self, tmp);
     } finally { if (staged) try { rmSync(tmp, { force: true }); } catch {} }

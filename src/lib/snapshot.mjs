@@ -8,20 +8,21 @@ import { isVersion, newer, ROUTR_VERSION } from "./version.mjs";
 
 const now = () => Date.now() / 1000;
 
-// Cursor shows usage only in its own /usage screen, which takes seconds to read (a private herdr session, Cursor, the
-// panel: 4 to 5 s measured), too slow for a call that answers in 300 ms. Kiro's /usage answers in ~10 s and leaves a
-// session behind that takes ~8 s more to delete (measured 2026-09-26). So both are read as a snapshot every
-// call reads in milliseconds, with its age shown, and a fresh reading taken in the BACKGROUND about once per working
-// session: when the last try is over 4 hours old, the call starts a detached `routr usage <name>` and does not wait.
-// Both are monthly pools and burn slowly, so a reading hours old routes the same (the maintainer's call, 2026-09-25).
-// `setup` and `doctor` read usage too, so a new install has its first reading before its first dispatch.
-// A try that got no reading does not count when an older routr made it (or one that did not say, 0.8.0 and before): a
-// newer routr may read what the old one could not (2026-10-23: v0.7.0 failed every Cursor read under herdr 0.9.5, and
-// after the upgrade to 0.8.0, whose reader works, `routr usage` and setup kept the failure for hours because the failed
-// try was under 4 hours old). Each write says which version (`by`). Only an older one's: a source checkout (0.0.0-dev)
-// and an installed binary sharing the cache would otherwise start a reading each time the other had tried (from the
-// review of 0298b56); this way the newer retries once and the older never does. A `by` that is not a version counts
-// as none (from the review of 6f3eaed: "0.9.invalid" ordered above 0.8.1 and held the retry back).
+// Cursor shows usage only in its own /usage screen, which takes seconds to read (a private herdr session,
+// Cursor, the panel: 4 to 5 s measured), too slow for a call that answers in 300 ms. Kiro's /usage answers in
+// ~10 s and leaves a session behind that takes ~8 s more to delete (measured 2026-09-26). So both are read as a
+// snapshot every call reads in milliseconds, with its age shown, and a fresh reading taken in the BACKGROUND
+// about once per working session: when the last try is over 4 hours old, the call starts a detached `routr
+// usage <name>` and does not wait. Both are monthly pools and burn slowly, so a reading hours old routes the
+// same (the maintainer's call, 2026-09-25). `setup` and `doctor` read usage too, so a new install has its first
+// reading before its first dispatch. A try that got no reading does not count when an older routr made it (or
+// one that did not say, 0.8.0 and before): a newer routr may read what the old one could not (2026-10-23:
+// v0.7.0 failed every Cursor read under herdr 0.9.5, and after the upgrade to 0.8.0, whose reader works, `routr
+// usage` and setup kept the failure for hours because the failed try was under 4 hours old). Each write says
+// which version (`by`). Only an older one's: a source checkout (0.0.0-dev) and an installed binary sharing the
+// cache would otherwise start a reading each time the other had tried; this way the newer retries once and the
+// older never does. A `by` that is not a version counts as none ("0.9.invalid" ordered above 0.8.1 and held the
+// retry back).
 const REFRESH_SEC = 4 * 3600;
 // A reading that has not been refreshed for a day is not used: refreshes are failing, and the plan may have reset
 // since (Cursor's screen shows no reset time). Past it, the subscription is assumed and the note says so.

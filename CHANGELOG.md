@@ -11,9 +11,10 @@ A short history of what changed in each routr release, one line per change. Each
 - You can configure OpenTelemetry export to your own endpoint, with secret headers, delivery status and a detached sender that retries queued batches. (#114)
 - Workers in a `--worktree` launch's pane now get the OpenTelemetry trace context too, and no pane launch opens picks
   up a stale one from the herdr server: each carrier routr does not pass is set empty there. (#113)
-- Workers now get the OpenTelemetry trace context (`TRACEPARENT`, `TRACESTATE`, `BAGGAGE`) routr was started with,
+- With export off, workers now get the OpenTelemetry trace context (`TRACEPARENT`, `TRACESTATE`, `BAGGAGE`) routr was started with,
   unchanged: headless workers on every turn, and workers in a pane launch splits. An existing pane gets none, and
-  launch says so; output shows only `<forwarded>`, never a value. (#112)
+  launch says so; output shows only `<forwarded>`, never a value. With export on and a sampled trace, routr’s own
+  launch or turn span replaces `TRACEPARENT`. (#112)
 - Launch and Cursor's usage read no longer fail when herdr briefly cannot report a new pane's processes while its shell starts; they keep waiting, up to the command's timeout. (#111)
 - On Windows, a folder whose name has a curly quote (`Chris’s`) now reaches a PowerShell pane exactly, for launch and
   Cursor's usage read. A cmd pane gets no folder path that holds `%` or `!` (cmd expands them even inside quotes);

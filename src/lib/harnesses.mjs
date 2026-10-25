@@ -60,21 +60,22 @@ let codexModels = null;
 const readCodexModels = () => (codexModels ??= run("codex", ["debug", "models"], { timeoutMs: 15000 }).then((out) => { try { const o = JSON.parse(out); return o.models ?? o; } catch { return null; } }));
 const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 20000 })) ?? "").split("\n").map((l) => l.match(pattern)?.[1]).filter(Boolean);
 
-// What `claude auth status` says about billing (Claude's `auth.billing`). Measured 2026-10-07 (Claude Code, macOS): an
-// API key login prints `"authMethod": "api_key"`, `"apiProvider": "firstParty"` and no subscriptionType, and its
-// `/usage` then shows only a session cost summary, no windows: the same as a subscription login whose credentials were
-// not available (`--bare`, 2026-10-05). So `/usage` alone cannot tell per-token billing from missing credentials, and
-// authMethod can. A subscription login prints `"authMethod": "claude.ai"` and a subscriptionType: windows decide.
-// Read from Claude Code's own code (2.1.293), not measured: `api_key_helper` is an API key from the user's
-// apiKeyHelper; the apiProvider values its code sets for a cloud provider (below) are that provider's account, billed
-// per token by it (its docs); `gateway` is a Claude apps gateway, whose spend limit arrives as a window (capped,
-// usage.mjs), so it is left to the windows. Both are allow-lists: any other value, or one that is not a string, is
-// null (from the review: an unknown provider once counted as metered, its raw text in the reason). Every reason is a
-// fixed string from these tables, never text from the answer, which also carries the email, organisation and ids.
-// Its code always sets authMethod, to one of CLAUDE_AUTH (initialised to "none"), and with a cloud provider always to
-// `third_party`; so authMethod is checked first, and a cloud provider counts only beside `third_party`. Only an ABSENT
-// apiProvider is first-party (an older answer); an explicit null or any non-string is no reading (from the review:
-// `null` once read as first-party, and a cloud provider once counted whatever authMethod said).
+// What `claude auth status` says about billing (Claude's `auth.billing`). Measured 2026-10-07 (Claude Code,
+// macOS): an API key login prints `"authMethod": "api_key"`, `"apiProvider": "firstParty"` and no
+// subscriptionType, and its `/usage` then shows only a session cost summary, no windows: the same as a
+// subscription login whose credentials were not available (`--bare`, 2026-10-05). So `/usage` alone cannot tell
+// per-token billing from missing credentials, and authMethod can. A subscription login prints `"authMethod":
+// "claude.ai"` and a subscriptionType: windows decide. Read from Claude Code's own code (2.1.293), not
+// measured: `api_key_helper` is an API key from the user's apiKeyHelper; the apiProvider values its code sets
+// for a cloud provider (below) are that provider's account, billed per token by it (its docs); `gateway` is a
+// Claude apps gateway, whose spend limit arrives as a window (capped, usage.mjs), so it is left to the windows.
+// Both are allow-lists: any other value, or one that is not a string, is null (an unknown provider once counted
+// as metered, its raw text in the reason). Every reason is a fixed string from these tables, never text from
+// the answer, which also carries the email, organisation and ids. Its code always sets authMethod, to one of
+// CLAUDE_AUTH (initialised to "none"), and with a cloud provider always to `third_party`; so authMethod is
+// checked first, and a cloud provider counts only beside `third_party`. Only an ABSENT apiProvider is
+// first-party (an older answer); an explicit null or any non-string is no reading (`null` once read as
+// first-party, and a cloud provider once counted whatever authMethod said).
 const CLAUDE_AUTH = new Set(["none", "third_party", "claude.ai", "api_key_helper", "oauth_token", "api_key"]);
 const CLAUDE_CLOUD = new Set(["bedrock", "vertex", "foundry", "anthropicAws", "anthropicGoogleCloud", "mantle"]);
 const CLAUDE_CLOUD_WHY = "Claude Code runs through a cloud provider's account, billed per token by that provider (from its docs, not measured)";
@@ -243,11 +244,11 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
       let u;
       if (!src?.read) u = failedUsage(name, source, "source_missing");
       else try { u = await src.read({ background: background.includes(name) }); } catch { u = failedUsage(name, source); }
-      // The billing reading settles only a reading without windows, and then it must be today's: a sign-in kept for
-      // 6 hours can predate a switch between a subscription and an API key (from the review: a switch an hour in still
-      // ranked the old way). So in exactly that case the status check runs again now. With windows there is no call.
-      // That check is a sign-in check too: unless it answers signed in, this call leaves the harness out, as any
-      // signed-out one (from the review: a fresh "loggedIn": false still left it a candidate on assumed headroom).
+      // The billing reading settles only a reading without windows, and then it must be today's: a sign-in kept for 6
+      // hours can predate a switch between a subscription and an API key (a switch an hour in still ranked the
+      // old way). So in exactly that case the status check runs again now. With windows there is no call. That
+      // check is a sign-in check too: unless it answers signed in, this call leaves the harness out, as any
+      // signed-out one (a fresh "loggedIn": false still left it a candidate on assumed headroom).
       const b = await billing(name, { fresh: u?.headroom == null });
       if (b?.not) return signedOut(name, b.not);
       return withBilling(name, u, b?.billing);

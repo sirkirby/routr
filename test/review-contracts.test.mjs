@@ -14,7 +14,7 @@ const fixture = () => {
 };
 const deps = (run) => ({ run, env: { HERDR_ENV: "1" }, settings: () => cfg(), ready: async () => null });
 
-test("review 1/10: adopted busy, unknown, not-ready and explained states have truthful headlines", async () => {
+test("adopted busy, unknown, not-ready and explained states have truthful headlines", async () => {
   for (const [state, ready, explanation] of [["working", true], ["unknown", true], ["idle", false], ["blocked", true, "working"], ["blocked", true, undefined]]) {
     const r = await launch([...base, "--pane", "w1:p9"], deps(async (a) => a[1] === "get" ? herdrOK({ agent: { agent: "claude", cwd: process.cwd(), agent_status: state, interactive_ready: ready } }) : a[1] === "explain" ? herdrOK(explanation ? { state: explanation } : {}) : herdrOK({ text: "question?" })));
     expect(r.state).toBe("needs_input"); expect(r.headline).toContain(r.needs_input.why);
@@ -22,7 +22,7 @@ test("review 1/10: adopted busy, unknown, not-ready and explained states have tr
   }
 });
 
-test("review 2: unranked views explain actual exclusions and never lower basic", async () => {
+test("unranked views explain actual exclusions and never lower basic", async () => {
   const c = cfg({ subscriptions: { claude: { ...cfg().subscriptions.claude, enabled: false } } });
   for (const words of [[], ["claude"], ["--level", "basic"]]) {
     const r = await usageCommand(words, c, {}, { read: async () => [] });
@@ -34,12 +34,12 @@ test("review 2: unranked views explain actual exclusions and never lower basic",
   expect(unconfigured.subscriptions.note).toContain("kiro is not configured"); expect(text(unconfigured)).not.toContain("lower level");
 });
 
-test("review 3: model-less dry runs refuse with a plan and model next step", async () => {
+test("model-less dry runs refuse with a plan and model next step", async () => {
   const r = await launch(["--kind", "claude", "--name", "worker", "--dry-run"]);
   expect(r.ok).toBe(false); expect(r.error).toContain("--model is required"); expect(r.would_run.length).toBeGreaterThan(0); expect(text(r)).toContain("Choose --model");
 });
 
-test("review 4/5: failed refs are unreadable, dirty and untracked refusals offer git status", async () => {
+test("failed refs are unreadable, dirty and untracked refusals offer git status", async () => {
   const f = fixture(), path = join(f.dir, "worker"), sha = "a".repeat(40);
   for (const mode of ["refs-fail", "refs-malformed", "dirty", "untracked", "prunable-refs", "prunable-heads"]) {
     const r = await cleanup(["--cwd", f.dir, "--worktree", "worker"], { env: { HERDR_ENV: "1" }, linked: () => true,
@@ -53,7 +53,7 @@ test("review 4/5: failed refs are unreadable, dirty and untracked refusals offer
   }
 });
 
-test("review 6: every moved sentence is rejected in explanatory strings of every output", () => {
+test("every moved sentence is rejected in explanatory strings of every output", () => {
   const sentences = ["Fix the brief first: add a check.", "Start at strong; go higher if a fact calls for it.", "You can: you know the codebase.", "Settle these from the codebase.", "Go with strong unless the work is plainly rote.", "Do not go below standard, and review the result.", "Choose a suitable model and effort from normal candidates first.", "every account is at its reserve: hold the work or ask the user", "choose a lower level", "Tell them, and ask which subscription to use meanwhile", "By hand: run cursor-agent", "Read Cursor's usage by hand", "pass --headroom cursor=0.5", "set `billing: \"metered\"` for claude", "Read capacity yourself before choosing an account.", "Pane p was left alive; inspect it before closing or retrying.", "Prompt may have been submitted; inspect the pane before retrying.", "Cursor config is retained; remove it if the launch command did not run.", "Could not rename it: address it by its pane.", "check the model's /effort panel", "Plan only: choose --model before launching.", "Omit --task-file only for an inline task; say so in --note.", "If this task came from a file, revise this row with --run-id and --task-file."];
   for (const mode of ["dispatch", "subagent", "launch", "check", "record", "cleanup", "usage"]) for (const sentence of sentences) for (const key of ["notes", "note", "why", "warnings"]) {
     const r = { mode, [key]: ["notes", "warnings"].includes(key) ? [sentence.toUpperCase()] : sentence.toLowerCase() };
@@ -63,7 +63,7 @@ test("review 6: every moved sentence is rejected in explanatory strings of every
   }
 });
 
-test("review 6/7/8: dispatch reports unavailable parts, subagent stays local, check names failed provider", async () => {
+test("dispatch reports unavailable parts, subagent stays local, check names failed provider", async () => {
   const f = fixture(), askFn = async () => { throw new Error("unavailable"); };
   const dispatch = await adviseCommand("dispatch", "task", { config: cfg() }, {}, { askFn, read: async () => [live("claude", 0.9)] });
   expect(text(dispatch)).toContain("Tell the user what was unavailable");
@@ -73,7 +73,7 @@ test("review 6/7/8: dispatch reports unavailable parts, subagent stays local, ch
   expect(checked.provider).toBe(checked.unavailable[0].provider);
 });
 
-test("review 9: startup questions continue directly; failed starts say no task was delivered", async () => {
+test("startup questions continue directly; failed starts say no task was delivered", async () => {
   const f = fixture(); let ticks = 0;
   for (const refused of [false, true]) {
     let started = false;
@@ -92,7 +92,7 @@ test("review 9: startup questions continue directly; failed starts say no task w
   }
 });
 
-test("review 11: missing herdr has installation guidance, process refusal names tool once", async () => {
+test("missing herdr has installation guidance, process refusal names tool once", async () => {
   expect(processFailure("herdr", ["pane", "split"], "herdr_refused").why).toBe("herdr refused pane split (herdr_refused).");
   for (const command of [launch, cleanup]) {
     const args = command === launch ? [...base, "--direction", "right"] : ["--pane", "w1:p9"];

@@ -23,8 +23,8 @@ reading and its headline names the model that answered; only no answer starts wi
 
 `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`, `feedback`,
 `launch`, `cleanup`, `send`, `stop`, `usage cursor`, and `usage kiro` act, and each says what it did. Their read-only forms
-(`telemetry status`, `setup --show`) only read. `workers` and `wait` may queue trace records and start the detached
-OpenTelemetry sender when export is on; `wait` also records which turns it has reported in the worker's own run folder.
+(`telemetry status`, `setup --show`) only read. `workers`, `wait` and `cleanup --dry-run` may
+queue records and start the detached OpenTelemetry sender when export is on; `wait` also records which turns it has reported in the worker's own run folder.
 
 Local file writes normally create parent folders from the file's absolute location, including when only a relative
 filename was given. OpenTelemetry batch and sender-state writes never create folders, so an uninstall cannot be

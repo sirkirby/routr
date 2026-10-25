@@ -348,8 +348,8 @@ test("below a linked folder a routr folder with no manifest is never adopted: a 
   const { installSkill, MANIFEST, notOursWhy, owner } = await import("../src/lib/skill-install.mjs");
   const { uninstallPlan } = await import("../src/lib/uninstall.mjs");
   const { cpSync, existsSync, readlinkSync, symlinkSync } = await import("node:fs");
-  // The final review's case: ~/.agents/skills is a developer's link into a checkout holding the legacy routr skill (no
-  // manifest), with an uncommitted edit to a guide.
+  // Legacy skill ownership: ~/.agents/skills is a developer's link into a checkout holding the legacy routr
+  // skill (no manifest), with an uncommitted edit to a guide.
   const dev = scratch("linked-above"), checkout = join(dev, "checkout", "skills"), guide = join(checkout, "routr/references/worker.md");
   mkdirSync(checkout, { recursive: true }); cpSync(join(import.meta.dir, "../skills/routr"), join(checkout, "routr"), { recursive: true });
   writeFileSync(guide, "an uncommitted edit");
@@ -591,7 +591,7 @@ test("a flag subagent and dispatch do not take is never advised on as the brief"
 });
 
 test("a folder inside routr's copy that cannot be read counts as the user's: the copy is left as it is", async () => {
-  // From the review of ef16898: an unreadable folder read as empty, and a reinstall moved the user's files aside.
+  // An unreadable folder read as empty, and a reinstall moved the user's files aside.
   if (process.platform === "win32" || process.getuid?.() === 0) return; // no POSIX modes there; root reads anything
   const { installSkill, extraFiles } = await import("../src/lib/skill-install.mjs");
   const { chmodSync } = await import("node:fs");
@@ -608,7 +608,7 @@ test("a folder inside routr's copy that cannot be read counts as the user's: the
   expect(readdirSync(`${home}/.agents/skills`).filter((n) => n.includes("routr-old"))).toEqual([]);
 });
 
-test("from the setup review: a Cloudflare account ID in capitals is taken, and saved in lower case", () => {
+test("a Cloudflare account ID in capitals is taken, and saved in lower case", () => {
   const home = scratch("key-upper"), env = cliEnv(home);
   const r = Bun.spawnSync(["bun", SCRIPT, "key", "set", "cloudflare", "--no-verify"], { env, stdin: Buffer.from("cf_test_0123456789abcdef\n0123456789ABCDEF0123456789ABCDEF\n") });
   expect(r.exitCode).toBe(0);

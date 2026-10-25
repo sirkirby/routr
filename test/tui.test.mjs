@@ -150,7 +150,7 @@ test("long lines wrap inside the gutter, at word boundaries", async () => {
   expect(lines.every((l) => l.startsWith("│  ") && l.length <= 30)).toBe(true);
 });
 
-// ---- Findings from the independent review (Cursor on grok-4.7-high, 2026-09-26): each one stays fixed.
+// ---- Terminal UI regression cases, checked 2026-09-26: input, redraw and cancellation.
 test("ACCESSIBLE=1 without a line reader given (as routr setup runs it) reads the terminal itself instead of crashing", async () => {
   const { PassThrough } = await import("node:stream");
   const input = new PassThrough();

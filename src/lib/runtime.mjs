@@ -24,10 +24,10 @@ export const standalone = () => COMPILED;
 export const CACHE_DIR = () => join(home(), ".cache/routr");
 // Headless workers: each one's run folder, and the sockets of their channels (channel.mjs, headless.mjs).
 export const STATE_DIR = () => join(home(), ".local/state/routr");
-// Which folder this is, not where: a worktree removed and made again at the same path, even on the same branch, is
-// another folder (from the review of d4166f9). Device and file number, read whole (Windows' file IDs exceed 2^53).
-// Its birth time too, where the file system keeps one: Linux may give a removed folder's number to the next one made.
-// `link: true` reads the path itself, not what a link there points at.
+// Which folder this is, not where: a worktree removed and made again at the same path, even on the same branch,
+// is another folder. Device and file number, read whole (Windows' file IDs exceed 2^53). Its birth time too,
+// where the file system keeps one: Linux may give a removed folder's number to the next one made. `link: true`
+// reads the path itself, not what a link there points at.
 export const folderId = (path, { link = false } = {}) => { try { const st = (link ? lstatSync : statSync)(path, { bigint: true }); return st.isSymbolicLink() ? null : `${st.dev}:${st.ino}:${st.birthtimeNs}`; } catch { return null; } };
 // Held by `routr uninstall` from its last check through its removal (its pid inside); a headless launch that reserves
 // a run folder while it is held backs out (headless.mjs reserve), so neither misses the other.
@@ -62,7 +62,7 @@ export function ensureParent(file, { mkdir = mkdirSync } = {}) {
 }
 
 // A temp file, then rename. Keep the existing remove-and-rename fallback for callers that need it on Windows.
-// OTel V10 retry state opts out: a failed replacement must retain its previous recorded backoff.
+// OTel retry state opts out: a failed replacement must retain its previous recorded backoff.
 export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync } = {}) {
   if (mkdir) ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
@@ -96,10 +96,10 @@ export function takeLock(file, stale, { token = randomUUID(), rename = renameSyn
   };
   const make = () => { create(file, token); locksHere.set(realOr(file), token); };
   try { make(); return true; } catch (e) { if (e?.code !== "EEXIST") return false; }
-  // Review 3: a live/never-stale lock needs no writes, especially while uninstall removes its state folder.
+  // A live/never-stale lock needs no writes, especially while uninstall removes its state folder.
   try { if (!stale(file)) return false; } catch { return false; }
-  // Review A: serialize the observation AND move, so a delayed taker never moves a live replacement. This guard
-  // covers only synchronous file operations, not the job; a crashed guard expires after five seconds. No hard links.
+  // Serialize the observation AND move, so a delayed taker never moves a live replacement. This guard covers only
+  // synchronous file operations, not the job; a crashed guard expires after five seconds. No hard links.
   const guard = `${file}.takeover`, guardToken = randomUUID(), began = Date.now(), guardAge = 5000;
   const guarded = () => Date.now() - began < guardAge && lockOwned(guard, guardToken);
   const moveStale = (path, move, isStale, allowed = () => true) => {
@@ -161,7 +161,7 @@ export const startSync = (cmd, args, opts, { via = spawnSync, platform } = {}) =
 //     node on PATH): no shell and no quoting;
 //   - any other `.cmd`/`.bat` starts through `cmd.exe /d /s /c` with every argument quoted for cmd (cmdLine below).
 // A name not found fails the start with ENOENT, as a missing program does: passed on bare, libuv's own search would
-// look in the current folder first, the hijack the lookup avoids (from the final review). Through cmd.exe
+// look in the current folder first, the hijack the lookup avoids. Through cmd.exe
 // or node the CLI runs one or more processes below the child routr holds, so a timeout stops the tree (stop, below).
 const RUNNABLE = [".com", ".exe", ".bat", ".cmd"];
 const isFile = (p) => { try { return statSync(p).isFile(); } catch { return false; } };
@@ -183,9 +183,9 @@ export function resolveCommand(cmd, { env = process.env, cwd = process.cwd(), ex
   return null;
 }
 
-// POSIX: the file a bare command name runs, the first executable file of that name on PATH as a shell finds it, its
-// links followed; null when there is none, when a relative or empty PATH entry comes first (the file would depend on
-// the folder it runs in: from the review of c9b049a), and on Windows, where nothing asks yet.
+// POSIX: the file a bare command name runs, the first executable file of that name on PATH as a shell finds it,
+// its links followed; null when there is none, when a relative or empty PATH entry comes first (the file would
+// depend on the folder it runs in), and on Windows, where nothing asks yet.
 export function installedAt(cmd, { env = process.env, platform = process.platform } = {}) {
   if (platform === "win32") return null;
   for (const dir of String(env.PATH ?? "").split(":")) {
@@ -250,16 +250,16 @@ export function windowsCommand(cmd, args = [], { env = process.env, cwd = proces
   return { cmd: comspec, args: ["/d", "/s", "/c", `"${cmdLine(file, args)}"`], verbatim: true };
 }
 
-// Stop a child routr no longer waits for (a timeout, or `until` has its answer), and on Windows all it started: a .cmd
-// runs the CLI under cmd.exe, and an npm shim's node may start the CLI's own binary, so killing the child alone would
-// leave the CLI running. `taskkill /T /F` walks the tree by parent id, so it runs while the child is still there, and
-// never for a child that has exited (its pid may belong to another process by then). If taskkill cannot start, exits
-// non-zero, or has not finished within KILL_GRACE_MS, the child alone is killed, unless it has exited meanwhile (from
-// the final review: a failing taskkill used to leave the child running). Off Windows a SIGTERM, then SIGKILL after
-// KILL_GRACE_MS if the child is still there: a CLI that ignores SIGTERM survived the one signal (from the final review;
-// Claude's /usage read is the newest such call). The caller has its answer already; the grace timers are unref'd, so
-// they never hold routr's exit. For herdr (runHerdr: one herdr.exe, and a tree kill could reach a herdr server it
-// started, the user's session), only the child is killed, and not through here. `via` and `after` are test seams.
+// Stop a child routr no longer waits for (a timeout, or `until` has its answer), and on Windows all it started:
+// a .cmd runs the CLI under cmd.exe, and an npm shim's node may start the CLI's own binary, so killing the child
+// alone would leave the CLI running. `taskkill /T /F` walks the tree by parent id, so it runs while the child
+// is still there, and never for a child that has exited (its pid may belong to another process by then). If
+// taskkill cannot start, exits non-zero, or has not finished within KILL_GRACE_MS, the child alone is killed,
+// unless it has exited meanwhile (a failing taskkill used to leave the child running). Off Windows a SIGTERM,
+// then SIGKILL after KILL_GRACE_MS if the child is still there: a CLI that ignores SIGTERM survived the one
+// signal. The caller has its answer already; the grace timers are unref'd, so they never hold routr's exit. For
+// herdr (runHerdr: one herdr.exe, and a tree kill could reach a herdr server it started, the user's session),
+// only the child is killed, and not through here. `via` and `after` are test seams.
 const KILL_GRACE_MS = 2000;
 const alive = (child) => child.exitCode == null && child.signalCode == null;
 const later = (ms, fn) => { const t = setTimeout(fn, ms); t.unref?.(); return t; };

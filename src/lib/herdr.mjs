@@ -106,12 +106,12 @@ export const promptSettled = (text, previous) => {
   return !!screen && typeof previous === "string" && screen === clean(previous).trim();
 };
 
-// One herdr command. The timeout answers by itself, then kills: waiting for `close` after the kill (as before) kept the
-// call pending past its timeout whenever something else still held the pipes, e.g. on Windows a herdr started through
-// cmd.exe, where the kill reaches cmd.exe and not the hung client below it (from the final review). Only the child is
-// killed, never its tree: a herdr client may have started the herdr server, the user's whole session. Our ends of
-// the pipes are closed and the child unref'd, so a client that lingers holds neither this call nor routr's exit.
-// `via` is a test seam (runtime's start).
+// One herdr command. The timeout answers by itself, then kills: waiting for `close` after the kill (as before)
+// kept the call pending past its timeout whenever something else still held the pipes, e.g. on Windows a herdr
+// started through cmd.exe, where the kill reaches cmd.exe and not the hung client below it. Only the child is
+// killed, never its tree: a herdr client may have started the herdr server, the user's whole session. Our ends
+// of the pipes are closed and the child unref'd, so a client that lingers holds neither this call nor routr's
+// exit. `via` is a test seam (runtime's start).
 function transport(args, timeout, { via = start } = {}) {
   return new Promise((done, reject) => {
     const child = via("herdr", args, { stdio: ["ignore", "pipe", "pipe"] });

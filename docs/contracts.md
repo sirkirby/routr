@@ -747,7 +747,8 @@ withholds it. `next`:
 
 ## workers
 
-Each headless worker as its holder last recorded it, checked against whether its channel answers. Changes nothing.
+Each headless worker as its holder last recorded it, checked against whether its channel answers. With export off,
+changes nothing.
 
 Inputs: used when given: `--name` (repeatable). Own fields: `workers`, each `{ name, kind, model, effort, cwd, state,
 turn, seconds_since_event, last_tool, tasks, queued, session, report, carriers_withheld?, harness_group? }`.
@@ -1198,8 +1199,8 @@ Headless worker metadata saves `launch: { launch_id, traceId, spanId }` for a re
 parent creates sampled roots. An explicit unsampled decision or a valid unsampled saved parent keeps turn spans
 and state-transition logs silent through later export changes. Holders queue no headroom observations. Later
 commands link only validated recorded launch ids. This is local worker metadata, not a public command field, and
-does not add anything to the record template. `workers` and `wait` may queue traces and start the sender when
-export is on. A dry-run launch may queue its planned span then, without executing its launch plan.
+does not add anything to the record template. `workers`, `wait` and `cleanup --dry-run` may
+queue records and start the detached OpenTelemetry sender when export is on. A dry-run launch may queue its planned span then, without executing its launch plan.
 
 The launch index contains entries only for workers that actually started (`ready`, `prompted`, `needs_input`).
 Dry runs and failed or refused launches create no entry. Cleanup links exclude finished entries; record can still

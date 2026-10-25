@@ -51,7 +51,7 @@ async function locked(name, fn) {
   let took = false;
   for (let i = 0; i < 50 && !(took = takeLock(file, lockIsStale)); i++) await sleep(100);
   const token = lockToken(file);
-  // Review A: checks await channels and git. A lock at entry is insufficient: fence the action with this token too.
+  // Checks await channels and git. A lock at entry is insufficient: fence the action with this token too.
   const assertOwned = () => { if (!took || !lockOwned(file, token)) throw new Error(`the worker lock for ${name} is held by another routr command; run it again in a moment`); };
   try { assertOwned(); return await fn(assertOwned); } finally { if (took) releaseFileLock(file, token); }
 }
@@ -137,15 +137,16 @@ function copyInto(from, root, rel, made) {
   const to = join(root, ...parts);
   if (existsSync(to) || (() => { try { lstatSync(to); return true; } catch { return false; } })()) throw new Error(`--copy ${rel}: the worktree already has it`);
   cpSync(from, to, { recursive: true, errorOnExist: true, force: false });
-  // A link copied as a link is a file here, never a folder to walk or take back (from the review of e46d79d).
+  // A link copied as a link is a file here, never a folder to walk or take back.
   if (realFolder(to)) { made.dirs.push(to); for (const f of readdirSync(to, { recursive: true }).map(String)) { if (realFolder(join(to, f))) made.dirs.push(join(to, f)); else made.files.push(join(rel, f)); } }
   else made.files.push(rel);
 }
-// The worktree a launch made and nothing ran in: its copies (unchanged ones, and the folders it made, only inside the
-// worktree and reached through no link, checked again right before each removal), the worktree through cleanup's own checks, and its branch while it still points at the commit it started
-// on (git compares and deletes in one step). The branch is this launch's only once git made the worktree: when
-// `worktree add -b` failed, a branch of that name may be another command's, made since the check (from the review of
-// 9224296), so it is left and said. Anything else left is said too.
+// The worktree a launch made and nothing ran in: its copies (unchanged ones, and the folders it made, only
+// inside the worktree and reached through no link, checked again right before each removal), the worktree
+// through cleanup's own checks, and its branch while it still points at the commit it started on (git compares
+// and deletes in one step). The branch is this launch's only once git made the worktree: when `worktree add -b`
+// failed, a branch of that name may be another command's, made since the check, so it is left and said.
+// Anything else left is said too.
 export async function unmakeWorktree(wt, out) {
   const exists = async () => (await git(wt.source, ["rev-parse", "--verify", "--quiet", `refs/heads/${wt.branch}`])).ok;
   if (!wt.added) {

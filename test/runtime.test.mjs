@@ -437,9 +437,9 @@ test("on Windows an npm shim starts node on its script, any other .cmd goes thro
   expect(w("codex", ["x"], { [`${NPM}\\codex.cmd`]: shim, [js]: "", [nodeCmd]: "@echo off" })).toEqual(viaCmd(nodeCmd, [js, "x"]));
 });
 
-// From the final review: a name not found was passed on unchanged, and libuv's own search on Windows looks in the
-// current folder first, so a planted `codex.exe` in a work tree would have started. Now the start fails, as for a
-// missing program, and run() and probe() answer null as they do for one. Off Windows nothing changes.
+// A name not found was passed on unchanged, and libuv's own search on Windows looks in the current folder
+// first, so a planted `codex.exe` in a work tree would have started. Now the start fails, as for a missing
+// program, and run() and probe() answer null as they do for one. Off Windows nothing changes.
 test("start on Windows fails a command it cannot find with ENOENT, and starts nothing; elsewhere the name goes on as given", async () => {
   const seen = [], via = (...a) => { seen.push(a); return { on: () => {} }; };
   expect(() => start("routr-no-such-command", ["a"], { stdio: "ignore" }, { via, platform: "win32" })).toThrow(expect.objectContaining({ code: "ENOENT" }));
@@ -469,8 +469,8 @@ test("stopping a child on Windows kills its whole tree with taskkill, never a ch
   expect([posix.killed, seen]).toEqual([1, []]);
 });
 
-// From the final review: taskkill's spawn error was handled, its exit status was not, so a taskkill that failed (or
-// hung) left the child running. Each case falls back to killing the child alone, unless it has exited meanwhile.
+// Taskkill's spawn error was handled, its exit status was not, so a taskkill that failed (or hung) left the
+// child running. Each case falls back to killing the child alone, unless it has exited meanwhile.
 test("on Windows a taskkill that exits non-zero or does not finish falls back to killing the child, never one that has exited", () => {
   const child = () => { const c = { pid: 4242, exitCode: null, signalCode: null, signals: [], kill(sig) { c.signals.push(sig ?? "TERM"); } }; return c; };
   const taskkill = () => { const h = {}; return { h, via: () => ({ on: (ev, fn) => { h[ev] = fn; } }) }; };
@@ -496,9 +496,9 @@ test("on Windows a taskkill that exits non-zero or does not finish falls back to
   expect(slow.signals).toEqual(["TERM"]);
 });
 
-// From the final review: off Windows a timeout sent SIGTERM once, and a CLI that ignores it kept running. SIGKILL
-// follows after a grace, unless the child has gone; the timer never holds routr's exit (unref'd), and the caller's
-// answer does not wait for it.
+// Off Windows a timeout sent SIGTERM once, and a CLI that ignores it kept running. SIGKILL follows after a
+// grace, unless the child has gone; the timer never holds routr's exit (unref'd), and the caller's answer does
+// not wait for it.
 test("off Windows a child that outlives SIGTERM gets SIGKILL after a grace; one that exited does not", () => {
   const child = () => { const c = { pid: 4242, exitCode: null, signalCode: null, signals: [], kill(sig) { c.signals.push(sig ?? "SIGTERM"); } }; return c; };
   const timers = [], after = (ms, fn) => { timers.push({ ms, fn }); return 0; };

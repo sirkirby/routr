@@ -157,10 +157,10 @@ export function cursorReader() {
 // Codex's item types as it sends them; an MCP server's tool is `mcp`, anything else `other`.
 const CODEX_ITEMS = new Set(["commandExecution", "fileChange", "webSearch", "imageView", "dynamicToolCall", "collabAgentToolCall", "subAgentActivity", "sleep", "imageGeneration", "contextCompaction"]);
 const READY_MS = 30000;
-// One line of the Codex app-server's output, for one connection: a reply to one of its requests, a request of its own,
-// or a notification read as what routr knows how to say. The turn's report is its final answer (agentMessage phase
-// final_answer), else its last agentMessage that marks no phase (a model that marks none). Commentary and partial
-// answers are never a report: a turn interrupted after them has none (from the review of a68ca2e).
+// One line of the Codex app-server's output, for one connection: a reply to one of its requests, a request of
+// its own, or a notification read as what routr knows how to say. The turn's report is its final answer
+// (agentMessage phase final_answer), else its last agentMessage that marks no phase (a model that marks none).
+// Commentary and partial answers are never a report: a turn interrupted after them has none.
 export function codexReader() {
   let final = null, last = null;
   return (line) => {
@@ -244,7 +244,7 @@ export const ADAPTERS = {
     argv: () => ["app-server", "-c", "check_for_update_on_startup=false"],
     connect: (c, { cwd, model, effort, session, emit, turnCarriers = () => ({}) }) => {
       let thread = session ?? null, turn = null, ready = null;
-      // Codex 0.164 source research: request trace wins over the process environment (Stage 2 W3-2).
+      // Codex 0.164 source research: request trace wins over the process environment.
       const ended = new Set(), { out, rpc, outcome, open, take } = rpcPipe(c, () => {
         const v = turnCarriers(), trace = { ...(v.TRACEPARENT ? { traceparent: v.TRACEPARENT } : {}), ...(v.TRACESTATE ? { tracestate: v.TRACESTATE } : {}) };
         return Object.keys(trace).length ? { trace } : {};
@@ -388,13 +388,13 @@ export const groupHasMembers = (pgid) => {
   if (!Number.isInteger(pgid) || pgid <= 1 || process.platform === "win32") return false;
   try { process.kill(-pgid, 0); return true; } catch (e) { return e?.code === "EPERM"; }
 };
-// Whether anything of a `kind` harness still runs in a process group: its members, read with the system's ps, less
-// the harness's own long-lived helper and the processes measured under it. Cursor's worker-server (measured 2026-10-22,
-// cursor-agent 2026.10.22: one per project folder, started in the group of the turn that first needs it, reused by later
-// turns, outliving them; references/harnesses.md, "Cursor headless") is told by its exact command line in the install
-// its own command resolves into, and only the language server under it is: anything else under it counts (from the
-// review of 62749a5: a path suffix, or every descendant, could hide the worker's own command). ps not answering in
-// time, output routr cannot read, no install found: every member counts.
+// Whether anything of a `kind` harness still runs in a process group: its members, read with the system's ps,
+// less the harness's own long-lived helper and the processes measured under it. Cursor's worker-server
+// (measured 2026-10-22, cursor-agent 2026.10.22: one per project folder, started in the group of the turn that
+// first needs it, reused by later turns, outliving them; references/harnesses.md, "Cursor headless") is told by
+// its exact command line in the install its own command resolves into, and only the language server under it
+// is: anything else under it counts (a path suffix, or every descendant, could hide the worker's own command).
+// ps not answering in time, output routr cannot read, no install found: every member counts.
 export const groupAlive = async (pgid, kind, { members = listGroup, installed = installedAt, timeoutMs = 5000 } = {}) => {
   if (!groupHasMembers(pgid)) return false;
   const helper = HARNESSES[kind]?.helper, exe = helper && installed(HARNESSES[kind].executable);
@@ -417,7 +417,7 @@ export const groupGone = async (pgid, kind, { ms = 2000, every = 100, ...o } = {
 };
 // The system's own ps, by its path where it has one (macOS and Linux both: /bin/ps), not whichever is first on PATH.
 const PS = existsSync("/bin/ps") ? "/bin/ps" : "ps";
-// Only a listing it finished counts (from the review of c9b049a: one that exited non-zero may stop part way).
+// Only a listing it finished counts (one that exited non-zero may stop part way).
 export const listGroup = async (pgid, timeoutMs, { ps = PS } = {}) => {
   const r = await collect(ps, ["-A", "-o", "pid=,ppid=,pgid=,command="], { timeoutMs, separate: true });
   return r?.code === 0 ? groupMembers(r.out, pgid) : null;
@@ -456,7 +456,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
     lastWrite = now; st.updated_at = new Date(now).toISOString();
     try {
       writeJsonAtomic(join(dir, "state.json"), st);
-      // Stage 3: observe persisted transitions; optional queue I/O must follow the holder's own state write.
+      // Observe persisted transitions; optional queue I/O must follow the holder's own state write.
       if (patch.state && previousState !== st.state) (trace ?? lastTrace)?.state(previousState, st.state);
       return true;
     } catch { return false; }
@@ -516,7 +516,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       let answered = false, finished = false, taskIn = false;
       const answer = (r) => { if (!answered) { answered = true; resolve(r); } };
       beginTurn(carried, carried ? 0 : 1);
-      // W3-2: environment records the cause of this process, never a later message into an existing process.
+      // Environment records the cause of this process, never a later message into an existing process.
       const processCarriers = w.kind === "cursor" || st.turn > 1 || w.launch == null ? turnCarriers() : savedCarriers(w.carriers).carriers;
       let c, h;
       try {
@@ -561,7 +561,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
           if (queue.length && !stopAsked) {
             const each = h.queues;
             if (resumable) {
-              // Counted as the messages they are (a message holds paragraphs of its own: from the review of 420d69c).
+              // Counted as the messages they are (a message holds paragraphs of its own: each message must retain its own paragraph boundaries).
               const taken = each ? queue.splice(0, 1) : queue.splice(0);
               save({ queued: queue.length });
               runHarness(taken.join("\n\n"), st.session_id, { carried: taken.length }); return;
@@ -597,8 +597,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
         else if (r === "refused") { endTurn("failed", null); answer({ code: "failed", why: "harness_refused" }); if (h.open()) h.done(); }
         else { stop(c, { group: true }); answer({ code: "failed", why: "task_not_written" }); }
       });
-      // Not named its session in time: "prompted" only once the task is in (Claude: written; Codex: its turn started),
-      // else not known (from the review of a68ca2e: Codex may still be starting, the brief not yet sent).
+      // Not named its session in time: "prompted" only once the task is in (Claude: written; Codex: its turn
+      // started), else not known (Codex may still be starting, the brief not yet sent).
       setTimeout(() => answer(taskIn ? { code: "prompted", session: null } : { code: "unknown", why: "not_started_in_time" }), startMs).unref?.();
     });
     return started;
@@ -614,8 +614,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
     stopAsked = true; queue.length = 0; save({ queued: 0 });
     return (stopping ??= (async () => {
       const c = child;
-      // No harness running: between its exit and what the holder does next, its group may still have members (from
-      // the review of 62749a5: reported stopped without a look).
+      // No harness running: between its exit and what the holder does next, its group may still have members
+      // (reported stopped without a look).
       if (!c) { const gone = await groupGone(st.harness_pgid, w.kind); settle(); return { code: gone ? "stopped" : "still_exiting", dropped }; }
       const closed = new Promise((r) => c.once("close", r));
       stop(c, { group: true });
@@ -658,10 +658,10 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       if (op === "send" && !st.session_id) return { code: "refused", why: "no_session" }; // a follow-up is not a task
       return runHarness(m.text, op === "send" ? st.session_id : null);
     }
-    // A harness that queues (each message a turn of its own): while a turn runs, or messages already wait, the holder
-    // keeps it, in order, and hands it over when its turn comes (nextHeld); between turns it goes in now. One queue,
-    // the holder's, for every message not yet handed over: a stop drops them all and counts them, an exit resumes
-    // them in order (from the review of 19031d3: two lists reordered and lost messages).
+    // A harness that queues (each message a turn of its own): while a turn runs, or messages already wait, the
+    // holder keeps it, in order, and hands it over when its turn comes (nextHeld); between turns it goes in
+    // now. One queue, the holder's, for every message not yet handed over: a stop drops them all and counts
+    // them, an exit resumes them in order (two lists reordered and lost messages).
     if (child && conn?.open() && conn.queues) {
       if (inTurn || pending || sending || queue.length) {
         if (queue.length >= 8) return { code: "refused", why: "queue_full" };
@@ -713,15 +713,16 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
 }
 
 // The run folder of a new worker, reserved by its name: made whole, owner-only, or refused when one exists.
-// Made first, then the uninstall lock looked at: uninstall takes its lock first, then looks for run folders, so one of
-// the two always sees the other. Each reservation writes its own random token into its folder, exclusively, before
-// anything else, and only the launch whose token is there removes that folder (its rollback in workers.mjs). An
-// uninstall releases its lock only once everything else in its state folder is gone, so when this call finds no lock,
-// any earlier uninstall has finished removing: the token still being there then means the folder is this call's for
-// good (a later uninstall takes its lock first and sees it). Found held, it backs out by removing nothing: the
-// uninstall running removes the folder, or, if it came after that uninstall's sweep, keeps its own state folder and
-// says so. (From #104's review: an identity by device, inode and birth time, and a token checked and then acted on by
-// path, each left a moment where another launch's folder could be taken for this one's.)
+// Made first, then the uninstall lock looked at: uninstall takes its lock first, then looks for run folders, so
+// one of the two always sees the other. Each reservation writes its own random token into its folder,
+// exclusively, before anything else, and only the launch whose token is there removes that folder (its rollback
+// in workers.mjs). An uninstall releases its lock only once everything else in its state folder is gone, so
+// when this call finds no lock, any earlier uninstall has finished removing: the token still being there then
+// means the folder is this call's for good (a later uninstall takes its lock first and sees it). Found held, it
+// backs out by removing nothing: the uninstall running removes the folder, or, if it came after that
+// uninstall's sweep, keeps its own state folder and says so. (an identity by device, inode and birth time, and
+// a token checked and then acted on by path, each left a moment where another launch's folder could be taken
+// for this one's.)
 export const OWNER = ".reserved-by";
 export const ownedBy = (dir, token) => { try { return readFileSync(join(dir, OWNER), "utf8") === token; } catch { return false; } };
 export function reserve(name, { beforeOwn = () => {}, afterOwn = () => {}, beforeBackout = () => {} } = {}) {

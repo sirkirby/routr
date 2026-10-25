@@ -104,7 +104,7 @@ test("a torn level reads as the more likely of the two (r5)", () => {
   expect(advise(torn({ 0: 0.27, 1: 0.7, 2: 0.03 }, 0.76), cfg()).level).toBe("standard");
   expect(advise(torn({ 0: 0.5, 1: 0.5, 2: 0 }, 0.5), cfg()).level).toBe("basic"); // a tie goes to the lower level
   expect(a.notes.join(" ")).toContain("strong is the more likely");
-  // Said as decided (from the review of #42): a tie is the lower of two equals, and no spread is the rounded score.
+  // Said as decided : a tie is the lower of two equals, and no spread is the rounded score.
   expect(advise(torn({ 0: 0.1, 1: 0.45, 2: 0.45 }, 1.35), cfg()).notes.join(" ")).toContain("standard is the lower of two equally likely levels");
   const flat = advise({ level: { score: 1.6, confidence: 0.3 }, work_type: { choice: "implement", confidence: 1, probabilities: { implement: 1 } }, high_blast_radius: { noul: 0.1 } }, cfg());
   expect(flat.level).toBe("strong");

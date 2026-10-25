@@ -95,8 +95,9 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
     ran: [], next: [], start: { executable: null, argv: [], env: {} }, steps: [], warnings: [], prompt_chars: null, unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
-  // Every screen launch returns goes through here: a shell's startup line can print the trace-context carriers routr
-  // holds (found, generated, passed or withheld). Stage 2 adds its generated launch parent to the same redaction set.
+  // Every screen launch returns goes through here: a shell's startup line can print the trace-context carriers
+  // routr holds (found, generated, passed or withheld). The generated launch parent belongs to the same
+  // redaction set.
   const hidden = [...carrierValues(env), ...Object.values(launchCarriers(env).carriers)], shown = (text) => redactCarriers(text, hidden);
   let configDir, createdPane = false, startAttempted = false, touchedPane = false, promptAttempted = false, unconfirmed = false;
   // Something in the pane needs an answer that routr does not give: a shell's own question, a harness's startup
@@ -117,10 +118,10 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     const o = parseLaunchArgs(args);
     out.warnings.push(...(o.leadWarnings ?? []));
     Object.assign(out, { kind: o.kind ?? null, name: o.name, pane: o.pane ?? null, cwd: resolve(o.cwd ?? "."), model: o.model ?? null, effort: o.effort ?? null });
-    // The same launch, into the pane it stopped in: it carries on from the shell, or adopts the agent already running
-    // there. A runnable command only when the task comes from a file: an inline --task is never printed (it is the
-    // brief), so then the orchestrator is told to give it again (from the review of #48: a placeholder in its place
-    // would have been sent as the task).
+    // The same launch, into the pane it stopped in: it carries on from the shell, or adopts the agent already
+    // running there. A runnable command only when the task comes from a file: an inline --task is never printed
+    // (it is the brief), so then the orchestrator is told to give it again (a placeholder in its place would
+    // have been sent as the task).
     rerun = () => {
       const keep = [];
       for (let i = 0; i < args.length; i++) {
@@ -267,16 +268,15 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       step("shell_ready", true, `Interactive ${shell} shell in ${r.cwd}`); return null;
     };
     // --pane may name a pane where the agent asked for is already running (recovery from an earlier startup
-    // question): launch adopts it and sends the task. A pane running another agent is refused; a pane
-    // with no agent goes through the shell as before.
-    // What herdr makes of the question the agent stopped at: its rule and the version of its rules for this harness,
-    // plus what the registry knows about that harness's startup questions. This extra reading gets its own short
-    // allowance and can never turn needs_input into failed (from the review of #47).
-    // `agent get` gives herdr's last state, `agent explain` reads the screen now, and right after a question is answered
-    // the two can disagree. Seen 2026-10-05 (Codex, rules 2026.10.01.1): the orchestrator answered Codex's folder trust
-    // and repeated launch at once; get still said blocked, explain said idle (osc_title_idle), and launch reported a ready
-    // agent as "waiting at a question", naming the idle rule as the question. So a block counts only when explain reads
-    // it blocked too (or cannot be read).
+    // question): launch adopts it and sends the task. A pane running another agent is refused; a pane with no
+    // agent goes through the shell as before. What herdr makes of the question the agent stopped at: its rule
+    // and the version of its rules for this harness, plus what the registry knows about that harness's startup
+    // questions. This extra reading gets its own short allowance and can never turn needs_input into failed.
+    // `agent get` gives herdr's last state, `agent explain` reads the screen now, and right after a question is
+    // answered the two can disagree. Seen 2026-10-05 (Codex, rules 2026.10.01.1): the orchestrator answered
+    // Codex's folder trust and repeated launch at once; get still said blocked, explain said idle
+    // (osc_title_idle), and launch reported a ready agent as "waiting at a question", naming the idle rule as
+    // the question. So a block counts only when explain reads it blocked too (or cannot be read).
     const explain = async () => {
       const a = ["agent", "explain", out.pane, "--json"];
       logCommand(out.ran, command(a));
@@ -291,13 +291,13 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       return needsInput("startup_question", `${h.label} is waiting at a question before it can start${reading}.`, text,
         { herdr: { state: "blocked", ...(rule && !disagreed ? { rule } : {}), ...(disagreed ? { explained: reads } : {}), ...(rules ? { rules } : {}) }, ...(h.startup ? { note: h.startup } : {}) });
     };
-    // Only an idle agent of that kind, in that folder, is adopted (from the review of #48): one elsewhere would get a
-    // task meant for --cwd, and a working one would get a second task when it finished. launch never waits on an agent
-    // it did not start, and decides from one reading, now: herdr's `agent wait` can see such an agent work and finish
-    // inside one wait (it matches idle, done, and blocked), and so can any later read, so waiting for one read unknown
-    // or working to become idle could hand a busy worker a second task (from the reviews of this change). A refusal
-    // costs the orchestrator one more launch. The screen on a refusal is extra: a read that fails or runs out of
-    // time leaves it out rather than turning the refusal into failed.
+    // Only an idle agent of that kind, in that folder, is adopted : one elsewhere would get a task meant for --cwd,
+    // and a working one would get a second task when it finished. launch never waits on an agent it did not
+    // start, and decides from one reading, now: herdr's `agent wait` can see such an agent work and finish
+    // inside one wait (it matches idle, done, and blocked), and so can any later read, so waiting for one read
+    // unknown or working to become idle could hand a busy worker a second task. A refusal costs the
+    // orchestrator one more launch. The screen on a refusal is extra: a read that fails or runs out of time
+    // leaves it out rather than turning the refusal into failed.
     let stop = null;
     if (o.pane) {
       const occupant = (await call(["agent", "get", out.pane], true)).data?.result?.agent;
@@ -364,8 +364,8 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       out.pane = opened.pane;
       step("split", true, `Created ${out.pane}, right of ${root}, in the worktree`);
       // A root pane left open makes the worker's pane one of two in its workspace, and cleanup --pane (which a later
-      // --pane rerun would give) closes a pane that is not a worktree's only one: the worktree would be left behind
-      // (from the review of fff9446). Nothing runs yet, so the launch ends here, and its cleanup is the worktree's.
+      // --pane rerun would give) closes a pane that is not a worktree's only one: the worktree would be left
+      // behind. Nothing runs yet, so the launch ends here, and its cleanup is the worktree's.
       if (!opened.closed) throw new Error(`launch created the worktree ${out.cwd} but could not close ${root}, the shell pane herdr opened with it, so its workspace has an extra shell pane; no agent was started. Remove the worktree with ${displayCommand(cleanupArgs)}`);
       step("close_root", true, `Closed ${root}, the shell pane herdr opened with the worktree`);
     } else if (!out.pane) {
@@ -427,8 +427,8 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
           const waited = await call(["agent", "wait", out.pane, "--timeout", String(Math.min(1000, remaining()))], true);
           const code = waited.data?.error?.code;
           if (!waited.ok && code === "agent_not_running") {
-            // A question read before it went is no longer what the pane shows: the exit is (from the review: an old
-            // blocked reading was reported at the deadline instead of the harness's own message).
+            // A question read before it went is no longer what the pane shows: the exit is (an old blocked reading was
+            // reported at the deadline instead of the harness's own message).
             goneSince ??= now(); disagreed = null; readySince = null;
             if (now() - goneSince > GONE_GRACE_MS) throw new Error("The agent is no longer running (herdr_refused)");
             await pause(); continue;
@@ -439,14 +439,14 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
           const got = await call(["agent", "get", out.pane], true);
           if (!got.ok && got.data?.error?.code !== "agent_not_found") throw processError(got);
           const agent = got.data?.result?.agent;
-          // Close only a pane this launch made: one passed in with --pane may hold someone else's work (from the review of #48).
+          // Close only a pane this launch made: one passed in with --pane may hold someone else's work.
           if (agent && agent.agent !== o.kind) return needsInput("wrong_harness", `The pane runs ${agent.agent}, not ${o.kind}`, text, { next: createdPane ? `Close the pane this launch made (herdr pane close ${out.pane}) and launch again` : "Leave that pane; choose another, or leave --pane off" });
           if (agent?.agent_status === "blocked") {
             const x = await explain();
             if (x.reads === "blocked" || typeof x.reads !== "string") return blockedAtStart(h, text, x);
             disagreed = { text, reading: x };
-          // herdr's state has moved on, or there is no agent any more: no disagreement left to report. A vanished agent
-          // kept the old one, and the deadline reported a block it no longer saw instead of failing (from the final review).
+          // Herdr's state has moved on, or there is no agent any more: no disagreement left to report. A vanished agent
+          // kept the old one, and the deadline reported a block it no longer saw instead of failing.
           } else disagreed = null;
           // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
           if (got.ok && waited.ok && ["idle", "done"].includes(agent?.agent_status) && agent.interactive_ready !== false) {
@@ -508,7 +508,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         return needsInput("worker_question", "The worker is asking a question or an approval right after its prompt", null, { ...sent, herdr: { state: "blocked" } });
       }
       // Working is always a start. Idle or done count when herdr's wait (the prompt's own, or the one after a quiet
-      // prompt) saw the agent working first: a short task can finish before this read (from the review of #46).
+      // prompt) saw the agent working first: a short task can finish before this read.
       if (status === "working" || (r.ok && ["idle", "done"].includes(status))) {
         step("prompt", true, `Submitted ${prompt.length} characters; the agent settled at ${status}`);
         out.state = "prompted";
@@ -533,11 +533,11 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     }
     out.state = "ready"; out.ok = true;
     if (prompt) stop = await submitPrompt();
-    // The name the orchestrator will use for an adopted agent, given once the task is in (whatever herdr then reports),
-    // so a rename that hangs cannot take the submission's time (from the verification of d47051e: it used all of
-    // --timeout, and the task was never sent). Its own short allowance, like explain's; a failure costs only the name.
-    // Not when the outcome read could not confirm the agent it prompted: the pane may hold another agent by then, and
-    // the name would go to it (from the final review).
+    // The name the orchestrator will use for an adopted agent, given once the task is in (whatever herdr then
+    // reports), so a rename that hangs cannot take the submission's time (from the verification of d47051e: it
+    // used all of --timeout, and the task was never sent). Its own short allowance, like explain's; a failure
+    // costs only the name. Not when the outcome read could not confirm the agent it prompted: the pane may hold
+    // another agent by then, and the name would go to it.
     if (adopted && !unconfirmed) {
       const a = ["agent", "rename", out.pane, o.name];
       logCommand(out.ran, command(a));

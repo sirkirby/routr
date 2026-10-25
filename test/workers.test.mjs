@@ -648,7 +648,7 @@ test("Kiro's ACP output as routr reads it: replies, its own requests, fixed tool
 test("a headless Cursor worker: one process a turn on a private config copy, corrections resumed as turns of their own, in order, past Cursor's own worker-server", async () => {
   const w = world(), userConfig = join(w.home, ".cursor", "cli-config.json"), dotfile = join(w.home, "dotfiles", "cli-config.json");
   afterAll(w.killHelper);
-  // On macOS and Linux, a config that is a link into a dotfiles folder (from the review of 62749a5: copied as a link).
+  // On macOS and Linux, a config that is a link into a dotfiles folder (copied as a link).
   for (const d of [dirname(userConfig), dirname(dotfile)]) mkdirSync(d, { recursive: true });
   writeFileSync(POSIX ? dotfile : userConfig, JSON.stringify({ model: { modelId: "the-user's" } }));
   if (POSIX) symlinkSync(dotfile, userConfig);
@@ -751,8 +751,8 @@ test("what of a process group counts as the worker still running: everything but
   const members = groupMembers(ps, pg);
   expect(members.map((m) => m.pid)).toEqual([400, 401, 402]);
   expect(besidesHelper(members, helper, children)).toEqual([]);
-  // What still counts (from the review of 62749a5): a command a turn left, and what it started; anything else under the
-  // helper; a worker-server outside the install, or with its node and script from two versions.
+  // What still counts : a command a turn left, and what it started; anything else under the helper; a
+  // worker-server outside the install, or with its node and script from two versions.
   const more = (rows) => groupMembers(ps + rows.join("\n"), pg);
   expect(besidesHelper(more(["  410     1   400 /bin/sh -c npm run dev", "  411   410   400 node server.js"]), helper, children).map((m) => m.pid)).toEqual([410, 411]);
   expect(besidesHelper(more(["  412   400   400 /bin/sh -c npm test", "  413   412   400 node /w/node_modules/.bin/typescript-language-server --stdio"]), helper, children).map((m) => m.pid)).toEqual([412, 413]);
@@ -770,7 +770,7 @@ test("what of a process group counts as the worker still running: everything but
     expect(await Promise.all([groupAlive(c.pid, "claude", o(live(members))), groupAlive(c.pid, "cursor", o(live(members))), groupAlive(c.pid, "cursor", o(async () => null)),
       groupAlive(c.pid, "cursor", o(async () => [])), groupAlive(c.pid, "cursor", o(live(members), () => null)), groupAlive(c.pid, "cursor"), groupAlive(null, "cursor")]))
       .toEqual([true, false, true, true, true, true, false]);
-    // A listing ps did not finish (from the review of c9b049a): nothing of it is read. One it finished is.
+    // A listing ps did not finish : nothing of it is read. One it finished is.
     const fake = join(scratch("ps-"), "ps"), line = `${c.pid} 1 ${c.pid} /x/whatever`;
     writeFileSync(fake, `#!/bin/sh\necho "${line}"\nexit 1\n`, { mode: 0o755 });
     expect(await listGroup(c.pid, 2000, { ps: fake })).toBeNull();

@@ -18,10 +18,9 @@ export function readSecretsFile(file = SECRETS_FILE) {
   return out;
 }
 
-// The values a provider needs, read per call (never at import: a missing one is a catchable error, nothing stale is
-// kept). Throws with what to do when one is missing.
-// The file is read only when the environment does not supply everything: an unreadable file must not block a key
-// given in the environment (from the core review; the old TypeSafe client read the environment first too).
+// The values a provider needs, read per call (never at import: a missing one is a catchable error, nothing
+// stale is kept). Throws with what to do when one is missing. The file is read only when the environment does
+// not supply everything: an unreadable file must not block a key given in the environment.
 export function secretsFor(provider, { env = process.env, file = SECRETS_FILE, target = { provider } } = {}) {
   const P = PROVIDERS[provider], out = {};
   let saved = null;
@@ -35,9 +34,9 @@ export function secretsFor(provider, { env = process.env, file = SECRETS_FILE, t
   return out;
 }
 
-// Merges into the file: the other lines (another provider's key, a comment) stay as they were. A name set more than
-// once keeps one line, the new value in the first one's place: readSecretsFile takes the last, so a stale duplicate left
-// below would win (from the core review).
+// Merges into the file: the other lines (another provider's key, a comment) stay as they were. A name set more
+// than once keeps one line, the new value in the first one's place: readSecretsFile takes the last, so a stale
+// duplicate left below would win.
 export function writeSecrets(values, file = SECRETS_FILE) {
   let lines = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter((l, i, a) => l !== "" || i < a.length - 1) : [];
   const nameOf = (l) => l.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*=/)?.[1];

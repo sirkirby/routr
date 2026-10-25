@@ -52,13 +52,14 @@ const legacy = (dir, skill) => {
   if (!LEGACY[skill] || !LEGACY[skill].every((f) => existsSync(join(dir, f)))) return false;
   try { return new RegExp(`^name:\\s*${skill}\\s*$`, "m").test(readFileSync(join(dir, "SKILL.md"), "utf8").match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? ""); } catch { return false; }
 };
-// The first folder between the user's home (not home itself) and `path` (not `path` itself) that is a link, or null.
-// From the final review: with ~/.agents/skills itself a link into a developer's checkout holding a routr skill with no
-// manifest, the legacy rule took the checkout's folder for routr's: install overwrote an uncommitted guide there, wrote
-// a manifest into it, and uninstall planned to remove it. So the legacy rule never applies below a linked folder. A
-// linked folder alone disqualifies nothing else (the maintainer's call: ~/.claude or ~/.kiro linked into a dotfiles
-// repo is common, and refusing it would silently drop routr's skills there): routr may create its folder or link where
-// nothing is, and update or remove a folder carrying its valid manifest, wherever that folder physically lives.
+// The first folder between the user's home (not home itself) and `path` (not `path` itself) that is a link, or
+// null. With ~/.agents/skills itself a link into a developer's checkout holding a routr skill with no manifest,
+// the legacy rule took the checkout's folder for routr's: install overwrote an uncommitted guide there, wrote a
+// manifest into it, and uninstall planned to remove it. So the legacy rule never applies below a linked folder.
+// A linked folder alone disqualifies nothing else (the maintainer's call: ~/.claude or ~/.kiro linked into a
+// dotfiles repo is common, and refusing it would silently drop routr's skills there): routr may create its
+// folder or link where nothing is, and update or remove a folder carrying its valid manifest, wherever that
+// folder physically lives.
 export function linkedAncestor(home, path) {
   const rel = relative(home, path);
   if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
@@ -84,16 +85,16 @@ export function owner(home, skill, path) {
 }
 const present = (p) => { try { lstatSync(p); return true; } catch { return false; } };
 const grandfathered = (home, skill, path) => !present(join(path, MANIFEST)) && !linkedAncestor(home, path) && legacy(path, skill);
-// Why a place that is not routr's is left: the general reason, or, for a pre-manifest routr folder reached through a
-// linked folder (the final review's case), that link.
+// Why a place that is not routr's is left: the general reason, or, for a pre-manifest routr folder reached
+// through a linked folder, that link.
 export function notOursWhy(home, skill, path) {
   const above = linkedAncestor(home, path);
   try { if (above && lstatSync(path).isDirectory() && !present(join(path, MANIFEST)) && legacy(path, skill)) return `${NOT_OURS}: it has no routr manifest and ${above} is a link, so routr never adopts it (a checkout's copy, say)`; } catch {}
   return NOT_OURS;
 }
-// The files routr wrote in an owned folder: its manifest's list, or (before manifests) what this routr ships. The second
-// only for the grandfathered legacy folder (no manifest at all, and the legacy rule holds). From the final review: a
-// folder with no manifest, swapped in while uninstall's prompt waited, had its SKILL.md and agents/openai.yaml deleted
+// The files routr wrote in an owned folder: its manifest's list, or (before manifests) what this routr ships.
+// The second only for the grandfathered legacy folder (no manifest at all, and the legacy rule holds). A folder
+// with no manifest, swapped in while uninstall's prompt waited, had its SKILL.md and agents/openai.yaml deleted
 // by this fallback. Any other folder lists nothing of routr's.
 export const ownedFiles = (dir, skill) => manifest(dir, skill)?.files ?? (!present(join(dir, MANIFEST)) && legacy(dir, skill) ? Object.keys(FILES[skill]) : []);
 // Is any folder between `root` and `rel` (not `root` itself, not the target) a link? routr never writes, renames or
@@ -115,10 +116,10 @@ export function missingFiles(skill, dir) {
   const want = [...new Set([...(manifest(dir, skill)?.files ?? []), ...Object.keys(FILES[skill]), MANIFEST])];
   return want.filter((f) => { try { if (!statSync(join(dir, f)).isFile()) return true; accessSync(join(dir, f), constants.R_OK); return false; } catch { return true; } });
 }
-// Every entry in a folder that is not a folder (files, links), as relative paths. Links are listed, never followed. A
-// folder that cannot be read is listed as itself, marked unreadable: what it holds is unknown, so it counts as not
-// routr's and the copy is left as it is (from the review of ef16898: an unreadable folder of the user's read as empty,
-// and a reinstall moved it aside).
+// Every entry in a folder that is not a folder (files, links), as relative paths. Links are listed, never
+// followed. A folder that cannot be read is listed as itself, marked unreadable: what it holds is unknown, so
+// it counts as not routr's and the copy is left as it is (an unreadable folder of the user's read as empty, and
+// a reinstall moved it aside).
 const entries = (dir, pre = "") => {
   let list; try { list = readdirSync(dir, { withFileTypes: true }); } catch { return [`${pre || "./"}(unreadable)`]; }
   return list.flatMap((e) => (e.isDirectory() && !e.isSymbolicLink() ? entries(join(dir, e.name), `${pre}${e.name}/`) : [`${pre}${e.name}`]));

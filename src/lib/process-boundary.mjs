@@ -143,9 +143,9 @@ export function processSteps(out, result) {
   return result;
 }
 
-// A process group's members, from `ps -A -o pid=,ppid=,pgid=,command=` (macOS and Linux both print it so), or null when
-// any line does not read as one: then nothing of the group can be told apart (from the review of 62749a5: a dropped
-// line read as a gone member). A command is only ever matched against a harness's helper, never shown.
+// A process group's members, from `ps -A -o pid=,ppid=,pgid=,command=` (macOS and Linux both print it so), or
+// null when any line does not read as one: then nothing of the group can be told apart (a dropped line read as
+// a gone member). A command is only ever matched against a harness's helper, never shown.
 export function groupMembers(out, pgid) {
   const rows = [];
   for (const l of String(out ?? "").split("\n")) {

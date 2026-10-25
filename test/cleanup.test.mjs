@@ -193,7 +193,7 @@ test("herdr out of reach fails with what happened, and removes nothing", async (
   expect(r.steps[0].detail).toContain("herdr_unreachable");
 });
 
-// From the review of b32617a: each of these let cleanup remove a worktree it should have kept.
+// Each of these let cleanup remove a worktree it should have kept.
 test("a pane cleanup cannot read, or one running a command, keeps the worktree; so does a worker started after the check", async () => {
   const why = async (f, name) => { const r = await cleanup(["--cwd", "/repo", "--worktree", name], f.deps); expect(r).toMatchObject({ ok: false, state: "refused" }); expect(f.calls.some((a) => a[1] === "remove")).toBe(false); return r.headline; };
   const shell = { w5: [{ pane_id: "w5:p1", agent_status: "unknown" }] };
@@ -235,7 +235,7 @@ test("git's worktree records: each path with its commit", () => {
     .toEqual(new Map([["/r", "aaa"], ["/w/x y", "bbb"]]));
 });
 
-// From the review of 980f1b2: changes made while cleanup runs, between its check and its removal.
+// Changes made while cleanup runs, between its check and its removal.
 test("a copy changed, or a worktree swapped for a link to the main checkout, while cleanup runs removes nothing of either", async () => {
   for (const swap of [false, true]) {
     const root = scratch("mid"), repo = join(root, "repo"), w = join(root, "w");
@@ -268,7 +268,7 @@ test("a commit made, or a worker started, after the check stops the removal; so 
   expect(broken.calls.some((a) => a[1] === "remove")).toBe(false);
 });
 
-// From the review of 31f9ddf: the swap made before cleanup fixed where the worktree is.
+// The swap made before cleanup fixed where the worktree is.
 test("a worktree swapped for a link to the main checkout before cleanup looks at it is not taken for the worktree", async () => {
   const root = scratch("early"), repo = join(root, "repo"), w = join(root, "w");
   for (const d of [repo, w]) { mkdirSync(d, { recursive: true }); writeFileSync(join(d, "notes.txt"), "same"); }

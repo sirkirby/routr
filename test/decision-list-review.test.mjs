@@ -1,4 +1,4 @@
-// Inputs from the independent review, through the source CLI with no provider or harness calls.
+// Inputs through the source CLI with no provider or harness calls.
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -28,7 +28,7 @@ function machine(decision) {
   return { home, config, brief, report, run };
 }
 
-test("review 1: every key provider preserves the list; plain key set skips local entries", () => {
+test("every key provider preserves the list; plain key set skips local entries", () => {
   const m = machine([ts, cf]), before = readFileSync(m.config, "utf8");
   const missing = m.run(["key", "set", "ollama"]).json();
   expect(missing.note).toContain("not in your decision list"); expect(missing.note).toContain("routr setup --decision typesafe:jev-1.13.0,cloudflare:clef,ollama");
@@ -40,7 +40,7 @@ test("review 1: every key provider preserves the list; plain key set skips local
   const onlyLocal = machine([local]).run(["key", "set"]).json(); expect(onlyLocal.note).toContain("needs no key"); expect(onlyLocal.note).not.toContain("routr setup");
 });
 
-test("review 2: a backup reading asks the lead to explain the first failure, not judge the missing level", async () => {
+test("a backup reading asks the lead to explain the first failure, not judge the missing level", async () => {
   const m = machine([ts, cf]);
   const r = m.run(["dispatch", "--task-file", m.brief], { replies: { typesafe: "http500" } }).json();
   const next = r.next.map((n) => n.why).join(" ");
@@ -57,7 +57,7 @@ test("review 2: a backup reading asks the lead to explain the first failure, not
 
 });
 
-test("review 3a: doctor tests a broken backup even after a ready first model", () => {
+test("doctor tests a broken backup even after a ready first model", () => {
   const m = machine([ts, cf]), replies = { cloudflare: "network" };
   const r = m.run(["doctor", "--json"], { replies }).json();
   expect(r.decision).toMatchObject([{ provider: "typesafe", works: true }, { provider: "cloudflare", works: false, code: "unreachable" }]);
@@ -65,7 +65,7 @@ test("review 3a: doctor tests a broken backup even after a ready first model", (
   expect(text).toContain("jev-1.13.0 answers"); expect(text).toContain("clef: key found but the test call failed");
 });
 
-test("review 3b: 429 retries exhaust only the per-entry cap and leave time to ask a backup", async () => {
+test("429 retries exhaust only the per-entry cap and leave time to ask a backup", async () => {
   let now = 0;
   const requests = [], clock = { now: () => now, sleep: async (ms) => { now += ms; } };
   // Two-second replies put another retry past 8 s but inside 10 s. Immediate 429s do not distinguish those caps.
@@ -84,7 +84,7 @@ test("review 3b: 429 retries exhaust only the per-entry cap and leave time to as
   expect(backup.answered).toBeLessThan(10000); // the decision's overall deadline, on the injected clock
 });
 
-test("review 4: setup leaves equivalent object, omitted and list settings byte-for-byte; first setup reports a write", () => {
+test("setup leaves equivalent object, omitted and list settings byte-for-byte; first setup reports a write", () => {
   for (const decision of [undefined, ts, [ts]]) {
     const m = machine(decision), before = readFileSync(m.config, "utf8");
     const r = m.run(["setup", "--yes", "--decision", "typesafe", "--json"]).json();
@@ -127,7 +127,7 @@ test("reviews 5 and 7: settings and setup drop duplicate resolved models and giv
   expect(out.skipped.join(" ")).toContain("duplicate"); expect(out.skipped.join(" ")).toContain("routr setup --decision typesafe:jev-1.13.0");
 });
 
-test("review 6: every no-reading command and headline identify the last failed model", () => {
+test("every no-reading command and headline identify the last failed model", () => {
   const m = machine([ts, cf]);
   for (const command of [["dispatch", "--task-file", m.brief], ["subagent", "--task-file", m.brief], ["check", "--brief", m.brief, "--report", m.report]]) {
     const r = m.run(command, { replies: { typesafe: "http500", cloudflare: "network" } }).json();
@@ -135,7 +135,7 @@ test("review 6: every no-reading command and headline identify the last failed m
   }
 });
 
-test("review 8: help, terminal progress, and import direction stay consistent", () => {
+test("help, terminal progress, and import direction stay consistent", () => {
   const m = machine([ts]);
   expect(m.run(["key", "--help"]).stdout).toContain("first entry that needs a key");
   const progress = m.run(["doctor"], { env: { ROUTR_TEST_TTY: "1" } }).stderr;

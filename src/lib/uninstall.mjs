@@ -115,7 +115,7 @@ export async function uninstall(args, { home = userHome(), platform = process.pl
   // folder from here on sees the lock and backs out (headless.mjs reserve). The lock goes with the state folder.
   const lock = UNINSTALL_LOCK(home);
   try { mkdirSync(join(home, ".local/state/routr"), { recursive: true, mode: 0o700 }); } catch {}
-  // Never taken over, even from a process that is gone: two uninstalls could both decide it is stale (from #104's review).
+  // Never taken over, even from a process that is gone: two uninstalls could both decide it is stale.
   if (!takeLock(lock, () => false)) {
     let gone = false; try { gone = lockIsStale(lock); } catch {}
     return { ok: false, error: `routr uninstall removed nothing: ${!existsSync(lock) ? `it could not write ${lock}` : gone ? `an earlier routr uninstall that is no longer running left ${lock}: remove that file, then run uninstall again` : "another routr uninstall is running"}` };
@@ -123,7 +123,7 @@ export async function uninstall(args, { home = userHome(), platform = process.pl
   let late;
   try { late = blockedBy(leftovers(home), purge); } catch (e) { releaseLock(lock); throw e; }
   if (late) { releaseLock(lock); return { ok: false, error: late }; }
-  senderRunning = senderStatus(home); // V4: a detached start can have arrived since the pre-lock snapshot
+  senderRunning = senderStatus(home); // A detached start can have arrived since the pre-lock snapshot
   const removed = [], failed = [], userFiles = [];
   if (plan.statusline) try {
     // Read again now: the plan may be minutes old (a person was asked), and the entry may have been replaced since.
@@ -160,8 +160,8 @@ export async function uninstall(args, { home = userHome(), platform = process.pl
 // (said, not removed). `between` is for a test to act at the moment the lock is the only thing left.
 export function removeState(home, lock, { between = () => {} } = {}) {
   const root = join(home, ".local/state/routr"), removed = [], failed = [], notOurs = [];
-  // A linked state folder is unlinked, never walked: what it points at is not known to be routr's (from #104's review).
-  // The link goes first, while the lock behind it still holds; the lock is then removed where it really is.
+  // A linked state folder is unlinked, never walked: what it points at is not known to be routr's. The link goes
+  // first, while the lock behind it still holds; the lock is then removed where it really is.
   try {
     if (lstatSync(root).isSymbolicLink()) {
       const real = realpathSync(root);
@@ -188,11 +188,11 @@ export function removeState(home, lock, { between = () => {} } = {}) {
 // Only a lock that still holds this process's pid is ours to remove.
 export const releaseLock = releaseFileLock;
 
-// Remove what the plan lists. Each skill place is checked again right before it is touched: from the final review,
-// ownership was settled before the confirmation prompt and acted on after it, so a folder swapped in while the prompt
-// waited (a user's own skill, no manifest) lost its SKILL.md and agents/openai.yaml. A place that is no longer routr's
-// (owner(), the linked-folder rule for pre-manifest folders included) is kept and reported in `notOurs`; one already
-// gone is nothing to do.
+// Remove what the plan lists. Each skill place is checked again right before it is touched: ownership was
+// settled before the confirmation prompt and acted on after it, so a folder swapped in while the prompt waited
+// (a user's own skill, no manifest) lost its SKILL.md and agents/openai.yaml. A place that is no longer routr's
+// (owner(), the linked-folder rule for pre-manifest folders included) is kept and reported in `notOurs`; one
+// already gone is nothing to do.
 export function carryOut(plan, { home = userHome(), platform = process.platform, senderRunning = false } = {}) {
   const removed = [], failed = [], userFiles = [], notOurs = [];
   let keptBinary = null;

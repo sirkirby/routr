@@ -1,4 +1,5 @@
-// V6: doubtful lineage is absent lineage. Local hashes distinguish repositories/paths without exporting native paths.
+// Doubtful lineage is absent lineage. Local hashes distinguish repositories/paths without exporting native
+// paths.
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { home as userHome, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";

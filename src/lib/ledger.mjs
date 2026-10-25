@@ -109,7 +109,7 @@ export function toEntry(advice, { subscription, model, effort, level, verdict, c
     ts: new Date().toISOString(), run_id: run_id ?? randomUUID(), project: project ?? projectName(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set,
     // The decision model that answered and its provider: a new model is compared on real work. A row written before
     // providers existed has `jev_model` instead, read as TypeSafe's (decisionOf).
-    ...decisionOf(advice), // advice saved by an older routr carries jev_model: read as TypeSafe's (from the core review)
+    ...decisionOf(advice), // Advice saved by an older routr carries jev_model: read as TypeSafe's
     brief_sha: advice.brief_sha, brief_chars: advice.brief_chars, // never the brief itself: briefs can be private
     advised: { level: advice.level, sure: advice.sure, between: advice.between ?? null, work_type: advice.work_type, high_risk: advice.high_risk, fallback: fallbackAdvice(advice),
       facts: Object.fromEntries(Object.entries(advice.facts ?? {}).map(([k, f]) => [k, f.p])) },
