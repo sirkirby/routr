@@ -154,7 +154,10 @@ object describing what it did.
   trusted one), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
 - A cmd shell expands `%` and `!` in a folder path even inside quotes, so launch refuses (`failed`) to type such a
   folder into one: use a folder without them, or a pane running PowerShell.
-- `--dry-run` requires `--model`, prints `would_run` and changes nothing. It returns `ok: false` and `error` when a real launch would refuse its arguments, folder, task or advice; otherwise `ok: true`. It does not check the environment, subscription settings or sign-in.
+- `--dry-run` requires `--model` and prints `would_run` without executing worker actions. It may queue a planned
+  span when OpenTelemetry export is on, but creates no launch index entry. It returns `ok: false` and `error` when
+  a real launch would refuse its arguments, folder, task or advice; otherwise `ok: true`. It does not check the
+  environment, subscription settings or sign-in.
 - Read the JSON it prints. `state` is `planned` (from `--dry-run`), `ready`, `prompted`, `needs_input`, or `failed`.
   `headline` says what happened. `warnings` states facts about the call. `steps` says what it did, in order. Follow `next`: it includes
   the cleanup command (step 6) and, after a start or task-submission attempt, this worker’s record template.
@@ -430,8 +433,10 @@ routr opens sets all three names, empty for a carrier it does not pass, excludin
 
 On `dispatch`, `subagent` and `launch`, pass `--lead-session <your session id>` when routr cannot read your id from
 the harness environment and you know it. Never invent an id. This joins the lead to its launches in the person's
-OpenTelemetry receiver; it is separate from a worker's own conversation id. A dry-run launch may queue its planned span and index while export is on. Never turn on OpenTelemetry export for
-the user unasked. The [published schema](../../../docs/opentelemetry.md#signals) describes what is sent.
+OpenTelemetry receiver; it is separate from a worker's own conversation id. A malformed explicit id is ignored
+with a fixed warning. A dry-run launch may queue its planned span while export is on, but creates no index entry.
+Never turn on OpenTelemetry export for the user unasked. The
+[published schema](https://github.com/sirkirby/routr/blob/main/docs/opentelemetry.md#signals) describes what is sent.
 
 ## Handoff contracts
 

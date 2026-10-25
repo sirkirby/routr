@@ -429,3 +429,16 @@ test("lead ids use the measured harness formats before a strict explicit fallbac
   for (const value of [undefined, "a note with spaces", "/a/path", "sk-secret", "https://host", "x".repeat(129)]) expect(leadSession({}, value)).toBeNull();
   expect(leadSession({ KIRO_SESSION_ID: v4 })).toBeNull();
 });
+
+test("the shipped trace contract defines values and ignores malformed optional lead ids", () => {
+  const doc = readFileSync(new URL("../docs/opentelemetry.md", import.meta.url), "utf8");
+  expect(doc).not.toContain("As defined above"); expect(doc).toContain("no `traceState`"); expect(doc).not.toContain("or worker id");
+  const contract = readFileSync(new URL("../docs/contracts.md", import.meta.url), "utf8");
+  expect(contract).not.toContain("refuses malformed explicit values");
+  expect(contract).toContain("--lead-session was ignored: no valid session id was supplied");
+  const guide = readFileSync(new URL("../skills/routr/references/orchestrator.md", import.meta.url), "utf8");
+  expect(guide).toContain("https://github.com/sirkirby/routr/blob/main/docs/opentelemetry.md");
+  expect(guide).not.toContain("planned span and index");
+  const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
+  expect(changelog.split(/^## /m)[1]).toMatch(/OpenTelemetry.*\(#<PR>\)/);
+});

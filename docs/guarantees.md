@@ -144,7 +144,8 @@ writes only:
   concurrent first calls agree, and derives its UUIDv5 service instance id from it. Identity writes require an
   existing state folder and stop during uninstall. The sender alone removes queue files or changes delivery totals;
   secrets stay in the secrets file;
-- the sampled launch index under `~/.local/state/routr/launches`, only while exporting and after queueing its span.
+- the sampled launch index under `~/.local/state/routr/launches`, only while exporting, after queueing its span, and
+  only for a started worker (`ready`, `prompted` or `needs_input`); never for dry runs, failed or refused launches.
   It holds ids, canonical repository identity and native-path hashes, never absolute paths or content. Cleanup keeps
   tombstones for later record links; launch and the sender sweep routr's own UUID filenames after 30 days;
 - in your repository's git metadata, the worktree and branch a headless `launch --worktree` adds;
@@ -328,17 +329,19 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
   worktree. For a worktree, launch splits the pane herdr opened with the worktree and closes that first pane, because
   herdr's worktree create takes no environment. A worker in an existing pane (`--pane`), and an agent already running
   there that launch adopts, get none: that pane's shell, or that agent, already started with its own environment, and
-  routr never types a carrier into a shell. When carriers are present, launch says it passed none, and why. A pane
-  routr split earlier already has them in its shell, so a `--pane` rerun into it is not left without them.
+  routr never types a carrier into a shell. When carriers or a generated launch span are present,
+  launch says which context it did not pass, and why. A pane routr split earlier already has them in its shell, so a `--pane` rerun into it is not left without them.
 - **Never the herdr server's.** A pane herdr makes starts from the environment herdr's server started with, which can
   hold a trace context from another session. So every pane launch makes gets all three names: the value routr passes,
   or an empty value for each one it does not pass, absent or withheld. OpenTelemetry treats an empty carrier as
   absent, so a worker in such a pane gets exactly routr's context, or none.
 - **Not for harness reads.** routr's own reads of a harness (sign-in status, usage, model lists) and its private herdr
-  session get no carrier: they are not workers.
+  session get no carrier: they are not workers. Every detached routr job also starts with all three carriers
+  removed; background usage refreshes and holders emit no spans.
 - **Limits.** routr passes a carrier only when every character is printable ASCII or a tab, and it is at most 512
   bytes (`TRACEPARENT`, `TRACESTATE`) or 8192 (`BAGGAGE`). This is routr's own limit on what it hands on, not the W3C
-  grammar. One outside it is not passed, and a warning names it, never its value; the others still go.
+  grammar. One outside it is not passed, and a warning names it, never its value; the others still go. With export
+  on, a sampled launch replaces a withheld inherited parent with its own launch span and says so.
 - **Never a value in output.** No carrier's value is printed, logged, or put in the ledger or telemetry (trace ids enter OpenTelemetry parentage only): launch shows
   each one passed as `<forwarded>`, in `start.env` and in the split command it shows (`--env NAME=<forwarded>`; an
   empty one shows as `--env NAME=`, as it is). A

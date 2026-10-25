@@ -169,7 +169,8 @@ no oldest age and zero totals.
 
 routr emits traces from `dispatch`, `subagent`, `check`, `usage`, `launch`, `send`, `wait`, `workers`, `stop`,
 `cleanup` and `record`. `statusline` and housekeeping commands (setup, doctor, key, update, uninstall, telemetry,
-share, assess, feedback and skill installation) emit nothing. No logs, metrics or headless turn spans are emitted yet.
+share, assess, feedback and skill installation), detached `usage --background` refreshes and `workers --hold`
+holders emit nothing. No logs, metrics or headless turn spans are emitted yet.
 
 The GenAI convention is pinned to `open-telemetry/semantic-conventions-genai`
 `9ffc7e00c639be7712e544e3e54331e885dccf84` (2026-10-21), whose manifest depends on core semantic conventions
@@ -205,13 +206,14 @@ that command. The hook can lag or report null; routr never waits for an id.
 `routr.lead.session_id` is the lead's id, separate from the worker's conversation. Routr checks the measured
 Claude Code, Codex, Cursor and Antigravity environment sources first. If none is valid, `--lead-session` on
 `dispatch`, `subagent` or `launch` can supply a known UUIDv4, UUIDv7 or lowercase hexadecimal id of 16–64 characters.
-An invalid explicit id is refused; an absent one is omitted. No session id is invented. Kiro has no measured
+An invalid explicit id is ignored with a fixed warning; an absent one is omitted. No session id is invented. Kiro has no measured
 ambient source. Formats and measurement dates are in the harness reference.
 
 ### Spans
 
 All command spans are INTERNAL (kind 1); decision calls are CLIENT (kind 3). A successful operation leaves status
-unset. A final failure sets ERROR (code 2) and a classified `error.type`; retries or an earlier failed provider
+unset. Exported spans carry no `traceState`; inherited `TRACESTATE` is forwarded only to workers. A final failure
+sets ERROR (code 2) and a classified `error.type`; retries or an earlier failed provider
 recovered by a backup do not mark the recovered operation as failed. No exception or provider wording is exported.
 Decision providers are `typesafe`, `cloudflare` and `ollama`, describing the platform routr contacted, not the
 model's author. Future worker invocation spans will use Claude Code `anthropic`, Codex `openai`, Cursor `cursor`,
@@ -247,14 +249,16 @@ is sent. A worker verdict of partial or blocked is data about the run, not failu
 
 ### Launch index
 
-Only an exporting, sampled launch with a queued span writes `~/.local/state/routr/launches/<UUIDv4>.json` (0600,
+Only an exporting, sampled launch that started a pane or headless worker (`ready`, `prompted` or `needs_input`)
+with a queued span writes `~/.local/state/routr/launches/<UUIDv4>.json` (0600,
 folder 0700 on macOS/Linux; existing Windows home permissions apply). It holds the launch/advice ids, backend,
 canonical repository URL, hash of git's common directory, branch, hash of the native real worktree path, pane and
-terminal ids or worker id, trace/span ids, creation time and eventually a cleanup time. Native paths are not stored
+terminal ids, trace/span ids, creation time and eventually a cleanup time. Native paths are not stored
 there. Headless `worker.json` also stores that launch context, revalidated before linking.
 
-Later commands link only on exactly one match: record by its eight-character advice id; cleanup by project hash
-plus branch, native real path hash, or pane id **and current terminal id**. A pane's terminal id proves terminal
+Dry runs, failed and refused launches create no index entry. Cleanup queries exclude finished entries; record
+queries retain them. Later commands link only on exactly one match: record by its eight-character advice id; cleanup
+by project hash plus branch, native real path hash, or pane id **and current terminal id**. A pane's terminal id proves terminal
 continuity only, never the same process, agent or conversation; restore assigns a new terminal id. Zero matches,
 ambiguous advice, reused panes or a wrong repository give no link. Headless commands use their worker's saved
 launch context. Links carry only trace/span ids. `record` can link after cleanup, including revisions.
@@ -277,76 +281,76 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 <!-- span-attributes -->
 | Attribute | Type | Meaning |
 |---|---|---|
-| `service.name` | `string` | As defined above |
-| `service.version` | `string` | As defined above |
-| `os.type` | `string` | As defined above |
-| `service.instance.id` | `string` | As defined above |
-| `routr.otel.schema` | `string` | As defined above |
-| `routr.lead.session_id` | `string` | As defined above |
-| `routr.question_set.version` | `string` | As defined above |
-| `routr.candidates` | `string[]` | As defined above |
-| `routr.unavailable` | `string[]` | As defined above |
-| `vcs.repository.url.full` | `string` | As defined above |
-| `vcs.ref.head.name` | `string` | As defined above |
-| `routr.cwd` | `string` | As defined above |
-| `routr.worktree` | `string` | As defined above |
-| `routr.kind` | `string` | As defined above |
-| `routr.backend` | `string` | As defined above |
-| `routr.launch.id` | `string` | As defined above |
-| `gen_ai.agent.name` | `string` | As defined above |
-| `gen_ai.conversation.id` | `string` | As defined above |
-| `routr.model` | `string` | As defined above |
-| `routr.advice.matched` | `boolean` | As defined above |
-| `routr.carriers.forwarded` | `string[]` | As defined above |
-| `routr.assessment.names_location` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.approach_open` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.cause_unknown` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.cross_cutting` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.concurrency_or_data` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.hard_to_reverse` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.tiny` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.separable` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.needs_user` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.states_check` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.standalone` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.level` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.high_blast_radius` | `double` | Assessment score, probability or registered work type |
-| `routr.assessment.work_type` | `string` | Assessment score, probability or registered work type |
-| `routr.check.states_verification` | `double` | Check probability or classified flag codes |
-| `routr.check.covers_brief` | `double` | Check probability or classified flag codes |
-| `routr.check.admits_gaps` | `double` | Check probability or classified flag codes |
-| `routr.check.symptom_patch` | `double` | Check probability or classified flag codes |
-| `routr.check.out_of_scope` | `double` | Check probability or classified flag codes |
-| `routr.check.flags` | `string[]` | Check probability or classified flag codes |
-| `gen_ai.operation.name` | `string` | As defined above |
-| `gen_ai.provider.name` | `string` | As defined above |
-| `gen_ai.request.model` | `string` | As defined above |
-| `gen_ai.response.model` | `string` | As defined above |
-| `gen_ai.usage.input_tokens` | `int` | Observed token count |
-| `gen_ai.usage.output_tokens` | `int` | Observed token count |
-| `gen_ai.usage.cache_read.input_tokens` | `int` | Observed token count |
-| `gen_ai.usage.cache_write.input_tokens` | `int` | Observed token count |
-| `gen_ai.usage.reasoning.output_tokens` | `int` | Observed token count |
-| `routr.usage.state` | `string` | Classified command or reading outcome |
-| `routr.usage.source` | `string` | As defined above |
-| `routr.launch.state` | `string` | Classified command or reading outcome |
-| `routr.send.state` | `string` | Classified command or reading outcome |
-| `routr.wait.state` | `string` | Classified command or reading outcome |
-| `routr.workers.state` | `string` | Classified command or reading outcome |
-| `routr.stop.state` | `string` | Classified command or reading outcome |
-| `routr.cleanup.state` | `string` | Classified command or reading outcome |
-| `routr.record.state` | `string` | Classified command or reading outcome |
-| `routr.verdict` | `string` | As defined above |
-| `routr.check` | `string` | As defined above |
-| `routr.level` | `string` | As defined above |
-| `routr.attempts` | `int` | As defined above |
-| `routr.seconds` | `double` | As defined above |
-| `routr.causes` | `string[]` | As defined above |
-| `routr.subscription` | `string` | As defined above |
-| `routr.effort` | `string` | As defined above |
-| `routr.effort_from` | `string` | As defined above |
-| `routr.advice.id` | `string` | As defined above |
-| `error.type` | `string` | As defined above |
+| `service.name` | `string` | `routr`. |
+| `service.version` | `string` | The running routr version; source checkouts use `0.0.0-dev`. |
+| `os.type` | `string` | OpenTelemetry OS name: `darwin`, `linux`, `windows`, `freebsd`, `openbsd`, `solaris`, `aix` or `unknown`. |
+| `service.instance.id` | `string` | Random UUIDv4, one per routr process, kept only in memory. |
+| `routr.otel.schema` | `string` | `genai@9ffc7e00;semconv@1.44.0;routr@1`. |
+| `routr.lead.session_id` | `string` | Validated lead UUIDv4, UUIDv7 or 16–64 lowercase hex characters; measured environment source before explicit flag. |
+| `routr.question_set.version` | `string` | Question-set version: `r` or `c` followed by 1–3 digits; invalid values become `other`. |
+| `routr.candidates` | `string[]` | Candidate subscription names: `claude`, `codex`, `cursor`, `agy`, `kiro`; unknown names become `other`. |
+| `routr.unavailable` | `string[]` | Classified failure codes from the Span error codes list below; unknown values become `other`. |
+| `vcs.repository.url.full` | `string` | Credential-free canonical HTTPS repository URL, without `.git`; unsafe remotes omitted. |
+| `vcs.ref.head.name` | `string` | Git branch name; omitted at detached HEAD. |
+| `routr.cwd` | `string` | Real cwd relative to git checkout root, using `/`; `.` for root; omitted outside a repository. |
+| `routr.worktree` | `string` | Worktree relative to project root when inside it; otherwise its folder name; no absolute path. |
+| `routr.kind` | `string` | Worker harness: `claude`, `codex`, `cursor`, `agy`, `kiro`; unknown becomes `other`. |
+| `routr.backend` | `string` | `pane` or `headless`. |
+| `routr.launch.id` | `string` | UUIDv4 identifying a sampled launch; recovery reruns reuse the original id. |
+| `gen_ai.agent.name` | `string` | Worker name matching `[a-z][a-z0-9_-]{0,31}`; invalid names omitted. |
+| `gen_ai.conversation.id` | `string` | Herdr agent_session of kind `id`, validated as UUIDv4, UUIDv7 or 16–64 lowercase hex characters; otherwise omitted. |
+| `routr.model` | `string` | Worker model, 1–48 characters matching `[A-Za-z0-9][A-Za-z0-9.:[\]-]*`, without 17 consecutive alphanumerics; invalid becomes `other`. |
+| `routr.advice.matched` | `boolean` | Whether supplied advice matched the task (`true` or `false`); omitted if no match result. |
+| `routr.carriers.forwarded` | `string[]` | Names passed to a new worker: `TRACEPARENT`, `TRACESTATE`, `BAGGAGE`; never their values. |
+| `routr.assessment.names_location` | `double` | Probability, 0–1, for the fixed `names_location` question. |
+| `routr.assessment.approach_open` | `double` | Probability, 0–1, for the fixed `approach_open` question. |
+| `routr.assessment.cause_unknown` | `double` | Probability, 0–1, for the fixed `cause_unknown` question. |
+| `routr.assessment.cross_cutting` | `double` | Probability, 0–1, for the fixed `cross_cutting` question. |
+| `routr.assessment.concurrency_or_data` | `double` | Probability, 0–1, for the fixed `concurrency_or_data` question. |
+| `routr.assessment.hard_to_reverse` | `double` | Probability, 0–1, for the fixed `hard_to_reverse` question. |
+| `routr.assessment.tiny` | `double` | Probability, 0–1, for the fixed `tiny` question. |
+| `routr.assessment.separable` | `double` | Probability, 0–1, for the fixed `separable` question. |
+| `routr.assessment.needs_user` | `double` | Probability, 0–1, for the fixed `needs_user` question. |
+| `routr.assessment.states_check` | `double` | Probability, 0–1, for the fixed `states_check` question. |
+| `routr.assessment.standalone` | `double` | Probability, 0–1, for the fixed `standalone` question. |
+| `routr.assessment.level` | `double` | Expected assessment level score, 0–2. |
+| `routr.assessment.high_blast_radius` | `double` | Probability, 0–1, that a wrong change affects many users, machines or persisted data. |
+| `routr.assessment.work_type` | `string` | `implement`, `debug`, `refactor`, `review`, `research`, `test_writing`, `docs`; unknown becomes `other`. |
+| `routr.check.states_verification` | `double` | Probability, 0–1, for the fixed `states_verification` question. |
+| `routr.check.covers_brief` | `double` | Probability, 0–1, for the fixed `covers_brief` question. |
+| `routr.check.admits_gaps` | `double` | Probability, 0–1, for the fixed `admits_gaps` question. |
+| `routr.check.symptom_patch` | `double` | Probability, 0–1, for the fixed `symptom_patch` question. |
+| `routr.check.out_of_scope` | `double` | Probability, 0–1, for the fixed `out_of_scope` question. |
+| `routr.check.flags` | `string[]` | Question names `states_verification`, `covers_brief`, `admits_gaps`, `symptom_patch`, `out_of_scope` when flagged; also `verdict_partial`, `verdict_blocked`, `verdict_unstated`. |
+| `gen_ai.operation.name` | `string` | `classify`, routr’s custom System One operation. |
+| `gen_ai.provider.name` | `string` | Decision platform contacted: `typesafe`, `cloudflare`, `ollama`; unknown becomes `other`. |
+| `gen_ai.request.model` | `string` | Requested decision model from the provider registry, or the shared worker-model shape; invalid becomes `other`. |
+| `gen_ai.response.model` | `string` | Model explicitly named by the provider reply, checked against the registry or shared model shape; absent unless observed, invalid becomes `other`. |
+| `gen_ai.usage.input_tokens` | `int` | Observed nonnegative integer input token count. |
+| `gen_ai.usage.output_tokens` | `int` | Observed nonnegative integer output token count. |
+| `gen_ai.usage.cache_read.input_tokens` | `int` | Observed positive integer cache-read input tokens, part of input count. |
+| `gen_ai.usage.cache_write.input_tokens` | `int` | Observed positive integer cache-write input tokens, part of input count. |
+| `gen_ai.usage.reasoning.output_tokens` | `int` | Observed positive integer reasoning output tokens, part of output count. |
+| `routr.usage.state` | `string` | `excluded`, `kept`, `given`, `live` or `assumed`. |
+| `routr.usage.source` | `string` | `claude /usage`, `app-server`, `cursor /usage`, `agy /usage`, `kiro /usage`, `sign-in check`, `given by caller`, `none`, `statusline`, `session log`; unknown becomes `other`. |
+| `routr.launch.state` | `string` | Classified launch outcome: `planned`, `ready`, `prompted`, `needs_input`, `failed`, `refused`, `none`, `finished`, `running`, `idle`, `resumed`, `queued`, `delivered`, `unknown`, `stopped`, `absent`, `listed`, `closed`, `removed`, `done`; unrecognized states become `other`. |
+| `routr.send.state` | `string` | Classified send outcome: `planned`, `ready`, `prompted`, `needs_input`, `failed`, `refused`, `none`, `finished`, `running`, `idle`, `resumed`, `queued`, `delivered`, `unknown`, `stopped`, `absent`, `listed`, `closed`, `removed`, `done`; unrecognized states become `other`. |
+| `routr.wait.state` | `string` | Classified wait outcome: `planned`, `ready`, `prompted`, `needs_input`, `failed`, `refused`, `none`, `finished`, `running`, `idle`, `resumed`, `queued`, `delivered`, `unknown`, `stopped`, `absent`, `listed`, `closed`, `removed`, `done`; unrecognized states become `other`. |
+| `routr.workers.state` | `string` | Classified workers outcome: `planned`, `ready`, `prompted`, `needs_input`, `failed`, `refused`, `none`, `finished`, `running`, `idle`, `resumed`, `queued`, `delivered`, `unknown`, `stopped`, `absent`, `listed`, `closed`, `removed`, `done`; unrecognized states become `other`. |
+| `routr.stop.state` | `string` | Classified stop outcome: `planned`, `ready`, `prompted`, `needs_input`, `failed`, `refused`, `none`, `finished`, `running`, `idle`, `resumed`, `queued`, `delivered`, `unknown`, `stopped`, `absent`, `listed`, `closed`, `removed`, `done`; unrecognized states become `other`. |
+| `routr.cleanup.state` | `string` | Classified cleanup outcome: `planned`, `ready`, `prompted`, `needs_input`, `failed`, `refused`, `none`, `finished`, `running`, `idle`, `resumed`, `queued`, `delivered`, `unknown`, `stopped`, `absent`, `listed`, `closed`, `removed`, `done`; unrecognized states become `other`. |
+| `routr.record.state` | `string` | Classified record outcome: `planned`, `ready`, `prompted`, `needs_input`, `failed`, `refused`, `none`, `finished`, `running`, `idle`, `resumed`, `queued`, `delivered`, `unknown`, `stopped`, `absent`, `listed`, `closed`, `removed`, `done`; unrecognized states become `other`. |
+| `routr.verdict` | `string` | `done`, `partial`, `blocked`, `unknown`; unknown enum values become `other`. |
+| `routr.check` | `string` | `pass`, `fail`, `none`; unknown becomes `other`. |
+| `routr.level` | `string` | `basic`, `standard` or `strong`; unknown becomes `other`. |
+| `routr.attempts` | `int` | Observed positive safe integer attempt count, omitted unless supplied. |
+| `routr.seconds` | `double` | Observed finite nonnegative elapsed seconds from record, omitted unless supplied. |
+| `routr.causes` | `string[]` | `execution`, `brief`, `scope`, `review`, `launch`, `unknown`; unknown values become `other`; `none` resolves to an empty array. |
+| `routr.subscription` | `string` | `claude`, `codex`, `cursor`, `agy`, `kiro`; unknown becomes `other`. |
+| `routr.effort` | `string` | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`, `ultra`, `auto`, `default`; unknown becomes `other`. |
+| `routr.effort_from` | `string` | Resolved record effort origin: `given`, `model id`, `config default`; unknown becomes `other`. |
+| `routr.advice.id` | `string` | Eight lowercase hexadecimal characters; invalid ids omitted. |
+| `error.type` | `string` | Classified code from Span error codes below; unclassified errors become `_OTHER`. |
 <!-- /span-attributes -->
 
 ### Span error codes
