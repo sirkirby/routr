@@ -163,7 +163,7 @@ routr's skill folders.
 | `dropped_by_code` | Lifetime counts by code; `partial_warning` and `response_unreadable` are additional diagnostics and do not increase `dropped_total` |
 
 Drop codes are `ceiling`, `write_failed`, `consent`, `cap`, `invalid_observation`, `rejected` and `http_<status>`. The last export's error
-can be `http_<status>`, `network`, `timeout` or `headers_invalid`. `sent` and `refused` count batches only: partial
+can be `http_<status>`, `network`, `timeout`, `headers_invalid` or `gauge_identity_unavailable`. `sent` and `refused` count batches only: partial
 success counts as one sent batch and zero refused batches; rejected record counts go in `dropped_by_code.rejected`.
 Headers are reported as set only when the saved list can be read and validated. A fresh install has no last export,
 no oldest age and zero totals.
@@ -188,7 +188,7 @@ running version. Each process has its own `service.instance.id`, without an iden
 Sampling is ParentBased(AlwaysOn). A valid inherited `TRACEPARENT` supplies a command's parent. The W3C parser
 rejects version ff, uppercase hex, malformed fields and all-zero ids; v00 has exactly four fields, while a higher
 version can append fields after the first four. An absent or invalid parent starts a sampled trace; its inherited
-`TRACESTATE` is then dropped. A valid unsampled parent produces no records or launch index and retains its carriers
+`TRACESTATE` is then dropped. A valid unsampled parent produces no traces, logs or launch index and retains its carriers
 unchanged. Transport limits still apply ([guarantees](guarantees.md#trace-context)).
 
 With export on and a sampled launch, workers get `TRACEPARENT` naming `routr launch`. Valid-parent `TRACESTATE` and
@@ -204,9 +204,9 @@ launch. A holder uses only the launch context saved in its worker settings, neve
 carriers. The worker's `launch` metadata distinguishes three cases: a recorded launch saves
 `{ launch_id, traceId, spanId }`; an enabled launch whose parent was unsampled saves `{ sampled: false }`;
 a launch with export off saves no `launch` field. Recorded launches keep their child turns. An unsampled launch
-keeps its sampling decision across export off/on: its turns record nothing, and its saved carriers pass unchanged.
+keeps its sampling decision across export off/on: its turn traces and logs stay off, and its saved carriers pass unchanged.
 When a worker was launched with export off, its saved valid `TRACEPARENT` still supplies ParentBased sampling:
-an unsampled parent keeps every later turn silent, and a sampled parent parents later turns directly, without a
+an unsampled parent keeps every later turn's traces and logs silent, and a sampled parent parents later turns directly, without a
 recorded launch between them. Only an absent or invalid saved parent starts a separate sampled root for each
 turn after opt-in, ParentBased(AlwaysOn) with no parent. These turns have no `routr.launch.id`.
 This also applies to older worker settings with no `launch` field. Each turn captures fresh export
@@ -433,7 +433,8 @@ outcomes, with `done`/`failed` when the command has no separate state. Effort an
 
 Each custom event is one OTLP LogRecord sent to `/v1/logs` in an `ExportLogsServiceRequest`. Its name is in
 `eventName`, never in the deprecated `event.name` attribute. Its body is absent (empty). `traceId` and `spanId`
-identify the span where it happened; `timeUnixNano` is a decimal-string timestamp. Logs share the process resource,
+identify the span where it happened; `timeUnixNano` and `observedTimeUnixNano` are equal decimal-string timestamps,
+and `flags` comes from that span. Logs share the process resource,
 scope and identity projection with spans. Identity attributes, when available, are repository, branch, relative cwd,
 worktree, lead session, harness kind, backend, launch id, agent name, conversation id and turn number, with the same
 shape checks as spans. There is no warning text, why text, harness output or exception message.
@@ -462,8 +463,9 @@ refresh. Warnings emit once per warning in command output. Unknown caller-suppli
 
 Holder transitions come from the holder's state changes, buffered with their times until the turn finishes and
 written beside that turn's spans. A settlement after completion emits another log batch correlated with that same
-turn. Turns and command batches re-check consent before each signal write. No event is emitted for an unsampled
-span. Housekeeping commands and `statusline` emit no signals.
+turn. Turns and command batches re-check consent before each signal write. Events follow trace sampling: an
+unsampled parent records no spans or logs. Metrics do not follow trace sampling. Housekeeping commands and
+`statusline` emit no signals.
 
 ### Warning codes
 
@@ -522,15 +524,20 @@ producer, including config and input notes forwarded into `warnings`.
 
 The only metric is custom **`routr.subscription.headroom`**, a Gauge with unit **`1`**, reporting remaining
 subscription allowance as a double ratio **0..1**. This name is routr's own, with no upstream stability guarantee.
-Counts and durations can be derived by receivers from spans; routr sends no other metrics.
+Counts and durations can be derived by receivers from spans; routr sends no other metrics. With export on, fresh
+usage observations are collected regardless of the parent trace's sampling flag; an unsampled parent suppresses
+spans and logs, never this gauge. Holders use the same collector for readings they already have; they do not start
+subscription reads to manufacture points.
 
 | Attribute | Type | Values |
 |---|---|---|
 | `routr.subscription` | `string` | Harness registry name: `claude`, `codex`, `cursor`, `agy`, `kiro`. |
-| `routr.usage.window` | `string` | `five_hour`, `seven_day`, `spend_limit`, `primary`, `secondary`, `monthly_cap`, `included`, `monthly_credits`, `5h`, `weekly`, `unknown`. Unknown raw window names are omitted. |
+| `routr.usage.window` | `string` | `five_hour`, `seven_day`, `spend_limit`, `primary`, `secondary`, `monthly_cap`, `included`, `monthly_credits`, `5h`, `weekly`. No observation is queued for `unknown` or any unrecognized window; unrelated buckets must not share a stream. |
 
 Commands queue each numeric window of a live reading as only `{ subscription, window, value, time }`, with `time`
-the source reading's Unix milliseconds. No usage note, harness text or resource path is stored in an observation.
+the source reading's Unix milliseconds, except that a window inferred empty after its reset is stamped at the
+reset time. Other windows in that snapshot keep their own source time. No usage note, harness text or resource path
+is stored in an observation.
 Kept, given, assumed or signed-out readings queue no point. A failed refresh can still leave a live numeric
 snapshot; it retains its original reading time and also emits a failure event. Metered/unknown capacity with no
 number queues no point. `statusline` queues nothing; a later usage-reading command may observe its fresh snapshot. Missing source
@@ -539,9 +546,14 @@ time also queues nothing, rather than inventing a new time for a cached reading.
 The sender is the stream's single writer. Under its lock it keeps only the latest observation per subscription and
 window, removes folded observations, and skips/removes any reading no newer than that stream's last accepted point.
 Watermarks persist in sender state across restarts and consent changes. A reset is a new value on the same stream,
-not a new dimension. Each point uses `asDouble` and its reading time as `timeUnixNano`; the sender posts an
+not a new dimension. Its reset timestamp lets it advance beyond the earlier snapshot without back-dating 1.0. Each
+point uses `asDouble` and its reading time as `timeUnixNano`; the sender posts an
 `ExportMetricsServiceRequest` to `/v1/metrics`. The resource uses the install's gauge UUIDv5, so sender restarts keep
 one stream per install/window and two installs differ. No repository/branch dimensions are added to this metric.
+
+The sender resolves the gauge resource before folding or claiming metric files. If the install identity is
+unavailable or invalid, it sets `last_export.error: "gauge_identity_unavailable"`, leaves observations queued and
+stops; repairing the state folder/id allows a later sender to retry.
 
 The sender saves accepted watermarks before removing claims. A crash before that save can resend the point; a crash
 after it skips the recovered observation. Logs and traces can also duplicate after acceptance. Folded and skipped

@@ -87,7 +87,8 @@ export function checkSmokeSignals(batches, { spans = [], markers = [] } = {}) {
         if (log.eventName === "routr.needs_input") check(NEEDS_INPUT_CODES.includes(a["routr.needs_input.why"]), "needs input code");
         if (log.eventName === "routr.usage.failed") check(Object.hasOwn(USAGE_FAILURES, a["error.type"]) && SUBSCRIPTIONS.includes(a["routr.subscription"]), "usage failure code");
         if (log.eventName === "routr.worker.state") check(WORKER_STATES.includes(a["routr.worker.state.from"]) && WORKER_STATES.includes(a["routr.worker.state.to"]) && a["routr.worker.state.from"] !== a["routr.worker.state.to"], "worker transition");
-        check(spans.some((s) => s.traceId === log.traceId && s.spanId === log.spanId), "log correlation");
+        const span = spans.find((s) => s.traceId === log.traceId && s.spanId === log.spanId);
+        check(span && log.flags === span.flags && log.observedTimeUnixNano === log.timeUnixNano, "log correlation, flags or observed time");
         check(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(resource["service.instance.id"]), "log process instance"); logs++;
       }
     }

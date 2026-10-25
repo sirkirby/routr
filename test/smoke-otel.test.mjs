@@ -140,7 +140,7 @@ test("smoke decodes correlated empty-body log events and the install headroom Ga
   const opts = { spans: [span], markers: ["PRIVATE_MARKER"] };
   expect(smoke.checkSmokeSignals([log, metric], opts)).toEqual({ logs: 1, points: 1 });
   const badLog = (change) => { const b = structuredClone(log); Object.assign(b.resourceLogs[0].scopeLogs[0].logRecords[0], change); return b; };
-  for (const b of [badLog({ eventName: undefined, attributes: [{ key: "event.name", value: { stringValue: "routr.warning" } }] }), badLog({ severityNumber: 9 }), badLog({ body: { stringValue: "PRIVATE_MARKER" } }), badLog({ spanId: "f".repeat(16) }), badLog({ attributes: [{ key: "routr.warning.code", value: { stringValue: "PRIVATE_MARKER" } }] })]) expect(() => smoke.checkSmokeSignals([b, metric], opts)).toThrow();
+  for (const b of [badLog({ eventName: undefined, attributes: [{ key: "event.name", value: { stringValue: "routr.warning" } }] }), badLog({ severityNumber: 9 }), badLog({ observedTimeUnixNano: "3" }), badLog({ flags: 0 }), badLog({ body: { stringValue: "PRIVATE_MARKER" } }), badLog({ spanId: "f".repeat(16) }), badLog({ attributes: [{ key: "routr.warning.code", value: { stringValue: "PRIVATE_MARKER" } }] })]) expect(() => smoke.checkSmokeSignals([b, metric], opts)).toThrow();
   for (const change of [{ asDouble: 2 }, { asDouble: undefined, asInt: "1" }, { timeUnixNano: 1700000000000000000 }]) {
     const b = structuredClone(metric); Object.assign(b.resourceMetrics[0].scopeMetrics[0].metrics[0].gauge.dataPoints[0], change);
     expect(() => smoke.checkSmokeSignals([log, b], opts)).toThrow();
