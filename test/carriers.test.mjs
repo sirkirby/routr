@@ -2,6 +2,7 @@
 // the two environments (a harness read gets none; a worker start gets the checked ones, its adapter's own keys winning).
 import { expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
+import { displayCommand } from "../src/lib/next.mjs";
 import { CARRIERS, carriersFrom, carrierValues, carrierWithheld, harnessEnv, redactCarriers, savedCarriers, workerEnv } from "../src/lib/runtime.mjs";
 
 const TP = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
@@ -330,7 +331,7 @@ test("smoke:carriers' teardown keeps the repository, and names it and the worktr
     expect(existsSync(refused.repo)).toBe(true);
     expect(refused.text).toContain(`could not remove the worktree at ${refused.tree}`);
     expect(refused.text).toContain(refused.repo);
-    expect(refused.text).toContain("herdr worktree remove --workspace w5");
+    expect(refused.text).toContain(displayCommand(["herdr", "worktree", "remove", "--workspace", "w5"]));
     noSmokeValue(refused.lines);
   } finally { refused.done(); }
   // worktree create failed after making the worktree: the repository's own list finds it, herdr's list its workspace.
@@ -346,7 +347,8 @@ test("smoke:carriers' teardown keeps the repository, and names it and the worktr
     expect(removes(blind.calls)).toEqual([]);
     expect(blind.gits.filter((a) => a[1] === "remove")).toEqual([]);
     expect(existsSync(blind.repo)).toBe(true);
-    for (const t of [blind.repo, blind.tree, "herdr workspace list", "herdr worktree remove --workspace", `git -C ${blind.repo} worktree remove ${blind.tree}`]) expect([t, blind.text.includes(t)]).toEqual([t, true]);
+    // Paths in prose are shown as they are; a command is shown as displayCommand quotes it (a backslash, a space).
+    for (const t of [blind.repo, blind.tree, displayCommand(["herdr", "workspace", "list"]), "herdr worktree remove --workspace <id>", displayCommand(["git", "-C", blind.repo, "worktree", "remove", blind.tree])]) expect([t, blind.text.includes(t)]).toEqual([t, true]);
     noSmokeValue(blind.lines);
   } finally { blind.done(); }
   // Only a listing that answered and shows no workspace for it lets git remove it.
