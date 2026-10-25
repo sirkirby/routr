@@ -433,8 +433,10 @@ routr opens sets all three names, empty for a carrier it does not pass, excludin
 
 On `dispatch`, `subagent` and `launch`, pass `--lead-session <your session id>` when routr cannot read your id from
 the harness environment and you know it. Never invent an id. This joins the lead to its launches in the person's
-OpenTelemetry receiver; it is separate from a worker's own conversation id. A malformed explicit id is ignored
-with a fixed warning. A dry-run launch may queue its planned span while export is on, but creates no index entry.
+OpenTelemetry receiver; it is separate from a worker's own conversation id. Inline advice consumes the flag and
+next word only when that word is a valid id; otherwise they remain in the brief with a flag-like note. Launch and
+file-based advice ignore malformed values with a fixed warning. A dry-run launch may queue its planned span while
+export is on, but creates no index entry.
 Never turn on OpenTelemetry export for the user unasked. The
 [published schema](https://github.com/sirkirby/routr/blob/main/docs/opentelemetry.md#signals) describes what is sent.
 

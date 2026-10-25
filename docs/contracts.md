@@ -1180,11 +1180,14 @@ the corresponding git inspection command. An explain answer without a state adds
 
 `dispatch`, `subagent` and `launch` accept optional `--lead-session <id>`. Supply your actual session id when routr
 cannot read it from the measured harness environment; never invent one. It accepts UUIDv4, UUIDv7 or 16–64 lowercase
-hex characters. Missing, duplicate or malformed explicit values are dropped with the fixed warning
-`--lead-session was ignored: no valid session id was supplied`; they never refuse or otherwise change the command.
+hex characters. Inline advice consumes `--lead-session` and its next word only when that word is a valid id;
+otherwise both remain in the brief, with the usual looks-like-a-flag note. Launch and file-based advice drop missing
+or malformed values with the fixed warning `--lead-session was ignored: no valid session id was supplied`.
+Repeated valid ids are dropped with that same warning. These optional identity checks never refuse the command.
 A valid measured environment source takes precedence. The flag changes no command result field except warnings:
-it supplies `routr.lead.session_id` only when OpenTelemetry export is on and the command records a span. The [published schema](opentelemetry.md#signals) lists the environment sources, lineage,
-launch index and every sent attribute. Export-off command behavior and carrier forwarding are unchanged.
+it supplies `routr.lead.session_id` only when OpenTelemetry export is on and the command records a span. The
+[published schema](opentelemetry.md#signals) lists the environment sources, lineage, launch index and every sent
+attribute. Export-off command behavior and carrier forwarding are unchanged.
 
 Headless worker metadata may contain `launch: { launch_id, traceId, spanId }` while exporting a sampled launch.
 Later commands validate those ids before adding a link. This is local worker metadata, not a public command field,

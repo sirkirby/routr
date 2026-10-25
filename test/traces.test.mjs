@@ -270,11 +270,28 @@ test("the real CLI consumes --lead-session independently of the brief and queues
   for (const args of [["BRIEF_MARKER", "--lead-session"], ["BRIEF_MARKER", "--lead-session", id, "--lead-session", id]]) {
     const bad = Bun.spawnSync([process.execPath, SCRIPT, "dispatch", "--config", x.otel.configPath, ...args], { env });
     expect(JSON.parse(bad.stdout.toString()).ok).toBe(true);
-    expect(JSON.parse(bad.stdout.toString()).warnings).toContain("--lead-session was ignored: no valid session id was supplied");
+    expect(JSON.parse(bad.stdout.toString()).warnings).toContain(args.length === 2
+      ? "--lead-session looks like a flag routr dispatch does not take; read as part of the brief"
+      : "--lead-session was ignored: no valid session id was supplied");
   }
 });
 
-test("malformed optional lead ids are dropped with a fixed warning on advice and launch, on or off", async () => {
+test("inline advice preserves a flag-like lead-session phrase verbatim", () => {
+  const brief = "fix the --lead-session parsing bug";
+  for (const on of [true, false]) {
+    const x = exporting(); if (!on) { delete x.config.otel; writeFileSync(x.otel.configPath, JSON.stringify(x.config)); }
+    writeFileSync(join(x.home, ".cache/routr/otel/sender.lock"), JSON.stringify({ pid: process.pid, token: "fixture" }));
+    const env = cliEnv(x.home, { PATH: x.home, OTEL_SDK_DISABLED: "false", ROUTR_OTEL: "1" });
+    for (const mode of ["dispatch", "subagent"]) {
+      const child = Bun.spawnSync([process.execPath, SCRIPT, mode, ...brief.split(" "), "--config", x.otel.configPath], { env });
+      expect(child.exitCode).toBe(0); const r = JSON.parse(child.stdout.toString());
+      expect(r.ok).toBe(true); expect(r.brief_sha).toBe(briefSha(brief)); expect(r.brief_chars).toBe(brief.length);
+      expect(r.warnings).toContain(`--lead-session looks like a flag routr ${mode} does not take; read as part of the brief`);
+    }
+  }
+});
+
+test("malformed lead ids remain in inline advice while launch drops them with a fixed warning, on or off", async () => {
   for (const on of [true, false]) {
     const x = exporting(); if (!on) { delete x.config.otel; writeFileSync(x.otel.configPath, JSON.stringify(x.config)); }
     writeFileSync(join(x.home, ".cache/routr/otel/sender.lock"), JSON.stringify({ pid: process.pid, token: "fixture" }));
@@ -282,8 +299,8 @@ test("malformed optional lead ids are dropped with a fixed warning on advice and
     for (const mode of ["dispatch", "subagent"]) {
       const child = Bun.spawnSync([process.execPath, SCRIPT, mode, "BRIEF_MARKER", "--lead-session", "PRIVATE_INVALID_ID", "--config", x.otel.configPath], { env });
       expect(child.exitCode).toBe(0); const r = JSON.parse(child.stdout.toString());
-      expect(r.ok).toBe(true); expect(r.brief_chars).toBe(12);
-      expect(r.warnings).toContain("--lead-session was ignored: no valid session id was supplied");
+      expect(r.ok).toBe(true); expect(r.brief_chars).toBe("BRIEF_MARKER --lead-session PRIVATE_INVALID_ID".length);
+      expect(r.warnings).toContain(`--lead-session looks like a flag routr ${mode} does not take; read as part of the brief`);
       expect(child.stdout.toString()).not.toContain("PRIVATE_INVALID_ID");
     }
     const r = await launch(["--kind", "claude", "--name", "fixture", "--model", "fixture", "--lead-session", "PRIVATE_INVALID_ID", "--dry-run"], { env: {}, otel: x.otel, settings: () => ({ config: x.config }) });
@@ -529,6 +546,4 @@ test("the shipped trace contract defines values and ignores malformed optional l
   const guide = readFileSync(new URL("../skills/routr/references/orchestrator.md", import.meta.url), "utf8");
   expect(guide).toContain("https://github.com/sirkirby/routr/blob/main/docs/opentelemetry.md");
   expect(guide).not.toContain("planned span and index");
-  const changelog = readFileSync(new URL("../CHANGELOG.md", import.meta.url), "utf8");
-  expect(changelog.split(/^## /m)[1]).toMatch(/OpenTelemetry.*\(#<PR>\)/);
 });

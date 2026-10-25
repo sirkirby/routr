@@ -336,8 +336,8 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
   or an empty value for each one it does not pass, absent or withheld. OpenTelemetry treats an empty carrier as
   absent, so a worker in such a pane gets exactly routr's context, or none.
 - **Not for harness reads.** routr's own reads of a harness (sign-in status, usage, model lists) and its private herdr
-  session get no carrier: they are not workers. Every detached routr job also starts with all three carriers
-  removed; background usage refreshes and holders emit no spans.
+  session get no carrier: they are not workers. Every detached routr job also starts with the trace carriers,
+  lead-session variables and herdr pane variables removed; background usage refreshes and holders emit no spans.
 - **Limits.** routr passes a carrier only when every character is printable ASCII or a tab, and it is at most 512
   bytes (`TRACEPARENT`, `TRACESTATE`) or 8192 (`BAGGAGE`). This is routr's own limit on what it hands on, not the W3C
   grammar. One outside it is not passed, and a warning names it, never its value; the others still go. With export

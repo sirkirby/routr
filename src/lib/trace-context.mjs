@@ -11,10 +11,12 @@ const uuid = (version) => new RegExp(`^[a-f0-9]{8}-[a-f0-9]{4}-${version}[a-f0-9
 const SOURCES = [["CLAUDE_CODE_SESSION_ID", uuid(4)], ["CODEX_THREAD_ID", uuid(7)], ["CURSOR_CONVERSATION_ID", uuid(4)], ["ANTIGRAVITY_CONVERSATION_ID", uuid(4)]];
 export const sessionId = (id) => typeof id === "string" && (uuid("[47]").test(id) || /^[a-f0-9]{16,64}$/.test(id)) ? id : null;
 export const LEAD_SESSION_WARNING = "--lead-session was ignored: no valid session id was supplied";
-export function takeLeadSession(args) {
+export function takeLeadSession(args, { inline = false } = {}) {
   const rest = [], ids = []; let count = 0;
   for (let i = 0; i < args.length; i++) {
     if (args[i] !== "--lead-session") { rest.push(args[i]); continue; }
+    // Inline advice can discuss this flag: consume only a recognized id, leaving other words for brief parsing.
+    if (inline && !sessionId(args[i + 1])) { rest.push(args[i]); continue; }
     count++;
     if (typeof args[i + 1] === "string" && !args[i + 1].startsWith("--")) ids.push(args[++i]);
   }

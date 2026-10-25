@@ -111,7 +111,7 @@ const configPath = take("--config");
 // percent (97%) is read; anything else is said in the answer, never dropped without a word.
 const { given, notes: inputNotes } = (await import("./lib/commands.mjs")).parseHeadroom(takeAll("--headroom"));
 const withNotes = (r) => (inputNotes.length && r && typeof r === "object" ? { ...r, warnings: [...(r.warnings ?? []), ...inputNotes] } : r);
-const leadInput = ["dispatch", "subagent"].includes(argv[0]) ? (await import("./lib/trace-context.mjs")).takeLeadSession(argv) : { args: [...argv], lead: null, warnings: [] };
+const leadInput = ["dispatch", "subagent"].includes(argv[0]) ? (await import("./lib/trace-context.mjs")).takeLeadSession(argv, { inline: !argv.includes("--task-file") }) : { args: [...argv], lead: null, warnings: [] };
 argv.splice(0, argv.length, ...leadInput.args); inputNotes.push(...leadInput.warnings);
 const leadSession = leadInput.lead;
 const [mode, ...rest] = argv;

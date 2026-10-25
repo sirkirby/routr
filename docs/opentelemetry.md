@@ -206,8 +206,10 @@ that command. The hook can lag or report null; routr never waits for an id.
 `routr.lead.session_id` is the lead's id, separate from the worker's conversation. Routr checks the measured
 Claude Code, Codex, Cursor and Antigravity environment sources first. If none is valid, `--lead-session` on
 `dispatch`, `subagent` or `launch` can supply a known UUIDv4, UUIDv7 or lowercase hexadecimal id of 16–64 characters.
-An invalid explicit id is ignored with a fixed warning; an absent one is omitted. No session id is invented. Kiro has no measured
-ambient source. Formats and measurement dates are in the harness reference.
+In inline advice, only a valid id is consumed; otherwise the flag and following words stay in the brief with a
+flag-like note. Launch and file-based advice ignore malformed values with a fixed warning. An absent id is omitted;
+no session id is invented. Kiro has no measured ambient source. Formats and measurement dates are in the harness
+reference.
 
 ### Spans
 
