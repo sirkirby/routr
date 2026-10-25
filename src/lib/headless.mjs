@@ -470,8 +470,11 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const turnTrace = () => (trace ??= newTurnTrace(st.turn + (inTurn ? 0 : 1)));
   const turnCarriers = () => turnTrace().carriers;
   const requestCarriers = () => { const t = turnTrace(); return t.generated ? t.carriers : {}; };
-  // Discard only context this send prepared; an earlier send can already own the pending turn.
-  const discardPrepared = (before, existing = null) => { if (!inTurn && st.turn === before && trace !== existing) trace = null; };
+  // A context prepared between turns goes out with every send in flight, any of which may start that turn with it: a
+  // send that failed discards it only once no other send is still on its way in and none that got in carried it (from
+  // the review of 14a45ca: one failing send cleared the context another, still pending, had given Codex).
+  let keptTrace = null;
+  const sent = (ok) => { if (inTurn || !trace) return; if (ok) keptTrace = trace; else if (!sending && trace !== keptTrace) trace = null; };
   const setRow = (patch) => ({ turns: [...st.turns.slice(0, -1), { ...turnRow(), ...patch }] });
   // One more message written into turn `n`, whether or not that turn is still running.
   const addDelivered = (n) => save({ turns: st.turns.map((t) => (t.turn === n ? { ...t, delivered: (t.delivered ?? 0) + 1 } : t)) });
@@ -629,8 +632,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const handOver = async (text) => {
     const c = conn;
     if (!c?.open()) return null;
-    const before = st.turn; turnCarriers(); pending++; sending++;
-    let r; try { r = await c.send(text, false); } finally { sending--; if (r?.code !== "handed_to_harness") discardPrepared(before); }
+    turnCarriers(); pending++; sending++;
+    let r; try { r = await c.send(text, false); } finally { sending--; sent(r?.code === "handed_to_harness"); }
     if (r?.code !== "handed_to_harness") pending = Math.max(0, pending - 1);
     return r;
   };
@@ -676,9 +679,9 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
     else if (child && conn?.open()) {
       // The turn it goes into: the running one, or the next. Decided now, counted once it is in, which may be after the
       // harness has started that next turn.
-      const into = inTurn ? st.turn : null, before = st.turn, c = conn, existing = trace;
+      const into = inTurn ? st.turn : null, before = st.turn, c = conn;
       sending++;
-      let r; try { r = await c.send(m.text, inTurn); } finally { sending--; if (!r || ["refused", "unknown"].includes(r.code)) discardPrepared(before, existing); }
+      let r; try { r = await c.send(m.text, inTurn); } finally { sending--; sent(Boolean(r) && !["refused", "unknown"].includes(r.code)); }
       // It said no, or ended before saying: no turn counts it, and it is not queued (it may have taken it).
       if (r && (r.code === "refused" || r.code === "unknown")) { maybeClose(); return { code: r.code, why: r.why }; }
       if (r) {
