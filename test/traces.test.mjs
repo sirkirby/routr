@@ -13,8 +13,9 @@ import { cleanup } from "../src/lib/cleanup.mjs";
 import { sendCommand, waitCommand, workersCommand, stopCommand } from "../src/lib/workers.mjs";
 import * as channel from "../src/lib/channel.mjs";
 import { LaunchIndex } from "../src/lib/launch-index.mjs";
+import { traceIdentity } from "../src/lib/trace-identity.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
-import { TRACE_ATTRIBUTES, ERROR_CODES, commandTrace } from "../src/lib/traces.mjs";
+import { TRACE_ATTRIBUTES, ERROR_CODES, commandTrace, linkWorker, usageSpans, decisionSpan } from "../src/lib/traces.mjs";
 import { readUsage } from "../src/lib/harnesses.mjs";
 
 function exporting(env = {}) {
@@ -228,6 +229,32 @@ test("a pane launch records identity, session and immutable index; cleanup and l
   expect(x.spans().find((s) => s.name === "routr record").links).toEqual(c.links);
 });
 
+function traceRepository(x) {
+  const repo = join(x.home, "repo"), tree = join(x.home, "tree"); mkdirSync(repo);
+  const git = (...args) => {
+    const r = Bun.spawnSync(["git", "-C", repo, ...args]); expect(r.exitCode, r.stderr.toString()).toBe(0);
+  };
+  git("init", "-b", "main"); git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "--allow-empty", "-m", "fixture");
+  return { repo, tree, git };
+}
+
+test.each(["--worktree", "--path"])("cleanup %s links the relaunched worktree rather than its finished predecessor", async (flag) => {
+  const x = exporting(), { repo, tree, git } = traceRepository(x), index = new LaunchIndex({ home: x.home });
+  git("worktree", "add", "-b", "worker", tree);
+  const identity = traceIdentity(tree), first = { launch_id: "12345678-1234-4123-8123-123456789abc", backend: "headless", repository: null,
+    project_hash: identity.project_hash, path_hash: identity.path_hash, branch: "worker", traceId: "1".repeat(32), spanId: "2".repeat(16), created_at: new Date().toISOString() };
+  const opts = { env: {}, otel: x.otel, settings: () => ({ config: x.config }) }, args = ["--cwd", repo, flag, flag === "--path" ? tree : "worker"];
+  expect(index.add(first)).toBe(true);
+  expect((await cleanup(args, opts)).state).toBe("removed");
+  expect(index.entries().find((e) => e.launch_id === first.launch_id).finished_at).toBeDefined();
+  git("worktree", "add", tree, "worker");
+  const second = { ...first, launch_id: "22345678-1234-4123-8123-123456789abc", spanId: "3".repeat(16) };
+  expect(index.add(second)).toBe(true);
+  expect((await cleanup(args, opts)).state).toBe("removed");
+  expect(x.spans().at(-1).links).toEqual([{ traceId: second.traceId, spanId: second.spanId, attributes: [] }]);
+  expect(index.entries().every((e) => e.finished_at)).toBe(true);
+});
+
 test("the real CLI consumes --lead-session independently of the brief and queues under --config", () => {
   const x = exporting(), id = "019a1aaa-1234-7123-8123-123456789abc";
   writeFileSync(join(x.home, ".cache/routr/otel/sender.lock"), JSON.stringify({ pid: process.pid, token: "fixture" }));
@@ -287,6 +314,69 @@ test("detached background usage emits no spans through the CLI or module command
   }
   await usageCommand(["--background"], x.config, {}, { env: x.env, otel: x.otel, read: async () => [] });
   expect(x.batches()).toEqual([]); expect(x.spawned).toEqual([]);
+});
+
+test("a throwing record trace hook cannot fail an already written ledger row", () => {
+  const x = exporting(), advice = join(x.home, "advice.json"), ledger = join(x.home, "ledger.jsonl");
+  writeFileSync(advice, JSON.stringify({ id: "abc12345", brief_sha: "123456789abc", mode: "dispatch", level: "standard" }));
+  const match = spyOn(LaunchIndex.prototype, "match").mockImplementation(() => { throw new Error("private trace bug"); });
+  try {
+    const r = recordCommand({ advice, ledger, subscription: "claude", model: "fixture", effort: "low", verdict: "done", check: "pass" }, [], x.config, { env: {}, otel: x.otel });
+    expect(match).toHaveBeenCalledTimes(1); expect(r.ok).toBe(true);
+    const rows = readFileSync(ledger, "utf8").trim().split("\n").map((s) => JSON.parse(s));
+    expect(rows).toHaveLength(1); expect(rows[0].run_id).toBe(r.run_id);
+    expect(JSON.stringify(r)).not.toContain("private trace bug");
+  } finally { match.mockRestore(); }
+});
+
+test("a throwing cleanup trace hook cannot stop worktree cleanup", async () => {
+  const x = exporting(), { repo, tree, git } = traceRepository(x); git("worktree", "add", "-b", "worker", tree);
+  const match = spyOn(LaunchIndex.prototype, "match").mockImplementation(() => { throw new Error("private trace bug"); });
+  try {
+    const r = await cleanup(["--cwd", repo, "--path", tree], { env: {}, otel: x.otel, settings: () => ({ config: x.config }) });
+    expect(match).toHaveBeenCalledTimes(1); expect(r.state).toBe("removed"); expect(r.ok).toBe(true);
+    expect(existsSync(tree)).toBe(false); expect(JSON.stringify(r)).not.toContain("private trace bug");
+  } finally { match.mockRestore(); }
+});
+
+test("a throwing worker trace hook cannot fail its command", () => {
+  const x = exporting(), expected = { ok: true, state: "listed" }; let observed = 0;
+  const r = commandTrace("workers", { config: x.config, env: {}, otel: x.otel }, () => {
+    linkWorker({ get launch() { observed++; throw new Error("private trace bug"); } }); return expected;
+  });
+  expect(observed).toBe(1); expect(r).toBe(expected); expect(x.spans()).toHaveLength(1);
+  expect(x.spans()[0].status).toBeUndefined();
+});
+
+test("a throwing usage trace hook preserves the observed reading", async () => {
+  const x = exporting(); let observed = 0;
+  const rows = [{ pool: "codex", get source() { observed++; throw new Error("private trace bug"); } }];
+  const r = await commandTrace("usage", { config: x.config, env: {}, otel: x.otel }, () => usageSpans(async (observe) => {
+    await observe(async () => rows[0]); return rows;
+  }));
+  expect(observed).toBeGreaterThan(0); expect(r).toBe(rows); expect(x.spans()).toHaveLength(1);
+  expect(x.spans()[0].status).toBeUndefined();
+});
+
+test("throwing decision trace setup runs the provider once and preserves its result or error", async () => {
+  const x = exporting(), opts = { config: x.config, env: {}, otel: x.otel }; let calls = 0, observed = 0;
+  const broken = { get decision() { observed++; throw new Error("private trace bug"); } }, expected = { ok: true };
+  expect(await commandTrace("dispatch", opts, () => decisionSpan(broken, () => { calls++; return expected; }))).toBe(expected);
+  expect(calls).toBe(1); expect(observed).toBe(1);
+  const failure = new Error("original provider error");
+  await expect(commandTrace("dispatch", opts, () => decisionSpan(broken, () => { calls++; throw failure; }))).rejects.toBe(failure);
+  expect(calls).toBe(2); expect(observed).toBe(2);
+  expect(x.spans().filter((s) => s.name.startsWith("classify"))).toEqual([]);
+});
+
+test("throwing decision trace completion preserves the provider's original reply and error", async () => {
+  const x = exporting(), opts = { config: x.config, env: {}, otel: x.otel }; let calls = 0, observed = 0;
+  const expected = { get provider() { observed++; throw new Error("private trace bug"); } };
+  expect(await commandTrace("dispatch", opts, () => decisionSpan(x.config, () => { calls++; return expected; }))).toBe(expected);
+  const failure = Object.defineProperty(new Error("original provider error"), "provider", { get() { observed++; throw new Error("private trace bug"); } });
+  await expect(commandTrace("dispatch", opts, () => decisionSpan(x.config, () => { calls++; throw failure; }))).rejects.toBe(failure);
+  expect(calls).toBe(2); expect(observed).toBe(2);
+  expect(JSON.stringify(x.batches())).not.toContain("private trace bug");
 });
 
 test("tracing setup failures run the command once, untraced, without swallowing command errors", async () => {

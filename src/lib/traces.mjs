@@ -34,12 +34,14 @@ const decisionName = (v) => KNOWN_MODELS.includes(v) ? v : modelName(v);
 const probability = (v) => typeof v === "number" && v >= 0 && v <= 1 ? v : null;
 const error = (span, code) => { put(span, { "error.type": pick(code, ERROR_CODES) === "other" ? "_OTHER" : code ?? "_OTHER" }); span.status = { code: 2 }; };
 export function recordSpan(entry) {
-  const c = context.getStore(); if (!c) return;
-  const { outcome: o, chose: choice } = entry;
-  put(c.span, { "routr.verdict": pick(o.verdict, VERDICTS), "routr.check": pick(o.check, CHECK_RESULTS), "routr.level": pick(choice.level, LEVELS),
-    "routr.attempts": o.attempts, "routr.seconds": o.seconds, "routr.causes": o.causes?.map((v) => pick(v, OUTCOME_CAUSES)), "routr.subscription": pick(choice.subscription, subscriptions),
-    "routr.effort": pick(choice.effort, EFFORTS), "routr.effort_from": pick(choice.effort_from, ["given", "model id", "config default"]), "routr.advice.id": /^[a-f0-9]{8}$/.test(entry.id) ? entry.id : null });
-  if (/^[a-f0-9]{8}$/.test(entry.id)) link(c.index.match({ advice_id: entry.id }));
+  try {
+    const c = context.getStore(); if (!c) return;
+    const { outcome: o, chose: choice } = entry;
+    put(c.span, { "routr.verdict": pick(o.verdict, VERDICTS), "routr.check": pick(o.check, CHECK_RESULTS), "routr.level": pick(choice.level, LEVELS),
+      "routr.attempts": o.attempts, "routr.seconds": o.seconds, "routr.causes": o.causes?.map((v) => pick(v, OUTCOME_CAUSES)), "routr.subscription": pick(choice.subscription, subscriptions),
+      "routr.effort": pick(choice.effort, EFFORTS), "routr.effort_from": pick(choice.effort_from, ["given", "model id", "config default"]), "routr.advice.id": /^[a-f0-9]{8}$/.test(entry.id) ? entry.id : null });
+    if (/^[a-f0-9]{8}$/.test(entry.id)) link(c.index.match({ advice_id: entry.id }));
+  } catch {} // A trace projection cannot undo a written ledger row.
 }
 function link(entry) {
   const c = context.getStore(), v = launchContext(entry); if (!c || !v) return;
@@ -48,7 +50,7 @@ function link(entry) {
   c.matched.add(v.launch_id);
 }
 export const currentLaunch = () => { const c = context.getStore(); return c?.command === "launch" ? { launch_id: c.launchId, traceId: c.span.traceId, spanId: c.span.spanId } : null; };
-export function linkWorker(worker) { const c = context.getStore(); if (c && ["send", "wait", "workers", "stop", "cleanup"].includes(c.command)) link(worker.launch); }
+export function linkWorker(worker) { try { const c = context.getStore(); if (c && ["send", "wait", "workers", "stop", "cleanup"].includes(c.command)) link(worker.launch); } catch {} }
 export function adviceForLaunch(id) { const c = context.getStore(); if (c?.command === "launch" && /^[a-f0-9]{8}$/.test(id)) c.adviceId = id; }
 async function paneFacts(pane, run) {
   try { const r = await callHerdr(run, ["pane", "get", pane], 1000); return r.ok ? r.data?.result?.pane : null; } catch { return null; }
@@ -58,15 +60,17 @@ function conversation(facts) {
   const c = context.getStore(); if (c && id) put(c.span, { "gen_ai.conversation.id": id });
 }
 export async function cleanupLink(o, run) {
-  const c = context.getStore(); if (!c || c.command !== "cleanup") return;
-  if (o.pane && c.env.HERDR_ENV === "1") {
-    const facts = await paneFacts(o.pane, run); conversation(facts);
-    if (typeof facts?.terminal_id === "string") link(c.index.match({ pane_id: o.pane, terminal_id: facts.terminal_id }, { activeOnly: true }));
-  } else if (o.path) { const path_hash = pathHash(o.path); if (path_hash) link(c.index.match({ path_hash }, { activeOnly: true })); }
-  else if (o.worktree) {
-    const identity = traceIdentity(o.cwd);
-    if (identity.project_hash) link(c.index.match({ project_hash: identity.project_hash, repository: identity.attributes["vcs.repository.url.full"] ?? null, branch: o.worktree }, { activeOnly: true }));
-  }
+  try {
+    const c = context.getStore(); if (!c || c.command !== "cleanup") return;
+    if (o.pane && c.env.HERDR_ENV === "1") {
+      const facts = await paneFacts(o.pane, run); conversation(facts);
+      if (typeof facts?.terminal_id === "string") link(c.index.match({ pane_id: o.pane, terminal_id: facts.terminal_id }, { activeOnly: true }));
+    } else if (o.path) { const path_hash = pathHash(o.path); if (path_hash) link(c.index.match({ path_hash }, { activeOnly: true })); }
+    else if (o.worktree) {
+      const identity = traceIdentity(o.cwd);
+      if (identity.project_hash) link(c.index.match({ project_hash: identity.project_hash, repository: identity.attributes["vcs.repository.url.full"] ?? null, branch: o.worktree }, { activeOnly: true }));
+    }
+  } catch {} // Index or pane observation failure never changes cleanup.
 }
 export async function completeLaunch(r, run, { rerun = false } = {}) {
   const c = context.getStore(); if (!c || c.command !== "launch") return;
@@ -83,32 +87,44 @@ export async function completeLaunch(r, run, { rerun = false } = {}) {
     traceId: c.span.traceId, spanId: c.span.spanId, created_at: new Date().toISOString() };
 }
 export async function decisionSpan(config, run) {
-  const c = context.getStore(); if (!c) return run();
-  const t = decisionTarget(config), span = { name: "classify", kind: 3, traceId: c.span.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: c.span.spanId, flags: 1, startTimeUnixNano: nanos(), attributes: { ...c.identity.attributes } };
+  let c, t, span;
   const identity = (provider, model) => {
     const name = decisionName(model) ?? "other";
     span.name = `classify ${name}`;
     put(span, { "gen_ai.operation.name": "classify", "gen_ai.provider.name": pick(provider, PROVIDER_NAMES), "gen_ai.request.model": name });
   };
-  identity(t.provider, t.model);
   try {
-    const r = await run(); identity(r.provider, r.request_model ?? t.model);
-    put(span, { "gen_ai.response.model": r.response_model == null ? null : decisionName(r.response_model) });
-    for (const key of ["input_tokens", "output_tokens", "cache_read.input_tokens", "cache_write.input_tokens", "reasoning.output_tokens"]) {
-      const v = r.usage?.[key]; if (Number.isSafeInteger(v) && v >= 0 && (!key.includes(".") || v > 0)) put(span, { [`gen_ai.usage.${key}`]: v });
+    c = context.getStore();
+    if (c) {
+      t = decisionTarget(config);
+      span = { name: "classify", kind: 3, traceId: c.span.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: c.span.spanId, flags: 1, startTimeUnixNano: nanos(), attributes: { ...c.identity.attributes } };
+      identity(t.provider, t.model);
     }
+  } catch { span = null; } // Optional setup cannot skip or repeat the provider call.
+  if (!span) return run();
+  try {
+    const r = await run();
+    try {
+      identity(r.provider, r.request_model ?? t.model);
+      put(span, { "gen_ai.response.model": r.response_model == null ? null : decisionName(r.response_model) });
+      for (const key of ["input_tokens", "output_tokens", "cache_read.input_tokens", "cache_write.input_tokens", "reasoning.output_tokens"]) {
+        const v = r.usage?.[key]; if (Number.isSafeInteger(v) && v >= 0 && (!key.includes(".") || v > 0)) put(span, { [`gen_ai.usage.${key}`]: v });
+      }
+    } catch {} // Observation cannot replace the provider's reply or its original failure.
     return r;
-  } catch (e) { identity(e.provider ?? t.provider, e.model ?? t.model); error(span, e.code); throw e; }
-  finally { span.endTimeUnixNano = nanos(); c.spans.push(span); }
+  } catch (e) { try { identity(e.provider ?? t.provider, e.model ?? t.model); error(span, e.code); } catch {} throw e; }
+  finally { try { span.endTimeUnixNano = nanos(); c.spans.push(span); } catch {} }
 }
 function usageRow(row, startTimeUnixNano, endTimeUnixNano) {
-  const c = context.getStore(); if (!c || !subscriptions.includes(row?.pool)) return;
-  const span = { name: `routr usage ${row.pool}`, kind: 1, traceId: c.span.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: c.span.spanId, flags: 1, startTimeUnixNano, endTimeUnixNano, attributes: { ...c.identity.attributes } };
-  put(span, { "routr.subscription": row.pool, "routr.usage.state": row.signedIn === false ? "excluded" : row.kept ? "kept" : row.given ? "given" : row.ageSec != null ? "live" : "assumed",
-    "routr.usage.source": pick(row.source, [...Object.values(SOURCES).map((s) => s.source), "sign-in check", "given by caller", "none", "statusline", "session log"]) });
-  // A kept reading recovers a failed refresh; the read operation still produced usable data.
-  if (row.failure && row.headroom == null) error(span, row.failure.code);
-  c.spans.push(span); c.observed.add(row);
+  try {
+    const c = context.getStore(); if (!c || !subscriptions.includes(row?.pool)) return;
+    const span = { name: `routr usage ${row.pool}`, kind: 1, traceId: c.span.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: c.span.spanId, flags: 1, startTimeUnixNano, endTimeUnixNano, attributes: { ...c.identity.attributes } };
+    put(span, { "routr.subscription": row.pool, "routr.usage.state": row.signedIn === false ? "excluded" : row.kept ? "kept" : row.given ? "given" : row.ageSec != null ? "live" : "assumed",
+      "routr.usage.source": pick(row.source, [...Object.values(SOURCES).map((s) => s.source), "sign-in check", "given by caller", "none", "statusline", "session log"]) });
+    // A kept reading recovers a failed refresh; the read operation still produced usable data.
+    if (row.failure && row.headroom == null) error(span, row.failure.code);
+    c.spans.push(span); c.observed.add(row);
+  } catch {} // A failed observation must leave its usage reading usable.
 }
 export async function usageSpans(run, { startedAt } = {}) {
   const c = context.getStore();
