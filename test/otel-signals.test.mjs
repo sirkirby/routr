@@ -30,6 +30,7 @@ test("every emitted warning keeps its text for the caller but has a fixed origin
   expect(JSON.stringify(batches)).not.toContain("PRIVATE_");
   const span = JSON.parse(readFileSync(join(f.root, "traces", readdirSync(join(f.root, "traces"))[0]))).resourceSpans[0].scopeSpans[0].spans[0];
   expect(log.traceId).toBe(span.traceId); expect(log.spanId).toBe(span.spanId);
+  expect(log.flags).toBe(span.flags); expect(log.observedTimeUnixNano).toBe(log.timeUnixNano);
 });
 
 import { failedUsage } from "../src/lib/usage.mjs";
@@ -61,15 +62,11 @@ test("a launch needing shell input logs only a fixed why code with its completed
 });
 
 import { Glob } from "bun";
-test("warning origins throughout shipped source use the single stable code table", () => {
+test("warning code names in shipped source match the single stable table", () => {
   const calls = new Set();
   for (const file of new Glob("src/**/*.mjs").scanSync({ cwd: join(import.meta.dir, "..") })) {
     const text = readFileSync(join(import.meta.dir, "..", file), "utf8");
     for (const match of text.matchAll(/\bwarning\("([a-z_]+)"/g)) { expect(warnings.WARNING_CODES).toHaveProperty(match[1]); calls.add(match[1]); }
-    // Walk warning producers, including config/input notes that become warnings. Spreads only forward earlier codes.
-    for (const match of text.matchAll(/(?:warnings|configNotes|inputNotes)\.push\((?!\.\.\.)([^\n]+)/g)) {
-      expect(match[1].startsWith("warning(") || /^(s\.warning|helper\.left|found\.launchSpan)/.test(match[1])).toBe(true);
-    }
   }
   expect([...calls].sort()).toEqual(Object.keys(warnings.WARNING_CODES).sort());
 });
@@ -86,6 +83,7 @@ test("holder transitions are INFO events on the finished turn, with fresh consen
   expect(logs.map((l) => [attrs(l)["routr.worker.state.from"], attrs(l)["routr.worker.state.to"]])).toEqual([["idle", "working"], ["working", "waiting"], ["waiting", "idle"]]);
   for (const log of logs) {
     expect(log).toMatchObject({ eventName: "routr.worker.state", severityNumber: 9, severityText: "INFO", traceId: spansIn(f)[0].traceId, spanId: spansIn(f)[0].spanId });
+    expect(log.observedTimeUnixNano).toBe(log.timeUnixNano); expect(log.flags).toBe(spansIn(f)[0].flags);
     expect(attrs(log)).toMatchObject({ "routr.turn": 1, "routr.kind": "claude", "gen_ai.agent.name": "fixture", "gen_ai.conversation.id": "12345678-1234-4123-8123-123456789abc" });
   }
   const revoked = workerTurn(worker, 2, { env: {}, otel: f.opts }); revoked.state("idle", "working");
@@ -171,4 +169,103 @@ test("a still-live numeric reading remains an observation when its refresh fails
   await commandTrace("usage", { config: f.config, env: {}, otel: f.opts }, () => usageSpans(async () => [row]));
   expect(readdirSync(join(f.root, "metrics"))).toHaveLength(1);
   expect(logsIn(f).map((l) => l.eventName)).toEqual(["routr.usage.failed"]);
+});
+
+import { adviseCommand, parseHeadroom } from "../src/lib/commands.mjs";
+import { takeLeadSession } from "../src/lib/trace-context.mjs";
+test("advice accepts input warnings before its batch ends, including a refused brief", async () => {
+  for (const brief of ["task", ""]) {
+    const f = install("http://127.0.0.1:4318"), input = [...parseHeadroom(["bad"]).notes, ...takeLeadSession(["--lead-session", "bad"]).warnings, warnings.warning("brief_flag", "--json was read as brief text")];
+    const r = await adviseCommand("subagent", brief, { config: f.config }, {}, { env: {}, otel: f.opts, warnings: input, askFn: async () => { throw new Error("fixture offline"); } });
+    expect(r.warnings).toEqual(input);
+    expect(logsIn(f).filter((l) => l.eventName === "routr.warning").map((l) => attrs(l)["routr.warning.code"]).sort()).toEqual(["brief_flag", "headroom_ignored", "lead_session_ignored"]);
+  }
+});
+
+test("unsampled commands queue live headroom with no traces or logs and still recheck consent", async () => {
+  const f = install("http://127.0.0.1:4318"), row = summarize({ pool: "claude", source: "statusline", ts: 1700000000, nowSec: 1700000001, windows: [{ name: "five_hour", usedPct: 25 }] });
+  const setup = { config: f.config, env: { TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00" }, otel: f.opts };
+  await commandTrace("usage", setup, async () => { await usageSpans(async () => [row]); return { warnings: [warnings.warning("prompt_uncertain", "local only")] }; });
+  expect(readdirSync(join(f.root, "metrics"))).toHaveLength(1); expect(spansIn(f)).toEqual([]); expect(logsIn(f)).toEqual([]);
+  await commandTrace("usage", setup, async () => { await usageSpans(async () => [row]); writeFileSync(f.opts.configPath, "{}"); });
+  expect(readdirSync(join(f.root, "metrics"))).toHaveLength(1);
+});
+
+test("summarized window resets are newer points at the reset, with other windows keeping the snapshot time", async () => {
+  await receiver(async (endpoint, requests) => {
+    const f = install(endpoint), snapshot = { pool: "claude", source: "statusline", ts: 1700000000, windows: [{ name: "five_hour", usedPct: 90, resetsAt: 1700003600 }, { name: "seven_day", usedPct: 50, resetsAt: 1700600000 }] };
+    const observe = (nowSec) => commandTrace("usage", { config: f.config, env: {}, otel: f.opts }, () => usageSpans(async () => [summarize({ ...snapshot, nowSec })]));
+    await observe(1700000001); await otel.sendOtel(f.opts);
+    expect(points(requests)).toHaveLength(2);
+    await observe(1700007200); await otel.sendOtel(f.opts);
+    expect(points(requests)).toHaveLength(3);
+    expect(points(requests).at(-1)).toMatchObject({ asDouble: 1, timeUnixNano: "1700003600000000000" });
+    expect(points(requests).at(-1).attributes).toContainEqual({ key: "routr.usage.window", value: { stringValue: "five_hour" } });
+    await observe(1700007300); await otel.sendOtel(f.opts); expect(points(requests)).toHaveLength(3);
+  });
+});
+
+test("CLI input notes become warning records once, for every accepting command and brief form", () => {
+  for (const command of ["check", "usage", "dispatch", "subagent"]) for (const form of ["inline", "file"]) {
+    if (!["dispatch", "subagent"].includes(command) && form === "file") continue;
+    const f = install("http://127.0.0.1:4318"), home = f.opts.home, file = join(home, "task.txt");
+    mkdirSync(join(home, ".config/routr"), { recursive: true }); writeFileSync(join(home, ".config/routr/config.json"), JSON.stringify({ ...f.config, subscriptions: {}, auto_update: false }));
+    writeFileSync(join(f.root, "sender.lock"), JSON.stringify({ pid: process.pid, token: "fixture" })); writeFileSync(file, "safe task");
+    const brief = ["dispatch", "subagent"].includes(command) ? form === "file" ? ["--task-file", file, "--lead-session", "invalid"] : ["safe task", "--json"] : [];
+    const child = Bun.spawnSync([process.execPath, SCRIPT, command, "--headroom", "bad", ...brief], { env: cliEnv(home, { PATH: home, ROUTR_OTEL: "1", OTEL_SDK_DISABLED: "false", ROUTR_NO_UPDATE: "1" }), stdin: "ignore" });
+    expect(child.exitCode).toBe(0);
+    const output = JSON.parse(child.stdout.toString()), codes = logsIn(f).filter((l) => l.eventName === "routr.warning").map((l) => attrs(l)["routr.warning.code"]);
+    expect(codes).toContain("headroom_ignored");
+    if (brief.length) expect(codes).toContain(form === "file" ? "lead_session_ignored" : "brief_flag");
+    expect(codes).toHaveLength(output.warnings.length);
+  }
+});
+
+test("unknown windows create no command observation and are rejected from an existing queue", async () => {
+  await receiver(async (endpoint, requests) => {
+    const f = install(endpoint), row = summarize({ pool: "agy", source: "agy /usage", ts: 1700000000, nowSec: 1700000001, windows: [{ name: "unknown", usedPct: 10 }, { name: "unknown", usedPct: 50 }] });
+    await commandTrace("usage", { config: f.config, env: {}, otel: f.opts }, () => usageSpans(async () => [row]));
+    expect(readdirSync(join(f.root, "metrics"))).toEqual([]);
+    f.queue.queue("metrics", { subscription: "agy", window: "unknown", value: 0.5, time: 1700000000000 });
+    await otel.sendOtel(f.opts); expect(points(requests)).toEqual([]); expect(readdirSync(join(f.root, "metrics"))).toEqual([]);
+  });
+});
+
+test("gauge identity failures report a fixed status before folding or claiming any observation", async () => {
+  await receiver(async (endpoint, requests) => {
+    for (const mode of ["missing", "malformed"]) {
+      const f = install(endpoint), state = join(f.opts.home, ".local/state/routr");
+      for (const time of [1000, 2000]) f.queue.queue("metrics", { subscription: "claude", window: "five_hour", value: 0.5, time });
+      const before = readdirSync(join(f.root, "metrics")).sort();
+      if (mode === "missing") rmSync(state, { recursive: true }); else writeFileSync(join(state, "service-instance-id"), "PRIVATE_BAD_ID_MARKER");
+      await otel.sendOtel(f.opts); expect(requests).toEqual([]);
+      expect(readdirSync(join(f.root, "metrics")).sort()).toEqual(before);
+      expect(otel.otelStatus(f.config, {}, f.opts).last_export).toMatchObject({ ok: false, sent: 0, refused: 0, error: "gauge_identity_unavailable" });
+      expect(readFileSync(join(f.root, "sender.json"), "utf8")).not.toContain("PRIVATE_");
+      if (mode === "missing") mkdirSync(state, { recursive: true }); else rmSync(join(state, "service-instance-id"));
+      await otel.sendOtel(f.opts); expect(requests).toHaveLength(1); requests.length = 0;
+      expect(readdirSync(join(f.root, "metrics"))).toEqual([]);
+    }
+  });
+});
+
+test("an unsampled holder queues a supplied fresh subscription reading at turn completion, without logs or spans", () => {
+  const f = install("http://127.0.0.1:4318"), worker = { name: "fixture", kind: "claude", cwd: f.opts.home, launch: { sampled: false }, carriers: { TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00" } };
+  const row = summarize({ pool: "claude", source: "statusline", ts: 1700000000, nowSec: 1700000001, windows: [{ name: "five_hour", usedPct: 25 }] });
+  const turn = workerTurn(worker, 1, { env: {}, otel: f.opts });
+  turn.observeUsage(row); turn.state("idle", "working"); turn.end("finished", 1);
+  expect(spansIn(f)).toEqual([]); expect(logsIn(f)).toEqual([]);
+  expect(readdirSync(join(f.root, "metrics"))).toHaveLength(1);
+  const revoked = workerTurn(worker, 2, { env: {}, otel: f.opts }); revoked.observeUsage(row); writeFileSync(f.opts.configPath, "{}"); revoked.end("finished", 1);
+  expect(readdirSync(join(f.root, "metrics"))).toHaveLength(1);
+});
+
+import { readCodexLive } from "../src/lib/usage.mjs";
+test("a live session-log fallback preserves the snapshot time when its app-server refresh fails", async () => {
+  const f = install("http://127.0.0.1:4318"), saved = summarize({ pool: "codex", source: "session log", ts: 1700000000, nowSec: 1700000001, windows: [{ name: "primary", usedPct: 25 }] });
+  const row = await readCodexLive({ exec: async () => null, fallback: () => saved, nowSec: 1700000001 });
+  expect(row.kept).toBeUndefined();
+  await commandTrace("usage", { config: f.config, env: {}, otel: f.opts }, () => usageSpans(async () => [row]));
+  const files = readdirSync(join(f.root, "metrics")); expect(files).toHaveLength(1);
+  expect(JSON.parse(readFileSync(join(f.root, "metrics", files[0]))).time).toBe(1700000000000);
 });

@@ -3,7 +3,8 @@
 import { expect, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { displayCommand } from "../src/lib/next.mjs";
-import { CARRIERS, carriersFrom, carrierValues, carrierWithheld, harnessEnv, redactCarriers, savedCarriers, workerEnv } from "../src/lib/runtime.mjs";
+import { carrierWithheld } from "../src/lib/warnings.mjs";
+import { CARRIERS, carriersFrom, carrierValues, harnessEnv, redactCarriers, savedCarriers, workerEnv } from "../src/lib/runtime.mjs";
 
 const TP = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
 // No smoke carrier value in what the smoke printed: its hostile values and its agent markers. Its own folder's name

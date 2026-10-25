@@ -23,7 +23,7 @@ export const NEEDS_INPUT_CODES = Object.freeze(["shell_not_ready", "startup_ques
 
 export const OTEL_ATTRIBUTES = Object.freeze({ ...TRACE_ATTRIBUTES, ...Object.assign({}, ...Object.values(LOG_EVENTS).map((v) => v.attributes)), "routr.usage.window": "string" });
 export const IDENTITY_ATTRIBUTES = Object.freeze(["vcs.repository.url.full", "vcs.ref.head.name", "routr.cwd", "routr.worktree", "routr.lead.session_id", "routr.kind", "routr.backend", "routr.launch.id", "gen_ai.agent.name", "gen_ai.conversation.id", "routr.turn"]);
-export const USAGE_WINDOWS = Object.freeze(["five_hour", "seven_day", "spend_limit", "primary", "secondary", "monthly_cap", "included", "monthly_credits", "5h", "weekly", "unknown"]);
+export const USAGE_WINDOWS = Object.freeze(["five_hour", "seven_day", "spend_limit", "primary", "secondary", "monthly_cap", "included", "monthly_credits", "5h", "weekly"]);
 export const SUBSCRIPTIONS = Object.freeze(["claude", "codex", "cursor", "agy", "kiro"]);
 export function signalAttributes(values, allowed = Object.keys(OTEL_ATTRIBUTES)) {
   return Object.fromEntries(Object.entries(values).filter(([key, value]) => allowed.includes(key) && OTEL_ATTRIBUTES[key] && value != null && typed(value, OTEL_ATTRIBUTES[key])));

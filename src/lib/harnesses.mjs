@@ -1,4 +1,3 @@
-import { warning } from "./warnings.mjs";
 // Everything routr knows about each harness, in one place: adding a harness is one entry here (and its row in
 // references/harnesses.md). Launch flags are measured; see references/harnesses.md.
 //   label, executable: how it is named to a person, and the command that starts it. installAs: how the install hint
@@ -35,11 +34,11 @@ import { warning } from "./warnings.mjs";
 //     fresh reading now and prints it raw (`routr usage <name>`). Cursor's and Kiro's readers bring herdr's terminal and
 //     their snapshot rules with them, so they load when first read: help, --version, and every command that reads no
 //     usage stay light. (Literal import paths, so the compiled binary still bundles them.)
-import { usageReadingTime, withUsageReadingTime } from "./usage.mjs";
+import { warning } from "./warnings.mjs";
 import { dirname } from "node:path";
 import { run } from "./runtime.mjs";
 import { billingFromSignIn, signInHint, signInState } from "./signin.mjs";
-import { readAgy, readClaude, readCodexLive, summarize, failedUsage } from "./usage.mjs";
+import { readAgy, readClaude, readCodexLive, summarize, failedUsage, usageReadingTime, withUsageReadingTime } from "./usage.mjs";
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // The levels a help text lists after its --effort flag: "(low, medium, high, xhigh, max)", as Claude Code and Kiro print them.

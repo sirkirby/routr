@@ -1,7 +1,7 @@
-import { warning } from "./warnings.mjs";
 // The advice commands (`subagent`, `dispatch`), the file-and-ledger commands, and `usage`: `check`, `record`, `assess`, `share`. Each takes its parsed flags and returns what to
 // print, so a test can drive it without a process. The pure parts stay where they were (check.mjs, ledger.mjs); this is
 // the I/O around them. None of them may fail an agent: an error becomes output, and the caller exits 0.
+import { warning } from "./warnings.mjs";
 import { commandTrace, decisionSpan, recordSpan, usageSpans } from "./traces.mjs";
 import { matchAdvice, readAdvice, readTask } from "./advice-file.mjs";
 import { answer, refusal } from "./output.mjs";
@@ -42,9 +42,10 @@ export function parseHeadroom(values) {
 // `routr subagent|dispatch "<brief>"`: the decision model's reading of the brief with the user's preferences, and for
 // dispatch the subscriptions ranked by usage, read while it answers. An unreachable model still gets an answer: the
 // user's fallback.
-async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read = readUsage } = {}) {
-  if (typeof brief !== "string" || !brief.trim()) return refusal("no advice", "empty brief", configNotes, [doNext("Supply the exact task", `routr ${mode} --task-file <path>`)]);
-  const out = { ok: true, warnings: configNotes, next: [], id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length, unavailable: [] };
+async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read = readUsage, warnings = [] } = {}) {
+  const callWarnings = [...configNotes, ...warnings];
+  if (typeof brief !== "string" || !brief.trim()) return refusal("no advice", "empty brief", callWarnings, [doNext("Supply the exact task", `routr ${mode} --task-file <path>`)]);
+  const out = { ok: true, warnings: callWarnings, next: [], id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length, unavailable: [] };
   const target = decisionTarget(config);
   let answered = false;
   let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };

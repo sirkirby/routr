@@ -1,11 +1,11 @@
 import { expect, spyOn, test } from "bun:test";
-import { parseTraceparent, leadSession } from "../src/lib/trace-context.mjs";
+import { parseTraceparent, leadSession, takeLeadSession } from "../src/lib/trace-context.mjs";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { cfg, scratch, ans, fact, cliEnv, SCRIPT } from "./helpers.mjs";
 import { prepareOtel, OTEL_RESOURCE_ATTRIBUTES } from "../src/lib/otel.mjs";
-import { usageCommand, adviseCommand, recordCommand, checkCommand } from "../src/lib/commands.mjs";
+import { usageCommand, adviseCommand, recordCommand, checkCommand, parseHeadroom } from "../src/lib/commands.mjs";
 import { launch } from "../src/lib/launch.mjs";
 import { ask } from "../src/lib/systemone.mjs";
 import { replyFetch } from "./fixtures/provider-fetch.mjs";
@@ -17,6 +17,7 @@ import { traceIdentity } from "../src/lib/trace-identity.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
 import { OTEL_ATTRIBUTES, ERROR_CODES, workerTurn, commandTrace, linkWorker, usageSpans, decisionSpan } from "../src/lib/traces.mjs";
 import { summarize } from "../src/lib/usage.mjs";
+import { warningCode } from "../src/lib/warnings.mjs";
 import { readUsage } from "../src/lib/harnesses.mjs";
 
 function exporting(env = {}) {
@@ -431,15 +432,24 @@ test("every command's queue, launch index and worker metadata exclude content an
   writeFileSync(advice, JSON.stringify({ id: "abc12345", brief_sha: briefSha(markers[0]), mode: "dispatch", level: "standard" }));
   mkdirSync(join(x.home, ".config/routr"), { recursive: true });
   writeFileSync(join(x.home, ".config/routr/env"), `ROUTR_OTEL_HEADERS=Authorization=${markers[2]}`);
-  const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), models: async () => null, read: async () => [summarize({ pool: "claude", source: "statusline", ts: Date.now() / 1000, windows: [{ name: "five_hour", usedPct: 25 }], note: markers[4] })], askFn: (state, questions, o) => ask(state, questions, { ...o, env: { TYPESAFE_API_KEY: markers[1] }, fetchFn: replyFetch("typesafe", "valid") }) };
-  await adviseCommand("dispatch", markers[0], { config: x.config }, {}, opts);
-  await adviseCommand("subagent", markers[0], { config: x.config }, {}, opts);
-  await checkCommand({ brief, report }, { ...opts, config: x.config });
-  await usageCommand([], x.config, {}, opts);
-  recordCommand({ advice, ledger: join(x.home, "ledger"), subscription: markers[1], model: markers[6], effort: markers[2], verdict: markers[4], check: markers[4], note: markers[4] }, [], x.config, opts);
+  const checked = async (run) => {
+    const dir = join(x.home, ".cache/routr/otel/logs"), before = new Set(readdirSync(dir)), r = await run();
+    const events = readdirSync(dir).filter((name) => !before.has(name)).flatMap((name) => JSON.parse(readFileSync(join(dir, name))).resourceLogs[0].scopeLogs[0].logRecords).filter((l) => l.eventName === "routr.warning");
+    const codes = r.warnings.map((text) => { const code = warningCode(text); expect(code).toBeDefined(); return code; });
+    expect(events.map((l) => attrs(l)["routr.warning.code"]).sort()).toEqual(codes.sort());
+    for (const event of events) expect(x.spans().some((span) => span.traceId === event.traceId && span.spanId === event.spanId)).toBe(true);
+    return r;
+  };
+  const opts = { warnings: [...parseHeadroom(["invalid"]).notes, ...takeLeadSession(["--lead-session", "invalid"]).warnings], env: x.env, otel: x.otel, settings: () => ({ config: x.config }), models: async () => null, read: async () => [summarize({ pool: "claude", source: "statusline", ts: Date.now() / 1000, windows: [{ name: "five_hour", usedPct: 25 }], note: markers[4] })], askFn: (state, questions, o) => ask(state, questions, { ...o, env: { TYPESAFE_API_KEY: markers[1] }, fetchFn: replyFetch("typesafe", "valid") }) };
+  await checked(() => adviseCommand("dispatch", markers[0], { config: x.config }, {}, opts));
+  await checked(() => adviseCommand("subagent", markers[0], { config: x.config }, {}, opts));
+  await checked(() => checkCommand({ brief, report }, { ...opts, config: x.config }));
+  await checked(() => usageCommand([], x.config, {}, opts));
+  await checked(() => recordCommand({ advice, ledger: join(x.home, "ledger"), subscription: markers[1], model: markers[6], effort: markers[2], verdict: markers[4], check: markers[4], note: markers[4] }, [], x.config, opts));
   let tick = 0;
-  await launch(["--kind", "claude", "--name", "fixture", "--model", markers[6], "--direction", "right"], { ...opts, env: { ...x.env, HERDR_ENV: "1" }, ready: async () => null, models: async () => null, now: () => tick, sleep: async (ms) => { tick += ms; }, run: async (a) => ({ ok: true, data: { result: a[1] === "split" ? { pane: { pane_id: "w1:p2" } } : a[1] === "read" ? { text: markers[5] + "\nSource it? [y/N]" } : a[1] === "process-info" ? { process_info: { shell_pid: 1, foreground_processes: [{ pid: 1 }] } } : a[1] === "get" ? { pane: { pane_id: "w1:p2", terminal_id: "term-1" } } : {} } }) });
-  await sendCommand(["--task", markers[0]], opts); await waitCommand(["--timeout", "0"], opts); await workersCommand([], opts); await stopCommand([], opts); await cleanup(["--unknown"], opts);
+  await checked(() => launch(["--kind", "claude", "--name", "fixture", "--model", markers[6], "--direction", "right"], { ...opts, env: { ...x.env, HERDR_ENV: "1" }, ready: async () => null, models: async () => null, now: () => tick, sleep: async (ms) => { tick += ms; }, run: async (a) => ({ ok: true, data: { result: a[1] === "split" ? { pane: { pane_id: "w1:p2" } } : a[1] === "read" ? { text: markers[5] + "\nSource it? [y/N]" } : a[1] === "process-info" ? { process_info: { shell_pid: 1, foreground_processes: [{ pid: 1 }] } } : a[1] === "get" ? { pane: { pane_id: "w1:p2", terminal_id: "term-1" } } : {} } }) }));
+  await checked(() => sendCommand(["--task", markers[0]], opts)); await checked(() => waitCommand(["--timeout", "0"], opts));
+  await checked(() => workersCommand([], opts)); await checked(() => stopCommand([], opts)); await checked(() => cleanup(["--unknown"], opts));
   for (const signal of ["logs", "metrics"]) expect(readdirSync(join(x.home, ".cache/routr/otel", signal)).length).toBeGreaterThan(0);
   const names = x.spans().map((s) => s.name);
   for (const command of ["dispatch", "subagent", "check", "usage", "record", "launch", "send", "wait", "workers", "stop", "cleanup"]) expect(names).toContain(`routr ${command}`);
@@ -449,9 +459,9 @@ test("every command's queue, launch index and worker metadata exclude content an
   try {
     // Windows CI, PR #115: runtime.home() reads USERPROFILE; HOME alone reserved metadata in the wrong home.
     process.env.HOME = process.env.USERPROFILE = x.home;
-    const r = await launch(["--kind", "claude", "--name", "metadata", "--model", "fixture", "--cwd", x.home, "--task-file", brief, "--advice", advice], { ...opts, ready: async () => null, spawn: () => {
+    const r = await checked(() => launch(["--kind", "claude", "--name", "metadata", "--model", "fixture", "--cwd", x.home, "--task-file", brief, "--advice", advice], { ...opts, ready: async () => null, spawn: () => {
       saved = JSON.parse(readFileSync(join(x.home, ".local/state/routr/workers/metadata/worker.json"), "utf8")); return false;
-    } });
+    } }));
     expect(r.ok).toBe(false); expect(saved).toBeDefined();
     const { cwd, carriers, ...metadata } = saved;
     expect(cwd).toBe(x.home); expect(carriers.BAGGAGE).toBe(markers[3]); expect(carriers.TRACESTATE).toBe(x.env.TRACESTATE);
@@ -490,7 +500,7 @@ test("headless commands link validated worker.json context and ignore malformed 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test("off and unsampled commands queue nothing, create no index and start no sender", async () => {
+test("off commands stay inert; unsampled commands without usage readings create no index or sender", async () => {
   for (const mode of ["off", "unsampled"]) {
     const x = exporting(mode === "off" ? { ROUTR_OTEL: "0" } : { TRACEPARENT: parent.slice(0, -2) + "00" });
     const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), models: async () => null, read: async () => [], askFn: async () => { throw new Error("PRIVATE_MARKER"); } };
@@ -576,7 +586,7 @@ test("turn queueing checks live consent; off holders can emit after opt-in, with
   expect(attrs(x.spans()[0])).toMatchObject({ "routr.turn": 3, "routr.turn.messages": 1 });
 });
 
-test("turns preserve saved carriers and emit nothing off, unsampled, with malformed launch context or under process off switches", () => {
+test("turns preserve saved carriers and omit traces/logs off, unsampled, with malformed launch context or under process off switches", () => {
   for (const mode of ["off", "unsampled", "malformed", "disabled", "sdk"]) {
     const x = exporting(), w = tracedWorker(x), env = {};
     if (mode === "off") writeFileSync(x.otel.configPath, JSON.stringify({ ...x.config, otel: undefined }));

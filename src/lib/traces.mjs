@@ -1,12 +1,12 @@
 // Only this boundary builds shipped spans, events and usage observations. Raw output never enters an OTLP encoder.
 import { IDENTITY_ATTRIBUTES, LOG_EVENTS, NEEDS_INPUT_CODES, OTEL_ATTRIBUTES, TRACE_ATTRIBUTES, signalAttributes, typed } from "./otel-schema.mjs";
 export { LOG_EVENTS, NEEDS_INPUT_CODES, OTEL_ATTRIBUTES, TRACE_ATTRIBUTES } from "./otel-schema.mjs";
-import { warning, warningCode } from "./warnings.mjs";
+import { warning, warningCode, carrierWithheld } from "./warnings.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
 import { encodeTraces, encodeLogs, headroomObservation, otelSession, otelSwitch } from "./otel.mjs";
 import { loadConfig } from "./config.mjs";
-import { carriersFrom, carrierWithheld, savedCarriers } from "./runtime.mjs";
+import { carriersFrom, savedCarriers } from "./runtime.mjs";
 import { parseTraceparent, leadSession, sessionId } from "./trace-context.mjs";
 import { pick, modelName, EFFORTS, questionSet, VERDICTS, CHECK_RESULTS } from "./shaped.mjs";
 import { HARNESSES, SOURCES } from "./harnesses.mjs";
@@ -25,22 +25,22 @@ const subscriptions = Object.keys(HARNESSES);
 export const ERROR_CODES = [...new Set([...DECISION_CODES, ...Object.keys(USAGE_FAILURES), "unreadable", "refused", "failed", "not_started", "no_finish", "stopped", "_OTHER"])];
 const put = (span, values) => Object.assign(span.attributes, signalAttributes(values, Object.keys(TRACE_ATTRIBUTES)));
 export function inputNeeded(code) {
-  const c = context.getStore(); if (c && NEEDS_INPUT_CODES.includes(code)) c.inputCode = code;
+  const c = context.getStore(); if (c?.span && NEEDS_INPUT_CODES.includes(code)) c.inputCode = code;
 }
-const logRecord = (span, eventName, values) => {
+const logRecord = (span, eventName, values, timeUnixNano = nanos()) => {
   const spec = LOG_EVENTS[eventName], attributes = {};
   for (const key of IDENTITY_ATTRIBUTES) {
     if (span.attributes[key] != null) attributes[key] = span.attributes[key];
   }
   for (const [key, value] of Object.entries(values)) if (spec.attributes[key] && typed(value, spec.attributes[key])) attributes[key] = value;
-  return { eventName, timeUnixNano: nanos(), severityNumber: spec.severityNumber, severityText: spec.severityText, traceId: span.traceId, spanId: span.spanId, attributes: signalAttributes(attributes, [...IDENTITY_ATTRIBUTES, ...Object.keys(spec.attributes)]) };
+  return { eventName, timeUnixNano, observedTimeUnixNano: timeUnixNano, flags: span.flags, severityNumber: spec.severityNumber, severityText: spec.severityText, traceId: span.traceId, spanId: span.spanId, attributes: signalAttributes(attributes, [...IDENTITY_ATTRIBUTES, ...Object.keys(spec.attributes)]) };
 };
 const decisionName = (v) => KNOWN_MODELS.includes(v) ? v : modelName(v);
 const probability = (v) => typeof v === "number" && v >= 0 && v <= 1 ? v : null;
 const error = (span, code) => { put(span, { "error.type": pick(code, ERROR_CODES) === "other" ? "_OTHER" : code ?? "_OTHER" }); span.status = { code: 2 }; };
 export function recordSpan(entry) {
   try {
-    const c = context.getStore(); if (!c) return;
+    const c = context.getStore(); if (!c?.span) return;
     const { outcome: o, chose: choice } = entry;
     put(c.span, { "routr.verdict": pick(o.verdict, VERDICTS), "routr.check": pick(o.check, CHECK_RESULTS), "routr.level": pick(choice.level, LEVELS),
       "routr.attempts": o.attempts, "routr.seconds": o.seconds, "routr.causes": o.causes?.map((v) => pick(v, OUTCOME_CAUSES)), "routr.subscription": pick(choice.subscription, subscriptions),
@@ -49,14 +49,14 @@ export function recordSpan(entry) {
   } catch {} // A trace projection cannot undo a written ledger row.
 }
 function link(entry) {
-  const c = context.getStore(), v = launchContext(entry); if (!c || !v) return;
+  const c = context.getStore(), v = launchContext(entry); if (!c?.span || !v) return;
   c.span.links ??= [];
   if (!c.span.links.some((l) => l.traceId === v.traceId && l.spanId === v.spanId)) c.span.links.push({ traceId: v.traceId, spanId: v.spanId });
   c.matched.add(v.launch_id);
 }
 export function currentLaunch(config, env = process.env) {
   const c = context.getStore();
-  if (c?.command === "launch") return { launch_id: c.launchId, traceId: c.span.traceId, spanId: c.span.spanId };
+  if (c?.span && c.command === "launch") return { launch_id: c.launchId, traceId: c.span.traceId, spanId: c.span.spanId };
   // Off is no sampling decision. Retain an enabled launch's unsampled parent even when a later holder opts in.
   return otelSwitch(config, env).on && parseTraceparent(carriersFrom(env).carriers.TRACEPARENT)?.sampled === false ? { sampled: false } : null;
 }
@@ -71,7 +71,7 @@ function conversation(facts) {
 }
 export async function cleanupLink(o, run) {
   try {
-    const c = context.getStore(); if (!c || c.command !== "cleanup") return;
+    const c = context.getStore(); if (!c?.span || c.command !== "cleanup") return;
     if (o.pane && c.env.HERDR_ENV === "1") {
       const facts = await paneFacts(o.pane, run); conversation(facts);
       if (typeof facts?.terminal_id === "string") link(c.index.match({ pane_id: o.pane, terminal_id: facts.terminal_id }, { activeOnly: true }));
@@ -83,7 +83,7 @@ export async function cleanupLink(o, run) {
   } catch {} // Index or pane observation failure never changes cleanup.
 }
 export async function completeLaunch(r, run, { rerun = false } = {}) {
-  const c = context.getStore(); if (!c || c.command !== "launch") return;
+  const c = context.getStore(); if (!c?.span || c.command !== "launch") return;
   const identity = traceIdentity(r.cwd), facts = r.pane && r.state !== "planned" ? await paneFacts(r.pane, run) : null;
   put(c.span, identity.attributes); conversation(facts);
   const reused = rerun && c.adviceId && facts?.terminal_id ? c.index.recovery({ advice_id: c.adviceId, pane_id: r.pane, terminal_id: facts.terminal_id }) : null;
@@ -105,7 +105,7 @@ export async function decisionSpan(config, run) {
   };
   try {
     c = context.getStore();
-    if (c) {
+    if (c?.span) {
       t = decisionTarget(config);
       span = { name: "classify", kind: 3, traceId: c.span.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: c.span.spanId, flags: 1, startTimeUnixNano: nanos(), attributes: { ...c.identity.attributes } };
       identity(t.provider, t.model);
@@ -125,23 +125,30 @@ export async function decisionSpan(config, run) {
   } catch (e) { try { identity(e.provider ?? t.provider, e.model ?? t.model); error(span, e.code); } catch {} throw e; }
   finally { try { span.endTimeUnixNano = nanos(); c.spans.push(span); } catch {} }
 }
+const usageState = (row) => row.signedIn === false ? "excluded" : row.kept ? "kept" : row.given ? "given" : row.ageSec != null ? "live" : "assumed";
+function usageObservations(row, observations) {
+  if (!subscriptions.includes(row?.pool) || usageState(row) !== "live" || !Number.isFinite(row.headroom)) return;
+  // Stage 3 review decision 2: metrics have their own consent, independent of trace sampling.
+  for (const w of row.windows ?? []) {
+    if (!Number.isFinite(w.usedPct)) continue;
+    const observation = headroomObservation({ subscription: row.pool, window: w.name, value: Math.min(1, Math.max(0, 1 - w.usedPct / 100)), time: usageReadingTime(row, w) });
+    if (observation) observations.push(observation);
+  }
+}
 function usageRow(row, startTimeUnixNano, endTimeUnixNano) {
   try {
     const c = context.getStore(); if (!c || !subscriptions.includes(row?.pool)) return;
+    c.observed.add(row);
+    const state = usageState(row);
+    usageObservations(row, c.observations);
+    if (!c.span) return;
     const span = { name: `routr usage ${row.pool}`, kind: 1, traceId: c.span.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: c.span.spanId, flags: 1, startTimeUnixNano, endTimeUnixNano, attributes: { ...c.identity.attributes } };
-    put(span, { "routr.subscription": row.pool, "routr.usage.state": row.signedIn === false ? "excluded" : row.kept ? "kept" : row.given ? "given" : row.ageSec != null ? "live" : "assumed",
+    put(span, { "routr.subscription": row.pool, "routr.usage.state": state,
       "routr.usage.source": pick(row.source, [...Object.values(SOURCES).map((s) => s.source), "sign-in check", "given by caller", "none", "statusline", "session log"]) });
     // A kept reading recovers a failed refresh; the read operation still produced usable data.
     if (row.failure && row.headroom == null) error(span, row.failure.code);
     if (row.failure) c.logs.push(logRecord(span, "routr.usage.failed", { "error.type": usageFailure(row.failure.code).code, "routr.subscription": row.pool }));
-    c.spans.push(span); c.observed.add(row);
-    // Snapshot readers can retain a still-live number after a failed refresh (snapshot trust rules, 2026-10-23).
-    // Its source time stays unchanged; only kept/assumed/given readings are excluded by Stage 3.
-    if (span.attributes["routr.usage.state"] === "live" && Number.isFinite(row.headroom)) for (const w of row.windows ?? []) {
-      if (!Number.isFinite(w.usedPct)) continue;
-      const observation = headroomObservation({ subscription: row.pool, window: w.name, value: Math.min(1, Math.max(0, 1 - w.usedPct / 100)), time: usageReadingTime(row) });
-      if (observation) c.observations.push(observation);
-    }
+    c.spans.push(span);
   } catch {} // A failed observation must leave its usage reading usable.
 }
 export async function usageSpans(run, { startedAt } = {}) {
@@ -178,7 +185,7 @@ const spanCarriers = (saved, span, inherited) => {
 };
 export function launchCarriers(env) {
   const found = carriersFrom(env), c = context.getStore();
-  if (!c || c.span.name !== "routr launch") return found;
+  if (!c?.span || c.span.name !== "routr launch") return found;
   const carriers = spanCarriers(found.carriers, c.span, c.inherited);
   return { carriers, withheld: found.withheld, launchSpan: true };
 }
@@ -210,10 +217,13 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
     }
   } catch {} // Missing context, malformed state or optional observation cannot change a turn.
   let ended = false;
-  const transitions = [], queueLogs = (events) => { if (events.length) session.queue("logs", encodeLogs(events.map(([from, to, timeUnixNano]) => ({ ...logRecord(span, "routr.worker.state", {
-    "routr.worker.state.from": from, "routr.worker.state.to": to }), timeUnixNano })), { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: OTEL_ATTRIBUTES })); };
+  const observations = [];
+  const transitions = [], queueLogs = (events) => { if (events.length) session.queue("logs", encodeLogs(events.map(([from, to, timeUnixNano]) => logRecord(span, "routr.worker.state", {
+    "routr.worker.state.from": from, "routr.worker.state.to": to }, timeUnixNano)), { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: OTEL_ATTRIBUTES })); };
   return {
     generated: Boolean(span),
+    // A holder may supply a reading it already has; never start a harness read merely to emit a metric.
+    observeUsage(row) { try { if (!ended && session?.on) usageObservations(row, observations); } catch {} },
     carriers: span ? spanCarriers(saved, span, inherited) : saved,
     state(from, to) {
       try {
@@ -236,6 +246,7 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
         session.queue("traces", encodeTraces([span], { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: TRACE_ATTRIBUTES }));
         queueLogs(transitions);
       } catch {} // Disk, consent or encoder failure never fails, delays or retries a worker turn.
+      finally { for (const observation of observations) session.queue("metrics", observation); }
     },
   };
 }
@@ -246,29 +257,32 @@ export function commandTrace(command, setup = {}, run) {
     const { config, env = process.env, otel = {}, lead, explicitLevel, cwd } = typeof setup === "function" ? setup() : setup;
     session = otelSession(config, env, otel);
     const inherited = parseTraceparent(carriersFrom(env).carriers.TRACEPARENT);
+    if (session.on) batch = { observations: [], observed: new Set(), env, command };
     if (session.on && inherited?.sampled !== false) {
       span = { name: `routr ${command}`, kind: 1, traceId: inherited?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"),
         ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, startTimeUnixNano: nanos(), attributes: {} };
       const id = leadSession(env, lead); if (id && ["dispatch", "subagent", "launch"].includes(command)) put(span, { "routr.lead.session_id": id });
       const identity = traceIdentity(cwd); put(span, identity.attributes);
-      batch = { span, spans: [span], observations: [], logs: [], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: randomUUID(), matched: new Set(), observed: new Set() };
+      batch = { ...batch, span, spans: [span], logs: [], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: randomUUID(), matched: new Set(), observed: new Set() };
     }
   } catch {} // Setup is optional too: a bad config or identity lookup cannot refuse a command.
   if (!batch) return run();
   const finish = (result) => {
     try {
       const output = batch.output ?? result;
-      resultAttributes(command, span, output); span.endTimeUnixNano = nanos();
-      if (batch.inputCode) batch.logs.push(logRecord(span, "routr.needs_input", { "routr.needs_input.why": batch.inputCode }));
-      for (const text of output?.warnings ?? []) {
-        const code = warningCode(text); if (code) batch.logs.push(logRecord(span, "routr.warning", { "routr.warning.code": code }));
+      if (span) {
+        resultAttributes(command, span, output); span.endTimeUnixNano = nanos();
+        if (batch.inputCode) batch.logs.push(logRecord(span, "routr.needs_input", { "routr.needs_input.why": batch.inputCode }));
+        for (const text of output?.warnings ?? []) {
+          const code = warningCode(text); if (code) batch.logs.push(logRecord(span, "routr.warning", { "routr.warning.code": code }));
+        }
+        const queued = session.queue("traces", encodeTraces(batch.spans, { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: TRACE_ATTRIBUTES }));
+        if (batch.logs.length) session.queue("logs", encodeLogs(batch.logs, { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: OTEL_ATTRIBUTES }));
+        if (queued && batch.entry) { batch.index.sweep(); batch.index.add(batch.entry); }
+        if (queued && command === "cleanup" && ["removed", "closed", "absent"].includes((batch.output ?? result)?.state)) for (const id of batch.matched) batch.index.finish(id);
       }
-      const queued = session.queue("traces", encodeTraces(batch.spans, { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: TRACE_ATTRIBUTES }));
-      if (batch.logs.length) session.queue("logs", encodeLogs(batch.logs, { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: OTEL_ATTRIBUTES }));
-      for (const observation of batch.observations) session.queue("metrics", observation);
-      if (queued && batch.entry) { batch.index.sweep(); batch.index.add(batch.entry); }
-      if (queued && command === "cleanup" && ["removed", "closed", "absent"].includes((batch.output ?? result)?.state)) for (const id of batch.matched) batch.index.finish(id);
     } catch {} // A malformed record, full disk or revoked consent never changes a command result.
+    for (const observation of batch.observations) session.queue("metrics", observation);
     return result;
   };
   return context.run(batch, () => {

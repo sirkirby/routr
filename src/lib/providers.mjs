@@ -1,4 +1,3 @@
-import { warning } from "./warnings.mjs";
 // The System One providers routr can ask, and the decision models it has measured on each. One registry, the way
 // harnesses.mjs holds the harnesses: everything that differs between providers is here (where to send, how to sign the
 // request, how the answer comes back, what "ready" means), and systemone.mjs is the one client that uses it. All three
@@ -13,6 +12,7 @@ import { warning } from "./warnings.mjs";
 // - sure_at: the lowest bar on 0.5..0.8 at which the model's level, when "sure", is right at least as often as Jev's at
 //   0.8 (39 of 44, 89%), with confidence normalized as systemone.mjs does.
 // - torn: the level as routr presents it, on the 36 real runs: right, one level low, one level high.
+import { warning } from "./warnings.mjs";
 import { home } from "./runtime.mjs";
 import { join } from "node:path";
 

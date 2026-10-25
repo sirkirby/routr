@@ -1,4 +1,5 @@
 // Codes are assigned at the warning's origin, never inferred from outside text. Keep the public string unchanged.
+import { CARRIER_MAX } from "./runtime.mjs";
 export const WARNING_CODES = Object.freeze({
   config_missing: "No config; defaults used", config_unreadable: "Config unreadable; defaults used",
   config_share: "Invalid share; default used", config_channel: "Invalid update channel", config_otel: "Invalid export setting",
@@ -25,3 +26,5 @@ export function warning(code, text) {
   return text;
 }
 export const warningCode = (text) => origins.get(text);
+
+export const carrierWithheld = (name) => warning("carrier_withheld", `${name} was not passed to the worker: routr passes it only when it is at most ${CARRIER_MAX[name]} bytes of printable ASCII or tabs`);

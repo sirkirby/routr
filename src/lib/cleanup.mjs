@@ -1,6 +1,3 @@
-import { warning } from "./warnings.mjs";
-import { commandTrace, cleanupLink } from "./traces.mjs";
-import { loadConfig } from "./config.mjs";
 // cleanup: finish a worker in one call, so its worktree and pane do not outlive it. The guide used to give this as two
 // herdr steps, close the pane and then `herdr worktree remove`, and that order cannot work: a launch's worktree pane
 // is its workspace's only pane, closing it closes the workspace, and herdr's remove finds a worktree only by an open
@@ -16,6 +13,9 @@ import { loadConfig } from "./config.mjs";
 // pane was killed). Neither herdr nor git has a remove-if-unchanged, so right before the removal the commit is compared
 // with the one checked and then the panes are read again, last: a commit made after that comparison, or a worker
 // started after that read, is the limit this narrows and does not close (from the reviews of b32617a, 980f1b2, 31f9ddf).
+import { warning } from "./warnings.mjs";
+import { commandTrace, cleanupLink } from "./traces.mjs";
+import { loadConfig } from "./config.mjs";
 import { lstatSync, readFileSync, readlinkSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";

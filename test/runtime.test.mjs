@@ -590,3 +590,9 @@ test("release binaries do not load a .env or bunfig.toml from the folder they ru
   expect(seen([], join(dir, `default${ext}`))).toBe("loaded preloaded");
   expect(seen(NO_AUTOLOAD, join(dir, `release${ext}`))).toBe("unset unset");
 }, 60000);
+
+test("the per-turn runtime loads only node built-ins", () => {
+  const text = readFileSync(new URL("../src/lib/runtime.mjs", import.meta.url), "utf8");
+  const imports = new Bun.Transpiler({ loader: "js" }).scanImports(text);
+  expect(imports.every((entry) => entry.path.startsWith("node:"))).toBe(true);
+});

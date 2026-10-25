@@ -1,5 +1,5 @@
-import { warning } from "./warnings.mjs";
 // W3C Trace Context 1.1: future versions retain the first four fields; v00 has exactly 55 bytes.
+import { warning } from "./warnings.mjs";
 export function parseTraceparent(value) {
   if (typeof value !== "string") return null;
   const m = value.match(/^([0-9a-f]{2})-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})(.*)$/);

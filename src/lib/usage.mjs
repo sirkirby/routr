@@ -15,8 +15,8 @@ export const CODEX_SESSIONS = join(home(), ".codex/sessions");
 const now = () => Date.now() / 1000;
 
 // Source time is internal provenance, not a new command field. Stage 3 must not timestamp a cached read as now.
-const readingTimes = new WeakMap();
-export const usageReadingTime = (row) => readingTimes.get(row);
+const readingTimes = new WeakMap(), windowTimes = new WeakMap();
+export const usageReadingTime = (row, window) => windowTimes.get(window) ?? readingTimes.get(row);
 export const withUsageReadingTime = (row, time) => { if (Number.isSafeInteger(time) && time > 0) readingTimes.set(row, time); return row; };
 
 // One subscription's usage as every reader returns it. `ts` is when the harness reported it (null: nothing read);
@@ -29,7 +29,12 @@ export function summarize({ pool, source, ts = null, windows = [], note, cls, no
   const missing = failure ? { failure: usageFailure(failure.code), ...(kept ? { kept } : {}) } : {};
   if (!windows.length) return withUsageReadingTime({ pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? missing.failure?.why ?? "no usage data", ...(reason ? { reason } : {}), ...missing }, Math.round(ts * 1000));
   // A window whose reset time has passed since the snapshot has rolled over: treat as empty.
-  const live = windows.map((w) => (w.resetsAt && w.resetsAt < nowSec ? { ...w, usedPct: 0 } : w));
+  const live = windows.map((w) => {
+    if (!Number.isFinite(w.resetsAt) || w.resetsAt <= 0 || w.resetsAt >= nowSec) return w;
+    const reset = { ...w, usedPct: 0 };
+    // Stage 3 review 3: the inferred empty window starts at its reset, never back at the source snapshot's time.
+    windowTimes.set(reset, Math.round(w.resetsAt * 1000)); return reset;
+  });
   const headroom = Math.min(...live.map((w) => Math.max(0, 1 - w.usedPct / 100)));
   return withUsageReadingTime({ pool, source, ageSec, windows: live, headroom, class: cls, note, ...missing }, Math.round(ts * 1000));
 }
@@ -305,9 +310,9 @@ export async function readCodexLive({ exec = run, fallback = readCodex, nowSec =
   let kept;
   try { kept = fallback(); } catch {}
   const failure = usageFailure(code ?? (out == null ? "no_response" : "invalid_response"));
-  return { ...(kept ?? failedUsage("codex", "app-server")), source: "app-server", failure,
+  return withUsageReadingTime({ ...(kept ?? failedUsage("codex", "app-server")), source: "app-server", failure,
     ...(kept?.class === "metered" || kept?.headroom != null && !(Number.isFinite(kept.ageSec) && kept.ageSec >= 0 && kept.ageSec < LOCAL_FRESH_SEC) ? { kept: { source: "session log", ageSec: kept.ageSec } } : {}),
-    note: `${failure.why}${kept?.headroom != null || kept?.class === "metered" ? " Using the session log's last reading." : " Using the assumed headroom."}` };
+    note: `${failure.why}${kept?.headroom != null || kept?.class === "metered" ? " Using the session log's last reading." : " Using the assumed headroom."}` }, usageReadingTime(kept));
 }
 
 // Antigravity: `/usage` in print mode is answered without an agent turn (0 tokens, ~2 s). It reports two pools;

@@ -1,7 +1,7 @@
-import { warning } from "./warnings.mjs";
 // The commands for headless workers (headless.mjs): launch's start outside herdr, and `wait`, `send`, `workers`,
 // `stop` and `cleanup --worker`. Each talks to a worker's holder only through its channel (channel.mjs) and reads what
 // the holder wrote; none stops a process by a saved id. Answers carry report paths, never worker text.
+import { warning, carrierWithheld } from "./warnings.mjs";
 import { commandTrace, launchCarriers, launchCarrierWarnings, currentLaunch } from "./traces.mjs";
 import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
@@ -16,7 +16,7 @@ import { answer } from "./output.mjs";
 import { CLOSING, count, OFF } from "./wording.mjs";
 import { callGit } from "./process-boundary.mjs";
 import { dropCopy } from "./cleanup.mjs";
-import { CARRIERS, carrierWithheld, ensureParent, folderId, FORWARDED, home, lockIsStale, lockOwned, lockToken, releaseFileLock, probe as runProbe, realOr, realPath, savedCarriers, spawnSelf, takeLock } from "./runtime.mjs";
+import { CARRIERS, ensureParent, folderId, FORWARDED, home, lockIsStale, lockOwned, lockToken, releaseFileLock, probe as runProbe, realOr, realPath, savedCarriers, spawnSelf, takeLock } from "./runtime.mjs";
 
 const NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const RUNNING = new Set(["working", "waiting", "starting"]);

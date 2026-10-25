@@ -108,7 +108,7 @@ export function encodeTraces(spans, { resource: r, scope, schemaUrl, attributeTy
 
 export function encodeLogs(records, { resource: r, scope, schemaUrl, attributeTypes } = {}) {
   return { resourceLogs: [{ resource: { attributes: otlpAttributes(r ?? otelResource()) }, ...(schemaUrl ? { schemaUrl } : {}),
-    scopeLogs: [{ scope: otlpScope(scope), logRecords: records.map((v) => ({ timeUnixNano: nanos(v.timeUnixNano), eventName: v.eventName,
+    scopeLogs: [{ scope: otlpScope(scope), logRecords: records.map((v) => ({ timeUnixNano: nanos(v.timeUnixNano), observedTimeUnixNano: nanos(v.observedTimeUnixNano ?? v.timeUnixNano), flags: integer(v.flags ?? 0), eventName: v.eventName,
       severityNumber: integer(v.severityNumber), severityText: v.severityText, traceId: hex(v.traceId, 32), spanId: hex(v.spanId, 16), attributes: otlpAttributes(v.attributes, attributeTypes) })) }] }] };
 }
 
@@ -351,6 +351,12 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
         st.last_export = { at: new Date(now()).toISOString(), ok: false, sent: 0, refused: 0, error: "headers_invalid" };
         save(); healthy = false; break; // no claim, no retry loop, and never store the rejected value
       }
+      let gaugeResource;
+      if (file.signal === "metrics") try { gaugeResource = resource(otelGaugeInstanceId({ home }), process.platform); }
+      catch {
+        st.last_export = { at: new Date(now()).toISOString(), ok: false, sent: 0, refused: 0, error: "gauge_identity_unavailable" };
+        save(); healthy = false; break; // Stage 3 review 6: no folding or claims until the stream's identity is known.
+      }
       // Stage 3 decision 19: only this lock owner folds observations and writes each install/window stream.
       const metrics = file.signal === "metrics" ? metricBatch(sw.consent.slice(0, 8)) : null;
       if (metrics && !metrics.length) continue;
@@ -364,7 +370,7 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
         break;
       }
       const body = metrics ? Buffer.from(JSON.stringify(encodeHeadroom(metrics.map((m) => m.observation), {
-        resource: resource(otelGaugeInstanceId({ home }), process.platform), schemaUrl: "https://opentelemetry.io/schemas/1.44.0" }))) : readFileSync(`${file.file}.sending`);
+        resource: gaugeResource, schemaUrl: "https://opentelemetry.io/schemas/1.44.0" }))) : readFileSync(`${file.file}.sending`);
       if (!held()) break;
       const reply = await postOtel(new URL(`${sw.endpoint}/v1/${file.signal}`), body, headers, timeoutMs);
       // Review E: acknowledge the response under this lock before reading consent again. A broken config must stop

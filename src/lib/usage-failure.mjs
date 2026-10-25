@@ -1,6 +1,6 @@
-import { warning } from "./warnings.mjs";
 // The usage boundary's vocabulary, shared by live readers and the snapshot writer/reader. Outside exception and
 // screen text never supplies a sentence. Unknown failures are read_failed; no caller parses a note to classify one.
+import { warning } from "./warnings.mjs";
 export const USAGE_FAILURES = Object.freeze({
   internal_error: "An internal error stopped routr from ranking usage.",
   read_failed: "routr could not read this usage source.",

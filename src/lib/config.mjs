@@ -1,5 +1,5 @@
-import { warning } from "./warnings.mjs";
 // User config: plain preferences only. Nothing here describes a model, so nothing goes stale when models change.
+import { warning } from "./warnings.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { LEVELS } from "./questions.mjs";
