@@ -1,3 +1,4 @@
+import { warning } from "./warnings.mjs";
 // Facts about this process and routr's own files, and the small process and file primitives several modules share
 // (an atomic write, a lock, a detached copy of routr, a subprocess read). No imports beyond node: `statusline` loads
 // this on every Claude Code turn. It is the only module that imports node:child_process (a test holds every other file
@@ -343,7 +344,7 @@ const CARRIER_MAX = { TRACEPARENT: 512, TRACESTATE: 512, BAGGAGE: 8192 };
 const CARRIER_TEXT = /^[\t\x20-\x7e]*$/;
 // Shown in output where a carrier stands: its value never is.
 export const FORWARDED = "<forwarded>";
-export const carrierWithheld = (name) => `${name} was not passed to the worker: routr passes it only when it is at most ${CARRIER_MAX[name]} bytes of printable ASCII or tabs`;
+export const carrierWithheld = (name) => warning("carrier_withheld", `${name} was not passed to the worker: routr passes it only when it is at most ${CARRIER_MAX[name]} bytes of printable ASCII or tabs`);
 // { carriers, withheld }: those within the limits, by name, and the names of those present but outside them.
 // `present(v)` says whether a value counts as there at all. Checked by character first, so a length is a count of bytes.
 const checked = (get, present = (v) => v != null && v !== "") => {

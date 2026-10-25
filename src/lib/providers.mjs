@@ -1,3 +1,4 @@
+import { warning } from "./warnings.mjs";
 // The System One providers routr can ask, and the decision models it has measured on each. One registry, the way
 // harnesses.mjs holds the harnesses: everything that differs between providers is here (where to send, how to sign the
 // request, how the answer comes back, what "ready" means), and systemone.mjs is the one client that uses it. All three
@@ -187,7 +188,7 @@ export function decisionSettings(setting) {
   }
   if (!decision.length) decision.push({ provider: DEFAULT_PROVIDER, model: null });
   const fix = decisionCommand(decision);
-  return { decision, problems, warnings: problems.map(({ index, entry, why }) => `decision[${index}] ${JSON.stringify(entry)} dropped: ${why}. Set the ordered list with ${fix}`) };
+  return { decision, problems, warnings: problems.map(({ index, entry, why }) => warning("decision_dropped", `decision[${index}] ${JSON.stringify(entry)} dropped: ${why}. Set the ordered list with ${fix}`)) };
 }
 
 // What routr will ask: the provider and model from the config (`decision`), or ROUTR_DECISION_MODEL

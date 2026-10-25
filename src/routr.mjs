@@ -36,6 +36,7 @@ const failed = (e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160)
 const { loadConfig } = await import("./lib/config.mjs");
 
 async function main() {
+const { warning } = await import("./lib/warnings.mjs");
 // The commands that act, each given its own arguments as typed. Each returns the exit code.
 const ACT = {
   launch: async (args) => { const r = await (await import("./lib/launch.mjs")).launch(args); print(r); return r.ok ? 0 : 1; },
@@ -172,9 +173,9 @@ if (unknownFlag && !setAside) {
   briefRefusal(`Unknown ${mode} flag: ${unknownFlag}. Quote an inline brief or use routr ${mode} --task-file <path>.`);
   return 0;
 }
-if (flagLike.length) inputNotes.push(setAside
+if (flagLike.length) inputNotes.push(warning("brief_flag", setAside
   ? `${flagLike.join(" ")}: not ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} takes, so ignored; the brief was read from stdin`
-  : `${flagLike.join(" ")} looks like ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} does not take; read as part of the brief`);
+  : `${flagLike.join(" ")} looks like ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} does not take; read as part of the brief`));
 const brief = rest.length && !setAside ? rest.join(" ").trim() : piped;
 if (!brief) { briefRefusal("empty brief"); return 0; }
 print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given, { lead: leadSession, otel: { configPath } })));

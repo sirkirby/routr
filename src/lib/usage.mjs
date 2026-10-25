@@ -14,6 +14,11 @@ export { CLAUDE_SNAPSHOT };
 export const CODEX_SESSIONS = join(home(), ".codex/sessions");
 const now = () => Date.now() / 1000;
 
+// Source time is internal provenance, not a new command field. Stage 3 must not timestamp a cached read as now.
+const readingTimes = new WeakMap();
+export const usageReadingTime = (row) => readingTimes.get(row);
+export const withUsageReadingTime = (row, time) => { if (Number.isSafeInteger(time) && time > 0) readingTimes.set(row, time); return row; };
+
 // One subscription's usage as every reader returns it. `ts` is when the harness reported it (null: nothing read);
 // `cls` the class, from the windows when not given; `reason` a stable key for a note doctor acts on. `nowSec` is
 // injectable so the recorded shapes are tests that do not age.
@@ -22,11 +27,11 @@ export function summarize({ pool, source, ts = null, windows = [], note, cls, no
   cls ??= windows.length ? "included" : "unknown";
   const ageSec = ts ? Math.round(nowSec - ts) : null;
   const missing = failure ? { failure: usageFailure(failure.code), ...(kept ? { kept } : {}) } : {};
-  if (!windows.length) return { pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? missing.failure?.why ?? "no usage data", ...(reason ? { reason } : {}), ...missing };
+  if (!windows.length) return withUsageReadingTime({ pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? missing.failure?.why ?? "no usage data", ...(reason ? { reason } : {}), ...missing }, Math.round(ts * 1000));
   // A window whose reset time has passed since the snapshot has rolled over: treat as empty.
   const live = windows.map((w) => (w.resetsAt && w.resetsAt < nowSec ? { ...w, usedPct: 0 } : w));
   const headroom = Math.min(...live.map((w) => Math.max(0, 1 - w.usedPct / 100)));
-  return { pool, source, ageSec, windows: live, headroom, class: cls, note, ...missing };
+  return withUsageReadingTime({ pool, source, ageSec, windows: live, headroom, class: cls, note, ...missing }, Math.round(ts * 1000));
 }
 export const failedUsage = (pool, source, code = "read_failed") => summarize({ pool, source, failure: usageFailure(code) });
 

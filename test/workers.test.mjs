@@ -1337,7 +1337,8 @@ function traceWorld(over = {}) {
   const dir = join(w.home, ".cache/routr/otel/traces");
   writeFileSync(join(w.home, ".cache/routr/otel/sender.lock"), JSON.stringify({ pid: process.pid, token: "fixture" }));
   const batches = () => readdirSync(dir).filter((n) => n.endsWith(".json")).map((n) => JSON.parse(readFileSync(join(dir, n), "utf8")));
-  return { ...w, config, configPath, batches, spans: () => batches().flatMap((b) => b.resourceSpans[0].scopeSpans[0].spans) };
+  const logs = () => readdirSync(join(w.home, ".cache/routr/otel/logs")).filter((n) => n.endsWith(".json")).flatMap((n) => JSON.parse(readFileSync(join(w.home, ".cache/routr/otel/logs", n))).resourceLogs[0].scopeLogs[0].logRecords);
+  return { ...w, config, configPath, batches, logs, spans: () => batches().flatMap((b) => b.resourceSpans[0].scopeSpans[0].spans) };
 }
 
 test("the holder queues one safe invoke_agent span when a turn ends, before its process exits", async () => {
@@ -1357,6 +1358,15 @@ test("the holder queues one safe invoke_agent span when a turn ends, before its 
     for (const a of turn.attributes) expect(TRACE_ATTRIBUTES[a.key]).toBeDefined();
     expect(JSON.stringify(w.batches())).not.toMatch(/PRIVATE-BRIEF|PRIVATE-SEND|BAGGAGE_PRIVATE_MARKER/);
     expect(w.spans().filter((s) => s.name === "invoke_agent traced")).toHaveLength(1);
+    const logs = w.logs().filter((l) => l.eventName === "routr.worker.state");
+    expect(logs.length).toBeGreaterThan(0);
+    expect(logs.some((l) => wireAttrs(l)["routr.worker.state.from"] === "working" && wireAttrs(l)["routr.worker.state.to"] === "waiting")).toBe(true);
+    for (const l of logs) {
+      expect(l).toMatchObject({ severityNumber: 9, severityText: "INFO", traceId: turn.traceId, spanId: turn.spanId });
+      expect(l.body).toBeUndefined(); expect(wireAttrs(l)["routr.turn"]).toBe(1);
+    }
+    expect(JSON.stringify(w.logs())).not.toMatch(/PRIVATE-BRIEF|PRIVATE-SEND|BAGGAGE_PRIVATE_MARKER/);
+
   } finally { w.release(); writeFileSync(w.env.FAKE_EXIT_GATE, ""); w.run(["stop", "--name", "traced"]); await w.settled("traced"); w.run(["cleanup", "--worker", "traced"]); }
 }, 30000);
 

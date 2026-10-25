@@ -1,4 +1,5 @@
-import { commandTrace, launchCarriers, launchCarrierWarnings, adviceForLaunch, completeLaunch } from "./traces.mjs";
+import { warning } from "./warnings.mjs";
+import { inputNeeded, commandTrace, launchCarriers, launchCarrierWarnings, adviceForLaunch, completeLaunch } from "./traces.mjs";
 import { takeLeadSession } from "./trace-context.mjs";
 import { randomUUID } from "node:crypto";
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -103,7 +104,8 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
   // sent: it shows the brief), herdr's reading when there is one, and `next`: how to carry on once it has answered.
   // It decides, and asks the user only for what is not its to answer (a password, a sign-in, a folder it did not make).
   let resumeSteps = () => [], rerun = () => null, recordOptions = null, cleanupArgs = null, adopted = false, planned = false;
-  const needsInput = (why, text, more = {}) => {
+  const needsInput = (code, why, text, more = {}) => {
+    inputNeeded(code);
     out.ok = false; out.state = "needs_input";
     const { next: instruction, ...detail } = more;
     out.needs_input = { why, ...detail };
@@ -177,9 +179,9 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         return found.carriers;
       }
       const present = CARRIERS.filter((n) => Object.hasOwn(found.carriers, n) || found.withheld.includes(n));
-      if (present.length) out.warnings.push(found.launchSpan
+      if (present.length) out.warnings.push(warning("carriers_not_passed", found.launchSpan
         ? "This launch did not pass its routr launch span or carriers to the worker: an existing pane keeps the environment its shell, or the agent already running there, started with, and routr never types a carrier into a shell"
-        : PASSED_NONE(present));
+        : PASSED_NONE(present)));
       return {};
     };
     const startArgs = (pane, timeout) => o.kind === "cursor" && SHELLS[shell].cursor
@@ -260,7 +262,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     const shellReady = async (expectedCwd) => {
       const r = await waitForShell({ ...pane(), read: readPane }, { sleep, now, remaining, cwd: expectedCwd, refuseBusy: Boolean(o.pane && !expectedCwd),
         onShell: (name) => { shell = shellFamily(name); } });
-      if (!r.ok) return needsInput(r.why, r.text);
+      if (!r.ok) return needsInput("shell_not_ready", r.why, r.text);
       shellCwd = r.cwd;
       step("shell_ready", true, `Interactive ${shell} shell in ${r.cwd}`); return null;
     };
@@ -286,7 +288,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       // A rule matched for another state is not the question's reason, so it is not given as one.
       const reading = disagreed ? ` (herdr's state says blocked, but its rules read the screen as ${stateWords(reads)}${rule ? ` by ${rule}` : ""}${rules ? `, rules ${rules}` : ""})`
         : rule ? ` (herdr reads it as ${rule}${rules ? `, rules ${rules}` : ""})` : "";
-      return needsInput(`${h.label} is waiting at a question before it can start${reading}.`, text,
+      return needsInput("startup_question", `${h.label} is waiting at a question before it can start${reading}.`, text,
         { herdr: { state: "blocked", ...(rule && !disagreed ? { rule } : {}), ...(disagreed ? { explained: reads } : {}), ...(rules ? { rules } : {}) }, ...(h.startup ? { note: h.startup } : {}) });
     };
     // Only an idle agent of that kind, in that folder, is adopted (from the review of #48): one elsewhere would get a
@@ -302,11 +304,11 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       if (occupant?.agent) {
         const screen = async () => { try { return await readPane(); } catch { return null; } };
         const other = { next: "Choose another pane, or leave --pane off" };
-        const notWaiting = async (state) => needsInput(`The ${o.kind} in the pane is ${stateWords(state)}, not waiting for a task`, await screen(), { next: [runNext("Wait until this worker is idle before repeating the launch.", ["herdr", "agent", "wait", out.pane, "--until", "idle"]), rerun()] });
-        if (occupant.agent !== o.kind) return needsInput(`The pane runs ${occupant.agent}, not ${o.kind}`, await screen(), other);
+        const notWaiting = async (state) => needsInput("worker_busy", `The ${o.kind} in the pane is ${stateWords(state)}, not waiting for a task`, await screen(), { next: [runNext("Wait until this worker is idle before repeating the launch.", ["herdr", "agent", "wait", out.pane, "--until", "idle"]), rerun()] });
+        if (occupant.agent !== o.kind) return needsInput("wrong_harness", `The pane runs ${occupant.agent}, not ${o.kind}`, await screen(), other);
         const where = occupant.foreground_cwd ?? occupant.cwd;
         const same = (() => { try { return realPath(where) === realPath(out.cwd); } catch { return false; } })();
-        if (!same) return needsInput(`The ${o.kind} in the pane works in ${where ?? "a folder herdr does not report"}, not ${out.cwd}`, await screen(), other);
+        if (!same) return needsInput("wrong_folder", `The ${o.kind} in the pane works in ${where ?? "a folder herdr does not report"}, not ${out.cwd}`, await screen(), other);
         let status = occupant.agent_status ?? "unknown";
         if (status === "blocked") {
           // herdr's state may be stale (above): its live reading decides, once. Idle (or done) is a block already answered.
@@ -350,7 +352,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       // across from the main checkout, at the same relative path.
       for (const rel of o.copy ?? []) {
         const from = join(repoCwd, rel), to = join(out.cwd, rel);
-        if (!existsSync(from)) { out.warnings.push(`--copy ${rel}: not found in ${repoCwd}; skipped`); continue; }
+        if (!existsSync(from)) { out.warnings.push(warning("copy_missing", `--copy ${rel}: not found in ${repoCwd}; skipped`)); continue; }
         ensureParent(to); cpSync(from, to, { recursive: true });
         step("copy", true, `Copied ${rel} into the worktree`);
       }
@@ -438,7 +440,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
           if (!got.ok && got.data?.error?.code !== "agent_not_found") throw processError(got);
           const agent = got.data?.result?.agent;
           // Close only a pane this launch made: one passed in with --pane may hold someone else's work (from the review of #48).
-          if (agent && agent.agent !== o.kind) return needsInput(`The pane runs ${agent.agent}, not ${o.kind}`, text, { next: createdPane ? `Close the pane this launch made (herdr pane close ${out.pane}) and launch again` : "Leave that pane; choose another, or leave --pane off" });
+          if (agent && agent.agent !== o.kind) return needsInput("wrong_harness", `The pane runs ${agent.agent}, not ${o.kind}`, text, { next: createdPane ? `Close the pane this launch made (herdr pane close ${out.pane}) and launch again` : "Leave that pane; choose another, or leave --pane off" });
           if (agent?.agent_status === "blocked") {
             const x = await explain();
             if (x.reads === "blocked" || typeof x.reads !== "string") return blockedAtStart(h, text, x);
@@ -500,10 +502,10 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         doNext("The task was sent: read the pane before answering a question or deciding whether it arrived.", templateCommand(["herdr", "agent", "read", out.pane])),
         doNext("Press Enter only if the task sits unsent in the input box; inspect the pane first.", templateCommand(["herdr", "agent", "send-keys", out.pane, "enter"])),
         doNext("Do not launch it again while the task may be there. If the input box is empty and the agent never started, it never arrived: send it with the same launch template.", again.kind === "run" ? templateCommand(again.argv) : again.template)] };
-      if (agent?.agent !== o.kind) { unconfirmed = true; return needsInput("Cannot confirm the prompted agent's identity", null, sent); }
+      if (agent?.agent !== o.kind) { unconfirmed = true; return needsInput("identity_unknown", "Cannot confirm the prompted agent's identity", null, sent); }
       if (status === "blocked") {
         step("prompt", r.ok, `Submitted ${prompt.length} characters; the agent is asking something`);
-        return needsInput("The worker is asking a question or an approval right after its prompt", null, { ...sent, herdr: { state: "blocked" } });
+        return needsInput("worker_question", "The worker is asking a question or an approval right after its prompt", null, { ...sent, herdr: { state: "blocked" } });
       }
       // Working is always a start. Idle or done count when herdr's wait (the prompt's own, or the one after a quiet
       // prompt) saw the agent working first: a short task can finish before this read (from the review of #46).
@@ -513,7 +515,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         return null;
       }
       step("prompt", false, `Sent once; the agent never started (${stateWords(status)})`);
-      return needsInput(`The task was sent once and the agent has not started within the timeout (${stateWords(status)}); launch never sends it twice.`, null, { ...sent, herdr: { state: status } });
+      return needsInput("start_unconfirmed", `The task was sent once and the agent has not started within the timeout (${stateWords(status)}); launch never sends it twice.`, null, { ...sent, herdr: { state: status } });
     };
     let text = null;
     if (!adopted) {
@@ -540,7 +542,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       const a = ["agent", "rename", out.pane, o.name];
       logCommand(out.ran, command(a));
       let renamed = null; try { renamed = await safeRun(a, 2000); } catch {}
-      if (!renamed?.ok) { out.warnings.push(`Could not rename the adopted agent to ${o.name}`); out.next.push(doNext(`Address this worker by its pane, ${out.pane}`)); }
+      if (!renamed?.ok) { out.warnings.push(warning("rename_failed", `Could not rename the adopted agent to ${o.name}`)); out.next.push(doNext(`Address this worker by its pane, ${out.pane}`)); }
     }
     if (stop) return stop;
   } catch (e) {
@@ -570,11 +572,11 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     }
     if (configDir && !startAttempted) {
       try { rmSync(configDir, { recursive: true, force: true }); step("cleanup_config", true, "Removed unused Cursor config"); }
-      catch (e) { out.warnings.push(`Could not remove unused Cursor config ${configDir}`); }
+      catch (e) { out.warnings.push(warning("cursor_config_left", `Could not remove unused Cursor config ${configDir}`)); }
     }
-    if (createdPane && !out.ok) { out.warnings.push(`Pane ${out.pane} was left alive`); if (out.state !== "needs_input") out.next.push(doNext(`Inspect pane ${out.pane} before closing it or retrying`)); }
-    if (configDir && startAttempted && !out.ok) { out.warnings.push(`Cursor config ${configDir} is retained for a possible running worker`); out.next.push(doNext(`Remove the private Cursor config ${configDir} if the launch command did not run`)); }
-    if (promptAttempted && out.state !== "prompted") { out.warnings.push("Prompt may have been submitted"); out.next.push(out.worker ? runNext("Look at the worker before retrying.", ["routr", "workers", "--name", out.name]) : doNext(`Inspect pane ${out.pane} before retrying`)); }
+    if (createdPane && !out.ok) { out.warnings.push(warning("pane_left", `Pane ${out.pane} was left alive`)); if (out.state !== "needs_input") out.next.push(doNext(`Inspect pane ${out.pane} before closing it or retrying`)); }
+    if (configDir && startAttempted && !out.ok) { out.warnings.push(warning("cursor_config_retained", `Cursor config ${configDir} is retained for a possible running worker`)); out.next.push(doNext(`Remove the private Cursor config ${configDir} if the launch command did not run`)); }
+    if (promptAttempted && out.state !== "prompted") { out.warnings.push(warning("prompt_uncertain", "Prompt may have been submitted")); out.next.push(out.worker ? runNext("Look at the worker before retrying.", ["routr", "workers", "--name", out.name]) : doNext(`Inspect pane ${out.pane} before retrying`)); }
     out.headline = out.state === "planned" ? `routr: planned ${out.kind} launch, nothing ran${out.error ? `; a real launch would refuse: ${out.error}` : ""}`
       : out.state === "prompted" ? `routr: ${out.name} (${out.kind}) took its task${out.worker ? ", running headless" : ` in pane ${out.pane}`}`
       : out.state === "ready" ? `routr: ${out.name} is ready in pane ${out.pane}; no task sent`

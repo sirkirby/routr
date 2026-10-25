@@ -1,3 +1,4 @@
+import { warning } from "./warnings.mjs";
 import { commandTrace, cleanupLink } from "./traces.mjs";
 import { loadConfig } from "./config.mjs";
 // cleanup: finish a worker in one call, so its worktree and pane do not outlive it. The guide used to give this as two
@@ -248,7 +249,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
       const r = await gitRun(out.cwd, ["worktree", "list", "--porcelain"]);
       if (!r?.ok) throw new Error(`git found no repository at ${out.cwd} it could list the worktrees of (${r?.code ?? "git_unreachable"})`);
       list = worktreesFromGit(r.out);
-      out.warnings.push("Outside herdr, cleanup cannot see whether anything runs in a worktree's folder: it checks git's state only");
+      out.warnings.push(warning("cleanup_unseen", "Outside herdr, cleanup cannot see whether anything runs in a worktree's folder: it checks git's state only"));
     } else list = (await herdr(["worktree", "list", "--cwd", out.cwd])).data?.result ?? {};
     const source = list.source?.source_checkout_path ?? list.source?.repo_root;
     if (!source) throw new Error(`herdr found no git repository at ${out.cwd}`);
@@ -275,7 +276,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
       out.ok = true; out.state = "absent";
       step("worktree", true, `No worktree of ${source} ${o.worktree != null ? `is on branch ${o.worktree}` : `at ${o.path}`}: nothing to remove`);
       if (linked.length) {
-        out.warnings.push(`Its other worktrees: ${few(linked.map((x) => x.branch ?? x.path))}`);
+        out.warnings.push(warning("other_worktrees", `Its other worktrees: ${few(linked.map((x) => x.branch ?? x.path))}`));
         out.next.push(runNext("List the repository’s remaining worktrees.", ["routr", "cleanup", "--cwd", out.cwd]));
       }
       return out;
@@ -315,7 +316,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
         const d = await gitRun(source, ["branch", "-d", w.branch]);
         out.branch = { name: w.branch, deleted: d?.code === 0 };
         if (d?.code === 0) step("branch", true, `Deleted branch ${w.branch}`);
-        else { step("branch", false, `Kept branch ${w.branch}`); out.warnings.push(`Branch ${w.branch} was kept: git deletes only a merged branch`); }
+        else { step("branch", false, `Kept branch ${w.branch}`); out.warnings.push(warning("branch_unmerged", `Branch ${w.branch} was kept: git deletes only a merged branch`)); }
       } else out.branch = { name: w.branch, deleted: false };
     }
   } catch (e) {

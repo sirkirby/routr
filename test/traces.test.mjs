@@ -15,7 +15,8 @@ import * as channel from "../src/lib/channel.mjs";
 import { LaunchIndex } from "../src/lib/launch-index.mjs";
 import { traceIdentity } from "../src/lib/trace-identity.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
-import { TRACE_ATTRIBUTES, ERROR_CODES, workerTurn, commandTrace, linkWorker, usageSpans, decisionSpan } from "../src/lib/traces.mjs";
+import { OTEL_ATTRIBUTES, ERROR_CODES, workerTurn, commandTrace, linkWorker, usageSpans, decisionSpan } from "../src/lib/traces.mjs";
+import { summarize } from "../src/lib/usage.mjs";
 import { readUsage } from "../src/lib/harnesses.mjs";
 
 function exporting(env = {}) {
@@ -430,7 +431,7 @@ test("every command's queue, launch index and worker metadata exclude content an
   writeFileSync(advice, JSON.stringify({ id: "abc12345", brief_sha: briefSha(markers[0]), mode: "dispatch", level: "standard" }));
   mkdirSync(join(x.home, ".config/routr"), { recursive: true });
   writeFileSync(join(x.home, ".config/routr/env"), `ROUTR_OTEL_HEADERS=Authorization=${markers[2]}`);
-  const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), models: async () => null, read: async () => [], askFn: (state, questions, o) => ask(state, questions, { ...o, env: { TYPESAFE_API_KEY: markers[1] }, fetchFn: replyFetch("typesafe", "valid") }) };
+  const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), models: async () => null, read: async () => [summarize({ pool: "claude", source: "statusline", ts: Date.now() / 1000, windows: [{ name: "five_hour", usedPct: 25 }], note: markers[4] })], askFn: (state, questions, o) => ask(state, questions, { ...o, env: { TYPESAFE_API_KEY: markers[1] }, fetchFn: replyFetch("typesafe", "valid") }) };
   await adviseCommand("dispatch", markers[0], { config: x.config }, {}, opts);
   await adviseCommand("subagent", markers[0], { config: x.config }, {}, opts);
   await checkCommand({ brief, report }, { ...opts, config: x.config });
@@ -439,6 +440,7 @@ test("every command's queue, launch index and worker metadata exclude content an
   let tick = 0;
   await launch(["--kind", "claude", "--name", "fixture", "--model", markers[6], "--direction", "right"], { ...opts, env: { ...x.env, HERDR_ENV: "1" }, ready: async () => null, models: async () => null, now: () => tick, sleep: async (ms) => { tick += ms; }, run: async (a) => ({ ok: true, data: { result: a[1] === "split" ? { pane: { pane_id: "w1:p2" } } : a[1] === "read" ? { text: markers[5] + "\nSource it? [y/N]" } : a[1] === "process-info" ? { process_info: { shell_pid: 1, foreground_processes: [{ pid: 1 }] } } : a[1] === "get" ? { pane: { pane_id: "w1:p2", terminal_id: "term-1" } } : {} } }) });
   await sendCommand(["--task", markers[0]], opts); await waitCommand(["--timeout", "0"], opts); await workersCommand([], opts); await stopCommand([], opts); await cleanup(["--unknown"], opts);
+  for (const signal of ["logs", "metrics"]) expect(readdirSync(join(x.home, ".cache/routr/otel", signal)).length).toBeGreaterThan(0);
   const names = x.spans().map((s) => s.name);
   for (const command of ["dispatch", "subagent", "check", "usage", "record", "launch", "send", "wait", "workers", "stop", "cleanup"]) expect(names).toContain(`routr ${command}`);
   const index = new LaunchIndex({ home: x.home }); expect(index.entries()).toHaveLength(1);
@@ -467,7 +469,7 @@ test("every command's queue, launch index and worker metadata exclude content an
 test("the published attribute names and types and error codes equal the shipped allow-lists in both directions", () => {
   const doc = readFileSync(new URL("../docs/opentelemetry.md", import.meta.url), "utf8");
   const fields = Object.fromEntries([...doc.matchAll(/^\| `([^`]+)` \| `(string\[\]|string|boolean|int|double)` \|/gm)].map((m) => [m[1], m[2]]));
-  expect(fields).toEqual({ ...OTEL_RESOURCE_ATTRIBUTES, ...TRACE_ATTRIBUTES });
+  expect(fields).toEqual({ ...OTEL_RESOURCE_ATTRIBUTES, ...OTEL_ATTRIBUTES });
   const errors = doc.match(/<!-- span-errors -->\s*([^]*?)\s*<!-- \/span-errors -->/)?.[1].match(/`[^`]+`/g)?.map((s) => s.slice(1, -1));
   expect(errors?.sort()).toEqual([...ERROR_CODES].sort());
 });

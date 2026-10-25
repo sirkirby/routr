@@ -448,18 +448,24 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   // Activity alone is written at most once a second: one that comes sooner is written when that second is up, so a
   // long turn's last tool is not held back until the turn ends.
   const save = (patch = {}, { quiet = false } = {}) => {
+    const previousState = st.state;
     st = { ...st, ...patch };
     const now = Date.now();
     if (quiet && now - lastWrite < 1000) { later ??= setTimeout(() => { later = null; save(); }, 1000 - (now - lastWrite)); return true; }
     if (later) { clearTimeout(later); later = null; }
     lastWrite = now; st.updated_at = new Date(now).toISOString();
-    try { writeJsonAtomic(join(dir, "state.json"), st); return true; } catch { return false; }
+    try {
+      writeJsonAtomic(join(dir, "state.json"), st);
+      // Stage 3: observe persisted transitions; optional queue I/O must follow the holder's own state write.
+      if (patch.state && previousState !== st.state) (trace ?? lastTrace)?.state(previousState, st.state);
+      return true;
+    } catch { return false; }
   };
   const queue = [];
   let child = null, conn = null, inTurn = false, stopping = null, stopAsked = false, settled = false, server = null, endpoint = null, started = null, answering = 0;
   // Messages written to the harness between turns: counted on the turn they start, once it starts it. `sending`: messages
   // on their way in, which keep its input open until their answer is back.
-  let pending = 0, sending = 0, refusing = null, trace = null, promptMessages = 0;
+  let pending = 0, sending = 0, refusing = null, trace = null, lastTrace = null, promptMessages = 0;
   const turnRow = () => st.turns.at(-1);
   const turnTrace = () => (trace ??= newTurnTrace(st.turn + (inTurn ? 0 : 1)));
   const turnCarriers = () => turnTrace().carriers;
@@ -476,7 +482,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const endTurn = (outcome, text) => {
     if (!inTurn) return;
     inTurn = false;
-    const completed = trace, number = st.turn, prompted = promptMessages, conversation = st.session_id; trace = null;
+    const completed = trace, number = st.turn, prompted = promptMessages, conversation = st.session_id; lastTrace = trace; trace = null;
     let report = null;
     if (text) { try { mkdirSync(join(dir, "reports"), { recursive: true, mode: 0o700 }); writeFileSync(reportPath(name, st.turn), text, { mode: 0o600 }); report = reportPath(name, st.turn); } catch {} }
     save({ ...setRow({ outcome, report, ended_at: new Date().toISOString() }), state: child ? "waiting" : st.state });

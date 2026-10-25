@@ -1,3 +1,4 @@
+import { warning } from "./warnings.mjs";
 // The commands for headless workers (headless.mjs): launch's start outside herdr, and `wait`, `send`, `workers`,
 // `stop` and `cleanup --worker`. Each talks to a worker's holder only through its channel (channel.mjs) and reads what
 // the holder wrote; none stops a process by a saved id. Answers carry report paths, never worker text.
@@ -27,7 +28,7 @@ const SANDBOXES = [["SANDBOX_RUNTIME", "Claude Code's Bash sandbox"], ["CODEX_SA
 export const sandboxOf = (env) => SANDBOXES.find(([k]) => env[k])?.[1] ?? null;
 const SANDBOXED = (which) => `this command runs inside ${which}, and a worker started from there cannot write routr's state or reach its provider; run it outside the sandbox (in Claude Code, as a command the sandbox does not wrap; in Codex, with sandbox_mode danger-full-access or an approved escalation)`;
 // wait, workers and stop read the channel, which a sandbox may block: they say what it may have made them see.
-const sandboxNote = (env) => { const s = sandboxOf(env); return s ? [`this command runs inside ${s}, which may keep it from reaching a worker's channel: a worker it reads as unreachable may be running`] : []; };
+const sandboxNote = (env) => { const s = sandboxOf(env); return s ? [warning("sandbox", `this command runs inside ${s}, which may keep it from reaching a worker's channel: a worker it reads as unreachable may be running`)] : []; };
 const TOO_BIG = `the message is over ${MESSAGE_MAX / 1024 / 1024} MB, more than a worker's channel takes; shorten it or point the worker at a file`;
 
 // Every name a worker can be given, the folders that exist: the holder writes state, launch the worker file.
@@ -148,7 +149,7 @@ function copyInto(from, root, rel, made) {
 export async function unmakeWorktree(wt, out) {
   const exists = async () => (await git(wt.source, ["rev-parse", "--verify", "--quiet", `refs/heads/${wt.branch}`])).ok;
   if (!wt.added) {
-    if (await exists()) out.warnings.push(`Branch ${wt.branch} exists in ${wt.source}, but git did not make this launch's worktree, so whose branch it is cannot be told; it was left`);
+    if (await exists()) out.warnings.push(warning("branch_unowned", `Branch ${wt.branch} exists in ${wt.source}, but git did not make this launch's worktree, so whose branch it is cannot be told; it was left`));
     return;
   }
   for (const rel of wt.files) dropCopy(wt.path, wt.copySource, rel);
@@ -158,8 +159,8 @@ export async function unmakeWorktree(wt, out) {
   const r = await cleanup(["--cwd", wt.source, "--path", wt.path], { env: {} });
   const removed = ["removed", "absent"].includes(r.state);
   const branchGone = removed && (await git(wt.source, ["update-ref", "-d", `refs/heads/${wt.branch}`, wt.start])).ok;
-  if (!removed) out.warnings.push(`The worktree ${wt.path} (branch ${wt.branch}) this launch made was left: run routr cleanup --cwd ${wt.source} --path ${wt.path}`);
-  else if (!branchGone && await exists()) out.warnings.push(`Branch ${wt.branch} this launch made was left, as it no longer points at ${wt.start}: run git -C ${wt.source} branch -d ${wt.branch} if it is not needed`);
+  if (!removed) out.warnings.push(warning("worktree_left", `The worktree ${wt.path} (branch ${wt.branch}) this launch made was left: run routr cleanup --cwd ${wt.source} --path ${wt.path}`));
+  else if (!branchGone && await exists()) out.warnings.push(warning("branch_changed", `Branch ${wt.branch} this launch made was left, as it no longer points at ${wt.start}: run git -C ${wt.source} branch -d ${wt.branch} if it is not needed`));
 }
 
 const andList = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs.at(-1)}` : xs[0]);
@@ -216,7 +217,7 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
       // A worktree holds tracked files only: --copy brings named untracked files across, at the same relative path.
       for (const rel of o.copy ?? []) {
         const from = join(out.cwd, rel);
-        if (!existsSync(from)) { out.warnings.push(`--copy ${rel}: not found in ${out.cwd}; skipped`); continue; }
+        if (!existsSync(from)) { out.warnings.push(warning("copy_missing", `--copy ${rel}: not found in ${out.cwd}; skipped`)); continue; }
         copyInto(from, wt.path, rel, wt);
         step("copy", true, `Copied ${rel} into the worktree`);
       }
@@ -439,14 +440,14 @@ async function stopCommandBody(args, { env = process.env } = {}) {
       out.headline = out.ok ? `routr: stopped ${name}` : `routr: ${name} was told to stop and has not finished exiting`;
       if (!out.ok) out.next.push(runNext("Look again in a moment.", ["routr", "workers", "--name", name]));
       // Messages it had queued and never sent: dropped by the stop. The lead sends them again if they still apply.
-      if (Number.isInteger(r.dropped) && r.dropped > 0) out.warnings.push(`${count(r.dropped, "queued message")} ${r.dropped === 1 ? "was" : "were"} dropped by the stop and never reached ${name}: send ${r.dropped === 1 ? "it" : "them"} again with routr send if ${r.dropped === 1 ? "it still applies" : "they still apply"}`);
+      if (Number.isInteger(r.dropped) && r.dropped > 0) out.warnings.push(warning("messages_dropped", `${count(r.dropped, "queued message")} ${r.dropped === 1 ? "was" : "were"} dropped by the stop and never reached ${name}: send ${r.dropped === 1 ? "it" : "them"} again with routr send if ${r.dropped === 1 ? "it still applies" : "they still apply"}`));
     } else if (["released", "none", "abandoned"].includes(p.state) && !left) {
       out.ok = true; out.state = "absent"; out.headline = `routr: ${name} is not running`;
     } else {
       out.state = p.state === "unreachable" ? "unreachable" : "lost";
       out.headline = p.state === "unreachable" ? `routr: ${name}'s process does not answer`
         : `routr: ${name}'s process is gone${left ? `, and its harness may still be running (process group ${pg()})` : ""}`;
-      out.warnings.push("routr stops a worker only through its own process, never by a saved process id: it cannot see whether the harness is still running");
+      out.warnings.push(warning("process_unseen", "routr stops a worker only through its own process, never by a saved process id: it cannot see whether the harness is still running"));
       out.next.push(doNext(left ? `Look at process group ${pg()} (${lookAt(pg())}) and stop it yourself if it is this worker's, then clean the worker up.` : "Clean the worker up once you are sure nothing of it runs."));
     }
     out.next.push(runNext("Remove its run folder and reports once you have what you need from them.", ["routr", "cleanup", "--worker", name]));
@@ -491,7 +492,7 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
       // The worker's own process and its harness's process group were checked above; what that cannot see is said here.
       const label = HARNESSES[w.kind]?.label ?? "the harness";
       out.warnings.push(...r.warnings.filter((x) => !/cannot see whether anything runs/.test(x)),
-        `cleanup cannot see a command ${name} started that left ${label}'s process group or detached itself${process.platform === "win32" ? ` (on Windows, anything once ${label} has ended)` : ""}: stop any such command before cleanup`);
+        warning("detached_unseen", `cleanup cannot see a command ${name} started that left ${label}'s process group or detached itself${process.platform === "win32" ? ` (on Windows, anything once ${label} has ended)` : ""}: stop any such command before cleanup`));
       const why = r.steps.find((x) => x.step === "refused")?.detail;
       if (!["removed", "absent", "planned"].includes(r.state)) return refuse(r.state === "failed" ? `its worktree could not be checked (${r.error})` : why ?? r.headline, r.next);
       // git lists no worktree there, yet a folder is: whose it is cannot be told, so it and the worker's record stay.
@@ -509,7 +510,7 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
     rmSync(runDir(name), { recursive: true, force: true });
     step("remove", true, `Removed ${runDir(name)} and its reports`);
     out.ok = true; out.state = "removed"; out.headline = `routr: removed worker ${name}`;
-    if (!w.worktree) out.warnings.push(`${name} worked in ${w.cwd}: its changes there are yours to check and keep`);
+    if (!w.worktree) out.warnings.push(warning("work_kept", `${name} worked in ${w.cwd}: its changes there are yours to check and keep`));
     return out;
   });
 }

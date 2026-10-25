@@ -1,7 +1,10 @@
-// Only this boundary builds shipped spans. Raw command output never enters an OTLP encoder.
+// Only this boundary builds shipped spans, events and usage observations. Raw output never enters an OTLP encoder.
+import { IDENTITY_ATTRIBUTES, LOG_EVENTS, NEEDS_INPUT_CODES, OTEL_ATTRIBUTES, TRACE_ATTRIBUTES, signalAttributes, typed } from "./otel-schema.mjs";
+export { LOG_EVENTS, NEEDS_INPUT_CODES, OTEL_ATTRIBUTES, TRACE_ATTRIBUTES } from "./otel-schema.mjs";
+import { warning, warningCode } from "./warnings.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
-import { encodeTraces, otelSession, otelSwitch } from "./otel.mjs";
+import { encodeTraces, encodeLogs, headroomObservation, otelSession, otelSwitch } from "./otel.mjs";
 import { loadConfig } from "./config.mjs";
 import { carriersFrom, carrierWithheld, savedCarriers } from "./runtime.mjs";
 import { parseTraceparent, leadSession, sessionId } from "./trace-context.mjs";
@@ -10,7 +13,8 @@ import { HARNESSES, SOURCES } from "./harnesses.mjs";
 import { CHECKS, FACTS, LEVELS, questions } from "./questions.mjs";
 import { DECISION_CODES, decisionTarget, PROVIDER_NAMES, KNOWN_MODELS } from "./providers.mjs";
 import { OUTCOME_CAUSES } from "./ledger.mjs";
-import { USAGE_FAILURES } from "./usage-failure.mjs";
+import { usageReadingTime } from "./usage.mjs";
+import { usageFailure, USAGE_FAILURES } from "./usage-failure.mjs";
 import { traceIdentity, pathHash } from "./trace-identity.mjs";
 import { LaunchIndex, launchContext } from "./launch-index.mjs";
 import { callHerdr, herdrId } from "./process-boundary.mjs";
@@ -19,19 +23,18 @@ const context = new AsyncLocalStorage(), nanos = () => BigInt(Date.now()) * 1000
 export function traceOutput(result) { const c = context.getStore(); if (c) c.output = result; }
 const subscriptions = Object.keys(HARNESSES);
 export const ERROR_CODES = [...new Set([...DECISION_CODES, ...Object.keys(USAGE_FAILURES), "unreadable", "refused", "failed", "not_started", "no_finish", "stopped", "_OTHER"])];
-export const TRACE_ATTRIBUTES = Object.freeze({ "routr.lead.session_id": "string", "routr.question_set.version": "string", "routr.candidates": "string[]", "routr.unavailable": "string[]",
-  "vcs.repository.url.full": "string", "vcs.ref.head.name": "string", "routr.cwd": "string", "routr.worktree": "string",
-  "routr.kind": "string", "routr.backend": "string", "routr.launch.id": "string", "gen_ai.agent.name": "string", "gen_ai.conversation.id": "string", "routr.model": "string", "routr.advice.matched": "boolean", "routr.carriers.forwarded": "string[]",
-  ...Object.fromEntries([...Object.keys(FACTS), "level", "high_blast_radius"].map((k) => [`routr.assessment.${k}`, "double"])), "routr.assessment.work_type": "string",
-  ...Object.fromEntries(Object.keys(CHECKS).map((k) => [`routr.check.${k}`, "double"])), "routr.check.flags": "string[]",
-  "gen_ai.operation.name": "string", "gen_ai.provider.name": "string", "gen_ai.request.model": "string", "gen_ai.response.model": "string",
-  ...Object.fromEntries(["input_tokens", "output_tokens", "cache_read.input_tokens", "cache_write.input_tokens", "reasoning.output_tokens"].map((k) => [`gen_ai.usage.${k}`, "int"])),
-  "routr.turn": "int", "routr.turn.outcome": "string", "routr.turn.messages": "int",
-  "routr.usage.state": "string", "routr.usage.source": "string",
-  ...Object.fromEntries(["launch", "send", "wait", "workers", "stop", "cleanup", "record"].map((k) => [`routr.${k}.state`, "string"])),
-  "routr.verdict": "string", "routr.check": "string", "routr.level": "string", "routr.attempts": "int", "routr.seconds": "double", "routr.causes": "string[]", "routr.subscription": "string", "routr.effort": "string", "routr.effort_from": "string", "routr.advice.id": "string", "error.type": "string" });
-const typed = (value, type) => type === "string" ? typeof value === "string" : type === "boolean" ? typeof value === "boolean" : type === "string[]" ? Array.isArray(value) && value.every((v) => typeof v === "string") : type === "int" ? Number.isSafeInteger(value) && value >= 0 : typeof value === "number" && Number.isFinite(value);
-const put = (span, values) => { for (const [key, value] of Object.entries(values)) if (TRACE_ATTRIBUTES[key] && value != null && typed(value, TRACE_ATTRIBUTES[key])) span.attributes[key] = value; };
+const put = (span, values) => Object.assign(span.attributes, signalAttributes(values, Object.keys(TRACE_ATTRIBUTES)));
+export function inputNeeded(code) {
+  const c = context.getStore(); if (c && NEEDS_INPUT_CODES.includes(code)) c.inputCode = code;
+}
+const logRecord = (span, eventName, values) => {
+  const spec = LOG_EVENTS[eventName], attributes = {};
+  for (const key of IDENTITY_ATTRIBUTES) {
+    if (span.attributes[key] != null) attributes[key] = span.attributes[key];
+  }
+  for (const [key, value] of Object.entries(values)) if (spec.attributes[key] && typed(value, spec.attributes[key])) attributes[key] = value;
+  return { eventName, timeUnixNano: nanos(), severityNumber: spec.severityNumber, severityText: spec.severityText, traceId: span.traceId, spanId: span.spanId, attributes: signalAttributes(attributes, [...IDENTITY_ATTRIBUTES, ...Object.keys(spec.attributes)]) };
+};
 const decisionName = (v) => KNOWN_MODELS.includes(v) ? v : modelName(v);
 const probability = (v) => typeof v === "number" && v >= 0 && v <= 1 ? v : null;
 const error = (span, code) => { put(span, { "error.type": pick(code, ERROR_CODES) === "other" ? "_OTHER" : code ?? "_OTHER" }); span.status = { code: 2 }; };
@@ -130,7 +133,15 @@ function usageRow(row, startTimeUnixNano, endTimeUnixNano) {
       "routr.usage.source": pick(row.source, [...Object.values(SOURCES).map((s) => s.source), "sign-in check", "given by caller", "none", "statusline", "session log"]) });
     // A kept reading recovers a failed refresh; the read operation still produced usable data.
     if (row.failure && row.headroom == null) error(span, row.failure.code);
+    if (row.failure) c.logs.push(logRecord(span, "routr.usage.failed", { "error.type": usageFailure(row.failure.code).code, "routr.subscription": row.pool }));
     c.spans.push(span); c.observed.add(row);
+    // Snapshot readers can retain a still-live number after a failed refresh (snapshot trust rules, 2026-10-23).
+    // Its source time stays unchanged; only kept/assumed/given readings are excluded by Stage 3.
+    if (span.attributes["routr.usage.state"] === "live" && Number.isFinite(row.headroom)) for (const w of row.windows ?? []) {
+      if (!Number.isFinite(w.usedPct)) continue;
+      const observation = headroomObservation({ subscription: row.pool, window: w.name, value: Math.min(1, Math.max(0, 1 - w.usedPct / 100)), time: usageReadingTime(row) });
+      if (observation) c.observations.push(observation);
+    }
   } catch {} // A failed observation must leave its usage reading usable.
 }
 export async function usageSpans(run, { startedAt } = {}) {
@@ -172,9 +183,10 @@ export function launchCarriers(env) {
   return { carriers, withheld: found.withheld, launchSpan: true };
 }
 export const launchCarrierWarnings = (found) => found.withheld.map((n) => found.launchSpan && n === "TRACEPARENT"
-  ? "The inherited TRACEPARENT exceeded routr's forwarding limits; the worker gets this routr launch span instead"
+  ? warning("launch_parent_replaced", "The inherited TRACEPARENT exceeded routr's forwarding limits; the worker gets this routr launch span instead")
   : carrierWithheld(n));
 // Stage 2 W3-3 and review 2b2: fresh consent per turn; missing launch uses saved-parent sampling, or a root without one.
+export const WORKER_STATES = Object.freeze(["starting", "working", "waiting", "idle", "failed", "stopped", "no_task"]);
 const WORKER_PROVIDERS = { claude: "anthropic", codex: "openai", cursor: "cursor", agy: "gcp.gen_ai", kiro: "kiro" };
 // Read identity only for a generated turn, once per holder: export-off startup performs no git reads (review A).
 export function workerTracing(worker, options = {}) {
@@ -198,9 +210,18 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
     }
   } catch {} // Missing context, malformed state or optional observation cannot change a turn.
   let ended = false;
+  const transitions = [], queueLogs = (events) => { if (events.length) session.queue("logs", encodeLogs(events.map(([from, to, timeUnixNano]) => ({ ...logRecord(span, "routr.worker.state", {
+    "routr.worker.state.from": from, "routr.worker.state.to": to }), timeUnixNano })), { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: OTEL_ATTRIBUTES })); };
   return {
     generated: Boolean(span),
     carriers: span ? spanCarriers(saved, span, inherited) : saved,
+    state(from, to) {
+      try {
+        if (!span || from === to || !WORKER_STATES.includes(from) || !WORKER_STATES.includes(to)) return;
+        const event = [from, to, nanos()];
+        if (ended) queueLogs([event]); else transitions.push(event);
+      } catch {} // A lifecycle observation cannot interrupt the holder's state write.
+    },
     end(outcome, messages, conversation, usage) {
       if (ended) return; ended = true;
       try {
@@ -213,6 +234,7 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
         if (outcome !== "finished") error(span, outcome);
         span.endTimeUnixNano = nanos();
         session.queue("traces", encodeTraces([span], { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: TRACE_ATTRIBUTES }));
+        queueLogs(transitions);
       } catch {} // Disk, consent or encoder failure never fails, delays or retries a worker turn.
     },
   };
@@ -229,14 +251,21 @@ export function commandTrace(command, setup = {}, run) {
         ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, startTimeUnixNano: nanos(), attributes: {} };
       const id = leadSession(env, lead); if (id && ["dispatch", "subagent", "launch"].includes(command)) put(span, { "routr.lead.session_id": id });
       const identity = traceIdentity(cwd); put(span, identity.attributes);
-      batch = { span, spans: [span], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: randomUUID(), matched: new Set(), observed: new Set() };
+      batch = { span, spans: [span], observations: [], logs: [], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: randomUUID(), matched: new Set(), observed: new Set() };
     }
   } catch {} // Setup is optional too: a bad config or identity lookup cannot refuse a command.
   if (!batch) return run();
   const finish = (result) => {
     try {
-      resultAttributes(command, span, batch.output ?? result); span.endTimeUnixNano = nanos();
+      const output = batch.output ?? result;
+      resultAttributes(command, span, output); span.endTimeUnixNano = nanos();
+      if (batch.inputCode) batch.logs.push(logRecord(span, "routr.needs_input", { "routr.needs_input.why": batch.inputCode }));
+      for (const text of output?.warnings ?? []) {
+        const code = warningCode(text); if (code) batch.logs.push(logRecord(span, "routr.warning", { "routr.warning.code": code }));
+      }
       const queued = session.queue("traces", encodeTraces(batch.spans, { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: TRACE_ATTRIBUTES }));
+      if (batch.logs.length) session.queue("logs", encodeLogs(batch.logs, { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: OTEL_ATTRIBUTES }));
+      for (const observation of batch.observations) session.queue("metrics", observation);
       if (queued && batch.entry) { batch.index.sweep(); batch.index.add(batch.entry); }
       if (queued && command === "cleanup" && ["removed", "closed", "absent"].includes((batch.output ?? result)?.state)) for (const id of batch.matched) batch.index.finish(id);
     } catch {} // A malformed record, full disk or revoked consent never changes a command result.

@@ -1,3 +1,4 @@
+import { warning } from "./warnings.mjs";
 // Everything routr knows about each harness, in one place: adding a harness is one entry here (and its row in
 // references/harnesses.md). Launch flags are measured; see references/harnesses.md.
 //   label, executable: how it is named to a person, and the command that starts it. installAs: how the install hint
@@ -34,6 +35,7 @@
 //     fresh reading now and prints it raw (`routr usage <name>`). Cursor's and Kiro's readers bring herdr's terminal and
 //     their snapshot rules with them, so they load when first read: help, --version, and every command that reads no
 //     usage stay light. (Literal import paths, so the compiled binary still bundles them.)
+import { usageReadingTime, withUsageReadingTime } from "./usage.mjs";
 import { dirname } from "node:path";
 import { run } from "./runtime.mjs";
 import { billingFromSignIn, signInHint, signInState } from "./signin.mjs";
@@ -136,7 +138,7 @@ export const HARNESSES = {
     permissions: ["--yolo", "--trust"], model: "--model", list: "cursor-agent models",
     noEffort: "cursor has no separate --effort flag; choose a model id with the desired effort",
     env: (dir) => ({ CURSOR_CONFIG_DIR: dir ?? "<private-cursor-config-dir>" }),
-    notes: () => ["Cursor changes its configured default model; launch uses a private copy of ~/.cursor/cli-config.json."],
+    notes: () => [warning("cursor_private_config", "Cursor changes its configured default model; launch uses a private copy of ~/.cursor/cli-config.json.")],
     // Its own long-lived helper, one per project folder, which outlives a headless turn in that turn's process group, and
     // the language server it starts (observed 2026-10-22: references/harnesses.md, "Cursor headless"). Cursor installs as
     // <versions>/<v>/cursor-agent (what the command on PATH links to), and runs the helper as <versions>/<v>/node
@@ -144,7 +146,7 @@ export const HARNESSES = {
     // worker still running.
     helper: { command: (exe) => { const v = esc(dirname(dirname(exe))); return new RegExp(`^${v}/([^/\\s]+)/node ${v}/\\1/index\\.js worker-server$`); },
       children: [/^npm exec typescript-language-server --stdio$/, /^(\S*\/)?node \S+\/node_modules\/\.bin\/typescript-language-server --stdio$/],
-      left: (cwd) => `Cursor's own worker-server for ${cwd} may still be running, as after a cursor-agent run there: it is Cursor's, and routr leaves it` },
+      left: (cwd) => warning("cursor_helper_left", `Cursor's own worker-server for ${cwd} may still be running, as after a cursor-agent run there: it is Cursor's, and routr leaves it`) },
     // "✓ Logged in as <email>" / "Not logged in", and exit 0 BOTH ways: only the text tells.
     auth: { check: ["status"], signedIn: (out) => /\bLogged in as\b/.test(out) && !/\bNot logged in\b/.test(out), signIn: "run `cursor-agent login`" },
     models: () => lines("cursor-agent", ["models"], /^\s*([a-z0-9][\w.-]+) - /i),
@@ -175,7 +177,7 @@ export const HARNESSES = {
     unknownModelRunsDefault: true,
     // Its docs: "start with --effort, and Kiro remembers it for future sessions". Not measured: no model on the
     // measured account took effort.
-    notes: (model, effort) => [...(effort ? [`Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently.`] : [])],
+    notes: (model, effort) => [...(effort ? [warning("kiro_effort_default", `Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently.`)] : [])],
     // `{"accountType":"SocialGitHub","email":…}` / `{"account":null}` (exit 1). Any `chat` command opens a sign-in.
     auth: { check: ["whoami", "--format", "json"], signedIn: (out, code) => code === 0 && /"email"\s*:\s*"[^"]/.test(out), signIn: "run `kiro-cli login`" },
     // Its help lists the levels; `auto` (no flag) leaves effort to the model, and is the only choice a model without levels has.
@@ -216,7 +218,7 @@ export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir
     ...(effort ? [h.effort, h.effortValue?.(effort) ?? effort] : [])];
   return {
     executable: h.executable, argv, env: h.env?.(cursorConfigDir) ?? {},
-    warnings: [...(!model ? ["Plan only: choose --model before launching."] : []), ...(h.notes?.(model, effort) ?? [])],
+    warnings: [...(!model ? [warning("model_required", "Plan only: choose --model before launching.")] : []), ...(h.notes?.(model, effort) ?? [])],
   };
 }
 
@@ -273,7 +275,7 @@ export async function billingFor(name, { fresh = false, harness = HARNESSES[name
 export function withBilling(name, u, b) {
   if (b?.billing !== "metered" || !u) return u;
   const from = HARNESSES[name] ? `${HARNESSES[name].executable} ${HARNESSES[name].auth.check.join(" ")}` : "sign-in check";
-  if (u.headroom != null) return { ...u, note: [u.note, `\`${from}\` says ${b.why}, yet usage windows arrived: ranked on the windows`].filter(Boolean).join("; ") };
+  if (u.headroom != null) return withUsageReadingTime({ ...u, note: [u.note, `\`${from}\` says ${b.why}, yet usage windows arrived: ranked on the windows`].filter(Boolean).join("; ") }, usageReadingTime(u));
   const rest = { ...u };
   delete rest.reason; // the "no windows" reason asks the user to set billing, which is now known
   return { ...rest, source: from, class: "metered", billing: { billing: "metered", why: b.why, source: from }, note: `metered: ${b.why}` };

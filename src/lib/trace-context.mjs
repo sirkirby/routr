@@ -1,3 +1,4 @@
+import { warning } from "./warnings.mjs";
 // W3C Trace Context 1.1: future versions retain the first four fields; v00 has exactly 55 bytes.
 export function parseTraceparent(value) {
   if (typeof value !== "string") return null;
@@ -21,7 +22,7 @@ export function takeLeadSession(args, { inline = false } = {}) {
     if (typeof args[i + 1] === "string" && !args[i + 1].startsWith("--")) ids.push(args[++i]);
   }
   const lead = count === 1 && ids.length === 1 ? sessionId(ids[0]) : null;
-  return { args: rest, lead, warnings: count && !lead ? [LEAD_SESSION_WARNING] : [] };
+  return { args: rest, lead, warnings: count && !lead ? [warning("lead_session_ignored", LEAD_SESSION_WARNING)] : [] };
 }
 export function leadSession(env, explicit) {
   for (const [key, format] of SOURCES) if (typeof env[key] === "string" && format.test(env[key])) return env[key];
