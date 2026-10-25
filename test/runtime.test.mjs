@@ -11,7 +11,7 @@ import { cliEnv, CONFIG_ENV, fakeExecutable, LEAD_ENV, npmShim, scratch } from "
 
 test("spawnSelf invoked by a foreign script starts routr's own entry for every background command", () => {
   for (const alias of [undefined, "foreign-entry.ts", "foreign-no-extension"]) {
-    const env = cliEnv(scratch("self-foreign"), alias ? { ROUTR_SELF_FOREIGN_ARGV: alias } : {});
+    const env = cliEnv(scratch("self-foreign"), { TRACEPARENT: "PRIVATE_PARENT", TRACESTATE: "PRIVATE_STATE", BAGGAGE: "PRIVATE_BAGGAGE", CLAUDE_CODE_SESSION_ID: "PRIVATE_LEAD", CODEX_HOME: "fixture-config", ...(alias ? { ROUTR_SELF_FOREIGN_ARGV: alias } : {}) });
     const r = Bun.spawnSync([process.execPath, join(import.meta.dir, "fixtures/spawn-self-foreign.mjs")], { env });
     expect(r.exitCode).toBe(0);
     const result = JSON.parse(r.stdout.toString());
@@ -21,7 +21,18 @@ test("spawnSelf invoked by a foreign script starts routr's own entry for every b
       expect(call.cmd).toBe(process.execPath);
       expect(call.args).toEqual([resolve(import.meta.dir, "../src/routr.mjs"), ...commands[i]]);
       expect(call.opts).toMatchObject({ detached: true, stdio: "ignore" });
+      expect(call.opts.env).toEqual({ CODEX_HOME: "fixture-config" });
     }
+  }
+});
+
+test("runtime import falls back to source if compiled detection cannot read its URL", () => {
+  for (const mode of ["once", "always"]) {
+    const r = Bun.spawnSync([process.execPath, join(import.meta.dir, "fixtures/spawn-self-foreign.mjs")], { env: cliEnv(scratch("self-url"), { ROUTR_SELF_FAIL_URL: mode }) });
+    expect(r.exitCode, r.stderr.toString()).toBe(0);
+    const result = JSON.parse(r.stdout.toString()); expect(result.standalone).toBe(false);
+    expect(result.calls).toHaveLength(mode === "once" ? 4 : 0);
+    for (const call of result.calls) expect(call.args[0]).toBe(resolve(import.meta.dir, "../src/routr.mjs"));
   }
 });
 

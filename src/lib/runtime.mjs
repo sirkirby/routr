@@ -16,8 +16,9 @@ export const home = () => (process.platform === "win32" ? process.env.USERPROFIL
 
 // Bun's compiled module lives in its virtual filesystem (1.4.3: /$bunfs on POSIX, B:/~BUN on Windows).
 // The importing script is not routr: smoke:otel's in-process launch exposed argv[1] re-entry, 2026-10-25.
-const COMPILED = /^(?:\/\$bunfs\/|[A-Za-z]:\/~BUN\/)/i.test(fileURLToPath(import.meta.url).replaceAll("\\", "/"));
-const ROUTR_ENTRY = COMPILED ? null : fileURLToPath(new URL("../routr.mjs", import.meta.url));
+let COMPILED = false, ROUTR_ENTRY = null;
+try { COMPILED = /^(?:\/\$bunfs\/|[A-Za-z]:\/~BUN\/)/i.test(fileURLToPath(import.meta.url).replaceAll("\\", "/")); } catch {} // A URL probe failure falls back to source, never to the caller's argv.
+if (!COMPILED) try { ROUTR_ENTRY = fileURLToPath(new URL("../routr.mjs", import.meta.url)); } catch {}
 export const standalone = () => COMPILED;
 
 export const CACHE_DIR = () => join(home(), ".cache/routr");
@@ -312,7 +313,8 @@ export function stop(child, { platform = process.platform, via, after = later, g
   }
 }
 
-// The environment for harness reads, headless turns (through workerEnv) and the private herdr server: routr's own,
+// The environment for harness reads, detached routr jobs, headless turns (through workerEnv) and the private herdr
+// server: routr's own,
 // without the trace-context carriers (below), and without herdr's pane variables (HERDR_ENV, HERDR_SOCKET_PATH,
 // HERDR_PANE_ID, ...). A harness inherits them, and herdr's integration hooks in
 // that harness (e.g. ~/.claude/hooks/herdr-agent-state.sh, which acts only when all three are set) would report
@@ -328,9 +330,9 @@ export function stop(child, { platform = process.platform, via, after = later, g
 const LEAD_SESSION = /^(?:HERDR_(?:ENV|SOCKET_PATH|CLIENT_SOCKET_PATH|SESSION|BIN_PATH|WORKSPACE_ID|TAB_ID|PANE_ID)|CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(?:ENTRYPOINT|EXECPATH|SESSION_ID|SESSION_ATTENDED|CHILD_SESSION|BRIDGE_SESSION_ID|MESSAGING_SOCKET|MESSAGING_TOKEN|SSE_PORT)|CODEX_THREAD_ID|CODEX_SESSION_ID|CODEX_TOOL_CALL_ID|CODEX_SANDBOX|CODEX_SANDBOX_NETWORK_DISABLED|CURSOR_CONVERSATION_ID|CURSOR_REQUEST_ID|CURSOR_AGENT|CURSOR_ASKPASS_SOCKET|CURSOR_ASKPASS_SECRET|CURSOR_AGENT_STORE_FILES_DIR|CURSOR_AGENT_STORE_SHARED_PATHS|CURSOR_SANDBOX|AGENT_TRANSCRIPTS|ANTIGRAVITY_CONVERSATION_ID|KIRO_SESSION_ID)$/i;
 
 // W3C trace context, as OpenTelemetry's "environment variables as context propagation carriers" names it: routr hands
-// the carriers in its own environment on to the workers it starts, unchanged, and sets, makes or reads none of them. A
-// carrier is an opaque string: kept byte for byte, never parsed. A harness read (usage, sign-in, a probe) is not a
-// worker and gets none (harnessEnv); a worker start adds the checked ones back (workerEnv).
+// the carriers in its own environment on to workers unchanged when export is off. This transport boundary checks
+// opaque strings; traces owns W3C parsing and sampled launch parentage. Harness reads and detached routr jobs get none
+// (harnessEnv); a worker start adds the checked ones back (workerEnv).
 export const CARRIERS = ["TRACEPARENT", "TRACESTATE", "BAGGAGE"];
 const CARRIER = new RegExp(`^(?:${CARRIERS.join("|")})$`, "i");
 // routr's own limit on what it hands on, not the W3C grammar: printable ASCII and horizontal tab (Baggage's optional
@@ -387,7 +389,8 @@ export const workerEnv = (carriers, extra = {}, env = process.env) => ({ ...harn
 // EMFILE) is ignored; one that fails at once returns false.
 export function spawnSelf(args) {
   try {
-    const c = start(process.execPath, [...(standalone() ? [] : [ROUTR_ENTRY]), ...args], { detached: true, stdio: "ignore" });
+    if (!standalone() && !ROUTR_ENTRY) return false;
+    const c = start(process.execPath, [...(standalone() ? [] : [ROUTR_ENTRY]), ...args], { detached: true, stdio: "ignore", env: harnessEnv() });
     c.on("error", () => {}); c.unref(); return true;
   } catch { return false; }
 }
