@@ -10,6 +10,7 @@ import { NOTICE } from "./telemetry.mjs";
 import { LEVEL_MEANING, RESERVE } from "./wording.mjs";
 import { accountUse, UPDATE_CHANNELS } from "./config.mjs";
 import { decisionTargets, modelsHere, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
+import { otelEndpoint } from "./otel.mjs";
 
 const LEAVE = ""; // "leave the model to the lead agent": no default_model
 const PRESETS = [0, 0.1, 0.2, 0.25, 0.3, 0.5];
@@ -158,7 +159,16 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       if (v === CANCEL || v === BACK) return v;
       answers.telemetry = v;
     }
+    if (!config?.otel) return askOtel();
     return "done";
+  };
+  const askOtel = async () => {
+    ui.line("OpenTelemetry sends to your endpoint. Later signals will carry repository names, relative paths and ids. No spans are emitted yet. Set authentication separately with routr key set otel-headers.", { dim: true });
+    const v = await ui.confirm({ message: "Export OpenTelemetry to your own endpoint?", initial: false });
+    if (v === CANCEL || v === BACK || !v) return v;
+    const endpoint = await ui.text({ message: "OpenTelemetry endpoint", initial: "", parse: otelEndpoint });
+    if (typeof endpoint === "string") answers.otelEndpoint = endpoint;
+    return endpoint;
   };
 
   // What would change, one line each: the review, and the count on the menu.
@@ -174,6 +184,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       }
     }
     if (answers.telemetry !== undefined) out.push(`telemetry: ${answers.telemetry ? "on" : "off"}`);
+    if (answers.otelEndpoint !== undefined) out.push("OpenTelemetry export: on");
     if (answers.channel && answers.channel !== channelNow) out.push(`update channel: ${channelNow} ${ui.glyphs.arrow} ${answers.channel}`);
     if (answers.decision && decisionLabel(answers.decision) !== decisionLabel(decisionNow)) out.push(`decision model: ${decisionLabel(decisionNow)} ${ui.glyphs.arrow} ${decisionLabel(answers.decision)}`);
     return out;
@@ -220,6 +231,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
         { value: "channel", label: "Update channel", hint: `${answers.channel ?? channelNow}: stable releases, or beta builds too` },
         { value: "decision", label: "Decision model", hint: decisionLabel(answers.decision ?? decisionNow) },
         { value: "all", label: "Walk through everything" },
+        { value: "otel", label: "OpenTelemetry export", hint: "send to your own endpoint (routr setup --otel-off stops it)" },
         pending ? { value: "save", label: `Save and exit (${pending} change${pending === 1 ? "" : "s"})` } : { value: "done", label: "Exit" },
         ...(pending ? [{ value: "quit", label: "Exit without saving" }] : [])] });
       if (v === CANCEL || v === "quit") return CANCEL;
@@ -229,6 +241,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       if (v === BACK) { const w = await finish(); if (w === "write") return "write"; if (w === "quit" || w === CANCEL) return CANCEL; continue; }
       if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) for (const n of c.filter((x) => !current[x])) if (await fields(n, fieldsOf(n)) === CANCEL) return CANCEL; continue; }
       if (v === "extras") { if (await extras() === CANCEL) return CANCEL; continue; }
+      if (v === "otel") { if (await askOtel() === CANCEL) return CANCEL; continue; }
       if (v === "channel") { if (await askChannel() === CANCEL) return CANCEL; continue; }
       if (v === "decision") { const d = await askDecision(ui, answers.decision ?? decisionNow); if (d === CANCEL) return CANCEL; if (Array.isArray(d)) answers.decision = d; continue; }
       if (v === "all") { const f = await full(); if (f === CANCEL) return CANCEL; if (f === "write") return "write"; continue; }

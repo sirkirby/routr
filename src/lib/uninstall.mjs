@@ -9,9 +9,10 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSy
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { notOursWhy, owner, removeOwned, skillPlaces } from "./skill-install.mjs";
-import { folderId, lockIsStale, home as userHome, standalone, start, takeLock, UNINSTALL_LOCK } from "./runtime.mjs";
+import { folderId, lockIsStale, home as userHome, releaseFileLock, standalone, start, takeLock, UNINSTALL_LOCK } from "./runtime.mjs";
 import { FORMAT } from "./headless.mjs";
 import { isOurStatusline } from "./statusline.mjs";
+import { otelSenderRunning } from "./otel.mjs";
 
 
 // A folder's entries; none when it is not there. Anything else unreadable is thrown: it is not known to be empty.
@@ -56,14 +57,14 @@ export function blockedBy({ workers, unknown = [], worktrees, unreadable = [] },
 // What would be removed, as data: a test can check the plan without touching a disk.
 export function uninstallPlan({ home = userHome(), purge = false, binary = null } = {}) {
   const remove = [], keep = [], notOurs = [];
-  if (binary) remove.push({ path: binary, what: "the routr binary" });
+  if (binary) remove.push({ path: binary, what: "the routr binary", binary: true });
   // Each of routr's skills: each harness's link first, then the folder the links point at. Only routr's own: a link to
   // anything but routr's copy, or a folder of the same name routr did not write, stays (skill-install.mjs, `owner`).
   for (const p of skillPlaces(home)) {
     if (p.state === "ours") remove.push({ path: p.path, what: `the ${p.skill} skill`, skill: p.skill });
     else if (p.state === "theirs") notOurs.push({ path: p.path, what: p.why });
   }
-  remove.push({ path: join(home, ".cache/routr"), what: "cache: the usage snapshots and the update log" });
+  remove.push({ path: join(home, ".cache/routr"), what: "cache: usage snapshots, update log, OpenTelemetry queue and sender state" });
   const left = leftovers(home);
   const data = [{ path: join(home, ".config/routr"), what: "your config and decision provider keys" },
     { path: join(home, ".local/share/routr"), what: left.worktrees.length ? "your ledger, and worktrees a headless launch made (yours to finish)" : "your ledger" }];
@@ -80,21 +81,22 @@ export function uninstallPlan({ home = userHome(), purge = false, binary = null 
 // A link is unlinked, never followed.
 const removePath = (p) => { if (lstatSync(p).isSymbolicLink()) unlinkSync(p); else rmSync(p, { recursive: true, force: true }); };
 
-export async function uninstall(args, { home = userHome() } = {}) {
+const keepBinary = (entry, platform, senderRunning) => platform === "win32" && senderRunning && (entry.binary || entry.path === process.execPath);
+export async function uninstall(args, { home = userHome(), platform = process.platform, senderStatus = otelSenderRunning, binary = standalone() ? process.execPath : null, print = console.log } = {}) {
   const json = args.includes("--json"), dry = args.includes("--dry-run");
-  const say = (s) => { if (!json) console.log(s); };
+  const say = (s) => { if (!json) print(s); };
   const interactive = Boolean(process.stdin.isTTY) && !args.includes("--yes");
   let purge = args.includes("--purge");
   if (!interactive && !args.includes("--yes") && !dry) return { ok: false, error: "routr uninstall needs a terminal to ask, or --yes. Add --purge to remove your config, key, and ledger as well; --dry-run shows the plan" };
 
   // From a source checkout there is no installed binary of ours to remove: the launcher is the developer's own.
-  let plan = uninstallPlan({ home, purge, binary: standalone() ? process.execPath : null });
+  let plan = uninstallPlan({ home, purge, binary });
   if (plan.blocked) return { ok: false, error: plan.blocked };
   if (interactive) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const show = (p) => { say("\nThis removes:"); for (const x of p.remove) say(`  ${x.path}   (${x.what})`); if (p.statusline) say("  the `routr statusline` entry in ~/.claude/settings.json (a backup is kept)"); if (p.keep.length || p.not_ours.length) { say("and keeps:"); for (const x of [...p.keep, ...p.not_ours]) say(`  ${x.path}   (${x.what})`); } };
     if (!purge && plan.keep.length && /^y/i.test((await rl.question("Also remove your config, decision provider keys, and ledger? [y/N] ")).trim())) {
-      purge = true; plan = uninstallPlan({ home, purge, binary: standalone() ? process.execPath : null });
+      purge = true; plan = uninstallPlan({ home, purge, binary });
       if (plan.blocked) { rl.close(); return { ok: false, error: plan.blocked }; }
     }
     show(plan);
@@ -102,7 +104,12 @@ export async function uninstall(args, { home = userHome() } = {}) {
     rl.close();
     if (!go) return { ok: true, removed: [], note: "nothing was removed" };
   }
-  if (dry) return { ok: true, dry_run: true, would_remove: plan.remove.map((x) => x.path), would_keep: plan.keep.map((x) => x.path), not_ours: plan.not_ours.map((x) => x.path), statusline: plan.statusline };
+  let senderRunning = senderStatus(home);
+  const senderNote = (kept) => senderRunning ? { otel_sender_running: true, note: `An OpenTelemetry sender is running. An in-flight request can finish within its 10 s timeout.${kept ? ` The binary at ${kept} can be removed once that sender exits (about a minute).` : ""}` } : {};
+  if (dry) {
+    const kept = plan.remove.filter((x) => keepBinary(x, platform, senderRunning));
+    return { ok: true, dry_run: true, would_remove: plan.remove.filter((x) => !keepBinary(x, platform, senderRunning)).map((x) => x.path), would_keep: [...plan.keep, ...kept].map((x) => x.path), not_ours: plan.not_ours.map((x) => x.path), statusline: plan.statusline, ...senderNote(kept[0]?.path) };
+  }
 
   // Again now, under the uninstall lock: the person may have been asked for minutes, and a launch that reserves a run
   // folder from here on sees the lock and backs out (headless.mjs reserve). The lock goes with the state folder.
@@ -116,6 +123,7 @@ export async function uninstall(args, { home = userHome() } = {}) {
   let late;
   try { late = blockedBy(leftovers(home), purge); } catch (e) { releaseLock(lock); throw e; }
   if (late) { releaseLock(lock); return { ok: false, error: late }; }
+  senderRunning = senderStatus(home); // V4: a detached start can have arrived since the pre-lock snapshot
   const removed = [], failed = [], userFiles = [];
   if (plan.statusline) try {
     // Read again now: the plan may be minutes old (a person was asked), and the entry may have been replaced since.
@@ -128,18 +136,21 @@ export async function uninstall(args, { home = userHome() } = {}) {
     }
   } catch (e) { failed.push(`~/.claude/settings.json: ${String(e?.message ?? e).slice(0, 100)}`); }
   let done, state;
-  try { done = carryOut(plan, { home }); state = removeState(home, lock); }
+  try { done = carryOut(plan, { home, platform, senderRunning }); state = removeState(home, lock); }
   finally { releaseLock(lock); }
   removed.push(...done.removed, ...state.removed); failed.push(...done.failed, ...state.failed); userFiles.push(...done.userFiles);
   const notOurs = [...plan.not_ours, ...done.notOurs, ...state.notOurs];
-  const result = { ok: !failed.length, removed, kept: plan.keep.map((x) => x.path), ...(notOurs.length ? { not_ours: notOurs.map((x) => x.path) } : {}),
+  const result = { ok: !failed.length, removed, kept: plan.keep.map((x) => x.path), ...senderNote(done.keptBinary), ...(notOurs.length ? { not_ours: notOurs.map((x) => x.path) } : {}),
+    ...(done.keptBinary ? { kept_binary: done.keptBinary } : {}),
     ...(userFiles.length ? { kept_files: userFiles } : {}), ...(failed.length ? { failed } : {}) };
   for (const p of removed) say(`removed ${p}`);
   for (const p of result.kept) say(`kept    ${p}`);
   for (const x of notOurs) say(`kept    ${x.path} (${x.what})`);
   for (const p of userFiles) say(`kept    ${p} (yours, in routr's skill folder)`);
+  if (result.kept_binary) say(`kept    ${result.kept_binary} (remove once the OpenTelemetry sender exits)`);
+  if (result.note) say(result.note);
   for (const f of failed) say(`FAILED  ${f}`);
-  if (!failed.length) say(`\nroutr is uninstalled.${result.kept.length ? " Your config, key, and ledger are still there for a reinstall; `--purge` removes them." : ""}`);
+  if (!failed.length) say(result.kept_binary ? `\nRemoval is waiting for the OpenTelemetry sender; delete ${result.kept_binary} once it exits.` : `\nroutr is uninstalled.${result.kept.length ? " Your config, key, and ledger are still there for a reinstall; `--purge` removes them." : ""}`);
   return result;
 }
 
@@ -175,18 +186,20 @@ export function removeState(home, lock, { between = () => {} } = {}) {
   return { removed, failed, notOurs };
 }
 // Only a lock that still holds this process's pid is ours to remove.
-export const releaseLock = (lock) => { try { if (readFileSync(lock, "utf8").trim() === String(process.pid)) unlinkSync(lock); } catch {} };
+export const releaseLock = releaseFileLock;
 
 // Remove what the plan lists. Each skill place is checked again right before it is touched: from the final review,
 // ownership was settled before the confirmation prompt and acted on after it, so a folder swapped in while the prompt
 // waited (a user's own skill, no manifest) lost its SKILL.md and agents/openai.yaml. A place that is no longer routr's
 // (owner(), the linked-folder rule for pre-manifest folders included) is kept and reported in `notOurs`; one already
 // gone is nothing to do.
-export function carryOut(plan, { home = userHome() } = {}) {
+export function carryOut(plan, { home = userHome(), platform = process.platform, senderRunning = false } = {}) {
   const removed = [], failed = [], userFiles = [], notOurs = [];
+  let keptBinary = null;
   for (const x of plan.remove) {
     if (x.state) continue; // removeState, last, around the uninstall lock
     try {
+      if (keepBinary(x, platform, senderRunning)) { keptBinary = x.path; continue; }
       if (x.skill) {
         const now = owner(home, x.skill, x.path);
         if (now === "absent") continue;
@@ -210,5 +223,5 @@ export function carryOut(plan, { home = userHome() } = {}) {
       removed.push(x.path);
     } catch (e) { failed.push(`${x.path}: ${String(e?.message ?? e).slice(0, 100)}`); }
   }
-  return { removed, failed, userFiles, notOurs };
+  return { removed, failed, userFiles, notOurs, keptBinary };
 }

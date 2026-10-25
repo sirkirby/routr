@@ -88,6 +88,21 @@ test("routr update by hand takes the daily job's lock; a look (--check) needs no
   expect(existsSync(lock)).toBe(false);                                   // and let go after
 });
 
+test("an updater that loses its lock during download stops before swapping and keeps the new owner's lock", async () => {
+  const { assetName, lockedUpdate } = await import("../src/lib/update.mjs");
+  const dir = scratch("update-lost-lock"), lock = join(dir, "update.lock"), self = join(dir, "routr"); writeFileSync(self, "OLD");
+  const fresh = Buffer.from("NEW"), sum = (await import("node:crypto")).createHash("sha256").update(fresh).digest("hex");
+  const replacement = JSON.stringify({ pid: process.pid, token: "new-owner" });
+  const r = await lockedUpdate({ base: "http://fake.invalid/r", self, isStandalone: () => true, spawn: () => { throw new Error("must not run"); },
+    fetchFn: async (url) => {
+      if (String(url).endsWith("SHA256SUMS")) { writeFileSync(lock, replacement); return served(Buffer.from(`${sum}  ${assetName()}\n`)); }
+      return served(fresh);
+    } }, { lock });
+  expect(r).toMatchObject({ ok: false, updated: false }); expect(r.error).toContain("lock");
+  expect(readFileSync(self, "utf8")).toBe("OLD"); expect(readFileSync(lock, "utf8")).toBe(replacement);
+  expect(readdirSync(dir).some((n) => n.includes("download-") || n.endsWith(".new"))).toBe(false);
+});
+
 test("an update never replaces a binary that is already as new as the download, unless forced", async () => {
   const { update } = await import("../src/lib/update.mjs");
   const run = async (there, force = false) => {

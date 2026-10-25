@@ -11,7 +11,8 @@ yours (`doctor --fix` is `setup` under another name). What they do besides answe
 - read your harnesses in the foreground, through each harness's own CLI (its status command, Claude's `/usage`);
 - keep routr's own bookkeeping under `~/.cache/routr` (which harnesses are signed in, when a usage source was last
   refreshed);
-- start one of routr's detached jobs and carry on: the updater, or Cursor's or Kiro's usage refresh.
+- start one of routr's detached jobs and carry on: the updater, Cursor's or Kiro's usage refresh, or the
+  OpenTelemetry sender when export is configured.
 
 They fail open: any error still prints usable output and exits 0. `dispatch`, `subagent` and `check` return
 `unavailable`, a list of the readings they could not make (`[]` when nothing was missing). Decision-model failures
@@ -25,8 +26,10 @@ reading and its headline names the model that answered; only no answer starts wi
 (`telemetry status`, `setup --show`) only read, and so does `workers`; `wait` changes nothing of yours, and writes which
 turns it has reported into the worker's own run folder.
 
-Local file writes create parent folders from the file's absolute location, including when only a relative filename
-was given. An existing directory is accepted; a file in its place or a permission error remains a failure.
+Local file writes normally create parent folders from the file's absolute location, including when only a relative
+filename was given. OpenTelemetry batch and sender-state writes never create folders, so an uninstall cannot be
+undone by an in-flight write. An existing directory is accepted; a file in its place or a permission error remains
+a failure.
 
 - `launch` drives panes in your herdr session; outside herdr it starts a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker (below). A task requires readable JSON advice from `routr dispatch` on that exact task
   (including `brief_sha`); missing, nonmatching or `routr subagent` advice is refused before any harness, pane or worktree call. Dry runs return
@@ -135,6 +138,12 @@ writes only:
 
 - under `~/.config/routr`, `~/.cache/routr`, `~/.local/share/routr` (headless workers' worktrees in its `worktrees`)
   and `~/.local/state/routr` (headless workers);
+- OpenTelemetry's per-signal queue, drop markers, sender state and lock under `~/.cache/routr/otel`. Trace and log
+  resources use a random UUIDv4 per process, held only in memory, and write no identity file. The future gauge's
+  identity uses a random per-install id under `~/.local/state/routr/service-instance-id`, exclusively published so
+  concurrent first calls agree, and derives its UUIDv5 service instance id from it. Identity writes require an
+  existing state folder and stop during uninstall. The sender alone removes queue files or changes delivery totals;
+  secrets stay in the secrets file;
 - in your repository's git metadata, the worktree and branch a headless `launch --worktree` adds;
 - its own binary, when it updates itself;
 - the skill folders, on `skill install` (and the updater's reinstall);
@@ -151,7 +160,11 @@ One exception: `uninstall` removes the `statusLine` entry an earlier routr's `se
 after a backup, and only when it runs `routr statusline`.
 
 `uninstall` removes the binary, routr's own skills (above), `~/.cache/routr` and `~/.local/state/routr` (sockets
-and locks). It keeps `~/.config/routr` (config and keys) and `~/.local/share/routr` (the ledger, telemetry's install
+and locks). It reports a running OpenTelemetry sender. A request already in flight can finish within its 10 s
+timeout, under the consent in force when it started. The sender checks the uninstall lock before each request and
+state write and cannot recreate removed queue folders. A removal race can report FAILED with ENOTEMPTY: a second
+uninstall finishes it. On Windows the binary stays for removal after that sender exits, about a minute.
+Uninstall keeps `~/.config/routr` (config and keys) and `~/.local/share/routr` (the ledger, telemetry's install
 id, and any worktree a headless launch made) unless `--purge`. It removes nothing, and says what to run, while a
 headless worker's run folder is still there (its reports, and while it runs, its holder, which is the routr binary):
 `routr cleanup --worker <name>` finishes each with its checks, and a run folder a launch did not finish writing is
@@ -358,6 +371,12 @@ Telemetry is off unless you turn it on (`routr telemetry on`, or yes to setup's 
 turns it on for you. It sends ledger rows with no text of any kind, only from the detached daily job or
 `routr telemetry send`, and stays off under `ROUTR_TELEMETRY=0`, `DO_NOT_TRACK=1`, or CI. What is sent:
 [telemetry.md](telemetry.md). `routr feedback` is the only text sent, and only what you typed.
+
+OpenTelemetry export is a separate opt-in to your own endpoint. `DO_NOT_TRACK` and CI do not turn it off; its off
+switches are `OTEL_SDK_DISABLED=true` (any case), `ROUTR_OTEL=0`, and removing its endpoint. An agent never enables it
+unasked. Its headers are secrets, read only from the secrets file and never printed, logged, or placed in the queue,
+sender state, ledger or telemetry. Response bodies are never stored. See [OpenTelemetry](opentelemetry.md); signals
+arrive in a later change and will carry repository names, relative paths and ids, unlike anonymous telemetry.
 
 ## Output a lead reads
 

@@ -6,6 +6,10 @@
 // Advice writes nothing of the user's and fails open; launch reports failures as JSON and exits nonzero.
 // Each command's code is loaded only when that command runs: `statusline` runs on every Claude Code turn.
 const argv = process.argv.slice(2);
+if (argv[0] === "--otel-sender") {
+  await (await import("./lib/otel.mjs")).sendOtel({ configPath: argv[1] === "--config" ? argv[2] : undefined });
+  process.exit(0);
+}
 const asksHelp = (args) => args.includes("--help") || args.includes("-h");
 if (argv[0] === "statusline" && !asksHelp(argv)) { (await import("./lib/statusline.mjs")).statusline(); process.exit(0); }
 
@@ -49,7 +53,7 @@ const ACT = {
   },
   uninstall: async (args) => {
     const r = await (await import("./lib/uninstall.mjs")).uninstall(args);
-    if (args.includes("--json")) print(r, 1); else if (r.error) console.error(r.error); else if (r.dry_run) print(r, 1); else if (r.note) console.log(r.note);
+    if (args.includes("--json")) print(r, 1); else if (r.error) console.error(r.error); else if (r.dry_run) print(r, 1); else if (r.note && !r.otel_sender_running) console.log(r.note);
     return r.ok ? 0 : 1;
   },
   // A person who stops the guided setup (Ctrl+C) has already been told nothing was written; 130 is the usual exit for it.

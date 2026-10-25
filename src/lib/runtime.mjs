@@ -3,7 +3,8 @@
 // this on every Claude Code turn. It is the only module that imports node:child_process (a test holds every other file
 // in src/ to that), so every process routr starts gets the same platform defaults from `start` / `startSync`.
 import { spawn, spawnSync } from "node:child_process";
-import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
+import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
 
@@ -55,27 +56,71 @@ export function ensureParent(file, { mkdir = mkdirSync } = {}) {
   }
 }
 
-// Written whole or not at all (a temp file, then a rename): a reader never sees half a file. Windows will not rename
-// over an existing file, so it is removed first there.
-export function writeJsonAtomic(file, value) {
-  ensureParent(file);
+// A temp file, then rename. Keep the existing remove-and-rename fallback for callers that need it on Windows.
+// OTel V10 retry state opts out: a failed replacement must retain its previous recorded backoff.
+export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync } = {}) {
+  if (mkdir) ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(value) + "\n");
-  try { renameSync(tmp, file); } catch { try { unlinkSync(file); } catch {} renameSync(tmp, file); }
+  writeFileSync(tmp, JSON.stringify(value, null, indent) + "\n", { mode });
+  try { rename(tmp, file); }
+  catch (e) { if (preserveOnError) throw e; try { unlinkSync(file); } catch {} rename(tmp, file); }
 }
 
 // Take a lock file, or say someone else holds it. Exclusive create, so two processes in a burst cannot both win; the
-// file holds the taker's pid. A lock `stale(file)` calls abandoned is taken over. An unwritable folder means no lock,
+// file holds the taker's pid and random token. A lock `stale(file)` calls abandoned is taken over. An unwritable folder means no lock,
 // never a lock on every try.
-export function takeLock(file, stale) {
-  const make = () => { const fd = openSync(file, "wx"); try { writeSync(fd, String(process.pid)); } catch {} closeSync(fd); };
+const locksHere = new Map();
+export const lockToken = (file) => locksHere.get(realOr(file));
+const lockRecord = (file) => { const value = JSON.parse(readFileSync(file, "utf8")); return typeof value === "number" ? { pid: value } : value; };
+export function lockOwned(file, token = lockToken(file)) {
+  try { const owner = lockRecord(file); return Boolean(token) && owner?.token === token && owner.pid === process.pid; } catch { return false; }
+}
+export function releaseFileLock(file, token = lockToken(file)) {
+  try {
+    // Old pid-only locks remain readable; new owners always prove the random token they made, never a read-back token.
+    const legacy = !token && lockRecord(file)?.pid === process.pid && !lockRecord(file)?.token;
+    if (!legacy && !lockOwned(file, token)) return false;
+    const key = realOr(file); unlinkSync(file); if (locksHere.get(key) === token) locksHere.delete(key); return true;
+  } catch { return false; }
+}
+export function takeLock(file, stale, { token = randomUUID(), rename = renameSync, write = writeFileSync } = {}) {
+  const create = (path, id) => {
+    const fd = openSync(path, "wx", 0o600);
+    try { try { write(fd, JSON.stringify({ pid: process.pid, token: id })); } finally { closeSync(fd); } }
+    catch (e) { try { unlinkSync(path); } catch {} throw e; }
+  };
+  const make = () => { create(file, token); locksHere.set(realOr(file), token); };
   try { make(); return true; } catch (e) { if (e?.code !== "EEXIST") return false; }
-  try { if (!stale(file)) return false; rmSync(file, { force: true }); make(); return true; } catch { return false; }
+  // Review 3: a live/never-stale lock needs no writes, especially while uninstall removes its state folder.
+  try { if (!stale(file)) return false; } catch { return false; }
+  // Review A: serialize the observation AND move, so a delayed taker never moves a live replacement. This guard
+  // covers only synchronous file operations, not the job; a crashed guard expires after five seconds. No hard links.
+  const guard = `${file}.takeover`, guardToken = randomUUID(), began = Date.now(), guardAge = 5000;
+  const guarded = () => Date.now() - began < guardAge && lockOwned(guard, guardToken);
+  const moveStale = (path, move, isStale, allowed = () => true) => {
+    const observed = readFileSync(path, "utf8");
+    if (!isStale(path) || !allowed()) return false;
+    const aside = `${path}.stale.${randomUUID()}`;
+    move(path, aside);
+    // An unexpected replacement is somebody else's file, including on filesystems without hard links: leave it.
+    if (readFileSync(aside, "utf8") !== observed) return false;
+    unlinkSync(aside); return true;
+  };
+  try {
+    try { create(guard, guardToken); }
+    catch (e) {
+      if (e?.code !== "EEXIST" || !moveStale(guard, renameSync, olderThan(guardAge))) return false;
+      create(guard, guardToken);
+    }
+    if (!moveStale(file, rename, stale, guarded) || !guarded()) return false;
+    make(); return true;
+  } catch { return false; }
+  finally { releaseFileLock(guard, guardToken); }
 }
 // The updater's lock is only taken over when its owner is gone: age alone would let a slow download be overlapped by a
 // second swap. A lock with no readable pid (written by an older routr) falls back to age.
 export function lockIsStale(file, { alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } } } = {}) {
-  const pid = Number(readFileSync(file, "utf8").trim());
+  let pid; try { pid = lockRecord(file)?.pid; } catch {}
   if (Number.isInteger(pid) && pid > 0) return !alive(pid);
   return Date.now() - statSync(file).mtimeMs >= 10 * 60 * 1000;
 }

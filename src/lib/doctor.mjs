@@ -14,6 +14,7 @@ import { home, resolveCommand, standalone } from "./runtime.mjs";
 import { autoUpdateStatus } from "./update.mjs";
 import { dailyTelemetrySend, hoursAgo, lastTelemetrySend, pendingCount, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
+import { otelStatus } from "./otel.mjs";
 import { extraFiles, hasExtras, missingFiles, NOT_OURS, notOursWhy, owner, skillPlaces } from "./skill-install.mjs";
 
 // Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows. On Windows it is runtime.mjs's
@@ -94,6 +95,7 @@ export function nextSteps(r) {
   // routr's folder holding files routr did not write is left as it is by install: the person clears it first.
   for (const k of r.skill.filter((x) => x.extra?.length)) steps.push(hasExtras(k.where, k.extra));
   if (r.telemetry?.needs_attention) steps.push("Telemetry is on but not sending: `routr telemetry status` says why (last_send, daily_send), and `routr telemetry send` sends now");
+  if (r.otel?.queue_error) steps.push(r.otel.queue_error);
   if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
   if (!r.herdr.path) steps.push("For workers in herdr panes, and to read Cursor's usage, install herdr (https://herdr.dev). Without it, workers run headless");
   else if (!r.herdr.skill) steps.push("Install herdr's agent skill: npx skills add herdrdev/herdr --skill herdr -g");
@@ -200,6 +202,7 @@ export async function inspect({ configPath, quiet } = {}) {
   // A newer release the daily job saw on this channel, and how long ago (none from a source checkout, or with updates off).
   if (r.auto_update.available) { r.update_available = r.auto_update.available.version; r.update_seen_hours_ago = r.auto_update.available.seen_hours_ago; }
   r.telemetry = telemetryStatus(config);
+  r.otel = otelStatus(config);
   if (r.telemetry.on) {
     // Only what happened since the current yes counts: a send before it (then off, then on again) says nothing now.
     // Rows pending with no send for two days (since that send, or since the yes) mean the daily job is not sending;
@@ -272,6 +275,12 @@ export function render(r) {
   }
   line(r.config.exists && !problems.length ? "ok" : "need", `config ${r.config.path}${r.config.exists ? ` · subscriptions: ${r.config.subscriptions.join(", ") || "none"}` : " not found: run `routr setup` to create it"}${r.config.exists && [...problems, ...notes].length ? `\n   ${[...problems, ...notes].join("\n   ")}` : ""}`);
   const au = r.auto_update;
+  if (r.otel) {
+    const t = r.otel;
+    line(t.queue_error ? "need" : "ok", `OpenTelemetry export ${t.on ? `on · ${t.endpoint_origin}` : `off: ${t.why_off}`} · headers ${t.headers} · queued ${t.queued_files} · oldest ${t.oldest_age_sec ?? "none"} s · dropped ${t.dropped_total}${t.queue_error ? ` · ${t.queue_error}` : ""}`);
+    if (t.last_export) line(t.last_export.ok ? "ok" : "need", `OpenTelemetry last export ${t.last_export.at}: ${t.last_export.sent} sent, ${t.last_export.refused} refused${t.last_export.error ? ` · ${t.last_export.error}` : ""}`);
+    if (Object.keys(t.dropped_by_code).length) line("ok", `OpenTelemetry counts ${JSON.stringify(t.dropped_by_code)}`);
+  }
   // The channel is shown on or off: `routr update` by hand follows it too.
   const channel = au.channel === "beta" ? "beta channel (beta and rc releases too; `routr setup --channel stable` leaves it)" : "stable channel";
   line("ok", `automatic updates ${au.on ? `on · ${channel} · last checked ${au.checked_hours_ago == null ? "never" : au.checked_hours_ago + " h ago"}${au.last ? ` · last result: ${au.last.error ?? au.last.note}` : ""}` : `off: ${au.why_off} · ${channel} · \`${au.check_by_hand ?? "routr update --check"}\` looks for a newer release`}`);

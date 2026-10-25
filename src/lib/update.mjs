@@ -6,7 +6,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { loadConfig } from "./config.mjs";
-import { CACHE_DIR, ensureParent, lockIsStale, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
+import { CACHE_DIR, ensureParent, lockIsStale, lockOwned, lockToken, releaseFileLock, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
 import { forgetConsentUnlessOn, hoursAgo, sendRows, telemetryStatus } from "./telemetry.mjs";
 import { newer, ROUTR_VERSION } from "./version.mjs";
 
@@ -175,7 +175,8 @@ export async function lockedUpdate(opts = {}, { lock = LOCK(), run = update } = 
   if (opts.checkOnly) return run(opts);
   try { ensureParent(lock); } catch {}
   if (!takeLock(lock, (f) => lockIsStale(f))) return { ok: false, updated: false, error: `another routr update is running (${lock}): nothing was changed. Try again once it finishes` };
-  try { return await run(opts); } finally { rmSync(lock, { force: true }); }
+  const token = lockToken(lock);
+  try { return await run(opts, { owned: () => lockOwned(lock, token) }); } finally { releaseFileLock(lock, token); }
 }
 
 // `self`, `fetchFn`, `spawn`, `isStandalone` and `current` are seams: a test drives a real swap on a scratch file, with no
@@ -184,7 +185,7 @@ export async function lockedUpdate(opts = {}, { lock = LOCK(), run = update } = 
 // download fast and a short write without a full disk.
 export async function update({ checkOnly = false, force = false, base = process.env.ROUTR_DOWNLOAD_BASE,
   self = process.execPath, fetchFn = fetch, spawn = startSync, isStandalone = standalone, current = ROUTR_VERSION,
-  channel = loadConfig().config.update_channel, stallMs = DOWNLOAD_STALL_MS, maxMs = DOWNLOAD_MAX_MS, write = writeSync } = {}) {
+  channel = loadConfig().config.update_channel, stallMs = DOWNLOAD_STALL_MS, maxMs = DOWNLOAD_MAX_MS, write = writeSync } = {}, { owned = () => true } = {}) {
   const out = { ok: false, current, latest: null, updated: false, ...(channel === "beta" ? { channel } : {}) };
   const on = channel === "beta" ? " on the beta channel" : "";
   // A look (--check) takes no lock, so it touches nothing; every other run holds the update lock (lockedUpdate,
@@ -223,6 +224,8 @@ export async function update({ checkOnly = false, force = false, base = process.
         if (there && !newer(out.latest, there)) return { ...out, ok: true, installed: there,
           note: `the routr at ${self} is already ${there}${there === out.latest ? "" : `, newer than ${out.latest}`} (installed since this run started): not replaced. \`routr update --force\` installs ${out.latest}` };
       }
+      // Review A: a download can outlive its lock. Prove the captured token at the irreversible action, after awaits.
+      if (!owned()) throw new Error("the update lock was taken over; nothing was changed");
       swapBinary(self, tmp);
     } finally { if (staged) try { rmSync(tmp, { force: true }); } catch {} }
     // From here on the new binary is in place: whatever happens next, the result must say so (0.1.14 to 0.1.16 threw
@@ -304,6 +307,7 @@ export const updateRecord = (r, channel, at = new Date().toISOString()) =>
 export async function backgroundUpdate({ run = update } = {}) {
   ensureParent(LOCK());
   if (!takeLock(LOCK(), (f) => lockIsStale(f))) return; // one updater at a time
+  const token = lockToken(LOCK());
   try {
     writeFileSync(UPDATE_STAMP(), new Date().toISOString() + "\n"); // first, so a failing check is not retried on every command
     const { config } = loadConfig();
@@ -311,9 +315,9 @@ export async function backgroundUpdate({ run = update } = {}) {
     forgetConsentUnlessOn(config);
     if (telemetryStatus(config).on) { const t = await sendRows().catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) })); writeFileSync(TELEMETRY_LOG(), JSON.stringify({ at: new Date().toISOString(), ...t }) + "\n"); }
     if (!updatesOn(config)) return;
-    const r = await run({ channel: config.update_channel });
-    writeFileSync(UPDATE_LOG(), JSON.stringify(updateRecord(r, config.update_channel)) + "\n");
-  } finally { rmSync(LOCK(), { force: true }); }
+    const r = await run({ channel: config.update_channel }, { owned: () => lockOwned(LOCK(), token) });
+    if (lockOwned(LOCK(), token)) writeFileSync(UPDATE_LOG(), JSON.stringify(updateRecord(r, config.update_channel)) + "\n");
+  } finally { releaseFileLock(LOCK(), token); }
 }
 
 // Whether automatic updates are on and why not, when the daily job last checked, its last result, and the update it saw

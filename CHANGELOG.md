@@ -5,6 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- You can configure OpenTelemetry export to your own endpoint, with secret headers, delivery status and a detached sender that retries queued batches; signals arrive in a later change. (#114)
 - Workers in a `--worktree` launch's pane now get the OpenTelemetry trace context too, and no pane launch opens picks
   up a stale one from the herdr server: each carrier routr does not pass is set empty there. (#113)
 - Workers now get the OpenTelemetry trace context (`TRACEPARENT`, `TRACESTATE`, `BAGGAGE`) routr was started with,

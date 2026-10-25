@@ -45,8 +45,9 @@ page and its tests in the same PR.
 - A brief goes only to the decision model and the worker it is for, and a key only to its provider. Neither is ever printed, logged, or put
   in the ledger or telemetry. A headless worker's report files, its own text, may quote its brief; where they are kept and for how long is
   `docs/guarantees.md`.
-- Telemetry is OFF unless the person turns it on; an agent never turns it on for them. A new field in a sent row is a
-  `docs/telemetry.md` change in the same PR.
+- Telemetry and OpenTelemetry export are OFF unless the person turns each on; an agent never turns either on
+  unasked. A new sent field changes `docs/telemetry.md` for telemetry or `docs/opentelemetry.md` for OpenTelemetry
+  export in the same PR. They have separate settings, state and delivery.
 - Claims in `README.md`, the guides, and `docs/evidence.md` are either measured or say they are not.
 
 ## Design
