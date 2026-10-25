@@ -20,6 +20,13 @@ import { LaunchIndex, launchContext } from "./launch-index.mjs";
 import { callHerdr, herdrId } from "./process-boundary.mjs";
 
 const context = new AsyncLocalStorage(), nanos = () => BigInt(Date.now()) * 1000000n;
+// A span's times: its start read from the wall clock once, every later time (its end, the logs taken from it) as that
+// start plus monotonic time since, so a clock change during a command or a long turn cannot make a duration negative
+// or inflate it (the plan's clock rule; from the review of 14a45ca).
+export const spanClock = () => { const start = nanos(), mono = process.hrtime.bigint(); return { start, now: () => start + (process.hrtime.bigint() - mono) }; };
+const clocks = new WeakMap();
+const started = (span, clock = spanClock()) => { span.startTimeUnixNano = clock.start; clocks.set(span, clock); return span; };
+const spanNow = (span) => clocks.get(span)?.now() ?? nanos();
 export function traceOutput(result) { const c = context.getStore(); if (c) c.output = result; }
 const subscriptions = Object.keys(HARNESSES);
 export const ERROR_CODES = [...new Set([...DECISION_CODES, ...Object.keys(USAGE_FAILURES), "unreadable", "refused", "failed", "not_started", "no_finish", "stopped", "_OTHER"])];
@@ -27,7 +34,7 @@ const put = (span, values) => Object.assign(span.attributes, signalAttributes(va
 export function inputNeeded(code) {
   const c = context.getStore(); if (c?.span && NEEDS_INPUT_CODES.includes(code)) c.inputCode = code;
 }
-const logRecord = (span, eventName, values, timeUnixNano = nanos()) => {
+const logRecord = (span, eventName, values, timeUnixNano = spanNow(span)) => {
   const spec = LOG_EVENTS[eventName], attributes = {};
   for (const key of IDENTITY_ATTRIBUTES) {
     if (span.attributes[key] != null) attributes[key] = span.attributes[key];
@@ -107,7 +114,7 @@ export async function decisionSpan(config, run) {
     c = context.getStore();
     if (c?.span) {
       t = decisionTarget(config);
-      span = { name: "classify", kind: 3, traceId: c.span.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: c.span.spanId, flags: 1, startTimeUnixNano: nanos(), attributes: { ...c.identity.attributes } };
+      span = started({ name: "classify", kind: 3, traceId: c.span.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: c.span.spanId, flags: 1, attributes: { ...c.identity.attributes } });
       identity(t.provider, t.model);
     }
   } catch { span = null; } // Optional setup cannot skip or repeat the provider call.
@@ -123,7 +130,7 @@ export async function decisionSpan(config, run) {
     } catch {} // Observation cannot replace the provider's reply or its original failure.
     return r;
   } catch (e) { try { identity(e.provider ?? t.provider, e.model ?? t.model); error(span, e.code); } catch {} throw e; }
-  finally { try { span.endTimeUnixNano = nanos(); c.spans.push(span); } catch {} }
+  finally { try { span.endTimeUnixNano = spanNow(span); c.spans.push(span); } catch {} }
 }
 const usageState = (row) => row.signedIn === false ? "excluded" : row.kept ? "kept" : row.given ? "given" : row.ageSec != null ? "live" : "assumed";
 function usageObservations(row, observations) {
@@ -147,18 +154,19 @@ function usageRow(row, startTimeUnixNano, endTimeUnixNano) {
       "routr.usage.source": pick(row.source, [...Object.values(SOURCES).map((s) => s.source), "sign-in check", "given by caller", "none", "statusline", "session log"]) });
     // A kept reading recovers a failed refresh; the read operation still produced usable data.
     if (row.failure && row.headroom == null) error(span, row.failure.code);
-    if (row.failure) c.logs.push(logRecord(span, "routr.usage.failed", { "error.type": usageFailure(row.failure.code).code, "routr.subscription": row.pool }));
+    if (row.failure) c.logs.push(logRecord(span, "routr.usage.failed", { "error.type": usageFailure(row.failure.code).code, "routr.subscription": row.pool }, endTimeUnixNano));
     c.spans.push(span);
   } catch {} // A failed observation must leave its usage reading usable.
 }
-export async function usageSpans(run, { startedAt } = {}) {
+// `since`: a spanClock the caller started before a reading of its own (a named fresh read), which then times them all.
+export async function usageSpans(run, { since } = {}) {
   const c = context.getStore();
   if (!c) return run((read) => read());
-  const start = startedAt == null ? nanos() : BigInt(startedAt) * 1000000n;
-  const observe = startedAt == null ? async (read) => { const at = nanos(), row = await read(); usageRow(row, at, nanos()); return row; } : (read) => read();
-  const rows = await run(observe), end = nanos();
+  const clock = since ?? spanClock();
+  const observe = since == null ? async (read) => { const at = spanClock(), row = await read(); usageRow(row, at.start, at.now()); return row; } : (read) => read();
+  const rows = await run(observe), end = clock.now();
   // Injected bulk readers still cross the projection, while the real reader measures each parallel source itself.
-  for (const row of rows) if (!c.observed.has(row)) usageRow(row, start, end);
+  for (const row of rows) if (!c.observed.has(row)) usageRow(row, clock.start, end);
   return rows;
 }
 function resultAttributes(command, span, r) {
@@ -210,8 +218,8 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
     session = otelSession(loadConfig(otel.configPath).config, env, otel);
     if (session.on && (launch || !Object.hasOwn(worker, "launch")) && inherited?.sampled !== false && Object.hasOwn(WORKER_PROVIDERS, worker.kind) && /^[a-z][a-z0-9_-]{0,31}$/.test(worker.name)) {
       const parent = launch ?? inherited;
-      span = { name: `invoke_agent ${worker.name}`, kind: 3, traceId: parent?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"), ...(parent ? { parentSpanId: parent.spanId } : {}),
-        flags: 1, startTimeUnixNano: nanos(), attributes: {} };
+      span = started({ name: `invoke_agent ${worker.name}`, kind: 3, traceId: parent?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"), ...(parent ? { parentSpanId: parent.spanId } : {}),
+        flags: 1, attributes: {} });
       put(span, identity ? identity() : traceIdentity(worker.cwd).attributes);
       put(span, { "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": WORKER_PROVIDERS[worker.kind], "gen_ai.agent.name": worker.name,
         "routr.kind": pick(worker.kind, subscriptions), "routr.backend": "headless", "routr.launch.id": launch?.launch_id, "routr.model": modelName(worker.model), "routr.effort": pick(worker.effort, EFFORTS), "routr.turn": number });
@@ -226,7 +234,7 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
     state(from, to) {
       try {
         if (!span || from === to || !WORKER_STATES.includes(from) || !WORKER_STATES.includes(to)) return;
-        const event = [from, to, nanos()];
+        const event = [from, to, spanNow(span)];
         if (ended) queueLogs([event]); else transitions.push(event);
       } catch {} // A lifecycle observation cannot interrupt the holder's state write.
     },
@@ -240,7 +248,7 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
           const v = usage?.[key]; if (Number.isSafeInteger(v) && v >= 0 && (!key.includes(".") || v > 0)) put(span, { [`gen_ai.usage.${key}`]: v });
         }
         if (outcome !== "finished") error(span, outcome);
-        span.endTimeUnixNano = nanos();
+        span.endTimeUnixNano = spanNow(span);
         session.queue("traces", encodeTraces([span], { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: TRACE_ATTRIBUTES }));
         queueLogs(transitions);
       } catch {} // Disk, consent or encoder failure never fails, delays or retries a worker turn.
@@ -256,8 +264,8 @@ export function commandTrace(command, setup = {}, run) {
     const inherited = parseTraceparent(carriersFrom(env).carriers.TRACEPARENT);
     if (session.on) batch = { observations: [], observed: new Set(), env, command };
     if (session.on && inherited?.sampled !== false) {
-      span = { name: `routr ${command}`, kind: 1, traceId: inherited?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"),
-        ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, startTimeUnixNano: nanos(), attributes: {} };
+      span = started({ name: `routr ${command}`, kind: 1, traceId: inherited?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"),
+        ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, attributes: {} });
       const id = leadSession(env, lead); if (id && ["dispatch", "subagent", "launch"].includes(command)) put(span, { "routr.lead.session_id": id });
       const identity = traceIdentity(cwd); put(span, identity.attributes);
       batch = { ...batch, span, spans: [span], logs: [], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: randomUUID(), matched: new Set(), observed: new Set() };
@@ -268,7 +276,7 @@ export function commandTrace(command, setup = {}, run) {
     try {
       const output = batch.output ?? result;
       if (span) {
-        resultAttributes(command, span, output); span.endTimeUnixNano = nanos();
+        resultAttributes(command, span, output); span.endTimeUnixNano = spanNow(span);
         if (batch.inputCode) batch.logs.push(logRecord(span, "routr.needs_input", { "routr.needs_input.why": batch.inputCode }));
         for (const text of output?.warnings ?? []) {
           const code = warningCode(text); if (code) batch.logs.push(logRecord(span, "routr.warning", { "routr.warning.code": code }));
