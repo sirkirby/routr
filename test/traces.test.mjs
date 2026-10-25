@@ -15,7 +15,7 @@ import * as channel from "../src/lib/channel.mjs";
 import { LaunchIndex } from "../src/lib/launch-index.mjs";
 import { traceIdentity } from "../src/lib/trace-identity.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
-import { TRACE_ATTRIBUTES, ERROR_CODES, commandTrace, linkWorker, usageSpans, decisionSpan } from "../src/lib/traces.mjs";
+import { TRACE_ATTRIBUTES, ERROR_CODES, workerTurn, commandTrace, linkWorker, usageSpans, decisionSpan } from "../src/lib/traces.mjs";
 import { readUsage } from "../src/lib/harnesses.mjs";
 
 function exporting(env = {}) {
@@ -547,4 +547,70 @@ test("the shipped trace contract defines values and ignores malformed optional l
   const guide = readFileSync(new URL("../skills/routr/references/orchestrator.md", import.meta.url), "utf8");
   expect(guide).toContain("https://github.com/sirkirby/routr/blob/main/docs/opentelemetry.md");
   expect(guide).not.toContain("planned span and index");
+});
+
+const tracedWorker = (x, over = {}) => ({ kind: "codex", name: "fixture", model: "gpt-6-luna", cwd: x.home,
+  launch: { launch_id: "12345678-1234-4123-8123-123456789abc", traceId: "4bf92f3577b34da6a3ce929d0e0e4736", spanId: "00f067aa0ba902b7" },
+  carriers: { TRACEPARENT: parent, TRACESTATE: "vendor=PRIVATE_STATE", BAGGAGE: "a=PRIVATE_BAGGAGE" }, ...over });
+
+test("turn queueing checks live consent; off holders can emit after opt-in, without using ambient lead carriers", () => {
+  const x = exporting(), w = tracedWorker(x), opts = { env: { TRACEPARENT: "00-" + "a".repeat(32) + "-" + "b".repeat(16) + "-01" }, otel: x.otel };
+  // A turn begun under one consent never queues under the replacement, nor when switched off.
+  for (const change of [undefined, { ...x.config.otel, consent: "a".repeat(32) }]) {
+    writeFileSync(x.otel.configPath, JSON.stringify(x.config));
+    const t = workerTurn(w, 1, opts);
+    writeFileSync(x.otel.configPath, JSON.stringify({ ...x.config, otel: change }));
+    t.end("finished", 1, "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b");
+    expect(x.spans()).toHaveLength(0);
+  }
+  // Same holder, later turn: reads fresh export state, not the setting at holder start.
+  writeFileSync(x.otel.configPath, JSON.stringify({ ...x.config, otel: undefined }));
+  workerTurn(w, 2, opts).end("finished", 1);
+  expect(x.spans()).toHaveLength(0);
+  writeFileSync(x.otel.configPath, JSON.stringify(x.config));
+  const t = workerTurn(w, 3, opts); t.end("finished", 1); t.end("failed", 2);
+  expect(x.spans()).toHaveLength(1);
+  expect(x.spans()[0]).toMatchObject({ traceId: w.launch.traceId, parentSpanId: w.launch.spanId });
+  expect(attrs(x.spans()[0])).toMatchObject({ "routr.turn": 3, "routr.turn.messages": 1 });
+});
+
+test("turns preserve saved carriers and emit nothing off, unsampled, without launch context or under process off switches", () => {
+  for (const mode of ["off", "unsampled", "missing", "malformed", "disabled", "sdk"]) {
+    const x = exporting(), w = tracedWorker(x), env = {};
+    if (mode === "off") writeFileSync(x.otel.configPath, JSON.stringify({ ...x.config, otel: undefined }));
+    if (mode === "unsampled") w.carriers.TRACEPARENT = parent.slice(0, -2) + "00";
+    if (mode === "missing") delete w.launch;
+    if (mode === "malformed") w.launch.traceId = "0".repeat(32);
+    if (mode === "disabled") env.ROUTR_OTEL = "0";
+    if (mode === "sdk") env.OTEL_SDK_DISABLED = "TRUE";
+    const t = workerTurn(w, 1, { env, otel: x.otel });
+    expect(t.carriers).toEqual(w.carriers);
+    t.end("finished", 1);
+    expect(x.spans()).toHaveLength(0); expect(x.spawned).toHaveLength(0);
+  }
+});
+
+test("turn projection uses shared shape checks, known error codes and only classified usage, even on queue failure", () => {
+  const x = exporting(), w = tracedWorker(x, { model: "private model text", effort: "secret effort" });
+  const t = workerTurn(w, 1, { env: {}, otel: x.otel });
+  t.end("exception PRIVATE_ERROR", 1, "PRIVATE_SESSION", { input_tokens: 20, output_tokens: 5, "cache_read.input_tokens": 4, "cache_write.input_tokens": 0, "reasoning.output_tokens": 3, total_tokens: 25, text: "PRIVATE_REPLY" });
+  const s = x.spans()[0];
+  expect(s.status).toEqual({ code: 2 });
+  expect(attrs(s)).toMatchObject({ "routr.model": "other", "routr.effort": "other", "routr.turn.outcome": "other", "error.type": "_OTHER", "gen_ai.usage.input_tokens": 20, "gen_ai.usage.output_tokens": 5, "gen_ai.usage.cache_read.input_tokens": 4, "gen_ai.usage.reasoning.output_tokens": 3 });
+  expect(attrs(s)).not.toHaveProperty("gen_ai.conversation.id");
+  expect(attrs(s)).not.toHaveProperty("gen_ai.usage.total_tokens");
+  expect(attrs(s)).not.toHaveProperty("gen_ai.usage.cache_write.input_tokens");
+  expect(JSON.stringify(x.batches())).not.toMatch(/PRIVATE|private model|secret effort/);
+  const broken = workerTurn(w, 2, { env: {}, otel: { ...x.otel, write: () => { throw new Error("PRIVATE_DISK_ERROR"); } } });
+  expect(() => broken.end("failed", 1)).not.toThrow();
+  expect(x.spans()).toHaveLength(1);
+});
+
+test("a generated turn context drops orphan tracestate when its saved parent is invalid", () => {
+  const x = exporting(), w = tracedWorker(x);
+  w.carriers.TRACEPARENT = "invalid";
+  const t = workerTurn(w, 1, { env: {}, otel: x.otel });
+  expect(t.carriers.TRACEPARENT).toMatch(/^00-4bf92f3577b34da6a3ce929d0e0e4736-[a-f0-9]{16}-01$/);
+  expect(t.carriers).not.toHaveProperty("TRACESTATE");
+  expect(t.carriers.BAGGAGE).toBe("a=PRIVATE_BAGGAGE");
 });

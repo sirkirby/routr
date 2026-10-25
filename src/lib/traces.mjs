@@ -2,7 +2,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
 import { encodeTraces, otelSession } from "./otel.mjs";
-import { carriersFrom, carrierWithheld } from "./runtime.mjs";
+import { loadConfig } from "./config.mjs";
+import { carriersFrom, carrierWithheld, savedCarriers } from "./runtime.mjs";
 import { parseTraceparent, leadSession, sessionId } from "./trace-context.mjs";
 import { pick, modelName, EFFORTS, questionSet, VERDICTS, CHECK_RESULTS } from "./shaped.mjs";
 import { HARNESSES, SOURCES } from "./harnesses.mjs";
@@ -17,7 +18,7 @@ import { callHerdr, herdrId } from "./process-boundary.mjs";
 const context = new AsyncLocalStorage(), nanos = () => BigInt(Date.now()) * 1000000n;
 export function traceOutput(result) { const c = context.getStore(); if (c) c.output = result; }
 const subscriptions = Object.keys(HARNESSES);
-export const ERROR_CODES = [...new Set([...DECISION_CODES, ...Object.keys(USAGE_FAILURES), "unreadable", "refused", "failed", "_OTHER"])];
+export const ERROR_CODES = [...new Set([...DECISION_CODES, ...Object.keys(USAGE_FAILURES), "unreadable", "refused", "failed", "not_started", "no_finish", "stopped", "_OTHER"])];
 export const TRACE_ATTRIBUTES = Object.freeze({ "routr.lead.session_id": "string", "routr.question_set.version": "string", "routr.candidates": "string[]", "routr.unavailable": "string[]",
   "vcs.repository.url.full": "string", "vcs.ref.head.name": "string", "routr.cwd": "string", "routr.worktree": "string",
   "routr.kind": "string", "routr.backend": "string", "routr.launch.id": "string", "gen_ai.agent.name": "string", "gen_ai.conversation.id": "string", "routr.model": "string", "routr.advice.matched": "boolean", "routr.carriers.forwarded": "string[]",
@@ -25,6 +26,7 @@ export const TRACE_ATTRIBUTES = Object.freeze({ "routr.lead.session_id": "string
   ...Object.fromEntries(Object.keys(CHECKS).map((k) => [`routr.check.${k}`, "double"])), "routr.check.flags": "string[]",
   "gen_ai.operation.name": "string", "gen_ai.provider.name": "string", "gen_ai.request.model": "string", "gen_ai.response.model": "string",
   ...Object.fromEntries(["input_tokens", "output_tokens", "cache_read.input_tokens", "cache_write.input_tokens", "reasoning.output_tokens"].map((k) => [`gen_ai.usage.${k}`, "int"])),
+  "routr.turn": "int", "routr.turn.outcome": "string", "routr.turn.messages": "int",
   "routr.usage.state": "string", "routr.usage.source": "string",
   ...Object.fromEntries(["launch", "send", "wait", "workers", "stop", "cleanup", "record"].map((k) => [`routr.${k}.state`, "string"])),
   "routr.verdict": "string", "routr.check": "string", "routr.level": "string", "routr.attempts": "int", "routr.seconds": "double", "routr.causes": "string[]", "routr.subscription": "string", "routr.effort": "string", "routr.effort_from": "string", "routr.advice.id": "string", "error.type": "string" });
@@ -153,16 +155,55 @@ function resultAttributes(command, span, r) {
   if (["launch", "send", "wait", "workers", "stop", "cleanup", "record"].includes(command)) put(span, { [`routr.${command}.state`]: pick(r.state ?? (r.ok ? "done" : "failed"), ["planned", "ready", "prompted", "needs_input", "failed", "refused", "none", "finished", "running", "idle", "resumed", "queued", "delivered", "unknown", "stopped", "absent", "listed", "closed", "removed", "done"]) });
   if (r.ok === false) error(span, ["refused", "failed"].includes(r.state) ? r.state : r.unavailable?.at(-1)?.code);
 }
+const spanCarriers = (saved, span, inherited) => {
+  const carriers = { ...saved, TRACEPARENT: `00-${span.traceId}-${span.spanId}-01` };
+  if (!inherited || inherited.traceId !== span.traceId) delete carriers.TRACESTATE;
+  return carriers;
+};
 export function launchCarriers(env) {
   const found = carriersFrom(env), c = context.getStore();
   if (!c || c.span.name !== "routr launch") return found;
-  const carriers = { ...found.carriers, TRACEPARENT: `00-${c.span.traceId}-${c.span.spanId}-01` };
-  if (!c.inherited) delete carriers.TRACESTATE;
+  const carriers = spanCarriers(found.carriers, c.span, c.inherited);
   return { carriers, withheld: found.withheld, launchSpan: true };
 }
 export const launchCarrierWarnings = (found) => found.withheld.map((n) => found.launchSpan && n === "TRACEPARENT"
   ? "The inherited TRACEPARENT exceeded routr's forwarding limits; the worker gets this routr launch span instead"
   : carrierWithheld(n));
+// Stage 2 W3-3: each turn captures fresh consent; its queue call checks it again. A holder has no lead carriers.
+const WORKER_PROVIDERS = { claude: "anthropic", codex: "openai", cursor: "cursor", agy: "gcp.gen_ai", kiro: "kiro" };
+export function workerTurn(worker, number, { env = process.env, otel = {} } = {}) {
+  const saved = savedCarriers(worker.carriers).carriers;
+  let span, session, inherited;
+  try {
+    const launch = launchContext(worker.launch); inherited = parseTraceparent(saved.TRACEPARENT);
+    session = otelSession(loadConfig(otel.configPath).config, env, otel);
+    if (session.on && launch && inherited?.sampled !== false && WORKER_PROVIDERS[worker.kind] && /^[a-z][a-z0-9_-]{0,31}$/.test(worker.name)) {
+      span = { name: `invoke_agent ${worker.name}`, kind: 3, traceId: launch.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: launch.spanId,
+        flags: 1, startTimeUnixNano: nanos(), attributes: {} };
+      put(span, traceIdentity(worker.cwd).attributes);
+      put(span, { "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": WORKER_PROVIDERS[worker.kind], "gen_ai.agent.name": worker.name,
+        "routr.kind": worker.kind, "routr.backend": "headless", "routr.launch.id": launch.launch_id, "routr.model": modelName(worker.model), "routr.effort": pick(worker.effort, EFFORTS), "routr.turn": number });
+    }
+  } catch {} // Missing context, malformed state or optional observation cannot change a turn.
+  let ended = false;
+  return {
+    carriers: span ? spanCarriers(saved, span, inherited) : saved,
+    end(outcome, messages, conversation, usage) {
+      if (ended) return; ended = true;
+      try {
+        if (!span) return;
+        put(span, { "routr.turn.outcome": pick(outcome, ["finished", "failed", "not_started", "no_finish", "stopped"]), "routr.turn.messages": messages,
+          "gen_ai.conversation.id": typeof conversation === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(conversation) ? conversation : null });
+        for (const key of ["input_tokens", "output_tokens", "cache_read.input_tokens", "cache_write.input_tokens", "reasoning.output_tokens"]) {
+          const v = usage?.[key]; if (Number.isSafeInteger(v) && v >= 0 && (!key.includes(".") || v > 0)) put(span, { [`gen_ai.usage.${key}`]: v });
+        }
+        if (outcome !== "finished") error(span, outcome);
+        span.endTimeUnixNano = nanos();
+        session.queue("traces", encodeTraces([span], { schemaUrl: "https://opentelemetry.io/schemas/1.44.0", attributeTypes: TRACE_ATTRIBUTES }));
+      } catch {} // Disk, consent or encoder failure never fails, delays or retries a worker turn.
+    },
+  };
+}
 export function commandTrace(command, setup = {}, run) {
   if (context.getStore()) return run(); // Internal cleanup of an unstarted launch belongs to that launch.
   let session, span, batch;

@@ -337,7 +337,7 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
   absent, so a worker in such a pane gets exactly routr's context, or none.
 - **Not for harness reads.** routr's own reads of a harness (sign-in status, usage, model lists) and its private herdr
   session get no carrier: they are not workers. Every detached routr job also starts with the trace carriers,
-  lead-session variables and herdr pane variables removed; background usage refreshes and holders emit no spans.
+  lead-session variables and herdr pane variables removed; background usage refreshes emit no spans. Headless holders emit completed turn spans only when export permits them.
 - **Limits.** routr passes a carrier only when every character is printable ASCII or a tab, and it is at most 512
   bytes (`TRACEPARENT`, `TRACESTATE`) or 8192 (`BAGGAGE`). This is routr's own limit on what it hands on, not the W3C
   grammar. One outside it is not passed, and a warning names it, never its value; the others still go. With export
@@ -349,8 +349,14 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
   value of every carrier routr found or generated, passed or withheld, replaced by `<carrier>`, also where the pane wrapped it
   across lines; a value the screen drew with something inside it (a colour code) is not recognised.
 - **Headless.** Launch saves the carriers it passes in the worker's settings file, in its run folder (0600 on macOS
-  and Linux), and every turn uses those, whoever starts the next one: a `send` from another environment does not
-  change them. They are checked against the limits again each time they are read: only the three names are used, and
+  and Linux), and every turn starts from those, whoever starts the next one: a `send` from another environment does not
+  replace them. With a sampled saved launch and export on, the holder emits one child `invoke_agent` span per
+  completed turn, re-checking consent on each write. The first process gets the launch span; a resumed process
+  gets the turn that starts it; Cursor gets the turn for every process. Codex requests carry the turn in `trace`;
+  Kiro prompts use ACP `_meta`, with session creation/loading carrying the process context. A message into a
+  running turn creates no new span. An existing process keeps its environment. Export off or unsampled parentage
+  keeps saved carrier values unchanged. Queue failures leave turns unchanged.
+  [OpenTelemetry nesting and measurement limits](opentelemetry.md#parentage-and-workers) describe each harness. They are checked against the limits again each time they are read: only the three names are used, and
   a value outside the limits, or a name saved with anything but a non-empty string (null, empty), is withheld (`send` says so; `workers` and `wait` show the names in
   `carriers_withheld`). A worker launched before routr saved carriers gets none. `cleanup --worker` removes them with
   the run folder.

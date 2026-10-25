@@ -37,7 +37,7 @@
 // continues it in a new process with its context. It runs on a private copy of its config, as in a pane.
 // Worker text reaches one place, the report file of each turn (owner-only, removed by cleanup); only its path leaves
 // routr. Nothing else of the harness's output is kept: its stderr is not read, and a tool is shown by a fixed name.
-import { linkWorker } from "./traces.mjs";
+import { linkWorker, workerTurn } from "./traces.mjs";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -196,7 +196,7 @@ const writeLine = (c, line) => new Promise((resolve) => {
 // `no_reply` (handed to it, and it ended before answering: whether it acted on it is not known). A request of the
 // harness's own (an approval, a question, a tool call) is answered with a JSON-RPC error, which declines it.
 const rpcLine = (e) => (e.id != null && !e.method ? { reply: { id: e.id, result: e.result ?? null, error: e.error ?? null } } : e.id != null && typeof e.method === "string" ? { request: e.id } : null);
-function rpcPipe(c) {
+function rpcPipe(c, trace = () => null) {
   let id = 0, closed = false;
   const waiting = new Map();
   const open = () => !closed && !c.stdin.writableEnded && !c.stdin.destroyed;
@@ -205,7 +205,7 @@ function rpcPipe(c) {
   const rpc = (method, params, { written } = {}) => new Promise((resolve) => {
     if (!open()) { written?.(false); return resolve({ error: { code: "not_written" } }); }
     const i = ++id; waiting.set(i, resolve);
-    out({ id: i, method, params }).then((ok) => { written?.(ok); if (!ok && waiting.delete(i)) resolve({ error: { code: "not_written" } }); });
+    out({ id: i, method, params, ...trace() }).then((ok) => { written?.(ok); if (!ok && waiting.delete(i)) resolve({ error: { code: "not_written" } }); });
   });
   c.on("close", () => { closed = true; for (const r of waiting.values()) r({ error: { code: "no_reply" } }); waiting.clear(); });
   const outcome = (r) => (r.result ? "ok" : ["not_written", "no_reply"].includes(r.error?.code) ? r.error.code : "refused");
@@ -242,9 +242,13 @@ export const ADAPTERS = {
     // No --dangerously-bypass-hook-trust: the app-server takes no such flag, and skips a hook the user has not trusted,
     // silently (p37 item 9). The model and effort go in the protocol too.
     argv: () => ["app-server", "-c", "check_for_update_on_startup=false"],
-    connect: (c, { cwd, model, effort, session, emit }) => {
+    connect: (c, { cwd, model, effort, session, emit, turnCarriers = () => ({}) }) => {
       let thread = session ?? null, turn = null, ready = null;
-      const ended = new Set(), { out, rpc, outcome, open, take } = rpcPipe(c);
+      // Codex 0.164 source research: request trace wins over the process environment (Stage 2 W3-2).
+      const ended = new Set(), { out, rpc, outcome, open, take } = rpcPipe(c, () => {
+        const v = turnCarriers(), trace = { ...(v.TRACEPARENT ? { traceparent: v.TRACEPARENT } : {}), ...(v.TRACESTATE ? { tracestate: v.TRACESTATE } : {}) };
+        return Object.keys(trace).length ? { trace } : {};
+      });
       const read = codexReader();
       const opts = { cwd, model, approvalPolicy: "never", sandbox: "danger-full-access" };
       // The running turn, as the app-server says it (turn/started, turn/completed) and as turn/start answered it, never
@@ -315,13 +319,18 @@ export const ADAPTERS = {
   kiro: {
     // As in a pane: --trust-tools=*, the model, the effort; `acp` in place of `chat`.
     argv: ({ model, effort }) => ["acp", ...plan({ kind: "kiro", model, effort }).argv.filter((a) => a !== "chat")],
-    connect: (c, { cwd, session, emit }) => {
+    connect: (c, { cwd, session, emit, turnCarriers = () => ({}), processCarriers = {} }) => {
       const { rpc, outcome, open, take } = rpcPipe(c), r = kiroReader();
+      // ACP reserves these keys; Kiro 2.34.0 reads none (2026-10-24 research). Consumption is unmeasured.
+      const meta = (v) => {
+        const m = Object.fromEntries(["TRACEPARENT", "TRACESTATE", "BAGGAGE"].filter((k) => v[k]).map((k) => [k.toLowerCase(), v[k]]));
+        return Object.keys(m).length ? { _meta: m } : {};
+      };
       let sid = session ?? null, ready = null, running = false;
       // One prompt: in once written (a turn of its own starts then), answered when that turn ends.
       const prompt = (text) => new Promise((went) => {
         running = true; r.take();
-        rpc("session/prompt", { sessionId: sid, prompt: [{ type: "text", text }] }, { written: (ok) => { if (ok) emit({ turn: true }); went(ok); } }).then((a) => {
+        rpc("session/prompt", { sessionId: sid, prompt: [{ type: "text", text }], ...meta(turnCarriers()) }, { written: (ok) => { if (ok) emit({ turn: true }); went(ok); } }).then((a) => {
           running = false;
           const k = outcome(a);
           // It ended mid-turn (the holder's finish says so), or never got the prompt (no turn started for it).
@@ -338,8 +347,8 @@ export const ADAPTERS = {
           const init = await rpc("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
           if (outcome(init) !== "ok") return go(outcome(init));
           let s;
-          if (sid) { r.loading(true); s = await rpc("session/load", { sessionId: sid, cwd, mcpServers: [] }); r.loading(false); }
-          else s = await rpc("session/new", { cwd, mcpServers: [] });
+          if (sid) { r.loading(true); s = await rpc("session/load", { sessionId: sid, cwd, mcpServers: [], ...meta(processCarriers) }); r.loading(false); }
+          else s = await rpc("session/new", { cwd, mcpServers: [], ...meta(processCarriers) });
           if (outcome(s) !== "ok") return go(outcome(s));
           if (!sid) { if (typeof s.result.sessionId !== "string" || !UUID.test(s.result.sessionId)) return "refused"; sid = s.result.sessionId; }
           if (!(await prompt(text))) return false;
@@ -416,7 +425,7 @@ export const listGroup = async (pgid, timeoutMs, { ps = PS } = {}) => {
 
 // The holder: `routr workers --hold <name>`, started detached by launch or send. Exits on its own; never prints.
 // `run` starts the harness (runtime's start); a test passes a fake.
-export async function hold(name, { run = start, noTaskMs = 30000, startMs = 30000 } = {}) {
+export async function hold(name, { run = start, noTaskMs = 30000, startMs = 30000, otel = {} } = {}) {
   const dir = runDir(name), w = readWorker(name);
   if (!w) return;
   const p = await probe(dir);
@@ -450,18 +459,20 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   let child = null, conn = null, inTurn = false, stopping = null, stopAsked = false, settled = false, server = null, endpoint = null, started = null, answering = 0;
   // Messages written to the harness between turns: counted on the turn they start, once it starts it. `sending`: messages
   // on their way in, which keep its input open until their answer is back.
-  let pending = 0, sending = 0, refusing = null;
+  let pending = 0, sending = 0, refusing = null, trace = null, promptMessages = 0;
   const turnRow = () => st.turns.at(-1);
+  const turnCarriers = () => (trace ??= workerTurn(w, st.turn + (inTurn ? 0 : 1), { otel })).carriers;
   const setRow = (patch) => ({ turns: [...st.turns.slice(0, -1), { ...turnRow(), ...patch }] });
   // One more message written into turn `n`, whether or not that turn is still running.
   const addDelivered = (n) => save({ turns: st.turns.map((t) => (t.turn === n ? { ...t, delivered: (t.delivered ?? 0) + 1 } : t)) });
   // A harness that runs each message as a turn of its own (`queues`: Antigravity) starts one turn per waiting message;
   // the others take every message written between turns into the one turn they start.
   // `carried`: messages the turn's own prompt carries (a resume that runs them), counted on it too.
-  const beginTurn = (carried = 0) => { inTurn = true; const taken = conn?.queues ? Math.min(1, pending) : pending; pending -= taken; const delivered = taken + carried; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered }], state: "working" }); };
+  const beginTurn = (carried = 0, prompted = 0) => { trace ??= workerTurn(w, st.turn + 1, { otel }); promptMessages = prompted; inTurn = true; const taken = conn?.queues ? Math.min(1, pending) : pending; pending -= taken; const delivered = taken + carried; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered }], state: "working" }); };
   const endTurn = (outcome, text) => {
     if (!inTurn) return;
     inTurn = false;
+    trace?.end(outcome, (turnRow()?.delivered ?? 0) + promptMessages, st.session_id); trace = null;
     let report = null;
     if (text) { try { mkdirSync(join(dir, "reports"), { recursive: true, mode: 0o700 }); writeFileSync(reportPath(name, st.turn), text, { mode: 0o600 }); report = reportPath(name, st.turn); } catch {} }
     save({ ...setRow({ outcome, report, ended_at: new Date().toISOString() }), state: child ? "waiting" : st.state });
@@ -492,11 +503,13 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
     started = new Promise((resolve) => {
       let answered = false, finished = false, taskIn = false;
       const answer = (r) => { if (!answered) { answered = true; resolve(r); } };
-      beginTurn(carried);
+      beginTurn(carried, carried ? 0 : 1);
+      // W3-2: environment records the cause of this process, never a later message into an existing process.
+      const processCarriers = w.kind === "cursor" || st.turn > 1 ? turnCarriers() : savedCarriers(w.carriers).carriers;
       let c, h;
       try {
         c = run(HARNESSES[w.kind].executable, headlessArgv({ kind: w.kind, model: w.model, effort: w.effort, session, cwd: w.cwd }),
-          { cwd: w.cwd, env: workerEnv(w.carriers, ADAPTERS[w.kind].env?.(dir)), stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
+          { cwd: w.cwd, env: workerEnv(processCarriers, ADAPTERS[w.kind].env?.(dir)), stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
       } catch { endTurn("not_started", null); answer({ code: "failed", why: "harness_not_started" }); return settle(); }
       child = c;
       // What it says, as events: bound to this process, and ignored once it has finished.
@@ -514,7 +527,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
         if (ev.result) nextHeld(); // a harness that queues: the next message the holder keeps, as a turn of its own
         if (ev.result || ev.tasks === 0) maybeClose();
       };
-      conn = h = ADAPTERS[w.kind].connect(c, { cwd: w.cwd, model: w.model, effort: w.effort, session, emit: onEvent });
+      conn = h = ADAPTERS[w.kind].connect(c, { cwd: w.cwd, model: w.model, effort: w.effort, session, emit: onEvent, turnCarriers, processCarriers });
       const finish = (why) => {
         if (finished) return; finished = true;
         // Messages it took between turns, and no turn started for them: they get one (one each, for a harness that
@@ -604,7 +617,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const handOver = async (text) => {
     const c = conn;
     if (!c?.open()) return null;
-    pending++; sending++;
+    turnCarriers(); pending++; sending++;
     let r; try { r = await c.send(text, false); } finally { sending--; }
     if (r?.code !== "handed_to_harness") pending = Math.max(0, pending - 1);
     return r;

@@ -169,8 +169,8 @@ no oldest age and zero totals.
 
 routr emits traces from `dispatch`, `subagent`, `check`, `usage`, `launch`, `send`, `wait`, `workers`, `stop`,
 `cleanup` and `record`. `statusline` and housekeeping commands (setup, doctor, key, update, uninstall, telemetry,
-share, assess, feedback and skill installation), detached `usage --background` refreshes and `workers --hold`
-holders emit nothing. No logs, metrics or headless turn spans are emitted yet.
+share, assess, feedback and skill installation) and detached `usage --background` refreshes emit nothing.
+Headless holders emit one `invoke_agent` span per completed turn. No logs or metrics are emitted yet.
 
 The GenAI convention is pinned to `open-telemetry/semantic-conventions-genai`
 `9ffc7e00c639be7712e544e3e54331e885dccf84` (2026-10-21), whose manifest depends on core semantic conventions
@@ -190,13 +190,34 @@ unchanged. Transport limits still apply ([guarantees](guarantees.md#trace-contex
 
 With export on and a sampled launch, workers get `TRACEPARENT` naming `routr launch`. Valid-parent `TRACESTATE` and
 `BAGGAGE` pass unchanged; routr adds no baggage member. Export off, including either process off switch, keeps
-pass-through behavior. Headless workers' first process and pane workers get this launch context. Existing panes
+pass-through behavior. Headless workers' first process (except Cursor) and pane workers get this launch context. Existing panes
 and adopted agents keep their own environment; launch says it passed none. Every pane routr opens sets **all three
 carrier names**, empty where none is passed. A herdr worktree's first pane comes from the server environment,
 which can hold stale context; routr replaces it with a pane carrying these explicit entries before starting the
 worker. Shell startup files may still change the environment.
 
-Lineage is **lead → routr launch → worker** by parentage, with later routr commands linked to the launch. Each
+Headless turn lineage is **lead → routr launch → invoke_agent turns**, with later routr commands linked to the
+launch. A holder uses only the launch context saved in its worker settings, never the sender's or lead's current
+carriers. Without a saved sampled launch there is no turn lineage to export. Each turn captures fresh export
+state and consent; its queue call re-reads them before writing. A holder started while export is off can emit
+turns begun after it is enabled. A turn whose consent changed writes nothing. Each finished turn writes its own
+batch immediately, while the harness may still be alive; export failure never changes its outcome or waits on
+network delivery. A message taken into a running turn adds to that turn, without creating another span.
+
+The process environment carries the span that started that process: the launch for the first process, and the
+turn for a later process resuming the session. Cursor starts a process per turn and gets that turn's span even
+for its first process. A running process keeps its original environment. Codex's requests carry the current
+turn's `trace: {traceparent, tracestate}`, which takes precedence over the environment. Kiro's `session/prompt`
+carries the turn through ACP's reserved `_meta.traceparent`, `_meta.tracestate` and `_meta.baggage`; `session/new`
+and `session/load` carry the process's context there. Absent carriers are omitted. With export off or an
+unsampled parent, saved carrier values stay unchanged. `TRACESTATE` is forwarded only with a valid inherited
+parent when routr generates context, and `BAGGAGE` remains unchanged.
+
+With its own tracing enabled, headless Claude nests under the span that started its process: the launch
+initially, or the resuming turn after a restart. Codex nests under each turn through its request field. Cursor,
+Antigravity and Kiro read no context in the researched versions, so their own telemetry, if any, is not joined.
+ACP reserves the keys routr sends to Kiro; Kiro's consumption is unmeasured. Routr's fixture tests verify the
+channels it writes, without claiming a new live measurement of harness tracing. Each
 harness reads inherited context differently, by mode: [measured harness reference](../skills/routr/references/harnesses.md#trace-context-each-harness-reads).
 Routr does not enable or configure a harness's telemetry. Pane workers have no turn span in routr: their launch
 places them by repository, branch and worktree, which a receiver can join to that harness's session. At launch end
@@ -213,14 +234,15 @@ reference.
 
 ### Spans
 
-All command spans are INTERNAL (kind 1); decision calls are CLIENT (kind 3). A successful operation leaves status
+All command spans are INTERNAL (kind 1); decision calls and headless turns are CLIENT (kind 3). A successful operation leaves status
 unset. Exported spans carry no `traceState`; inherited `TRACESTATE` is forwarded only to workers. A final failure
 sets ERROR (code 2) and a classified `error.type`; retries or an earlier failed provider
 recovered by a backup do not mark the recovered operation as failed. No exception or provider wording is exported.
 Decision providers are `typesafe`, `cloudflare` and `ollama`, describing the platform routr contacted, not the
-model's author. Future worker invocation spans will use Claude Code `anthropic`, Codex `openai`, Cursor `cursor`,
-Antigravity `gcp.gen_ai` and Kiro `kiro` as routr's best knowledge of the platform; those turn spans are not emitted
-in this schema version.
+model's author. Worker invocation spans use Claude Code `anthropic`, Codex `openai`, Cursor `cursor`,
+Antigravity `gcp.gen_ai` and Kiro `kiro` as routr's best knowledge of the platform, rather than the model's author.
+CLIENT is routr's reading of “invocation over a remote service” for a separate local process speaking the harness's
+protocol; it is not an upstream measurement of local IPC.
 
 | Span | Kind | Parent / links | Attributes beyond identity |
 |---|---|---|---|
@@ -230,6 +252,7 @@ in this schema version.
 | `routr usage` | INTERNAL | inherited or new root | level only when explicitly given; per-subscription reading children |
 | `routr usage {subscription}` | INTERNAL | reading command | subscription, usage state and source; final error type |
 | `routr launch` | INTERNAL | inherited or new root; recovery rerun links to original launch | kind, backend, launch state and id, worker name, model as given, effort, advice match, lead session, forwarded carrier names, available pane conversation id |
+| `invoke_agent {gen_ai.agent.name}` | CLIENT | saved `routr launch` | operation `invoke_agent`, provider, worker name, available harness conversation id, model selector, turn number, outcome and message count; observed classified token counts only; final error type |
 | `routr send` | INTERNAL | inherited or new root; matched launch link | send state |
 | `routr wait` | INTERNAL | inherited or new root; link per matched launch | wait state |
 | `routr workers` | INTERNAL | inherited or new root; link per matched launch | workers state |
@@ -237,11 +260,13 @@ in this schema version.
 | `routr cleanup` | INTERNAL | inherited or new root; matched launch link | cleanup state; available pane conversation id |
 | `routr record` | INTERNAL | inherited or new root; unique advice launch link | record state; exact outcome projection below |
 
-`gen_ai.request.model` belongs only to the classify span. The launch model is `routr.model`, shape-checked as a
+`gen_ai.request.model` belongs only to the classify span. The launch and turn model selector is `routr.model`, shape-checked as a
 worker model is in anonymous telemetry, rather than validated against a model registry. The requested decision
 model and a provider-recognized model **named in its reply** are distinct; routr never echoes the request as
 `gen_ai.response.model`. Unknown token counts are omitted, never fabricated as zero. Observed input and output
-counts may be zero; cache and reasoning detail counts are emitted only when positive. Cache counts are part of
+counts may be zero; cache and reasoning detail counts are emitted only when positive. Turn counts are accepted
+only from already-classified adapter events; routr parses no additional harness text for token usage. Current
+adapters expose no classified token counts, so their turn spans omit usage. Cache counts are part of
 input and reasoning counts part of output; no total token attribute is emitted.
 
 `record` projects exactly verdict, check, level, attempts, seconds, causes, subscription, resolved effort,
@@ -300,8 +325,11 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `routr.backend` | `string` | `pane` or `headless`. |
 | `routr.launch.id` | `string` | UUIDv4 identifying a sampled launch; recovery reruns reuse the original id. |
 | `gen_ai.agent.name` | `string` | Worker name matching `[a-z][a-z0-9_-]{0,31}`; invalid names omitted. |
-| `gen_ai.conversation.id` | `string` | Herdr agent_session of kind `id`, validated as UUIDv4, UUIDv7 or 16–64 lowercase hex characters; otherwise omitted. |
+| `gen_ai.conversation.id` | `string` | On commands, herdr agent_session of kind `id`, validated as UUIDv4, UUIDv7 or 16–64 lowercase hex characters; on turns, the harness UUID the adapter already reads; omitted when unavailable. |
 | `routr.model` | `string` | Worker model, 1–48 characters matching `[A-Za-z0-9][A-Za-z0-9.:[\]-]*`, without 17 consecutive alphanumerics; invalid becomes `other`. |
+| `routr.turn` | `int` | Headless turn number, starting at 1. |
+| `routr.turn.outcome` | `string` | `finished`, `failed`, `not_started`, `no_finish`, `stopped`; unknown becomes `other`. |
+| `routr.turn.messages` | `int` | Messages taken into the turn: its task or resume prompt plus delivered follow-ups; automatic harness turns can have zero. |
 | `routr.advice.matched` | `boolean` | Whether supplied advice matched the task (`true` or `false`); omitted if no match result. |
 | `routr.carriers.forwarded` | `string[]` | Names passed to a new worker: `TRACEPARENT`, `TRACESTATE`, `BAGGAGE`; never their values. |
 | `routr.assessment.names_location` | `double` | Probability, 0–1, for the fixed `names_location` question. |
@@ -324,8 +352,8 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `routr.check.symptom_patch` | `double` | Probability, 0–1, for the fixed `symptom_patch` question. |
 | `routr.check.out_of_scope` | `double` | Probability, 0–1, for the fixed `out_of_scope` question. |
 | `routr.check.flags` | `string[]` | Question names `states_verification`, `covers_brief`, `admits_gaps`, `symptom_patch`, `out_of_scope` when flagged; also `verdict_partial`, `verdict_blocked`, `verdict_unstated`. |
-| `gen_ai.operation.name` | `string` | `classify`, routr’s custom System One operation. |
-| `gen_ai.provider.name` | `string` | Decision platform contacted: `typesafe`, `cloudflare`, `ollama`; unknown becomes `other`. |
+| `gen_ai.operation.name` | `string` | `classify`, routr’s custom System One operation, or `invoke_agent` for a headless turn. |
+| `gen_ai.provider.name` | `string` | Decision platform: `typesafe`, `cloudflare`, `ollama`; worker platform: `anthropic`, `openai`, `cursor`, `gcp.gen_ai`, `kiro`; unknown becomes `other`. |
 | `gen_ai.request.model` | `string` | Requested decision model from the provider registry, or the shared worker-model shape; invalid becomes `other`. |
 | `gen_ai.response.model` | `string` | Model explicitly named by the provider reply, checked against the registry or shared model shape; absent unless observed, invalid becomes `other`. |
 | `gen_ai.usage.input_tokens` | `int` | Observed nonnegative integer input token count. |
@@ -358,13 +386,14 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 ### Span error codes
 
 <!-- span-errors -->
-`no_key`, `secrets_unreadable`, `key_refused`, `model_missing`, `model_unsupported`, `timeout`, `unreachable`, `provider_error`, `invalid_response`, `daily_allowance`, `internal_error`, `attempt_unknown`, `read_failed`, `no_response`, `private_folder`, `source_missing`, `cmd_path`, `unreadable`, `refused`, `failed`, `_OTHER`
+`no_key`, `secrets_unreadable`, `key_refused`, `model_missing`, `model_unsupported`, `timeout`, `unreachable`, `provider_error`, `invalid_response`, `daily_allowance`, `internal_error`, `attempt_unknown`, `read_failed`, `no_response`, `private_folder`, `source_missing`, `cmd_path`, `unreadable`, `refused`, `failed`, `not_started`, `no_finish`, `stopped`, `_OTHER`
 <!-- /span-errors -->
 
 Decision codes describe missing/refused keys, unreadable secrets, missing/unsupported models, allowance, timeout,
 reachability, provider status, invalid response and internal errors. Usage codes describe missing/unreadable
 sources, no response, private-folder and cmd-path failures. `unreadable` covers required files, `refused` a refused
-operation, `failed` a classified command failure, and `_OTHER` any unclassified error. Codes contain no error text.
+operation, `failed` a classified command or turn failure, `not_started` a harness that did not start,
+`no_finish` a harness that ended without a turn result, `stopped` a stopped turn, and `_OTHER` any unclassified error. Codes contain no error text.
 
 Assessment fact and check probabilities range from 0 to 1; the assessment level score ranges from 0 to 2. Work
 types and flags come from routr's fixed question set. Check flag codes are the check question names in the table,

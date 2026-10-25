@@ -134,18 +134,24 @@ Rules 0, 1 and 7 are about panes, in herdr; a headless worker has no pane, scree
 
 ## Trace context each harness reads
 
-routr passes `TRACEPARENT`, `TRACESTATE` and `BAGGAGE` from its own environment to headless workers and to a pane it
-makes (a split, or a new worktree's), unchanged (`docs/guarantees.md`, "Trace context"). What a harness does with an inherited one is its own, and
-only matters when that harness's own OpenTelemetry tracing is on. Read-only research, 2026-10-24: vendor docs [doc],
-official source [src], and strings in the installed binary [bin]; no session was started. No harness reads `BAGGAGE`.
+routr forwards saved `TRACEPARENT`, `TRACESTATE` and `BAGGAGE`; with export on, sampled launches and headless
+turns supply the context described in [the schema](../../../docs/opentelemetry.md#parentage-and-workers).
+A process gets its cause: launch for the first, resuming turn for a later process, turn for every Cursor process.
+A running process keeps that environment. Protocol requests can carry the current turn separately. Routr never
+enables a harness's own tracing. Read-only research, 2026-10-24: vendor docs [doc], official source [src], and
+installed binary strings [bin]; no session was started. Fixture tests verify routr's channels, not live consumption.
 
-| Harness | Reads an inherited `TRACEPARENT` | So, for routr's workers | Source, version |
+| Harness | Channel routr uses headless | Context read and resulting nesting | Source, version |
 |---|---|---|---|
-| Claude Code | Only with `-p` (and the Agent SDK), with `TRACESTATE`; an interactive session ignores it by design | Headless: yes. Pane: no | [doc] code.claude.com/docs/en/monitoring-usage; [bin] 2.1.310 |
-| Codex | In `codex exec` and `codex app-server` (the app-server also takes a per-request `trace` field, which wins), with `TRACESTATE`; an invalid value is ignored; no reader in the interactive TUI | Headless (app-server): yes. Pane: no | [src] codex-rs `otel/src/trace_context.rs`, `app-server/src/app_server_tracing.rs`; [bin] 0.164.0 |
-| Cursor | No: the string is not in the install | No | [bin] cursor-agent 2026.10.22-27dcf5f |
-| Antigravity | No: the string is not in the binary | No | [bin] agy 1.4.7 |
-| Kiro | No, in the environment or in ACP's `_meta` | No | [bin] kiro-cli 2.34.0; [doc] kiro.dev/docs/cli/acp |
+| Claude Code | Process environment | `TRACEPARENT` and `TRACESTATE` only with `-p` (and Agent SDK), when its tracing is on: launch for the first process, resuming turn after restart. Interactive ignores them by design | [doc] code.claude.com/docs/en/monitoring-usage; [bin] 2.1.310 |
+| Codex | Environment plus `trace: {traceparent, tracestate}` on every request in a turn | app-server reads the request field first, then environment: nests under each turn. `exec` reads environment; interactive TUI has no reader | [src] codex-rs `otel/src/trace_context.rs`, `app-server/src/app_server_tracing.rs`; [bin] 0.164.0 |
+| Cursor | Environment, current turn for each process | No reader found: its own telemetry is not joined | [bin] cursor-agent 2026.10.22-27dcf5f |
+| Antigravity | Process environment | No reader found: its own telemetry is not joined | [bin] agy 1.4.7 |
+| Kiro | Environment; ACP reserved `_meta.traceparent`, `_meta.tracestate`, `_meta.baggage` on `session/prompt` for the turn, on `session/new`/`session/load` for the process | No reader in environment or ACP found: its own telemetry is not joined. ACP reserves these keys; Kiro consuming what routr sends is unmeasured | [bin] kiro-cli 2.34.0; [doc] kiro.dev/docs/cli/acp; agentclientprotocol.com/protocol/extensibility |
+
+No researched harness reads `BAGGAGE`. Pane workers have no turn spans and get launch context in a new pane's
+environment; neither Claude nor Codex reads it in interactive mode. Export off or an unsampled parent preserves
+saved carrier values unchanged.
 
 Whether an inherited carrier then reaches a harness's own shell commands unchanged is not measured.
 
