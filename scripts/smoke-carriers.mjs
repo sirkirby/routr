@@ -30,10 +30,12 @@
 // its pane's shell has, with markers of letters, digits, `-` and `_` that ps shows unambiguously.
 // Writes only in a temporary folder it removes, and the worktree herdr makes for its repository, which it removes. Prints carrier names, never values. Exits 1 when a check fails.
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, sep } from "node:path";
+import { basename, isAbsolute, join, posix, win32 } from "node:path";
 import { deadline, paneView, quote, runHerdr, splitArgs, waitForShell, worktreeArgs, worktreePane } from "../src/lib/herdr.mjs";
+import { worktreesFromGit } from "../src/lib/cleanup.mjs";
+import { displayCommand } from "../src/lib/next.mjs";
 import { processError } from "../src/lib/process-boundary.mjs";
 import { CARRIERS, carriersFrom, installedAt, probe, realOr } from "../src/lib/runtime.mjs";
 
@@ -60,8 +62,16 @@ export function leftOut(sent, left = "TRACESTATE") {
   return { passed, expected: { ...passed, [left]: "" } };
 }
 // The ids of the workspaces (`workspace list`'s) whose checkout is `dir` or inside it: by path, never by name.
-export function workspacesIn(workspaces, dir) {
-  const under = (p) => typeof p === "string" && [p, realOr(p)].some((q) => q === dir || q.startsWith(dir.endsWith(sep) ? dir : dir + sep));
+// Compared as routr compares paths, through each one's real path, and with the platform's own rules: on Windows any
+// case and either slash, a path on another drive never inside. `platform` is a test seam; a real path is read only on
+// the platform this runs on.
+export function workspacesIn(workspaces, dir, { platform = process.platform } = {}) {
+  const P = platform === "win32" ? win32 : posix, canon = (p) => (platform === process.platform ? realOr(p) : p);
+  const under = (p) => {
+    if (typeof p !== "string" || !P.isAbsolute(p)) return false;
+    const rel = P.relative(canon(dir), canon(p));
+    return rel === "" || (!rel.startsWith("..") && !P.isAbsolute(rel));
+  };
   return (workspaces ?? []).filter((w) => under(w?.worktree?.checkout_path)).map((w) => w.workspace_id);
 }
 // The carriers `sent` that `got` (an environment object) does not hold exactly.
@@ -164,14 +174,16 @@ export async function smokeCarriers({ herdr = runHerdr, git = gitIn, env = proce
   }
   // The worktree half, on its own: a failure above does not skip it. Its pane is never closed by itself (that would
   // close the workspace and leave the worktree); removing the worktree closes the workspace.
-  let workspace = null, tree = null;
+  const repo = join(dir, "repo");
+  let workspace = null, tree = null, created = false;
   try {
-    const repo = join(dir, "repo"), branch = `routr-smoke-${randomUUID().slice(0, 8)}`;
+    const branch = `routr-smoke-${randomUUID().slice(0, 8)}`;
     mkdirSync(repo);
     for (const a of [["init", "-q"], ["-c", "user.name=routr smoke", "-c", "user.email=smoke@routr.invalid", "commit", "-q", "--allow-empty", "-m", "routr smoke"]]) {
       const r = await git(repo, a);
       if (r?.code !== 0) throw new Error(`git ${a.includes("init") ? "init" : "commit"} in the throwaway repository failed`);
     }
+    created = true; // from here on, herdr may have made a worktree whatever it answers
     const made = (await call(worktreeArgs(repo, branch))).data?.result;
     workspace = made?.workspace?.workspace_id ?? null; tree = made?.worktree?.path ?? null;
     if (typeof made?.root_pane?.pane_id !== "string" || !workspace || !tree) throw new Error("herdr worktree create returned an answer this check cannot read");
@@ -185,18 +197,34 @@ export async function smokeCarriers({ herdr = runHerdr, git = gitIn, env = proce
     say(`worktree pane, ${shell} shell, one carrier empty`, got ? missingIn(got, expected) : CARRIERS);
   } catch (e) { failed++; log(`FAILED: worktree: ${e?.message ?? e}`); }
   finally {
-    if (workspace) {
-      let r; try { r = await herdr(["worktree", "remove", "--workspace", workspace], 15000); } catch { r = { ok: false, code: "herdr_unreachable" }; }
-      if (!r?.ok) { failed++; log(`FAILED: could not remove the worktree at ${tree} (${r?.code ?? "no answer"}); remove it yourself: herdr worktree remove --workspace ${workspace}`); }
+    // The folder goes only once nothing in it is still in use: the worktree removed (its git metadata is in the
+    // repository, so a removal that failed or cannot be known keeps the repository for the retry), and every workspace
+    // on the folder closed. Each part kept is named, with its exact path.
+    let keep = false;
+    const fail = (why) => { failed++; keep = true; log(`FAILED: ${why}`); };
+    const listWorkspaces = async () => { try { const r = await herdr(["workspace", "list"], 5000); return r?.ok ? r.data?.result?.workspaces ?? [] : null; } catch { return null; } };
+    // What a create that failed, or answered unusably, made: the repository's own worktree list says (it is new, so
+    // any linked worktree is this run's), and herdr's workspaces which one is that worktree's.
+    if (created && !tree) {
+      const r = await git(repo, ["worktree", "list", "--porcelain"]);
+      if (r?.code === 0 && typeof r.out === "string") tree = worktreesFromGit(r.out).worktrees.find((w) => w.is_linked_worktree)?.path ?? null;
+      else fail(`git could not list the worktrees of the throwaway repository at ${repo}, so whether herdr made one is not known; it is kept: look with ${displayCommand(["git", "-C", repo, "worktree", "list"])}`);
     }
-    let own = null;
-    try { const r = await herdr(["workspace", "list"], 5000); if (r?.ok) own = workspacesIn(r.data?.result?.workspaces, dir); } catch {}
-    if (own == null) { failed++; log("FAILED: could not list herdr's workspaces to close the throwaway repository's; look for one on a folder in the system's temporary folder"); }
+    if (tree && !workspace) workspace = workspacesIn(await listWorkspaces(), tree)[0] ?? null;
+    if (tree) {
+      // Through herdr when the worktree has a workspace (that closes it too), else through git; never forced.
+      const retry = workspace ? ["herdr", "worktree", "remove", "--workspace", workspace] : ["git", "-C", repo, "worktree", "remove", tree];
+      let ok = false;
+      try { ok = workspace ? (await herdr(retry.slice(1), 15000))?.ok === true : (await git(repo, retry.slice(3)))?.code === 0; } catch {}
+      if (!ok || existsSync(tree)) fail(`could not remove the worktree at ${tree}; the throwaway repository at ${repo} is kept for it: remove it with ${displayCommand(retry)}, then the folder ${dir}`);
+    }
+    const all = await listWorkspaces(), own = all && workspacesIn(all, dir);
+    if (own == null) fail(`could not list herdr's workspaces to close any on the throwaway repository; ${dir} is kept: close any workspace on it, then remove it`);
     for (const id of own ?? []) {
       let r; try { r = await herdr(["workspace", "close", id], 5000); } catch { r = { ok: false, code: "herdr_unreachable" }; }
-      if (!r?.ok) { failed++; log(`FAILED: could not close workspace ${id}, on the throwaway repository (${r?.code ?? "no answer"}); close it yourself: herdr workspace close ${id}`); }
+      if (!r?.ok) fail(`could not close workspace ${id}, on the throwaway repository (${r?.code ?? "no answer"}); ${dir} is kept: close it with ${displayCommand(["herdr", "workspace", "close", id])}, then remove the folder`);
     }
-    rmSync(dir, { recursive: true, force: true });
+    if (!keep) rmSync(dir, { recursive: true, force: true });
   }
   return failed;
 }
