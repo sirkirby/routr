@@ -6,7 +6,7 @@ A short history of what changed in each routr release, one line per change. Each
 ## Unreleased
 
 - Workers in a `--worktree` launch's pane now get the OpenTelemetry trace context too, and no pane launch opens picks
-  up a stale one from the herdr server: each carrier routr does not pass is set empty there. (#<PR>)
+  up a stale one from the herdr server: each carrier routr does not pass is set empty there. (#113)
 - Workers now get the OpenTelemetry trace context (`TRACEPARENT`, `TRACESTATE`, `BAGGAGE`) routr was started with,
   unchanged: headless workers on every turn, and workers in a pane launch splits. An existing pane gets none, and
   launch says so; output shows only `<forwarded>`, never a value. (#112)
