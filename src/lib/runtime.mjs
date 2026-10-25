@@ -91,6 +91,8 @@ export function takeLock(file, stale, { token = randomUUID(), rename = renameSyn
   };
   const make = () => { create(file, token); locksHere.set(realOr(file), token); };
   try { make(); return true; } catch (e) { if (e?.code !== "EEXIST") return false; }
+  // Review 3: a live/never-stale lock needs no writes, especially while uninstall removes its state folder.
+  try { if (!stale(file)) return false; } catch { return false; }
   // Review A: serialize the observation AND move, so a delayed taker never moves a live replacement. This guard
   // covers only synchronous file operations, not the job; a crashed guard expires after five seconds. No hard links.
   const guard = `${file}.takeover`, guardToken = randomUUID(), began = Date.now(), guardAge = 5000;

@@ -114,7 +114,8 @@ markers into lifetime totals, removes old-consent batches, applies caps and remo
 files older than an hour. It sweeps on taking the lock and before exit. Only its own batch and temporary filename
 patterns are removed. On taking the lock it returns every owned `.sending` file to the queue, without an age rule;
 a held lock protects an active sender's claim. A lock older than five minutes is stale even if its recorded pid
-exists. Takeovers are serialized by a short-lived exclusive guard, which expires after five seconds if abandoned.
+exists. Takeovers are serialized by a short-lived exclusive guard. A holder paused past five seconds can lose its
+takeover to another process, just as an abandoned guard can be taken over.
 Only its holder judges and moves a stale lock; a moved file is deleted only after its contents match the stale
 generation observed. This needs no hard links. A random token proves ownership before claims, state writes,
 deletes and release; an owner that lost its token stops before its next action. This cannot cancel an HTTP request

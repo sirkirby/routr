@@ -57,12 +57,36 @@ test("a failed initial lock write removes only its own incomplete lock and allow
   expect(readFileSync(file, "utf8")).toBe(before);
 });
 
+test("retries for non-stale uninstall and worker locks write no takeover guard", () => {
+  for (const name of ["uninstalling", "worker.lock"]) {
+    const dir = scratch("live-lock-retry"), file = join(dir, name), guard = `${file}.takeover`;
+    expect(runtime.takeLock(file, () => false)).toBe(true);
+    const before = readFileSync(file, "utf8"), guarded = []; let writes = 0;
+    for (let retry = 0; retry < 3; retry++) expect(runtime.takeLock(file, () => { guarded.push(existsSync(guard)); return false; }, {
+      write: (...args) => { writes++; writeFileSync(...args); }
+    })).toBe(false);
+    expect(writes).toBe(0); expect(guarded).toEqual([false, false, false]);
+    expect(readFileSync(file, "utf8")).toBe(before); expect(readdirSync(dir)).toEqual([name]);
+  }
+});
+
+test("a stale lock is checked again under the takeover guard before it can be moved", () => {
+  const file = join(scratch("stale-lock-recheck"), "job.lock"), guard = `${file}.takeover`, guarded = [];
+  writeFileSync(file, "999999999");
+  expect(runtime.takeLock(file, () => { guarded.push(existsSync(guard)); return guarded.length === 1; })).toBe(false);
+  expect(guarded).toEqual([false, true]); expect(readFileSync(file, "utf8")).toBe("999999999");
+  expect(existsSync(guard)).toBe(false);
+});
+
 test("takeover guards expire after a few seconds, and losing one prevents moving the main lock", () => {
   const file = join(scratch("takeover-guard"), "job.lock"), guard = `${file}.takeover`;
   writeFileSync(file, "999999999"); writeFileSync(guard, "abandoned");
   expect(runtime.takeLock(file, () => true)).toBe(false);
   utimesSync(guard, new Date(Date.now() - 6000), new Date(Date.now() - 6000));
-  expect(runtime.takeLock(file, () => { writeFileSync(guard, JSON.stringify({ pid: process.pid, token: "replacement" })); return true; })).toBe(false);
+  expect(runtime.takeLock(file, () => {
+    if (readFileSync(guard, "utf8") !== "abandoned") writeFileSync(guard, JSON.stringify({ pid: process.pid, token: "replacement" }));
+    return true;
+  })).toBe(false);
   expect(readFileSync(file, "utf8")).toBe("999999999");
   expect(JSON.parse(readFileSync(guard)).token).toBe("replacement");
 });
