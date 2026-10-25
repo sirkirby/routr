@@ -123,10 +123,32 @@ test("no-mkdir atomic writes cannot recreate a removed queue", () => {
   expect(JSON.parse(readFileSync(file))).toEqual({ a: 1 });
 });
 
-test("a failed atomic rename preserves the old retry state", () => {
+test("atomic writes retain the default remove-and-rename fallback", () => {
+  const file = join(scratch("otel-atomic-default"), "value.json"); writeFileSync(file, '{"a":1}');
+  let calls = 0;
+  writeJsonAtomic(file, { a: 2 }, { rename: (from, to) => {
+    calls++; expect(existsSync(to)).toBe(calls === 1);
+    if (calls === 1) throw Object.assign(new Error("replace failed"), { code: "EPERM" });
+    renameSync(from, to);
+  } });
+  expect(calls).toBe(2); expect(JSON.parse(readFileSync(file))).toEqual({ a: 2 });
+});
+
+test("atomic writes can preserve the old file and throw on failed replacement", () => {
   const file = join(scratch("otel-atomic-failure"), "sender.json"); writeFileSync(file, '{"attempt":3}');
-  expect(() => writeJsonAtomic(file, { attempt: 4 }, { rename: () => { throw Object.assign(new Error("full disk"), { code: "ENOSPC" }); } })).toThrow();
+  let calls = 0;
+  expect(() => writeJsonAtomic(file, { attempt: 4 }, { preserveOnError: true, rename: () => { calls++; throw Object.assign(new Error("full disk"), { code: "ENOSPC" }); } })).toThrow();
+  expect(calls).toBe(1);
   expect(JSON.parse(readFileSync(file))).toEqual({ attempt: 3 });
+});
+
+test("sender state requests replacement without deleting the previous retry state on failure", async () => {
+  const f = install(); otel.prepareOtel(f.opts);
+  const file = join(f.root, "sender.json"), previous = { attempt: 3, next_attempt_at: Date.now() + 60_000, consent: f.config.otel.consent, dropped_total: 0, dropped_by_code: {} };
+  writeFileSync(file, JSON.stringify(previous));
+  await otel.sendOtel({ ...f.opts, write: (file, value, options) => writeJsonAtomic(file, value, { ...options, rename: () => { throw Object.assign(new Error("full disk"), { code: "ENOSPC" }); } }) });
+  expect(JSON.parse(readFileSync(file))).toEqual(previous);
+  expect(existsSync(join(f.root, "sender.lock"))).toBe(false);
 });
 
 test("sessions do nothing off, and queue only under the consent they started with without deleting files", () => {

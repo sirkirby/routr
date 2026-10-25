@@ -254,7 +254,7 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
   let healthy = true;
   const held = () => lockId && folderId(p.lock, { link: true }) === lockId && !existsSync(p.uninstall);
   const st = { ...freshState(), ...readConfig(p.state) };
-  const save = () => { if (!held()) throw new Error("sender stopped"); write(p.state, st, { mkdir: false }); };
+  const save = () => { if (!held()) throw new Error("sender stopped"); write(p.state, st, { mkdir: false, preserveOnError: true }); };
   const remove = (file, code) => { if (!held()) throw 0; countDrop(st, code); save(); unlinkSync(file); };
   const sweep = () => {
     if (!held()) return;

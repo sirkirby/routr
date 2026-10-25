@@ -3,7 +3,7 @@
 // this on every Claude Code turn. It is the only module that imports node:child_process (a test holds every other file
 // in src/ to that), so every process routr starts gets the same platform defaults from `start` / `startSync`.
 import { spawn, spawnSync } from "node:child_process";
-import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
+import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
 
@@ -55,13 +55,14 @@ export function ensureParent(file, { mkdir = mkdirSync } = {}) {
   }
 }
 
-// Written whole or not at all (a temp file, then a rename): a reader never sees half a file. A failed replacement
-// must keep the old state: deleting it before retrying loses persisted backoff on a full disk (OTel V10).
-export function writeJsonAtomic(file, value, { mkdir = true, mode = 0o600, rename = renameSync } = {}) {
+// A temp file, then rename. Keep the existing remove-and-rename fallback for callers that need it on Windows.
+// OTel V10 retry state opts out: a failed replacement must retain its previous recorded backoff.
+export function writeJsonAtomic(file, value, { mkdir = true, mode = 0o600, preserveOnError = false, rename = renameSync } = {}) {
   if (mkdir) ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
   writeFileSync(tmp, JSON.stringify(value) + "\n", { mode });
-  rename(tmp, file);
+  try { rename(tmp, file); }
+  catch (e) { if (preserveOnError) throw e; try { unlinkSync(file); } catch {} rename(tmp, file); }
 }
 
 // Take a lock file, or say someone else holds it. Exclusive create, so two processes in a burst cannot both win; the
