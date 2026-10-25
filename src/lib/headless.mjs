@@ -38,6 +38,7 @@
 // Worker text reaches one place, the report file of each turn (owner-only, removed by cleanup); only its path leaves
 // routr. Nothing else of the harness's output is kept: its stderr is not read, and a tool is shown by a fixed name.
 import { linkWorker, workerTracing } from "./traces.mjs";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -467,11 +468,18 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   // on their way in, which keep its input open until their answer is back.
   let pending = 0, sending = 0, refusing = null, trace = null, lastTrace = null, promptMessages = 0;
   const turnRow = () => st.turns.at(-1);
-  const turnTrace = () => (trace ??= newTurnTrace(st.turn + (inTurn ? 0 : 1)));
+  // A context prepared between turns goes out with every send in flight, any of which may start that turn with it: a
+  // send that failed discards it only once no other send is still on its way in and none that got in carried it, or
+  // the turn a pending send starts would get a span other than the context Codex was given. What a send carried is
+  // what its own requests took (`carrying`, through every await of the send), never what is prepared when its answer
+  // comes: an answer that arrives after its turn has ended keeps nothing of the next. The check runs after every answer,
+  // a success too: a failed send's context, kept while an earlier send was still out, goes once that one has answered.
+  const carrying = new AsyncLocalStorage(), kept = new WeakSet();
+  const turnTrace = () => { const t = (trace ??= newTurnTrace(st.turn + (inTurn ? 0 : 1))); carrying.getStore()?.add(t); return t; };
   const turnCarriers = () => turnTrace().carriers;
   const requestCarriers = () => { const t = turnTrace(); return t.generated ? t.carriers : {}; };
-  // Discard only context this send prepared; an earlier send can already own the pending turn.
-  const discardPrepared = (before, existing = null) => { if (!inTurn && st.turn === before && trace !== existing) trace = null; };
+  const carryingSend = (send) => { const carried = new Set(); return [carried, carrying.run(carried, async () => send())]; };
+  const sent = (carried, ok) => { if (ok) for (const t of carried) kept.add(t); if (!inTurn && trace && !sending && !kept.has(trace)) trace = null; };
   const setRow = (patch) => ({ turns: [...st.turns.slice(0, -1), { ...turnRow(), ...patch }] });
   // One more message written into turn `n`, whether or not that turn is still running.
   const addDelivered = (n) => save({ turns: st.turns.map((t) => (t.turn === n ? { ...t, delivered: (t.delivered ?? 0) + 1 } : t)) });
@@ -629,8 +637,9 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const handOver = async (text) => {
     const c = conn;
     if (!c?.open()) return null;
-    const before = st.turn; turnCarriers(); pending++; sending++;
-    let r; try { r = await c.send(text, false); } finally { sending--; if (r?.code !== "handed_to_harness") discardPrepared(before); }
+    pending++; sending++;
+    const [carried, reply] = carryingSend(() => { turnCarriers(); return c.send(text, false); });
+    let r; try { r = await reply; } finally { sending--; sent(carried, r?.code === "handed_to_harness"); }
     if (r?.code !== "handed_to_harness") pending = Math.max(0, pending - 1);
     return r;
   };
@@ -676,9 +685,10 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
     else if (child && conn?.open()) {
       // The turn it goes into: the running one, or the next. Decided now, counted once it is in, which may be after the
       // harness has started that next turn.
-      const into = inTurn ? st.turn : null, before = st.turn, c = conn, existing = trace;
+      const into = inTurn ? st.turn : null, before = st.turn, c = conn;
       sending++;
-      let r; try { r = await c.send(m.text, inTurn); } finally { sending--; if (!r || ["refused", "unknown"].includes(r.code)) discardPrepared(before, existing); }
+      const [carried, reply] = carryingSend(() => c.send(m.text, inTurn));
+      let r; try { r = await reply; } finally { sending--; sent(carried, Boolean(r) && !["refused", "unknown"].includes(r.code)); }
       // It said no, or ended before saying: no turn counts it, and it is not queued (it may have taken it).
       if (r && (r.code === "refused" || r.code === "unknown")) { maybeClose(); return { code: r.code, why: r.why }; }
       if (r) {

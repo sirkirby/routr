@@ -791,7 +791,9 @@ Inputs:
 - Required: none.
 - Used when given: one subscription name (`claude`, `codex`, `agy`, `cursor`, `kiro`); `--level <basic|standard|strong>`
   (once, unnamed only, without `--background`); `--config`; `--headroom` (repeatable); `--json` (accepted, changes
-  nothing); `--background` (routr's own refresh job, which no one reads). Refused (with `error`) for an unknown flag, a
+  nothing); `--background` (routr's own refresh job, which no one reads) with `--lock-token <token>` (the refresh lock its
+  starter took: without it the job reads nothing, and it writes its snapshot and releases the lock only while that lock
+  is still the one it was handed). Refused (with `error`) for an unknown flag, `--lock-token` without `--background`, a
   second name, a bad `--level`, or a name that is not configured (except `cursor` and `kiro`, which can be read
   unconfigured).
 

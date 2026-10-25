@@ -654,3 +654,34 @@ test("turn projection rejects inherited object keys as worker harness kinds", ()
     expect([kind, x.spans()]).toEqual([kind, []]);
   }
 });
+
+test("span durations and their log times follow a monotonic clock when the wall clock jumps forward or back", async () => {
+  const realNow = Date.now.bind(Date), clock = spyOn(Date, "now");
+  const hour = 3600_000, ns = (v) => Number(BigInt(v)) / 1e6;
+  const { warning } = await import("../src/lib/warnings.mjs");
+  try {
+    for (const jump of [hour, -hour]) {
+      let shift = 0; clock.mockImplementation(() => realNow() + shift);
+      const x = exporting(), began = realNow(), at = () => { shift = jump; };
+      // Command (with a log taken from it), decision, usage per reading, a named fresh read, and a worker turn.
+      await commandTrace("record", { config: x.config, env: {}, otel: x.otel }, () => { at(); return { ok: true, warnings: [warning("prompt_uncertain", "local only")] }; }); shift = 0;
+      await commandTrace("dispatch", { config: x.config, env: {}, otel: x.otel }, () => decisionSpan(x.config, async () => { at(); return { provider: "jev", usage: {} }; })); shift = 0;
+      await commandTrace("usage", { config: x.config, env: {}, otel: x.otel }, () => usageSpans(async (observe) => [await observe(async () => { at(); return { pool: "codex", source: "app-server", ageSec: 0, windows: [], headroom: 0.5 }; })])); shift = 0;
+      x.config.subscriptions = { cursor: {} };
+      await usageCommand(["cursor"], x.config, {}, { env: {}, otel: x.otel, sources: { cursor: { source: "cursor /usage", check: async () => { at(); return { ok: true }; } } }, read: async () => [{ pool: "cursor", source: "statusline", ageSec: 0, headroom: 0.8, windows: [] }] }); shift = 0;
+      const turn = workerTurn(tracedWorker(x), 1, { env: {}, otel: x.otel });
+      turn.state("idle", "working"); at(); turn.state("working", "waiting"); turn.end("finished", 1); shift = 0;
+      const ended = realNow(), spans = x.spans();
+      for (const name of ["routr record", "classify jev", "routr usage codex", "routr usage cursor", "invoke_agent fixture"]) {
+        const s = spans.find((v) => v.name.startsWith(name.split(" jev")[0]) && (name !== "classify jev" || v.name.startsWith("classify")));
+        expect([jump, name, Boolean(s)]).toEqual([jump, name, true]);
+        const start = ns(s.startTimeUnixNano), end = ns(s.endTimeUnixNano);
+        expect([jump, name, start >= began - 5 && start <= ended + 5]).toEqual([jump, name, true]);
+        expect([jump, name, end >= start && end - start < 5000]).toEqual([jump, name, true]);
+      }
+      const logs = readdirSync(join(x.home, ".cache/routr/otel/logs")).filter((n) => n.endsWith(".json")).flatMap((n) => JSON.parse(readFileSync(join(x.home, ".cache/routr/otel/logs", n), "utf8")).resourceLogs[0].scopeLogs[0].logRecords);
+      expect(logs.length).toBeGreaterThanOrEqual(3);
+      for (const log of logs) { const t = ns(log.timeUnixNano); expect([jump, log.eventName, t >= began - 5 && t <= ended + 5]).toEqual([jump, log.eventName, true]); }
+    }
+  } finally { clock.mockRestore(); }
+});

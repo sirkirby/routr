@@ -2,7 +2,7 @@
 // print, so a test can drive it without a process. The pure parts stay where they were (check.mjs, ledger.mjs); this is
 // the I/O around them. None of them may fail an agent: an error becomes output, and the caller exits 0.
 import { warning } from "./warnings.mjs";
-import { commandTrace, decisionSpan, recordSpan, usageSpans } from "./traces.mjs";
+import { commandTrace, decisionSpan, recordSpan, spanClock, usageSpans } from "./traces.mjs";
 import { matchAdvice, readAdvice, readTask } from "./advice-file.mjs";
 import { answer, refusal } from "./output.mjs";
 import { doNext, recordRevisionNext, runNext } from "./next.mjs";
@@ -213,6 +213,12 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
       return refuse("usage: --level takes one of basic, standard, strong, once; eligibility was not refreshed");
     level = words[at + 1]; words.splice(at, 2);
   }
+  // The background refresh's lock token, handed over by the call that took the lock (snapshot.mjs).
+  const tokenAt = words.indexOf("--lock-token"), token = tokenAt === -1 ? undefined : words[tokenAt + 1];
+  if (tokenAt !== -1) {
+    if (!words.includes("--background") || words.lastIndexOf("--lock-token") !== tokenAt || !token || token.startsWith("-")) return refuse("usage: --lock-token is routr's own, for its background refresh only");
+    words.splice(tokenAt, 2);
+  }
   const flags = words.filter((w) => w.startsWith("-")), configured = Object.keys(config.subscriptions);
   const [name, ...extra] = words.filter((w) => !w.startsWith("-"));
   const unknown = flags.filter((f) => f !== "--json" && f !== "--background");
@@ -222,9 +228,9 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
   if (name && !configured.includes(name) && !fresh) return { ...refuse(`${name} is not a configured subscription (configured: ${configured.join(", ") || "none, run routr setup"})`), subscription: name };
   const out = { ok: true, warnings: [...warnings], next: [], unavailable: [], level, ...(name ? { subscription: name } : {}) };
   try {
-    let reading = null; const readingStart = Date.now();
+    let reading = null; const readingStart = spanClock();
     if (fresh) {
-      try { reading = await fresh({ background: flags.includes("--background") }); } catch { reading = { ok: false, ...usageFailure("read_failed") }; }
+      try { reading = await fresh({ background: flags.includes("--background"), ...(token ? { token } : {}) }); } catch { reading = { ok: false, ...usageFailure("read_failed") }; }
       out.ok = reading?.ok === true;
       if (name === "kiro" && reading?.note) out.warnings.push(warning("kiro_session_left", "Kiro kept an empty usage session"));
       if (name === "kiro" && reading?.note) out.next.push(doNext("Inspect Kiro's saved sessions to remove the empty usage session"));
@@ -238,7 +244,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
     const subs = Object.fromEntries(names.map((n) => [n, config.subscriptions[n]]));
     const viewConfig = { ...config, subscriptions: subs };
     const readingNames = fresh && !configured.includes(name) ? [name] : names.filter((n) => subs[n].enabled !== false);
-    const rows = reading?.excluded ? [{ pool: name, signedIn: false, note: reading.why }] : await usageSpans((observe) => read(readingNames, given, { sources, background: fresh ? [] : names, observe }), fresh ? { startedAt: readingStart } : {});
+    const rows = reading?.excluded ? [{ pool: name, signedIn: false, note: reading.why }] : await usageSpans((observe) => read(readingNames, given, { sources, background: fresh ? [] : names, observe }), fresh ? { since: readingStart } : {});
     out.subscriptions = rankSubscriptions(level, rows, viewConfig);
     out.unavailable.push(...usageUnavailable(rows).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
     // A fresh read that just worked clears its own warning; one that failed again keeps it (the retry is this call).

@@ -1,7 +1,7 @@
 // runtime.mjs: every process routr starts, and the environment a harness read gets
 import { expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { existsSync, readdirSync, readFileSync, renameSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, win32 } from "node:path";
 import { cmdArg, cmdLine, ensureParent, harnessEnv, npmShimScript, probe, resolveCommand, run, start, startOptions, startSync, stop, windowsCommand } from "../src/lib/runtime.mjs";
 import * as runtime from "../src/lib/runtime.mjs";
@@ -82,7 +82,9 @@ test("stale takeovers need no hard links and preserve the winning owner's file",
   const file = join(scratch("lock-without-links"), "job.lock");
   const p = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/lock-no-links.mjs"), file], { stdout: "pipe", stderr: "pipe" });
   expect(await p.exited).toBe(0);
-  expect(JSON.parse(await new Response(p.stdout).text())).toEqual({ winners: 1, owned: true, links: 0 });
+  // Links are tried, refused, and the exclusive open used instead.
+  const r = JSON.parse(await new Response(p.stdout).text());
+  expect(r).toMatchObject({ winners: 1, owned: true }); expect(r.links).toBeGreaterThan(0);
 });
 
 test("a failed initial lock write removes only its own incomplete lock and allows a retry", () => {
@@ -117,17 +119,114 @@ test("a stale lock is checked again under the takeover guard before it can be mo
   expect(existsSync(guard)).toBe(false);
 });
 
-test("takeover guards expire after a few seconds, and losing one prevents moving the main lock", () => {
-  const file = join(scratch("takeover-guard"), "job.lock"), guard = `${file}.takeover`;
+test("a guard with no pid to read is reclaimed only after minutes, and losing one prevents moving the main lock", () => {
+  const file = join(scratch("takeover-guard"), "job.lock"), guard = `${file}.takeover`, ago = (ms) => new Date(Date.now() - ms);
   writeFileSync(file, "999999999"); writeFileSync(guard, "abandoned");
   expect(runtime.takeLock(file, () => true)).toBe(false);
-  utimesSync(guard, new Date(Date.now() - 6000), new Date(Date.now() - 6000));
+  utimesSync(guard, ago(6000), ago(6000));
+  expect(runtime.takeLock(file, () => true)).toBe(false); // seconds are not enough: its taker may be paused
+  utimesSync(guard, ago(11 * 60_000), ago(11 * 60_000));
   expect(runtime.takeLock(file, () => {
     if (readFileSync(guard, "utf8") !== "abandoned") writeFileSync(guard, JSON.stringify({ pid: process.pid, token: "replacement" }));
     return true;
   })).toBe(false);
   expect(readFileSync(file, "utf8")).toBe("999999999");
   expect(JSON.parse(readFileSync(guard)).token).toBe("replacement");
+});
+
+test("a guard whose owner crashed is reclaimed at once, and the lock behind it taken over", () => {
+  const dir = scratch("crashed-guard"), file = join(dir, "job.lock"), guard = `${file}.takeover`;
+  writeFileSync(file, "999999999"); writeFileSync(guard, JSON.stringify({ pid: 999999999, token: "crashed" }));
+  expect(runtime.takeLock(file, runtime.lockIsStale)).toBe(true);
+  expect(runtime.lockOwned(file)).toBe(true); expect(readdirSync(dir)).toEqual(["job.lock"]);
+  // An owner that is alive keeps its guard, however old it is.
+  runtime.releaseFileLock(file); writeFileSync(file, "999999999"); writeFileSync(guard, JSON.stringify({ pid: process.pid, token: "paused" }));
+  utimesSync(guard, new Date(Date.now() - 3600_000), new Date(Date.now() - 3600_000));
+  expect(runtime.takeLock(file, runtime.lockIsStale)).toBe(false);
+  expect(runtime.takeLock(file, runtime.lockIsStale, { alive: (pid) => pid !== process.pid })).toBe(true);
+});
+
+test("a taker paused between its last guard check and its move keeps its guard: no one else takes the lock meanwhile", () => {
+  // With a guard that expired by age: A paused after its check; B reclaimed A's guard and took the lock; A then moved
+  // B's live lock aside, and C took the empty path while B worked.
+  const file = join(scratch("paused-taker"), "job.lock"), guard = `${file}.takeover`, ago = new Date(Date.now() - 60_000);
+  writeFileSync(file, "999999999");
+  let b = false, c = false;
+  const a = runtime.takeLock(file, runtime.lockIsStale, { rename: (from, to) => {
+    if (from === file) { utimesSync(guard, ago, ago); b = runtime.takeLock(file, runtime.lockIsStale); }
+    renameSync(from, to);
+  } });
+  c = runtime.takeLock(file, runtime.lockIsStale);
+  expect([a, b, c]).toEqual([true, false, false]);
+  expect(JSON.parse(readFileSync(file, "utf8")).token).toBe(runtime.lockToken(file));
+});
+
+test("two takers reclaiming the same crashed guard cannot both act: one moves it, the other stops", () => {
+  // B checks the dead guard, then pauses before moving it; D reclaims it meanwhile and pauses before moving the stale
+  // lock; B's move then takes D's live guard, and E takes the lock that D is about to move.
+  const dir = scratch("guard-reclaim-race"), file = join(dir, "job.lock"), guard = `${file}.takeover`;
+  writeFileSync(file, "999999999"); writeFileSync(guard, JSON.stringify({ pid: 999999999, token: "crashed" }));
+  let d = false, e = false;
+  const b = runtime.takeLock(file, runtime.lockIsStale, { rename: (from, to) => {
+    if (from !== guard) return renameSync(from, to);
+    let moved = false;
+    d = runtime.takeLock(file, runtime.lockIsStale, { rename: (f, t) => {
+      if (f === file && !moved) { moved = true; renameSync(guard, to); e = runtime.takeLock(file, runtime.lockIsStale); }
+      renameSync(f, t);
+    } });
+    if (!moved) renameSync(from, to);
+  } });
+  expect([b, d, e].filter(Boolean)).toHaveLength(1);
+  expect(existsSync(file)).toBe(true); expect(JSON.parse(readFileSync(file, "utf8")).token).toBe(runtime.lockToken(file));
+  expect(readdirSync(dir).sort()).toEqual(["job.lock"]);
+});
+
+const paused = async (mode) => {
+  const dir = scratch(`lock-pause-${mode}`);
+  const p = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/lock-pauses.mjs"), mode, dir], { stdout: "pipe", stderr: "pipe" });
+  expect(await p.exited, await new Response(p.stderr).text()).toBe(0);
+  return JSON.parse(await new Response(p.stdout).text());
+};
+
+test("an owner releasing its lock holds the guard: a takeover meanwhile cannot have its new lock removed", async () => {
+  const r = await paused("release");
+  expect(r).toMatchObject({ released: true, taken: false, lock: null });
+});
+
+test("a guard is never seen without its owner's pid, so an owner paused publishing it never acts unguarded", async () => {
+  // Paused ten minutes as its guard is published, then released while a third process tries to take the lock over.
+  const r = await paused("guard");
+  expect(r.seen).not.toBe("no pid");
+  expect(r.taken === false || r.lock === r.token).toBe(true); // a takeover that won keeps its lock
+  expect(r).toMatchObject({ released: true, taken: false, lock: null });
+});
+
+test("a lock is never seen without its owner's pid, so a taker paused publishing it cannot share it", async () => {
+  const r = await paused("lock");
+  expect(r.seen).not.toBe("no pid");
+  expect([r.other, r.mine].filter(Boolean)).toHaveLength(1);
+  expect(r.lock).toBe(r.other ? r.otherToken : r.mineToken);
+});
+
+test("a claim on a dead guard is never seen without its owner's pid", async () => {
+  const r = await paused("claim");
+  expect(r.seen).not.toBe("no pid");
+  expect(r.taken === undefined || r.taken === false || r.lock === r.token).toBe(true);
+});
+
+test("release makes one attempt at a busy guard and never waits: the lock stays for the stale rule", () => {
+  const file = join(scratch("busy-release"), "job.lock"), guard = `${file}.takeover`;
+  expect(runtime.takeLock(file, () => false)).toBe(true);
+  writeFileSync(guard, JSON.stringify({ pid: process.pid, token: "busy" }));
+  const wait = spyOn(Atomics, "wait");
+  try {
+    const began = performance.now();
+    expect(runtime.releaseFileLock(file)).toBe(false);
+    expect(wait).not.toHaveBeenCalled(); expect(performance.now() - began).toBeLessThan(100);
+    expect(runtime.lockOwned(file)).toBe(true);
+  } finally { wait.mockRestore(); }
+  unlinkSync(guard);
+  expect(runtime.releaseFileLock(file)).toBe(true); expect(existsSync(file)).toBe(false);
 });
 
 test("a moved lock with an unexpected generation is kept, never deleted as stale", () => {
