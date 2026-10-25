@@ -1,3 +1,5 @@
+import { commandTrace, launchCarriers, launchCarrierWarnings, adviceForLaunch, completeLaunch } from "./traces.mjs";
+import { takeLeadSession } from "./trace-context.mjs";
 import { randomUUID } from "node:crypto";
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +13,7 @@ import { CLOSING, OFF } from "./wording.mjs";
 import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, splitArgs, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
-import { CARRIERS, carriersFrom, carrierValues, carrierWithheld, ensureParent, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
+import { CARRIERS, carrierValues, ensureParent, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
 import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
 
 // The guide is the source of this instruction, embedded at build time just like the installed skills.
@@ -49,7 +51,8 @@ export function logCommand(log, text) {
 }
 
 export function parseLaunchArgs(args) {
-  const o = { timeout: 120000, dryRun: false };
+  const lead = takeLeadSession(args); args = lead.args;
+  const o = { timeout: 120000, dryRun: false, ...(lead.lead ? { "lead-session": lead.lead } : {}), ...(lead.warnings.length ? { leadWarnings: lead.warnings } : {}) };
   const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "timeout", "advice"];
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
@@ -85,15 +88,15 @@ export function parseLaunchArgs(args) {
 
 // Inject transport and time for tests; no test needs a live pane.
 // `ready(kind)`: null when the harness is signed in, or why not (harnesses.mjs). `settings()`: the user's config.
-export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(), env = process.env, ready = notReady, settings = () => loadConfig(),
+async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(), env = process.env, ready = notReady, settings = () => loadConfig(),
   cursorConfigSource = join(home(), ".cursor", "cli-config.json"), tempRoot = tmpdir(), models = (kind) => HARNESSES[kind].models?.(), spawn = spawnSelf } = {}) {
   const safeRun = async (args, ms) => processSteps(out, await callHerdr(run, args, ms));
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
     ran: [], next: [], start: { executable: null, argv: [], env: {} }, steps: [], warnings: [], prompt_chars: null, unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
   // Every screen launch returns goes through here: a shell's startup line can print the trace-context carriers routr
-  // holds (any found, passed or withheld), and their values never reach output.
-  const hidden = carrierValues(env), shown = (text) => redactCarriers(text, hidden);
+  // holds (found, generated, passed or withheld). Stage 2 adds its generated launch parent to the same redaction set.
+  const hidden = [...carrierValues(env), ...Object.values(launchCarriers(env).carriers)], shown = (text) => redactCarriers(text, hidden);
   let configDir, createdPane = false, startAttempted = false, touchedPane = false, promptAttempted = false, unconfirmed = false;
   // Something in the pane needs an answer that routr does not give: a shell's own question, a harness's startup
   // question, an agent that has not started. The orchestrator gets what the pane shows (withheld once the task has been
@@ -110,6 +113,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
   };
   try {
     const o = parseLaunchArgs(args);
+    out.warnings.push(...(o.leadWarnings ?? []));
     Object.assign(out, { kind: o.kind ?? null, name: o.name, pane: o.pane ?? null, cwd: resolve(o.cwd ?? "."), model: o.model ?? null, effort: o.effort ?? null });
     // The same launch, into the pane it stopped in: it carries on from the shell, or adopts the agent already running
     // there. A runnable command only when the task comes from a file: an inline --task is never printed (it is the
@@ -148,7 +152,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         const advice = dispatchAdvice(readAdvice(resolve(o.advice)));
         out.advice = { file: o.advice, matches: false };
         matchAdvice(advice, task);
-        out.advice.matches = true;
+        out.advice.matches = true; adviceForLaunch(advice.id);
         out.unavailable.push(...savedDecisionFailures(advice));
         recordOptions = { ...o, advice: resolve(o.advice), ...(o["task-file"] ? { "task-file": resolve(o["task-file"]) } : {}) };
       } catch (e) { problem = e.message; }
@@ -165,15 +169,17 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
     // The carriers this launch hands on: a pane it splits (beside the caller, or in a worktree) gets the ones within
     // routr's limits, with a warning for each withheld; an existing pane gets none, said once. Only names and FORWARDED
     // reach the output.
-    const found = carriersFrom(env);
+    const found = launchCarriers(env);
     const paneCarriers = () => {
       if (!o.pane) {
-        out.warnings.push(...found.withheld.map(carrierWithheld));
+        out.warnings.push(...launchCarrierWarnings(found));
         out.start.env = { ...out.start.env, ...Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) };
         return found.carriers;
       }
       const present = CARRIERS.filter((n) => Object.hasOwn(found.carriers, n) || found.withheld.includes(n));
-      if (present.length) out.warnings.push(PASSED_NONE(present));
+      if (present.length) out.warnings.push(found.launchSpan
+        ? "This launch did not pass its routr launch span or carriers to the worker: an existing pane keeps the environment its shell, or the agent already running there, started with, and routr never types a carrier into a shell"
+        : PASSED_NONE(present));
       return {};
     };
     const startArgs = (pane, timeout) => o.kind === "cursor" && SHELLS[shell].cursor
@@ -199,7 +205,7 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
         ...(o.kind === "cursor" ? [command(["agent", "rename", pane, o.name])] : []),
         ...(prompt ? [promptForLog(promptArgs(pane, Math.max(1, Math.min(Math.floor(o.timeout / 2), 30000)))), command(["agent", "get", pane])] : []),
       ];
-      step("plan", true, "No commands executed or files written. Pane ids, geometry, polling, timeouts and shell questions are resolved at launch. Environment, subscription settings and sign-in are not checked.");
+      step("plan", true, "No worker commands executed or worker files written. Pane ids, geometry, polling, timeouts and shell questions are resolved at launch. Environment, subscription settings and sign-in are not checked.");
       const problems = [!o.model && MODEL_REQUIRED, adviceProblem].filter(Boolean);
       planned = true; out.ok = !problems.length; out.state = "planned";
       if (problems.length) out.error = problems.join("; ");
@@ -580,4 +586,9 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       attempted: startAttempted || promptAttempted, planned, submitted: promptAttempted, failed: out.state === "failed" });
   }
   return out;
+}
+
+export function launch(args, opts = {}) {
+  const lead = takeLeadSession(args); args = [...lead.args, ...(lead.lead ? ["--lead-session", lead.lead] : [])];
+  return commandTrace("launch", () => { const loaded = (opts.settings ?? (() => loadConfig()))(); return { config: loaded.config ?? loaded, ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead }; }, async () => { const r = await launchBody(args, opts); r.warnings.push(...lead.warnings); try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane") }); } catch {} return r; });
 }

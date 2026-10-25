@@ -1,4 +1,5 @@
 // The OTLP boundary: consent, encoding, queue and detached delivery. Separate from anonymous outcome telemetry (V10).
+import { LaunchIndex } from "./launch-index.mjs";
 import { otelSwitch } from "./otel-settings.mjs";
 export { otelEndpoint, otelSwitch } from "./otel-settings.mjs";
 import { request as httpRequest, validateHeaderName } from "node:http";
@@ -37,6 +38,7 @@ export function otelHeaders(file = SECRETS_FILE) {
 
 // Stage 2 prep amendment, core semconv 1.44.0: an application process is an instance. No identity file for traces/logs.
 const PROCESS_INSTANCE_ID = randomUUID();
+export const OTEL_RESOURCE_ATTRIBUTES = Object.freeze({ "service.name": "string", "service.version": "string", "os.type": "string", "service.instance.id": "string", "routr.otel.schema": "string" });
 export const otelResource = ({ platform = process.platform } = {}) => resource(PROCESS_INSTANCE_ID, platform);
 
 // Stage 3's gauge has one stream per install, independent of whichever sender process holds the lock. Its UUIDv5
@@ -66,7 +68,7 @@ const resource = (id, platform) => {
   if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("invalid service instance id");
   return { "service.name": "routr", "service.version": ROUTR_VERSION,
     "os.type": ({ win32: "windows", sunos: "solaris", aix: "aix", darwin: "darwin", linux: "linux", freebsd: "freebsd", openbsd: "openbsd" })[platform] ?? "unknown",
-    "service.instance.id": id }; // The next change adds routr.otel.schema here, and schemaUrl at the batch below.
+    "service.instance.id": id, "routr.otel.schema": "genai@9ffc7e00;semconv@1.44.0;routr@1" };
 };
 
 export function otlpValue(v) {
@@ -79,15 +81,15 @@ export function otlpValue(v) {
   if (v && typeof v === "object") return { kvlistValue: { values: otlpAttributes(v) } };
   throw new Error("invalid OTLP attribute");
 }
-export const otlpAttributes = (values = {}) => Object.entries(values).map(([key, value]) => ({ key, value: otlpValue(value) }));
+export const otlpAttributes = (values = {}, types = {}) => Object.entries(values).map(([key, value]) => ({ key, value: types[key] === "double" && typeof value === "number" && Number.isFinite(value) ? { doubleValue: value } : otlpValue(value) }));
 export const otlpScope = ({ name = "routr", version = ROUTR_VERSION, attributes = {} } = {}) => ({ name, version, attributes: otlpAttributes(attributes) });
 const hex = (v, n) => { if (typeof v !== "string" || !new RegExp(`^[a-f0-9]{${n}}$`, "i").test(v) || /^0+$/.test(v)) throw new Error("invalid OTLP id"); return v.toLowerCase(); };
 const nanos = (v) => { if (!/^[0-9]+$/.test(String(v)) || (typeof v === "number" && !Number.isSafeInteger(v))) throw new Error("invalid OTLP time"); return String(v); };
 const integer = (v) => { if (!Number.isInteger(v) || v < 0) throw new Error("invalid OTLP enum or count"); return v; };
 const counts = (v, fields) => Object.fromEntries(fields.filter((k) => v[k] !== undefined).map((k) => [k, integer(v[k])]));
-function spanJson(s) {
+function spanJson(s, attributeTypes) {
   const out = { traceId: hex(s.traceId, 32), spanId: hex(s.spanId, 16), name: s.name, kind: integer(s.kind ?? 1),
-    startTimeUnixNano: nanos(s.startTimeUnixNano), endTimeUnixNano: nanos(s.endTimeUnixNano), attributes: otlpAttributes(s.attributes),
+    startTimeUnixNano: nanos(s.startTimeUnixNano), endTimeUnixNano: nanos(s.endTimeUnixNano), attributes: otlpAttributes(s.attributes, attributeTypes),
     ...counts(s, ["flags", "droppedAttributesCount", "droppedEventsCount", "droppedLinksCount"]) };
   if (s.parentSpanId) out.parentSpanId = hex(s.parentSpanId, 16);
   if (s.traceState) out.traceState = s.traceState;
@@ -97,9 +99,9 @@ function spanJson(s) {
   return out;
 }
 // Resource, scope and AnyValue are signal-independent: logs and metrics reuse these parts in Stage 3.
-export function encodeTraces(spans, { resource: r, scope, schemaUrl } = {}) {
+export function encodeTraces(spans, { resource: r, scope, schemaUrl, attributeTypes } = {}) {
   return { resourceSpans: [{ resource: { attributes: otlpAttributes(r ?? otelResource()) },
-    ...(schemaUrl ? { schemaUrl } : {}), scopeSpans: [{ scope: otlpScope(scope), spans: spans.map(spanJson) }] }] };
+    ...(schemaUrl ? { schemaUrl } : {}), scopeSpans: [{ scope: otlpScope(scope), spans: spans.map((s) => spanJson(s, attributeTypes)) }] }] };
 }
 
 export const newOtelConsent = () => randomBytes(16).toString("hex");
@@ -167,7 +169,10 @@ export function otelSession(config, env = process.env, opts = {}) {
       try {
         const size = Buffer.byteLength(JSON.stringify(requestBody) + "\n");
         if (queued(p, signal).reduce((n, f) => n + f.size, 0) + size > 2 * capBytes) marker("ceiling");
-        else write(join(p.root, signal, `${now()}-${initial.consent.slice(0, 8)}-${randomUUID()}.json`), requestBody, { mkdir: false, mode: 0o600 });
+        else {
+          write(join(p.root, signal, `${now()}-${initial.consent.slice(0, 8)}-${randomUUID()}.json`), requestBody, { mkdir: false, mode: 0o600 });
+          startOtelSender(opts); return true;
+        }
       } catch { marker("write_failed"); }
       startOtelSender(opts);
     } catch {} // V10: even a full disk must not change the command's result or duration by waiting on delivery
@@ -255,6 +260,7 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
   const save = () => { if (!held()) throw new Error("sender stopped"); write(p.state, st, { mkdir: false, mode: 0o600, preserveOnError: true }); };
   const remove = (file, code) => { if (!held()) throw 0; countDrop(st, code); save(); if (!held()) throw 0; unlinkSync(file); };
   const sweep = async () => {
+    if (held()) new LaunchIndex({ home, now }).sweep();
     if (!held()) return;
     // Sweep against configured consent even with a process-local off switch: that switch revokes no other process's
     // batches. Removing/changing the setting does (V4). Backoff belongs to that generation too.

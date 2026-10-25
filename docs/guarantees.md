@@ -23,8 +23,8 @@ reading and its headline names the model that answered; only no answer starts wi
 
 `record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`, `feedback`,
 `launch`, `cleanup`, `send`, `stop`, `usage cursor`, and `usage kiro` act, and each says what it did. Their read-only forms
-(`telemetry status`, `setup --show`) only read, and so does `workers`; `wait` changes nothing of yours, and writes which
-turns it has reported into the worker's own run folder.
+(`telemetry status`, `setup --show`) only read. `workers` and `wait` may queue trace records and start the detached
+OpenTelemetry sender when export is on; `wait` also records which turns it has reported in the worker's own run folder.
 
 Local file writes normally create parent folders from the file's absolute location, including when only a relative
 filename was given. OpenTelemetry batch and sender-state writes never create folders, so an uninstall cannot be
@@ -144,6 +144,10 @@ writes only:
   concurrent first calls agree, and derives its UUIDv5 service instance id from it. Identity writes require an
   existing state folder and stop during uninstall. The sender alone removes queue files or changes delivery totals;
   secrets stay in the secrets file;
+- the sampled launch index under `~/.local/state/routr/launches`, only while exporting, after queueing its span, and
+  only for a started worker (`ready`, `prompted` or `needs_input`); never for dry runs, failed or refused launches.
+  It holds ids, canonical repository identity and native-path hashes, never absolute paths or content. Cleanup keeps
+  tombstones for later record links; launch and the sender sweep routr's own UUID filenames after 30 days;
 - in your repository's git metadata, the worktree and branch a headless `launch --worktree` adds;
 - its own binary, when it updates itself;
 - the skill folders, on `skill install` (and the updater's reinstall);
@@ -180,6 +184,9 @@ it. A lock an earlier uninstall left when it was stopped is never taken
 over: uninstall names the file to remove (launches treat it as free).
 
 ## Processes and platforms
+
+Detached background work starts routr's own compiled binary, or its source entry resolved from its runtime module.
+It never restarts the script that happened to import routr.
 
 routr runs on macOS, Linux and Windows. It starts every process directly, never through `sh`, and with no Unix-only
 paths. The binary does not load a `.env` or `bunfig.toml` from the folder you run it in, so routr does not use a
@@ -308,32 +315,38 @@ stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one proces
 
 routr hands on the OpenTelemetry context carriers it finds in its own environment, `TRACEPARENT`, `TRACESTATE` and
 `BAGGAGE` (W3C trace context, as OpenTelemetry's "environment variables as context propagation carriers" names them),
-so a tool that reads OpenTelemetry context can link a worker to the session that launched it. Pass-through only:
+so a tool that reads OpenTelemetry context can link a worker to the session that launched it:
 
-- **Unchanged, never made.** A carrier is passed exactly as routr found it, never parsed, changed or generated, and
-  routr sets none itself. Names are matched as your system matches them (any case on Windows); an empty one is absent.
-  routr sends nothing anywhere for this.
+- **Export off: unchanged.** A carrier is passed exactly as routr found it, without parsing or generating context.
+  Names match the platform (any case on Windows); an empty one is absent. This forwarding makes no network call.
+- **Export on: launch parentage.** A valid inherited W3C `TRACEPARENT` parents routr's command span. An invalid or
+  absent parent starts a new sampled trace and drops inherited `TRACESTATE`. A recorded launch hands its own span
+  as the worker's `TRACEPARENT`; valid-parent `TRACESTATE` and `BAGGAGE` remain unchanged. An unsampled parent
+  produces no records or launch index and keeps its carriers unchanged. Both process off switches preserve
+  export-off forwarding. [OpenTelemetry schema](opentelemetry.md#signals) lists every sent field.
 - **Which workers get them.** A headless worker gets them on every turn, and a worker in a pane `routr launch` makes
   gets them as that pane's shell starts (herdr's `pane split --env`): a pane beside yours, or the pane in a new
   worktree. For a worktree, launch splits the pane herdr opened with the worktree and closes that first pane, because
   herdr's worktree create takes no environment. A worker in an existing pane (`--pane`), and an agent already running
   there that launch adopts, get none: that pane's shell, or that agent, already started with its own environment, and
-  routr never types a carrier into a shell. When carriers are present, launch says it passed none, and why. A pane
-  routr split earlier already has them in its shell, so a `--pane` rerun into it is not left without them.
+  routr never types a carrier into a shell. When carriers or a generated launch span are present,
+  launch says which context it did not pass, and why. A pane routr split earlier already has them in its shell, so a `--pane` rerun into it is not left without them.
 - **Never the herdr server's.** A pane herdr makes starts from the environment herdr's server started with, which can
   hold a trace context from another session. So every pane launch makes gets all three names: the value routr passes,
   or an empty value for each one it does not pass, absent or withheld. OpenTelemetry treats an empty carrier as
   absent, so a worker in such a pane gets exactly routr's context, or none.
 - **Not for harness reads.** routr's own reads of a harness (sign-in status, usage, model lists) and its private herdr
-  session get no carrier: they are not workers.
+  session get no carrier: they are not workers. Every detached routr job also starts with the trace carriers,
+  lead-session variables and herdr pane variables removed; background usage refreshes and holders emit no spans.
 - **Limits.** routr passes a carrier only when every character is printable ASCII or a tab, and it is at most 512
   bytes (`TRACEPARENT`, `TRACESTATE`) or 8192 (`BAGGAGE`). This is routr's own limit on what it hands on, not the W3C
-  grammar. One outside it is not passed, and a warning names it, never its value; the others still go.
-- **Never a value in output.** No carrier's value is printed, logged, or put in the ledger or telemetry: launch shows
+  grammar. One outside it is not passed, and a warning names it, never its value; the others still go. With export
+  on, a sampled launch replaces a withheld inherited parent with its own launch span and says so.
+- **Never a value in output.** No carrier's value is printed, logged, or put in the ledger or telemetry (trace ids enter OpenTelemetry parentage only): launch shows
   each one passed as `<forwarded>`, in `start.env` and in the split command it shows (`--env NAME=<forwarded>`; an
   empty one shows as `--env NAME=`, as it is). A
   pane's screen that launch returns (a question before the task was sent, or the last lines after a failure) has the
-  value of every carrier routr found, passed or withheld, replaced by `<carrier>`, also where the pane wrapped it
+  value of every carrier routr found or generated, passed or withheld, replaced by `<carrier>`, also where the pane wrapped it
   across lines; a value the screen drew with something inside it (a colour code) is not recognised.
 - **Headless.** Launch saves the carriers it passes in the worker's settings file, in its run folder (0600 on macOS
   and Linux), and every turn uses those, whoever starts the next one: a `send` from another environment does not

@@ -3,12 +3,14 @@
 import { isAbsolute, win32 } from "node:path";
 import { doNext } from "./next.mjs";
 import { KINDS } from "./harnesses.mjs";
+import { sessionId } from "./trace-context.mjs";
 const states = new Set(["idle", "working", "blocked", "done"]);
 export const agentState = (s) => states.has(s) ? s : "unknown";
 export const stateWords = (s) => s === "unknown" ? "in a state routr does not know" : s;
 const absolutePath = (s) => typeof s === "string" && s.length > 0 && !/[\x00-\x1f\x7f]/.test(s) && (isAbsolute(s) || win32.isAbsolute(s));
 const folder = (s) => absolutePath(s) && s.length <= 512;
-const id = (s) => typeof s === "string" && s.length > 0;
+export const herdrId = (s) => typeof s === "string" && s.length > 0;
+const id = herdrId;
 const knownErrors = new Set(["timeout", "agent_not_running", "agent_not_found", "agent_not_ready", "agent_prompt_stalled", "server_not_running"]);
 export function processFailure(tool, args, code, missing = false) {
   const command = (args[0] === "--session" ? args.slice(2) : args).slice(0, 2).join(" ");
@@ -38,7 +40,14 @@ export function herdrResult(args, r) {
   if ((data == null || data === "") && QUIET.has(key)) return { ok: true, data: { result: {} } };
   if ((data == null || data === "") && key !== "pane read") return { ...processFailure("herdr", args, "herdr_unreachable"), data: {} };
   if ((!data || typeof data !== "object" || Array.isArray(data)) && key !== "pane read") return invalid();
-  if (key === "agent get") {
+  if (key === "pane get") {
+    const p = v?.pane;
+    if (!id(p?.pane_id)) return invalid();
+    const sid = p.agent_session?.kind === "id" ? sessionId(p.agent_session.value) : null;
+    data = { result: { pane: { pane_id: p.pane_id,
+      ...(typeof p.terminal_id === "string" && /^[A-Za-z0-9][A-Za-z0-9:_-]{0,127}$/.test(p.terminal_id) ? { terminal_id: p.terminal_id } : {}),
+      ...(sid ? { agent_session: { kind: "id", value: sid } } : {}) } } };
+  } else if (key === "agent get") {
     if (!v || typeof v !== "object") return invalid();
     const g = v.agent;
     if (g != null && (typeof g !== "object" || Array.isArray(g))) return invalid();

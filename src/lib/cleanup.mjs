@@ -1,3 +1,5 @@
+import { commandTrace, cleanupLink } from "./traces.mjs";
+import { loadConfig } from "./config.mjs";
 // cleanup: finish a worker in one call, so its worktree and pane do not outlive it. The guide used to give this as two
 // herdr steps, close the pane and then `herdr worktree remove`, and that order cannot work: a launch's worktree pane
 // is its workspace's only pane, closing it closes the workspace, and herdr's remove finds a worktree only by an open
@@ -112,7 +114,7 @@ export function parseWorktreeHeads(text) {
 
 // `run` is one herdr command, `git(dir, args)` one git command ({ out, err, code }, or null), and `linked` the
 // linked-worktree test: seams for tests.
-export async function cleanup(args, { run = runHerdr, git = gitIn, env = process.env, linked = linkedWorktree, assertOwned = () => {} } = {}) {
+async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.env, linked = linkedWorktree, assertOwned = () => {} } = {}) {
   // Outside herdr, worktrees are listed and removed through git alone (headless workers make theirs that way), and
   // what runs in a folder is not seen: the warning says so.
   const viaGit = env.HERDR_ENV !== "1";
@@ -217,6 +219,7 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
 
   try {
     const o = parseCleanupArgs(args);
+    await cleanupLink(o, run);
     target = o.worktree ?? o.path;
     if (o.worker != null) return await (await import("./workers.mjs")).cleanupWorker(o.worker, o, out);
     if (o.pane != null) {
@@ -326,3 +329,5 @@ export async function cleanup(args, { run = runHerdr, git = gitIn, env = process
   }
   return out;
 }
+
+export const cleanup = (args, opts = {}) => commandTrace("cleanup", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined }), () => cleanupBody(args, opts));

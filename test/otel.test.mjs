@@ -91,7 +91,7 @@ test("the trace encoder uses OTLP JSON's hex ids, string nanos, integer enums an
 test("trace and log resources use one in-memory UUIDv4 per process and OpenTelemetry operating system names", () => {
   const home = scratch("otel-resource");
   const r = otel.otelResource({ home, platform: "darwin" });
-  expect(r).toEqual({ "service.name": "routr", "service.version": ROUTR_VERSION, "os.type": "darwin", "service.instance.id": expect.stringMatching(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/) });
+  expect(r).toEqual({ "service.name": "routr", "service.version": ROUTR_VERSION, "os.type": "darwin", "routr.otel.schema": "genai@9ffc7e00;semconv@1.44.0;routr@1", "service.instance.id": expect.stringMatching(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/) });
   expect(otel.otelResource({ home, platform: "win32" })).toEqual({ ...r, "os.type": "windows" });
   expect(otel.otelResource({ home, platform: "linux" })["os.type"]).toBe("linux");
   expect(readdirSync(home)).toEqual([]);

@@ -5,6 +5,16 @@ import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync 
 
 import { COMMANDS } from "../src/lib/help.mjs";
 import { cliEnv, row, scratch, SCRIPT } from "./helpers.mjs";
+import { questionSet, VERDICTS, CHECK_RESULTS } from "../src/lib/shaped.mjs";
+
+test("shared question-set and outcome projections retain their published values", async () => {
+  const { telemetryRows } = await import("../src/lib/telemetry.mjs");
+  expect(questionSet("r5")).toBe("r5"); expect(questionSet("c1")).toBe("c1"); expect(questionSet("PRIVATE_MARKER")).toBe("other");
+  for (const verdict of VERDICTS) for (const check of CHECK_RESULTS) {
+    const out = telemetryRows([row({ outcome: { verdict, check } })], "fixture")[0];
+    expect(out.outcome).toMatchObject({ verdict, check });
+  }
+});
 
 test("telemetry status reads the last daily send and explains scheduling without writing", async () => {
   const home = scratch("telemetry-status"), env = cliEnv(home, { PATH: home, ROUTR_NO_UPDATE: "" });

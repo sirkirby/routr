@@ -1,6 +1,7 @@
 // The commands for headless workers (headless.mjs): launch's start outside herdr, and `wait`, `send`, `workers`,
 // `stop` and `cleanup --worker`. Each talks to a worker's holder only through its channel (channel.mjs) and reads what
 // the holder wrote; none stops a process by a saved id. Answers carry report paths, never worker text.
+import { commandTrace, launchCarriers, launchCarrierWarnings, currentLaunch } from "./traces.mjs";
 import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -14,7 +15,7 @@ import { answer } from "./output.mjs";
 import { CLOSING, count, OFF } from "./wording.mjs";
 import { callGit } from "./process-boundary.mjs";
 import { dropCopy } from "./cleanup.mjs";
-import { CARRIERS, carriersFrom, carrierWithheld, ensureParent, folderId, FORWARDED, home, lockIsStale, lockOwned, lockToken, releaseFileLock, probe as runProbe, realOr, realPath, savedCarriers, spawnSelf, takeLock } from "./runtime.mjs";
+import { CARRIERS, carrierWithheld, ensureParent, folderId, FORWARDED, home, lockIsStale, lockOwned, lockToken, releaseFileLock, probe as runProbe, realOr, realPath, savedCarriers, spawnSelf, takeLock } from "./runtime.mjs";
 
 const NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const RUNNING = new Set(["working", "waiting", "starting"]);
@@ -227,11 +228,12 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
     // The trace-context carriers in launch's environment, within routr's limits, are saved with the worker: every turn
     // gets these, whoever starts its holder later (a `send` from another environment). Shown by name only;
     // CURSOR_CONFIG_DIR, the run folder's, is not listed.
-    const found = carriersFrom(env);
-    out.warnings.push(...found.withheld.map(carrierWithheld));
+    const found = launchCarriers(env);
+    out.warnings.push(...launchCarrierWarnings(found));
     out.start = { executable: HARNESSES[o.kind].executable, argv, env: Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) };
     out.ran.push(displayCommand([HARNESSES[o.kind].executable, ...argv]));
     const w = { format: FORMAT, id: randomUUID().replace(/-/g, ""), name: o.name, kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(), carriers: found.carriers,
+      ...(currentLaunch() ? { launch: currentLaunch() } : {}),
       ...(wt ? { worktree: { branch: wt.branch, base: wt.base, path: wt.path, source: wt.source, start: wt.start, folder: wt.folder } } : {}) };
     writeFileSync(join(dir, "worker.json"), JSON.stringify(w) + "\n", { mode: 0o600 });
     writeSecret(dir);
@@ -296,7 +298,7 @@ const noticeOf = (v) => (NOTICE.has(v.state) ? `${v.gen}:${v.state}` : null);
 const fresh = (v, seen) => v.turns.filter((t) => t.turn > seen.turn && t.outcome !== "running");
 const isNews = (v, seen) => fresh(v, seen).length > 0 || (noticeOf(v) != null && noticeOf(v) !== seen.notice);
 
-export async function waitCommand(args, { now = () => Date.now(), pause = sleep, env = process.env } = {}) {
+async function waitCommandBody(args, { now = () => Date.now(), pause = sleep, env = process.env } = {}) {
   const out = { ok: false, headline: "", unavailable: [], warnings: sandboxNote(env), next: [], state: "failed", workers: [] };
   try {
     const o = parseNamed(args, "wait", ["name", "timeout"]);
@@ -349,7 +351,7 @@ const SENT = { handed_to_harness: () => "written to the running worker's input (
   accepted: () => "taken by the running worker (into its running turn, or as its next)",
   queued: (label, why) => (why === "next_turn" ? "queued: it runs as the worker's next turn, once the running one ends" : `queued: it runs as the worker's next turn, in a new ${label} process on the same session`),
   prompted: () => "the worker resumed its session with it as the next turn" };
-export async function sendCommand(args, { env = process.env, settings = () => loadConfig(), ready = notReady, spawn } = {}) {
+async function sendCommandBody(args, { env = process.env, settings = () => loadConfig(), ready = notReady, spawn } = {}) {
   const out = { ok: false, headline: "", unavailable: [], warnings: [], next: [], state: "failed", name: null };
   try {
     const o = parseNamed(args, "send", ["name", "task", "task-file"]);
@@ -406,7 +408,7 @@ export async function sendCommand(args, { env = process.env, settings = () => lo
 }
 
 // ---- workers ---------------------------------------------------------------------------------------------------------
-export async function workersCommand(args, { env = process.env } = {}) {
+async function workersCommandBody(args, { env = process.env } = {}) {
   const out = { ok: false, headline: "", unavailable: [], warnings: sandboxNote(env), next: [], workers: [] };
   try {
     const o = parseNamed(args, "workers", ["name"]);
@@ -421,7 +423,7 @@ export async function workersCommand(args, { env = process.env } = {}) {
 }
 
 // ---- stop ------------------------------------------------------------------------------------------------------------
-export async function stopCommand(args, { env = process.env } = {}) {
+async function stopCommandBody(args, { env = process.env } = {}) {
   const out = { ok: false, headline: "", unavailable: [], warnings: sandboxNote(env), next: [], state: "failed", name: null };
   try {
     const o = parseNamed(args, "stop", ["name"]);
@@ -511,3 +513,11 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
     return out;
   });
 }
+
+export const sendCommand = (args, opts = {}) => commandTrace("send", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }), () => sendCommandBody(args, opts));
+
+export const waitCommand = (args, opts = {}) => commandTrace("wait", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }), () => waitCommandBody(args, opts));
+
+export const workersCommand = (args, opts = {}) => commandTrace("workers", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }), () => workersCommandBody(args, opts));
+
+export const stopCommand = (args, opts = {}) => commandTrace("stop", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }), () => stopCommandBody(args, opts));

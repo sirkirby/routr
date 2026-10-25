@@ -469,7 +469,7 @@ was created (after a failed close, also that its workspace has an extra shell pa
 never goes on with two panes in a worktree's workspace, where `routr cleanup --pane` would close the worker's pane and
 leave the worktree.
 
-Trace-context carriers: the `TRACEPARENT`, `TRACESTATE` and `BAGGAGE` in launch's own environment (any case, on
+With export off, the `TRACEPARENT`, `TRACESTATE` and `BAGGAGE` in launch's own environment (any case, on
 Windows; an empty one is absent) go to every pane launch splits (beside the caller, or in a new worktree), as
 `--env NAME=VALUE` on that `herdr pane split`. Each is passed only within routr's limits: printable ASCII or tab, at
 most 512 bytes (`TRACEPARENT`, `TRACESTATE`) or 8192 (`BAGGAGE`). One outside them is not passed, and a warning names
@@ -482,6 +482,13 @@ started with, and routr never types a carrier into a shell". A dry run plans and
 output: `start.env` lists each carrier passed as `"<forwarded>"` (and none that is empty), and `ran` and `would_run`
 show the split's `--env NAME=<forwarded>`, or `--env NAME=` for an empty one. `screen` has the value of every carrier
 launch found, passed or withheld, replaced by `<carrier>`, also across the pane's line wraps.
+
+With export on and a sampled launch, the worker receives the routr launch span as `TRACEPARENT`. If inherited
+`TRACEPARENT` was withheld, its warning instead says "The inherited TRACEPARENT exceeded routr's forwarding limits;
+the worker gets this routr launch span instead". Existing panes get the warning "This launch did not pass its
+routr launch span or carriers to the worker: an existing pane keeps the environment its shell, or the agent already
+running there, started with, and routr never types a carrier into a shell". Invalid inherited parentage also drops
+`TRACESTATE`. Unsampled launches retain the export-off behavior. Screen redaction includes the generated parent.
 
 `headline`: `routr: <name> (<kind>) took its task in pane <pane>`; `routr: <name> is ready in pane <pane>; no task
 sent`; `routr: <name> needs input in pane <pane>: <why>`; `routr: launch failed: <error>`; `routr: planned <kind>
@@ -1168,3 +1175,26 @@ worktree state, never proof that a worktree is safe. A model list read that thro
 
 An unreadable ref check is an unreadable check, not an unheld commit. Cleanup states which read failed and offers
 the corresponding git inspection command. An explain answer without a state adds no disagreement to a blocked reading.
+
+## Lead session identity
+
+`dispatch`, `subagent` and `launch` accept optional `--lead-session <id>`. Supply your actual session id when routr
+cannot read it from the measured harness environment; never invent one. It accepts UUIDv4, UUIDv7 or 16–64 lowercase
+hex characters. Inline advice consumes `--lead-session` and its next word only when that word is a valid id;
+otherwise both remain in the brief, with the usual looks-like-a-flag note. Launch and file-based advice drop missing
+or malformed values with the fixed warning `--lead-session was ignored: no valid session id was supplied`.
+Repeated valid ids are dropped with that same warning. These optional identity checks never refuse the command.
+A valid measured environment source takes precedence. The flag changes no command result field except warnings:
+it supplies `routr.lead.session_id` only when OpenTelemetry export is on and the command records a span. The
+[published schema](opentelemetry.md#signals) lists the environment sources, lineage, launch index and every sent
+attribute. Export-off command behavior and carrier forwarding are unchanged.
+
+Headless worker metadata may contain `launch: { launch_id, traceId, spanId }` while exporting a sampled launch.
+Later commands validate those ids before adding a link. This is local worker metadata, not a public command field,
+and does not add anything to the record template. `workers` and `wait` may queue traces and start the sender when
+export is on. A dry-run launch may queue its planned span then, without executing its launch plan.
+
+The launch index contains entries only for workers that actually started (`ready`, `prompted`, `needs_input`).
+Dry runs and failed or refused launches create no entry. Cleanup links exclude finished entries; record can still
+link to a finished launch. Detached jobs emit no spans and inherit no trace carriers. Tracing setup failures run
+the command untraced, without changing its result.

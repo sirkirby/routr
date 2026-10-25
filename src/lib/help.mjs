@@ -11,6 +11,7 @@ export const COMMANDS = {
       { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); unknown flag-led input without a stdin brief is refused; quote a multi-word inline brief containing flags", required: true },
     ],
     flags: [
+      { name: "--lead-session", arg: "<id>", description: "your known session id when routr cannot read it from the harness environment; UUIDv4, UUIDv7 or 16–64 lowercase hex characters; only a valid id is consumed from inline advice; other words stay in the brief with a flag-like note; invalid file-based values are ignored with a fixed warning; never invent one", required: false },
       { name: "--task-file", arg: "<path>", description: "read the exact task from a file instead of inline text or stdin", required: false },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
     ],
@@ -22,6 +23,7 @@ export const COMMANDS = {
       { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); unknown flag-led input without a stdin brief is refused; quote a multi-word inline brief containing flags", required: true },
     ],
     flags: [
+      { name: "--lead-session", arg: "<id>", description: "your known session id when routr cannot read it from the harness environment; UUIDv4, UUIDv7 or 16–64 lowercase hex characters; only a valid id is consumed from inline advice; other words stay in the brief with a flag-like note; invalid file-based values are ignored with a fixed warning; never invent one", required: false },
       { name: "--task-file", arg: "<path>", description: "read the exact task from a file instead of inline text or stdin", required: false },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--headroom", arg: "<subscription>=<share>", description: "override a reading with usage you read yourself: the share left, 0.9 or 90% (not for a harness that is not signed in)", required: false, repeatable: true },
@@ -41,6 +43,7 @@ export const COMMANDS = {
     name: "launch",
     description: "start a worker with matching task advice: in a herdr pane, or outside herdr a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker that `routr wait` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
     flags: [
+      { name: "--lead-session", arg: "<id>", description: "your known session id when routr cannot read it from the harness environment; UUIDv4, UUIDv7 or 16–64 lowercase hex characters; malformed values are ignored with a fixed warning; never invent one", required: false },
       { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
       { name: "--name", arg: "<name>", description: "worker agent name ([a-z][a-z0-9_-]{0,31})", required: true },
       { name: "--model", arg: "<id>", description: "model id", required: true },
@@ -56,7 +59,7 @@ export const COMMANDS = {
       { name: "--task", arg: "<text>", description: "task prompt string (mutually exclusive with --task-file)", required: false },
       { name: "--task-file", arg: "<path>", description: "file containing task prompt (mutually exclusive with --task; outside herdr a task is required)", required: false },
       { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds (outside herdr: for the worker's process to start and the harness to take the task)", required: false, default: 120000 },
-      { name: "--dry-run", arg: null, description: "plan commands without executing or writing files; advice checks can refuse with ok:false", required: false, default: false },
+      { name: "--dry-run", arg: null, description: "plan worker actions without executing them; advice checks can refuse with ok:false; enabled OpenTelemetry export may queue the plan span (no launch index entry)", required: false, default: false },
     ],
   },
   cleanup: {

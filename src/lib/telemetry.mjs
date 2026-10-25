@@ -7,6 +7,7 @@
 // On with `routr telemetry on` (setup asks a person once, default no). Kept off by ROUTR_TELEMETRY=0, DO_NOT_TRACK=1, CI,
 // for every send, `routr telemetry send` included.
 // Sending happens only in the detached daily job (update.mjs) or on an explicit command: never inside advice.
+import { pick, shaped, modelName as model, EFFORTS, questionSet, VERDICTS, CHECK_RESULTS } from "./shaped.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -92,19 +93,16 @@ export function installId(ledger, { create = true } = {}) { const s = state(ledg
 // Every string a lead can type into the ledger (`record --model/--effort/...`, a report's SUBAGENTS line) is cut down
 // here, before it can leave the machine, to an exact list or a narrow shape; anything else becomes "other". No shape
 // admits a path, URL, email, or token: no "/", "~", "@", "_" or spaces, and no long unbroken run of letters and digits.
-const pick = (v, allowed) => (v == null ? null : allowed.includes(v) ? v : "other");
-const shaped = (re) => (v) => (v == null || v === "" ? null : re.test(String(v)) && !/[A-Za-z0-9]{17,}/.test(String(v)) ? String(v) : "other");
 const LEVELS3 = ["basic", "standard", "strong"];
 const WORK_TYPES = Object.keys(questions.work_type.criteria);
 const SUBSCRIPTIONS = Object.keys(HARNESSES);                            // routr keys a subscription by its harness
-const questionSet = shaped(/^[rc]\d{1,3}$/), jevVersion = shaped(/^jev-\d+(\.\d+){0,3}$/);
+const jevVersion = shaped(/^jev-\d+(\.\d+){0,3}$/);
 // A decision model is one routr offers (providers.mjs), or a Jev version the maintainers tried; anything else is "other".
 const decisionModel = (v) => (v == null || v === "" ? null : KNOWN_MODELS.includes(v) ? v : jevVersion(v));
-export const EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "auto", "default"]; // what the harnesses take, and "default" (seen in real rows)
+export { EFFORTS } from "./shaped.mjs";
 // A model name is the one field no list can check (routr holds no model knowledge, and reading the harnesses' lists
 // would mean running them in the background). It must LOOK like one; a slug an agent passes as a model is sent as
 // written, and docs/telemetry.md says so.
-const model = shaped(/^[A-Za-z0-9][A-Za-z0-9.:[\]-]{0,47}$/);            // gpt-5.6-terra, claude-opus-5-5[1m], cursor-grok-4.6-high
 const num = (v) => (Number.isFinite(v) ? v : null);
 
 // Pure: ledger entries → the rows sent, field by field. A line that is not a ledger row is skipped, never sent.
@@ -121,7 +119,7 @@ export function telemetryRows(entries, install) {
         work_type: pick(a.work_type, WORK_TYPES), high_risk: !!a.high_risk, fallback: !!a.fallback,
         facts: Object.fromEntries(Object.entries(a.facts ?? {}).filter(([k, p]) => k in FACTS && Number.isFinite(p))) },
       chose: { subscription: pick(e.chose.subscription, SUBSCRIPTIONS), model: model(e.chose.model), effort: pick(e.chose.effort, EFFORTS), level: pick(e.chose.level, LEVELS3) },
-      outcome: { verdict: pick(e.outcome.verdict, ["done", "partial", "blocked", "unknown"]), check: pick(e.outcome.check, ["pass", "fail", "none"]),
+      outcome: { verdict: pick(e.outcome.verdict, VERDICTS), check: pick(e.outcome.check, CHECK_RESULTS),
         attempts: num(e.outcome.attempts) ?? 1, seconds: num(e.outcome.seconds) },
       subagents: (e.subagents ?? []).slice(0, 20).map((x) => ({ advised: pick(x?.advised, LEVELS3), model: model(x?.model) })),
     };
