@@ -10,6 +10,17 @@ export function parseTraceparent(value) {
 const uuid = (version) => new RegExp(`^[a-f0-9]{8}-[a-f0-9]{4}-${version}[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$`);
 const SOURCES = [["CLAUDE_CODE_SESSION_ID", uuid(4)], ["CODEX_THREAD_ID", uuid(7)], ["CURSOR_CONVERSATION_ID", uuid(4)], ["ANTIGRAVITY_CONVERSATION_ID", uuid(4)]];
 export const sessionId = (id) => typeof id === "string" && (uuid("[47]").test(id) || /^[a-f0-9]{16,64}$/.test(id)) ? id : null;
+export const LEAD_SESSION_WARNING = "--lead-session was ignored: no valid session id was supplied";
+export function takeLeadSession(args) {
+  const rest = [], ids = []; let count = 0;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== "--lead-session") { rest.push(args[i]); continue; }
+    count++;
+    if (typeof args[i + 1] === "string" && !args[i + 1].startsWith("--")) ids.push(args[++i]);
+  }
+  const lead = count === 1 && ids.length === 1 ? sessionId(ids[0]) : null;
+  return { args: rest, lead, warnings: count && !lead ? [LEAD_SESSION_WARNING] : [] };
+}
 export function leadSession(env, explicit) {
   for (const [key, format] of SOURCES) if (typeof env[key] === "string" && format.test(env[key])) return env[key];
   return sessionId(explicit);

@@ -111,8 +111,9 @@ const configPath = take("--config");
 // percent (97%) is read; anything else is said in the answer, never dropped without a word.
 const { given, notes: inputNotes } = (await import("./lib/commands.mjs")).parseHeadroom(takeAll("--headroom"));
 const withNotes = (r) => (inputNotes.length && r && typeof r === "object" ? { ...r, warnings: [...(r.warnings ?? []), ...inputNotes] } : r);
-const leadFlags = ["dispatch", "subagent"].includes(argv[0]) ? argv.filter((v) => v === "--lead-session").length : 0;
-const leadSession = leadFlags ? take("--lead-session") : undefined;
+const leadInput = ["dispatch", "subagent"].includes(argv[0]) ? (await import("./lib/trace-context.mjs")).takeLeadSession(argv) : { args: [...argv], lead: null, warnings: [] };
+argv.splice(0, argv.length, ...leadInput.args); inputNotes.push(...leadInput.warnings);
+const leadSession = leadInput.lead;
 const [mode, ...rest] = argv;
 if (mode === "usage" && levelFlags !== rest.filter((word) => /^--level(?:=|$)/.test(word)).length) {
   print({ ...(await import("./lib/output.mjs")).refusal("no usage view", "usage: --level cannot be a value for --config or --headroom; eligibility was not refreshed"), level: "basic" });
@@ -145,8 +146,6 @@ if (mode !== "subagent" && mode !== "dispatch") { console.error(formatUnknownUsa
 const { doNext } = await import("./lib/next.mjs");
 const briefRefusal = (error) => print({ ok: false, headline: `routr: no advice: ${error}`, unavailable: [], warnings: [...loaded().notes, ...inputNotes],
   next: [doNext("Supply the exact task: quote an inline brief, pipe it on stdin, or use this file form.", `routr ${mode} --task-file <path>`)], error });
-
-if (leadFlags && (leadFlags !== 1 || !(await import("./lib/trace-context.mjs")).sessionId(leadSession))) { briefRefusal("--lead-session requires a measured UUIDv4/UUIDv7 or a 16–64 character lowercase hex id"); return 0; }
 
 // File input is explicit: a missing value is refused rather than accidentally reading stdin or advising on a flag.
 if (rest.includes("--task-file")) {
@@ -189,10 +188,13 @@ const emitting = ["dispatch", "subagent", "check", "usage", "launch", "send", "w
 const words = [...argv];
 for (const flag of ["--config", "--headroom"]) while (words.includes(flag)) words.splice(words.indexOf(flag), 2);
 const command = emitting.includes(words[0]) && (words[0] === "launch" || !argv.includes("--version")) ? words[0] : null;
-let code;
-if (command && !(argv[0] === "workers" && argv[1] === "--hold" && argv[2])) {
-  const tracing = await import("./lib/traces.mjs"), configPath = value("--config"); traceOutput = tracing.traceOutput;
-  code = await tracing.commandTrace(command, { config: loadConfig(configPath).config, otel: { configPath },
-    lead: value("--lead-session"), cwd: value("--cwd"), explicitLevel: argv.includes("--level") }, main);
-} else code = await main();
+let invoke = main;
+if (command && !(argv[0] === "workers" && argv[1] === "--hold" && argv[2]) && !(command === "usage" && argv.includes("--background"))) {
+  try {
+    const tracing = await import("./lib/traces.mjs"), configPath = value("--config"), { takeLeadSession } = await import("./lib/trace-context.mjs"); traceOutput = tracing.traceOutput;
+    invoke = () => tracing.commandTrace(command, () => ({ config: loadConfig(configPath).config, otel: { configPath },
+      lead: takeLeadSession(argv).lead, cwd: value("--cwd"), explicitLevel: argv.includes("--level") }), main);
+  } catch {} // Optional tracing must not prevent a command from starting.
+}
+const code = await invoke();
 if (code != null) process.exit(code);

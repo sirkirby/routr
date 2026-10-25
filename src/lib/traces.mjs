@@ -2,9 +2,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
 import { encodeTraces, otelSession } from "./otel.mjs";
-import { carriersFrom } from "./runtime.mjs";
+import { carriersFrom, carrierWithheld } from "./runtime.mjs";
 import { parseTraceparent, leadSession, sessionId } from "./trace-context.mjs";
-import { pick, shaped, modelName, EFFORTS } from "./shaped.mjs";
+import { pick, modelName, EFFORTS, questionSet, VERDICTS, CHECK_RESULTS } from "./shaped.mjs";
 import { HARNESSES, SOURCES } from "./harnesses.mjs";
 import { CHECKS, FACTS, LEVELS, questions } from "./questions.mjs";
 import { DECISION_CODES, decisionTarget, PROVIDER_NAMES, KNOWN_MODELS } from "./providers.mjs";
@@ -12,11 +12,11 @@ import { OUTCOME_CAUSES } from "./ledger.mjs";
 import { USAGE_FAILURES } from "./usage-failure.mjs";
 import { traceIdentity, pathHash } from "./trace-identity.mjs";
 import { LaunchIndex, launchContext } from "./launch-index.mjs";
-import { callHerdr } from "./process-boundary.mjs";
+import { callHerdr, herdrId } from "./process-boundary.mjs";
 
 const context = new AsyncLocalStorage(), nanos = () => BigInt(Date.now()) * 1000000n;
 export function traceOutput(result) { const c = context.getStore(); if (c) c.output = result; }
-const subscriptions = Object.keys(HARNESSES), questionVersion = shaped(/^[rc]\d{1,3}$/);
+const subscriptions = Object.keys(HARNESSES);
 export const ERROR_CODES = [...new Set([...DECISION_CODES, ...Object.keys(USAGE_FAILURES), "unreadable", "refused", "failed", "_OTHER"])];
 export const TRACE_ATTRIBUTES = Object.freeze({ "routr.lead.session_id": "string", "routr.question_set.version": "string", "routr.candidates": "string[]", "routr.unavailable": "string[]",
   "vcs.repository.url.full": "string", "vcs.ref.head.name": "string", "routr.cwd": "string", "routr.worktree": "string",
@@ -36,7 +36,7 @@ const error = (span, code) => { put(span, { "error.type": pick(code, ERROR_CODES
 export function recordSpan(entry) {
   const c = context.getStore(); if (!c) return;
   const { outcome: o, chose: choice } = entry;
-  put(c.span, { "routr.verdict": pick(o.verdict, ["done", "partial", "blocked", "unknown"]), "routr.check": pick(o.check, ["pass", "fail", "none"]), "routr.level": pick(choice.level, LEVELS),
+  put(c.span, { "routr.verdict": pick(o.verdict, VERDICTS), "routr.check": pick(o.check, CHECK_RESULTS), "routr.level": pick(choice.level, LEVELS),
     "routr.attempts": o.attempts, "routr.seconds": o.seconds, "routr.causes": o.causes?.map((v) => pick(v, OUTCOME_CAUSES)), "routr.subscription": pick(choice.subscription, subscriptions),
     "routr.effort": pick(choice.effort, EFFORTS), "routr.effort_from": pick(choice.effort_from, ["given", "model id", "config default"]), "routr.advice.id": /^[a-f0-9]{8}$/.test(entry.id) ? entry.id : null });
   if (/^[a-f0-9]{8}$/.test(entry.id)) link(c.index.match({ advice_id: entry.id }));
@@ -61,11 +61,11 @@ export async function cleanupLink(o, run) {
   const c = context.getStore(); if (!c || c.command !== "cleanup") return;
   if (o.pane && c.env.HERDR_ENV === "1") {
     const facts = await paneFacts(o.pane, run); conversation(facts);
-    if (typeof facts?.terminal_id === "string") link(c.index.match({ pane_id: o.pane, terminal_id: facts.terminal_id }));
-  } else if (o.path) { const path_hash = pathHash(o.path); if (path_hash) link(c.index.match({ path_hash })); }
+    if (typeof facts?.terminal_id === "string") link(c.index.match({ pane_id: o.pane, terminal_id: facts.terminal_id }, { activeOnly: true }));
+  } else if (o.path) { const path_hash = pathHash(o.path); if (path_hash) link(c.index.match({ path_hash }, { activeOnly: true })); }
   else if (o.worktree) {
     const identity = traceIdentity(o.cwd);
-    if (identity.project_hash) link(c.index.match({ project_hash: identity.project_hash, repository: identity.attributes["vcs.repository.url.full"] ?? null, branch: o.worktree }));
+    if (identity.project_hash) link(c.index.match({ project_hash: identity.project_hash, repository: identity.attributes["vcs.repository.url.full"] ?? null, branch: o.worktree }, { activeOnly: true }));
   }
 }
 export async function completeLaunch(r, run, { rerun = false } = {}) {
@@ -77,9 +77,9 @@ export async function completeLaunch(r, run, { rerun = false } = {}) {
   put(c.span, { "routr.kind": pick(r.kind, subscriptions), "routr.backend": c.env.HERDR_ENV === "1" ? "pane" : "headless", "routr.launch.id": c.launchId,
     "gen_ai.agent.name": /^[a-z][a-z0-9_-]{0,31}$/.test(r.name) ? r.name : null, "routr.model": modelName(r.model), "routr.effort": pick(r.effort, EFFORTS),
     "routr.advice.matched": typeof r.advice?.matches === "boolean" ? r.advice.matches : null, "routr.carriers.forwarded": ["TRACEPARENT", "TRACESTATE", "BAGGAGE"].filter((n) => r.start?.env?.[n] === "<forwarded>") });
-  if (!reused) c.entry = { launch_id: c.launchId, advice_id: c.adviceId ?? null, backend: c.env.HERDR_ENV === "1" ? "pane" : "headless", repository: identity.attributes["vcs.repository.url.full"] ?? null,
+  if (!reused && (herdrId(r.pane) || r.worker) && ["ready", "prompted", "needs_input"].includes(r.state)) c.entry = { launch_id: c.launchId, advice_id: c.adviceId ?? null, backend: c.env.HERDR_ENV === "1" ? "pane" : "headless", repository: identity.attributes["vcs.repository.url.full"] ?? null,
     project_hash: identity.project_hash ?? null, path_hash: identity.path_hash ?? null, branch: identity.attributes["vcs.ref.head.name"] ?? null,
-    pane_id: typeof r.pane === "string" ? r.pane : null, terminal_id: typeof facts?.terminal_id === "string" ? facts.terminal_id : null, worker_id: r.worker?.id ?? null,
+    pane_id: herdrId(r.pane) ? r.pane : null, terminal_id: typeof facts?.terminal_id === "string" ? facts.terminal_id : null,
     traceId: c.span.traceId, spanId: c.span.spanId, created_at: new Date().toISOString() };
 }
 export async function decisionSpan(config, run) {
@@ -123,7 +123,7 @@ export async function usageSpans(run, { startedAt } = {}) {
 function resultAttributes(command, span, r) {
   if (!r) return;
   if (["dispatch", "subagent", "check"].includes(command)) {
-    put(span, { "routr.question_set.version": questionVersion(r.question_set), "routr.unavailable": r.unavailable?.map((u) => pick(u.code, ERROR_CODES)) });
+    put(span, { "routr.question_set.version": questionSet(r.question_set), "routr.unavailable": r.unavailable?.map((u) => pick(u.code, ERROR_CODES)) });
     if (command === "check") {
       for (const key of Object.keys(CHECKS)) put(span, { [`routr.check.${key}`]: probability(r.checks?.[key]?.p) });
       put(span, { "routr.check.flags": [...Object.entries(CHECKS).filter(([k, v]) => r.checks?.[k]?.reading === v.flag).map(([k]) => k), ...(["partial", "blocked", "unstated"].includes(r.claimed) ? [`verdict_${r.claimed}`] : [])] });
@@ -142,17 +142,27 @@ export function launchCarriers(env) {
   if (!c || c.span.name !== "routr launch") return found;
   const carriers = { ...found.carriers, TRACEPARENT: `00-${c.span.traceId}-${c.span.spanId}-01` };
   if (!c.inherited) delete carriers.TRACESTATE;
-  return { carriers, withheld: found.withheld };
+  return { carriers, withheld: found.withheld, launchSpan: true };
 }
-export function commandTrace(command, { config, env = process.env, otel = {}, lead, explicitLevel, cwd } = {}, run) {
-  if (context.getStore()) return run(); // Internal cleanup of an unstarted launch is part of that launch, not another command.
-  const session = otelSession(config, env, otel), inherited = parseTraceparent(carriersFrom(env).carriers.TRACEPARENT);
-  if (!session.on || inherited?.sampled === false) return run();
-  const span = { name: `routr ${command}`, kind: 1, traceId: inherited?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"),
-    ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, startTimeUnixNano: nanos(), attributes: {} };
-  const id = leadSession(env, lead); if (id && ["dispatch", "subagent", "launch"].includes(command)) put(span, { "routr.lead.session_id": id });
-  const identity = traceIdentity(cwd); put(span, identity.attributes);
-  const batch = { span, spans: [span], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: randomUUID(), matched: new Set(), observed: new Set() };
+export const launchCarrierWarnings = (found) => found.withheld.map((n) => found.launchSpan && n === "TRACEPARENT"
+  ? "The inherited TRACEPARENT exceeded routr's forwarding limits; the worker gets this routr launch span instead"
+  : carrierWithheld(n));
+export function commandTrace(command, setup = {}, run) {
+  if (context.getStore()) return run(); // Internal cleanup of an unstarted launch belongs to that launch.
+  let session, span, batch;
+  try {
+    const { config, env = process.env, otel = {}, lead, explicitLevel, cwd } = typeof setup === "function" ? setup() : setup;
+    session = otelSession(config, env, otel);
+    const inherited = parseTraceparent(carriersFrom(env).carriers.TRACEPARENT);
+    if (session.on && inherited?.sampled !== false) {
+      span = { name: `routr ${command}`, kind: 1, traceId: inherited?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"),
+        ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, startTimeUnixNano: nanos(), attributes: {} };
+      const id = leadSession(env, lead); if (id && ["dispatch", "subagent", "launch"].includes(command)) put(span, { "routr.lead.session_id": id });
+      const identity = traceIdentity(cwd); put(span, identity.attributes);
+      batch = { span, spans: [span], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: randomUUID(), matched: new Set(), observed: new Set() };
+    }
+  } catch {} // Setup is optional too: a bad config or identity lookup cannot refuse a command.
+  if (!batch) return run();
   const finish = (result) => {
     try {
       resultAttributes(command, span, batch.output ?? result); span.endTimeUnixNano = nanos();

@@ -86,7 +86,8 @@ export const briefSha = (text) => createHash("sha256").update(String(text).trim(
 // The effort a run actually had, when the lead wrote none, "none" or "default". Cursor and Antigravity carry it in the
 // model id (grok-4.7-high); for a harness that takes it separately, "default" is the user's configured default_effort.
 // In the maintainer's ledger (2026-09-26), 13 of 44 rows said "default", "none" or nothing, all on Cursor and
-// Antigravity, and the model id gave the effort every time. `effort_from` says where it came from (kept locally, not sent).
+// Antigravity, and the model id gave the effort every time. `effort_from` says where it came from (local ledger and
+// opted-in OpenTelemetry; not anonymous telemetry).
 const IN_ID = /-(minimal|low|medium|high|xhigh|max)(?:-[a-z0-9]+)?$/; // one qualifier may follow: cursor-grok-4.6-high-fast
 export function resolveEffort({ subscription, model, effort }, config = null) {
   const h = HARNESSES[subscription], unset = effort == null || effort === "" || /^(none|default)$/i.test(effort);

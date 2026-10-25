@@ -330,4 +330,4 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
   return out;
 }
 
-export const cleanup = (args, opts = {}) => commandTrace("cleanup", { config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined }, () => cleanupBody(args, opts));
+export const cleanup = (args, opts = {}) => commandTrace("cleanup", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined }), () => cleanupBody(args, opts));

@@ -1186,8 +1186,8 @@ test.skipIf(!POSIX)("stop with group: true ends what a detached child started in
 });
 
 // Trace-context carriers for headless workers: launch saves the ones within routr's limits with the worker, and every
-// turn gets those, whoever starts the holder: a holder `send` starts inherits the sender's environment, and must use
-// the launch's carriers, not the sender's.
+// turn gets those, whoever starts the holder: detached holders inherit no carriers, and must read the launch's
+// carriers from worker.json, not the sender's.
 const LAUNCHED = { TRACEPARENT: "00-0af7651916cd43dd8448eb211c80319c-CARRIER_HL_TP-01", TRACESTATE: "k=CARRIER_HL_TS,\tz=\"%PATH%\"", BAGGAGE: "a=CARRIER_HL_BG;p=1,b=c d!&'" };
 const turnsOf = (kind, rows) => rows.filter(({ argv }) => kind === "codex" ? argv[0] === "app-server" : kind === "kiro" ? argv[0] === "acp" : kind === "agy" ? argv.includes("--print=") : argv.includes("-p"));
 const carriersIn = (env) => Object.fromEntries(Object.entries(env).filter(([k]) => /^(traceparent|tracestate|baggage)$/i.test(k)));

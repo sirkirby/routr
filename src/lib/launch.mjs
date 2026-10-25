@@ -1,5 +1,5 @@
-import { commandTrace, launchCarriers, adviceForLaunch, completeLaunch } from "./traces.mjs";
-import { sessionId } from "./trace-context.mjs";
+import { commandTrace, launchCarriers, launchCarrierWarnings, adviceForLaunch, completeLaunch } from "./traces.mjs";
+import { takeLeadSession } from "./trace-context.mjs";
 import { randomUUID } from "node:crypto";
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,7 +13,7 @@ import { CLOSING, OFF } from "./wording.mjs";
 import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, splitArgs, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
-import { CARRIERS, carrierValues, carrierWithheld, ensureParent, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
+import { CARRIERS, carrierValues, ensureParent, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
 import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
 
 // The guide is the source of this instruction, embedded at build time just like the installed skills.
@@ -51,8 +51,9 @@ export function logCommand(log, text) {
 }
 
 export function parseLaunchArgs(args) {
-  const o = { timeout: 120000, dryRun: false };
-  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "timeout", "advice", "lead-session"];
+  const lead = takeLeadSession(args); args = lead.args;
+  const o = { timeout: 120000, dryRun: false, ...(lead.lead ? { "lead-session": lead.lead } : {}), ...(lead.warnings.length ? { leadWarnings: lead.warnings } : {}) };
+  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "timeout", "advice"];
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
@@ -68,7 +69,6 @@ export function parseLaunchArgs(args) {
     if (args[i + 1].includes("\0")) throw new Error(`--${key} must not contain NUL`);
     o[key] = args[++i];
   }
-  if (o["lead-session"] != null && !sessionId(o["lead-session"])) throw new Error("--lead-session requires a measured UUIDv4/UUIDv7 or a 16–64 character lowercase hex id");
   if (!Object.hasOwn(HARNESSES, o.kind)) throw kindError();
   if (o.worktree && o.pane) throw new Error("--worktree creates its own pane; do not pass --pane with it");
   if (o.copy && !o.worktree) throw new Error("--copy only makes sense with --worktree");
@@ -113,6 +113,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
   };
   try {
     const o = parseLaunchArgs(args);
+    out.warnings.push(...(o.leadWarnings ?? []));
     Object.assign(out, { kind: o.kind ?? null, name: o.name, pane: o.pane ?? null, cwd: resolve(o.cwd ?? "."), model: o.model ?? null, effort: o.effort ?? null });
     // The same launch, into the pane it stopped in: it carries on from the shell, or adopts the agent already running
     // there. A runnable command only when the task comes from a file: an inline --task is never printed (it is the
@@ -171,12 +172,14 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     const found = launchCarriers(env);
     const paneCarriers = () => {
       if (!o.pane) {
-        out.warnings.push(...found.withheld.map(carrierWithheld));
+        out.warnings.push(...launchCarrierWarnings(found));
         out.start.env = { ...out.start.env, ...Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) };
         return found.carriers;
       }
       const present = CARRIERS.filter((n) => Object.hasOwn(found.carriers, n) || found.withheld.includes(n));
-      if (present.length) out.warnings.push(PASSED_NONE(present));
+      if (present.length) out.warnings.push(found.launchSpan
+        ? "This launch did not pass its routr launch span or carriers to the worker: an existing pane keeps the environment its shell, or the agent already running there, started with, and routr never types a carrier into a shell"
+        : PASSED_NONE(present));
       return {};
     };
     const startArgs = (pane, timeout) => o.kind === "cursor" && SHELLS[shell].cursor
@@ -586,6 +589,6 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
 }
 
 export function launch(args, opts = {}) {
-  const config = (opts.settings ?? (() => loadConfig()))();
-  return commandTrace("launch", { config: config.config ?? config, ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: args[args.indexOf("--lead-session") + 1] }, async () => { const r = await launchBody(args, opts); await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane") }); return r; });
+  const lead = takeLeadSession(args); args = [...lead.args, ...(lead.lead ? ["--lead-session", lead.lead] : [])];
+  return commandTrace("launch", () => { const loaded = (opts.settings ?? (() => loadConfig()))(); return { config: loaded.config ?? loaded, ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead }; }, async () => { const r = await launchBody(args, opts); r.warnings.push(...lead.warnings); try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane") }); } catch {} return r; });
 }

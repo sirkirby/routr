@@ -1,7 +1,7 @@
 // The commands for headless workers (headless.mjs): launch's start outside herdr, and `wait`, `send`, `workers`,
 // `stop` and `cleanup --worker`. Each talks to a worker's holder only through its channel (channel.mjs) and reads what
 // the holder wrote; none stops a process by a saved id. Answers carry report paths, never worker text.
-import { commandTrace, launchCarriers, currentLaunch } from "./traces.mjs";
+import { commandTrace, launchCarriers, launchCarrierWarnings, currentLaunch } from "./traces.mjs";
 import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
@@ -229,7 +229,7 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
     // gets these, whoever starts its holder later (a `send` from another environment). Shown by name only;
     // CURSOR_CONFIG_DIR, the run folder's, is not listed.
     const found = launchCarriers(env);
-    out.warnings.push(...found.withheld.map(carrierWithheld));
+    out.warnings.push(...launchCarrierWarnings(found));
     out.start = { executable: HARNESSES[o.kind].executable, argv, env: Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) };
     out.ran.push(displayCommand([HARNESSES[o.kind].executable, ...argv]));
     const w = { format: FORMAT, id: randomUUID().replace(/-/g, ""), name: o.name, kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(), carriers: found.carriers,
@@ -514,10 +514,10 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
   });
 }
 
-export const sendCommand = (args, opts = {}) => commandTrace("send", { config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }, () => sendCommandBody(args, opts));
+export const sendCommand = (args, opts = {}) => commandTrace("send", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }), () => sendCommandBody(args, opts));
 
-export const waitCommand = (args, opts = {}) => commandTrace("wait", { config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }, () => waitCommandBody(args, opts));
+export const waitCommand = (args, opts = {}) => commandTrace("wait", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }), () => waitCommandBody(args, opts));
 
-export const workersCommand = (args, opts = {}) => commandTrace("workers", { config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }, () => workersCommandBody(args, opts));
+export const workersCommand = (args, opts = {}) => commandTrace("workers", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }), () => workersCommandBody(args, opts));
 
-export const stopCommand = (args, opts = {}) => commandTrace("stop", { config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }, () => stopCommandBody(args, opts));
+export const stopCommand = (args, opts = {}) => commandTrace("stop", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }), () => stopCommandBody(args, opts));

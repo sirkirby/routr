@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, relative, sep } from "node:path";
 import { harnessEnv, realPath, startSync } from "./runtime.mjs";
 
 // Stage 2 prep, VCS 1.44.0: a URL is a repository identity, never a transport credential or arbitrary remote text.
@@ -31,7 +31,7 @@ export function traceIdentity(cwd = process.cwd()) {
     if (dirs?.length !== 2) return { attributes: {} };
     const [root, common] = dirs, projectRoot = dirname(common), rel = relative(projectRoot, root), worktree = rel && !rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel) ? rel : basename(root);
     const repository = canonicalRepository(git(["config", "--get", "remote.origin.url"])), branch = branchName(git(["symbolic-ref", "--quiet", "--short", "HEAD"]));
-    const attributes = {}, folder = relativeName(relative(root, resolve(cwd)).split(sep).join("/") || "."), tree = relativeName(worktree.split(sep).join("/"));
+    const attributes = {}, folder = relativeName(relative(root, realPath(cwd)).split(sep).join("/") || "."), tree = relativeName(worktree.split(sep).join("/"));
     if (repository) attributes["vcs.repository.url.full"] = repository;
     if (branch) attributes["vcs.ref.head.name"] = branch;
     if (folder) attributes["routr.cwd"] = folder;

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { parseTraceparent, leadSession } from "../src/lib/trace-context.mjs";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
@@ -11,9 +11,10 @@ import { ask } from "../src/lib/systemone.mjs";
 import { replyFetch } from "./fixtures/provider-fetch.mjs";
 import { cleanup } from "../src/lib/cleanup.mjs";
 import { sendCommand, waitCommand, workersCommand, stopCommand } from "../src/lib/workers.mjs";
+import * as channel from "../src/lib/channel.mjs";
 import { LaunchIndex } from "../src/lib/launch-index.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
-import { TRACE_ATTRIBUTES, ERROR_CODES } from "../src/lib/traces.mjs";
+import { TRACE_ATTRIBUTES, ERROR_CODES, commandTrace } from "../src/lib/traces.mjs";
 import { readUsage } from "../src/lib/harnesses.mjs";
 
 function exporting(env = {}) {
@@ -41,14 +42,15 @@ test("usage queues an inherited span with the pinned resource and no success sta
 });
 
 test("launch hands its sampled span to panes, drops orphan tracestate, and leaves off/unsampled forwarding alone", async () => {
-  for (const mode of ["inherited", "invalid", "none", "unsampled", "off"]) {
+  for (const target of ["split", "worktree"]) for (const mode of ["inherited", "invalid", "none", "unsampled", "off"]) {
     const env = { HERDR_ENV: "1", ...(mode === "none" ? {} : { TRACEPARENT: mode === "invalid" ? "invalid" : mode === "unsampled" ? parent.slice(0, -2) + "00" : parent }), TRACESTATE: "vendor=STATE_MARKER", BAGGAGE: "BAGGAGE_MARKER" };
     const x = exporting(env);
     if (mode === "off") { delete x.config.otel; writeFileSync(x.otel.configPath, JSON.stringify(x.config)); }
     let split;
-    const r = await launch(["--kind", "claude", "--name", "fixture", "--model", "sonnet", "--direction", "right"], {
-      env, settings: () => ({ config: x.config }), ready: async () => null, otel: x.otel,
+    const r = await launch(["--kind", "claude", "--name", "fixture", "--model", "sonnet", ...(target === "worktree" ? ["--worktree", "branch"] : ["--direction", "right"])], {
+      env, settings: () => ({ config: x.config }), ready: async () => null, models: async () => null, otel: x.otel,
       run: async (args) => {
+        if (args[0] === "worktree" && args[1] === "create") return { ok: true, data: { result: { root_pane: { pane_id: "w1:p1" }, worktree: { path: x.home }, workspace: { workspace_id: "w1" } } } };
         if (args[0] === "pane" && args[1] === "split") { split = args; return { ok: false }; }
         return { ok: false };
       },
@@ -71,9 +73,20 @@ test("launch hands its sampled span to panes, drops orphan tracestate, and leave
   }
 });
 
+test("launch warnings distinguish its own span from inherited context", async () => {
+  const x = exporting({ HERDR_ENV: "1" }), opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), models: async () => null };
+  const base = ["--kind", "claude", "--name", "fixture", "--model", "fixture", "--dry-run"];
+  const existing = await launch([...base, "--pane", "w1:p2"], opts);
+  expect(existing.warnings.join(" ")).toContain("routr launch span");
+  expect(existing.warnings.join(" ")).not.toContain("passed none of TRACEPARENT");
+  const inherited = await launch([...base, "--direction", "right"], { ...opts, env: { ...x.env, TRACEPARENT: "x".repeat(513) } });
+  expect(inherited.warnings.join(" ")).toContain("routr launch span");
+  expect(inherited.warnings.join(" ")).not.toContain("TRACEPARENT was not passed to the worker");
+});
+
 test("a pane screen redacts the generated launch carrier as well as inherited carrier values", async () => {
   const x = exporting({ HERDR_ENV: "1", TRACEPARENT: parent }); let generated, ticks = 0;
-  const r = await launch(["--kind", "claude", "--name", "fixture", "--model", "fixture", "--direction", "right"], { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), ready: async () => null, now: () => ticks, sleep: async (ms) => { ticks += ms; }, run: async (a) => {
+  const r = await launch(["--kind", "claude", "--name", "fixture", "--model", "fixture", "--direction", "right"], { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), ready: async () => null, models: async () => null, now: () => ticks, sleep: async (ms) => { ticks += ms; }, run: async (a) => {
     const ok = (result) => ({ ok: true, data: { result } });
     if (a[1] === "split") { generated = a.find((v) => v.startsWith("TRACEPARENT=")).slice(12); return ok({ pane: { pane_id: "w1:p2" } }); }
     if (a[1] === "read") return ok({ text: generated + "\nSource it? [y/N]" });
@@ -188,13 +201,19 @@ test("a pane launch records identity, session and immutable index; cleanup and l
     if (a[0] === "workspace") return ok({ workspaces: [] });
     return ok({});
   };
-  const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), run, ready: async () => null, now: () => ticks, sleep: async (ms) => { ticks += ms; } };
-  const r = await launch(["--kind", "claude", "--name", "fixture", "--model", "sonnet", "--direction", "right", "--task", task, "--advice", advice], opts);
+  const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), run, models: async () => null, ready: async () => null, now: () => ticks, sleep: async (ms) => { ticks += ms; } };
+  const index = new LaunchIndex({ home: x.home }), args = ["--kind", "claude", "--name", "fixture", "--model", "sonnet", "--direction", "right", "--task", task, "--advice", advice];
+  expect((await launch([...args, "--dry-run"], opts)).state).toBe("planned");
+  expect(index.entries()).toEqual([]);
+  expect((await launch(args, { ...opts, run: async () => ({ ok: false }) })).state).toBe("failed");
+  expect(index.entries()).toEqual([]);
+  const r = await launch(args, opts);
   expect(r.state).toBe("prompted");
-  const s = x.spans().find((s) => s.name === "routr launch"), a = attrs(s);
+  const s = x.spans().find((s) => s.name === "routr launch" && attrs(s)["routr.launch.state"] === "prompted"), a = attrs(s);
   expect(a).toMatchObject({ "routr.kind": "claude", "routr.backend": "pane", "routr.launch.state": "prompted", "gen_ai.agent.name": "fixture", "routr.model": "sonnet", "routr.advice.matched": true, "gen_ai.conversation.id": session, "routr.lead.session_id": x.env.CODEX_THREAD_ID, "routr.cwd": "." });
   expect(a).not.toHaveProperty("gen_ai.request.model");
-  const index = new LaunchIndex({ home: x.home }), entry = index.match({ advice_id: "abc12345" });
+  const entry = index.match({ advice_id: "abc12345" });
+  expect(entry).not.toHaveProperty("worker_id");
   expect(entry).toMatchObject({ traceId: s.traceId, spanId: s.spanId, pane_id: "w1:p2", terminal_id: "term-1", launch_id: a["routr.launch.id"] });
   const rerun = await launch(["--kind", "claude", "--name", "fixture", "--model", "sonnet", "--pane", "w1:p2", "--task", task, "--advice", advice], opts);
   expect(rerun.state).toBe("prompted");
@@ -223,7 +242,27 @@ test("the real CLI consumes --lead-session independently of the brief and queues
   expect(x.spans().filter((s) => s.name === "routr dispatch")).toHaveLength(2);
   for (const args of [["BRIEF_MARKER", "--lead-session"], ["BRIEF_MARKER", "--lead-session", id, "--lead-session", id]]) {
     const bad = Bun.spawnSync([process.execPath, SCRIPT, "dispatch", "--config", x.otel.configPath, ...args], { env });
-    expect(JSON.parse(bad.stdout.toString()).ok).toBe(false);
+    expect(JSON.parse(bad.stdout.toString()).ok).toBe(true);
+    expect(JSON.parse(bad.stdout.toString()).warnings).toContain("--lead-session was ignored: no valid session id was supplied");
+  }
+});
+
+test("malformed optional lead ids are dropped with a fixed warning on advice and launch, on or off", async () => {
+  for (const on of [true, false]) {
+    const x = exporting(); if (!on) { delete x.config.otel; writeFileSync(x.otel.configPath, JSON.stringify(x.config)); }
+    writeFileSync(join(x.home, ".cache/routr/otel/sender.lock"), JSON.stringify({ pid: process.pid, token: "fixture" }));
+    const env = cliEnv(x.home, { PATH: x.home, CODEX_THREAD_ID: "", CLAUDE_CODE_SESSION_ID: "", CURSOR_CONVERSATION_ID: "", ANTIGRAVITY_CONVERSATION_ID: "", OTEL_SDK_DISABLED: "false", ROUTR_OTEL: "1" });
+    for (const mode of ["dispatch", "subagent"]) {
+      const child = Bun.spawnSync([process.execPath, SCRIPT, mode, "BRIEF_MARKER", "--lead-session", "PRIVATE_INVALID_ID", "--config", x.otel.configPath], { env });
+      expect(child.exitCode).toBe(0); const r = JSON.parse(child.stdout.toString());
+      expect(r.ok).toBe(true); expect(r.brief_chars).toBe(12);
+      expect(r.warnings).toContain("--lead-session was ignored: no valid session id was supplied");
+      expect(child.stdout.toString()).not.toContain("PRIVATE_INVALID_ID");
+    }
+    const r = await launch(["--kind", "claude", "--name", "fixture", "--model", "fixture", "--lead-session", "PRIVATE_INVALID_ID", "--dry-run"], { env: {}, otel: x.otel, settings: () => ({ config: x.config }) });
+    expect(r.ok).toBe(true); expect(r.state).toBe("planned");
+    expect(r.warnings).toContain("--lead-session was ignored: no valid session id was supplied");
+    expect(JSON.stringify(r)).not.toContain("PRIVATE_INVALID_ID");
   }
 });
 
@@ -238,26 +277,83 @@ test("housekeeping emits nothing even when an argument names an emitting command
   expect(x.batches()).toEqual([]);
 });
 
-test("every command's complete queue files exclude all content and secret markers", async () => {
+test("detached background usage emits no spans through the CLI or module command", async () => {
+  const x = exporting({ TRACEPARENT: parent });
+  writeFileSync(join(x.home, ".cache/routr/otel/sender.lock"), JSON.stringify({ pid: process.pid, token: "fixture" }));
+  const env = cliEnv(x.home, { PATH: x.home, TRACEPARENT: parent, OTEL_SDK_DISABLED: "false", ROUTR_OTEL: "1" });
+  for (const words of [["--background"], ["cursor", "--background", "--level", "basic"]]) {
+    const r = Bun.spawnSync([process.execPath, SCRIPT, "usage", ...words, "--config", x.otel.configPath], { env });
+    expect(r.exitCode).toBe(0); expect(x.batches()).toEqual([]);
+  }
+  await usageCommand(["--background"], x.config, {}, { env: x.env, otel: x.otel, read: async () => [] });
+  expect(x.batches()).toEqual([]); expect(x.spawned).toEqual([]);
+});
+
+test("tracing setup failures run the command once, untraced, without swallowing command errors", async () => {
+  let ran = 0, setUp = 0;
+  expect(commandTrace("usage", { get config() { throw new Error("private setup failure"); } }, () => ++ran)).toBe(1);
+  expect(ran).toBe(1);
+  expect(commandTrace("usage", () => { setUp++; throw new Error("private config failure"); }, () => ++ran)).toBe(2);
+  expect(setUp).toBe(1); expect(ran).toBe(2);
+  const x = exporting();
+  expect(commandTrace("usage", { config: x.config, env: {}, otel: { get home() { throw new Error("private identity failure"); } } }, () => ++ran)).toBe(3);
+  expect(x.batches()).toEqual([]);
+  let business = 0;
+  expect(() => commandTrace("usage", { config: x.config, env: {}, otel: x.otel }, () => { business++; throw new Error("command failed"); })).toThrow("command failed");
+  expect(business).toBe(1);
+  const opts = { env: {}, settings: () => { throw new Error("private settings failure"); } };
+  for (const [fn, args] of [[workersCommand, []], [waitCommand, ["--timeout", "0"]], [sendCommand, []], [stopCommand, []], [cleanup, ["--unknown"]], [launch, ["--kind", "claude", "--name", "fixture", "--model", "fixture", "--dry-run"]]])
+    expect(await fn(args, opts)).toHaveProperty("ok");
+});
+
+test("a null config cannot crash commands which only read it for tracing", () => {
+  const home = scratch("trace-null-config"), dir = join(home, ".config/routr"); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "config.json"), "null");
+  const env = cliEnv(home, { PATH: home });
+  for (const args of [["workers"], ["wait", "--timeout", "0"], ["send"], ["stop"], ["cleanup", "--unknown"], ["launch", "--kind", "claude", "--name", "fixture", "--model", "fixture", "--dry-run"]]) {
+    const child = Bun.spawnSync([process.execPath, SCRIPT, ...args], { env });
+    expect(JSON.parse(child.stdout.toString())).toHaveProperty("ok");
+    expect(child.stderr.toString()).not.toContain("TypeError");
+  }
+});
+
+test("every command's queue, launch index and worker metadata exclude content and secret markers", async () => {
   const markers = ["PRIVATE_BRIEF_MARKER", "PRIVATE_KEY_MARKER", "PRIVATE_HEADER_MARKER", "PRIVATE_BAGGAGE_MARKER", "PRIVATE_NOTE_MARKER", "PRIVATE_SCREEN_MARKER", "PRIVATE_REPLY_MARKER"];
   const x = exporting({ TRACEPARENT: parent, BAGGAGE: markers[3], TRACESTATE: "vendor=" + markers[2] }), brief = join(x.home, "brief"), report = join(x.home, "report"), advice = join(x.home, "advice.json");
   writeFileSync(brief, markers[0]); writeFileSync(report, markers[4]);
   writeFileSync(advice, JSON.stringify({ id: "abc12345", brief_sha: briefSha(markers[0]), mode: "dispatch", level: "standard" }));
   mkdirSync(join(x.home, ".config/routr"), { recursive: true });
   writeFileSync(join(x.home, ".config/routr/env"), `ROUTR_OTEL_HEADERS=Authorization=${markers[2]}`);
-  const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), read: async () => [], askFn: (state, questions, o) => ask(state, questions, { ...o, env: { TYPESAFE_API_KEY: markers[1] }, fetchFn: replyFetch("typesafe", "valid") }) };
+  const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), models: async () => null, read: async () => [], askFn: (state, questions, o) => ask(state, questions, { ...o, env: { TYPESAFE_API_KEY: markers[1] }, fetchFn: replyFetch("typesafe", "valid") }) };
   await adviseCommand("dispatch", markers[0], { config: x.config }, {}, opts);
   await adviseCommand("subagent", markers[0], { config: x.config }, {}, opts);
   await checkCommand({ brief, report }, { ...opts, config: x.config });
   await usageCommand([], x.config, {}, opts);
   recordCommand({ advice, ledger: join(x.home, "ledger"), subscription: markers[1], model: markers[6], effort: markers[2], verdict: markers[4], check: markers[4], note: markers[4] }, [], x.config, opts);
   let tick = 0;
-  await launch(["--kind", "claude", "--name", "fixture", "--model", markers[6], "--direction", "right"], { ...opts, env: { ...x.env, HERDR_ENV: "1" }, ready: async () => null, now: () => tick, sleep: async (ms) => { tick += ms; }, run: async (a) => ({ ok: true, data: { result: a[1] === "split" ? { pane: { pane_id: "w1:p2" } } : a[1] === "read" ? { text: markers[5] + "\nSource it? [y/N]" } : a[1] === "process-info" ? { process_info: { shell_pid: 1, foreground_processes: [{ pid: 1 }] } } : a[1] === "get" ? { pane: { pane_id: "w1:p2", terminal_id: "term-1" } } : {} } }) });
+  await launch(["--kind", "claude", "--name", "fixture", "--model", markers[6], "--direction", "right"], { ...opts, env: { ...x.env, HERDR_ENV: "1" }, ready: async () => null, models: async () => null, now: () => tick, sleep: async (ms) => { tick += ms; }, run: async (a) => ({ ok: true, data: { result: a[1] === "split" ? { pane: { pane_id: "w1:p2" } } : a[1] === "read" ? { text: markers[5] + "\nSource it? [y/N]" } : a[1] === "process-info" ? { process_info: { shell_pid: 1, foreground_processes: [{ pid: 1 }] } } : a[1] === "get" ? { pane: { pane_id: "w1:p2", terminal_id: "term-1" } } : {} } }) });
   await sendCommand(["--task", markers[0]], opts); await waitCommand(["--timeout", "0"], opts); await workersCommand([], opts); await stopCommand([], opts); await cleanup(["--unknown"], opts);
   const names = x.spans().map((s) => s.name);
   for (const command of ["dispatch", "subagent", "check", "usage", "record", "launch", "send", "wait", "workers", "stop", "cleanup"]) expect(names).toContain(`routr ${command}`);
-  for (const file of readdirSync(join(x.home, ".cache/routr/otel"), { recursive: true }).map(String).filter((n) => n.endsWith(".json")))
-    for (const marker of markers) expect(readFileSync(join(x.home, ".cache/routr/otel", file), "utf8")).not.toContain(marker);
+  const index = new LaunchIndex({ home: x.home }); expect(index.entries()).toHaveLength(1);
+  // worker.json intentionally holds native cwd and checked carriers; its remaining metadata must hold no content.
+  const prior = process.env.HOME, fits = spyOn(channel, "socketPathFits").mockReturnValue(true); let saved;
+  try {
+    process.env.HOME = x.home;
+    const r = await launch(["--kind", "claude", "--name", "metadata", "--model", "fixture", "--cwd", x.home, "--task-file", brief, "--advice", advice], { ...opts, ready: async () => null, spawn: () => {
+      saved = JSON.parse(readFileSync(join(x.home, ".local/state/routr/workers/metadata/worker.json"), "utf8")); return false;
+    } });
+    expect(r.ok).toBe(false); expect(saved).toBeDefined();
+    const { cwd, carriers, ...metadata } = saved;
+    expect(cwd).toBe(x.home); expect(carriers.BAGGAGE).toBe(markers[3]); expect(carriers.TRACESTATE).toBe(x.env.TRACESTATE);
+    expect(carriers.TRACEPARENT).toBe(`00-${metadata.launch.traceId}-${metadata.launch.spanId}-01`);
+    for (const marker of [...markers, x.home]) expect(JSON.stringify(metadata)).not.toContain(marker);
+    for (const marker of markers.filter((_, i) => ![2, 3].includes(i))) expect(JSON.stringify(saved)).not.toContain(marker);
+  } finally { fits.mockRestore(); if (prior == null) delete process.env.HOME; else process.env.HOME = prior; }
+
+  for (const dir of [join(x.home, ".cache/routr/otel"), index.dir])
+    for (const file of readdirSync(dir, { recursive: true }).map(String).filter((n) => n.endsWith(".json")))
+      for (const marker of [...markers, x.home]) expect(readFileSync(join(dir, file), "utf8")).not.toContain(marker);
+
 });
 
 test("the published attribute names and types and error codes equal the shipped allow-lists in both directions", () => {
@@ -287,7 +383,7 @@ test("headless commands link validated worker.json context and ignore malformed 
 test("off and unsampled commands queue nothing, create no index and start no sender", async () => {
   for (const mode of ["off", "unsampled"]) {
     const x = exporting(mode === "off" ? { ROUTR_OTEL: "0" } : { TRACEPARENT: parent.slice(0, -2) + "00" });
-    const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), read: async () => [], askFn: async () => { throw new Error("PRIVATE_MARKER"); } };
+    const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), models: async () => null, read: async () => [], askFn: async () => { throw new Error("PRIVATE_MARKER"); } };
     await adviseCommand("dispatch", "PRIVATE_MARKER", { config: x.config }, {}, opts); await adviseCommand("subagent", "PRIVATE_MARKER", { config: x.config }, {}, opts);
     await checkCommand({}, { ...opts, config: x.config }); await usageCommand([], x.config, {}, opts);
     recordCommand({}, [], x.config, opts);

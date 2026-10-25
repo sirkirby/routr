@@ -269,8 +269,8 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
   return answer(out);
 }
 
-export const usageCommand = (words, config, given = {}, opts = {}) => commandTrace("usage", { config, ...opts, explicitLevel: words.includes("--level") }, () => usageCommandBody(words, config, given, opts));
+export const usageCommand = (words, config, given = {}, opts = {}) => words.includes("--background") ? usageCommandBody(words, config, given, opts) : commandTrace("usage", () => ({ config, ...opts, explicitLevel: words.includes("--level") }), () => usageCommandBody(words, config, given, opts));
 
-export const adviseCommand = (mode, brief, loaded, given = {}, opts = {}) => commandTrace(mode, { config: loaded.config, ...opts }, () => adviseCommandBody(mode, brief, loaded, given, opts));
-export const checkCommand = (files, opts = {}) => commandTrace("check", opts, () => checkCommandBody(files, opts));
-export const recordCommand = (o, subagents = [], config = null, opts = {}) => commandTrace("record", { config, ...opts }, () => recordCommandBody(o, subagents, config, opts));
+export const adviseCommand = (mode, brief, loaded, given = {}, opts = {}) => commandTrace(mode, () => ({ config: loaded.config, ...opts }), () => adviseCommandBody(mode, brief, loaded, given, opts));
+export const checkCommand = (files, opts = {}) => commandTrace("check", () => opts, () => checkCommandBody(files, opts));
+export const recordCommand = (o, subagents = [], config = null, opts = {}) => commandTrace("record", () => ({ config, ...opts }), () => recordCommandBody(o, subagents, config, opts));

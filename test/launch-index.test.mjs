@@ -43,3 +43,15 @@ test("the 30-day sweep removes only owned file names, ignores malformed or linke
   expect(index.add(first)).toBe(false);
   expect(readFileSync(foreign, "utf8")).toBe(JSON.stringify(first));
 });
+
+test("cleanup matches a relaunched branch, path and pane among unfinished entries, while record retains tombstones", () => {
+  const home = scratch("index-relaunch"), index = new LaunchIndex({ home, now: () => Date.parse(first.created_at) });
+  mkdirSync(join(home, ".local/state/routr"), { recursive: true });
+  index.add(first); index.finish(first.launch_id);
+  const next = { ...first, launch_id: "22345678-1234-4123-8123-123456789abc", advice_id: "12345678", spanId: "1234567890abcdef" };
+  index.add(next);
+  for (const query of [{ project_hash: first.project_hash, branch: first.branch }, { path_hash: first.path_hash }, { pane_id: first.pane_id, terminal_id: first.terminal_id }])
+    expect(index.match(query, { activeOnly: true })).toMatchObject(next);
+  expect(index.match({ advice_id: first.advice_id })).toHaveProperty("finished_at");
+  expect(index.match({ advice_id: first.advice_id }, { activeOnly: true })).toBeNull();
+});

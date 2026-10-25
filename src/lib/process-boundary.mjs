@@ -9,7 +9,8 @@ export const agentState = (s) => states.has(s) ? s : "unknown";
 export const stateWords = (s) => s === "unknown" ? "in a state routr does not know" : s;
 const absolutePath = (s) => typeof s === "string" && s.length > 0 && !/[\x00-\x1f\x7f]/.test(s) && (isAbsolute(s) || win32.isAbsolute(s));
 const folder = (s) => absolutePath(s) && s.length <= 512;
-const id = (s) => typeof s === "string" && s.length > 0;
+export const herdrId = (s) => typeof s === "string" && s.length > 0;
+const id = herdrId;
 const knownErrors = new Set(["timeout", "agent_not_running", "agent_not_found", "agent_not_ready", "agent_prompt_stalled", "server_not_running"]);
 export function processFailure(tool, args, code, missing = false) {
   const command = (args[0] === "--session" ? args.slice(2) : args).slice(0, 2).join(" ");
