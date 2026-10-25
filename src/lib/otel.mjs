@@ -113,7 +113,7 @@ const paths = (home = userHome()) => {
 };
 const names = (dir) => { try { return readdirSync(dir); } catch (e) { if (e?.code === "ENOENT") return []; throw e; } };
 // Review D: an absent config revokes export; a failed read or parse gives no evidence about consent and stops a sweep.
-const readConfig = (file) => { try { const v = JSON.parse(readFileSync(file, "utf8")); return v && typeof v === "object" && !Array.isArray(v) ? v : null; } catch (e) { return e?.code === "ENOENT" ? {} : null; } };
+const readConfig = (file, missing = {}) => { try { const v = JSON.parse(readFileSync(file, "utf8")); return v && typeof v === "object" && !Array.isArray(v) ? v : null; } catch (e) { return e?.code === "ENOENT" ? missing : null; } };
 const statPresent = (file, stat = lstatSync) => { try { return stat(file); } catch (e) { if (e?.code === "ENOENT") return null; throw e; } };
 function queued(p, signal) {
   const dir = join(p.root, signal);
@@ -254,11 +254,16 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
   if (st.next_attempt_at != null && (!Number.isFinite(st.next_attempt_at) || st.next_attempt_at - now() > RETRY_CAP)) st.next_attempt_at = null;
   const save = () => { if (!held()) throw new Error("sender stopped"); write(p.state, st, { mkdir: false, mode: 0o600, preserveOnError: true }); };
   const remove = (file, code) => { if (!held()) throw 0; countDrop(st, code); save(); if (!held()) throw 0; unlinkSync(file); };
-  const sweep = () => {
+  const sweep = async () => {
     if (!held()) return;
     // Sweep against configured consent even with a process-local off switch: that switch revokes no other process's
     // batches. Removing/changing the setting does (V4). Backoff belongs to that generation too.
-    const config = readConfig(configFile); if (!config) throw new Error("config unreadable");
+    // Review 3: editors and the legacy Windows replacement can briefly hide the config. Confirm ENOENT before
+    // revoking a generation; this delay belongs only to the detached sender, never to a command's queue write.
+    const missing = Symbol(); let config = readConfig(configFile, missing);
+    if (config === missing) { await new Promise((resolve) => setTimeout(resolve, 250)); config = readConfig(configFile); }
+    if (!config) throw new Error("config unreadable");
+    if (!held()) return;
     const configured = otelSwitch(config, {}), nonce = configured.consent?.slice(0, 8);
     if (st.consent !== configured.consent) { st.consent = configured.consent; st.attempt = 0; st.next_attempt_at = null; save(); }
     for (const name of names(join(p.root, "drops")).filter((n) => DROP.test(n))) {
@@ -291,7 +296,7 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
       if (statPresent(file, stat)?.isFile() && held()) renameSync(file, file.slice(0, -8));
     }
     save(); // prove backoff can be recorded before making the first request
-    sweep();
+    await sweep();
     while (!sweepOnly && held() && within(60_000)) {
       const config = readConfig(configFile); if (!config) throw new Error("config unreadable");
       const sw = otelSwitch(config, env);
@@ -334,7 +339,7 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
       if (retry) { renameSync(sending, file.file); break; }
       unlinkSync(sending);
     }
-    sweep(); // even an off exit removes every old-consent batch; only this process ever deletes queue files
+    await sweep(); // even an off exit removes every old-consent batch; only this process ever deletes queue files
   } catch { healthy = false; } // detached: no outside prose or response body is ever logged
   finally {
     if (!lockOwned(p.lock, token)) healthy = false;

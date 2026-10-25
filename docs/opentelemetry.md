@@ -121,9 +121,11 @@ generation observed. This needs no hard links. A random token proves ownership b
 deletes and release; an owner that lost its token stops before its next action. This cannot cancel an HTTP request
 already in flight.
 An unreadable or unparseable config is never interpreted as consent being removed: the sender keeps the batches
-and stops. A missing config means export is off, so queued batches are swept. Setup publishes its config atomically
-as indented JSON for hand editing. An accepted batch is recorded and removed before the next config read; a failed
-read then stops the sender without resending that batch.
+and stops. Before treating a missing config as export being off and sweeping batches, the sender waits about
+250 ms and reads again, allowing for an editor's brief rename while saving. Setup publishes its config atomically
+as indented JSON for hand editing; a failed replacement keeps the previous file and reports the error. An accepted
+batch is recorded and removed before the next config read; a failed read then stops the sender without resending
+that batch.
 
 The sender exits when empty, backing off, export is off, or its life reaches about a minute. An in-flight request
 can add its 10 s deadline. After releasing its lock it scans again for a command that arrived during exit, keeping

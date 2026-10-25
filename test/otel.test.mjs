@@ -653,10 +653,27 @@ test("an unreadable or unparseable config keeps every batch and stops without in
   }
 });
 
-test("a missing config means export is off and the sender sweeps its queued batches", async () => {
+test("a config briefly renamed aside by an editor does not revoke queued batches", async () => {
+  const r = await receiver((req, res) => res.end("{}"));
+  const f = install(r.endpoint); otel.prepareOtel(f.opts); otel.otelSession(f.config, {}, f.opts).queue("traces", { batch: "keep" });
+  const aside = `${f.configPath}.editor`; renameSync(f.configPath, aside);
+  const restore = setTimeout(() => renameSync(aside, f.configPath), 50);
+  try {
+    await otel.sendOtel(f.opts);
+    expect(r.requests.map((req) => JSON.parse(req.body))).toEqual([{ batch: "keep" }]);
+    expect(otel.otelStatus(f.config, {}, f.opts).dropped_total).toBe(0);
+  } finally {
+    clearTimeout(restore); if (existsSync(aside)) renameSync(aside, f.configPath);
+    await r.close();
+  }
+});
+
+test("a config still missing after confirmation means export is off and the sender sweeps its queued batches", async () => {
   const f = install(); otel.prepareOtel(f.opts); otel.otelSession(f.config, {}, f.opts).queue("traces", {});
   unlinkSync(f.configPath);
+  const began = performance.now();
   await otel.sendOtel(f.opts);
+  expect(performance.now() - began).toBeGreaterThanOrEqual(200);
   expect(readdirSync(join(f.root, "traces"))).toEqual([]);
   expect(JSON.parse(readFileSync(join(f.root, "sender.json"))).dropped_by_code.consent).toBe(1);
 });
@@ -680,6 +697,18 @@ test("setup publishes config through the shared atomic writer without truncating
     } }) });
   expect(r.ok).toBe(true); expect(replacements).toBe(1); expect(JSON.parse(readFileSync(f.configPath)).update_channel).toBe("beta");
   expect(readFileSync(f.configPath, "utf8")).toContain('\n  "otel": {\n    "endpoint":');
+});
+
+test("setup reports a failed config replacement and preserves the previous settings", async () => {
+  const f = install(), before = readFileSync(f.configPath, "utf8"); let replacements = 0;
+  const inspect = async () => ({ config: { exists: true, subscriptions: [] }, harnesses: {}, decision: [{ works: true }], next_steps: [],
+    skill: ["routr", "routr-orchestrate"].map((name) => ({ name, where: `~/.agents/skills/${name}`, version: ROUTR_VERSION })) });
+  await expect(setup(["--yes", "--json", "--config", f.configPath, "--channel", "beta"], { inspect, interactive: false, env: {}, otelHome: f.home,
+    writeConfig: (file, value, options) => writeJsonAtomic(file, value, { ...options, rename: (from, to) => {
+      if (++replacements === 1) throw Object.assign(new Error("replace denied"), { code: "EPERM" });
+      renameSync(from, to);
+    } }) })).rejects.toThrow("replace denied");
+  expect(replacements).toBe(1); expect(readFileSync(f.configPath, "utf8")).toBe(before);
 });
 
 test("strict sender-state replacement works repeatedly over an existing file on every platform", () => {
