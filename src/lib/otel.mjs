@@ -5,7 +5,7 @@ import { request as httpsRequest } from "node:https";
 import { readSecretsFile } from "./systemone.mjs";
 import { SECRETS_FILE } from "./providers.mjs";
 import { existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { folderId, home as userHome, lockIsStale, olderThan, spawnSelf, takeLock, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
@@ -54,17 +54,30 @@ export function otelSwitch(config, env = process.env) {
   return { on: !why, why_off: why, endpoint, consent: why ? null : config.otel.consent };
 }
 
-export function otelResource({ home = userHome(), platform = process.platform } = {}) {
+// Stage 2 prep amendment, core semconv 1.44.0: an application process is an instance. No identity file for traces/logs.
+const PROCESS_INSTANCE_ID = randomUUID();
+export const otelResource = ({ platform = process.platform } = {}) => resource(PROCESS_INSTANCE_ID, platform);
+
+// Stage 3's gauge has one stream per install, independent of whichever sender process holds the lock. Its UUIDv5
+// uses the convention's namespace and the persisted UUID's UTF-8 text as the name; no shipped caller uses it yet.
+export function otelGaugeInstanceId({ home = userHome() } = {}) {
+  const id = installInstanceId(home);
+  if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id)) throw new Error("invalid installation id");
+  const bytes = createHash("sha1").update(Buffer.from("4d63009a8d0f11eeaad74c796ed8e320", "hex")).update(id, "utf8").digest().subarray(0, 16);
+  bytes[6] = (bytes[6] & 0x0f) | 0x50; bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  return bytes.toString("hex").replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
+}
+function installInstanceId(home) {
   const dir = join(home, ".local/state/routr"), file = join(dir, "service-instance-id");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  try { return resource(readFileSync(file, "utf8").trim(), platform); } catch (e) { if (e?.code !== "ENOENT") throw e; }
+  try { return readFileSync(file, "utf8").trim(); } catch (e) { if (e?.code !== "ENOENT") throw e; }
   // Exclusive publication of a complete id: opening the final file with wx exposes an empty file to the other first
   // run (W3-8). A hard link creates exclusively too, but no reader can see the id before its bytes are written.
   const tmp = `${file}.tmp.${process.pid}.${randomUUID()}`;
   writeFileSync(tmp, randomUUID(), { flag: "wx", mode: 0o600 });
   try { try { linkSync(tmp, file); } catch (e) { if (e?.code !== "EEXIST") throw e; } }
   finally { unlinkSync(tmp); }
-  return resource(readFileSync(file, "utf8").trim(), platform);
+  return readFileSync(file, "utf8").trim();
 }
 const resource = (id, platform) => {
   if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("invalid service instance id");

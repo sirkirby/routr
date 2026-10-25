@@ -48,14 +48,20 @@ output, logs, queue files, sender state, the ledger or anonymous telemetry.
 
 ## Resource and encoding
 
-Every encoded batch has the same resource:
+Trace and log batches from a process share this resource:
 
 | Attribute | Value |
 |---|---|
 | `service.name` | `routr` |
 | `service.version` | The running routr version |
 | `os.type` | The OpenTelemetry operating system value, such as `darwin`, `linux` or `windows` |
-| `service.instance.id` | A random per-install id under routr's state folder, exclusively created so concurrent first runs agree |
+| `service.instance.id` | One random UUIDv4 per routr process, kept only in memory; different processes have different ids |
+
+This follows core semantic conventions v1.44.0: each application process is its own service instance. Creating a
+trace or log resource writes no identity file. Stage 3's gauge will instead use a UUIDv5 derived from a random
+per-install id, under the convention's namespace `4d63009a-8d0f-11ee-aad7-4c796ed8e320`, to keep one stream per
+install across sender processes. That per-install file is created exclusively, only when the gauge identity helper
+is called; nothing in this change calls it during normal commands. No gauge is emitted yet.
 
 No hostname or username is added. The schema URL and the `routr.otel.schema` attribute arrive with the signals in
 a later change. Encoding uses the OTLP JSON mapping: hexadecimal trace/span ids, decimal-string nanoseconds,

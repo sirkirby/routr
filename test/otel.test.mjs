@@ -88,12 +88,31 @@ test("the trace encoder uses OTLP JSON's hex ids, string nanos, integer enums an
   expect(() => otel.encodeTraces([{ ...span, traceId: "not hex" }])).toThrow();
 });
 
-test("resources have an exclusive per-install id and use OpenTelemetry operating system names", () => {
+test("trace and log resources use one in-memory UUIDv4 per process and OpenTelemetry operating system names", () => {
   const home = scratch("otel-resource");
   const r = otel.otelResource({ home, platform: "darwin" });
-  expect(r).toEqual({ "service.name": "routr", "service.version": ROUTR_VERSION, "os.type": "darwin", "service.instance.id": expect.stringMatching(/^[a-f0-9-]{36}$/) });
+  expect(r).toEqual({ "service.name": "routr", "service.version": ROUTR_VERSION, "os.type": "darwin", "service.instance.id": expect.stringMatching(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/) });
   expect(otel.otelResource({ home, platform: "win32" })).toEqual({ ...r, "os.type": "windows" });
   expect(otel.otelResource({ home, platform: "linux" })["os.type"]).toBe("linux");
+  expect(readdirSync(home)).toEqual([]);
+  expect(otel.otelResource({ home: scratch("otel-other-home") })["service.instance.id"]).toBe(r["service.instance.id"]);
+});
+
+test("the unused gauge identity helper lazily derives UUIDv5 from the persistent installation id", async () => {
+  const home = scratch("otel-gauge-id"), dir = join(home, ".local/state/routr"), file = join(dir, "service-instance-id");
+  otel.otelResource({ home }); expect(existsSync(file)).toBe(false);
+  const id = otel.otelGaugeInstanceId({ home });
+  expect(id).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-5[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  const installed = readFileSync(file, "utf8");
+  expect(installed).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  expect(otel.otelGaugeInstanceId({ home })).toBe(id); expect(readFileSync(file, "utf8")).toBe(installed);
+  // Independent Python stdlib uuid.uuid5 vector: convention namespace + UTF-8 UUID text as the name.
+  writeFileSync(file, "00112233-4455-4677-8899-aabbccddeeff");
+  expect(otel.otelGaugeInstanceId({ home })).toBe("7d27dd02-0951-5268-b356-413ed1cf4b75");
+  const concurrentHome = scratch("otel-gauge-concurrent");
+  const children = Array.from({ length: 8 }, () => Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/otel-child.mjs"), "gauge"], { env: cliEnv(concurrentHome), stdout: "pipe", stderr: "pipe" }));
+  const ids = await Promise.all(children.map(async (p) => { expect(await p.exited).toBe(0); return new Response(p.stdout).text(); }));
+  expect(new Set(ids)).toEqual(new Set([otel.otelGaugeInstanceId({ home: concurrentHome }) + "\n"]));
 });
 
 test("no-mkdir atomic writes cannot recreate a removed queue", () => {
@@ -286,13 +305,19 @@ test("a sender recovers every owned .sending file only after taking the lock, an
   } finally { await r.close(); }
 });
 
-test("concurrent processes write complete distinct batches and agree on the installation identity", async () => {
+test("concurrent processes write complete distinct batches with their own process identities and no id file", async () => {
   const f = install(); otel.prepareOtel(f.opts);
   const children = Array.from({ length: 8 }, () => Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/otel-child.mjs"), "queue"], { env: cliEnv(f.home), stdout: "pipe", stderr: "pipe" }));
   const ids = await Promise.all(children.map(async (p) => { expect(await p.exited).toBe(0); return new Response(p.stdout).text(); }));
-  expect(new Set(ids).size).toBe(1);
+  expect(new Set(ids).size).toBe(8);
   const files = readdirSync(join(f.root, "traces")); expect(files).toHaveLength(80);
-  for (const name of files) expect(JSON.parse(readFileSync(join(f.root, "traces", name))).resourceSpans[0].resource["service.instance.id"]).toBe(ids[0].trim());
+  const counts = {};
+  for (const name of files) {
+    const id = JSON.parse(readFileSync(join(f.root, "traces", name))).resourceSpans[0].resource["service.instance.id"];
+    expect(ids.map((s) => s.trim())).toContain(id); counts[id] = (counts[id] ?? 0) + 1;
+  }
+  expect(Object.values(counts)).toEqual(Array(8).fill(10));
+  expect(existsSync(join(f.home, ".local/state/routr/service-instance-id"))).toBe(false);
 });
 
 test("killing a sender before POST keeps the batch; after 2xx it resends the same bytes and ids", async () => {
