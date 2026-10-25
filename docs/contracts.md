@@ -417,11 +417,12 @@ a folder whose path has neither, or a pane running PowerShell." A pane launch sp
 A `--worktree` launch opens the worker's pane itself. `ran` shows, in order: `herdr worktree create`, then (after any
 `--copy`) `herdr pane split <root pane> --direction right --cwd <worktree path> --no-focus --env …`, a split of the
 pane herdr opened with the worktree, then `herdr pane close <root pane>`; the agent starts in the new pane, which is
-`pane`. A dry run's `would_run` shows the same three with `<root-pane>` and `<worktree-path>`. When the split fails the
-launch fails (`state: "failed"`), and `error` says the worktree was created and gives the `routr cleanup --cwd <repo>
---worktree <branch>` that removes it. When the close fails the launch goes on, with the warning "Could not close
-`<root pane>`, the shell pane herdr opened with the worktree: its workspace has an extra shell pane (herdr pane close
-`<root pane>`)".
+`pane`. A dry run's `would_run` shows the same three with `<root-pane>` and `<worktree-path>`. When the split, or the
+close of the root pane, fails, the launch fails before any agent starts (`state: "failed"`): `error` says the worktree
+was created (after a failed close, also that its workspace has an extra shell pane, naming it) and gives the
+`routr cleanup --cwd <repo> --worktree <branch>` that removes it, which is also the cleanup step in `next`. A launch
+never goes on with two panes in a worktree's workspace, where `routr cleanup --pane` would close the worker's pane and
+leave the worktree.
 
 Trace-context carriers: the `TRACEPARENT`, `TRACESTATE` and `BAGGAGE` in launch's own environment (any case, on
 Windows; an empty one is absent) go to every pane launch splits (beside the caller, or in a new worktree), as

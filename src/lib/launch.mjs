@@ -355,8 +355,11 @@ export async function launch(args, { run = runHerdr, sleep = (ms) => Bun.sleep(m
       catch (e) { throw new Error(`launch created the worktree ${out.cwd} but could not open the worker's pane in it (${e?.message ?? e}); remove the worktree with ${displayCommand(cleanupArgs)}`); }
       out.pane = opened.pane;
       step("split", true, `Created ${out.pane}, right of ${root}, in the worktree`);
-      if (opened.closed) step("close_root", true, `Closed ${root}, the shell pane herdr opened with the worktree`);
-      else out.warnings.push(`Could not close ${root}, the shell pane herdr opened with the worktree: its workspace has an extra shell pane (herdr pane close ${root})`);
+      // A root pane left open makes the worker's pane one of two in its workspace, and cleanup --pane (which a later
+      // --pane rerun would give) closes a pane that is not a worktree's only one: the worktree would be left behind
+      // (from the review of fff9446). Nothing runs yet, so the launch ends here, and its cleanup is the worktree's.
+      if (!opened.closed) throw new Error(`launch created the worktree ${out.cwd} but could not close ${root}, the shell pane herdr opened with it, so its workspace has an extra shell pane; no agent was started. Remove the worktree with ${displayCommand(cleanupArgs)}`);
+      step("close_root", true, `Closed ${root}, the shell pane herdr opened with the worktree`);
     } else if (!out.pane) {
       let direction = o.direction;
       if (!direction) {

@@ -174,7 +174,8 @@ export const worktreeArgs = (cwd, branch, base = null) => ["worktree", "create",
 // a split of the root pane, in the worktree, with routr's carriers (splitArgs), and the root pane is closed after it:
 // closing a workspace's only pane closes the workspace. Measured 2026-10-25, herdr 0.9.5 on macOS: the split's shell
 // had the values byte for byte, and the close left the workspace open with only the new pane. Throws when the split
-// fails; a close that fails only leaves an extra shell pane, so it is returned, not thrown: { pane, closed }.
+// fails; a close that fails leaves an extra shell pane and is returned, not thrown, for the caller to decide (launch
+// ends there; smoke:carriers fails its check): { pane, closed }.
 // `call` as splitPane's. smoke:carriers runs this too.
 export async function worktreePane(call, root, cwd, carriers) {
   const pane = await splitPane(call, "right", cwd, carriers, { pane: root });
