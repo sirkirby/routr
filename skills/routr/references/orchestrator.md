@@ -191,7 +191,9 @@ object describing what it did.
 you or when you are choosing a model. Every task handoff uses `routr launch` with its own advice.
 The sequence below explains what launch performs; it is not a route around the advice check:
 
-1. `herdr worktree create --cwd <repo> --branch <name> [--base <ref>] --no-focus`, and take the root pane it returns.
+1. `herdr worktree create --cwd <repo> --branch <name> [--base <ref>] --no-focus`; split the root pane it returns
+   (`herdr pane split <root pane> --direction right --cwd <worktree path> --no-focus`, with the trace-context
+   carriers as `--env`), close the root pane, and use the new one.
 2. Read the pane; wait for a clean shell prompt before typing (see `harnesses.md` rule 0).
 3. `herdr agent start <name> --kind <kind> --pane <id> -- <permissive flags>`.
 4. **Read the pane after every start**, whatever state herdr reports. A startup question may be showing: herdr
@@ -420,9 +422,9 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
 
 ## Trace context
 
-routr gives headless workers, and workers in a pane it splits, the OpenTelemetry context carriers (`TRACEPARENT`,
-`TRACESTATE`, `BAGGAGE`) from its own environment, unchanged, and sets none itself. Workers in a worktree's pane or an
-existing pane don't get them yet; launch says so. To pass context, set them on your `routr launch` command.
+routr gives headless workers, and workers in a pane it makes (a split or a new worktree), the OpenTelemetry context
+carriers (`TRACEPARENT`, `TRACESTATE`, `BAGGAGE`) from its own environment, unchanged, and sets none itself. Workers in
+an existing pane don't get them; launch says so. To pass context, set them on your `routr launch` command.
 
 ## Handoff contracts
 
