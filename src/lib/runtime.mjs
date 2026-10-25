@@ -3,7 +3,7 @@
 // this on every Claude Code turn. It is the only module that imports node:child_process (a test holds every other file
 // in src/ to that), so every process routr starts gets the same platform defaults from `start` / `startSync`.
 import { spawn, spawnSync } from "node:child_process";
-import { accessSync, closeSync, constants, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, closeSync, constants, existsSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
@@ -72,8 +72,8 @@ export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnErr
 }
 
 // Take a lock file, or say someone else holds it. Exclusive create, so two processes in a burst cannot both win; the
-// file holds the taker's pid and random token. A lock `stale(file)` calls abandoned is taken over. An unwritable folder means no lock,
-// never a lock on every try.
+// file holds the taker's pid and random token, published whole (publishLock, below). A lock `stale(file)` calls
+// abandoned is taken over. An unwritable folder means no lock, never a lock on every try.
 const locksHere = new Map();
 export const lockToken = (file) => locksHere.get(realOr(file));
 const lockRecord = (file) => { const value = JSON.parse(readFileSync(file, "utf8")); return typeof value === "number" ? { pid: value } : value; };
@@ -94,16 +94,16 @@ const dropOwn = (file, token) => {
     const key = realOr(file); unlinkSync(file); if (locksHere.get(key) === token) locksHere.delete(key); return true;
   } catch { return false; }
 };
-// A guard or claim is published whole: its pid and token written to a file of its own beside it, then linked into
-// place, which fails if the name exists. So it is never seen without its owner's pid, and an owner paused while it is
-// published cannot be taken for one that died. Where hard links are not supported (FAT, some network shares) it is
-// an exclusive open and then a write: only there can one be seen without a pid, and taken as abandoned if its opener
-// pauses ten minutes between the two.
-const publishLock = (path, token, { link = linkSync } = {}) => {
+// A lock, guard or claim is published whole: its pid and token written to a file of its own beside it, then linked
+// into place, which fails if the name exists. So it is never seen without its owner's pid, and an owner paused while
+// it is published cannot be taken for one that died. Where hard links are not supported (FAT, some network shares) it
+// is an exclusive open and then a write: only there (and in a lock an older routr wrote) can one be seen without a
+// pid, and taken as abandoned if its opener pauses ten minutes between the two.
+const publishLock = (path, token, { link = linkSync, write = writeFileSync } = {}) => {
   const tmp = `${path}.${randomUUID()}.tmp`;
-  writeFileSync(tmp, JSON.stringify({ pid: process.pid, token }), { flag: "wx", mode: 0o600 });
+  write(tmp, JSON.stringify({ pid: process.pid, token }), { flag: "wx", mode: 0o600 });
   try { link(tmp, path); }
-  catch (e) { if (e?.code === "EEXIST" || e?.code === "ENOENT") throw e; createLock(path, token); }
+  catch (e) { if (e?.code === "EEXIST" || e?.code === "ENOENT") throw e; createLock(path, token, write); }
   finally { try { unlinkSync(tmp); } catch {} }
 };
 // Every move or removal of a lock is made under its guard, `<lock>.takeover`, held for a few file operations, never
@@ -166,8 +166,9 @@ export const adoptLock = (file, token) => underGuard(file, () => {
   locksHere.set(realOr(file), token); return true;
 }, { wait: true });
 export function takeLock(file, stale, { token = randomUUID(), rename = renameSync, write = writeFileSync, alive } = {}) {
-  const make = () => { createLock(file, token, write); locksHere.set(realOr(file), token); };
-  try { make(); return true; } catch (e) { if (e?.code !== "EEXIST") return false; }
+  const make = () => { publishLock(file, token, { write }); locksHere.set(realOr(file), token); };
+  // Published only when nothing is there: a retry on a live lock writes nothing, not even a temporary file.
+  try { if (!existsSync(file)) { make(); return true; } } catch (e) { if (e?.code !== "EEXIST") return false; }
   // A live (or never-stale) lock needs no writes, especially while uninstall removes its state folder.
   try { if (!stale(file)) return false; } catch { return false; }
   const guard = holdGuard(file, { alive, rename });

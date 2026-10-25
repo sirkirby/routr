@@ -1,5 +1,5 @@
 // A lock holder paused at one file operation while others act, through node:fs itself, so a test reaches the same
-// point whatever the lock code's own seams are. Modes: guard and claim (paused as a guard or claim is published),
+// point whatever the lock code's own seams are. Modes: lock, guard and claim (paused as each is published),
 // release (paused between an owner's check and its delete), mark (a refresh starter paused before its "tried" mark).
 import { mock } from "bun:test";
 import fs from "node:fs";
@@ -34,6 +34,12 @@ if (mode === "guard" || mode === "claim") {
   hook((op, p) => op === "unlink" && p === file, () => { out.taken = takeLock(file, () => true); out.token = lockToken(file); });
   out.released = releaseFileLock(file, mine);
   out.lock = record(file)?.token ?? null;
+} else if (mode === "lock") {
+  // Paused ten minutes as it publishes the lock itself: another taker sees what is there, and takes it if it can.
+  const { lockIsStale } = await import("../../src/lib/runtime.mjs");
+  hook(publishing((p) => p === file), (p) => { out.seen = seen(p); age(p); out.other = takeLock(file, lockIsStale); out.otherToken = lockToken(file) ?? null; });
+  out.mine = takeLock(file, lockIsStale); out.mineToken = lockToken(file) ?? null;
+  out.lock = record(file)?.token ?? null;
 } else if (mode === "release") {
   takeLock(file, () => false);
   hook((op, p) => op === "unlink" && p === file, () => { out.taken = takeLock(file, () => true); out.token = lockToken(file); });
@@ -45,7 +51,7 @@ if (mode === "guard" || mode === "claim") {
   // Once the starter has its lock, its next write by name is the first step toward its mark: there another call
   // takes the lock over and its refresh lands a complete reading.
   let locked = false;
-  hook((op, p) => op === "open" && p === lock, () => { locked = true; });
+  hook((op, p) => (op === "open" || op === "link") && p === lock, () => { locked = true; });
   hook((op, p) => locked && op === "write" && typeof p === "string" && p !== "undefined" && !p.endsWith(".lock"), () => {
     out.taken = takeLock(lock, () => true);
     fs.writeFileSync(snap, JSON.stringify({ ts: T + 100, tried: T + 100, by: "0.0.0-dev", reading: { plan: "Team", included_used_pct: 70, auto_used_pct: 0, api_used_pct: 0 } }));

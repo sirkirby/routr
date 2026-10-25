@@ -201,6 +201,13 @@ test("a guard is never seen without its owner's pid, so an owner paused publishi
   expect(r).toMatchObject({ released: true, taken: false, lock: null });
 });
 
+test("a lock is never seen without its owner's pid, so a taker paused publishing it cannot share it", async () => {
+  const r = await paused("lock");
+  expect(r.seen).not.toBe("no pid");
+  expect([r.other, r.mine].filter(Boolean)).toHaveLength(1);
+  expect(r.lock).toBe(r.other ? r.otherToken : r.mineToken);
+});
+
 test("a claim on a dead guard is never seen without its owner's pid", async () => {
   const r = await paused("claim");
   expect(r.seen).not.toBe("no pid");
