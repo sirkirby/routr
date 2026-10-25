@@ -142,8 +142,11 @@ export const whileLockOwned = (file, token, fn) => underGuard(file, () => { if (
 // A lock another process took for this one and handed it the token of (the background usage refresh): this process's
 // from here, its age counted again, and only while it still holds that token.
 export const adoptLock = (file, token) => underGuard(file, () => {
-  try { if (!token || lockRecord(file)?.token !== token) return false; } catch { return false; }
-  writeJsonAtomic(file, { pid: process.pid, token }, { mkdir: false, mode: 0o600, preserveOnError: true });
+  try {
+    if (!token || lockRecord(file)?.token !== token) return false;
+    // Replaced whole or not at all: removing it first would leave the path empty for any taker.
+    writeJsonAtomic(file, { pid: process.pid, token }, { mkdir: false, mode: 0o600, preserveOnError: true });
+  } catch { return false; }
   locksHere.set(realOr(file), token); return true;
 });
 export function takeLock(file, stale, { token = randomUUID(), rename = renameSync, write = writeFileSync, alive } = {}) {
