@@ -131,3 +131,29 @@ test("the smoke checks both invoke_agent turns under the launch and the carrier 
   const body = encodeTraces([span, { ...turns[0], attributes: { "gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "fixture", "routr.turn": 1 } }], { schemaUrl: "https://opentelemetry.io/schemas/1.44.0" });
   expect(() => checkSmokeTraces([body], { counts: { "invoke_agent fixture": 1 } })).not.toThrow();
 });
+
+import * as smoke from "../scripts/smoke-otel.mjs";
+import { encodeLogs, encodeHeadroom } from "../src/lib/otel.mjs";
+test("smoke decodes correlated empty-body log events and the install headroom Gauge, rejecting wrong mappings and content", () => {
+  const log = encodeLogs([{ ...span, timeUnixNano: "2", eventName: "routr.warning", severityNumber: 13, severityText: "WARN", attributes: { "routr.warning.code": "prompt_uncertain" } }], { schemaUrl: "https://opentelemetry.io/schemas/1.44.0" });
+  const metric = encodeHeadroom([{ subscription: "claude", window: "five_hour", value: 0.75, time: 1700000000000 }], { resource: { "service.name": "routr", "service.instance.id": "7d27dd02-0951-5268-b356-413ed1cf4b75" }, schemaUrl: "https://opentelemetry.io/schemas/1.44.0" });
+  const opts = { spans: [span], markers: ["PRIVATE_MARKER"] };
+  expect(smoke.checkSmokeSignals([log, metric], opts)).toEqual({ logs: 1, points: 1 });
+  const badLog = (change) => { const b = structuredClone(log); Object.assign(b.resourceLogs[0].scopeLogs[0].logRecords[0], change); return b; };
+  for (const b of [badLog({ eventName: undefined, attributes: [{ key: "event.name", value: { stringValue: "routr.warning" } }] }), badLog({ severityNumber: 9 }), badLog({ body: { stringValue: "PRIVATE_MARKER" } }), badLog({ spanId: "f".repeat(16) }), badLog({ attributes: [{ key: "routr.warning.code", value: { stringValue: "PRIVATE_MARKER" } }] })]) expect(() => smoke.checkSmokeSignals([b, metric], opts)).toThrow();
+  for (const change of [{ asDouble: 2 }, { asDouble: undefined, asInt: "1" }, { timeUnixNano: 1700000000000000000 }]) {
+    const b = structuredClone(metric); Object.assign(b.resourceMetrics[0].scopeMetrics[0].metrics[0].gauge.dataPoints[0], change);
+    expect(() => smoke.checkSmokeSignals([log, b], opts)).toThrow();
+  }
+});
+
+test("smoke checks each event's fixed code vocabulary, not just its string wire type", () => {
+  for (const [eventName, severityNumber, severityText, attributes] of [
+    ["routr.needs_input", 13, "WARN", { "routr.needs_input.why": "arbitrary" }],
+    ["routr.usage.failed", 13, "WARN", { "error.type": "arbitrary", "routr.subscription": "claude" }],
+    ["routr.worker.state", 9, "INFO", { "routr.worker.state.from": "arbitrary", "routr.worker.state.to": "working" }],
+  ]) {
+    const body = encodeLogs([{ ...span, timeUnixNano: "2", eventName, severityNumber, severityText, attributes }], { schemaUrl: "https://opentelemetry.io/schemas/1.44.0" });
+    expect(() => smoke.checkSmokeSignals([body], { spans: [span] })).toThrow();
+  }
+});

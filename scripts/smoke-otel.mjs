@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, join, win32 } from "node:path";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
-import { TRACE_ATTRIBUTES, ERROR_CODES } from "../src/lib/traces.mjs";
+import { USAGE_FAILURES } from "../src/lib/usage-failure.mjs";
+import { LOG_EVENTS, NEEDS_INPUT_CODES, IDENTITY_ATTRIBUTES, OTEL_ATTRIBUTES, SUBSCRIPTIONS, USAGE_WINDOWS } from "../src/lib/otel-schema.mjs";
+import { WARNING_CODES } from "../src/lib/warnings.mjs";
+import { TRACE_ATTRIBUTES, ERROR_CODES, WORKER_STATES } from "../src/lib/traces.mjs";
 import { OTEL_RESOURCE_ATTRIBUTES, otelEndpoint, prepareOtel, newOtelConsent } from "../src/lib/otel.mjs";
 import { generations, genFile } from "../src/lib/channel.mjs";
 import { DEFAULTS } from "../src/lib/config.mjs";
@@ -64,6 +67,46 @@ export function checkSmokeTraces(batches, { counts = {}, parent = smokeParent, m
   }
   for (const [name, expected] of Object.entries(counts)) check([...unique.values()].filter((s) => s.name === name).length === expected, `unexpected ${name} count`);
   return { unique: unique.size, duplicates: total - unique.size, spans: [...unique.values()] };
+}
+
+// Decode all signals without running the smoke. Tests exercise these checks with malformed OTLP too.
+export function checkSmokeSignals(batches, { spans = [], markers = [] } = {}) {
+  for (const marker of markers) check(!JSON.stringify(batches).includes(marker), "content or secret marker escaped");
+  let logs = 0, points = 0;
+  for (const b of batches) {
+    for (const r of b.resourceLogs ?? []) {
+      check(r.schemaUrl === "https://opentelemetry.io/schemas/1.44.0", "log resource schema");
+      const resource = attributes(r.resource?.attributes, OTEL_RESOURCE_ATTRIBUTES);
+      for (const scope of r.scopeLogs ?? []) for (const log of scope.logRecords ?? []) {
+        const spec = LOG_EVENTS[log.eventName]; check(spec, "eventName");
+        check(log.body === undefined && log.severityNumber === spec.severityNumber && log.severityText === spec.severityText, "log body or severity");
+        check(typeof log.timeUnixNano === "string" && /^\d+$/.test(log.timeUnixNano), "log timestamp");
+        const a = attributes(log.attributes, Object.fromEntries([...IDENTITY_ATTRIBUTES, ...Object.keys(spec.attributes)].map((k) => [k, OTEL_ATTRIBUTES[k]])));
+        for (const key of Object.keys(spec.attributes)) check(a[key] !== undefined, "missing event attribute");
+        if (log.eventName === "routr.warning") check(Object.hasOwn(WARNING_CODES, a["routr.warning.code"]), "warning code");
+        if (log.eventName === "routr.needs_input") check(NEEDS_INPUT_CODES.includes(a["routr.needs_input.why"]), "needs input code");
+        if (log.eventName === "routr.usage.failed") check(Object.hasOwn(USAGE_FAILURES, a["error.type"]) && SUBSCRIPTIONS.includes(a["routr.subscription"]), "usage failure code");
+        if (log.eventName === "routr.worker.state") check(WORKER_STATES.includes(a["routr.worker.state.from"]) && WORKER_STATES.includes(a["routr.worker.state.to"]) && a["routr.worker.state.from"] !== a["routr.worker.state.to"], "worker transition");
+        check(spans.some((s) => s.traceId === log.traceId && s.spanId === log.spanId), "log correlation");
+        check(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(resource["service.instance.id"]), "log process instance"); logs++;
+      }
+    }
+    for (const r of b.resourceMetrics ?? []) {
+      check(r.schemaUrl === "https://opentelemetry.io/schemas/1.44.0", "metric resource schema");
+      const resource = attributes(r.resource?.attributes, OTEL_RESOURCE_ATTRIBUTES);
+      check(/^[a-f0-9]{8}-[a-f0-9]{4}-5[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(resource["service.instance.id"]), "gauge install instance");
+      for (const scope of r.scopeMetrics ?? []) for (const metric of scope.metrics ?? []) {
+        check(metric.name === "routr.subscription.headroom" && metric.unit === "1" && metric.gauge && !metric.sum, "headroom Gauge");
+        for (const point of metric.gauge.dataPoints ?? []) {
+          check(typeof point.asDouble === "number" && point.asDouble >= 0 && point.asDouble <= 1 && point.asInt === undefined, "headroom double ratio");
+          check(typeof point.timeUnixNano === "string" && /^\d+$/.test(point.timeUnixNano), "gauge timestamp");
+          const a = attributes(point.attributes, { "routr.subscription": "string", "routr.usage.window": "string" });
+          check(SUBSCRIPTIONS.includes(a["routr.subscription"]) && USAGE_WINDOWS.includes(a["routr.usage.window"]), "gauge dimensions"); points++;
+        }
+      }
+    }
+  }
+  return { logs, points };
 }
 
 // Claude's documented stream protocol only. In a pane it prints and exits; it never runs a model or a tool.
@@ -229,7 +272,7 @@ async function runSmoke({ env: original, log }) {
         if (hold) { held = true; return; } // killed sender's response is deliberately lost after full receipt
         if (original.ROUTR_SMOKE_OTLP_ENDPOINT) {
           const endpoint = otelEndpoint(original.ROUTR_SMOKE_OTLP_ENDPOINT);
-          const reply = await fetch(`${endpoint}/v1/traces`, { method: "POST", headers: { "Content-Type": "application/json" }, body: bytes, signal: AbortSignal.timeout(10000), redirect: "error" });
+          const reply = await fetch(`${endpoint}${req.url}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: bytes, signal: AbortSignal.timeout(10000), redirect: "error" });
           check(reply.ok, "external receiver refused the fixture batch");
         }
         res.writeHead(200, { "Content-Type": "application/json" }); res.end("{}");
@@ -258,7 +301,7 @@ async function runSmoke({ env: original, log }) {
       check(code === 0, `command ${args[0]} failed (${code}): ${err.slice(0, 160)}`); return JSON.parse(out);
     };
     const senderPid = () => { try { const v = JSON.parse(readFileSync(join(home, ".cache/routr/otel/sender.lock"), "utf8")); return Number.isSafeInteger(v.pid) && v.pid > 1 && v.pid !== process.pid ? v.pid : null; } catch { return null; } };
-    const queueIdle = () => !senderPid() && !readdirSync(join(home, ".cache/routr/otel/traces")).some((n) => /\.(json|sending)$/.test(n));
+    const queueIdle = () => !senderPid() && !["traces", "logs", "metrics"].some((signal) => readdirSync(join(home, ".cache/routr/otel", signal)).some((n) => /\.(json|sending)$/.test(n)));
     const holderReleased = () => { const gen = generations(workerDir).at(-1); return gen && existsSync(genFile(workerDir, gen, "released")); };
     const config = { ...DEFAULTS, subscriptions: { claude: { enabled: true, hardest_work: "strong", assumed_headroom: 0.5, reserve: 0 } }, telemetry: false,
       otel: { endpoint: `http://127.0.0.1:${server.address().port}`, consent: newOtelConsent() } };
@@ -290,6 +333,8 @@ async function runSmoke({ env: original, log }) {
       } finally { for (const [k, v] of Object.entries(previous)) if (v == null) delete process.env[k]; else process.env[k] = v; }
     }
     await until(queueIdle, "initial delivery");
+    // Fresh statusline fixture gives usage a source reading without launching another harness or pane.
+    writeFileSync(join(home, ".cache/routr/claude-usage.json"), JSON.stringify({ ts: Date.now() / 1000, rate_limits: { five_hour: { used_percentage: 25 } } }));
     hold = true; held = false;
     await cli(["usage", "--config", configPath]); await until(() => held, "sender mid-batch");
     const killed = senderPid(), inventory = await listSmokeProcesses();
@@ -299,13 +344,15 @@ async function runSmoke({ env: original, log }) {
     hold = false; server.closeAllConnections();
     await cli(["usage", "--config", configPath]); await until(queueIdle, "recovery delivery");
     const checked = checkSmokeTraces(batches, { markers: never, counts: { "routr launch": original.HERDR_ENV === "1" ? 3 : 2, "routr send": 1, "invoke_agent fixture": 2, "routr wait": 2, "routr cleanup": original.HERDR_ENV === "1" ? 2 : 1, "routr record": 1, "routr usage": 2 } });
+    const signals = checkSmokeSignals(batches, { spans: checked.spans, markers: never });
+    check(signals.logs > 0 && signals.points > 0, "logs and headroom arrived");
     if (original.HERDR_ENV === "1") checkPaneTrace(checked.spans, paneSplit);
     checkHeadlessTrace(checked.spans, readFileSync(env.ROUTR_SMOKE_ENV_FILE, "utf8").trim().split("\n").map(JSON.parse));
     check(checked.duplicates >= 1, "mid-batch recovery kept the same span ids");
     const launchSpan = checked.spans.find((s) => s.traceId === saved.launch.traceId && s.spanId === saved.launch.spanId);
     check(launchSpan, "headless launch arrived");
     for (const name of ["send", "wait", "cleanup", "record"]) check(checked.spans.some((s) => s.name === `routr ${name}` && s.links?.some((l) => l.spanId === saved.launch.spanId && l.traceId === saved.launch.traceId)), `missing ${name} launch link`);
-    summary = `smoke:otel ok: ${checked.unique} spans, ${checked.duplicates} duplicate records recovered; ${original.HERDR_ENV === "1" ? "pane fixture checked" : "pane fixture skipped (outside herdr)"}`;
+    summary = `smoke:otel ok: ${checked.unique} spans, ${signals.logs} logs, ${signals.points} gauge points, ${checked.duplicates} duplicate records recovered; ${original.HERDR_ENV === "1" ? "pane fixture checked" : "pane fixture skipped (outside herdr)"}`;
     return 0;
   } catch (e) { log(e.message); return 1; }
   finally {

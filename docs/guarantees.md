@@ -138,8 +138,8 @@ writes only:
 
 - under `~/.config/routr`, `~/.cache/routr`, `~/.local/share/routr` (headless workers' worktrees in its `worktrees`)
   and `~/.local/state/routr` (headless workers);
-- OpenTelemetry's per-signal queue, drop markers, sender state and lock under `~/.cache/routr/otel`. Trace and log
-  resources use a random UUIDv4 per process, held only in memory, and write no identity file. The future gauge's
+- OpenTelemetry's trace and log requests, four-field usage observations, drop markers, sender state (including per-stream gauge watermarks) and lock under `~/.cache/routr/otel`. Trace and log
+  resources use a random UUIDv4 per process, held only in memory, and write no identity file. The gauge's
   identity uses a random per-install id under `~/.local/state/routr/service-instance-id`, exclusively published so
   concurrent first calls agree, and derives its UUIDv5 service instance id from it. Identity writes require an
   existing state folder and stop during uninstall. The sender alone removes queue files or changes delivery totals;
@@ -400,8 +400,10 @@ turns it on for you. It sends ledger rows with no text of any kind, only from th
 OpenTelemetry export is a separate opt-in to your own endpoint. `DO_NOT_TRACK` and CI do not turn it off; its off
 switches are `OTEL_SDK_DISABLED=true` (any case), `ROUTR_OTEL=0`, and removing its endpoint. An agent never enables it
 unasked. Its headers are secrets, read only from the secrets file and never printed, logged, or placed in the queue,
-sender state, ledger or telemetry. Response bodies are never stored. See [OpenTelemetry](opentelemetry.md); signals
-arrive in a later change and will carry repository names, relative paths and ids, unlike anonymous telemetry.
+sender state, ledger or telemetry. Response bodies are never stored. It sends structured, correlated events with
+fixed codes and no body, and one remaining-subscription-allowance gauge per install and usage window. Unknown
+capacity sends no point; statusline queues nothing. Its traces and logs carry repository names, relative paths
+and ids, unlike anonymous telemetry. See [OpenTelemetry](opentelemetry.md) for every sent field.
 
 ## Output a lead reads
 
