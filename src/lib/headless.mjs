@@ -37,7 +37,7 @@
 // continues it in a new process with its context. It runs on a private copy of its config, as in a pane.
 // Worker text reaches one place, the report file of each turn (owner-only, removed by cleanup); only its path leaves
 // routr. Nothing else of the harness's output is kept: its stderr is not read, and a tool is shown by a fixed name.
-import { linkWorker, workerTurn } from "./traces.mjs";
+import { linkWorker, workerTracing } from "./traces.mjs";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -440,7 +440,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const turns = (prior.turns ?? []).map((t) => (t.outcome ? t : { ...t, outcome: "no_finish", ended_at: new Date().toISOString() })); // a lost turn ends here
   // A carrier worker.json holds outside routr's limits (it changed since launch) is withheld from every turn. This
   // process has no output: the names go in its state, which workers and wait show.
-  const { withheld } = savedCarriers(w.carriers);
+  const { withheld } = savedCarriers(w.carriers), newTurnTrace = workerTracing(w, { otel });
   let st = { format: FORMAT, turn: 0, ...prior, turns, gen: n, holder_pid: process.pid, harness_pid: null, harness_pgid: null, tasks: 0, queued: 0,
     carriers_withheld: withheld.length ? withheld : undefined };
   let lastWrite = 0, later = null;
@@ -461,21 +461,27 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   // on their way in, which keep its input open until their answer is back.
   let pending = 0, sending = 0, refusing = null, trace = null, promptMessages = 0;
   const turnRow = () => st.turns.at(-1);
-  const turnCarriers = () => (trace ??= workerTurn(w, st.turn + (inTurn ? 0 : 1), { otel })).carriers;
+  const turnTrace = () => (trace ??= newTurnTrace(st.turn + (inTurn ? 0 : 1)));
+  const turnCarriers = () => turnTrace().carriers;
+  const requestCarriers = () => { const t = turnTrace(); return t.generated ? t.carriers : {}; };
+  // A failed write/request did not start the prepared turn: its id, time and consent must not survive the retry.
+  const discardPrepared = (before) => { if (!inTurn && st.turn === before) trace = null; };
   const setRow = (patch) => ({ turns: [...st.turns.slice(0, -1), { ...turnRow(), ...patch }] });
   // One more message written into turn `n`, whether or not that turn is still running.
   const addDelivered = (n) => save({ turns: st.turns.map((t) => (t.turn === n ? { ...t, delivered: (t.delivered ?? 0) + 1 } : t)) });
   // A harness that runs each message as a turn of its own (`queues`: Antigravity) starts one turn per waiting message;
   // the others take every message written between turns into the one turn they start.
   // `carried`: messages the turn's own prompt carries (a resume that runs them), counted on it too.
-  const beginTurn = (carried = 0, prompted = 0) => { trace ??= workerTurn(w, st.turn + 1, { otel }); promptMessages = prompted; inTurn = true; const taken = conn?.queues ? Math.min(1, pending) : pending; pending -= taken; const delivered = taken + carried; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered }], state: "working" }); };
+  const beginTurn = (carried = 0, prompted = 0) => { trace ??= newTurnTrace(st.turn + 1); promptMessages = prompted; inTurn = true; const taken = conn?.queues ? Math.min(1, pending) : pending; pending -= taken; const delivered = taken + carried; save({ turn: st.turn + 1, turns: [...st.turns, { turn: st.turn + 1, started_at: new Date().toISOString(), delivered }], state: "working" }); };
   const endTurn = (outcome, text) => {
     if (!inTurn) return;
     inTurn = false;
-    trace?.end(outcome, (turnRow()?.delivered ?? 0) + promptMessages, st.session_id); trace = null;
+    const completed = trace, number = st.turn, prompted = promptMessages, conversation = st.session_id; trace = null;
     let report = null;
     if (text) { try { mkdirSync(join(dir, "reports"), { recursive: true, mode: 0o700 }); writeFileSync(reportPath(name, st.turn), text, { mode: 0o600 }); report = reportPath(name, st.turn); } catch {} }
     save({ ...setRow({ outcome, report, ended_at: new Date().toISOString() }), state: child ? "waiting" : st.state });
+    // Persist the turn before optional queue I/O; emission runs after this turn callback, never at holder exit.
+    if (completed) setImmediate(() => completed.end(outcome, (st.turns.find((t) => t.turn === number)?.delivered ?? 0) + prompted, conversation));
   };
   // Nothing more to say to it: close its input, so it ends once its background commands have. Not while a message it
   // was given has yet to start its turn, or one is on its way in.
@@ -527,7 +533,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
         if (ev.result) nextHeld(); // a harness that queues: the next message the holder keeps, as a turn of its own
         if (ev.result || ev.tasks === 0) maybeClose();
       };
-      conn = h = ADAPTERS[w.kind].connect(c, { cwd: w.cwd, model: w.model, effort: w.effort, session, emit: onEvent, turnCarriers, processCarriers });
+      conn = h = ADAPTERS[w.kind].connect(c, { cwd: w.cwd, model: w.model, effort: w.effort, session, emit: onEvent, turnCarriers: requestCarriers, processCarriers: trace?.generated ? processCarriers : {} });
       const finish = (why) => {
         if (finished) return; finished = true;
         // Messages it took between turns, and no turn started for them: they get one (one each, for a harness that
@@ -617,8 +623,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const handOver = async (text) => {
     const c = conn;
     if (!c?.open()) return null;
-    turnCarriers(); pending++; sending++;
-    let r; try { r = await c.send(text, false); } finally { sending--; }
+    const before = st.turn; turnCarriers(); pending++; sending++;
+    let r; try { r = await c.send(text, false); } finally { sending--; if (r?.code !== "handed_to_harness") discardPrepared(before); }
     if (r?.code !== "handed_to_harness") pending = Math.max(0, pending - 1);
     return r;
   };
@@ -666,7 +672,7 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       // harness has started that next turn.
       const into = inTurn ? st.turn : null, before = st.turn, c = conn;
       sending++;
-      let r; try { r = await c.send(m.text, inTurn); } finally { sending--; }
+      let r; try { r = await c.send(m.text, inTurn); } finally { sending--; if (!r || ["refused", "unknown"].includes(r.code)) discardPrepared(before); }
       // It said no, or ended before saying: no turn counts it, and it is not queued (it may have taken it).
       if (r && (r.code === "refused" || r.code === "unknown")) { maybeClose(); return { code: r.code, why: r.why }; }
       if (r) {

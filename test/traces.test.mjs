@@ -620,14 +620,25 @@ test("a generated turn context drops orphan tracestate when its saved parent is 
   expect(t.carriers.BAGGAGE).toBe("a=PRIVATE_BAGGAGE");
 });
 
-test("absent launch metadata starts sampled root turns even with an unsampled carrier saved while export was off", () => {
-  const x = exporting(), w = tracedWorker(x);
-  delete w.launch; w.carriers.TRACEPARENT = parent.slice(0, -2) + "00";
-  for (const n of [2, 3]) workerTurn(w, n, { env: { TRACEPARENT: parent }, otel: x.otel }).end("finished", 1);
-  expect(x.spans()).toHaveLength(2);
-  expect(new Set(x.spans().map((s) => s.traceId)).size).toBe(2);
-  for (const s of x.spans()) {
-    expect(s.parentSpanId).toBeUndefined(); expect(s.flags).toBe(1); expect(s.traceId).not.toBe(parent.split("-")[1]);
-    expect(attrs(s)).not.toHaveProperty("routr.launch.id");
+test("an off launch's valid inherited parent keeps its sampling decision when turns opt in", () => {
+  for (const sampled of [false, true]) {
+    const x = exporting(), w = tracedWorker(x); delete w.launch;
+    w.carriers.TRACEPARENT = parent.slice(0, -2) + (sampled ? "01" : "00");
+    const t = workerTurn(w, 2, { env: { TRACEPARENT: "different-lead" }, otel: x.otel });
+    t.end("finished", 1);
+    if (!sampled) { expect(x.spans()).toHaveLength(0); expect(t.carriers).toEqual(w.carriers); }
+    else {
+      expect(x.spans()).toHaveLength(1);
+      expect(x.spans()[0]).toMatchObject({ traceId: "4bf92f3577b34da6a3ce929d0e0e4736", parentSpanId: "00f067aa0ba902b7", flags: 1 });
+      expect(attrs(x.spans()[0])).not.toHaveProperty("routr.launch.id");
+    }
+  }
+});
+
+test("turn projection rejects inherited object keys as worker harness kinds", () => {
+  for (const kind of ["constructor", "toString", "__proto__", "hasOwnProperty", "PRIVATE_KIND"]) {
+    const x = exporting(), w = tracedWorker(x, { kind });
+    workerTurn(w, 1, { env: {}, otel: x.otel }).end("finished", 1);
+    expect([kind, x.spans()]).toEqual([kind, []]);
   }
 });

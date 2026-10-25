@@ -174,24 +174,31 @@ export function launchCarriers(env) {
 export const launchCarrierWarnings = (found) => found.withheld.map((n) => found.launchSpan && n === "TRACEPARENT"
   ? "The inherited TRACEPARENT exceeded routr's forwarding limits; the worker gets this routr launch span instead"
   : carrierWithheld(n));
-// Stage 2 W3-3: fresh consent per turn. Missing launch means export was off: root turns; an explicit unsampled launch stays silent.
+// Stage 2 W3-3 and review 2b2: fresh consent per turn; missing launch uses saved-parent sampling, or a root without one.
 const WORKER_PROVIDERS = { claude: "anthropic", codex: "openai", cursor: "cursor", agy: "gcp.gen_ai", kiro: "kiro" };
-export function workerTurn(worker, number, { env = process.env, otel = {} } = {}) {
+// A holder's cwd does not change: finish its git reads before it can take a turn (review 2b2 finding 3).
+export function workerTracing(worker, options = {}) {
+  const identity = traceIdentity(worker.cwd).attributes;
+  return (number) => workerTurn(worker, number, { ...options, identity });
+}
+export function workerTurn(worker, number, { env = process.env, otel = {}, identity } = {}) {
   const saved = savedCarriers(worker.carriers).carriers;
   let span, session, inherited;
   try {
     const launch = launchContext(worker.launch); inherited = parseTraceparent(saved.TRACEPARENT);
     session = otelSession(loadConfig(otel.configPath).config, env, otel);
-    if (session.on && (launch || !Object.hasOwn(worker, "launch")) && WORKER_PROVIDERS[worker.kind] && /^[a-z][a-z0-9_-]{0,31}$/.test(worker.name)) {
-      span = { name: `invoke_agent ${worker.name}`, kind: 3, traceId: launch?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"), ...(launch ? { parentSpanId: launch.spanId } : {}),
+    if (session.on && (launch || !Object.hasOwn(worker, "launch")) && inherited?.sampled !== false && Object.hasOwn(WORKER_PROVIDERS, worker.kind) && /^[a-z][a-z0-9_-]{0,31}$/.test(worker.name)) {
+      const parent = launch ?? inherited;
+      span = { name: `invoke_agent ${worker.name}`, kind: 3, traceId: parent?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"), ...(parent ? { parentSpanId: parent.spanId } : {}),
         flags: 1, startTimeUnixNano: nanos(), attributes: {} };
-      put(span, traceIdentity(worker.cwd).attributes);
+      put(span, identity ?? traceIdentity(worker.cwd).attributes);
       put(span, { "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": WORKER_PROVIDERS[worker.kind], "gen_ai.agent.name": worker.name,
-        "routr.kind": worker.kind, "routr.backend": "headless", "routr.launch.id": launch?.launch_id, "routr.model": modelName(worker.model), "routr.effort": pick(worker.effort, EFFORTS), "routr.turn": number });
+        "routr.kind": pick(worker.kind, subscriptions), "routr.backend": "headless", "routr.launch.id": launch?.launch_id, "routr.model": modelName(worker.model), "routr.effort": pick(worker.effort, EFFORTS), "routr.turn": number });
     }
   } catch {} // Missing context, malformed state or optional observation cannot change a turn.
   let ended = false;
   return {
+    generated: Boolean(span),
     carriers: span ? spanCarriers(saved, span, inherited) : saved,
     end(outcome, messages, conversation, usage) {
       if (ended) return; ended = true;

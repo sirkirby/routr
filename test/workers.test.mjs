@@ -246,8 +246,47 @@ function world(over = {}) {
   // The machine's own trace context never reaches a test's routr: only what a test gives.
   for (const k of Object.keys(env)) if (/^(TRACEPARENT|TRACESTATE|BAGGAGE)$/i.test(k) && !Object.hasOwn(over, k)) delete env[k];
   // Inject sandbox markers only in the holder: the public launch correctly refuses a genuinely sandboxed lead.
-  const entry = over.FAKE_HOLDER_ENV ? join(home, "routr.mjs") : SCRIPT;
+  const entry = over.FAKE_HOLDER_ENV || over.FAKE_TRACE_WRITES ? join(home, "routr.mjs") : SCRIPT;
   if (over.FAKE_HOLDER_ENV) writeFileSync(entry, `if (process.argv.includes("--hold")) Object.assign(process.env, JSON.parse(process.env.FAKE_HOLDER_ENV)); await import(${JSON.stringify(SCRIPT)});\n`);
+  if (over.FAKE_TRACE_WRITES) writeFileSync(entry, `
+    import { readFileSync, existsSync, appendFileSync, writeFileSync } from "node:fs";
+    import { join } from "node:path";
+    import { writeJsonAtomic, start, harnessEnv } from ${JSON.stringify(new URL("../src/lib/runtime.mjs", import.meta.url).href)};
+    import { fileURLToPath } from "node:url";
+    if (process.argv.includes("--hold")) {
+      process.env.FAKE_HOLDER_TRACE = "1";
+      const { hold, runDir, ADAPTERS } = await import(${JSON.stringify(new URL("../src/lib/headless.mjs", import.meta.url).href)});
+      if (process.env.FAKE_REJECT_HANDOVER) {
+        const connect = ADAPTERS.agy.connect;
+        ADAPTERS.agy.connect = (c, o) => {
+          const h = connect(c, o); let rejected = false;
+          return { ...h, send: async (...args) => {
+            if (!rejected) {
+              rejected = true; writeFileSync(join(process.env.HOME, "rejected-context.json"), JSON.stringify(o.turnCarriers()));
+              const file = join(process.env.HOME, ".config/routr/config.json"), config = JSON.parse(readFileSync(file, "utf8"));
+              config.otel.consent = "a".repeat(32); writeFileSync(file, JSON.stringify(config));
+              return { code: "refused", why: "harness_refused" };
+            }
+            return h.send(...args);
+          } };
+        };
+      }
+      const name = process.argv[process.argv.indexOf("--hold") + 1];
+      await hold(name, { otel: { spawn: () => false, write: (file, body, opts) => {
+        if (body.resourceSpans) {
+          const state = JSON.parse(readFileSync(join(runDir(name), "state.json"), "utf8")), turn = state.turns.at(-1);
+          appendFileSync(join(process.env.HOME, "emissions.jsonl"), JSON.stringify({ outcome: turn.outcome ?? null, report: turn.report != null && existsSync(turn.report) }) + "\\n");
+        }
+        writeJsonAtomic(file, body, opts);
+      } } });
+    } else if (["launch", "send"].includes(process.argv[2])) {
+      const spawn = (args) => { const c = start(process.execPath, [fileURLToPath(import.meta.url), ...args], { detached: true, stdio: "ignore", env: harnessEnv() }); c.on("error", () => {}); c.unref(); return true; };
+      const result = process.argv[2] === "launch"
+        ? await (await import(${JSON.stringify(new URL("../src/lib/launch.mjs", import.meta.url).href)})).launch(process.argv.slice(3), { spawn })
+        : await (await import(${JSON.stringify(new URL("../src/lib/workers.mjs", import.meta.url).href)})).sendCommand(process.argv.slice(3), { spawn });
+      console.log(JSON.stringify(result));
+    } else await import(${JSON.stringify(new URL("../src/routr.mjs", import.meta.url).href)});
+  `);
   const outputs = [];
   const run = (args, extra = {}) => {
     const r = Bun.spawnSync([process.execPath, entry, ...args], { cwd: work, env: { ...env, ...extra }, stdin: "ignore" });
@@ -1199,7 +1238,7 @@ test("every headless adapter's turns get the launch's carriers, a process per tu
   for (const kind of Object.keys(ADAPTERS)) {
     const w = world(LAUNCHED), log = join(w.home, "env.jsonl");
     if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor", "cli-config.json"), "{}"); }
-    w.env.FAKE_ENV = log;
+    w.env.FAKE_ENV = log; w.env.FAKE_TRACE_RPC = "1";
     try {
       // HOLD: a message sent mid-turn goes to the running harness (or, for a harness that queues, its next turn in the
       // same process; Cursor's a new process of its own).
@@ -1219,6 +1258,7 @@ test("every headless adapter's turns get the launch's carriers, a process per tu
       const rows = readFileSync(log, "utf8").trim().split("\n").map((x) => JSON.parse(x)), turns = turnsOf(kind, rows);
       expect([kind, turns.length >= 2]).toEqual([kind, true]);
       for (const t of turns) expect([kind, carriersIn(t.env)]).toEqual([kind, LAUNCHED]);
+      if (["codex", "kiro"].includes(kind)) for (const r of rpcs(w)) { expect(r).not.toHaveProperty("trace"); expect(r).not.toHaveProperty("_meta"); }
       // A harness read (its sign-in status, a model list) is not a worker: none.
       for (const r of rows.filter((x) => !turns.includes(x))) expect([kind, carriersIn(r.env)]).toEqual([kind, {}]);
       expect(w.state("tc").carriers_withheld).toBeUndefined();
@@ -1346,7 +1386,13 @@ test("every adapter gets the causing process span and the current turn through i
         const starts = rpc.filter((r) => r.method === "turn/start");
         expect(starts.map((r) => r.trace)).toEqual(turns.map((t) => ({ traceparent: spanCarrier(t), tracestate: inherited.TRACESTATE })));
         expect(rpc.find((r) => r.method === "turn/steer").trace).toEqual(starts[0].trace);
-        for (const r of rpc) if (r.worker && r.request) expect(r.trace?.traceparent).toBeDefined();
+        let process = -1;
+        for (const r of rpc.filter((r) => r.worker && r.request)) {
+          if (r.method === "initialize") process++;
+          const turn = process === 0 ? turns[0] : turns.at(-1);
+          expect([r.method, r.trace]).toEqual([r.method, { traceparent: spanCarrier(turn), tracestate: inherited.TRACESTATE }]);
+        }
+        expect(process).toBe(1);
         for (const r of rpc) if (!r.worker) expect(r.trace).toBeUndefined();
       }
       if (kind === "kiro") {
@@ -1360,6 +1406,7 @@ test("every adapter gets the causing process span and the current turn through i
       expect(resources).not.toContain(wireAttrs({ attributes: launchResource.resourceSpans[0].resource.attributes })["service.instance.id"]);
       expect(JSON.stringify(w.batches())).not.toMatch(/PRIVATE-BRIEF|PRIVATE-SEND|STATE_PRIVATE|BAGGAGE_PRIVATE|sender=PRIVATE/);
       expect(JSON.stringify(w.batches())).not.toContain(w.home);
+      expect(JSON.stringify(w.batches())).not.toContain(JSON.stringify(w.home).slice(1, -1));
     } finally { w.release(); w.run(["stop", "--name", "channels"]); await w.settled("channels"); w.run(["cleanup", "--worker", "channels"]); }
   }
 }, 120000);
@@ -1390,8 +1437,12 @@ test("Codex starting a fast next turn in the same process uses its own request c
     expect(await w.settled("fast")).toBe(true);
     const turns = w.spans().filter((s) => s.name === "invoke_agent fast").sort((a, b) => wireAttrs(a)["routr.turn"] - wireAttrs(b)["routr.turn"]);
     expect(turns.map((t) => wireAttrs(t)["routr.turn.messages"])).toEqual([1, 1]);
-    const rpc = readFileSync(join(w.home, "rpc.jsonl"), "utf8").trim().split("\n").map(JSON.parse).filter((r) => r.worker && r.method === "turn/start");
-    expect(rpc.map((r) => r.trace.traceparent)).toEqual(turns.map(spanCarrier));
+    const rpc = readFileSync(join(w.home, "rpc.jsonl"), "utf8").trim().split("\n").map(JSON.parse).filter((r) => r.worker && r.request);
+    expect(rpc.map((r) => [r.method, r.trace])).toEqual([
+      ["initialize", { traceparent: spanCarrier(turns[0]) }], ["thread/start", { traceparent: spanCarrier(turns[0]) }],
+      ["turn/start", { traceparent: spanCarrier(turns[0]) }], ["turn/steer", { traceparent: spanCarrier(turns[0]) }],
+      ["turn/start", { traceparent: spanCarrier(turns[1]) }],
+    ]);
     expect(turnsOf("codex", readFileSync(w.env.FAKE_ENV, "utf8").trim().split("\n").map(JSON.parse))).toHaveLength(1);
   } finally { w.release(); w.run(["stop", "--name", "fast"]); await w.settled("fast"); w.run(["cleanup", "--worker", "fast"]); }
 }, 30000);
@@ -1433,7 +1484,7 @@ test("revoked consent or a failed holder queue write cannot change a completed t
 
 test("workers launched with export off record independent root turns after opt-in and give resumed processes their turn context", async () => {
   for (const kind of Object.keys(ADAPTERS)) {
-    const saved = { TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", TRACESTATE: "vendor=PRIVATE_STATE", BAGGAGE: "a=PRIVATE_BAGGAGE" };
+    const saved = { TRACEPARENT: "invalid-off-parent", TRACESTATE: "vendor=PRIVATE_STATE", BAGGAGE: "a=PRIVATE_BAGGAGE" };
     const w = traceWorld(saved); w.env.FAKE_ENV = join(w.home, "env.jsonl");
     if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor/cli-config.json"), "{}"); }
     writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: undefined }));
@@ -1480,6 +1531,7 @@ test("an unsampled launch saves its sampling decision and every adapter keeps it
         expect(await w.settled("unsampled")).toBe(true);
       }
       expect(w.spans().filter((s) => s.name.startsWith("invoke_agent "))).toEqual([]);
+      if (["codex", "kiro"].includes(kind)) for (const r of rpcs(w)) { expect(r).not.toHaveProperty("trace"); expect(r).not.toHaveProperty("_meta"); }
       const processes = turnsOf(kind, readFileSync(w.env.FAKE_ENV, "utf8").trim().split("\n").map(JSON.parse));
       expect(processes).toHaveLength(3);
       for (const p of processes) expect(carriersIn(p.env)).toEqual(saved);
@@ -1487,7 +1539,7 @@ test("an unsampled launch saves its sampling decision and every adapter keeps it
   }
 }, 60000);
 
-test("an initially off holder records its first later automatic turn as a root, even with an unsampled saved carrier", async () => {
+test("an initially off holder preserves an unsampled saved parent for its later automatic turn", async () => {
   const parent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00", w = traceWorld({ TRACEPARENT: parent });
   w.env.FAKE_ENV = join(w.home, "env.jsonl");
   writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: undefined }));
@@ -1496,9 +1548,60 @@ test("an initially off holder records its first later automatic turn as a root, 
     expect(JSON.parse(readFileSync(join(w.runDir("later-root"), "worker.json"), "utf8"))).not.toHaveProperty("launch");
     writeFileSync(w.configPath, JSON.stringify(w.config)); w.release(); expect(await w.settled("later-root")).toBe(true);
     const turns = w.spans().filter((s) => s.name === "invoke_agent later-root");
-    expect(turns).toHaveLength(1); expect(wireAttrs(turns[0])).toMatchObject({ "routr.turn": 2, "routr.turn.messages": 0 });
-    expect(turns[0].parentSpanId).toBeUndefined(); expect(turns[0].traceId).not.toBe(parent.split("-")[1]);
+    expect(turns).toHaveLength(0);
     const processes = turnsOf("claude", readFileSync(w.env.FAKE_ENV, "utf8").trim().split("\n").map(JSON.parse));
     expect(processes).toHaveLength(1); expect(processes[0].env.TRACEPARENT).toBe(parent);
   } finally { w.release(); w.run(["stop", "--name", "later-root"]); await w.settled("later-root"); w.run(["cleanup", "--worker", "later-root"]); }
+}, 30000);
+
+function observedTraceWorld(over = {}) {
+  const w = traceWorld({ FAKE_TRACE_WRITES: "1", ...over }), git = Bun.which("git");
+  fakeExecutable(join(w.home, "bin"), "git", `
+    const fs = require("node:fs"), cp = require("node:child_process"), a = process.argv.slice(2);
+    if (process.env.FAKE_HOLDER_TRACE) {
+      fs.appendFileSync(${JSON.stringify(join(w.home, "git-reads.jsonl"))}, JSON.stringify(a) + "\\n");
+      if (a.includes("--show-toplevel")) console.log(${JSON.stringify(realpathSync.native(w.work) + "\n" + join(realpathSync.native(w.work), ".git"))});
+      else if (a.includes("remote.origin.url")) console.log("https://example.test/owner/repo.git");
+      else if (a.includes("symbolic-ref")) console.log("fixture");
+      else process.exit(1);
+    } else { const r = cp.spawnSync(${JSON.stringify(git)}, a, { stdio: "inherit" }); process.exit(r.status ?? 1); }
+  `);
+  return w;
+}
+
+test("the holder saves the report and outcome before it queues each finished turn", async () => {
+  const w = observedTraceWorld();
+  try {
+    expect(w.launch("ordered", w.task(`${BRIEF} BACKGROUND`)).ok).toBe(true); expect(await w.settled("ordered")).toBe(true);
+    const emitted = readFileSync(join(w.home, "emissions.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+    expect(emitted).toEqual([{ outcome: "finished", report: true }, { outcome: "finished", report: true }]);
+  } finally { w.run(["stop", "--name", "ordered"]); await w.settled("ordered"); w.run(["cleanup", "--worker", "ordered"]); }
+}, 30000);
+
+test("a holder computes git identity once for multiple turns in its process", async () => {
+  const w = observedTraceWorld();
+  try {
+    expect(w.launch("identity", w.task(`${BRIEF} BACKGROUND`)).ok).toBe(true); expect(await w.settled("identity")).toBe(true);
+    const reads = readFileSync(join(w.home, "git-reads.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+    expect(reads).toHaveLength(3);
+    const turns = w.spans().filter((s) => s.name === "invoke_agent identity");
+    expect(turns).toHaveLength(2);
+    for (const t of turns) expect(wireAttrs(t)).toMatchObject({ "vcs.repository.url.full": "https://example.test/owner/repo", "vcs.ref.head.name": "fixture", "routr.cwd": "." });
+  } finally { w.run(["stop", "--name", "identity"]); await w.settled("identity"); w.run(["cleanup", "--worker", "identity"]); }
+}, 30000);
+
+test("a failed hand-over discards its prepared span before the next turn captures fresh consent", async () => {
+  const w = observedTraceWorld({ FAKE_REJECT_HANDOVER: "1" });
+  try {
+    expect(w.launch("retry-context", w.task(`${BRIEF} HOLD`), [], undefined, "agy").ok).toBe(true);
+    for (const text of [SENT, `${SENT} TAG-next`]) expect(w.run(["send", "--name", "retry-context", "--task", text]).ok).toBe(true);
+    w.release(); expect(await w.settled("retry-context")).toBe(true);
+    const turns = w.spans().filter((s) => s.name === "invoke_agent retry-context");
+    expect(turns.map((s) => wireAttrs(s)["routr.turn"]).sort()).toEqual([2, 3]);
+    expect(wireAttrs(turns.find((s) => wireAttrs(s)["routr.turn"] === 2))["routr.turn.outcome"]).toBe("not_started");
+    expect(wireAttrs(turns.find((s) => wireAttrs(s)["routr.turn"] === 3))["routr.turn.outcome"]).toBe("finished");
+    const rejected = JSON.parse(readFileSync(join(w.home, "rejected-context.json"), "utf8")).TRACEPARENT;
+    expect(rejected).toMatch(/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/);
+    expect(turns.map(spanCarrier)).not.toContain(rejected);
+  } finally { w.release(); w.run(["stop", "--name", "retry-context"]); await w.settled("retry-context"); w.run(["cleanup", "--worker", "retry-context"]); }
 }, 30000);
