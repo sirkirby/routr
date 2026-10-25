@@ -82,7 +82,9 @@ test("stale takeovers need no hard links and preserve the winning owner's file",
   const file = join(scratch("lock-without-links"), "job.lock");
   const p = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/lock-no-links.mjs"), file], { stdout: "pipe", stderr: "pipe" });
   expect(await p.exited).toBe(0);
-  expect(JSON.parse(await new Response(p.stdout).text())).toEqual({ winners: 1, owned: true, links: 0 });
+  // Links are tried, refused, and the exclusive open used instead.
+  const r = JSON.parse(await new Response(p.stdout).text());
+  expect(r).toMatchObject({ winners: 1, owned: true }); expect(r.links).toBeGreaterThan(0);
 });
 
 test("a failed initial lock write removes only its own incomplete lock and allows a retry", () => {
@@ -179,13 +181,45 @@ test("two takers reclaiming the same crashed guard cannot both act: one moves it
   expect(readdirSync(dir).sort()).toEqual(["job.lock"]);
 });
 
-test("an owner releasing its lock holds the guard: a takeover meanwhile cannot have its new lock removed", () => {
-  const file = join(scratch("guarded-release"), "job.lock");
+const paused = async (mode) => {
+  const dir = scratch(`lock-pause-${mode}`);
+  const p = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/lock-pauses.mjs"), mode, dir], { stdout: "pipe", stderr: "pipe" });
+  expect(await p.exited, await new Response(p.stderr).text()).toBe(0);
+  return JSON.parse(await new Response(p.stdout).text());
+};
+
+test("an owner releasing its lock holds the guard: a takeover meanwhile cannot have its new lock removed", async () => {
+  const r = await paused("release");
+  expect(r).toMatchObject({ released: true, taken: false, lock: null });
+});
+
+test("a guard is never seen without its owner's pid, so an owner paused publishing it never acts unguarded", async () => {
+  // Paused ten minutes as its guard is published, then released while a third process tries to take the lock over.
+  const r = await paused("guard");
+  expect(r.seen).not.toBe("no pid");
+  expect(r.taken === false || r.lock === r.token).toBe(true); // a takeover that won keeps its lock
+  expect(r).toMatchObject({ released: true, taken: false, lock: null });
+});
+
+test("a claim on a dead guard is never seen without its owner's pid", async () => {
+  const r = await paused("claim");
+  expect(r.seen).not.toBe("no pid");
+  expect(r.taken === undefined || r.taken === false || r.lock === r.token).toBe(true);
+});
+
+test("release makes one attempt at a busy guard and never waits: the lock stays for the stale rule", () => {
+  const file = join(scratch("busy-release"), "job.lock"), guard = `${file}.takeover`;
   expect(runtime.takeLock(file, () => false)).toBe(true);
-  let other = false;
-  expect(runtime.releaseFileLock(file, runtime.lockToken(file), { unlink: (p) => { other = runtime.takeLock(file, () => true); unlinkSync(p); } })).toBe(true);
-  // Either the takeover waited, or the lock it made is still there for it.
-  expect(other).toBe(false); expect(existsSync(file)).toBe(false);
+  writeFileSync(guard, JSON.stringify({ pid: process.pid, token: "busy" }));
+  const wait = spyOn(Atomics, "wait");
+  try {
+    const began = performance.now();
+    expect(runtime.releaseFileLock(file)).toBe(false);
+    expect(wait).not.toHaveBeenCalled(); expect(performance.now() - began).toBeLessThan(100);
+    expect(runtime.lockOwned(file)).toBe(true);
+  } finally { wait.mockRestore(); }
+  unlinkSync(guard);
+  expect(runtime.releaseFileLock(file)).toBe(true); expect(existsSync(file)).toBe(false);
 });
 
 test("a moved lock with an unexpected generation is kept, never deleted as stale", () => {

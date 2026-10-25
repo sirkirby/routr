@@ -3,7 +3,7 @@
 // this on every Claude Code turn. It is the only module that imports node:child_process (a test holds every other file
 // in src/ to that), so every process routr starts gets the same platform defaults from `start` / `startSync`.
 import { spawn, spawnSync } from "node:child_process";
-import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, closeSync, constants, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
@@ -87,25 +87,38 @@ export function lockOwned(file, token = lockToken(file)) {
   try { const owner = lockRecord(file); return Boolean(token) && owner?.token === token && owner.pid === process.pid; } catch { return false; }
 }
 // Old pid-only locks remain readable; new owners always prove the random token they made, never a read-back token.
-const dropOwn = (file, token, unlink = unlinkSync) => {
+const dropOwn = (file, token) => {
   try {
     const legacy = !token && lockRecord(file)?.pid === process.pid && !lockRecord(file)?.token;
     if (!legacy && !lockOwned(file, token)) return false;
-    const key = realOr(file); unlink(file); if (locksHere.get(key) === token) locksHere.delete(key); return true;
+    const key = realOr(file); unlinkSync(file); if (locksHere.get(key) === token) locksHere.delete(key); return true;
   } catch { return false; }
+};
+// A guard or claim is published whole: its pid and token written to a file of its own beside it, then linked into
+// place, which fails if the name exists. So it is never seen without its owner's pid, and an owner paused while it is
+// published cannot be taken for one that died. Where hard links are not supported (FAT, some network shares) it is
+// an exclusive open and then a write: only there can one be seen without a pid, and taken as abandoned if its opener
+// pauses ten minutes between the two.
+const publishLock = (path, token, { link = linkSync } = {}) => {
+  const tmp = `${path}.${randomUUID()}.tmp`;
+  writeFileSync(tmp, JSON.stringify({ pid: process.pid, token }), { flag: "wx", mode: 0o600 });
+  try { link(tmp, path); }
+  catch (e) { if (e?.code === "EEXIST" || e?.code === "ENOENT") throw e; createLock(path, token); }
+  finally { try { unlinkSync(tmp); } catch {} }
 };
 // Every move or removal of a lock is made under its guard, `<lock>.takeover`, held for a few file operations, never
 // for the job. A guard is taken from its holder only once that process is gone (or, with no pid to read, after ten
 // minutes): a holder paused between its last check and its move keeps it, so no one else moves the lock while it may
 // still act: a guard that expired after a few seconds let a taker paused past it move the next owner's live lock
-// aside, and a third take the empty path while that owner worked. A dead guard is moved by one taker only, the one that
+// aside, and a third take the empty path while that owner worked. A guard whose pid now belongs to another process
+// stays held until that one exits too: blocked, never shared. A dead guard is moved by one taker only, the one that
 // creates the claim named for that guard's bytes and file: the dead owner cannot touch it, so the move takes exactly
-// the guard that was checked. A claim whose own holder died passes to the next number. No hard links.
+// the guard that was checked. A claim whose own holder died passes to the next number.
 // Returns the held guard, "busy", or null when the folder cannot be written.
 function holdGuard(file, { alive = isAlive, rename = renameSync } = {}) {
   const guard = `${file}.takeover`, token = randomUUID(), gone = (f) => lockIsStale(f, { alive });
   const held = { held: () => lockOwned(guard, token), release: () => dropOwn(guard, token) };
-  try { createLock(guard, token); return held; } catch (e) { if (e?.code !== "EEXIST") return null; }
+  try { publishLock(guard, token); return held; } catch (e) { if (e?.code !== "EEXIST") return null; }
   const seen = () => { const st = statSync(guard, { bigint: true }); return `${readFileSync(guard, "utf8")}\0${st.dev}:${st.ino}:${st.mtimeNs}`; };
   let claim = null;
   try {
@@ -114,33 +127,36 @@ function holdGuard(file, { alive = isAlive, rename = renameSync } = {}) {
     const id = createHash("sha256").update(observed).digest("hex").slice(0, 16), dead = [];
     for (let k = 1; !claim; k++) {
       const name = `${guard}.${id}.${k}`;
-      try { createLock(name, token); claim = name; } catch (e) { if (e?.code !== "EEXIST" || !gone(name)) return "busy"; dead.push(name); }
+      try { publishLock(name, token); claim = name; } catch (e) { if (e?.code !== "EEXIST" || !gone(name)) return "busy"; dead.push(name); }
     }
     if (seen() !== observed || !gone(guard)) return "busy";
     const aside = `${guard}.stale.${randomUUID()}`, bytes = readFileSync(guard, "utf8");
     rename(guard, aside);
     if (readFileSync(aside, "utf8") !== bytes) return "busy"; // somebody else's file: left aside, never deleted
     unlinkSync(aside); for (const name of dead) try { unlinkSync(name); } catch {}
-    createLock(guard, token); return held;
+    publishLock(guard, token); return held;
   } catch { return "busy"; }
   finally { if (claim) dropOwn(claim, token); }
 }
-// `fn` under the lock's guard, waited for a second at most; false when the guard cannot be had.
+// `fn` under the lock's guard, run only while the guard at its path is still the one published for it; false when the
+// guard cannot be had. One try unless `wait`: a command never waits on a lock (a release that finds the guard busy
+// leaves its lock, which the stale rule frees once its owner is gone). `wait`, for background work only, tries for a
+// second.
 const pause = new Int32Array(new SharedArrayBuffer(4));
-function underGuard(file, fn, opts) {
-  for (let i = 0; i < 200; i++) {
+function underGuard(file, fn, { wait = false, ...opts } = {}) {
+  for (let i = 0; i < (wait ? 200 : 1); i++) {
+    if (i) Atomics.wait(pause, 0, 0, 5);
     const guard = holdGuard(file, opts);
     if (guard === null) return false;
-    if (guard !== "busy") try { return fn(); } finally { guard.release(); }
-    Atomics.wait(pause, 0, 0, 5);
+    if (guard !== "busy") try { return guard.held() ? fn() : false; } finally { guard.release(); }
   }
   return false;
 }
-export const releaseFileLock = (file, token = lockToken(file), { alive, unlink } = {}) => underGuard(file, () => dropOwn(file, token, unlink), { alive });
+export const releaseFileLock = (file, token = lockToken(file), { alive } = {}) => underGuard(file, () => dropOwn(file, token), { alive });
 // `fn` only while this process owns the lock, and with no takeover possible until it returns: true once it has run.
-export const whileLockOwned = (file, token, fn) => underGuard(file, () => { if (!lockOwned(file, token)) return false; fn(); return true; });
+export const whileLockOwned = (file, token, fn, { wait = false } = {}) => underGuard(file, () => { if (!lockOwned(file, token)) return false; fn(); return true; }, { wait });
 // A lock another process took for this one and handed it the token of (the background usage refresh): this process's
-// from here, its age counted again, and only while it still holds that token.
+// from here, its age counted again, and only while it still holds that token. Background work: it waits for a busy guard.
 export const adoptLock = (file, token) => underGuard(file, () => {
   try {
     if (!token || lockRecord(file)?.token !== token) return false;
@@ -148,7 +164,7 @@ export const adoptLock = (file, token) => underGuard(file, () => {
     writeJsonAtomic(file, { pid: process.pid, token }, { mkdir: false, mode: 0o600, preserveOnError: true });
   } catch { return false; }
   locksHere.set(realOr(file), token); return true;
-});
+}, { wait: true });
 export function takeLock(file, stale, { token = randomUUID(), rename = renameSync, write = writeFileSync, alive } = {}) {
   const make = () => { createLock(file, token, write); locksHere.set(realOr(file), token); };
   try { make(); return true; } catch (e) { if (e?.code !== "EEXIST") return false; }
