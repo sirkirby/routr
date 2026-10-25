@@ -617,6 +617,30 @@ test("a consent change during the first POST prevents the next old-consent batch
   } finally { finish?.(); await r.close(); }
 });
 
+test("a 2xx is recorded and its claim removed before a failed config reread, without resending it", async () => {
+  for (const mode of ["invalid", "unreadable"]) {
+    let arrived, finish;
+    const received = new Promise((resolve) => { arrived = resolve; });
+    const r = await receiver((req, res, n) => { if (n === 1) { finish = () => res.end("{}"); arrived(); } else res.end("{}"); });
+    try {
+      const f = install(r.endpoint); otel.prepareOtel(f.opts); let time = Date.now() - 1000;
+      const session = otel.otelSession(f.config, {}, { ...f.opts, now: () => time++ });
+      session.queue("traces", { batch: "accepted" }); session.queue("traces", { batch: "pending" });
+      const sender = otel.sendOtel(f.opts); await received;
+      if (mode === "invalid") writeFileSync(f.configPath, "{partial");
+      else { unlinkSync(f.configPath); mkdirSync(f.configPath); }
+      finish(); await sender;
+      expect(r.requests).toHaveLength(1);
+      expect(JSON.parse(readFileSync(join(f.root, "sender.json"))).last_export).toMatchObject({ ok: true, sent: 1, refused: 0 });
+      const files = readdirSync(join(f.root, "traces")); expect(files).toHaveLength(1); expect(files[0]).toEndWith(".json");
+      expect(JSON.parse(readFileSync(join(f.root, "traces", files[0])))).toEqual({ batch: "pending" });
+      if (mode === "unreadable") rmSync(f.configPath, { recursive: true });
+      writeJsonAtomic(f.configPath, f.config); await otel.sendOtel(f.opts);
+      expect(r.requests.map((req) => JSON.parse(req.body).batch)).toEqual(["accepted", "pending"]);
+    } finally { finish?.(); await r.close(); }
+  }
+});
+
 test("an unreadable or unparseable config keeps every batch and stops without interpreting it as off", async () => {
   for (const mode of ["invalid", "unreadable"]) {
     const f = install(); otel.prepareOtel(f.opts); otel.otelSession(f.config, {}, f.opts).queue("traces", {});
@@ -629,6 +653,23 @@ test("an unreadable or unparseable config keeps every batch and stops without in
   }
 });
 
+test("a missing config means export is off and the sender sweeps its queued batches", async () => {
+  const f = install(); otel.prepareOtel(f.opts); otel.otelSession(f.config, {}, f.opts).queue("traces", {});
+  unlinkSync(f.configPath);
+  await otel.sendOtel(f.opts);
+  expect(readdirSync(join(f.root, "traces"))).toEqual([]);
+  expect(JSON.parse(readFileSync(join(f.root, "sender.json"))).dropped_by_code.consent).toBe(1);
+});
+
+test("a config permission error keeps all batches and creates no sender state", async () => {
+  const f = install(); otel.prepareOtel(f.opts); otel.otelSession(f.config, {}, f.opts).queue("traces", {});
+  const before = readdirSync(join(f.root, "traces"));
+  const p = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/otel-config-denied.mjs"), f.home, f.configPath], { stdout: "pipe", stderr: "pipe" });
+  expect(await p.exited).toBe(0);
+  expect(readdirSync(join(f.root, "traces"))).toEqual(before);
+  expect(existsSync(join(f.root, "sender.json"))).toBe(false);
+});
+
 test("setup publishes config through the shared atomic writer without truncating the previous settings", async () => {
   const f = install(), before = readFileSync(f.configPath, "utf8"); let replacements = 0;
   const inspect = async () => ({ config: { exists: true, subscriptions: [] }, harnesses: {}, decision: [{ works: true }], next_steps: [],
@@ -638,6 +679,7 @@ test("setup publishes config through the shared atomic writer without truncating
       expect(readFileSync(to, "utf8")).toBe(before); expect(JSON.parse(readFileSync(from)).update_channel).toBe("beta"); replacements++; renameSync(from, to);
     } }) });
   expect(r.ok).toBe(true); expect(replacements).toBe(1); expect(JSON.parse(readFileSync(f.configPath)).update_channel).toBe("beta");
+  expect(readFileSync(f.configPath, "utf8")).toContain('\n  "otel": {\n    "endpoint":');
 });
 
 test("strict sender-state replacement works repeatedly over an existing file on every platform", () => {
@@ -679,7 +721,6 @@ test("doctor flags an enabled but missing queue with a setup repair command", ()
   const f = install(); mkdirSync(join(f.home, ".config/routr"), { recursive: true }); writeJsonAtomic(join(f.home, ".config/routr/config.json"), f.config);
   const run = (...args) => Bun.spawnSync([process.execPath, SCRIPT, "doctor", ...args], { env: cliEnv(f.home, { PATH: f.home }), stdin: "ignore" }).stdout.toString();
   const r = JSON.parse(run("--json"));
-  expect(readFileSync(f.configPath, "utf8")).toContain('\n  "otel": {\n    "endpoint":');
   expect(r.otel).toMatchObject({ on: true, can_queue: false }); expect(r.next_steps.some((s) => s.includes("OpenTelemetry") && s.includes("routr setup"))).toBe(true);
   expect(run()).toMatch(/!! OpenTelemetry export on[^\n]*routr setup/);
   expect(existsSync(f.root)).toBe(false);

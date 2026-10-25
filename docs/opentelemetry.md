@@ -114,10 +114,15 @@ markers into lifetime totals, removes old-consent batches, applies caps and remo
 files older than an hour. It sweeps on taking the lock and before exit. Only its own batch and temporary filename
 patterns are removed. On taking the lock it returns every owned `.sending` file to the queue, without an age rule;
 a held lock protects an active sender's claim. A lock older than five minutes is stale even if its recorded pid
-exists. Takeover atomically moves that lock aside and checks its generation before an exclusive create. A random
-token proves ownership before claims, state writes, deletes and release; an owner that lost its token stops.
+exists. Takeovers are serialized by a short-lived exclusive guard, which expires after five seconds if abandoned.
+Only its holder judges and moves a stale lock; a moved file is deleted only after its contents match the stale
+generation observed. This needs no hard links. A random token proves ownership before claims, state writes,
+deletes and release; an owner that lost its token stops before its next action. This cannot cancel an HTTP request
+already in flight.
 An unreadable or unparseable config is never interpreted as consent being removed: the sender keeps the batches
-and stops. Setup publishes its config atomically.
+and stops. A missing config means export is off, so queued batches are swept. Setup publishes its config atomically
+as indented JSON for hand editing. An accepted batch is recorded and removed before the next config read; a failed
+read then stops the sender without resending that batch.
 
 The sender exits when empty, backing off, export is off, or its life reaches about a minute. An in-flight request
 can add its 10 s deadline. After releasing its lock it scans again for a command that arrived during exit, keeping

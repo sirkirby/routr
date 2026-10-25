@@ -112,7 +112,8 @@ const paths = (home = userHome()) => {
   return { root, lock: join(root, "sender.lock"), state: join(root, "sender.json"), secrets: join(home, ".config/routr/env"), config: join(home, ".config/routr/config.json"), uninstall: UNINSTALL_LOCK(home) };
 };
 const names = (dir) => { try { return readdirSync(dir); } catch (e) { if (e?.code === "ENOENT") return []; throw e; } };
-const readConfig = (file) => { try { const v = JSON.parse(readFileSync(file, "utf8")); return v && typeof v === "object" && !Array.isArray(v) ? v : null; } catch { return null; } };
+// Review D: an absent config revokes export; a failed read or parse gives no evidence about consent and stops a sweep.
+const readConfig = (file) => { try { const v = JSON.parse(readFileSync(file, "utf8")); return v && typeof v === "object" && !Array.isArray(v) ? v : null; } catch (e) { return e?.code === "ENOENT" ? {} : null; } };
 const statPresent = (file, stat = lstatSync) => { try { return stat(file); } catch (e) { if (e?.code === "ENOENT") return null; throw e; } };
 function queued(p, signal) {
   const dir = join(p.root, signal);
@@ -314,7 +315,8 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
       }
       const body = readFileSync(sending); if (!held()) break;
       const reply = await postOtel(new URL(`${sw.endpoint}/v1/${file.signal}`), body, headers, timeoutMs);
-      if (!readConfig(configFile)) throw new Error("config unreadable");
+      // Review E: acknowledge the response under this lock before reading consent again. A broken config must stop
+      // the next claim, not turn an accepted batch into an unnecessary resend.
       const ok = reply.status >= 200 && reply.status < 300, retry = Boolean(reply.error) || [429, 502, 503, 504].includes(reply.status);
       const code = reply.error ?? `http_${reply.status}`, partial = ok ? accepted(reply, file.signal) : {};
       st.last_export = { at: new Date(now()).toISOString(), ok, sent: ok ? 1 : 0, refused: !ok && !retry ? 1 : 0, error: ok ? null : code };
