@@ -117,10 +117,14 @@ markers into lifetime totals, removes old-consent batches, applies caps and remo
 files older than an hour. It sweeps on taking the lock and before exit. Only its own batch and temporary filename
 patterns are removed. On taking the lock it returns every owned `.sending` file to the queue, without an age rule;
 a held lock protects an active sender's claim. A lock older than five minutes is stale even if its recorded pid
-exists. Takeovers are serialized by a short-lived exclusive guard. A holder paused past five seconds can lose its
-takeover to another process, just as an abandoned guard can be taken over.
-Only its holder judges and moves a stale lock; a moved file is deleted only after its contents match the stale
-generation observed. This needs no hard links. A random token proves ownership before claims, state writes,
+exists. Takeovers and releases are serialized by an exclusive guard, held for a few file operations. A guard is
+taken from its holder only once that process is gone, so a holder that pauses keeps it. A guard is published with
+its pid already in it, by a hard link; where hard links are not supported (FAT, some network shares) it is an
+exclusive create and then a write, and only there can a guard be seen without a pid: one is then treated as
+abandoned after ten minutes. A guard whose pid now belongs to another process stays held until that process exits
+too. An abandoned guard is moved aside by one process only, the one that creates the claim named for it.
+Only the guard's holder judges and moves a stale lock; a moved file is deleted only after its contents match the
+stale generation observed. A random token proves ownership before claims, state writes,
 deletes and release; an owner that lost its token stops before its next action. This cannot cancel an HTTP request
 already in flight.
 An unreadable or unparseable config is never interpreted as consent being removed: the sender keeps the batches
