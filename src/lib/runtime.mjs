@@ -57,7 +57,7 @@ export function ensureParent(file, { mkdir = mkdirSync } = {}) {
 
 // A temp file, then rename. Keep the existing remove-and-rename fallback for callers that need it on Windows.
 // OTel V10 retry state opts out: a failed replacement must retain its previous recorded backoff.
-export function writeJsonAtomic(file, value, { mkdir = true, mode = 0o600, preserveOnError = false, rename = renameSync } = {}) {
+export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, rename = renameSync } = {}) {
   if (mkdir) ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
   writeFileSync(tmp, JSON.stringify(value) + "\n", { mode });

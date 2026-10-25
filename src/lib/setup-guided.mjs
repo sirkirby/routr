@@ -231,9 +231,9 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
         { value: "channel", label: "Update channel", hint: `${answers.channel ?? channelNow}: stable releases, or beta builds too` },
         { value: "decision", label: "Decision model", hint: decisionLabel(answers.decision ?? decisionNow) },
         { value: "all", label: "Walk through everything" },
+        { value: "otel", label: "OpenTelemetry export", hint: "send to your own endpoint (routr setup --otel-off stops it)" },
         pending ? { value: "save", label: `Save and exit (${pending} change${pending === 1 ? "" : "s"})` } : { value: "done", label: "Exit" },
-        ...(pending ? [{ value: "quit", label: "Exit without saving" }] : []),
-        { value: "otel", label: "OpenTelemetry export", hint: "send to your own endpoint (routr setup --otel-off stops it)" }] });
+        ...(pending ? [{ value: "quit", label: "Exit without saving" }] : [])] });
       if (v === CANCEL || v === "quit") return CANCEL;
       if (v === "done" || (v === BACK && !pending)) return "nothing";
       if (v === "save") { ui.note("Saving", changes()); return "write"; }

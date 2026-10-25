@@ -174,11 +174,11 @@ export function otelSession(config, env = process.env, opts = {}) {
       const { home = userHome(), configPath, write = writeJsonAtomic, capBytes = CAP, now = Date.now } = opts, p = paths(home);
       const current = otelSwitch(readConfig(configPath ?? p.config), env);
       if (!SIGNALS.includes(signal) || !current.on || current.consent !== initial.consent || current.endpoint !== initial.endpoint || existsSync(p.uninstall)) return;
-      const marker = (code) => { try { write(join(p.root, "drops", `${randomUUID()}.json`), { code }, { mkdir: false }); } catch {} };
+      const marker = (code) => { try { write(join(p.root, "drops", `${randomUUID()}.json`), { code }, { mkdir: false, mode: 0o600 }); } catch {} };
       try {
         const size = Buffer.byteLength(JSON.stringify(requestBody) + "\n");
         if (queued(p, signal).reduce((n, f) => n + f.size, 0) + size > 2 * capBytes) marker("ceiling");
-        else write(join(p.root, signal, `${now()}-${initial.consent.slice(0, 8)}-${randomUUID()}.json`), requestBody, { mkdir: false });
+        else write(join(p.root, signal, `${now()}-${initial.consent.slice(0, 8)}-${randomUUID()}.json`), requestBody, { mkdir: false, mode: 0o600 });
       } catch { marker("write_failed"); }
       startOtelSender(opts);
     } catch {} // V10: even a full disk must not change the command's result or duration by waiting on delivery
@@ -254,7 +254,7 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
   let healthy = true;
   const held = () => lockId && folderId(p.lock, { link: true }) === lockId && !existsSync(p.uninstall);
   const st = { ...freshState(), ...readConfig(p.state) };
-  const save = () => { if (!held()) throw new Error("sender stopped"); write(p.state, st, { mkdir: false, preserveOnError: true }); };
+  const save = () => { if (!held()) throw new Error("sender stopped"); write(p.state, st, { mkdir: false, mode: 0o600, preserveOnError: true }); };
   const remove = (file, code) => { if (!held()) throw 0; countDrop(st, code); save(); unlinkSync(file); };
   const sweep = () => {
     if (!held()) return;

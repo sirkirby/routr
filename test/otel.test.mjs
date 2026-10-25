@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import * as otel from "../src/lib/otel.mjs";
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 import { ROUTR_VERSION } from "../src/lib/version.mjs";
@@ -106,6 +106,7 @@ test("the unused gauge identity helper lazily derives UUIDv5 from the persistent
   const installed = readFileSync(file, "utf8");
   expect(installed).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
   expect(otel.otelGaugeInstanceId({ home })).toBe(id); expect(readFileSync(file, "utf8")).toBe(installed);
+  expect(otel.otelGaugeInstanceId({ home: scratch("otel-gauge-other-install") })).not.toBe(id);
   // Independent Python stdlib uuid.uuid5 vector: convention namespace + UTF-8 UUID text as the name.
   writeFileSync(file, "00112233-4455-4677-8899-aabbccddeeff");
   expect(otel.otelGaugeInstanceId({ home })).toBe("7d27dd02-0951-5268-b356-413ed1cf4b75");
@@ -125,6 +126,7 @@ test("no-mkdir atomic writes cannot recreate a removed queue", () => {
 
 test("atomic writes retain the default remove-and-rename fallback", () => {
   const file = join(scratch("otel-atomic-default"), "value.json"); writeFileSync(file, '{"a":1}');
+  const defaultMode = statSync(file).mode & 0o777;
   let calls = 0;
   writeJsonAtomic(file, { a: 2 }, { rename: (from, to) => {
     calls++; expect(existsSync(to)).toBe(calls === 1);
@@ -132,6 +134,14 @@ test("atomic writes retain the default remove-and-rename fallback", () => {
     renameSync(from, to);
   } });
   expect(calls).toBe(2); expect(JSON.parse(readFileSync(file))).toEqual({ a: 2 });
+  if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(defaultMode);
+});
+
+test("atomic writes keep the explicit mode option", () => {
+  const file = join(scratch("otel-atomic-mode"), "value.json");
+  writeJsonAtomic(file, {}, { mode: 0o600 });
+  if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(0o600 & ~process.umask());
+  expect(JSON.parse(readFileSync(file))).toEqual({});
 });
 
 test("atomic writes can preserve the old file and throw on failed replacement", () => {
@@ -212,6 +222,19 @@ test("guided setup offers a person export with skip as the default and validates
     expect(questions).toContainEqual(expect.objectContaining({ message: "Export OpenTelemetry to your own endpoint?", initial: false }));
     expect(result.otelEndpoint).toBe(on ? "http://localhost:4318/prefix" : undefined);
   }
+});
+
+test("guided setup lists OpenTelemetry with settings before either exit or save action", async () => {
+  const menus = [], ui = { style: { dim: (s) => s }, glyphs: { arrow: "→" }, note() {},
+    select: async (q) => {
+      if (q.message !== "What would you like to do?") return "beta";
+      menus.push(q.options.map((o) => o.value));
+      return menus.length === 1 ? "channel" : "quit";
+    } };
+  await guided({ ui, r: { harnesses: {} }, config: { subscriptions: {} } });
+  expect(menus).toHaveLength(2);
+  for (const values of menus) for (const action of ["save", "done", "quit"]) if (values.includes(action))
+    expect(values.indexOf("otel")).toBeLessThan(values.indexOf(action));
 });
 
 test("doctor and setup --show share the complete read-only export status", () => {
