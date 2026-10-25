@@ -96,4 +96,5 @@ test("teardown fails on survivors, unreadable process state or a pane it cannot 
   expect(await teardownSmoke({ home: "/tmp/ro-one", holderPids: new Set([30]) }, { list: async () => [holder], kill: (pid) => killed.push(pid), pause: async () => {}, attempts: 1 })).not.toEqual([]);
   expect(killed).toEqual([]);
   expect(await teardownSmoke({ home: "/tmp/ro-one", holderPids: new Set([30]) }, { list: async () => [{ ...holder, command: "unrelated process" }] })).toEqual([]);
+  expect(await teardownSmoke({ home: "/tmp/ro-one", senderPids: new Set([31]) }, { list: async () => [{ pid: 31, ppid: 1, command: "" }], pause: async () => {}, attempts: 1 })).not.toEqual([]);
 });

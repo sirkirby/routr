@@ -118,7 +118,7 @@ async function listSmokeProcesses() {
   const rows = r?.code === 0 ? smokeProcessRows(r.out) : null;
   return rows?.length ? rows : null; // Even an empty listing cannot prove the smoke's own processes are gone.
 }
-export async function teardownSmoke({ home, children = new Set(), pane, closePane, stopWorker, holderPids = new Set() }, {
+export async function teardownSmoke({ home, children = new Set(), pane, closePane, stopWorker, holderPids = new Set(), senderPids = new Set() }, {
   list = listSmokeProcesses, kill = (pid) => process.kill(pid, "SIGKILL"), stopChild = stop, pause = sleep, attempts = 40,
 } = {}) {
   const errors = [];
@@ -137,7 +137,7 @@ export async function teardownSmoke({ home, children = new Set(), pane, closePan
     let rows; try { rows = await list(); } catch {}
     if (!rows) { errors.push("cannot verify smoke process teardown: process inventory unreadable"); return errors; }
     const inHome = smokeProcessesIn(rows, home).filter((r) => r.pid > 1 && r.pid !== process.pid && owned(r));
-    const holders = rows.filter((r) => r.pid !== process.pid && (holder(r) || holderPids.has(r.pid) && !r.command));
+    const holders = rows.filter((r) => r.pid !== process.pid && (holder(r) || (holderPids.has(r.pid) || senderPids.has(r.pid)) && !r.command));
     const activeChildren = [...children].filter((c) => c.exitCode == null && c.signalCode == null);
     if (!inHome.length && !holders.length && !activeChildren.length) return errors;
     if (attempt === attempts) { errors.push("smoke processes remain after teardown; home retained for inspection"); return errors; }
@@ -188,12 +188,14 @@ async function runSmoke({ env: original, log }) {
   const home = mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "ro-")), bin = join(home, "bin"), batches = [], children = new Set();
   const never = ["PRIVATE_BRIEF_MARKER", "PRIVATE_REPORT_MARKER", "PRIVATE_REPLY_MARKER", "PRIVATE_NOTE_MARKER", "PRIVATE_HEADER_MARKER", "PRIVATE_KEY_MARKER", "PRIVATE_BAGGAGE_MARKER", "PRIVATE_SCREEN_MARKER"];
   let hold = false, held = false, pane = null, server, env, cli, summary;
-  const workerDir = join(home, ".local/state/routr/workers/fixture"), holderPids = new Set();
-  const rememberHolders = () => {
-    for (const n of generations(workerDir)) try {
-      const { pid } = JSON.parse(readFileSync(genFile(workerDir, n, "claim"), "utf8"));
-      if (Number.isSafeInteger(pid) && pid > 1 && pid !== process.pid) holderPids.add(pid);
-    } catch {}
+  const workerDir = join(home, ".local/state/routr/workers/fixture"), holderPids = new Set(), senderPids = new Set();
+  const rememberProcesses = () => {
+    const remember = (file, ids) => { try {
+      const { pid } = JSON.parse(readFileSync(file, "utf8"));
+      if (Number.isSafeInteger(pid) && pid > 1 && pid !== process.pid) ids.add(pid);
+    } catch {} };
+    for (const n of generations(workerDir)) remember(genFile(workerDir, n, "claim"), holderPids);
+    remember(join(home, ".cache/routr/otel/sender.lock"), senderPids);
   };
   try {
     mkdirSync(bin); const fixture = makeFixture(bin), configPath = join(home, ".config/routr/config.json");
@@ -229,7 +231,7 @@ async function runSmoke({ env: original, log }) {
         child.once("error", (e) => { clearTimeout(timer); reject(e); });
         child.once("close", (code) => { clearTimeout(timer); children.delete(child); resolve(code); });
       });
-      rememberHolders();
+      rememberProcesses();
       check(code === 0, `command ${args[0]} failed (${code}): ${err.slice(0, 160)}`); return JSON.parse(out);
     };
     const senderPid = () => { try { const v = JSON.parse(readFileSync(join(home, ".cache/routr/otel/sender.lock"), "utf8")); return Number.isSafeInteger(v.pid) && v.pid > 1 && v.pid !== process.pid ? v.pid : null; } catch { return null; } };
@@ -284,9 +286,9 @@ async function runSmoke({ env: original, log }) {
   } catch (e) { log(e.message); return 1; }
   finally {
     if (env) env.ROUTR_OTEL = "0"; // Teardown cannot start a new sender after its verification.
-    rememberHolders();
+    rememberProcesses();
     let errors;
-    try { errors = await teardownSmoke({ home, children, pane, holderPids,
+    try { errors = await teardownSmoke({ home, children, pane, holderPids, senderPids,
       closePane: async (id) => {
         const r = await runHerdr(["pane", "close", id], 1000);
         return r?.ok || r?.data?.error?.code === "pane_not_found" ? { ok: true } : r;
