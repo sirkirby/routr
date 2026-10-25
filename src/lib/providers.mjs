@@ -12,6 +12,7 @@
 // - sure_at: the lowest bar on 0.5..0.8 at which the model's level, when "sure", is right at least as often as Jev's at
 //   0.8 (39 of 44, 89%), with confidence normalized as systemone.mjs does.
 // - torn: the level as routr presents it, on the 36 real runs: right, one level low, one level high.
+import { warning } from "./warnings.mjs";
 import { home } from "./runtime.mjs";
 import { join } from "node:path";
 
@@ -187,7 +188,7 @@ export function decisionSettings(setting) {
   }
   if (!decision.length) decision.push({ provider: DEFAULT_PROVIDER, model: null });
   const fix = decisionCommand(decision);
-  return { decision, problems, warnings: problems.map(({ index, entry, why }) => `decision[${index}] ${JSON.stringify(entry)} dropped: ${why}. Set the ordered list with ${fix}`) };
+  return { decision, problems, warnings: problems.map(({ index, entry, why }) => warning("decision_dropped", `decision[${index}] ${JSON.stringify(entry)} dropped: ${why}. Set the ordered list with ${fix}`)) };
 }
 
 // What routr will ask: the provider and model from the config (`decision`), or ROUTR_DECISION_MODEL

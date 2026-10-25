@@ -5,6 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- OpenTelemetry export now includes structured warning, input, usage-failure and worker-state logs, plus subscription headroom per usage window. (#117)
 - OpenTelemetry export now includes each headless worker turn, with turn context passed through each harness’s process or request channel; workers launched with export off can begin tracing after opt-in, preserving inherited sampling. (#116)
 - OpenTelemetry export now traces orchestration and decisions, joins workers to their launches and lead sessions, and publishes every sent field. (#115)
 - You can configure OpenTelemetry export to your own endpoint, with secret headers, delivery status and a detached sender that retries queued batches. (#114)

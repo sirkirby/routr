@@ -1,4 +1,5 @@
 // User config: plain preferences only. Nothing here describes a model, so nothing goes stale when models change.
+import { warning } from "./warnings.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { LEVELS } from "./questions.mjs";
@@ -35,34 +36,34 @@ export function loadConfig(path = CONFIG_PATH) {
   let raw = {};
   try {
     if (existsSync(path)) raw = JSON.parse(readFileSync(path, "utf8"));
-    else notes.push(NO_CONFIG(path));
+    else notes.push(warning("config_missing", NO_CONFIG(path)));
   } catch (e) {
-    notes.push(`config unreadable (${String(e?.message ?? e).slice(0, 80)}): using defaults`);
+    notes.push(warning("config_unreadable", `config unreadable (${String(e?.message ?? e).slice(0, 80)}): using defaults`));
   }
   // Every number here is a share between 0 and 1. Anything else (a reserve of -1 would turn an empty subscription into
   // a full one) is reported and replaced by the default.
-  const share = (v, fallback, where) => { if (v === undefined) return fallback; if (typeof v === "number" && v >= 0 && v <= 1) return v; notes.push(`${where}: ${JSON.stringify(v)} is not a number from 0 to 1, using ${fallback ?? "the decision model's own"}`); return fallback; };
+  const share = (v, fallback, where) => { if (v === undefined) return fallback; if (typeof v === "number" && v >= 0 && v <= 1) return v; notes.push(warning("config_share", `${where}: ${JSON.stringify(v)} is not a number from 0 to 1, using ${fallback ?? "the decision model's own"}`)); return fallback; };
   const num = (k) => share(raw[k], DEFAULTS[k], k);
   const config = { fallback_level: isLevel(raw.fallback_level) ? raw.fallback_level : DEFAULTS.fallback_level, sure_at: raw.sure_at === null ? null : num("sure_at"), risk_above: num("risk_above"),
     decision: decisionSetting(raw.decision, notes), auto_update: raw.auto_update !== false, update_channel: DEFAULTS.update_channel, telemetry: raw.telemetry === true, prefer: {}, subscriptions: {} };
   if (UPDATE_CHANNELS.includes(raw.update_channel)) config.update_channel = raw.update_channel;
-  else if (raw.update_channel !== undefined) notes.push(`update_channel: ${JSON.stringify(raw.update_channel)} is not one of ${UPDATE_CHANNELS.join(", ")}, using stable: routr setup --channel stable|beta`);
+  else if (raw.update_channel !== undefined) notes.push(warning("config_channel", `update_channel: ${JSON.stringify(raw.update_channel)} is not one of ${UPDATE_CHANNELS.join(", ")}, using stable: routr setup --channel stable|beta`));
   if (raw.otel !== undefined) {
     const setting = otelSwitch({ otel: raw.otel }, {});
     if (setting.on) config.otel = { endpoint: setting.endpoint, consent: setting.consent };
-    else notes.push(`OpenTelemetry export is off: ${setting.why_off}; set an endpoint with routr setup --otel-endpoint <url>`);
+    else notes.push(warning("config_otel", `OpenTelemetry export is off: ${setting.why_off}; set an endpoint with routr setup --otel-endpoint <url>`));
   }
-  for (const [k, v] of Object.entries(raw.prefer ?? DEFAULTS.prefer)) isLevel(v) ? (config.prefer[k] = v) : notes.push(`prefer.${k}: "${v}" is not a level, ignored`);
+  for (const [k, v] of Object.entries(raw.prefer ?? DEFAULTS.prefer)) isLevel(v) ? (config.prefer[k] = v) : notes.push(warning("config_prefer", `prefer.${k}: "${v}" is not a level, ignored`));
   for (const [name, s] of Object.entries(raw.subscriptions ?? {})) {
     // The two settings that decide where work may go are the user's: a missing or invalid one is a problem to fix, and
     // the note says how. Until then the router still answers, on the stand-in named.
-    if (s?.hardest_work === undefined) notes.push(`${HARDEST.unset(name)}. ${HARDEST.choose(name)}`);
-    else if (!isLevel(s.hardest_work)) notes.push(`${HARDEST.invalid(name, s.hardest_work)}. ${HARDEST.choose(name)}`);
+    if (s?.hardest_work === undefined) notes.push(warning("config_hardest", `${HARDEST.unset(name)}. ${HARDEST.choose(name)}`));
+    else if (!isLevel(s.hardest_work)) notes.push(warning("config_hardest", `${HARDEST.invalid(name, s.hardest_work)}. ${HARDEST.choose(name)}`));
     const validReserve = typeof s?.reserve === "number" && s.reserve >= 0 && s.reserve <= 1;
-    if (s?.reserve === undefined) notes.push(`${RESERVE.unset(name)}. ${RESERVE.choose(name)}`);
-    else if (!validReserve) notes.push(`${RESERVE.invalid(name, s.reserve)}. ${RESERVE.choose(name)}`);
-    const oneOf = (k, allowed, fallback) => { const v = s?.[k]; if (v === undefined || v === null) return fallback; if (allowed.includes(v)) return v; notes.push(`subscriptions.${name}.${k}: ${JSON.stringify(v)} is not one of ${allowed.join(", ")}, using ${fallback ?? (k === "use" ? "the legacy account-use preference" : "the harness's own reading")}`); return fallback; };
-    if (s?.enabled !== undefined && typeof s.enabled !== "boolean") notes.push(`subscriptions.${name}.enabled: ${JSON.stringify(s.enabled)} is not true or false, so it stays on`);
+    if (s?.reserve === undefined) notes.push(warning("config_reserve", `${RESERVE.unset(name)}. ${RESERVE.choose(name)}`));
+    else if (!validReserve) notes.push(warning("config_reserve", `${RESERVE.invalid(name, s.reserve)}. ${RESERVE.choose(name)}`));
+    const oneOf = (k, allowed, fallback) => { const v = s?.[k]; if (v === undefined || v === null) return fallback; if (allowed.includes(v)) return v; notes.push(warning("config_choice", `subscriptions.${name}.${k}: ${JSON.stringify(v)} is not one of ${allowed.join(", ")}, using ${fallback ?? (k === "use" ? "the legacy account-use preference" : "the harness's own reading")}`)); return fallback; };
+    if (s?.enabled !== undefined && typeof s.enabled !== "boolean") notes.push(warning("config_enabled", `subscriptions.${name}.enabled: ${JSON.stringify(s.enabled)} is not true or false, so it stays on`));
     config.subscriptions[name] = {
       enabled: s?.enabled !== false,
       hardest_work: isLevel(s?.hardest_work) ? s.hardest_work : SUB_DEFAULTS.hardest_work,

@@ -138,8 +138,8 @@ writes only:
 
 - under `~/.config/routr`, `~/.cache/routr`, `~/.local/share/routr` (headless workers' worktrees in its `worktrees`)
   and `~/.local/state/routr` (headless workers);
-- OpenTelemetry's per-signal queue, drop markers, sender state and lock under `~/.cache/routr/otel`. Trace and log
-  resources use a random UUIDv4 per process, held only in memory, and write no identity file. The future gauge's
+- OpenTelemetry's trace and log requests, four-field usage observations, drop markers, sender state (including per-stream gauge watermarks) and lock under `~/.cache/routr/otel`. Trace and log
+  resources use a random UUIDv4 per process, held only in memory, and write no identity file. The gauge's
   identity uses a random per-install id under `~/.local/state/routr/service-instance-id`, exclusively published so
   concurrent first calls agree, and derives its UUIDv5 service instance id from it. Identity writes require an
   existing state folder and stop during uninstall. The sender alone removes queue files or changes delivery totals;
@@ -322,8 +322,9 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
 - **Export on: launch parentage.** A valid inherited W3C `TRACEPARENT` parents routr's command span. An invalid or
   absent parent starts a new sampled trace and drops inherited `TRACESTATE`. A recorded launch hands its own span
   as the worker's `TRACEPARENT`; valid-parent `TRACESTATE` and `BAGGAGE` remain unchanged. An unsampled parent
-  produces no records or launch index and keeps its carriers unchanged. Both process off switches preserve
-  export-off forwarding. [OpenTelemetry schema](opentelemetry.md#signals) lists every sent field.
+  produces no traces, logs or launch index and keeps its carriers unchanged. With export on, commands still queue
+  headroom observations regardless of trace sampling. Both process off switches preserve export-off forwarding.
+  [OpenTelemetry schema](opentelemetry.md#signals) lists every sent field.
 - **Which workers get them.** A headless worker gets them on every turn, and a worker in a pane `routr launch` makes
   gets them as that pane's shell starts (herdr's `pane split --env`): a pane beside yours, or the pane in a new
   worktree. For a worktree, launch splits the pane herdr opened with the worktree and closes that first pane, because
@@ -356,9 +357,10 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
   none. `cleanup --worker` removes them with the run folder.
   With export on, the holder emits one `invoke_agent` span per completed turn, checking consent on each write:
   a child of its recorded launch, otherwise its valid saved parent, or a sampled root with no valid parent.
-  An unsampled saved parent or explicit unsampled launch decision keeps turns silent across export changes,
-  including when launch export was off. The first process gets the recorded launch span; a resumed process or
-  a process starting a turn without a recorded launch gets that turn's span; Cursor gets the turn for every process.
+  An unsampled saved parent or explicit unsampled launch decision keeps turn spans and state-transition logs
+  silent across export changes, including when launch export was off. Holders queue no headroom observations.
+  The first process gets the recorded launch span; a resumed process or a process starting a turn without a
+  recorded launch gets that turn's span; Cursor gets the turn for every process.
   Codex requests carry the turn in `trace`; Kiro prompts use ACP `_meta`, with session creation/loading carrying
   the process context. These protocol fields are absent when export is off or sampling suppresses the turn.
   A message into a running turn creates no new span. An existing process keeps its environment. Export off or an
@@ -400,8 +402,10 @@ turns it on for you. It sends ledger rows with no text of any kind, only from th
 OpenTelemetry export is a separate opt-in to your own endpoint. `DO_NOT_TRACK` and CI do not turn it off; its off
 switches are `OTEL_SDK_DISABLED=true` (any case), `ROUTR_OTEL=0`, and removing its endpoint. An agent never enables it
 unasked. Its headers are secrets, read only from the secrets file and never printed, logged, or placed in the queue,
-sender state, ledger or telemetry. Response bodies are never stored. See [OpenTelemetry](opentelemetry.md); signals
-arrive in a later change and will carry repository names, relative paths and ids, unlike anonymous telemetry.
+sender state, ledger or telemetry. Response bodies are never stored. It sends structured, correlated events with
+fixed codes and no body, and one remaining-subscription-allowance gauge per install and usage window. Unknown
+capacity sends no point; statusline queues nothing. Its traces and logs carry repository names, relative paths
+and ids, unlike anonymous telemetry. See [OpenTelemetry](opentelemetry.md) for every sent field.
 
 ## Output a lead reads
 

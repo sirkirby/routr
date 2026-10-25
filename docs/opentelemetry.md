@@ -78,16 +78,16 @@ This follows core semantic conventions v1.44.0: each application process is its 
 trace or log resource writes no identity file. For a gauge stream, the instance id is a UUIDv5 derived from a random
 per-install id, under the convention's namespace `4d63009a-8d0f-11ee-aad7-4c796ed8e320`, to keep one stream per
 install across sender processes. That per-install file is created exclusively, only for the gauge, in an existing
-state folder. Its creation never makes folders or writes while uninstall is running. No gauge is emitted yet.
+state folder. Its creation never makes folders or writes while uninstall is running. Only the sender creates it when sending a gauge point.
 
 No hostname or username is added. The Signals section below pins the resource schema URL and the mixed
 `routr.otel.schema` identity. Encoding uses the OTLP JSON mapping: hexadecimal trace/span ids, decimal-string
 nanoseconds, lowerCamelCase fields, integer enums, and resource, scope and AnyValue nesting. Delivery sends the
-queued JSON bytes unchanged.
+queued trace and log JSON bytes unchanged; the sender turns metric observations into OTLP gauge requests.
 
 ## Delivery
 
-Commands atomically write one file per signal under `~/.cache/routr/otel/<signal>`, then may start the detached
+Commands atomically write a trace batch, an optional log batch and one file per usage-window observation under `~/.cache/routr/otel/<signal>`, then may start the detached
 sender. A queue file's name is `<time>-<nonce8>-<uuid>.json`; consent never enters the request body. Commands take
 no queue lock, never delete batches or update counters, never wait for the sender, and make no delivery network
 call themselves. With export off, the command API creates no files and starts no process. Queue writes do not
@@ -157,13 +157,13 @@ routr's skill folders.
 | `headers` | `set`, `not set` or `invalid`, never their values |
 | `can_queue`, `queue_error` | Whether this process can queue; a fixed repair sentence when enabled queue folders are missing/unreadable or uninstall is running, otherwise null |
 | `last_export` | null, or `{ at, ok, sent, refused, error }`: ISO time, accepted status, batches sent, batches refused, fixed failure code |
-| `queued_files` | Waiting files, excluding temporary files and in-flight claims |
+| `queued_files` | Waiting files across traces, logs and metrics, excluding temporary files and in-flight claims |
 | `oldest_age_sec` | Oldest waiting file's age, clamped at zero, or null |
 | `dropped_total` | Lifetime lost batches and explicitly rejected records |
 | `dropped_by_code` | Lifetime counts by code; `partial_warning` and `response_unreadable` are additional diagnostics and do not increase `dropped_total` |
 
-Drop codes are `ceiling`, `write_failed`, `consent`, `cap`, `rejected` and `http_<status>`. The last export's error
-can be `http_<status>`, `network`, `timeout` or `headers_invalid`. `sent` and `refused` count batches only: partial
+Drop codes are `ceiling`, `write_failed`, `consent`, `cap`, `invalid_observation`, `rejected` and `http_<status>`. The last export's error
+can be `http_<status>`, `network`, `timeout`, `headers_invalid` or `gauge_identity_unavailable`. `sent` and `refused` count batches only: partial
 success counts as one sent batch and zero refused batches; rejected record counts go in `dropped_by_code.rejected`.
 Headers are reported as set only when the saved list can be read and validated. A fresh install has no last export,
 no oldest age and zero totals.
@@ -173,7 +173,7 @@ no oldest age and zero totals.
 routr emits traces from `dispatch`, `subagent`, `check`, `usage`, `launch`, `send`, `wait`, `workers`, `stop`,
 `cleanup` and `record`. `statusline` and housekeeping commands (setup, doctor, key, update, uninstall, telemetry,
 share, assess, feedback and skill installation) and detached `usage --background` refreshes emit nothing.
-Headless holders emit one `invoke_agent` span per completed turn. No logs or metrics are emitted yet.
+Headless holders emit one `invoke_agent` span per completed turn, with structured lifecycle logs. Commands also queue structured logs and fresh usage-window observations.
 
 The GenAI convention is pinned to `open-telemetry/semantic-conventions-genai`
 `9ffc7e00c639be7712e544e3e54331e885dccf84` (2026-10-21), whose manifest depends on core semantic conventions
@@ -188,7 +188,7 @@ running version. Each process has its own `service.instance.id`, without an iden
 Sampling is ParentBased(AlwaysOn). A valid inherited `TRACEPARENT` supplies a command's parent. The W3C parser
 rejects version ff, uppercase hex, malformed fields and all-zero ids; v00 has exactly four fields, while a higher
 version can append fields after the first four. An absent or invalid parent starts a sampled trace; its inherited
-`TRACESTATE` is then dropped. A valid unsampled parent produces no records or launch index and retains its carriers
+`TRACESTATE` is then dropped. A valid unsampled parent produces no traces, logs or launch index and retains its carriers
 unchanged. Transport limits still apply ([guarantees](guarantees.md#trace-context)).
 
 With export on and a sampled launch, workers get `TRACEPARENT` naming `routr launch`. Valid-parent `TRACESTATE` and
@@ -204,9 +204,9 @@ launch. A holder uses only the launch context saved in its worker settings, neve
 carriers. The worker's `launch` metadata distinguishes three cases: a recorded launch saves
 `{ launch_id, traceId, spanId }`; an enabled launch whose parent was unsampled saves `{ sampled: false }`;
 a launch with export off saves no `launch` field. Recorded launches keep their child turns. An unsampled launch
-keeps its sampling decision across export off/on: its turns record nothing, and its saved carriers pass unchanged.
+keeps its sampling decision across export off/on: its turn traces and logs stay off, and its saved carriers pass unchanged.
 When a worker was launched with export off, its saved valid `TRACEPARENT` still supplies ParentBased sampling:
-an unsampled parent keeps every later turn silent, and a sampled parent parents later turns directly, without a
+an unsampled parent keeps every later turn's traces and logs silent, and a sampled parent parents later turns directly, without a
 recorded launch between them. Only an absent or invalid saved parent starts a separate sampled root for each
 turn after opt-in, ParentBased(AlwaysOn) with no parent. These turns have no `routr.launch.id`.
 This also applies to older worker settings with no `launch` field. Each turn captures fresh export
@@ -336,7 +336,7 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `service.name` | `string` | `routr`. |
 | `service.version` | `string` | The running routr version; source checkouts use `0.0.0-dev`. |
 | `os.type` | `string` | OpenTelemetry OS name: `darwin`, `linux`, `windows`, `freebsd`, `openbsd`, `solaris`, `aix` or `unknown`. |
-| `service.instance.id` | `string` | Random UUIDv4, one per routr process, kept only in memory. |
+| `service.instance.id` | `string` | Traces/logs: random UUIDv4 per process, only in memory. Gauge: UUIDv5 derived from the per-install id. |
 | `routr.otel.schema` | `string` | `genai@9ffc7e00;semconv@1.44.0;routr@1`. |
 | `routr.lead.session_id` | `string` | Validated lead UUIDv4, UUIDv7 or 16–64 lowercase hex characters; measured environment source before explicit flag. |
 | `routr.question_set.version` | `string` | Question-set version: `r` or `c` followed by 1–3 digits; invalid values become `other`. |
@@ -429,17 +429,148 @@ outcomes, with `done`/`failed` when the command has no separate state. Effort an
 [anonymous telemetry's projection](telemetry.md), with causes from record's contract and effort origin `given`,
 `model id` or `config default`. IDs are format-checked. Missing optional attributes are omitted.
 
+### Logs
+
+Each custom event is one OTLP LogRecord sent to `/v1/logs` in an `ExportLogsServiceRequest`. Its name is in
+`eventName`, never in the deprecated `event.name` attribute. Its body is absent (empty). `traceId` and `spanId`
+identify the span where it happened; `timeUnixNano` and `observedTimeUnixNano` are equal decimal-string timestamps,
+and `flags` comes from that span. Logs share the process resource,
+scope and identity projection with spans. Identity attributes, when available, are repository, branch, relative cwd,
+worktree, lead session, harness kind, backend, launch id, agent name, conversation id and turn number, with the same
+shape checks as spans. There is no warning text, why text, harness output or exception message.
+
+<!-- log-events -->
+| Event | Severity | Fixed attributes |
+|---|---|---|
+| `routr.needs_input` | WARN (13) | `routr.needs_input.why` |
+| `routr.warning` | WARN (13) | `routr.warning.code` |
+| `routr.usage.failed` | WARN (13) | `error.type`, `routr.subscription` |
+| `routr.worker.state` | INFO (9) | `routr.worker.state.from`, `routr.worker.state.to` |
+<!-- /log-events -->
+
+| Attribute | Type | Values |
+|---|---|---|
+| `routr.needs_input.why` | `string` | `shell_not_ready`, `startup_question`, `worker_busy`, `wrong_harness`, `wrong_folder`, `identity_unknown`, `worker_question`, `start_unconfirmed`. |
+| `routr.warning.code` | `string` | One code from the warning table below, assigned where the warning is made. |
+| `routr.worker.state.from` | `string` | Previous holder state: `starting`, `working`, `waiting`, `idle`, `failed`, `stopped`, `no_task`. |
+| `routr.worker.state.to` | `string` | New holder state, from the same list. Equal states emit nothing. |
+
+Input events describe launch refusals that need the shell, startup question or worker resolved, including a worker's
+question after its prompt. Usage failures correlate with the subscription's usage child span, including a failed
+refresh recovered with a kept reading. Their `error.type` is one of the classified usage failure codes, with
+unrecognized failures becoming `read_failed`. A kept reading's span can succeed while its failure event records the
+refresh. Warnings emit once per warning in command output. Unknown caller-supplied warning strings are omitted.
+
+Holder transitions come from the holder's state changes, buffered with their times until the turn finishes and
+written beside that turn's spans. A settlement after completion emits another log batch correlated with that same
+turn. Turns and command batches re-check consent before each signal write. Events follow trace sampling: an
+unsampled parent records no spans or logs. Metrics do not follow trace sampling. Housekeeping commands and
+`statusline` emit no signals.
+
+### Warning codes
+
+Only these fixed codes are sent; the warning's displayed text stays local. Codes cover every shipped warning
+producer, including config and input notes forwarded into `warnings`.
+
+<!-- warning-codes -->
+| Code | Meaning |
+|---|---|
+| `config_missing` | No config; defaults used. |
+| `config_unreadable` | Config unreadable; defaults used. |
+| `config_share` | Invalid share; default used. |
+| `config_channel` | Invalid update channel. |
+| `config_otel` | Invalid export setting. |
+| `config_prefer` | Invalid preferred level. |
+| `config_hardest` | Missing or invalid hardest work. |
+| `config_reserve` | Missing or invalid reserve. |
+| `config_choice` | Invalid subscription choice. |
+| `config_enabled` | Invalid enabled setting. |
+| `decision_dropped` | Invalid or duplicate decision entry dropped. |
+| `headroom_ignored` | Invalid headroom input ignored. |
+| `lead_session_ignored` | Invalid lead session ignored. |
+| `brief_flag` | Flag-like brief input. |
+| `report_short` | Report is very short. |
+| `advice_unchecked` | Advice not checked against a task. |
+| `usage_stale` | Usage reader has stopped working. |
+| `kiro_session_left` | Kiro kept an empty usage session. |
+| `subscription_unconfigured` | Subscription is not configured. |
+| `model_required` | Plan needs a model. |
+| `cursor_private_config` | Cursor uses a private config. |
+| `kiro_effort_default` | Kiro remembers effort. |
+| `carrier_withheld` | Carrier exceeds forwarding limits. |
+| `launch_parent_replaced` | Inherited parent replaced by launch span. |
+| `carriers_not_passed` | Launch passed no carriers to an existing or adopted pane. |
+| `sandbox` | Sandbox may limit harness access. |
+| `branch_unowned` | Branch ownership cannot be proved. |
+| `worktree_left` | Launch worktree was left. |
+| `branch_changed` | Launch branch has changed. |
+| `copy_missing` | Requested copy source is missing. |
+| `messages_dropped` | Stopped worker had queued messages. |
+| `process_unseen` | Saved process id cannot prove the harness state. |
+| `cleanup_unseen` | Cleanup sees git state only. |
+| `other_worktrees` | Repository has other worktrees. |
+| `branch_unmerged` | Unmerged branch was kept. |
+| `detached_unseen` | Detached commands cannot be seen. |
+| `cursor_helper_left` | Cursor owns its worker server. |
+| `work_kept` | Worker changes remain in the working folder. |
+| `rename_failed` | Adopted agent could not be renamed. |
+| `cursor_config_left` | Unused Cursor config could not be removed. |
+| `pane_left` | Launch pane was left alive. |
+| `cursor_config_retained` | Possible worker still needs Cursor config. |
+| `prompt_uncertain` | Prompt may have been submitted. |
+<!-- /warning-codes -->
+
+### Subscription headroom
+
+The only metric is custom **`routr.subscription.headroom`**, a Gauge with unit **`1`**, reporting remaining
+subscription allowance as a double ratio **0..1**. This name is routr's own, with no upstream stability guarantee.
+Counts and durations can be derived by receivers from spans; routr sends no other metrics. With export on, fresh
+usage observations are collected regardless of the parent trace's sampling flag; an unsampled parent suppresses
+spans and logs, never this gauge. Headless holders emit turn spans and state-transition logs; they do not collect
+headroom observations.
+
+| Attribute | Type | Values |
+|---|---|---|
+| `routr.subscription` | `string` | Harness registry name: `claude`, `codex`, `cursor`, `agy`, `kiro`. |
+| `routr.usage.window` | `string` | `five_hour`, `seven_day`, `spend_limit`, `primary`, `secondary`, `monthly_cap`, `included`, `monthly_credits`, `5h`, `weekly`. No observation is queued for `unknown` or any unrecognized window; unrelated buckets must not share a stream. |
+
+Commands queue each numeric window of a live reading as only `{ subscription, window, value, time }`, with `time`
+the source reading's Unix milliseconds, except that a window inferred empty after its reset is stamped at the
+reset time. Other windows in that snapshot keep their own source time. No usage note, harness text or resource path
+is stored in an observation.
+Kept, given, assumed or signed-out readings queue no point. A failed refresh can still leave a live numeric
+snapshot; it retains its original reading time and also emits a failure event. Metered/unknown capacity with no
+number queues no point. `statusline` queues nothing; a later usage-reading command may observe its fresh snapshot. Missing source
+time also queues nothing, rather than inventing a new time for a cached reading.
+
+The sender is the stream's single writer. Under its lock it keeps only the latest observation per subscription and
+window, removes folded observations, and skips/removes any reading no newer than that stream's last accepted point.
+Watermarks persist in sender state across restarts and consent changes. A reset is a new value on the same stream,
+not a new dimension. Its reset timestamp lets it advance beyond the earlier snapshot without back-dating 1.0. Each
+point uses `asDouble` and its reading time as `timeUnixNano`; the sender posts an
+`ExportMetricsServiceRequest` to `/v1/metrics`. The resource uses the install's gauge UUIDv5, so sender restarts keep
+one stream per install/window and two installs differ. No repository/branch dimensions are added to this metric.
+
+The sender resolves the gauge resource before folding or claiming metric files. If the install identity is
+unavailable or invalid, it sets `last_export.error: "gauge_identity_unavailable"`, leaves observations queued and
+stops; repairing the state folder/id allows a later sender to retry.
+
+The sender saves accepted watermarks before removing claims. A crash before that save can resend the point; a crash
+after it skips the recovered observation. Logs and traces can also duplicate after acceptance. Folded and skipped
+observations are removed without counting a delivery loss. Invalid observation files count `invalid_observation`.
+The same per-signal caps, consent re-checks, lock ownership, partial-success handling and uninstall rules apply.
+
 ### Content and delivery limits
 
 Never sent: a brief, report, note, prompt, model reply, pane screen, header value, key, baggage value or other free
 text. `TRACEPARENT` ids enter only span parentage, and saved launch context supplies later links. No carrier value
 is an attribute or span name. There is no content-capture option. Resource text cannot be supplied through
-`OTEL_RESOURCE_ATTRIBUTES`. Queue files contain complete OTLP requests; resending can duplicate records with the
-same span ids. Receivers that count spans or aggregate durations must account for that delivery behavior.
+`OTEL_RESOURCE_ATTRIBUTES`. Trace and log queue files contain complete OTLP requests; metric files contain only
+projected observations. Resending can duplicate records with the same trace/span ids. Receivers that count spans or aggregate durations must account for that delivery behavior.
 
 This export has its own setting, consent, state, queue, sender and destination, separate from
-[anonymous telemetry](telemetry.md). `bun run smoke:otel` checks decoded fixture traces against a loopback receiver,
-without a subscription; it can target `ROUTR_SMOKE_OTLP_ENDPOINT`. In live herdr it additionally exercises a fixture
+[anonymous telemetry](telemetry.md). `bun run smoke:otel` checks decoded fixture traces, logs and the headroom gauge
+against a loopback receiver, without a subscription; it can target `ROUTR_SMOKE_OTLP_ENDPOINT`. In live herdr it additionally exercises a fixture
 pane. It is an explicit smoke command, never part of `bun test`.
 
 The smoke accepts no arguments and refuses an inherited `ROUTR_SMOKE_OTEL_ACTIVE` marker. It sets that marker in

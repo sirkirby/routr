@@ -339,11 +339,10 @@ const CARRIER = new RegExp(`^(?:${CARRIERS.join("|")})$`, "i");
 // whitespace; nothing in the three formats needs more), so no control character reaches a child's environment or
 // herdr's argv. Bytes: room for later traceparent versions, W3C's minimum tracestate to propagate, and W3C's minimum
 // baggage size, taken here as routr's maximum.
-const CARRIER_MAX = { TRACEPARENT: 512, TRACESTATE: 512, BAGGAGE: 8192 };
+export const CARRIER_MAX = Object.freeze({ TRACEPARENT: 512, TRACESTATE: 512, BAGGAGE: 8192 });
 const CARRIER_TEXT = /^[\t\x20-\x7e]*$/;
 // Shown in output where a carrier stands: its value never is.
 export const FORWARDED = "<forwarded>";
-export const carrierWithheld = (name) => `${name} was not passed to the worker: routr passes it only when it is at most ${CARRIER_MAX[name]} bytes of printable ASCII or tabs`;
 // { carriers, withheld }: those within the limits, by name, and the names of those present but outside them.
 // `present(v)` says whether a value counts as there at all. Checked by character first, so a length is a count of bytes.
 const checked = (get, present = (v) => v != null && v !== "") => {

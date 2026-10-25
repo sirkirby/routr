@@ -1,6 +1,7 @@
 // The advice commands (`subagent`, `dispatch`), the file-and-ledger commands, and `usage`: `check`, `record`, `assess`, `share`. Each takes its parsed flags and returns what to
 // print, so a test can drive it without a process. The pure parts stay where they were (check.mjs, ledger.mjs); this is
 // the I/O around them. None of them may fail an agent: an error becomes output, and the caller exits 0.
+import { warning } from "./warnings.mjs";
 import { commandTrace, decisionSpan, recordSpan, usageSpans } from "./traces.mjs";
 import { matchAdvice, readAdvice, readTask } from "./advice-file.mjs";
 import { answer, refusal } from "./output.mjs";
@@ -33,7 +34,7 @@ export function parseHeadroom(values) {
     const [k0 = "", v = ""] = String(h ?? "").split("="), k = k0.trim(), t = v.trim(), num = t.endsWith("%") ? t.slice(0, -1).trim() : t;
     const x = num && /^[0-9.]+$/.test(num) ? Number(num) / (t.endsWith("%") ? 100 : 1) : NaN;
     if (k && Number.isFinite(x) && x >= 0 && x <= 1) given[k] = x;
-    else notes.push(`--headroom ${h ?? ""} is not <subscription>=<a share from 0 to 1, or a percent>: ignored`);
+    else notes.push(warning("headroom_ignored", `--headroom ${h ?? ""} is not <subscription>=<a share from 0 to 1, or a percent>: ignored`));
   }
   return { given, notes };
 }
@@ -41,9 +42,10 @@ export function parseHeadroom(values) {
 // `routr subagent|dispatch "<brief>"`: the decision model's reading of the brief with the user's preferences, and for
 // dispatch the subscriptions ranked by usage, read while it answers. An unreachable model still gets an answer: the
 // user's fallback.
-async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read = readUsage } = {}) {
-  if (typeof brief !== "string" || !brief.trim()) return refusal("no advice", "empty brief", configNotes, [doNext("Supply the exact task", `routr ${mode} --task-file <path>`)]);
-  const out = { ok: true, warnings: configNotes, next: [], id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length, unavailable: [] };
+async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read = readUsage, warnings = [] } = {}) {
+  const callWarnings = [...configNotes, ...warnings];
+  if (typeof brief !== "string" || !brief.trim()) return refusal("no advice", "empty brief", callWarnings, [doNext("Supply the exact task", `routr ${mode} --task-file <path>`)]);
+  const out = { ok: true, warnings: callWarnings, next: [], id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length, unavailable: [] };
   const target = decisionTarget(config);
   let answered = false;
   let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };
@@ -107,7 +109,7 @@ async function checkCommandBody({ brief: briefFile, report: reportFile }, { askF
   catch { failedFile("report"); }
   if (out.unavailable.length) return answer(Object.assign(out, { headline: `routr: no reading (${out.unavailable.map((u) => `${u.part} unavailable: ${u.code}`).join("; ")}); judge the report yourself`, next: [doNext("Judge the report yourself against the brief")] }));
   try {
-    if (report.length < 200) out.warnings.push("this report is very short: make sure it is the worker's full report, not just its last message");
+    if (report.length < 200) out.warnings.push(warning("report_short", "this report is very short: make sure it is the worker's full report, not just its last message"));
     const r = await decisionSpan(config, () => askFn({ task: { brief }, report: { text: report } }, checkQuestions, { config }));
     out.unavailable.push(...(r.unavailable ?? []));
     Object.assign(out, readReport(r.answers), { ok: true, provider: r.provider, decision_model: r.model, ...(r.measured === false ? { unmeasured: true } : {}), ms: Math.round(r.latencyMs) });
@@ -147,7 +149,7 @@ function recordCommandBody(o, subagentFlags = [], config = null, { warnings = []
     append(entry, ledger, { revision: o.run_id != null });
     recordSpan(entry);
     return answer({ ok: true, headline: `routr: recorded run ${entry.run_id} (advice ${advice.id}) in ${ledger}`, id: advice.id, run_id: entry.run_id, ledger,
-      warnings: [...warnings, ...(o.task_file == null ? ["The advice was not checked against a task."] : [])],
+      warnings: [...warnings, ...(o.task_file == null ? [warning("advice_unchecked", "The advice was not checked against a task.")] : [])],
       next: [doNext(entry.outcome.verdict === "done" && entry.outcome.check === "pass"
         ? "Integrate the verified result, then follow launch’s cleanup step when this worker is finished."
         : "Send the work back or escalate, then verify and revise this row; no cleanup yet."),
@@ -224,13 +226,13 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
     if (fresh) {
       try { reading = await fresh({ background: flags.includes("--background") }); } catch { reading = { ok: false, ...usageFailure("read_failed") }; }
       out.ok = reading?.ok === true;
-      if (name === "kiro" && reading?.note) out.warnings.push("Kiro kept an empty usage session");
+      if (name === "kiro" && reading?.note) out.warnings.push(warning("kiro_session_left", "Kiro kept an empty usage session"));
       if (name === "kiro" && reading?.note) out.next.push(doNext("Inspect Kiro's saved sessions to remove the empty usage session"));
       if (out.ok) {
         const fields = name === "cursor" ? ["plan", "included_used_pct", "auto_used_pct", "api_used_pct", "headroom"] : ["plan", "credits_used", "credits_limit", "used_pct", "resets_at", "unrecognized_lines", "headroom"];
         out.reading = Object.fromEntries(fields.filter((k) => Object.hasOwn(reading, k)).map((k) => [k, reading[k]]));
       }
-      if (!configured.includes(name)) out.warnings.push(`${name} is not configured, so it is not ranked`);
+      if (!configured.includes(name)) out.warnings.push(warning("subscription_unconfigured", `${name} is not configured, so it is not ranked`));
     }
     const names = name ? configured.filter((n) => n === name) : configured;
     const subs = Object.fromEntries(names.map((n) => [n, config.subscriptions[n]]));

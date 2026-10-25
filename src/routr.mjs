@@ -36,6 +36,7 @@ const failed = (e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160)
 const { loadConfig } = await import("./lib/config.mjs");
 
 async function main() {
+const { warning } = await import("./lib/warnings.mjs");
 // The commands that act, each given its own arguments as typed. Each returns the exit code.
 const ACT = {
   launch: async (args) => { const r = await (await import("./lib/launch.mjs")).launch(args); print(r); return r.ok ? 0 : 1; },
@@ -110,7 +111,6 @@ const configPath = take("--config");
 // Every --headroom is taken off the line, even an empty one, so none can end up in the brief. A share (0.97) or a
 // percent (97%) is read; anything else is said in the answer, never dropped without a word.
 const { given, notes: inputNotes } = (await import("./lib/commands.mjs")).parseHeadroom(takeAll("--headroom"));
-const withNotes = (r) => (inputNotes.length && r && typeof r === "object" ? { ...r, warnings: [...(r.warnings ?? []), ...inputNotes] } : r);
 const leadInput = ["dispatch", "subagent"].includes(argv[0]) ? (await import("./lib/trace-context.mjs")).takeLeadSession(argv, { inline: !argv.includes("--task-file") }) : { args: [...argv], lead: null, warnings: [] };
 argv.splice(0, argv.length, ...leadInput.args); inputNotes.push(...leadInput.warnings);
 const leadSession = leadInput.lead;
@@ -125,7 +125,7 @@ if (["subagent", "dispatch", "check", "record", "assess", "share", "doctor", "us
 
 const commands = () => import("./lib/commands.mjs");
 const ADVISE = {
-  check: async () => print(withNotes(await (await commands()).checkCommand({ brief: take("--brief"), report: take("--report") }, { config: loaded().config, warnings: loaded().notes, otel: { configPath } }))),
+  check: async () => print(await (await commands()).checkCommand({ brief: take("--brief"), report: take("--report") }, { config: loaded().config, warnings: [...loaded().notes, ...inputNotes], otel: { configPath } })),
   assess: async () => console.log((await commands()).assessCommand({ ledger: take("--ledger") }, loaded().config)),
   share: async () => console.log((await commands()).shareCommand({ ledger: take("--ledger"), out: take("--out") }, loaded().config)),
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]
@@ -137,7 +137,7 @@ const ADVISE = {
     o.run_id = take("--run-id") ?? (revising ? "" : undefined); o.causes = takeAll("--cause");
     print((await commands()).recordCommand(o, takeAll("--subagent"), loaded().config, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } })); // never blocks the agent; the config resolves a "default" effort
   },
-  usage: async () => print(withNotes(await (await commands()).usageCommand(rest, loaded().config, given, { warnings: loaded().notes, otel: { configPath } })), 1), // never blocks an agent
+  usage: async () => print(await (await commands()).usageCommand(rest, loaded().config, given, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } }), 1), // never blocks an agent
   doctor: async () => (await import("./lib/doctor.mjs")).doctor({ json: rest.includes("--json"), configPath }),
 };
 if (ADVISE[mode]) { await ADVISE[mode](); return 0; }
@@ -154,7 +154,7 @@ if (rest.includes("--task-file")) {
     if (rest.length !== 2 || at !== 0) throw new Error("--task-file takes one path; quote the whole inline brief if it contains --task-file, or use --task-file <path>");
     const brief = (await import("./lib/advice-file.mjs")).readTask(rest[1]).trim();
     if (!brief) throw new Error("--task-file: the task must not be empty");
-    print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given, { lead: leadSession, otel: { configPath } })));
+    print(await (await commands()).adviseCommand(mode, brief, loaded(), given, { lead: leadSession, warnings: inputNotes, otel: { configPath } }));
   } catch (e) { briefRefusal(e.message); }
   return 0;
 }
@@ -172,12 +172,12 @@ if (unknownFlag && !setAside) {
   briefRefusal(`Unknown ${mode} flag: ${unknownFlag}. Quote an inline brief or use routr ${mode} --task-file <path>.`);
   return 0;
 }
-if (flagLike.length) inputNotes.push(setAside
+if (flagLike.length) inputNotes.push(warning("brief_flag", setAside
   ? `${flagLike.join(" ")}: not ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} takes, so ignored; the brief was read from stdin`
-  : `${flagLike.join(" ")} looks like ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} does not take; read as part of the brief`);
+  : `${flagLike.join(" ")} looks like ${flagLike.length > 1 ? "flags" : "a flag"} routr ${mode} does not take; read as part of the brief`));
 const brief = rest.length && !setAside ? rest.join(" ").trim() : piped;
 if (!brief) { briefRefusal("empty brief"); return 0; }
-print(withNotes(await (await commands()).adviseCommand(mode, brief, loaded(), given, { lead: leadSession, otel: { configPath } })));
+print(await (await commands()).adviseCommand(mode, brief, loaded(), given, { lead: leadSession, warnings: inputNotes, otel: { configPath } }));
 }
 
 }

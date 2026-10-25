@@ -98,7 +98,7 @@ test("trace and log resources use one in-memory UUIDv4 per process and OpenTelem
   expect(otel.otelResource({ home: scratch("otel-other-home") })["service.instance.id"]).toBe(r["service.instance.id"]);
 });
 
-test("the unused gauge identity helper lazily derives UUIDv5 from the persistent installation id", async () => {
+test("the gauge identity helper lazily derives UUIDv5 from the persistent installation id", async () => {
   const home = scratch("otel-gauge-id"), dir = join(home, ".local/state/routr"), file = join(dir, "service-instance-id");
   otel.otelResource({ home }); expect(existsSync(file)).toBe(false);
   mkdirSync(dir, { recursive: true });
@@ -495,7 +495,7 @@ test("saved header values stay out of every command's whole output, queued batch
   expect(readFileSync(ledger, "utf8")).not.toContain(marker);
   expect(JSON.stringify(telemetryRows(readLedger(ledger), "test-install"))).not.toContain(marker);
   otel.prepareOtel(f.opts); otel.otelSession(f.config, {}, f.opts).queue("traces", otel.encodeTraces([], { resource: otel.otelResource({ home: f.home }) }));
-  for (const name of readdirSync(join(f.root, "traces"))) expect(readFileSync(join(f.root, "traces", name), "utf8")).not.toContain(marker);
+  for (const signal of ["traces", "logs", "metrics"]) for (const name of readdirSync(join(f.root, signal))) expect(readFileSync(join(f.root, signal, name), "utf8")).not.toContain(marker);
 }, 20_000);
 
 test("each off switch leaves the command API completely inert", () => {

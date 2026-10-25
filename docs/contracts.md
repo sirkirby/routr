@@ -116,6 +116,9 @@ request to judge missing readings applies only to true fallback or unavailable u
 
 ### OpenTelemetry setup, headers and status
 
+Status counts waiting files across all three signal queues: traces, logs and metrics. Log and gauge fields are
+published in [OpenTelemetry's signal schema](opentelemetry.md#signals); command output fields are unchanged.
+
 `setup --otel-endpoint <url>` writes `otel: { endpoint, consent }` and starts the detached sender. It accepts HTTPS,
 or HTTP on loopback, without userinfo, query or fragment. It normalises trailing slashes, keeps a path prefix and
 appends `/v1/traces`, `/v1/logs` or `/v1/metrics` per signal. Every setting of the endpoint creates fresh consent,
@@ -143,7 +146,7 @@ result is `{ ok: false, key: "otel-headers", error }` with fixed wording and no 
 | `headers` | `"set"`, `"not set"` or `"invalid"`; never names or values |
 | `can_queue`, `queue_error` | Whether this process can queue; a fixed repair sentence for enabled but missing/unreadable folders or an uninstall, otherwise null |
 | `last_export` | null, or `{ at, ok, sent, refused, error }`: ISO time, success, accepted batches, refused batches, fixed failure code or null |
-| `queued_files` | Waiting batch files, excluding atomic temporary files and in-flight claims |
+| `queued_files` | Waiting trace/log batches and metric observation files, excluding atomic temporary files and in-flight claims |
 | `oldest_age_sec` | Age of the oldest waiting batch by file time, clamped at zero; null when empty |
 | `dropped_total` | Lifetime lost batches and explicitly rejected records |
 | `dropped_by_code` | Lifetime counts by fixed code; also includes `partial_warning` and `response_unreadable` diagnostics, which do not increase `dropped_total` |
@@ -1192,9 +1195,10 @@ attribute. Export-off command behavior and carrier forwarding are unchanged.
 Headless worker metadata saves `launch: { launch_id, traceId, spanId }` for a recorded sampled launch, or
 `launch: { sampled: false }` when an enabled launch inherits an unsampled parent. With export off at launch,
 `launch` is absent: the saved valid parent still supplies sampling and parentage after opt-in; only no valid
-parent creates sampled roots. An explicit unsampled decision or a valid unsampled saved parent keeps turns silent
-through later export changes. Later commands link only validated recorded launch ids. This is
-local worker metadata, not a public command field, and does not add anything to the record template. `workers` and `wait` may queue traces and start the sender when
+parent creates sampled roots. An explicit unsampled decision or a valid unsampled saved parent keeps turn spans
+and state-transition logs silent through later export changes. Holders queue no headroom observations. Later
+commands link only validated recorded launch ids. This is local worker metadata, not a public command field, and
+does not add anything to the record template. `workers` and `wait` may queue traces and start the sender when
 export is on. A dry-run launch may queue its planned span then, without executing its launch plan.
 
 The launch index contains entries only for workers that actually started (`ready`, `prompted`, `needs_input`).

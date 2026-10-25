@@ -1,4 +1,6 @@
 // The OTLP boundary: consent, encoding, queue and detached delivery. Separate from anonymous outcome telemetry (V10).
+import { SUBSCRIPTIONS, USAGE_WINDOWS, signalAttributes } from "./otel-schema.mjs";
+export { USAGE_WINDOWS } from "./otel-schema.mjs";
 import { LaunchIndex } from "./launch-index.mjs";
 import { otelSwitch } from "./otel-settings.mjs";
 export { otelEndpoint, otelSwitch } from "./otel-settings.mjs";
@@ -42,7 +44,7 @@ export const OTEL_RESOURCE_ATTRIBUTES = Object.freeze({ "service.name": "string"
 export const otelResource = ({ platform = process.platform } = {}) => resource(PROCESS_INSTANCE_ID, platform);
 
 // Stage 3's gauge has one stream per install, independent of whichever sender process holds the lock. Its UUIDv5
-// uses the convention's namespace and the persisted UUID's UTF-8 text as the name; no shipped caller uses it yet.
+// uses the convention's namespace and the persisted UUID's UTF-8 text as the name (Stage 2 prep).
 export function otelGaugeInstanceId({ home = userHome() } = {}) {
   const id = installInstanceId(home);
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(id)) throw new Error("invalid installation id");
@@ -102,6 +104,25 @@ function spanJson(s, attributeTypes) {
 export function encodeTraces(spans, { resource: r, scope, schemaUrl, attributeTypes } = {}) {
   return { resourceSpans: [{ resource: { attributes: otlpAttributes(r ?? otelResource()) },
     ...(schemaUrl ? { schemaUrl } : {}), scopeSpans: [{ scope: otlpScope(scope), spans: spans.map((s) => spanJson(s, attributeTypes)) }] }] };
+}
+
+export function encodeLogs(records, { resource: r, scope, schemaUrl, attributeTypes } = {}) {
+  return { resourceLogs: [{ resource: { attributes: otlpAttributes(r ?? otelResource()) }, ...(schemaUrl ? { schemaUrl } : {}),
+    scopeLogs: [{ scope: otlpScope(scope), logRecords: records.map((v) => ({ timeUnixNano: nanos(v.timeUnixNano), observedTimeUnixNano: nanos(v.observedTimeUnixNano ?? v.timeUnixNano), flags: integer(v.flags ?? 0), eventName: v.eventName,
+      severityNumber: integer(v.severityNumber), severityText: v.severityText, traceId: hex(v.traceId, 32), spanId: hex(v.spanId, 16), attributes: otlpAttributes(v.attributes, attributeTypes) })) }] }] };
+}
+
+// Exact projection for observations on disk as well as freshly read values; never trust a queue file's extra fields.
+export function headroomObservation(v) {
+  return SUBSCRIPTIONS.includes(v?.subscription) && USAGE_WINDOWS.includes(v.window)
+    && typeof v.value === "number" && Number.isFinite(v.value) && v.value >= 0 && v.value <= 1 && Number.isSafeInteger(v.time) && v.time > 0
+    ? { subscription: v.subscription, window: v.window, value: v.value, time: v.time } : null;
+}
+
+export function encodeHeadroom(observations, { resource: r, scope, schemaUrl } = {}) {
+  return { resourceMetrics: [{ resource: { attributes: otlpAttributes(r ?? otelResource()) }, ...(schemaUrl ? { schemaUrl } : {}),
+    scopeMetrics: [{ scope: otlpScope(scope), metrics: [{ name: "routr.subscription.headroom", unit: "1", gauge: { dataPoints: observations.map((v) => ({
+      timeUnixNano: nanos(BigInt(v.time) * 1000000n), asDouble: v.value, attributes: otlpAttributes(signalAttributes({ "routr.subscription": v.subscription, "routr.usage.window": v.window }, ["routr.subscription", "routr.usage.window"])) })) } }] }] }] };
 }
 
 export const newOtelConsent = () => randomBytes(16).toString("hex");
@@ -195,7 +216,7 @@ export function otelStatus(config, env = process.env, { home = userHome(), now =
     dropped_total: st.dropped_total ?? 0, dropped_by_code: st.dropped_by_code ?? {} };
 }
 
-const freshState = () => ({ attempt: 0, next_attempt_at: null, last_export: null, dropped_total: 0, dropped_by_code: {} });
+const freshState = () => ({ gauge_sent: {}, attempt: 0, next_attempt_at: null, last_export: null, dropped_total: 0, dropped_by_code: {} });
 function postOtel(url, body, headers, timeoutMs) {
   return new Promise((resolve) => {
     let done = false, req, timer;
@@ -256,9 +277,24 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
   const within = (limit) => monotonic() - began < limit && now() - beganWall < limit;
   const held = () => lockOwned(p.lock, token) && within(70_000) && !existsSync(p.uninstall);
   const st = { ...freshState(), ...readConfig(p.state) };
+  st.gauge_sent = st.gauge_sent && typeof st.gauge_sent === "object" && !Array.isArray(st.gauge_sent) ? st.gauge_sent : {};
   if (st.next_attempt_at != null && (!Number.isFinite(st.next_attempt_at) || st.next_attempt_at - now() > RETRY_CAP)) st.next_attempt_at = null;
   const save = () => { if (!held()) throw new Error("sender stopped"); write(p.state, st, { mkdir: false, mode: 0o600, preserveOnError: true }); };
   const remove = (file, code) => { if (!held()) throw 0; countDrop(st, code); save(); if (!held()) throw 0; unlinkSync(file); };
+  const discard = (file) => { if (!held()) throw 0; unlinkSync(file); };
+  const metricBatch = (nonce) => {
+    const latest = new Map();
+    for (const f of queued(p, "metrics")) {
+      if (f.nonce !== nonce) continue;
+      const observation = headroomObservation(readConfig(f.file));
+      if (!observation) { remove(f.file, "invalid_observation"); continue; }
+      const key = `${observation.subscription}/${observation.window}`, previous = latest.get(key);
+      if (observation.time <= (st.gauge_sent[key] ?? 0) || previous && observation.time <= previous.observation.time) { discard(f.file); continue; }
+      if (previous) discard(previous.file.file);
+      latest.set(key, { file: f, observation });
+    }
+    return [...latest.values()];
+  };
   const sweep = async () => {
     if (held()) new LaunchIndex({ home, now }).sweep();
     if (!held()) return;
@@ -315,16 +351,27 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
         st.last_export = { at: new Date(now()).toISOString(), ok: false, sent: 0, refused: 0, error: "headers_invalid" };
         save(); healthy = false; break; // no claim, no retry loop, and never store the rejected value
       }
-      const sending = `${file.file}.sending`;
-      if (!held()) break;
-      renameSync(file.file, sending);
+      let gaugeResource;
+      if (file.signal === "metrics") try { gaugeResource = resource(otelGaugeInstanceId({ home }), process.platform); }
+      catch {
+        st.last_export = { at: new Date(now()).toISOString(), ok: false, sent: 0, refused: 0, error: "gauge_identity_unavailable" };
+        save(); healthy = false; break; // Stage 3 review 6: no folding or claims until the stream's identity is known.
+      }
+      // Stage 3 decision 19: only this lock owner folds observations and writes each install/window stream.
+      const metrics = file.signal === "metrics" ? metricBatch(sw.consent.slice(0, 8)) : null;
+      if (metrics && !metrics.length) continue;
+      const files = metrics ? metrics.map((m) => m.file) : [file];
+      for (const f of files) { if (!held()) throw 0; renameSync(f.file, `${f.file}.sending`); }
+      const restore = () => { for (const f of files) { if (!held()) throw 0; renameSync(`${f.file}.sending`, f.file); } };
       const latest = readConfig(configFile); if (!latest) throw new Error("config unreadable");
       const current = otelSwitch(latest, env);
       if (!held() || current.consent !== sw.consent || current.endpoint !== sw.endpoint || file.nonce !== current.consent?.slice(0, 8)) {
-        if (held()) renameSync(sending, file.file);
+        if (held()) restore();
         break;
       }
-      const body = readFileSync(sending); if (!held()) break;
+      const body = metrics ? Buffer.from(JSON.stringify(encodeHeadroom(metrics.map((m) => m.observation), {
+        resource: gaugeResource, schemaUrl: "https://opentelemetry.io/schemas/1.44.0" }))) : readFileSync(`${file.file}.sending`);
+      if (!held()) break;
       const reply = await postOtel(new URL(`${sw.endpoint}/v1/${file.signal}`), body, headers, timeoutMs);
       // Review E: acknowledge the response under this lock before reading consent again. A broken config must stop
       // the next claim, not turn an accepted batch into an unnecessary resend.
@@ -340,10 +387,11 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
         st.attempt = 0; st.next_attempt_at = null;
         if (!ok) countDrop(st, code);
       }
-      save();
+      if (ok && metrics) for (const { observation: o } of metrics) st.gauge_sent[`${o.subscription}/${o.window}`] = o.time;
+      save(); // Persist watermarks before removing claims: a crash after this save skips their replay.
       if (!held()) break;
-      if (retry) { renameSync(sending, file.file); break; }
-      unlinkSync(sending);
+      if (retry) { restore(); break; }
+      for (const f of files) discard(`${f.file}.sending`);
     }
     await sweep(); // even an off exit removes every old-consent batch; only this process ever deletes queue files
   } catch { healthy = false; } // detached: no outside prose or response body is ever logged

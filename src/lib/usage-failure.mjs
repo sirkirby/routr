@@ -1,5 +1,6 @@
 // The usage boundary's vocabulary, shared by live readers and the snapshot writer/reader. Outside exception and
 // screen text never supplies a sentence. Unknown failures are read_failed; no caller parses a note to classify one.
+import { warning } from "./warnings.mjs";
 export const USAGE_FAILURES = Object.freeze({
   internal_error: "An internal error stopped routr from ranking usage.",
   read_failed: "routr could not read this usage source.",
@@ -28,7 +29,7 @@ export const STALE_SEC = 24 * 3600;
 export const staleReaders = (rows, config = {}) => rows
   .filter((r) => r.failure && r.signedIn !== false && r.headroom == null && r.class !== "metered" && config.subscriptions?.[r.pool]?.billing !== "metered"
     && r.ageSec != null && r.ageSec >= STALE_SEC)
-  .map((r) => ({ pool: r.pool, warning: `${r.pool}'s usage has not been read for ${Math.round(r.ageSec / 3600)} h, and its last try failed (${r.failure.code}), so routing assumes its headroom: an update of ${r.pool} or herdr may have changed what routr reads` }));
+  .map((r) => ({ pool: r.pool, warning: warning("usage_stale", `${r.pool}'s usage has not been read for ${Math.round(r.ageSec / 3600)} h, and its last try failed (${r.failure.code}), so routing assumes its headroom: an update of ${r.pool} or herdr may have changed what routr reads`) }));
 
 // Shared by reader diagnostics and command next steps; never tucked into a ranked row's note.
 export const USAGE_BY_HAND = {
