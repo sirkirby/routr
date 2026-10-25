@@ -182,6 +182,17 @@ A flag that routr cannot apply fails with the reason and changes nothing: a mode
 it does not take for that model, a harness that is not signed in (the error says what to run). A subscription turned
 off keeps every setting and gets no work, in dispatch or launch, until it is on again.
 
+OpenTelemetry export is separate from anonymous telemetry. Never turn it on unasked. If the person requests it,
+use their endpoint with `--otel-endpoint`: HTTPS, or HTTP on loopback, without userinfo or query; path prefixes are
+kept. Do not ask for or pass header values through your transcript: the person runs `routr key set otel-headers`,
+with hidden input or a pipe, for comma-separated OTLP `name=value` headers. `doctor` and `setup --show` report its
+status and whether headers are set, absent or invalid. `--otel-off` revokes queued batches through the detached
+sender. `--yes` alone never turns it on. `DO_NOT_TRACK` and CI do not turn it off; `OTEL_SDK_DISABLED=true` or
+`ROUTR_OTEL=0` do. After reinstall, a valid endpoint can remain on while its queue folders are missing: ordinary
+`routr setup` repairs them without changing consent. No signals are emitted yet; later signals will carry
+repository names, relative paths and ids. See
+[OpenTelemetry](https://github.com/sirkirby/routr/blob/main/docs/opentelemetry.md).
+
 ## 4. Claude usage (only if Claude Code is a subscription)
 
 Nothing to set up. routr reads Claude's usage from Claude's own `/usage` in each call (`claude -p /usage`: no tokens,
@@ -222,15 +233,6 @@ sent, and https://github.com/sirkirby/routr/blob/main/docs/telemetry.md has the 
 `routr telemetry on`. Do not ask again.
 
 ## 8. Confirm
-
-OpenTelemetry export is separate from anonymous telemetry. Never turn it on unasked. If the person requests it,
-use their endpoint with `--otel-endpoint`: HTTPS, or HTTP on loopback, without userinfo or query; path prefixes are
-kept. Do not ask for or pass header values through your transcript: the person runs `routr key set otel-headers`,
-with hidden input or a pipe, for comma-separated OTLP `name=value` headers. `doctor` and `setup --show` report its
-status and only whether headers are set. `--otel-off` revokes queued batches through the detached sender.
-`--yes` alone never turns it on. `DO_NOT_TRACK` and CI do not turn it off; `OTEL_SDK_DISABLED=true` or `ROUTR_OTEL=0`
-do. No signals are emitted yet; later signals will carry repository names, relative paths and ids. See
-[OpenTelemetry](https://github.com/sirkirby/routr/blob/main/docs/opentelemetry.md).
 
 Run doctor again, then one real call, and show the user the result:
 

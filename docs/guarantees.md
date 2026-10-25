@@ -12,7 +12,7 @@ yours (`doctor --fix` is `setup` under another name). What they do besides answe
 - keep routr's own bookkeeping under `~/.cache/routr` (which harnesses are signed in, when a usage source was last
   refreshed);
 - start one of routr's detached jobs and carry on: the updater, Cursor's or Kiro's usage refresh, or the
-  OpenTelemetry sender when export is configured. This change prepares the sender; no command emits signals yet.
+  OpenTelemetry sender when export is configured.
 
 They fail open: any error still prints usable output and exits 0. `dispatch`, `subagent` and `check` return
 `unavailable`, a list of the readings they could not make (`[]` when nothing was missing). Decision-model failures
@@ -140,9 +140,10 @@ writes only:
   and `~/.local/state/routr` (headless workers);
 - OpenTelemetry's per-signal queue, drop markers, sender state and lock under `~/.cache/routr/otel`. Trace and log
   resources use a random UUIDv4 per process, held only in memory, and write no identity file. The future gauge's
-  identity helper alone creates a random per-install id under `~/.local/state/routr/service-instance-id`, exclusively
-  published so concurrent first calls agree, and derives its UUIDv5 service instance id from it. No command calls
-  that helper yet. The sender alone removes queue files or changes delivery totals; secrets stay in the secrets file;
+  identity uses a random per-install id under `~/.local/state/routr/service-instance-id`, exclusively published so
+  concurrent first calls agree, and derives its UUIDv5 service instance id from it. Identity writes require an
+  existing state folder and stop during uninstall. The sender alone removes queue files or changes delivery totals;
+  secrets stay in the secrets file;
 - in your repository's git metadata, the worktree and branch a headless `launch --worktree` adds;
 - its own binary, when it updates itself;
 - the skill folders, on `skill install` (and the updater's reinstall);
