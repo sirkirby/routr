@@ -75,9 +75,15 @@ if (process.env.FAKE_ARGV) fs.appendFileSync(process.env.FAKE_ARGV, JSON.stringi
 const out = (o) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...o }) + "\\n");
 const log = (m, p) => process.env.FAKE_RPC && fs.appendFileSync(process.env.FAKE_RPC, JSON.stringify({ method: m, ...Object.fromEntries(Object.entries(p ?? {}).filter(([k]) => k !== "input")) }) + "\\n");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let thread = null, turn = null, n = 0, steered = 0, buf = "", busy = false, ended = false, nextSteer = null;
+let thread = null, turn = null, n = 0, steered = 0, buf = "", busy = false, ended = false, nextSteer = null, starting = false;
 async function run(id, text) {
   if (text.includes("CRASH")) process.exit(3);
+  if (process.env.FAKE_START_GATE && n > 0) {
+    if (starting) return out({ id, error: { code: -32600, message: "a turn is already starting" } });
+    starting = true; fs.writeFileSync(process.env.FAKE_START_PENDING, "");
+    for (let i = 0; i < 400 && !fs.existsSync(process.env.FAKE_START_GATE); i++) await sleep(50);
+    starting = false;
+  }
   busy = true; turn = "turn-" + (++n); steered = 0;
   out({ id, result: { turn: { id: turn, items: [], status: "inProgress" } } });
   out({ method: "turn/started", params: { threadId: thread, turn: { id: turn, items: [], status: "inProgress" } } });
@@ -1604,4 +1610,40 @@ test("a failed hand-over discards its prepared span before the next turn capture
     expect(rejected).toMatch(/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/);
     expect(turns.map(spanCarrier)).not.toContain(rejected);
   } finally { w.release(); w.run(["stop", "--name", "retry-context"]); await w.settled("retry-context"); w.run(["cleanup", "--worker", "retry-context"]); }
+}, 30000);
+
+test("an export-off holder reads no git identity until its first generated turn", async () => {
+  for (const enable of [false, true]) {
+    const w = observedTraceWorld(), reads = () => existsSync(join(w.home, "git-reads.jsonl")) ? readFileSync(join(w.home, "git-reads.jsonl"), "utf8").trim().split("\n").map(JSON.parse) : [];
+    writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: undefined }));
+    try {
+      expect(w.launch("lazy", w.task(`${BRIEF} HOLD BACKGROUND`)).ok).toBe(true);
+      expect(reads()).toEqual([]);
+      if (enable) writeFileSync(w.configPath, JSON.stringify(w.config));
+      w.release(); expect(await w.settled("lazy")).toBe(true);
+      expect(reads()).toHaveLength(enable ? 3 : 0);
+      expect(w.spans().filter((s) => s.name === "invoke_agent lazy")).toHaveLength(enable ? 1 : 0);
+    } finally { w.release(); w.run(["stop", "--name", "lazy"]); await w.settled("lazy"); w.run(["cleanup", "--worker", "lazy"]); }
+  }
+}, 30000);
+
+test("a refused concurrent Codex send preserves the first send's prepared turn context", async () => {
+  const w = traceWorld({ FAKE_STEER_NEXT: "1" });
+  w.env.FAKE_START_GATE = join(w.home, "start-gate"); w.env.FAKE_START_PENDING = join(w.home, "start-pending");
+  let peer;
+  try {
+    expect(w.launch("pending", w.task(`${BRIEF} HOLD`), [], undefined, "codex").ok).toBe(true);
+    const p = await probe(w.runDir("pending")); peer = await connect(w.runDir("pending"), p.gen, p.ready.endpoint);
+    const first = peer.request("send", { text: SENT }, 10000); first.catch(() => {});
+    expect(await until(() => existsSync(w.env.FAKE_START_PENDING))).toBe(true);
+    const prepared = rpcs(w).filter((r) => r.worker && r.method === "turn/start").at(-1).trace;
+    expect(await peer.request("send", { text: `${SENT} second` }, 10000)).toMatchObject({ code: "refused", why: "harness_refused" });
+    writeFileSync(w.env.FAKE_START_GATE, "");
+    expect(await first).toMatchObject({ code: "accepted" }); peer.close(); peer = null;
+    expect(await w.settled("pending")).toBe(true);
+    const turns = w.spans().filter((s) => s.name === "invoke_agent pending").sort((a, b) => wireAttrs(a)["routr.turn"] - wireAttrs(b)["routr.turn"]);
+    expect(turns).toHaveLength(2);
+    expect(spanCarrier(turns[1])).toBe(prepared.traceparent);
+    expect(turns.map((s) => wireAttrs(s)["routr.turn.messages"])).toEqual([1, 1]);
+  } finally { writeFileSync(w.env.FAKE_START_GATE, ""); w.release(); peer?.close(); w.run(["stop", "--name", "pending"]); await w.settled("pending"); w.run(["cleanup", "--worker", "pending"]); }
 }, 30000);

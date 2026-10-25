@@ -464,8 +464,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const turnTrace = () => (trace ??= newTurnTrace(st.turn + (inTurn ? 0 : 1)));
   const turnCarriers = () => turnTrace().carriers;
   const requestCarriers = () => { const t = turnTrace(); return t.generated ? t.carriers : {}; };
-  // A failed write/request did not start the prepared turn: its id, time and consent must not survive the retry.
-  const discardPrepared = (before) => { if (!inTurn && st.turn === before) trace = null; };
+  // Discard only context this send prepared; an earlier send can already own the pending turn.
+  const discardPrepared = (before, existing = null) => { if (!inTurn && st.turn === before && trace !== existing) trace = null; };
   const setRow = (patch) => ({ turns: [...st.turns.slice(0, -1), { ...turnRow(), ...patch }] });
   // One more message written into turn `n`, whether or not that turn is still running.
   const addDelivered = (n) => save({ turns: st.turns.map((t) => (t.turn === n ? { ...t, delivered: (t.delivered ?? 0) + 1 } : t)) });
@@ -670,9 +670,9 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
     else if (child && conn?.open()) {
       // The turn it goes into: the running one, or the next. Decided now, counted once it is in, which may be after the
       // harness has started that next turn.
-      const into = inTurn ? st.turn : null, before = st.turn, c = conn;
+      const into = inTurn ? st.turn : null, before = st.turn, c = conn, existing = trace;
       sending++;
-      let r; try { r = await c.send(m.text, inTurn); } finally { sending--; if (!r || ["refused", "unknown"].includes(r.code)) discardPrepared(before); }
+      let r; try { r = await c.send(m.text, inTurn); } finally { sending--; if (!r || ["refused", "unknown"].includes(r.code)) discardPrepared(before, existing); }
       // It said no, or ended before saying: no turn counts it, and it is not queued (it may have taken it).
       if (r && (r.code === "refused" || r.code === "unknown")) { maybeClose(); return { code: r.code, why: r.why }; }
       if (r) {

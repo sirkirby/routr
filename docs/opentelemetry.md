@@ -213,14 +213,15 @@ This also applies to older worker settings with no `launch` field. Each turn cap
 state and consent; its queue call re-reads them before writing. A holder started while export is off can emit
 turns begun after it is enabled. A turn whose consent changed writes nothing. Each finished turn writes its own
 batch after its report and outcome are saved, in a deferred callback while the holder is alive; export failure
-never changes its outcome or waits on network delivery. Git identity is captured once when the holder starts,
-before it takes any turn. A message taken into a running turn adds to that turn, without creating another span.
+never changes its outcome or waits on network delivery. Git identity is read lazily for the first generated
+turn and cached for that holder; an export-off holder runs no identity git reads. A message taken into a running
+turn adds to that turn, without creating another span.
 Spans remain in memory until queued: killing a holder loses its unqueued spans, including its in-flight turn's
 span. The next holder marks that interrupted turn `no_finish` in local state and does not reconstruct its span.
 
 The process environment carries the span that started that process: the launch for the first process, and the
 turn for a later process resuming the session. When no launch context was recorded, a process started for a
-recorded root turn gets that turn's span. Cursor starts a process per turn and gets that turn's span even
+recorded turn gets that turn's span. Cursor starts a process per turn and gets that turn's span even
 for its first process. A running process keeps its original environment. Codex's requests carry the current
 turn's `trace: {traceparent, tracestate}`, which takes precedence over the environment. Kiro's `session/prompt`
 carries the turn through ACP's reserved `_meta.traceparent`, `_meta.tracestate` and `_meta.baggage`; `session/new`
@@ -231,7 +232,7 @@ carriers unchanged. Absent carriers are omitted. `TRACESTATE` is forwarded only 
 valid inherited parent when routr generates context, and `BAGGAGE` remains unchanged.
 
 With its own tracing enabled, headless Claude nests under the span that started its process: the launch
-initially, or the resuming turn after a restart; a process started for a root turn nests under that root. Codex
+initially, or the resuming turn after a restart; a process started for a recorded turn nests under that turn. Codex
 nests under each turn through its request field. Cursor,
 Antigravity and Kiro read no context in the researched versions, so their own telemetry, if any, is not joined.
 ACP reserves the keys routr sends to Kiro; research finds that Kiro does not read them.

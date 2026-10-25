@@ -176,10 +176,11 @@ export const launchCarrierWarnings = (found) => found.withheld.map((n) => found.
   : carrierWithheld(n));
 // Stage 2 W3-3 and review 2b2: fresh consent per turn; missing launch uses saved-parent sampling, or a root without one.
 const WORKER_PROVIDERS = { claude: "anthropic", codex: "openai", cursor: "cursor", agy: "gcp.gen_ai", kiro: "kiro" };
-// A holder's cwd does not change: finish its git reads before it can take a turn (review 2b2 finding 3).
+// Read identity only for a generated turn, once per holder: export-off startup performs no git reads (review A).
 export function workerTracing(worker, options = {}) {
-  const identity = traceIdentity(worker.cwd).attributes;
-  return (number) => workerTurn(worker, number, { ...options, identity });
+  let identity;
+  const getIdentity = () => (identity ??= traceIdentity(worker.cwd).attributes);
+  return (number) => workerTurn(worker, number, { ...options, identity: getIdentity });
 }
 export function workerTurn(worker, number, { env = process.env, otel = {}, identity } = {}) {
   const saved = savedCarriers(worker.carriers).carriers;
@@ -191,7 +192,7 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
       const parent = launch ?? inherited;
       span = { name: `invoke_agent ${worker.name}`, kind: 3, traceId: parent?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"), ...(parent ? { parentSpanId: parent.spanId } : {}),
         flags: 1, startTimeUnixNano: nanos(), attributes: {} };
-      put(span, identity ?? traceIdentity(worker.cwd).attributes);
+      put(span, identity ? identity() : traceIdentity(worker.cwd).attributes);
       put(span, { "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": WORKER_PROVIDERS[worker.kind], "gen_ai.agent.name": worker.name,
         "routr.kind": pick(worker.kind, subscriptions), "routr.backend": "headless", "routr.launch.id": launch?.launch_id, "routr.model": modelName(worker.model), "routr.effort": pick(worker.effort, EFFORTS), "routr.turn": number });
     }
