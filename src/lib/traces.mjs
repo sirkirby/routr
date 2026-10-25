@@ -22,7 +22,7 @@ import { callHerdr, herdrId } from "./process-boundary.mjs";
 const context = new AsyncLocalStorage(), nanos = () => BigInt(Date.now()) * 1000000n;
 // A span's times: its start read from the wall clock once, every later time (its end, the logs taken from it) as that
 // start plus monotonic time since, so a clock change during a command or a long turn cannot make a duration negative
-// or inflate it (the plan's clock rule; from the review of 14a45ca).
+// or inflate it.
 export const spanClock = () => { const start = nanos(), mono = process.hrtime.bigint(); return { start, now: () => start + (process.hrtime.bigint() - mono) }; };
 const clocks = new WeakMap();
 const started = (span, clock = spanClock()) => { span.startTimeUnixNano = clock.start; clocks.set(span, clock); return span; };

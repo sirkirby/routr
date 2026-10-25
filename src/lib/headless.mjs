@@ -471,8 +471,8 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   const turnCarriers = () => turnTrace().carriers;
   const requestCarriers = () => { const t = turnTrace(); return t.generated ? t.carriers : {}; };
   // A context prepared between turns goes out with every send in flight, any of which may start that turn with it: a
-  // send that failed discards it only once no other send is still on its way in and none that got in carried it (from
-  // the review of 14a45ca: one failing send cleared the context another, still pending, had given Codex).
+  // send that failed discards it only once no other send is still on its way in and none that got in carried it, or
+  // the turn a pending send starts would get a span other than the context Codex was given.
   let keptTrace = null;
   const sent = (ok) => { if (inTurn || !trace) return; if (ok) keptTrace = trace; else if (!sending && trace !== keptTrace) trace = null; };
   const setRow = (patch) => ({ turns: [...st.turns.slice(0, -1), { ...turnRow(), ...patch }] });

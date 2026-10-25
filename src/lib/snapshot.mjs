@@ -40,8 +40,7 @@ const startRefresh = (name, token) => spawnSelf(["usage", name, "--background", 
 // old it is. Only the background reading (`--background`) holds the refresh lock, so only it releases it: a reading
 // asked for by hand must not free a lock a background reading still holds. The background reading takes over the lock
 // by the token its starter handed it, or reads nothing; it writes its snapshot and releases only while the lock is still
-// that one (from the review of 14a45ca: one paused past the lock's age overwrote a newer snapshot and removed the newer
-// refresh's lock).
+// that one: a refresh paused past the lock's age would otherwise overwrite a newer refresh's snapshot and remove its lock.
 // `ready()` gates the read: null to go ahead, or a harness not signed in. That is an exclusion, never a read failure.
 export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`, nowSec = now(), background = false, token, ready, version = ROUTR_VERSION }) {
   const owned = background && adoptLock(lock, token);

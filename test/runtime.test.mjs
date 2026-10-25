@@ -145,8 +145,8 @@ test("a guard whose owner crashed is reclaimed at once, and the lock behind it t
 });
 
 test("a taker paused between its last guard check and its move keeps its guard: no one else takes the lock meanwhile", () => {
-  // From the review of 14a45ca: A paused after its check; B reclaimed A's guard as expired and took the lock; A then
-  // moved B's live lock aside, and C took the empty path while B worked.
+  // With a guard that expired by age: A paused after its check; B reclaimed A's guard and took the lock; A then moved
+  // B's live lock aside, and C took the empty path while B worked.
   const file = join(scratch("paused-taker"), "job.lock"), guard = `${file}.takeover`, ago = new Date(Date.now() - 60_000);
   writeFileSync(file, "999999999");
   let b = false, c = false;
