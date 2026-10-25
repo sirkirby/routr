@@ -60,7 +60,7 @@ test("headers save and reload losslessly through the secrets file, with a distin
   const file = join(home, ".config/routr/env");
   expect(readFileSync(file, "utf8")).toContain("ROUTR_OTEL_HEADERS=%27name=ends%27,Authorization=Bearer%20HEADER_MARKER%2C%3D%23%22%25,tab=a%09b");
   expect(otel.otelHeaders(file)).toEqual({ "'name": "ends'", Authorization: 'Bearer HEADER_MARKER,=#"%', tab: "a\tb" });
-  for (const value of ["a=b,A=c", "a=%", "a=%FF", "a=%0d%0aHEADER_MARKER", "a=%1b", "a=é", "bad name=HEADER_MARKER", "missing", "content-type=x", "Content-Length=3", "HOST=x", "transfer-encoding=x", "connection=x", "Accept-Encoding=x"])
+  for (const value of ["a=b,A=c", "a=%", "a=%FF", "a=%0d%0aHEADER_MARKER", "a=%1b", "a=é", "a=\vHEADER_MARKER", "a=\fHEADER_MARKER", "a=\u00a0HEADER_MARKER", "\u00a0a=b", "a=b\u00a0", "bad name=HEADER_MARKER", "missing", "content-type=x", "Content-Length=3", "HOST=x", "transfer-encoding=x", "connection=x", "Accept-Encoding=x"])
     expect(() => otel.parseOtelHeaders(value)).toThrow("invalid OpenTelemetry headers");
   const bad = Bun.spawnSync([process.execPath, SCRIPT, "key", "set", "otel-headers"], { env, stdin: Buffer.from("a=%0dHEADER_MARKER\n") });
   expect(bad.exitCode).toBe(1);
@@ -204,7 +204,7 @@ test("the sender claims batches, POSTs JSON with saved headers, deletes accepted
 
 test("accepted responses count partial rejection and diagnostics without retaining response text", async () => {
   for (const [body, code, count] of [[JSON.stringify({ partialSuccess: { rejectedSpans: "3", errorMessage: "HEADER_MARKER" } }), "rejected", 3],
-    [JSON.stringify({ partialSuccess: { rejectedSpans: "0", errorMessage: "HEADER_MARKER" } }), "partial_warning", 1], ["not JSON HEADER_MARKER", "response_unreadable", 1], ["x".repeat(65537), "response_unreadable", 1]]) {
+    [JSON.stringify({ partialSuccess: { rejectedSpans: "0", errorMessage: "HEADER_MARKER" } }), "partial_warning", 1], ["", "response_unreadable", 1], ["not JSON HEADER_MARKER", "response_unreadable", 1], ["x".repeat(65537), "response_unreadable", 1]]) {
     const r = await receiver((req, res) => res.end(body));
     try {
       const f = install(r.endpoint); otel.prepareOtel(f.opts); otel.otelSession(f.config, {}, f.opts).queue("traces", {});

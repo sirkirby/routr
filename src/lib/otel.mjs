@@ -13,14 +13,15 @@ import { ROUTR_VERSION } from "./version.mjs";
 const RESERVED_HEADERS = new Set(["content-type", "content-length", "host", "transfer-encoding", "connection", "accept-encoding"]);
 // W3-5: only RFC3986's unreserved bytes survive storage, including in names. Quote stripping cannot alter a secret.
 const escaped = (s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+const trimHeader = (s) => s.replace(/^[ \t]+|[ \t]+$/g, ""); // W3-5: trim() would silently admit edge VT/FF or Unicode spaces
 export function parseOtelHeaders(text) {
   try {
-    if (typeof text !== "string" || !text.trim() || /[\r\n]/.test(text)) throw 0;
+    if (typeof text !== "string" || !trimHeader(text) || /[\r\n]/.test(text)) throw 0;
     const headers = Object.create(null), seen = new Set();
     for (const pair of text.split(",")) {
       const at = pair.indexOf("=");
       if (at < 1) throw 0;
-      const name = decodeURIComponent(pair.slice(0, at).trim()), value = decodeURIComponent(pair.slice(at + 1).trim()), lower = name.toLowerCase();
+      const name = decodeURIComponent(trimHeader(pair.slice(0, at))), value = decodeURIComponent(trimHeader(pair.slice(at + 1))), lower = name.toLowerCase();
       validateHeaderName(name);
       if (seen.has(lower) || RESERVED_HEADERS.has(lower) || /[^\x09\x20-\x7e]/.test(value)) throw 0;
       seen.add(lower); headers[name] = value;
@@ -215,7 +216,7 @@ function countDrop(st, code, n = 1) {
 function accepted(reply, signal) {
   if (reply.unreadable) return { code: "response_unreadable", count: 1 };
   try {
-    const body = reply.body ? JSON.parse(reply.body) : {};
+    const body = JSON.parse(reply.body);
     if (!body || typeof body !== "object" || Array.isArray(body)) throw 0;
     const partial = body.partialSuccess;
     if (!partial) return {};
