@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { encodeTraces } from "../src/lib/otel.mjs";
-import { checkSmokeTraces, fixtureHarness, fixturePaneRun, smokeOtel, smokeParent, guardSmoke, SMOKE_ACTIVE, smokeProcessRows, smokeProcessesIn, teardownSmoke } from "../scripts/smoke-otel.mjs";
+import { checkPaneTrace, paneFixtureDeps, checkSmokeTraces, fixtureHarness, fixturePaneRun, smokeOtel, smokeParent, guardSmoke, SMOKE_ACTIVE, smokeProcessRows, smokeProcessesIn, teardownSmoke } from "../scripts/smoke-otel.mjs";
 
 const span = { traceId: "4bf92f3577b34da6a3ce929d0e0e4736", spanId: "1234567890abcdef", parentSpanId: "00f067aa0ba902b7", flags: 1, name: "routr usage", kind: 1, startTimeUnixNano: "1", endTimeUnixNano: "2", attributes: {} };
 const batch = (s = span) => encodeTraces([s], { schemaUrl: "https://opentelemetry.io/schemas/1.44.0" });
@@ -97,4 +97,22 @@ test("teardown fails on survivors, unreadable process state or a pane it cannot 
   expect(killed).toEqual([]);
   expect(await teardownSmoke({ home: "/tmp/ro-one", holderPids: new Set([30]) }, { list: async () => [{ ...holder, command: "unrelated process" }] })).toEqual([]);
   expect(await teardownSmoke({ home: "/tmp/ro-one", senderPids: new Set([31]) }, { list: async () => [{ pid: 31, ppid: 1, command: "" }], pause: async () => {}, attempts: 1 })).not.toEqual([]);
+});
+
+test("the pane smoke bypasses installed model probes and captures the one split's arguments", async () => {
+  const split = ["pane", "split", "--env", `TRACEPARENT=${smokeParent}`], captured = [];
+  const deps = paneFixtureDeps("/fixture.mjs", { cwd: "/fixture-home", config: {}, env: {}, onSplit: (a) => captured.push(a), run: async () => ({ ok: true, data: { result: { pane: { pane_id: "w1:p2" } } } }) });
+  expect(await deps.models()).toBeNull(); expect(await deps.ready()).toBeNull();
+  await deps.run(split); split.push("changed");
+  expect(captured).toEqual([["pane", "split", "--env", `TRACEPARENT=${smokeParent}`]]);
+});
+
+test("the pane smoke verifies its generated launch carrier and cleanup link", () => {
+  const launched = { ...span, name: "routr launch", attributes: [{ key: "gen_ai.agent.name", value: { stringValue: "pane-fixture" } }] };
+  const cleaned = { ...span, spanId: "f".repeat(16), name: "routr cleanup", links: [{ traceId: span.traceId, spanId: span.spanId }] };
+  const split = ["pane", "split", "--env", `TRACEPARENT=00-${span.traceId}-${span.spanId}-01`];
+  expect(() => checkPaneTrace([launched, cleaned], split)).not.toThrow();
+  expect(() => checkPaneTrace([launched, cleaned], ["pane", "split", "--env", `TRACEPARENT=${smokeParent}`])).toThrow();
+  expect(() => checkPaneTrace([launched, { ...cleaned, links: [] }], split)).toThrow();
+  expect(() => checkPaneTrace([cleaned], split)).toThrow();
 });

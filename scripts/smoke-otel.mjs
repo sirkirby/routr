@@ -163,13 +163,13 @@ function makeFixture(bin) {
   }
   return script;
 }
-export function fixturePaneRun(fixture, { run = runHerdr, cwd, onPane = () => {}, runtime = process.execPath, shell = process.platform === "win32" ? "powershell" : "posix" } = {}) {
+export function fixturePaneRun(fixture, { run = runHerdr, cwd, onPane = () => {}, onSplit = () => {}, runtime = process.execPath, shell = process.platform === "win32" ? "powershell" : "posix" } = {}) {
   let splitAttempted = false;
   return async (a, ms) => {
     const ok = (result) => ({ ok: true, data: { result } });
     if (["worktree", "workspace", "tab"].includes(a[0]) && a[1] === "create") throw new Error("smoke:otel permits only its one pane split");
     if (a[0] === "pane" && a[1] === "split") {
-      check(!splitAttempted, "only one pane split is permitted"); splitAttempted = true;
+      check(!splitAttempted, "only one pane split is permitted"); splitAttempted = true; onSplit([...a]);
       const r = await run(a, ms), id = r?.data?.result?.pane?.pane_id;
       if (r?.ok && typeof id === "string") onPane(id); // Own it before launch can fail during readiness or queueing.
       return r;
@@ -183,11 +183,21 @@ export function fixturePaneRun(fixture, { run = runHerdr, cwd, onPane = () => {}
     return ok({});
   };
 }
+// Both readiness and models are fixture-owned: PATH in the smoke process is not the pane's PATH.
+export function paneFixtureDeps(fixture, { config, env, ...opts }) {
+  return { run: fixturePaneRun(fixture, opts), env: { ...env, HERDR_ENV: "1" }, settings: () => ({ config }), ready: async () => null, models: async () => null };
+}
+export function checkPaneTrace(spans, split) {
+  const launched = spans.find((s) => s.name === "routr launch" && s.attributes?.some((a) => a.key === "gen_ai.agent.name" && a.value?.stringValue === "pane-fixture"));
+  check(launched, "pane launch arrived");
+  check(split?.some((a, i) => split[i - 1] === "--env" && a === `TRACEPARENT=00-${launched.traceId}-${launched.spanId}-01`), "pane launch carrier");
+  check(spans.some((s) => s.name === "routr cleanup" && s.links?.some((l) => l.traceId === launched.traceId && l.spanId === launched.spanId)), "pane cleanup launch link");
+}
 async function runSmoke({ env: original, log }) {
   // Short homes on Darwin are necessary for its 103-byte Unix-socket address bound (headless p36 measurement).
   const home = mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "ro-")), bin = join(home, "bin"), batches = [], children = new Set();
   const never = ["PRIVATE_BRIEF_MARKER", "PRIVATE_REPORT_MARKER", "PRIVATE_REPLY_MARKER", "PRIVATE_NOTE_MARKER", "PRIVATE_HEADER_MARKER", "PRIVATE_KEY_MARKER", "PRIVATE_BAGGAGE_MARKER", "PRIVATE_SCREEN_MARKER"];
-  let hold = false, held = false, pane = null, server, env, cli, summary;
+  let hold = false, held = false, pane = null, paneSplit, server, env, cli, summary;
   const workerDir = join(home, ".local/state/routr/workers/fixture"), holderPids = new Set(), senderPids = new Set();
   const rememberProcesses = () => {
     const remember = (file, ids) => { try {
@@ -256,12 +266,11 @@ async function runSmoke({ env: original, log }) {
     if (original.HERDR_ENV === "1") {
       // Herdr's agent registry recognizes real harnesses, not a fixture. Only its pane operations are live; agent
       // protocol replies are fixture-owned and agent start runs the absolute fixture, so the server's PATH is irrelevant.
-      const run = fixturePaneRun(fixture, { cwd: home, onPane: (id) => { pane = id; } });
       const temporary = { HOME: home, USERPROFILE: home, ROUTR_OTEL: "1", OTEL_SDK_DISABLED: "false", ROUTR_NO_UPDATE: "1", ROUTR_NO_REFRESH: "1" };
       const previous = Object.fromEntries(Object.keys(temporary).map((k) => [k, process.env[k]]));
       try {
         Object.assign(process.env, temporary);
-        const deps = { run, env: { ...env, HERDR_ENV: "1" }, settings: () => ({ config }), ready: async () => null };
+        const deps = paneFixtureDeps(fixture, { config, env, cwd: home, onPane: (id) => { pane = id; }, onSplit: (a) => { paneSplit = a; } });
         const result = await launch([...base, "--name", "pane-fixture", "--direction", "right"], deps);
         check(result.ok, "pane fixture launch");
         const removed = await cleanup(["--pane", pane], deps); check(removed.ok, "pane fixture cleanup"); pane = null;
@@ -277,6 +286,7 @@ async function runSmoke({ env: original, log }) {
     hold = false; server.closeAllConnections();
     await cli(["usage", "--config", configPath]); await until(queueIdle, "recovery delivery");
     const checked = checkSmokeTraces(batches, { markers: never, counts: { "routr launch": original.HERDR_ENV === "1" ? 3 : 2, "routr send": 1, "routr wait": 2, "routr cleanup": original.HERDR_ENV === "1" ? 2 : 1, "routr record": 1, "routr usage": 2 } });
+    if (original.HERDR_ENV === "1") checkPaneTrace(checked.spans, paneSplit);
     check(checked.duplicates >= 1, "mid-batch recovery kept the same span ids");
     const launchSpan = checked.spans.find((s) => s.traceId === saved.launch.traceId && s.spanId === saved.launch.spanId);
     check(launchSpan, "headless launch arrived");
