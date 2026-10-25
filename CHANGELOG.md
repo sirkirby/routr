@@ -8,8 +8,8 @@ A short history of what changed in each routr release, one line per change. Each
 - Workers in a `--worktree` launch's pane now get the OpenTelemetry trace context too, and no pane launch opens picks
   up a stale one from the herdr server: each carrier routr does not pass is set empty there. (#<PR>)
 - Workers now get the OpenTelemetry trace context (`TRACEPARENT`, `TRACESTATE`, `BAGGAGE`) routr was started with,
-  unchanged: headless workers on every turn, and workers in a pane launch splits. A worktree's pane or an existing
-  pane gets none yet, and launch says so; output shows only `<forwarded>`, never a value. (#112)
+  unchanged: headless workers on every turn, and workers in a pane launch splits. An existing pane gets none, and
+  launch says so; output shows only `<forwarded>`, never a value. (#112)
 - Launch and Cursor's usage read no longer fail when herdr briefly cannot report a new pane's processes while its shell starts; they keep waiting, up to the command's timeout. (#111)
 - On Windows, a folder whose name has a curly quote (`Chris’s`) now reaches a PowerShell pane exactly, for launch and
   Cursor's usage read. A cmd pane gets no folder path that holds `%` or `!` (cmd expands them even inside quotes);
