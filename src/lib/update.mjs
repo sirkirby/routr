@@ -6,7 +6,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { loadConfig } from "./config.mjs";
-import { CACHE_DIR, ensureParent, lockIsStale, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
+import { CACHE_DIR, ensureParent, lockIsStale, lockToken, releaseFileLock, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
 import { forgetConsentUnlessOn, hoursAgo, sendRows, telemetryStatus } from "./telemetry.mjs";
 import { newer, ROUTR_VERSION } from "./version.mjs";
 
@@ -175,7 +175,8 @@ export async function lockedUpdate(opts = {}, { lock = LOCK(), run = update } = 
   if (opts.checkOnly) return run(opts);
   try { ensureParent(lock); } catch {}
   if (!takeLock(lock, (f) => lockIsStale(f))) return { ok: false, updated: false, error: `another routr update is running (${lock}): nothing was changed. Try again once it finishes` };
-  try { return await run(opts); } finally { rmSync(lock, { force: true }); }
+  const token = lockToken(lock);
+  try { return await run(opts); } finally { releaseFileLock(lock, token); }
 }
 
 // `self`, `fetchFn`, `spawn`, `isStandalone` and `current` are seams: a test drives a real swap on a scratch file, with no
@@ -304,6 +305,7 @@ export const updateRecord = (r, channel, at = new Date().toISOString()) =>
 export async function backgroundUpdate({ run = update } = {}) {
   ensureParent(LOCK());
   if (!takeLock(LOCK(), (f) => lockIsStale(f))) return; // one updater at a time
+  const token = lockToken(LOCK());
   try {
     writeFileSync(UPDATE_STAMP(), new Date().toISOString() + "\n"); // first, so a failing check is not retried on every command
     const { config } = loadConfig();
@@ -313,7 +315,7 @@ export async function backgroundUpdate({ run = update } = {}) {
     if (!updatesOn(config)) return;
     const r = await run({ channel: config.update_channel });
     writeFileSync(UPDATE_LOG(), JSON.stringify(updateRecord(r, config.update_channel)) + "\n");
-  } finally { rmSync(LOCK(), { force: true }); }
+  } finally { releaseFileLock(LOCK(), token); }
 }
 
 // Whether automatic updates are on and why not, when the daily job last checked, its last result, and the update it saw

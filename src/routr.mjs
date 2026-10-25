@@ -53,7 +53,7 @@ const ACT = {
   },
   uninstall: async (args) => {
     const r = await (await import("./lib/uninstall.mjs")).uninstall(args);
-    if (args.includes("--json")) print(r, 1); else if (r.error) console.error(r.error); else if (r.dry_run) print(r, 1); else if (r.note) console.log(r.note);
+    if (args.includes("--json")) print(r, 1); else if (r.error) console.error(r.error); else if (r.dry_run) print(r, 1); else if (r.note && !r.otel_sender_running) console.log(r.note);
     return r.ok ? 0 : 1;
   },
   // A person who stops the guided setup (Ctrl+C) has already been told nothing was written; 130 is the usual exit for it.

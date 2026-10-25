@@ -95,6 +95,7 @@ export function nextSteps(r) {
   // routr's folder holding files routr did not write is left as it is by install: the person clears it first.
   for (const k of r.skill.filter((x) => x.extra?.length)) steps.push(hasExtras(k.where, k.extra));
   if (r.telemetry?.needs_attention) steps.push("Telemetry is on but not sending: `routr telemetry status` says why (last_send, daily_send), and `routr telemetry send` sends now");
+  if (r.otel?.queue_error) steps.push(r.otel.queue_error);
   if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
   if (!r.herdr.path) steps.push("For workers in herdr panes, and to read Cursor's usage, install herdr (https://herdr.dev). Without it, workers run headless");
   else if (!r.herdr.skill) steps.push("Install herdr's agent skill: npx skills add herdrdev/herdr --skill herdr -g");
@@ -276,7 +277,7 @@ export function render(r) {
   const au = r.auto_update;
   if (r.otel) {
     const t = r.otel;
-    line("ok", `OpenTelemetry export ${t.on ? `on · ${t.endpoint_origin}` : `off: ${t.why_off}`} · headers ${t.headers} · queued ${t.queued_files} · oldest ${t.oldest_age_sec ?? "none"} s · dropped ${t.dropped_total}`);
+    line(t.queue_error ? "need" : "ok", `OpenTelemetry export ${t.on ? `on · ${t.endpoint_origin}` : `off: ${t.why_off}`} · headers ${t.headers} · queued ${t.queued_files} · oldest ${t.oldest_age_sec ?? "none"} s · dropped ${t.dropped_total}${t.queue_error ? ` · ${t.queue_error}` : ""}`);
     if (t.last_export) line(t.last_export.ok ? "ok" : "need", `OpenTelemetry last export ${t.last_export.at}: ${t.last_export.sent} sent, ${t.last_export.refused} refused${t.last_export.error ? ` · ${t.last_export.error}` : ""}`);
     if (Object.keys(t.dropped_by_code).length) line("ok", `OpenTelemetry counts ${JSON.stringify(t.dropped_by_code)}`);
   }

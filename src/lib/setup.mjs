@@ -3,7 +3,7 @@
 // through its own `/usage` (usage.mjs), so routr no longer needs Claude's statusline slot. `--no-statusline` is
 // still accepted, and does nothing, for scripts written for an older routr.
 // A person gets questions; an agent passes `--yes` and the choices it settled with the user as flags. Same code, same file.
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { ACCOUNT_USE, CONFIG_PATH, loadConfig, SUB_DEFAULTS, UPDATE_CHANNELS } from "./config.mjs";
 import { LEVELS } from "./questions.mjs";
 import { settingSummary } from "./wording.mjs";
@@ -11,7 +11,7 @@ import { envOff, setTelemetry } from "./telemetry.mjs";
 import { inspect, paint, render, skillsIncomplete, skillsMissing, starterConfig } from "./doctor.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { setKey } from "./key.mjs";
-import { ensureParent, standalone } from "./runtime.mjs";
+import { standalone, writeJsonAtomic } from "./runtime.mjs";
 import { updatesOff } from "./update.mjs";
 import { installSkill } from "./skill-install.mjs";
 import { askDecision, decisionLabel, guided } from "./setup-guided.mjs";
@@ -19,7 +19,7 @@ import { decisionTarget, decisionTargets, decisionSettings, PROVIDER_NAMES, PROV
 import { secretsFor } from "./systemone.mjs";
 import { CANCEL, createUI } from "./tui.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
-import { newOtelConsent, otelEndpoint, otelStatus, prepareOtel, startOtelSender } from "./otel.mjs";
+import { newOtelConsent, otelEndpoint, otelStatus, otelSwitch, prepareOtel, startOtelSender } from "./otel.mjs";
 
 // `--model claude=sonnet --model codex=<id>`: repeatable name=id pairs.
 export function parseModels(args) {
@@ -130,12 +130,18 @@ export async function meteredRanks(fresh, harnesses, ranks, ask) {
 // in the tui's accessible mode, or `ui`, a ready-made tui), each harness's effort levels (`efforts`), and each step that
 // writes outside the config (the skill, the telemetry state, the key), and whether a provider's key is saved (`hasKey`).
 export async function setup(args, { inspect: look = inspect, question, interactive: tty = Boolean(process.stdin.isTTY), env = process.env,
-  install = installSkill, share: shareOn = setTelemetry, key = setKey, hasKey = (provider) => { try { secretsFor(provider, { env }); return true; } catch { return false; } }, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI, isStandalone = standalone, otelStart = startOtelSender, otelHome } = {}) {
+  install = installSkill, share: shareOn = setTelemetry, key = setKey, hasKey = (provider) => { try { secretsFor(provider, { env }); return true; } catch { return false; } }, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI, isStandalone = standalone, otelStart = startOtelSender, otelHome, writeConfig = writeJsonAtomic } = {}) {
   const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   const path = flag("--config") ?? CONFIG_PATH;
   const interactive = tty && !args.includes("--yes");
   const say = (s) => { if (!args.includes("--json")) print(s); };
   const did = [], skipped = [];
+  const repairQueue = (config) => {
+    if (!otelSwitch(config, {}).on) return;
+    const problem = otelStatus(config, {}, { home: otelHome }).queue_error;
+    if (prepareOtel({ home: otelHome })) { if (problem) did.push("repaired OpenTelemetry queue folders"); }
+    else if (problem) skipped.push(problem);
+  };
   let otelEndpointValue;
   const otelOff = args.includes("--otel-off"), otelSet = args.includes("--otel-endpoint");
   if (otelOff && otelSet) return { ok: false, error: "choose --otel-endpoint or --otel-off, not both" };
@@ -254,6 +260,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     choices = await guided({ ui, r, config, efforts: levelsOf, telemetry: !telemetryAsked && !envOff(env), decided: decision ?? null });
     if (choices === CANCEL) { return stopped(); }
     if (!choices.write) {
+      repairQueue(config);
       if (skillStep()) { if (did.length) ui.note("Done", did); if (skillFailures.length) ui.note("Failed", skillFailures); }
       ui.outro("Your settings did not change."); ui.close();
       return { ok: true, did, skipped: [...skipped, ...leftOut, "nothing changed"], config: path, next_steps: r.next_steps, ...failure() };
@@ -354,13 +361,12 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   }
   if (changed.length) did.push(`changed ${changed.join(", ")}`);
   if (!r.config.exists || args.includes("--force") || fresh.length || changed.length) {
-    ensureParent(path);
     if (r.config.exists) copyFileSync(path, `${path}.bak`);
-    writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+    writeConfig(path, config);
     did.push(`wrote ${path}${fresh.length ? ` with ${fresh.join(", ")}` : changed.length ? "" : " (no harness found yet: run `routr setup` again after installing one)"}`);
   } else skipped.push(`config ${path} already covers every harness found: kept as it is`);
+  repairQueue(config);
   if (otelChanged) {
-    if (!otelOff) prepareOtel({ home: otelHome });
     otelStart({ home: otelHome, configPath: path }); // V4: only the sender removes old-consent files, including on off
   }
   if (channelMoved) did.push(channelNote(channel, ROUTR_VERSION, isStandalone(), updatesOff(config, { isStandalone, env }))); // what happens next; setup itself updates nothing

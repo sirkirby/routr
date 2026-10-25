@@ -5,7 +5,7 @@ import { LEVELS } from "./questions.mjs";
 import { HARDEST, NO_CONFIG, RESERVE } from "./wording.mjs";
 import { home } from "./runtime.mjs";
 import { DEFAULT_PROVIDER, decisionSettings } from "./providers.mjs";
-import { otelSwitch } from "./otel.mjs";
+import { otelSwitch } from "./otel-settings.mjs";
 
 export const CONFIG_PATH = join(home(), ".config/routr/config.json");
 export const DEFAULTS = {

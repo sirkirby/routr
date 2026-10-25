@@ -14,7 +14,7 @@ import { answer } from "./output.mjs";
 import { CLOSING, count, OFF } from "./wording.mjs";
 import { callGit } from "./process-boundary.mjs";
 import { dropCopy } from "./cleanup.mjs";
-import { CARRIERS, carriersFrom, carrierWithheld, ensureParent, folderId, FORWARDED, home, lockIsStale, probe as runProbe, realOr, realPath, savedCarriers, spawnSelf, takeLock } from "./runtime.mjs";
+import { CARRIERS, carriersFrom, carrierWithheld, ensureParent, folderId, FORWARDED, home, lockIsStale, lockOwned, lockToken, releaseFileLock, probe as runProbe, realOr, realPath, savedCarriers, spawnSelf, takeLock } from "./runtime.mjs";
 
 const NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const RUNNING = new Set(["working", "waiting", "starting"]);
@@ -47,8 +47,9 @@ const PATH_TOO_LONG = NOT_STARTED({ released: { why: "path_too_long" } });
 async function locked(name, fn) {
   const file = join(WORKERS_DIR(), `${name}.lock`);
   for (let i = 0; i < 50 && !takeLock(file, lockIsStale); i++) await sleep(100);
-  if (!existsSync(file) || Number(readFileSync(file, "utf8")) !== process.pid) throw new Error(`another routr command is starting or removing ${name}; run it again in a moment`);
-  try { return await fn(); } finally { try { rmSync(file, { force: true }); } catch {} }
+  const token = lockToken(file);
+  if (!lockOwned(file, token)) throw new Error(`another routr command is starting or removing ${name}; run it again in a moment`);
+  try { return await fn(); } finally { releaseFileLock(file, token); }
 }
 // Start the next holder of a worker (launch, or send to an idle one) and wait until its channel answers. Under the lock.
 async function becomeHolder(name, { spawn = spawnSelf, timeoutMs = 15000 } = {}) {

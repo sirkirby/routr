@@ -671,7 +671,7 @@ test("the refresh lock lets one caller in at a time and gives up a lock left by 
   expect(takeLock(lock, stale())).toBe(true);
   expect(takeLock(lock, stale())).toBe(false); // a second call in the burst
   expect(takeLock(lock, stale(Date.now() + 121 * 1000))).toBe(true); // older than any reading can take
-  expect(readFileSync(lock, "utf8")).toBe(String(process.pid));
+  expect(JSON.parse(readFileSync(lock, "utf8"))).toMatchObject({ pid: process.pid, token: expect.stringMatching(/^[a-f0-9-]{36}$/) });
   expect(takeLock(join(dir, "missing", "x.lock"), stale())).toBe(false); // cannot write: no lock, so no refresh
 });
 

@@ -1,13 +1,47 @@
 // runtime.mjs: every process routr starts, and the environment a harness read gets
 import { expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, win32 } from "node:path";
 import { cmdArg, cmdLine, ensureParent, harnessEnv, npmShimScript, probe, resolveCommand, run, start, startOptions, startSync, stop, windowsCommand } from "../src/lib/runtime.mjs";
 import * as runtime from "../src/lib/runtime.mjs";
 import { openTerminal } from "../src/lib/terminal.mjs";
 import { runHerdr } from "../src/lib/herdr.mjs";
 import { cliEnv, CONFIG_ENV, fakeExecutable, LEAD_ENV, npmShim, scratch } from "./helpers.mjs";
+
+test("two takers observing the same stale lock admit only one, with a token the loser cannot release", () => {
+  const file = join(scratch("stale-lock-race"), "job.lock"); writeFileSync(file, "999999999");
+  let second = false;
+  const first = runtime.takeLock(file, () => true, { rename: (from, to) => {
+    second = runtime.takeLock(file, () => true);
+    renameSync(from, to);
+  } });
+  expect(second).toBe(true); expect(first).toBe(false);
+  const owner = JSON.parse(readFileSync(file, "utf8"));
+  const token = owner.token;
+  expect(runtime.lockOwned(file, token)).toBe(true);
+  expect(owner).toMatchObject({ pid: process.pid, token: expect.stringMatching(/^[a-f0-9-]{36}$/) });
+  expect(runtime.lockOwned(file, "another-token")).toBe(false);
+  expect(runtime.releaseFileLock(file, "another-token")).toBe(false); expect(existsSync(file)).toBe(true);
+  expect(runtime.lockOwned(file, token)).toBe(true);
+  expect(runtime.releaseFileLock(file, token)).toBe(true); expect(existsSync(file)).toBe(false);
+});
+
+test("real processes racing over the same observed stale lock elect one owner", async () => {
+  const dir = scratch("stale-lock-processes"), file = join(dir, "job.lock"); writeFileSync(file, "999999999");
+  const children = Array.from({ length: 2 }, () => Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/lock-taker.mjs"), file, dir], { env: cliEnv(dir), stdout: "pipe", stderr: "pipe" }));
+  try {
+    const until = Date.now() + 10_000;
+    while (readdirSync(dir).filter((n) => n.startsWith("ready-")).length < 2) {
+      if (Date.now() > until) throw new Error("lock test start timed out");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    writeFileSync(join(dir, "go"), "go");
+    const answers = await Promise.all(children.map(async (p) => { expect(await p.exited).toBe(0); return JSON.parse(await new Response(p.stdout).text()); }));
+    expect(answers.filter((r) => r.won)).toHaveLength(1);
+    expect(JSON.parse(readFileSync(file, "utf8")).token).toBe(answers.find((r) => r.won).token);
+  } finally { for (const p of children) p.kill(); }
+}, 20_000);
 
 test("the Windows fake herdr forwards a multiline worker prompt without a batch-shell parse", () => {
   const dir = scratch("fake-herdr-prompt"), root = "C:\\fake-tools";

@@ -1,5 +1,6 @@
 // The OTLP boundary: consent, encoding, queue and detached delivery. Separate from anonymous outcome telemetry (V10).
-import { isIP } from "node:net";
+import { otelSwitch } from "./otel-settings.mjs";
+export { otelEndpoint, otelSwitch } from "./otel-settings.mjs";
 import { request as httpRequest, validateHeaderName } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { readSecretsFile } from "./systemone.mjs";
@@ -7,10 +8,10 @@ import { SECRETS_FILE } from "./providers.mjs";
 import { existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { folderId, home as userHome, lockIsStale, olderThan, spawnSelf, takeLock, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
+import { home as userHome, lockIsStale, lockOwned, olderThan, releaseFileLock, spawnSelf, takeLock, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
-const RESERVED_HEADERS = new Set(["content-type", "content-length", "host", "transfer-encoding", "connection", "accept-encoding"]);
+const RESERVED_HEADERS = new Set(["content-type", "content-length", "host", "transfer-encoding", "connection", "accept-encoding", "content-encoding", "te", "upgrade", "expect", "trailer", "keep-alive"]);
 // W3-5: only RFC3986's unreserved bytes survive storage, including in names. Quote stripping cannot alter a secret.
 const escaped = (s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
 const trimHeader = (s) => s.replace(/^[ \t]+|[ \t]+$/g, ""); // W3-5: trim() would silently admit edge VT/FF or Unicode spaces
@@ -34,26 +35,6 @@ export function otelHeaders(file = SECRETS_FILE) {
   return text === undefined ? {} : parseOtelHeaders(text).headers; // V11: never read the environment for this secret
 }
 
-export function otelEndpoint(value) {
-  try {
-    if (typeof value !== "string" || /[\s?#\\]/.test(value)) throw 0;
-    const u = new URL(value), host = u.hostname.replace(/^\[|\]$/g, "");
-    const loopback = host === "localhost" || host === "::1" || (isIP(host) === 4 && host.startsWith("127."));
-    if ((u.protocol !== "https:" && !(u.protocol === "http:" && loopback)) || u.username || u.password || /\/\/[^/]*@/.test(value)) throw 0;
-    return u.href.replace(/\/+$/, "");
-  } catch { throw new Error("invalid OpenTelemetry endpoint: use https, or http on loopback, without userinfo, query or fragment"); }
-}
-
-export function otelSwitch(config, env = process.env) {
-  let why = null, endpoint = null;
-  if (String(env.OTEL_SDK_DISABLED).toLowerCase() === "true") why = "OTEL_SDK_DISABLED=true";
-  else if (env.ROUTR_OTEL === "0") why = "ROUTR_OTEL=0";
-  else if (!config?.otel?.endpoint) why = "no endpoint configured";
-  else if (!/^[0-9a-f]{32}$/.test(config.otel.consent ?? "")) why = "missing or malformed consent";
-  else try { endpoint = otelEndpoint(config.otel.endpoint); } catch { why = "invalid endpoint"; }
-  return { on: !why, why_off: why, endpoint, consent: why ? null : config.otel.consent };
-}
-
 // Stage 2 prep amendment, core semconv 1.44.0: an application process is an instance. No identity file for traces/logs.
 const PROCESS_INSTANCE_ID = randomUUID();
 export const otelResource = ({ platform = process.platform } = {}) => resource(PROCESS_INSTANCE_ID, platform);
@@ -69,14 +50,16 @@ export function otelGaugeInstanceId({ home = userHome() } = {}) {
 }
 function installInstanceId(home) {
   const dir = join(home, ".local/state/routr"), file = join(dir, "service-instance-id");
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const permitted = () => { if (existsSync(UNINSTALL_LOCK(home)) || !lstatSync(dir).isDirectory()) throw new Error("gauge identity unavailable during uninstall or without its state folder"); };
+  permitted();
   try { return readFileSync(file, "utf8").trim(); } catch (e) { if (e?.code !== "ENOENT") throw e; }
   // Exclusive publication of a complete id: opening the final file with wx exposes an empty file to the other first
   // run (W3-8). A hard link creates exclusively too, but no reader can see the id before its bytes are written.
   const tmp = `${file}.tmp.${process.pid}.${randomUUID()}`;
+  permitted();
   writeFileSync(tmp, randomUUID(), { flag: "wx", mode: 0o600 });
-  try { try { linkSync(tmp, file); } catch (e) { if (e?.code !== "EEXIST") throw e; } }
-  finally { unlinkSync(tmp); }
+  try { permitted(); try { linkSync(tmp, file); } catch (e) { if (e?.code !== "EEXIST") throw e; } }
+  finally { try { unlinkSync(tmp); } catch (e) { if (e?.code !== "ENOENT") throw e; } }
   return readFileSync(file, "utf8").trim();
 }
 const resource = (id, platform) => {
@@ -121,7 +104,7 @@ export function encodeTraces(spans, { resource: r, scope, schemaUrl } = {}) {
 
 export const newOtelConsent = () => randomBytes(16).toString("hex");
 
-const SIGNALS = ["traces", "logs", "metrics"], CAP = 10 * 1024 * 1024, WEEK = 7 * 86400_000;
+const SIGNALS = ["traces", "logs", "metrics"], CAP = 10 * 1024 * 1024, WEEK = 7 * 86400_000, RETRY_CAP = 3600_000;
 const UUID = "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}";
 const BATCH = new RegExp(`^(\\d+)-([a-f0-9]{8})-(${UUID})\\.json$`), DROP = new RegExp(`^${UUID}\\.json$`);
 const paths = (home = userHome()) => {
@@ -129,7 +112,8 @@ const paths = (home = userHome()) => {
   return { root, lock: join(root, "sender.lock"), state: join(root, "sender.json"), secrets: join(home, ".config/routr/env"), config: join(home, ".config/routr/config.json"), uninstall: UNINSTALL_LOCK(home) };
 };
 const names = (dir) => { try { return readdirSync(dir); } catch (e) { if (e?.code === "ENOENT") return []; throw e; } };
-const readConfig = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return {}; } };
+const readConfig = (file) => { try { const v = JSON.parse(readFileSync(file, "utf8")); return v && typeof v === "object" && !Array.isArray(v) ? v : null; } catch { return null; } };
+const statPresent = (file, stat = lstatSync) => { try { return stat(file); } catch (e) { if (e?.code === "ENOENT") return null; throw e; } };
 function queued(p, signal) {
   const dir = join(p.root, signal);
   return names(dir).filter((n) => BATCH.test(n)).flatMap((name) => {
@@ -144,7 +128,11 @@ export function prepareOtel({ home = userHome(), sender = false } = {}) {
   const p = paths(home);
   try {
     if (existsSync(p.uninstall)) return false;
-    if (!sender) mkdirSync(p.root, { recursive: true, mode: 0o700 });
+    if (!sender) {
+      mkdirSync(p.root, { recursive: true, mode: 0o700 });
+      if (existsSync(p.uninstall)) return false;
+      mkdirSync(join(home, ".local/state/routr"), { recursive: true, mode: 0o700 });
+    }
     if (!lstatSync(p.root).isDirectory()) return false;
     for (const name of [...SIGNALS, "drops"]) {
       if (existsSync(p.uninstall)) return false;
@@ -186,11 +174,17 @@ export function otelSession(config, env = process.env, opts = {}) {
 }
 
 export function otelStatus(config, env = process.env, { home = userHome(), now = Date.now } = {}) {
-  const p = paths(home), sw = otelSwitch(config, env), st = readConfig(p.state);
+  const p = paths(home), sw = otelSwitch(config, env), st = readConfig(p.state) ?? {};
   let files = [], headers = "not set";
   try { files = SIGNALS.flatMap((s) => queued(p, s)); } catch {}
-  try { if (Object.keys(otelHeaders(p.secrets)).length) headers = "set"; } catch {}
-  return { on: sw.on, why_off: sw.why_off, endpoint_origin: sw.endpoint ? new URL(sw.endpoint).origin : null, headers,
+  try { if (Object.keys(otelHeaders(p.secrets)).length) headers = "set"; } catch { headers = "invalid"; }
+  let queueError = null;
+  if (sw.on) {
+    if (existsSync(p.uninstall)) queueError = "OpenTelemetry queue is unavailable during uninstall; run routr setup after it finishes";
+    else try { if (![p.root, ...[...SIGNALS, "drops"].map((s) => join(p.root, s))].every((dir) => lstatSync(dir).isDirectory())) throw 0; }
+    catch { queueError = "OpenTelemetry queue folders are missing or unreadable: run routr setup to repair them"; }
+  }
+  return { on: sw.on, why_off: sw.why_off, endpoint_origin: sw.endpoint ? new URL(sw.endpoint).origin : null, headers, can_queue: sw.on && !queueError, queue_error: queueError,
     last_export: st.last_export ?? null, queued_files: files.length, oldest_age_sec: files.length ? Math.max(0, Math.floor((now() - files.reduce((oldest, f) => Math.min(oldest, f.mtime), Infinity)) / 1000)) : null,
     dropped_total: st.dropped_total ?? 0, dropped_by_code: st.dropped_by_code ?? {} };
 }
@@ -241,31 +235,35 @@ function accepted(reply, signal) {
 }
 const retryAfterMs = (value, now) => {
   if (typeof value !== "string") return 0;
-  if (/^\d+$/.test(value)) return Number.isSafeInteger(Number(value) * 1000) ? Number(value) * 1000 : 0;
-  const t = Date.parse(value); return Number.isFinite(t) ? Math.max(0, t - now) : 0;
+  if (/^\d+$/.test(value)) return Math.min(RETRY_CAP, Number(value) * 1000);
+  const t = Date.parse(value); return Number.isFinite(t) ? Math.min(RETRY_CAP, Math.max(0, t - now)) : 0;
 };
-export async function sendOtel({ home = userHome(), configPath, env = process.env, write = writeJsonAtomic, timeoutMs = 10_000, now = Date.now, random = Math.random, capBytes = CAP, release = unlinkSync, monotonic = () => performance.now(), began = monotonic() } = {}) {
+export async function sendOtel({ home = userHome(), configPath, env = process.env, write = writeJsonAtomic, timeoutMs = 10_000, now = Date.now, random = Math.random, capBytes = CAP, release, stat = lstatSync, monotonic = () => performance.now(), began = monotonic(), beganWall = now(), sweepOnly = false } = {}) {
   const p = paths(home), configFile = configPath ?? p.config;
+  if (!readConfig(configFile)) return; // Review 2: unknown config is not a revocation; leave every queued file alone
   if (existsSync(p.uninstall)) return;
   if (!existsSync(p.root)) return; // V4: a delayed detached start after uninstall must not recreate the cache
   if (otelSwitch(readConfig(configFile), env).on && !prepareOtel({ home, sender: true })) return;
-  if (!takeLock(p.lock, (f) => olderThan(5 * 60_000)(f) || lockIsStale(f))) return;
-  const lockId = folderId(p.lock, { link: true });
+  const token = randomUUID();
+  if (!takeLock(p.lock, (f) => olderThan(5 * 60_000)(f) || lockIsStale(f), { token })) return;
   let healthy = true;
-  const held = () => lockId && folderId(p.lock, { link: true }) === lockId && !existsSync(p.uninstall);
+  const within = (limit) => monotonic() - began < limit && now() - beganWall < limit;
+  const held = () => lockOwned(p.lock, token) && within(70_000) && !existsSync(p.uninstall);
   const st = { ...freshState(), ...readConfig(p.state) };
+  if (st.next_attempt_at != null && (!Number.isFinite(st.next_attempt_at) || st.next_attempt_at - now() > RETRY_CAP)) st.next_attempt_at = null;
   const save = () => { if (!held()) throw new Error("sender stopped"); write(p.state, st, { mkdir: false, mode: 0o600, preserveOnError: true }); };
-  const remove = (file, code) => { if (!held()) throw 0; countDrop(st, code); save(); unlinkSync(file); };
+  const remove = (file, code) => { if (!held()) throw 0; countDrop(st, code); save(); if (!held()) throw 0; unlinkSync(file); };
   const sweep = () => {
     if (!held()) return;
     // Sweep against configured consent even with a process-local off switch: that switch revokes no other process's
     // batches. Removing/changing the setting does (V4). Backoff belongs to that generation too.
-    const configured = otelSwitch(readConfig(configFile), {}), nonce = configured.consent?.slice(0, 8);
+    const config = readConfig(configFile); if (!config) throw new Error("config unreadable");
+    const configured = otelSwitch(config, {}), nonce = configured.consent?.slice(0, 8);
     if (st.consent !== configured.consent) { st.consent = configured.consent; st.attempt = 0; st.next_attempt_at = null; save(); }
     for (const name of names(join(p.root, "drops")).filter((n) => DROP.test(n))) {
       const file = join(p.root, "drops", name);
-      if (!lstatSync(file).isFile()) continue;
-      const code = readConfig(file).code;
+      if (!statPresent(file, stat)?.isFile()) continue;
+      const code = readConfig(file)?.code;
       if (code === "ceiling" || code === "write_failed") remove(file, code);
     }
     for (const signal of SIGNALS) {
@@ -279,8 +277,8 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
       for (const name of names(dir)) {
         const m = name.match(/^(.*)\.tmp\.\d+$/);
         if (!m || !(BATCH.test(m[1]) || DROP.test(m[1]) || (dir === p.root && m[1] === "sender.json"))) continue;
-        const file = join(dir, name), st = lstatSync(file);
-        if (held() && st.isFile() && now() - st.mtimeMs > 3600_000) unlinkSync(file);
+        const file = join(dir, name), st = statPresent(file, stat);
+        if (st?.isFile() && now() - st.mtimeMs > 3600_000 && held()) unlinkSync(file);
       }
     }
   };
@@ -289,26 +287,37 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
     for (const signal of SIGNALS) for (const name of names(join(p.root, signal))) {
       if (!name.endsWith(".sending") || !BATCH.test(name.slice(0, -8))) continue;
       const file = join(p.root, signal, name);
-      if (held() && lstatSync(file).isFile()) renameSync(file, file.slice(0, -8));
+      if (statPresent(file, stat)?.isFile() && held()) renameSync(file, file.slice(0, -8));
     }
     save(); // prove backoff can be recorded before making the first request
     sweep();
-    while (held() && monotonic() - began < 60_000) {
-      const sw = otelSwitch(readConfig(configFile), env);
+    while (!sweepOnly && held() && within(60_000)) {
+      const config = readConfig(configFile); if (!config) throw new Error("config unreadable");
+      const sw = otelSwitch(config, env);
       if (!sw.on || st.next_attempt_at > now()) break;
       const file = SIGNALS.flatMap((s) => queued(p, s))[0];
       if (!file) break;
+      let headers;
+      try { headers = otelHeaders(p.secrets); }
+      catch {
+        st.last_export = { at: new Date(now()).toISOString(), ok: false, sent: 0, refused: 0, error: "headers_invalid" };
+        save(); healthy = false; break; // no claim, no retry loop, and never store the rejected value
+      }
       const sending = `${file.file}.sending`;
+      if (!held()) break;
       renameSync(file.file, sending);
-      const current = otelSwitch(readConfig(configFile), env);
+      const latest = readConfig(configFile); if (!latest) throw new Error("config unreadable");
+      const current = otelSwitch(latest, env);
       if (!held() || current.consent !== sw.consent || current.endpoint !== sw.endpoint || file.nonce !== current.consent?.slice(0, 8)) {
         if (held()) renameSync(sending, file.file);
         break;
       }
-      const reply = await postOtel(new URL(`${sw.endpoint}/v1/${file.signal}`), readFileSync(sending), otelHeaders(p.secrets), timeoutMs);
+      const body = readFileSync(sending); if (!held()) break;
+      const reply = await postOtel(new URL(`${sw.endpoint}/v1/${file.signal}`), body, headers, timeoutMs);
+      if (!readConfig(configFile)) throw new Error("config unreadable");
       const ok = reply.status >= 200 && reply.status < 300, retry = Boolean(reply.error) || [429, 502, 503, 504].includes(reply.status);
       const code = reply.error ?? `http_${reply.status}`, partial = ok ? accepted(reply, file.signal) : {};
-      st.last_export = { at: new Date(now()).toISOString(), ok, sent: ok ? 1 : 0, refused: partial.code === "rejected" ? partial.count : !ok && !retry ? 1 : 0, error: ok ? null : code };
+      st.last_export = { at: new Date(now()).toISOString(), ok, sent: ok ? 1 : 0, refused: !ok && !retry ? 1 : 0, error: ok ? null : code };
       if (partial.code) countDrop(st, partial.code, partial.count);
       if (retry) {
         st.attempt = Math.min(st.attempt + 1, 32);
@@ -319,16 +328,23 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
         if (!ok) countDrop(st, code);
       }
       save();
+      if (!held()) break;
       if (retry) { renameSync(sending, file.file); break; }
       unlinkSync(sending);
     }
     sweep(); // even an off exit removes every old-consent batch; only this process ever deletes queue files
   } catch { healthy = false; } // detached: no outside prose or response body is ever logged
-  finally { if (folderId(p.lock, { link: true }) === lockId) try { release(p.lock); } catch { healthy = false; } }
+  finally {
+    if (!lockOwned(p.lock, token)) healthy = false;
+    else try { if (release) release(p.lock); else releaseFileLock(p.lock, token); } catch { healthy = false; }
+  }
   // W3-10: a command may have observed the held lock just after the empty read. Release, then rescan; preserve the
   // original monotonic lifetime and the persisted backoff, so neither a busy writer nor a clock jump extends it.
   try {
-    if (healthy && !existsSync(p.uninstall) && monotonic() - began < 60_000 && !(st.next_attempt_at > now()) && otelSwitch(readConfig(configFile), env).on && SIGNALS.some((s) => queued(p, s).length))
-      return sendOtel({ home, configPath, env, write, timeoutMs, now, random, capBytes, release, monotonic, began });
+    if (!healthy || sweepOnly || existsSync(p.uninstall) || !within(60_000)) return;
+    const config = readConfig(configFile); if (!config) return;
+    const on = otelSwitch(config, env).on;
+    if (!on || (!(st.next_attempt_at > now()) && SIGNALS.some((s) => queued(p, s).length)))
+      return sendOtel({ home, configPath, env, write, timeoutMs, now, random, capBytes, release, stat, monotonic, began, beganWall, sweepOnly: !on });
   } catch {}
 }
