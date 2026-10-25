@@ -703,6 +703,16 @@ test("a background refresh that resumes after another took its lock over publish
   }
 });
 
+test("a refresh starter that lost its lock before its mark leaves the newer refresh's snapshot and starts nothing", async () => {
+  const dir = scratch("starter-mark");
+  const p = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/lock-pauses.mjs"), "mark", dir], { stdout: "pipe", stderr: "pipe" });
+  expect(await p.exited, await new Response(p.stderr).text()).toBe(0);
+  const r = JSON.parse(await new Response(p.stdout).text());
+  expect(r.taken).toBe(true);
+  expect(r.snapshot).toMatchObject({ tried: 1_800_000_100, reading: { included_used_pct: 70 } });
+  expect(r.started).toBe(0);
+});
+
 test("a background usage refresh gets its lock token from the command line", async () => {
   const c = cfg(); let seen;
   const sources = { cursor: { source: "cursor /usage", check: async (o) => { seen = o; return { ok: false, ...usageFailure("read_failed") }; } } };

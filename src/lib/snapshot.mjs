@@ -58,7 +58,7 @@ export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`,
     const publish = () => writeJsonAtomic(file, r.ok ? { ts: nowSec, tried: nowSec, by: version, reading: keep(r) }
       : { ts: Number.isFinite(last?.ts) ? last.ts : null, tried: nowSec, by: version, reading: last?.reading ? keep(last.reading) : null,
         ...(r.excluded ? { excluded: true } : { failure: usageFailure(r.code) }) });
-    try { if (background) whileLockOwned(lock, token, publish); else publish(); } catch {}
+    try { if (background) whileLockOwned(lock, token, publish, { wait: true }); else publish(); } catch {}
     return r;
   } finally { if (owned) releaseFileLock(lock, token); }
 }
@@ -79,8 +79,9 @@ export function readSnapshot({ name, source, windows, describe, keep, byHand, fi
   const triedHere = !olderFailed && nowSec - (snap?.tried ?? 0) < REFRESH_SEC;
   if (background && !off && !triedHere && takeLock(lock, olderThan(LOCK_SEC * 1000, nowSec * 1000))) {
     // Marked before it starts, so the next call waits its turn; if the mark cannot be written, nothing is started.
+    // Marked only while the lock is still this call's: one taken over meanwhile may already have a newer reading in.
     const token = lockToken(lock);
-    try { writeJsonAtomic(file, { ...snap, tried: nowSec, by: version }); started = refresh(token); } catch {}
+    try { if (whileLockOwned(lock, token, () => writeJsonAtomic(file, { ...snap, tried: nowSec, by: version }))) started = refresh(token); } catch {}
     if (!started) releaseFileLock(lock, token);
   }
   const r = snap?.reading, age = snap?.ts == null ? null : nowSec - snap.ts;
