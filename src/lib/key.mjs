@@ -4,6 +4,7 @@
 import { decisionTarget, decisionTargets, decisionCommand, isProvider, PROVIDER_NAMES, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 import { loadConfig } from "./config.mjs";
 import { failureMessage, ping, writeSecrets } from "./systemone.mjs";
+import { parseOtelHeaders } from "./otel.mjs";
 
 export const KEYS_URL = PROVIDERS.typesafe.keysUrl;
 
@@ -45,6 +46,13 @@ export function checkValue(s, v) {
 }
 
 export async function setKey({ provider, file = SECRETS_FILE, verify = true, config = loadConfig().config } = {}) {
+  if (provider === "otel-headers") {
+    try {
+      const text = process.stdin.isTTY ? await readTyped("OpenTelemetry headers: ", true) : (await readStdin()).replace(/\r?\n$/, "");
+      writeSecrets({ ROUTR_OTEL_HEADERS: parseOtelHeaders(text).stored }, file);
+      return { ok: true, key: "otel-headers", file, headers: "set" };
+    } catch { return { ok: false, key: "otel-headers", error: "invalid or unwritable OpenTelemetry headers; nothing was written" }; }
+  }
   const targets = decisionTargets(config, {}, { localLast: false });
   provider ??= targets.find((t) => PROVIDERS[t.provider].secrets.length)?.provider ?? targets[0].provider;
   const P = isProvider(provider) ? PROVIDERS[provider] : null;
