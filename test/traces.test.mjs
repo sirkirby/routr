@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { parseTraceparent, leadSession } from "../src/lib/trace-context.mjs";
-import { readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import { cfg, scratch, ans, fact, cliEnv, SCRIPT } from "./helpers.mjs";
 import { prepareOtel, OTEL_RESOURCE_ATTRIBUTES } from "../src/lib/otel.mjs";
@@ -70,6 +71,19 @@ test("launch hands its sampled span to panes, drops orphan tracestate, and leave
   }
 });
 
+test("a pane screen redacts the generated launch carrier as well as inherited carrier values", async () => {
+  const x = exporting({ HERDR_ENV: "1", TRACEPARENT: parent }); let generated, ticks = 0;
+  const r = await launch(["--kind", "claude", "--name", "fixture", "--model", "fixture", "--direction", "right"], { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), ready: async () => null, now: () => ticks, sleep: async (ms) => { ticks += ms; }, run: async (a) => {
+    const ok = (result) => ({ ok: true, data: { result } });
+    if (a[1] === "split") { generated = a.find((v) => v.startsWith("TRACEPARENT=")).slice(12); return ok({ pane: { pane_id: "w1:p2" } }); }
+    if (a[1] === "read") return ok({ text: generated + "\nSource it? [y/N]" });
+    if (a[1] === "process-info") return ok({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1 }] } });
+    return ok({});
+  } });
+  expect(r.state).toBe("needs_input"); expect(generated).toBeDefined();
+  expect(JSON.stringify(r)).not.toContain(generated);
+});
+
 const attrs = (s) => Object.fromEntries(s.attributes.map(({ key, value }) => [key, value.stringValue ?? value.boolValue ?? (value.intValue == null ? value.doubleValue ?? value.arrayValue?.values.map((v) => v.stringValue) : Number(value.intValue))]));
 test("dispatch's classify child exports observed usage, requested and named response model, never reply text", async () => {
   const x = exporting({ TRACEPARENT: parent });
@@ -82,6 +96,7 @@ test("dispatch's classify child exports observed usage, requested and named resp
   expect(attrs(child)).toMatchObject({ "gen_ai.operation.name": "classify", "gen_ai.provider.name": "typesafe", "gen_ai.request.model": "jev-1.13.0", "gen_ai.response.model": "jev-1.13.0", "gen_ai.usage.input_tokens": 21, "gen_ai.usage.output_tokens": 7, "gen_ai.usage.cache_read.input_tokens": 10 });
   expect(attrs(child)).not.toHaveProperty("gen_ai.usage.total_tokens");
   expect(attrs(root)).toMatchObject({ "routr.assessment.names_location": 0.8, "routr.question_set.version": "r5" });
+  expect(root.attributes.find((a) => a.key === "routr.assessment.level").value).toEqual({ doubleValue: 1 });
   expect(JSON.stringify(x.batches())).not.toMatch(/BRIEF_MARKER|REPLY_MARKER/);
 });
 
@@ -113,6 +128,17 @@ test("the provider boundary preserves requested identity separately and never ec
   }
 });
 
+test("registered decision model names survive exactly, and check flag text is projected to fixed codes", async () => {
+  const x = exporting(), model = "clef-flash:9b-q8_0";
+  x.config.decision = { provider: "ollama" };
+  await adviseCommand("subagent", "BRIEF_MARKER", { config: x.config }, {}, { env: {}, otel: x.otel, askFn: async () => ({ provider: "ollama", model, request_model: model, response_model: model, answers: ans(1, 0.9), latencyMs: 1 }) });
+  const child = x.spans().find((s) => s.kind === 3);
+  expect(child.name).toBe(`classify ${model}`); expect(attrs(child)["gen_ai.response.model"]).toBe(model);
+  const brief = join(x.home, "brief"), report = join(x.home, "report"); writeFileSync(brief, "BRIEF_MARKER"); writeFileSync(report, "REPORT_MARKER");
+  await checkCommand({ brief, report }, { config: x.config, env: {}, otel: x.otel, askFn: async () => ({ provider: "ollama", model, request_model: model, answers: { verdict: { choice: "partial" }, work_type: { choice: "implement" } }, latencyMs: 1 }) });
+  expect(attrs(x.spans().find((s) => s.name === "routr check"))["routr.check.flags"]).toContain("verdict_partial");
+});
+
 test("usage has per-subscription children and orchestration commands emit only classified outcomes", async () => {
   const x = exporting();
   await usageCommand(["--level", "standard"], x.config, {}, { otel: x.otel, env: {}, read: async () => [{ pool: "codex", source: "app-server", headroom: 0.7, windows: [], ageSec: 0 }] });
@@ -136,6 +162,14 @@ test("parallel usage child durations measure their own reading rather than the s
   await usageCommand([], x.config, {}, { env: {}, otel: x.otel, read: (names, given, opts) => readUsage(names, given, { sources, observe: opts.observe, why: async () => null, billing: async () => null }) });
   const duration = (name) => { const s = x.spans().find((s) => s.name === `routr usage ${name}`); return Number(BigInt(s.endTimeUnixNano) - BigInt(s.startTimeUnixNano)); };
   expect(duration("codex")).toBeLessThan(duration("claude") * 0.7);
+});
+
+test("named usage includes its fresh read and admits recorded statusline source names", async () => {
+  const x = exporting(); x.config.subscriptions = { cursor: {} };
+  await usageCommand(["cursor"], x.config, {}, { env: {}, otel: x.otel, sources: { cursor: { source: "cursor /usage", check: async () => { await Bun.sleep(35); return { ok: true }; } } }, read: async () => [{ pool: "cursor", source: "statusline", ageSec: 0, headroom: 0.8, windows: [] }] });
+  const child = x.spans().find((s) => s.name === "routr usage cursor");
+  expect(Number(BigInt(child.endTimeUnixNano) - BigInt(child.startTimeUnixNano))).toBeGreaterThanOrEqual(30000000);
+  expect(attrs(child)["routr.usage.source"]).toBe("statusline");
 });
 
 test("a pane launch records identity, session and immutable index; cleanup and later record link to it", async () => {
@@ -184,6 +218,24 @@ test("the real CLI consumes --lead-session independently of the brief and queues
   expect(result.ok).toBe(true); expect(result.brief_chars).toBe(12);
   expect(x.spans().find((s) => s.name === "routr dispatch")).toBeDefined();
   expect(attrs(x.spans().find((s) => s.name === "routr dispatch"))["routr.lead.session_id"]).toBe(id);
+  const refused = Bun.spawnSync([process.execPath, SCRIPT, "dispatch", "--config", x.otel.configPath, "--task-file", join(x.home, "missing")], { env });
+  expect(JSON.parse(refused.stdout.toString()).ok).toBe(false);
+  expect(x.spans().filter((s) => s.name === "routr dispatch")).toHaveLength(2);
+  for (const args of [["BRIEF_MARKER", "--lead-session"], ["BRIEF_MARKER", "--lead-session", id, "--lead-session", id]]) {
+    const bad = Bun.spawnSync([process.execPath, SCRIPT, "dispatch", "--config", x.otel.configPath, ...args], { env });
+    expect(JSON.parse(bad.stdout.toString()).ok).toBe(false);
+  }
+});
+
+test("housekeeping emits nothing even when an argument names an emitting command", () => {
+  const x = exporting();
+  writeFileSync(join(x.home, ".cache/routr/otel/sender.lock"), JSON.stringify({ pid: process.pid, token: "fixture" }));
+  const env = cliEnv(x.home, { PATH: x.home, OTEL_SDK_DISABLED: "false", ROUTR_OTEL: "1" });
+  for (const args of [["share", "--out", "usage"], ["assess", "--ledger", "launch"], ["setup", "--show"], ["dispatch", "--version"]]) {
+    const r = Bun.spawnSync([process.execPath, SCRIPT, ...args, "--config", x.otel.configPath], { env, cwd: x.home });
+    expect(r.exitCode).toBe(0);
+  }
+  expect(x.batches()).toEqual([]);
 });
 
 test("every command's complete queue files exclude all content and secret markers", async () => {
@@ -191,7 +243,8 @@ test("every command's complete queue files exclude all content and secret marker
   const x = exporting({ TRACEPARENT: parent, BAGGAGE: markers[3], TRACESTATE: "vendor=" + markers[2] }), brief = join(x.home, "brief"), report = join(x.home, "report"), advice = join(x.home, "advice.json");
   writeFileSync(brief, markers[0]); writeFileSync(report, markers[4]);
   writeFileSync(advice, JSON.stringify({ id: "abc12345", brief_sha: briefSha(markers[0]), mode: "dispatch", level: "standard" }));
-  writeFileSync(join(x.home, ".config-headers"), `Authorization=${markers[2]}`);
+  mkdirSync(join(x.home, ".config/routr"), { recursive: true });
+  writeFileSync(join(x.home, ".config/routr/env"), `ROUTR_OTEL_HEADERS=Authorization=${markers[2]}`);
   const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), read: async () => [], askFn: (state, questions, o) => ask(state, questions, { ...o, env: { TYPESAFE_API_KEY: markers[1] }, fetchFn: replyFetch("typesafe", "valid") }) };
   await adviseCommand("dispatch", markers[0], { config: x.config }, {}, opts);
   await adviseCommand("subagent", markers[0], { config: x.config }, {}, opts);
@@ -203,7 +256,8 @@ test("every command's complete queue files exclude all content and secret marker
   await sendCommand(["--task", markers[0]], opts); await waitCommand(["--timeout", "0"], opts); await workersCommand([], opts); await stopCommand([], opts); await cleanup(["--unknown"], opts);
   const names = x.spans().map((s) => s.name);
   for (const command of ["dispatch", "subagent", "check", "usage", "record", "launch", "send", "wait", "workers", "stop", "cleanup"]) expect(names).toContain(`routr ${command}`);
-  for (const batch of x.batches()) for (const marker of markers) expect(JSON.stringify(batch)).not.toContain(marker);
+  for (const file of readdirSync(join(x.home, ".cache/routr/otel"), { recursive: true }).map(String).filter((n) => n.endsWith(".json")))
+    for (const marker of markers) expect(readFileSync(join(x.home, ".cache/routr/otel", file), "utf8")).not.toContain(marker);
 });
 
 test("the published attribute names and types and error codes equal the shipped allow-lists in both directions", () => {
@@ -212,6 +266,54 @@ test("the published attribute names and types and error codes equal the shipped 
   expect(fields).toEqual({ ...OTEL_RESOURCE_ATTRIBUTES, ...TRACE_ATTRIBUTES });
   const errors = doc.match(/<!-- span-errors -->\s*([^]*?)\s*<!-- \/span-errors -->/)?.[1].match(/`[^`]+`/g)?.map((s) => s.slice(1, -1));
   expect(errors?.sort()).toEqual([...ERROR_CODES].sort());
+});
+
+test("headless commands link validated worker.json context and ignore malformed ids", async () => {
+  const x = exporting(), name = "trace-fixture", dir = join(process.env.HOME, ".local/state/routr/workers", name);
+  mkdirSync(dir, { recursive: true });
+  const launch = { launch_id: "12345678-1234-4123-8123-123456789abc", traceId: "4bf92f3577b34da6a3ce929d0e0e4736", spanId: "00f067aa0ba902b7" };
+  try {
+    const worker = { format: 1, name, id: "a".repeat(32), kind: "claude", cwd: x.home, model: "fixture", launch };
+    writeFileSync(join(dir, "worker.json"), JSON.stringify(worker)); writeFileSync(join(dir, "state.json"), JSON.stringify({ state: "idle", turns: [] }));
+    const opts = { env: {}, otel: x.otel, settings: () => ({ config: x.config }) };
+    await workersCommand(["--name", name], opts); await waitCommand(["--name", name, "--timeout", "0"], opts); await sendCommand(["--name", name, "--task", "BRIEF_MARKER"], opts);
+    for (const s of x.spans()) expect(s.links).toContainEqual({ traceId: launch.traceId, spanId: launch.spanId, attributes: [] });
+    writeFileSync(join(dir, "worker.json"), JSON.stringify({ ...worker, launch: { ...launch, traceId: "PRIVATE_MARKER" } }));
+    await workersCommand(["--name", name], opts);
+    expect(x.spans().at(-1).links).toBeUndefined();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("off and unsampled commands queue nothing, create no index and start no sender", async () => {
+  for (const mode of ["off", "unsampled"]) {
+    const x = exporting(mode === "off" ? { ROUTR_OTEL: "0" } : { TRACEPARENT: parent.slice(0, -2) + "00" });
+    const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), read: async () => [], askFn: async () => { throw new Error("PRIVATE_MARKER"); } };
+    await adviseCommand("dispatch", "PRIVATE_MARKER", { config: x.config }, {}, opts); await adviseCommand("subagent", "PRIVATE_MARKER", { config: x.config }, {}, opts);
+    await checkCommand({}, { ...opts, config: x.config }); await usageCommand([], x.config, {}, opts);
+    recordCommand({}, [], x.config, opts);
+    await launch(["--kind", "claude", "--name", "fixture", "--model", "fixture", "--dry-run"], opts);
+    for (const f of [sendCommand, stopCommand, workersCommand]) await f([], opts);
+    await waitCommand(["--timeout", "0"], opts); await cleanup(["--unknown"], opts);
+    expect(x.batches()).toEqual([]); expect(x.spawned).toEqual([]);
+    expect(existsSync(join(x.home, ".local/state/routr/launches"))).toBe(false);
+  }
+});
+
+test("a real command finishes while its detached sender waits on a loopback endpoint that never answers", async () => {
+  let received;
+  const request = new Promise((r) => { received = r; }), server = createServer((req) => { req.resume(); received(); });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const x = exporting(); x.config.otel.endpoint = `http://127.0.0.1:${server.address().port}`; writeFileSync(x.otel.configPath, JSON.stringify(x.config));
+  const env = cliEnv(x.home, { PATH: x.home, OTEL_SDK_DISABLED: "false", ROUTR_OTEL: "1", TRACEPARENT: parent });
+  try {
+    const at = performance.now(), child = Bun.spawn([process.execPath, SCRIPT, "usage", "--config", x.otel.configPath], { env, stdout: "pipe", stderr: "pipe" });
+    expect(await child.exited).toBe(0); expect(performance.now() - at).toBeLessThan(2000);
+    expect(JSON.parse(await new Response(child.stdout).text()).ok).toBe(true);
+    let timer; try { await Promise.race([request, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("sender made no loopback request")), 3000); })]); } finally { clearTimeout(timer); }
+  } finally {
+    try { const { pid } = JSON.parse(readFileSync(join(x.home, ".cache/routr/otel/sender.lock"), "utf8")); if (pid > 1 && pid !== process.pid) process.kill(pid, "SIGKILL"); } catch {}
+    server.closeAllConnections(); await new Promise((r) => server.close(r));
+  }
 });
 
 const parent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";

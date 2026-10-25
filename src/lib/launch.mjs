@@ -95,8 +95,8 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     ran: [], next: [], start: { executable: null, argv: [], env: {} }, steps: [], warnings: [], prompt_chars: null, unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
   // Every screen launch returns goes through here: a shell's startup line can print the trace-context carriers routr
-  // holds (any found, passed or withheld), and their values never reach output.
-  const hidden = carrierValues(env), shown = (text) => redactCarriers(text, hidden);
+  // holds (found, generated, passed or withheld). Stage 2 adds its generated launch parent to the same redaction set.
+  const hidden = [...carrierValues(env), ...Object.values(launchCarriers(env).carriers)], shown = (text) => redactCarriers(text, hidden);
   let configDir, createdPane = false, startAttempted = false, touchedPane = false, promptAttempted = false, unconfirmed = false;
   // Something in the pane needs an answer that routr does not give: a shell's own question, a harness's startup
   // question, an agent that has not started. The orchestrator gets what the pane shows (withheld once the task has been
@@ -202,7 +202,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         ...(o.kind === "cursor" ? [command(["agent", "rename", pane, o.name])] : []),
         ...(prompt ? [promptForLog(promptArgs(pane, Math.max(1, Math.min(Math.floor(o.timeout / 2), 30000)))), command(["agent", "get", pane])] : []),
       ];
-      step("plan", true, "No commands executed or files written. Pane ids, geometry, polling, timeouts and shell questions are resolved at launch. Environment, subscription settings and sign-in are not checked.");
+      step("plan", true, "No worker commands executed or worker files written. Pane ids, geometry, polling, timeouts and shell questions are resolved at launch. Environment, subscription settings and sign-in are not checked.");
       const problems = [!o.model && MODEL_REQUIRED, adviceProblem].filter(Boolean);
       planned = true; out.ok = !problems.length; out.state = "planned";
       if (problems.length) out.error = problems.join("; ");

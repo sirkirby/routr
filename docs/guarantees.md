@@ -340,7 +340,7 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
   each one passed as `<forwarded>`, in `start.env` and in the split command it shows (`--env NAME=<forwarded>`; an
   empty one shows as `--env NAME=`, as it is). A
   pane's screen that launch returns (a question before the task was sent, or the last lines after a failure) has the
-  value of every carrier routr found, passed or withheld, replaced by `<carrier>`, also where the pane wrapped it
+  value of every carrier routr found or generated, passed or withheld, replaced by `<carrier>`, also where the pane wrapped it
   across lines; a value the screen drew with something inside it (a colour code) is not recognised.
 - **Headless.** Launch saves the carriers it passes in the worker's settings file, in its run folder (0600 on macOS
   and Linux), and every turn uses those, whoever starts the next one: a `send` from another environment does not

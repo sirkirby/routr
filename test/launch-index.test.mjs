@@ -15,6 +15,8 @@ test("launch index links only a unique match, fences pane reuse, and retains imm
   expect(index.match({ pane_id: "pane-1", terminal_id: "terminal-1" })).toMatchObject(first);
   expect(index.match({ project_hash: "c".repeat(64), branch: "worker" })).toBeNull();
   expect(index.match({ project_hash: first.project_hash, branch: "worker" })).toMatchObject(first);
+  expect(index.match({ project_hash: first.project_hash, repository: "https://github.com/acme/other", branch: "worker" })).toBeNull();
+  expect(index.match({ project_hash: first.project_hash, repository: first.repository, branch: "worker" })).toMatchObject(first);
   expect(index.match({ path_hash: first.path_hash })).toMatchObject(first);
   expect(index.recovery({ advice_id: first.advice_id, pane_id: "pane-1", terminal_id: "terminal-1" })).toMatchObject(first);
   expect(index.recovery({ advice_id: "12345678", pane_id: "pane-1", terminal_id: "terminal-1" })).toBeNull();

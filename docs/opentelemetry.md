@@ -361,9 +361,10 @@ sources, no response, private-folder and cmd-path failures. `unreadable` covers 
 operation, `failed` a classified command failure, and `_OTHER` any unclassified error. Codes contain no error text.
 
 Assessment fact and check probabilities range from 0 to 1; the assessment level score ranges from 0 to 2. Work
-types and flags come from routr's fixed question set. Candidates and subscription are harness registry names.
+types and flags come from routr's fixed question set. Check flag codes are the check question names in the table,
+plus `verdict_partial`, `verdict_blocked` and `verdict_unstated` for a report that does not claim done. Candidates and subscription are harness registry names.
 Usage state is `excluded`, `kept`, `given`, `live` or `assumed`; source is a registered usage source, `sign-in check`,
-`given by caller`, `none` or `other`. Backend is `pane` or `headless`. Command states come from their documented
+`given by caller`, `statusline`, `session log`, `none` or `other`. Backend is `pane` or `headless`. Command states come from their documented
 outcomes, with `done`/`failed` when the command has no separate state. Effort and outcome enum values match
 [anonymous telemetry's projection](telemetry.md), with causes from record's contract and effort origin `given`,
 `model id` or `config default`. IDs are format-checked. Missing optional attributes are omitted.

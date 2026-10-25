@@ -35,8 +35,8 @@ export class LaunchIndex {
     } catch { return false; }
   }
   match(query) {
-    const allowed = ["advice_id", "project_hash", "branch", "path_hash", "pane_id", "terminal_id", "worker_id"];
-    if (!query || !Object.keys(query).length || Object.keys(query).some((k) => !allowed.includes(k) || typeof query[k] !== "string" || !query[k])) return null;
+    const allowed = ["advice_id", "project_hash", "branch", "path_hash", "pane_id", "terminal_id", "worker_id", "repository"];
+    if (!query || !Object.keys(query).length || Object.keys(query).some((k) => !allowed.includes(k) || !(k === "repository" && query[k] === null) && (typeof query[k] !== "string" || !query[k]))) return null;
     if (query.pane_id && !query.terminal_id || query.branch && !hash(query.project_hash) || query.path_hash && !hash(query.path_hash)) return null;
     const matches = this.entries().filter((v) => Object.entries(query).every(([k, value]) => v[k] === value));
     return matches.length === 1 ? matches[0] : null;

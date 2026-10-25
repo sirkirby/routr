@@ -59,7 +59,7 @@ export const COMMANDS = {
       { name: "--task", arg: "<text>", description: "task prompt string (mutually exclusive with --task-file)", required: false },
       { name: "--task-file", arg: "<path>", description: "file containing task prompt (mutually exclusive with --task; outside herdr a task is required)", required: false },
       { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds (outside herdr: for the worker's process to start and the harness to take the task)", required: false, default: 120000 },
-      { name: "--dry-run", arg: null, description: "plan commands without executing or writing files; advice checks can refuse with ok:false", required: false, default: false },
+      { name: "--dry-run", arg: null, description: "plan worker actions without executing them; advice checks can refuse with ok:false; enabled OpenTelemetry export may queue the plan span and index", required: false, default: false },
     ],
   },
   cleanup: {

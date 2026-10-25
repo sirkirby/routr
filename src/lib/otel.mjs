@@ -81,15 +81,15 @@ export function otlpValue(v) {
   if (v && typeof v === "object") return { kvlistValue: { values: otlpAttributes(v) } };
   throw new Error("invalid OTLP attribute");
 }
-export const otlpAttributes = (values = {}) => Object.entries(values).map(([key, value]) => ({ key, value: otlpValue(value) }));
+export const otlpAttributes = (values = {}, types = {}) => Object.entries(values).map(([key, value]) => ({ key, value: types[key] === "double" && typeof value === "number" && Number.isFinite(value) ? { doubleValue: value } : otlpValue(value) }));
 export const otlpScope = ({ name = "routr", version = ROUTR_VERSION, attributes = {} } = {}) => ({ name, version, attributes: otlpAttributes(attributes) });
 const hex = (v, n) => { if (typeof v !== "string" || !new RegExp(`^[a-f0-9]{${n}}$`, "i").test(v) || /^0+$/.test(v)) throw new Error("invalid OTLP id"); return v.toLowerCase(); };
 const nanos = (v) => { if (!/^[0-9]+$/.test(String(v)) || (typeof v === "number" && !Number.isSafeInteger(v))) throw new Error("invalid OTLP time"); return String(v); };
 const integer = (v) => { if (!Number.isInteger(v) || v < 0) throw new Error("invalid OTLP enum or count"); return v; };
 const counts = (v, fields) => Object.fromEntries(fields.filter((k) => v[k] !== undefined).map((k) => [k, integer(v[k])]));
-function spanJson(s) {
+function spanJson(s, attributeTypes) {
   const out = { traceId: hex(s.traceId, 32), spanId: hex(s.spanId, 16), name: s.name, kind: integer(s.kind ?? 1),
-    startTimeUnixNano: nanos(s.startTimeUnixNano), endTimeUnixNano: nanos(s.endTimeUnixNano), attributes: otlpAttributes(s.attributes),
+    startTimeUnixNano: nanos(s.startTimeUnixNano), endTimeUnixNano: nanos(s.endTimeUnixNano), attributes: otlpAttributes(s.attributes, attributeTypes),
     ...counts(s, ["flags", "droppedAttributesCount", "droppedEventsCount", "droppedLinksCount"]) };
   if (s.parentSpanId) out.parentSpanId = hex(s.parentSpanId, 16);
   if (s.traceState) out.traceState = s.traceState;
@@ -99,9 +99,9 @@ function spanJson(s) {
   return out;
 }
 // Resource, scope and AnyValue are signal-independent: logs and metrics reuse these parts in Stage 3.
-export function encodeTraces(spans, { resource: r, scope, schemaUrl } = {}) {
+export function encodeTraces(spans, { resource: r, scope, schemaUrl, attributeTypes } = {}) {
   return { resourceSpans: [{ resource: { attributes: otlpAttributes(r ?? otelResource()) },
-    ...(schemaUrl ? { schemaUrl } : {}), scopeSpans: [{ scope: otlpScope(scope), spans: spans.map(spanJson) }] }] };
+    ...(schemaUrl ? { schemaUrl } : {}), scopeSpans: [{ scope: otlpScope(scope), spans: spans.map((s) => spanJson(s, attributeTypes)) }] }] };
 }
 
 export const newOtelConsent = () => randomBytes(16).toString("hex");
