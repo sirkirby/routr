@@ -196,7 +196,7 @@ test("smoke:carriers' worktree half runs routr's worktree steps in a throwaway r
       return ok({ pane: { pane_id: "w5:p2" } });
     }
     if (a[1] === "close") return ok({});
-    if (a[1] === "list") return ok({ panes: [{ pane_id: "w5:p2" }] });
+    if (a[0] === "pane" && a[1] === "list") return ok({ panes: [{ pane_id: "w5:p2" }] });
     if (a[1] === "process-info") return ok({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh", cwd: a[3] === "w5:p2" ? tree : "/" }] } });
     if (a[1] === "read") return ok({ text: a[2] === "w5:p2" ? "chris % " : "found '.env' file. Source it? ([y]es/[N]o/[a]lways/n[e]ver)" });
     if (a[1] === "run" && a[2] === "w5:p2") {
@@ -252,7 +252,9 @@ test("smoke:carriers finds the workspaces inside its own folder by checkout path
 // A herdr and a git for the smoke's teardown. `create`: "ok", "refused" (nothing made) or "made" (refused, but it made
 // the worktree and its workspace, as the repository's own list and herdr's workspaces show). `listed`: whether git can
 // list the repository's worktrees. The worktree is a real folder herdr's remove deletes, unless `removeFails`.
-async function teardown({ create = "ok", removeFails = false, closeFails = false, listed = true } = {}) {
+// `listFails`: how many of herdr's first workspace lists fail; `treeWorkspace`: whether a worktree made by a failed create
+// has a workspace open (git's remove deletes its folder when it has none).
+async function teardown({ create = "ok", removeFails = false, closeFails = false, listed = true, listFails = 0, treeWorkspace = true } = {}) {
   const { smokeCarriers } = await import("../scripts/smoke-carriers.mjs");
   const { mkdtempSync, readFileSync, realpathSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
@@ -269,9 +271,10 @@ async function teardown({ create = "ok", removeFails = false, closeFails = false
       return create === "ok" ? ok({ root_pane: { pane_id: "w5:p1" }, worktree: { path: tree }, workspace: { workspace_id: "w5" } }) : { ok: false, code: "herdr_refused", data: {} };
     }
     // As herdr 0.9.5 with no workspace open for the source: worktree create opened one for the throwaway repository too.
+    if (a[0] === "workspace" && a[1] === "list" && listFails-- > 0) return { ok: false, code: "herdr_unreachable", data: {} };
     if (a[0] === "workspace" && a[1] === "list") return ok({ workspaces: [{ workspace_id: "w1", worktree: { checkout_path: process.cwd(), is_linked_worktree: false } },
       ...(repo ? [{ workspace_id: "wEW", worktree: { checkout_path: repo, is_linked_worktree: false } }] : []),
-      ...(made ? [{ workspace_id: "w5", worktree: { checkout_path: tree, is_linked_worktree: true, repo_root: repo } }] : []),
+      ...(made && treeWorkspace ? [{ workspace_id: "w5", worktree: { checkout_path: tree, is_linked_worktree: true, repo_root: repo } }] : []),
       { workspace_id: "wY", worktree: { checkout_path: join(`${dirname(repo ?? "/x")}-other`, "repo") } }] });
     if (a[0] === "workspace" && a[1] === "close") return closeFails ? { ok: false, code: "herdr_refused", data: {} } : ok({});
     if (a[1] === "split" && a[2] === "--current") return ok({ pane: { pane_id: "w1:p7" } });
@@ -288,10 +291,11 @@ async function teardown({ create = "ok", removeFails = false, closeFails = false
     if (a[0] === "worktree" && a[1] === "remove") { if (removeFails) return { ok: false, code: "herdr_refused", data: {} }; rmSync(tree, { recursive: true, force: true }); return ok({}); }
     throw new Error(`unexpected ${a.join(" ")}`);
   };
-  const git = async (dir, a) => (a[0] === "worktree" && a[1] === "list" ? (listed ? { code: 0, out: `worktree ${dir}\nHEAD ${"a".repeat(40)}\nbranch refs/heads/main\n\n${made ? `worktree ${tree}\nHEAD ${"a".repeat(40)}\nbranch refs/heads/x\n` : ""}` } : { code: 128, out: "" }) : { code: 0, out: "" });
+  const gits = [];
+  const git = async (dir, a) => (gits.push(a), a[0] === "worktree" && a[1] === "remove" ? (rmSync(tree, { recursive: true, force: true }), { code: 0, out: "" }) : a[0] === "worktree" && a[1] === "list" ? (listed ? { code: 0, out: `worktree ${dir}\nHEAD ${"a".repeat(40)}\nbranch refs/heads/main\n\n${made ? `worktree ${tree}\nHEAD ${"a".repeat(40)}\nbranch refs/heads/x\n` : ""}` } : { code: 128, out: "" }) : { code: 0, out: "" });
   const failed = await smokeCarriers({ herdr, git, env: { HERDR_ENV: "1" }, log: (l) => lines.push(l) });
   const dir = dirname(repo);
-  return { failed, calls, lines, text: lines.join("\n"), repo, tree, dir, done: () => { rmSync(dir, { recursive: true, force: true }); rmSync(tree, { recursive: true, force: true }); } };
+  return { failed, calls, gits, lines, text: lines.join("\n"), repo, tree, dir, done: () => { rmSync(dir, { recursive: true, force: true }); rmSync(tree, { recursive: true, force: true }); } };
 }
 const closes = (calls) => calls.filter((a) => a[0] === "workspace" && a[1] === "close");
 const removes = (calls) => calls.filter((a) => a[0] === "worktree" && a[1] === "remove");
@@ -335,7 +339,24 @@ test("smoke:carriers' teardown keeps the repository, and names it and the worktr
     expect(removes(made.calls)).toEqual([["worktree", "remove", "--workspace", "w5"]]);
     expect(existsSync(made.dir)).toBe(false);
   } finally { made.done(); }
-  // ... and when that list cannot be read, whether anything was made is not known: the repository stays.
+  // ... and when herdr's workspaces cannot be listed, whether that worktree has a workspace open is not known: neither
+  // git nor herdr removes it (git's remove would leave the workspace open, outside the folder), and the repository stays.
+  const blind = await teardown({ create: "made", listFails: 1 });
+  try {
+    expect(removes(blind.calls)).toEqual([]);
+    expect(blind.gits.filter((a) => a[1] === "remove")).toEqual([]);
+    expect(existsSync(blind.repo)).toBe(true);
+    for (const t of [blind.repo, blind.tree, "herdr workspace list", "herdr worktree remove --workspace", `git -C ${blind.repo} worktree remove ${blind.tree}`]) expect([t, blind.text.includes(t)]).toEqual([t, true]);
+    noSmokeValue(blind.lines);
+  } finally { blind.done(); }
+  // Only a listing that answered and shows no workspace for it lets git remove it.
+  const bare = await teardown({ create: "made", treeWorkspace: false });
+  try {
+    expect(removes(bare.calls)).toEqual([]);
+    expect(bare.gits.filter((a) => a[1] === "remove")).toEqual([["worktree", "remove", bare.tree]]);
+    expect(existsSync(bare.dir)).toBe(false);
+  } finally { bare.done(); }
+  // ... and when git's own list cannot be read, whether anything was made is not known: the repository stays.
   const unknown = await teardown({ create: "refused", listed: false });
   try {
     expect(removes(unknown.calls)).toEqual([]);

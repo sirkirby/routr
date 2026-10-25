@@ -202,7 +202,8 @@ export async function smokeCarriers({ herdr = runHerdr, git = gitIn, env = proce
     // on the folder closed. Each part kept is named, with its exact path.
     let keep = false;
     const fail = (why) => { failed++; keep = true; log(`FAILED: ${why}`); };
-    const listWorkspaces = async () => { try { const r = await herdr(["workspace", "list"], 5000); return r?.ok ? r.data?.result?.workspaces ?? [] : null; } catch { return null; } };
+    // herdr's workspaces, or null when it did not give a list: never an empty one in its place.
+    const listWorkspaces = async () => { try { const r = await herdr(["workspace", "list"], 5000); const all = r?.ok ? r.data?.result?.workspaces : null; return Array.isArray(all) ? all : null; } catch { return null; } };
     // What a create that failed, or answered unusably, made: the repository's own worktree list says (it is new, so
     // any linked worktree is this run's), and herdr's workspaces which one is that worktree's.
     if (created && !tree) {
@@ -210,8 +211,13 @@ export async function smokeCarriers({ herdr = runHerdr, git = gitIn, env = proce
       if (r?.code === 0 && typeof r.out === "string") tree = worktreesFromGit(r.out).worktrees.find((w) => w.is_linked_worktree)?.path ?? null;
       else fail(`git could not list the worktrees of the throwaway repository at ${repo}, so whether herdr made one is not known; it is kept: look with ${displayCommand(["git", "-C", repo, "worktree", "list"])}`);
     }
-    if (tree && !workspace) workspace = workspacesIn(await listWorkspaces(), tree)[0] ?? null;
-    if (tree) {
+    // A worktree with no workspace known is removed through git only once herdr's list answered and shows none for it:
+    // git's remove would leave an open workspace behind, outside the folder, where nothing here would close it.
+    let placed = true;
+    if (tree && !workspace) { const all = await listWorkspaces(); placed = all != null; workspace = all && (workspacesIn(all, tree)[0] ?? null); }
+    if (tree && !placed) {
+      fail(`herdr's workspaces could not be listed, so whether the worktree at ${tree} has a workspace open is not known; the throwaway repository at ${repo} is kept for it: find its workspace with ${displayCommand(["herdr", "workspace", "list"])} and remove it with herdr worktree remove --workspace <id>, or if it has none, ${displayCommand(["git", "-C", repo, "worktree", "remove", tree])}; then remove the folder ${dir}`);
+    } else if (tree) {
       // Through herdr when the worktree has a workspace (that closes it too), else through git; never forced.
       const retry = workspace ? ["herdr", "worktree", "remove", "--workspace", workspace] : ["git", "-C", repo, "worktree", "remove", tree];
       let ok = false;
