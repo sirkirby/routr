@@ -140,7 +140,7 @@ const calls = (source, file) => {
 const ALLOWED = [
   ["lib/runtime.mjs", "platform adapters", "via(...prepare(cmd, args, opts, platform))", 2],
   ["lib/runtime.mjs", "Windows taskkill", '(via ?? spawn)(exe, ["/PID", String(child.pid), "/T", "/F"], startOptions({ stdio: "ignore" }))', 1],
-  ["lib/runtime.mjs", "routr starting itself", 'start(process.execPath, [...(standalone() ? [] : [process.argv[1]]), ...args], { detached: true, stdio: "ignore" })', 1],
+  ["lib/runtime.mjs", "routr starting itself", 'start(process.execPath, [...(standalone() ? [] : [ROUTR_ENTRY]), ...args], { detached: true, stdio: "ignore" })', 1],
   ["lib/herdr.mjs", "herdr clients", 'via("herdr", args, { stdio: ["ignore", "pipe", "pipe"] })', 1],
   ["lib/update.mjs", "updater version inspection", 'spawn(self, ["--version"], { encoding: "utf8", timeout: 15000 })', 1],
   ["lib/update.mjs", "updater version confirmation", 'spawn(self, ["--version"], { encoding: "utf8" })', 1],

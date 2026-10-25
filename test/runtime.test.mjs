@@ -9,6 +9,34 @@ import { openTerminal } from "../src/lib/terminal.mjs";
 import { runHerdr } from "../src/lib/herdr.mjs";
 import { cliEnv, CONFIG_ENV, fakeExecutable, LEAD_ENV, npmShim, scratch } from "./helpers.mjs";
 
+test("spawnSelf invoked by a foreign script starts routr's own entry for every background command", () => {
+  for (const alias of [undefined, "foreign-entry.ts", "foreign-no-extension"]) {
+    const env = cliEnv(scratch("self-foreign"), alias ? { ROUTR_SELF_FOREIGN_ARGV: alias } : {});
+    const r = Bun.spawnSync([process.execPath, join(import.meta.dir, "fixtures/spawn-self-foreign.mjs")], { env });
+    expect(r.exitCode).toBe(0);
+    const result = JSON.parse(r.stdout.toString());
+    expect(result.standalone).toBe(false); expect(result.calls).toHaveLength(4);
+    const commands = [["--otel-sender", "--config", "fixture-home/config.json"], ["usage", "cursor", "--background"], ["update", "--background"], ["workers", "--hold", "fixture"]];
+    for (const [i, call] of result.calls.entries()) {
+      expect(call.cmd).toBe(process.execPath);
+      expect(call.args).toEqual([resolve(import.meta.dir, "../src/routr.mjs"), ...commands[i]]);
+      expect(call.opts).toMatchObject({ detached: true, stdio: "ignore" });
+    }
+  }
+});
+
+test("a compiled spawnSelf uses only its binary even when the caller names another script", async () => {
+  const dir = scratch("self-compiled"), exe = join(dir, process.platform === "win32" ? "self.exe" : "self"), entry = join(import.meta.dir, "fixtures/spawn-self-compiled.mjs"), out = join(dir, "child.json");
+  const built = Bun.spawnSync([process.execPath, "build", "--compile", "--no-compile-autoload-dotenv", "--no-compile-autoload-bunfig", entry, "--outfile", exe]);
+  expect(built.exitCode).toBe(0);
+  const r = Bun.spawnSync([exe], { env: cliEnv(dir, { ROUTR_SELF_RESULT: out }) });
+  expect(r.exitCode, r.stderr.toString()).toBe(0);
+  expect(JSON.parse(r.stdout.toString())).toEqual({ standalone: true, started: true });
+  for (let i = 0; i < 100 && !existsSync(out); i++) await Bun.sleep(20);
+  const child = JSON.parse(readFileSync(out, "utf8"));
+  expect(child.argv).toEqual(["--self-child", out]); expect(runtime.realPath(child.executable)).toBe(runtime.realPath(exe));
+}, 60000);
+
 test("two takers observing the same stale lock admit only one, with a token the loser cannot release", () => {
   const file = join(scratch("stale-lock-race"), "job.lock"); writeFileSync(file, "999999999");
   let second = false;

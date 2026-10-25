@@ -184,6 +184,9 @@ over: uninstall names the file to remove (launches treat it as free).
 
 ## Processes and platforms
 
+Detached background work starts routr's own compiled binary, or its source entry resolved from its runtime module.
+It never restarts the script that happened to import routr.
+
 routr runs on macOS, Linux and Windows. It starts every process directly, never through `sh`, and with no Unix-only
 paths. The binary does not load a `.env` or `bunfig.toml` from the folder you run it in, so routr does not use a
 project's `.env` itself or pass it to the harness commands it runs (sign-in status and usage reads). Variables already

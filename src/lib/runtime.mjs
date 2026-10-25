@@ -7,14 +7,18 @@ import { accessSync, closeSync, constants, lstatSync, mkdirSync, openSync, readF
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // The user's home, read when asked: HOME (USERPROFILE on Windows), as Node's os.homedir() reads it. Bun's os.homedir()
 // ignores a HOME changed while it runs (measured 2026-09-26, Bun 1.3.13), so a test's scratch home reached only the CLIs
 // it spawned, not routr's own code in the test process.
 export const home = () => (process.platform === "win32" ? process.env.USERPROFILE : process.env.HOME) || homedir();
 
-// A compiled release binary has no script path of its own; a source checkout runs `bun src/routr.mjs`.
-export const standalone = () => !/\.m?js$/.test(process.argv[1] ?? "");
+// Bun's compiled module lives in its virtual filesystem (1.4.3: /$bunfs on POSIX, B:/~BUN on Windows).
+// The importing script is not routr: smoke:otel's in-process launch exposed argv[1] re-entry, 2026-10-25.
+const COMPILED = /^(?:\/\$bunfs\/|[A-Za-z]:\/~BUN\/)/i.test(fileURLToPath(import.meta.url).replaceAll("\\", "/"));
+const ROUTR_ENTRY = COMPILED ? null : fileURLToPath(new URL("../routr.mjs", import.meta.url));
+export const standalone = () => COMPILED;
 
 export const CACHE_DIR = () => join(home(), ".cache/routr");
 // Headless workers: each one's run folder, and the sockets of their channels (channel.mjs, headless.mjs).
@@ -379,10 +383,11 @@ export const harnessEnv = (env = process.env) => Object.fromEntries(Object.entri
 export const workerEnv = (carriers, extra = {}, env = process.env) => ({ ...harnessEnv(env), ...savedCarriers(carriers).carriers, ...extra });
 
 // Start routr again, detached, with `args`, and carry on without waiting: the binary itself, or `bun <script>` from a
-// source checkout. A spawn that fails later (EACCES, EMFILE) is ignored; one that fails at once returns false.
+// source checkout, located beside this module rather than the importing script. A spawn that fails later (EACCES,
+// EMFILE) is ignored; one that fails at once returns false.
 export function spawnSelf(args) {
   try {
-    const c = start(process.execPath, [...(standalone() ? [] : [process.argv[1]]), ...args], { detached: true, stdio: "ignore" });
+    const c = start(process.execPath, [...(standalone() ? [] : [ROUTR_ENTRY]), ...args], { detached: true, stdio: "ignore" });
     c.on("error", () => {}); c.unref(); return true;
   } catch { return false; }
 }
