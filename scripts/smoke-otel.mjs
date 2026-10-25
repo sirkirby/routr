@@ -49,7 +49,7 @@ export function checkSmokeTraces(batches, { counts = {}, parent = smokeParent, m
     check(/^[a-f0-9]{32}$/.test(s.traceId) && /^[a-f0-9]{16}$/.test(s.spanId), "ids");
     const a = attributes(s.attributes, TRACE_ATTRIBUTES);
     check(!s.events?.length && !s.traceState && !s.status?.message, "free text field");
-    check(/^routr (dispatch|subagent|check|usage(?: (claude|codex|cursor|agy|kiro))?|launch|send|wait|workers|stop|cleanup|record)$/.test(s.name) || s.name.startsWith("classify "), "span name");
+    check(/^routr (dispatch|subagent|check|usage(?: (claude|codex|cursor|agy|kiro))?|launch|send|wait|workers|stop|cleanup|record)$/.test(s.name) || s.name.startsWith("classify ") || /^invoke_agent [a-z][a-z0-9_-]{0,31}$/.test(s.name), "span name");
     check(!s.status || s.status.code === 2 && ERROR_CODES.includes(a["error.type"]), "span error status");
     for (const key of ["routr.cwd", "routr.worktree"]) if (a[key]) check(!/^(?:[\\/]|[A-Za-z]:)/.test(a[key]), "absolute path");
     check(!a["gen_ai.request.model"] || s.name.startsWith("classify "), "model on agent span");
@@ -72,7 +72,7 @@ const fs = require("node:fs");
 const a = process.argv.slice(2), sid = "12345678-1234-4123-8123-123456789abc";
 if (a[0] === "auth") { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); process.exit(0); }
 if (!a.includes("--input-format")) { console.log("PRIVATE_SCREEN_MARKER"); process.exit(0); }
-if (process.env.ROUTR_SMOKE_ENV_FILE) fs.writeFileSync(process.env.ROUTR_SMOKE_ENV_FILE, JSON.stringify({ TRACEPARENT: process.env.TRACEPARENT, TRACESTATE: process.env.TRACESTATE, BAGGAGE: process.env.BAGGAGE }));
+if (process.env.ROUTR_SMOKE_ENV_FILE) fs.appendFileSync(process.env.ROUTR_SMOKE_ENV_FILE, JSON.stringify({ TRACEPARENT: process.env.TRACEPARENT, TRACESTATE: process.env.TRACESTATE, BAGGAGE: process.env.BAGGAGE }) + "\\n");
 const out = (v) => console.log(JSON.stringify(v)); let buf = "";
 process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const line = buf.slice(0,i); buf = buf.slice(i+1); JSON.parse(line);
   out({type:"system",subtype:"init",session_id:sid});
@@ -193,6 +193,19 @@ export function checkPaneTrace(spans, split) {
   check(split?.some((a, i) => split[i - 1] === "--env" && a === `TRACEPARENT=00-${launched.traceId}-${launched.spanId}-01`), "pane launch carrier");
   check(spans.some((s) => s.name === "routr cleanup" && s.links?.some((l) => l.traceId === launched.traceId && l.spanId === launched.spanId)), "pane cleanup launch link");
 }
+export function checkHeadlessTrace(spans, processes) {
+  const launched = spans.find((s) => s.name === "routr launch" && attributes(s.attributes, TRACE_ATTRIBUTES)["gen_ai.agent.name"] === "fixture");
+  check(launched, "headless launch arrived");
+  const turns = spans.filter((s) => s.name === "invoke_agent fixture").sort((a, b) => Number(attributes(a.attributes, TRACE_ATTRIBUTES)["routr.turn"]) - Number(attributes(b.attributes, TRACE_ATTRIBUTES)["routr.turn"]));
+  check(turns.length === 2 && processes.length === 2, "two headless turns and fixture processes");
+  for (const [i, turn] of turns.entries()) {
+    const a = attributes(turn.attributes, TRACE_ATTRIBUTES);
+    check(turn.kind === 3 && turn.traceId === launched.traceId && turn.parentSpanId === launched.spanId, "turn launch parent");
+    check(a["gen_ai.operation.name"] === "invoke_agent" && a["gen_ai.provider.name"] === "anthropic" && a["gen_ai.agent.name"] === "fixture" && Number(a["routr.turn"]) === i + 1 && a["routr.turn.outcome"] === "finished" && Number(a["routr.turn.messages"]) === 1 && !turn.status, "turn projection");
+    const cause = i === 0 ? launched : turn;
+    check(processes[i].TRACEPARENT === `00-${cause.traceId}-${cause.spanId}-01`, "headless process carrier");
+  }
+}
 async function runSmoke({ env: original, log }) {
   // Short homes on Darwin are necessary for its 103-byte Unix-socket address bound (headless p36 measurement).
   const home = mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "ro-")), bin = join(home, "bin"), batches = [], children = new Set();
@@ -258,7 +271,7 @@ async function runSmoke({ env: original, log }) {
     await cli(["launch", ...base, "--name", "planned", "--dry-run"]);
     const launched = await cli(["launch", ...base, "--name", "fixture", "--task-file", task, "--advice", advice]); check(launched.ok, "fixture launch");
     await cli(["wait", "--name", "fixture"]); await until(holderReleased, "first fixture holder release");
-    const saved = JSON.parse(readFileSync(join(home, ".local/state/routr/workers/fixture/worker.json"), "utf8")), got = JSON.parse(readFileSync(env.ROUTR_SMOKE_ENV_FILE, "utf8"));
+    const saved = JSON.parse(readFileSync(join(home, ".local/state/routr/workers/fixture/worker.json"), "utf8")), got = JSON.parse(readFileSync(env.ROUTR_SMOKE_ENV_FILE, "utf8").trim().split("\n")[0]);
     check(got.TRACEPARENT === `00-${saved.launch.traceId}-${saved.launch.spanId}-01` && got.BAGGAGE === never[6] && got.TRACESTATE === "vendor=fixture", "first process carriers");
     await cli(["send", "--name", "fixture", "--task", never[0]]); await cli(["wait", "--name", "fixture"]); await until(holderReleased, "resumed fixture holder release");
     await cli(["cleanup", "--worker", "fixture"]);
@@ -285,8 +298,9 @@ async function runSmoke({ env: original, log }) {
     await until(() => { try { process.kill(killed, 0); return false; } catch { return true; } }, "killed sender exit");
     hold = false; server.closeAllConnections();
     await cli(["usage", "--config", configPath]); await until(queueIdle, "recovery delivery");
-    const checked = checkSmokeTraces(batches, { markers: never, counts: { "routr launch": original.HERDR_ENV === "1" ? 3 : 2, "routr send": 1, "routr wait": 2, "routr cleanup": original.HERDR_ENV === "1" ? 2 : 1, "routr record": 1, "routr usage": 2 } });
+    const checked = checkSmokeTraces(batches, { markers: never, counts: { "routr launch": original.HERDR_ENV === "1" ? 3 : 2, "routr send": 1, "invoke_agent fixture": 2, "routr wait": 2, "routr cleanup": original.HERDR_ENV === "1" ? 2 : 1, "routr record": 1, "routr usage": 2 } });
     if (original.HERDR_ENV === "1") checkPaneTrace(checked.spans, paneSplit);
+    checkHeadlessTrace(checked.spans, readFileSync(env.ROUTR_SMOKE_ENV_FILE, "utf8").trim().split("\n").map(JSON.parse));
     check(checked.duplicates >= 1, "mid-batch recovery kept the same span ids");
     const launchSpan = checked.spans.find((s) => s.traceId === saved.launch.traceId && s.spanId === saved.launch.spanId);
     check(launchSpan, "headless launch arrived");

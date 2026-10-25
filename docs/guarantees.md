@@ -337,7 +337,7 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
   absent, so a worker in such a pane gets exactly routr's context, or none.
 - **Not for harness reads.** routr's own reads of a harness (sign-in status, usage, model lists) and its private herdr
   session get no carrier: they are not workers. Every detached routr job also starts with the trace carriers,
-  lead-session variables and herdr pane variables removed; background usage refreshes and holders emit no spans.
+  lead-session variables and herdr pane variables removed; background usage refreshes emit no spans. Headless holders emit completed turn spans only when export permits them.
 - **Limits.** routr passes a carrier only when every character is printable ASCII or a tab, and it is at most 512
   bytes (`TRACEPARENT`, `TRACESTATE`) or 8192 (`BAGGAGE`). This is routr's own limit on what it hands on, not the W3C
   grammar. One outside it is not passed, and a warning names it, never its value; the others still go. With export
@@ -349,11 +349,23 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
   value of every carrier routr found or generated, passed or withheld, replaced by `<carrier>`, also where the pane wrapped it
   across lines; a value the screen drew with something inside it (a colour code) is not recognised.
 - **Headless.** Launch saves the carriers it passes in the worker's settings file, in its run folder (0600 on macOS
-  and Linux), and every turn uses those, whoever starts the next one: a `send` from another environment does not
-  change them. They are checked against the limits again each time they are read: only the three names are used, and
-  a value outside the limits, or a name saved with anything but a non-empty string (null, empty), is withheld (`send` says so; `workers` and `wait` show the names in
-  `carriers_withheld`). A worker launched before routr saved carriers gets none. `cleanup --worker` removes them with
-  the run folder.
+  and Linux), and every turn starts from those, whoever starts the next one: a `send` from another environment does
+  not replace them. Saved carriers are checked against the limits again on each read: only the three names are
+  used, and a value outside the limits, or anything but a non-empty string (null, empty), is withheld (`send` says
+  so; `workers` and `wait` show the names in `carriers_withheld`). A worker launched before routr saved carriers gets
+  none. `cleanup --worker` removes them with the run folder.
+  With export on, the holder emits one `invoke_agent` span per completed turn, checking consent on each write:
+  a child of its recorded launch, otherwise its valid saved parent, or a sampled root with no valid parent.
+  An unsampled saved parent or explicit unsampled launch decision keeps turns silent across export changes,
+  including when launch export was off. The first process gets the recorded launch span; a resumed process or
+  a process starting a turn without a recorded launch gets that turn's span; Cursor gets the turn for every process.
+  Codex requests carry the turn in `trace`; Kiro prompts use ACP `_meta`, with session creation/loading carrying
+  the process context. These protocol fields are absent when export is off or sampling suppresses the turn.
+  A message into a running turn creates no new span. An existing process keeps its environment. Export off or an
+  unsampled parent keeps saved environment carriers unchanged. Reports and outcomes are saved before optional
+  queue I/O; queue failures leave turns unchanged. A killed holder loses unqueued spans, including its in-flight
+  turn's span; a replacement records `no_finish` locally without reconstructing it. Holders read the default config.
+  [OpenTelemetry nesting and measurement limits](opentelemetry.md#parentage-and-workers) describe each harness.
 - **Split panes.** The values are in herdr's command line while the split runs, visible to your own processes as any
   command line is. Once the pane's shell starts, its own startup files may still set or change these variables: that
   is your shell's configuration, not routr's. Whether a harness reads an inherited `TRACEPARENT`, and in which mode,

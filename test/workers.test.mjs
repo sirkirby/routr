@@ -6,6 +6,8 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { claim, connect, endpointFor, generations, ownEndpoint, probe, serve, SOCKET_DIR, writeSecret } from "../src/lib/channel.mjs";
+import { prepareOtel } from "../src/lib/otel.mjs";
+import { TRACE_ATTRIBUTES } from "../src/lib/traces.mjs";
 import { ADAPTERS, agyReader, codexReader, cursorReader, groupAlive, groupGone, kiroReader, listGroup, readEvent } from "../src/lib/headless.mjs";
 import { unmakeWorktree, view } from "../src/lib/workers.mjs";
 import { EventEmitter } from "node:events";
@@ -56,7 +58,7 @@ async function turn(text) {
 }
 process.stdin.on("data", async (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const l = buf.slice(0, i); buf = buf.slice(i + 1); const t = JSON.parse(l).message.content; if (busy) mid.push(t); else await turn(t); } });
 // FAKE_HOLD_EXIT: once its input closes, it stays until the test writes the gate file (a Claude slow to exit).
-const leave = async () => { if (process.env.FAKE_HOLD_EXIT) for (let i = 0; i < 400 && !fs.existsSync(process.env.FAKE_GATE); i++) await sleep(50); process.exit(0); };
+const leave = async () => { if (process.env.FAKE_HOLD_EXIT) for (let i = 0; i < 400 && !fs.existsSync(process.env.FAKE_EXIT_GATE ?? process.env.FAKE_GATE); i++) await sleep(50); process.exit(0); };
 process.stdin.on("end", () => { ended = true; if (!busy && !tasks) leave(); });
 `;
 // Codex's app-server, as measured (p38): initialize, thread/start or thread/resume, turn/start answered at once and then
@@ -73,30 +75,37 @@ if (process.env.FAKE_ARGV) fs.appendFileSync(process.env.FAKE_ARGV, JSON.stringi
 const out = (o) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...o }) + "\\n");
 const log = (m, p) => process.env.FAKE_RPC && fs.appendFileSync(process.env.FAKE_RPC, JSON.stringify({ method: m, ...Object.fromEntries(Object.entries(p ?? {}).filter(([k]) => k !== "input")) }) + "\\n");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-let thread = null, turn = null, n = 0, steered = 0, buf = "", busy = false, ended = false;
+let thread = null, turn = null, n = 0, steered = 0, buf = "", busy = false, ended = false, nextSteer = null, starting = false;
 async function run(id, text) {
   if (text.includes("CRASH")) process.exit(3);
+  if (process.env.FAKE_START_GATE && n > 0) {
+    if (starting) return out({ id, error: { code: -32600, message: "a turn is already starting" } });
+    starting = true; fs.writeFileSync(process.env.FAKE_START_PENDING, "");
+    for (let i = 0; i < 400 && !fs.existsSync(process.env.FAKE_START_GATE); i++) await sleep(50);
+    starting = false;
+  }
   busy = true; turn = "turn-" + (++n); steered = 0;
   out({ id, result: { turn: { id: turn, items: [], status: "inProgress" } } });
   out({ method: "turn/started", params: { threadId: thread, turn: { id: turn, items: [], status: "inProgress" } } });
   out({ method: "item/started", params: { threadId: thread, turnId: turn, startedAtMs: 0, item: { type: text.includes("MCP") ? "mcpToolCall" : "commandExecution", id: "c", command: "an argument" } } });
   if (text.includes("ASK")) out({ id: 900, method: "item/tool/requestUserInput", params: { threadId: thread, turnId: turn, questions: [] } });
-  if (text.includes("HOLD")) for (let i = 0; i < 400 && !fs.existsSync(process.env.FAKE_GATE); i++) await sleep(50);
+  if (text.includes("HOLD")) for (let i = 0; i < 400 && !nextSteer && !fs.existsSync(process.env.FAKE_GATE); i++) await sleep(50);
   out({ method: "item/completed", params: { threadId: thread, turnId: turn, completedAtMs: 0, item: { type: "agentMessage", id: "m1", phase: "commentary", text: "COMMENTARY-not-the-report" } } });
   out({ method: "item/completed", params: { threadId: thread, turnId: turn, completedAtMs: 0, item: { type: "agentMessage", id: "m2", phase: "final_answer", text: "VERDICT: done\\nSUMMARY: turn with " + steered + " steered messages" } } });
   const t = turn; turn = null; busy = false;
   out({ method: "turn/completed", params: { threadId: thread, turn: { id: t, items: [], status: text.includes("FAIL") ? "failed" : "completed" } } });
+  if (nextSteer) { out({ id: nextSteer, error: { code: -32600, message: "no active turn to steer" } }); nextSteer = null; }
   if (ended) process.exit(0);
 }
 process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n")) >= 0) { const e = JSON.parse(buf.slice(0, i)); buf = buf.slice(i + 1);
   if (e.id != null && !e.method) { if (process.env.FAKE_ANSWERS) fs.appendFileSync(process.env.FAKE_ANSWERS, JSON.stringify(e) + "\\n"); continue; }
-  log(e.method, e.params);
+  log(e.method, { ...e.params, ...(process.env.FAKE_TRACE_RPC ? { trace: e.trace, worker: a.includes("check_for_update_on_startup=false"), request: e.id != null } : {}) });
   const p = e.params ?? {};
   if (e.method === "initialize") out({ id: e.id, result: { userAgent: "fake" } });
   else if (e.method === "thread/start") { if (p.model === "nosuch") out({ id: e.id, error: { code: -32600, message: "model not found" } }); else { thread = "0199a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"; out({ id: e.id, result: { thread: { id: thread } } }); } }
   else if (e.method === "thread/resume") { thread = p.threadId; out({ id: e.id, result: { thread: { id: thread } } }); }
   else if (e.method === "turn/start") run(e.id, p.input[0].text);
-  else if (e.method === "turn/steer") { if (turn && p.expectedTurnId === turn) { steered++; out({ id: e.id, result: { turnId: turn } }); } else out({ id: e.id, error: { code: -32600, message: "no active turn to steer" } }); }
+  else if (e.method === "turn/steer") { if (process.env.FAKE_STEER_NEXT && turn) { nextSteer = e.id; continue; } if (turn && p.expectedTurnId === turn) { steered++; out({ id: e.id, result: { turnId: turn } }); } else out({ id: e.id, error: { code: -32600, message: "no active turn to steer" } }); }
 } });
 process.stdin.on("end", () => { ended = true; if (!busy) process.exit(0); });
 `;
@@ -164,9 +173,9 @@ process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n"
   if (e.id != null && !e.method) { if (process.env.FAKE_ANSWERS) fs.appendFileSync(process.env.FAKE_ANSWERS, JSON.stringify(e) + "\\n"); continue; }
   const p = e.params ?? {};
   if (e.method === "initialize") out({ id: e.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true } } });
-  else if (e.method === "session/new") { log({ method: e.method, cwd: p.cwd }); if (process.env.FAKE_NEW_DIE) { setTimeout(() => process.exit(0), 1500); continue; } out({ id: e.id, result: { sessionId: SID, models: { currentModelId: a[a.indexOf("--model") + 1] } } }); }
-  else if (e.method === "session/load") { log({ method: e.method, sessionId: p.sessionId, cwd: p.cwd }); if (process.env.FAKE_LOAD_DIE) process.exit(0); const ms = Number(process.env.FAKE_LOAD_MS ?? 0); if (ms) { const id = e.id; setTimeout(() => { up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-not-the-report" } }); out({ id, result: {} }); }, ms); continue; } up({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "an old prompt" } }); up({ sessionUpdate: "tool_call", toolCallId: "old", kind: "edit" }); up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-not-the-report" } }); out({ id: e.id, result: {} }); }
-  else if (e.method === "session/prompt") { log({ method: e.method, busy, tag: (p.prompt[0].text.match(/TAG-\\w+/) ?? [null])[0] }); if (busy) out({ id: e.id, error: { code: -32603, message: "Internal error", data: "Prompt already in progress" } }); else prompt(e.id, p.prompt[0].text); }
+  else if (e.method === "session/new") { log({ method: e.method, cwd: p.cwd, _meta: p._meta }); if (process.env.FAKE_NEW_DIE) { setTimeout(() => process.exit(0), 1500); continue; } out({ id: e.id, result: { sessionId: SID, models: { currentModelId: a[a.indexOf("--model") + 1] } } }); }
+  else if (e.method === "session/load") { log({ method: e.method, sessionId: p.sessionId, cwd: p.cwd, _meta: p._meta }); if (process.env.FAKE_LOAD_DIE) process.exit(0); const ms = Number(process.env.FAKE_LOAD_MS ?? 0); if (ms) { const id = e.id; setTimeout(() => { up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-not-the-report" } }); out({ id, result: {} }); }, ms); continue; } up({ sessionUpdate: "user_message_chunk", content: { type: "text", text: "an old prompt" } }); up({ sessionUpdate: "tool_call", toolCallId: "old", kind: "edit" }); up({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "REPLAYED-not-the-report" } }); out({ id: e.id, result: {} }); }
+  else if (e.method === "session/prompt") { log({ method: e.method, _meta: p._meta, busy, tag: (p.prompt[0].text.match(/TAG-\\w+/) ?? [null])[0] }); if (busy) out({ id: e.id, error: { code: -32603, message: "Internal error", data: "Prompt already in progress" } }); else prompt(e.id, p.prompt[0].text); }
 } });
 process.stdin.on("end", () => { ended = true; if (!busy) process.exit(0); });
 `;
@@ -243,8 +252,47 @@ function world(over = {}) {
   // The machine's own trace context never reaches a test's routr: only what a test gives.
   for (const k of Object.keys(env)) if (/^(TRACEPARENT|TRACESTATE|BAGGAGE)$/i.test(k) && !Object.hasOwn(over, k)) delete env[k];
   // Inject sandbox markers only in the holder: the public launch correctly refuses a genuinely sandboxed lead.
-  const entry = over.FAKE_HOLDER_ENV ? join(home, "routr.mjs") : SCRIPT;
+  const entry = over.FAKE_HOLDER_ENV || over.FAKE_TRACE_WRITES ? join(home, "routr.mjs") : SCRIPT;
   if (over.FAKE_HOLDER_ENV) writeFileSync(entry, `if (process.argv.includes("--hold")) Object.assign(process.env, JSON.parse(process.env.FAKE_HOLDER_ENV)); await import(${JSON.stringify(SCRIPT)});\n`);
+  if (over.FAKE_TRACE_WRITES) writeFileSync(entry, `
+    import { readFileSync, existsSync, appendFileSync, writeFileSync } from "node:fs";
+    import { join } from "node:path";
+    import { writeJsonAtomic, start, harnessEnv } from ${JSON.stringify(new URL("../src/lib/runtime.mjs", import.meta.url).href)};
+    import { fileURLToPath } from "node:url";
+    if (process.argv.includes("--hold")) {
+      process.env.FAKE_HOLDER_TRACE = "1";
+      const { hold, runDir, ADAPTERS } = await import(${JSON.stringify(new URL("../src/lib/headless.mjs", import.meta.url).href)});
+      if (process.env.FAKE_REJECT_HANDOVER) {
+        const connect = ADAPTERS.agy.connect;
+        ADAPTERS.agy.connect = (c, o) => {
+          const h = connect(c, o); let rejected = false;
+          return { ...h, send: async (...args) => {
+            if (!rejected) {
+              rejected = true; writeFileSync(join(process.env.HOME, "rejected-context.json"), JSON.stringify(o.turnCarriers()));
+              const file = join(process.env.HOME, ".config/routr/config.json"), config = JSON.parse(readFileSync(file, "utf8"));
+              config.otel.consent = "a".repeat(32); writeFileSync(file, JSON.stringify(config));
+              return { code: "refused", why: "harness_refused" };
+            }
+            return h.send(...args);
+          } };
+        };
+      }
+      const name = process.argv[process.argv.indexOf("--hold") + 1];
+      await hold(name, { otel: { spawn: () => false, write: (file, body, opts) => {
+        if (body.resourceSpans) {
+          const state = JSON.parse(readFileSync(join(runDir(name), "state.json"), "utf8")), turn = state.turns.at(-1);
+          appendFileSync(join(process.env.HOME, "emissions.jsonl"), JSON.stringify({ outcome: turn.outcome ?? null, report: turn.report != null && existsSync(turn.report) }) + "\\n");
+        }
+        writeJsonAtomic(file, body, opts);
+      } } });
+    } else if (["launch", "send"].includes(process.argv[2])) {
+      const spawn = (args) => { const c = start(process.execPath, [fileURLToPath(import.meta.url), ...args], { detached: true, stdio: "ignore", env: harnessEnv() }); c.on("error", () => {}); c.unref(); return true; };
+      const result = process.argv[2] === "launch"
+        ? await (await import(${JSON.stringify(new URL("../src/lib/launch.mjs", import.meta.url).href)})).launch(process.argv.slice(3), { spawn })
+        : await (await import(${JSON.stringify(new URL("../src/lib/workers.mjs", import.meta.url).href)})).sendCommand(process.argv.slice(3), { spawn });
+      console.log(JSON.stringify(result));
+    } else await import(${JSON.stringify(new URL("../src/routr.mjs", import.meta.url).href)});
+  `);
   const outputs = [];
   const run = (args, extra = {}) => {
     const r = Bun.spawnSync([process.execPath, entry, ...args], { cwd: work, env: { ...env, ...extra }, stdin: "ignore" });
@@ -1189,14 +1237,14 @@ test.skipIf(!POSIX)("stop with group: true ends what a detached child started in
 // turn gets those, whoever starts the holder: detached holders inherit no carriers, and must read the launch's
 // carriers from worker.json, not the sender's.
 const LAUNCHED = { TRACEPARENT: "00-0af7651916cd43dd8448eb211c80319c-CARRIER_HL_TP-01", TRACESTATE: "k=CARRIER_HL_TS,\tz=\"%PATH%\"", BAGGAGE: "a=CARRIER_HL_BG;p=1,b=c d!&'" };
-const turnsOf = (kind, rows) => rows.filter(({ argv }) => kind === "codex" ? argv[0] === "app-server" : kind === "kiro" ? argv[0] === "acp" : kind === "agy" ? argv.includes("--print=") : argv.includes("-p"));
+const turnsOf = (kind, rows) => rows.filter(({ argv }) => kind === "codex" ? argv[0] === "app-server" && argv.includes("check_for_update_on_startup=false") : kind === "kiro" ? argv[0] === "acp" : kind === "agy" ? argv.includes("--print=") : kind === "claude" ? argv.includes("--input-format") : argv.includes("-p") && argv.includes("--trust"));
 const carriersIn = (env) => Object.fromEntries(Object.entries(env).filter(([k]) => /^(traceparent|tracestate|baggage)$/i.test(k)));
 
 test("every headless adapter's turns get the launch's carriers, a process per turn or a long-lived one, and a holder send restarts gets the launch's, not the sender's", async () => {
   for (const kind of Object.keys(ADAPTERS)) {
     const w = world(LAUNCHED), log = join(w.home, "env.jsonl");
     if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor", "cli-config.json"), "{}"); }
-    w.env.FAKE_ENV = log;
+    w.env.FAKE_ENV = log; w.env.FAKE_TRACE_RPC = "1";
     try {
       // HOLD: a message sent mid-turn goes to the running harness (or, for a harness that queues, its next turn in the
       // same process; Cursor's a new process of its own).
@@ -1216,6 +1264,7 @@ test("every headless adapter's turns get the launch's carriers, a process per tu
       const rows = readFileSync(log, "utf8").trim().split("\n").map((x) => JSON.parse(x)), turns = turnsOf(kind, rows);
       expect([kind, turns.length >= 2]).toEqual([kind, true]);
       for (const t of turns) expect([kind, carriersIn(t.env)]).toEqual([kind, LAUNCHED]);
+      if (["codex", "kiro"].includes(kind)) for (const r of rpcs(w)) { expect(r).not.toHaveProperty("trace"); expect(r).not.toHaveProperty("_meta"); }
       // A harness read (its sign-in status, a model list) is not a worker: none.
       for (const r of rows.filter((x) => !turns.includes(x))) expect([kind, carriersIn(r.env)]).toEqual([kind, {}]);
       expect(w.state("tc").carriers_withheld).toBeUndefined();
@@ -1277,3 +1326,324 @@ test("a headless worker's saved carriers are checked on every load: a bad one is
     expect(carriersIn(turns.at(-1).env)).toEqual({ TRACEPARENT: LAUNCHED.TRACEPARENT });
   } finally { w.run(["stop", "--name", "tb"]); w.run(["cleanup", "--worker", "tb"]); }
 }, 60000);
+
+// Hold the sender lock ourselves: queue assertions never start a sender or contact an endpoint.
+const wireAttrs = (s) => Object.fromEntries(s.attributes.map(({ key, value }) => [key, value.stringValue ?? value.boolValue ?? (value.intValue == null ? value.doubleValue : Number(value.intValue))]));
+function traceWorld(over = {}) {
+  const w = world({ ROUTR_OTEL: "1", OTEL_SDK_DISABLED: "false", FAKE_TRACE_RPC: "1", ...over });
+  const configPath = join(w.home, ".config/routr/config.json"), config = cfg({ auto_update: false, subscriptions: {}, otel: { endpoint: "http://127.0.0.1:4318", consent: "1234567890abcdef1234567890abcdef" } });
+  mkdirSync(dirname(configPath), { recursive: true }); writeFileSync(configPath, JSON.stringify(config));
+  prepareOtel({ home: w.home });
+  const dir = join(w.home, ".cache/routr/otel/traces");
+  writeFileSync(join(w.home, ".cache/routr/otel/sender.lock"), JSON.stringify({ pid: process.pid, token: "fixture" }));
+  const batches = () => readdirSync(dir).filter((n) => n.endsWith(".json")).map((n) => JSON.parse(readFileSync(join(dir, n), "utf8")));
+  return { ...w, config, configPath, batches, spans: () => batches().flatMap((b) => b.resourceSpans[0].scopeSpans[0].spans) };
+}
+
+test("the holder queues one safe invoke_agent span when a turn ends, before its process exits", async () => {
+  const w = traceWorld({ TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", BAGGAGE: "BAGGAGE_PRIVATE_MARKER", FAKE_HOLD_EXIT: "1" });
+  w.env.FAKE_EXIT_GATE = join(w.home, "exit-gate");
+  try {
+    expect(w.launch("traced", w.task(`${BRIEF} HOLD`)).state).toBe("prompted");
+    expect(w.run(["send", "--name", "traced", "--task", SENT]).ok).toBe(true);
+    w.release();
+    expect(await until(() => w.spans().some((s) => s.name === "invoke_agent traced"))).toBe(true);
+    expect(w.state("traced").harness_pid).toBeGreaterThan(0);
+    const spans = w.spans(), launch = spans.find((s) => s.name === "routr launch"), turn = spans.find((s) => s.name === "invoke_agent traced");
+    expect(turn).toMatchObject({ kind: 3, traceId: launch.traceId, parentSpanId: launch.spanId });
+    expect(wireAttrs(turn)).toMatchObject({ "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": "anthropic", "gen_ai.agent.name": "traced", "gen_ai.conversation.id": "11111111-2222-3333-4444-555555555555", "routr.model": "haiku", "routr.turn": 1, "routr.turn.outcome": "finished", "routr.turn.messages": 2 });
+    expect(turn.status).toBeUndefined();
+    expect(wireAttrs(turn)).not.toHaveProperty("gen_ai.request.model");
+    for (const a of turn.attributes) expect(TRACE_ATTRIBUTES[a.key]).toBeDefined();
+    expect(JSON.stringify(w.batches())).not.toMatch(/PRIVATE-BRIEF|PRIVATE-SEND|BAGGAGE_PRIVATE_MARKER/);
+    expect(w.spans().filter((s) => s.name === "invoke_agent traced")).toHaveLength(1);
+  } finally { w.release(); writeFileSync(w.env.FAKE_EXIT_GATE, ""); w.run(["stop", "--name", "traced"]); await w.settled("traced"); w.run(["cleanup", "--worker", "traced"]); }
+}, 30000);
+
+const spanCarrier = (s) => `00-${s.traceId}-${s.spanId}-01`;
+test("every adapter gets the causing process span and the current turn through its protocol channel", async () => {
+  for (const kind of Object.keys(ADAPTERS)) {
+    const inherited = { TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01", TRACESTATE: "vendor=STATE_PRIVATE", BAGGAGE: "k=BAGGAGE_PRIVATE" };
+    const w = traceWorld(inherited); w.env.FAKE_ENV = join(w.home, "env.jsonl");
+    if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor/cli-config.json"), "{}"); }
+    try {
+      const l = w.launch("channels", w.task(`${BRIEF} HOLD`), [], undefined, kind);
+      expect([kind, l.state, l.error]).toEqual([kind, "prompted", undefined]);
+      expect(w.run(["send", "--name", "channels", "--task", SENT]).ok).toBe(true);
+      w.release(); expect(await w.settled("channels")).toBe(true);
+      const beforeResume = ["agy", "kiro", "cursor"].includes(kind) ? 2 : 1;
+      expect(w.spans().filter((s) => s.name === "invoke_agent channels")).toHaveLength(beforeResume);
+      expect(w.run(["send", "--name", "channels", "--task", SENT], { TRACEPARENT: "bad-sender", BAGGAGE: "sender=PRIVATE" }).ok).toBe(true);
+      expect(await w.settled("channels")).toBe(true);
+      const spans = w.spans(), launched = spans.find((s) => s.name === "routr launch"), turns = spans.filter((s) => s.name === "invoke_agent channels").sort((a, b) => wireAttrs(a)["routr.turn"] - wireAttrs(b)["routr.turn"]);
+      expect(turns).toHaveLength(beforeResume + 1);
+      for (const [i, t] of turns.entries()) {
+        expect(t).toMatchObject({ traceId: launched.traceId, parentSpanId: launched.spanId, kind: 3 });
+        expect(wireAttrs(t)).toMatchObject({ "routr.turn": i + 1, "routr.turn.outcome": "finished", "routr.turn.messages": i === 0 && beforeResume === 1 ? 2 : 1, "gen_ai.provider.name": { claude: "anthropic", codex: "openai", cursor: "cursor", agy: "gcp.gen_ai", kiro: "kiro" }[kind] });
+        expect(t.status).toBeUndefined(); expect(wireAttrs(t)).not.toHaveProperty("gen_ai.request.model");
+      }
+      const processes = turnsOf(kind, readFileSync(w.env.FAKE_ENV, "utf8").trim().split("\n").map(JSON.parse));
+      expect([kind, processes.map((p) => p.argv)]).toEqual([kind, Array.from({ length: kind === "cursor" ? 3 : 2 }, () => expect.any(Array))]);
+      expect(carriersIn(processes[0].env)).toEqual({ ...inherited, TRACEPARENT: spanCarrier(kind === "cursor" ? turns[0] : launched) });
+      expect(carriersIn(processes.at(-1).env)).toEqual({ ...inherited, TRACEPARENT: spanCarrier(turns.at(-1)) });
+      if (kind === "cursor") expect(processes.map((p) => p.env.TRACEPARENT)).toEqual(turns.map(spanCarrier));
+      const rpc = existsSync(join(w.home, "rpc.jsonl")) ? readFileSync(join(w.home, "rpc.jsonl"), "utf8").trim().split("\n").map(JSON.parse) : [];
+      if (kind === "codex") {
+        const starts = rpc.filter((r) => r.method === "turn/start");
+        expect(starts.map((r) => r.trace)).toEqual(turns.map((t) => ({ traceparent: spanCarrier(t), tracestate: inherited.TRACESTATE })));
+        expect(rpc.find((r) => r.method === "turn/steer").trace).toEqual(starts[0].trace);
+        let process = -1;
+        for (const r of rpc.filter((r) => r.worker && r.request)) {
+          if (r.method === "initialize") process++;
+          const turn = process === 0 ? turns[0] : turns.at(-1);
+          expect([r.method, r.trace]).toEqual([r.method, { traceparent: spanCarrier(turn), tracestate: inherited.TRACESTATE }]);
+        }
+        expect(process).toBe(1);
+        for (const r of rpc) if (!r.worker) expect(r.trace).toBeUndefined();
+      }
+      if (kind === "kiro") {
+        expect(rpc.filter((r) => r.method === "session/prompt").map((r) => r._meta)).toEqual(turns.map((t) => ({ traceparent: spanCarrier(t), tracestate: inherited.TRACESTATE, baggage: inherited.BAGGAGE })));
+        expect(rpc.find((r) => r.method === "session/new")._meta.traceparent).toBe(spanCarrier(launched));
+        expect(rpc.find((r) => r.method === "session/load")._meta.traceparent).toBe(spanCarrier(turns.at(-1)));
+      }
+      const resources = w.batches().filter((b) => b.resourceSpans[0].scopeSpans[0].spans[0].name === "invoke_agent channels").map((b) => wireAttrs({ attributes: b.resourceSpans[0].resource.attributes })["service.instance.id"]);
+      expect(new Set(resources).size).toBe(2); // first holder's turns share an id; a resumed holder is a different process
+      const launchResource = w.batches().find((b) => b.resourceSpans[0].scopeSpans[0].spans[0].name === "routr launch");
+      expect(resources).not.toContain(wireAttrs({ attributes: launchResource.resourceSpans[0].resource.attributes })["service.instance.id"]);
+      expect(JSON.stringify(w.batches())).not.toMatch(/PRIVATE-BRIEF|PRIVATE-SEND|STATE_PRIVATE|BAGGAGE_PRIVATE|sender=PRIVATE/);
+      expect(JSON.stringify(w.batches())).not.toContain(w.home);
+      expect(JSON.stringify(w.batches())).not.toContain(JSON.stringify(w.home).slice(1, -1));
+    } finally { w.release(); w.run(["stop", "--name", "channels"]); await w.settled("channels"); w.run(["cleanup", "--worker", "channels"]); }
+  }
+}, 120000);
+
+test("failed adapter turns have a fixed error code, with no report or reply text in holder batches", async () => {
+  for (const kind of Object.keys(ADAPTERS)) {
+    const w = traceWorld();
+    if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor/cli-config.json"), "{}"); }
+    try {
+      expect(w.launch("failure", w.task(`${BRIEF} FAIL`), [], undefined, kind).ok).toBe(true);
+      expect(await w.settled("failure")).toBe(true);
+      const turns = w.spans().filter((s) => s.name === "invoke_agent failure");
+      expect(turns).toHaveLength(1);
+      expect(turns[0].status).toEqual({ code: 2 });
+      expect(wireAttrs(turns[0])).toMatchObject({ "routr.turn.outcome": "failed", "error.type": "failed", "routr.turn.messages": 1 });
+      expect(turns[0].events).toBeUndefined();
+      expect(Object.keys(wireAttrs(turns[0])).filter((k) => k.startsWith("gen_ai.usage."))).toEqual([]);
+      for (const t of w.state("failure").turns) if (t.report) expect(JSON.stringify(w.batches())).not.toContain(readFileSync(t.report, "utf8"));
+    } finally { w.run(["stop", "--name", "failure"]); await w.settled("failure"); w.run(["cleanup", "--worker", "failure"]); }
+  }
+}, 120000);
+
+test("Codex starting a fast next turn in the same process uses its own request context and counts the taken message", async () => {
+  const w = traceWorld({ FAKE_STEER_NEXT: "1" }); w.env.FAKE_ENV = join(w.home, "env.jsonl");
+  try {
+    expect(w.launch("fast", w.task(`${BRIEF} HOLD`), [], undefined, "codex").ok).toBe(true);
+    expect(w.run(["send", "--name", "fast", "--task", SENT]).ok).toBe(true);
+    expect(await w.settled("fast")).toBe(true);
+    const turns = w.spans().filter((s) => s.name === "invoke_agent fast").sort((a, b) => wireAttrs(a)["routr.turn"] - wireAttrs(b)["routr.turn"]);
+    expect(turns.map((t) => wireAttrs(t)["routr.turn.messages"])).toEqual([1, 1]);
+    const rpc = readFileSync(join(w.home, "rpc.jsonl"), "utf8").trim().split("\n").map(JSON.parse).filter((r) => r.worker && r.request);
+    expect(rpc.map((r) => [r.method, r.trace])).toEqual([
+      ["initialize", { traceparent: spanCarrier(turns[0]) }], ["thread/start", { traceparent: spanCarrier(turns[0]) }],
+      ["turn/start", { traceparent: spanCarrier(turns[0]) }], ["turn/steer", { traceparent: spanCarrier(turns[0]) }],
+      ["turn/start", { traceparent: spanCarrier(turns[1]) }],
+    ]);
+    expect(turnsOf("codex", readFileSync(w.env.FAKE_ENV, "utf8").trim().split("\n").map(JSON.parse))).toHaveLength(1);
+  } finally { w.release(); w.run(["stop", "--name", "fast"]); await w.settled("fast"); w.run(["cleanup", "--worker", "fast"]); }
+}, 30000);
+
+test("a holder started with export off reads fresh consent for its later automatic turn", async () => {
+  const w = traceWorld(); w.env.FAKE_ENV = join(w.home, "env.jsonl");
+  try {
+    expect(w.launch("toggle", w.task(BRIEF)).ok).toBe(true); expect(await w.settled("toggle")).toBe(true);
+    writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: undefined }));
+    expect(w.run(["send", "--name", "toggle", "--task", `${SENT} HOLD BACKGROUND`]).ok).toBe(true);
+    writeFileSync(w.configPath, JSON.stringify(w.config)); w.release();
+    expect(await w.settled("toggle")).toBe(true);
+    const turns = w.spans().filter((s) => s.name === "invoke_agent toggle").sort((a, b) => wireAttrs(a)["routr.turn"] - wireAttrs(b)["routr.turn"]);
+    expect(turns.map((s) => wireAttrs(s)["routr.turn"])).toEqual([1, 3]);
+    expect(wireAttrs(turns[1])["routr.turn.messages"]).toBe(0);
+    const launched = w.spans().find((s) => s.name === "routr launch");
+    for (const t of turns) expect(t).toMatchObject({ traceId: launched.traceId, parentSpanId: launched.spanId });
+    const processes = turnsOf("claude", readFileSync(w.env.FAKE_ENV, "utf8").trim().split("\n").map(JSON.parse));
+    // The process started with export off keeps the saved launch context, even when a later turn is recorded.
+    expect(processes.map((p) => p.env.TRACEPARENT)).toEqual([spanCarrier(launched), spanCarrier(launched)]);
+  } finally { w.release(); w.run(["stop", "--name", "toggle"]); await w.settled("toggle"); w.run(["cleanup", "--worker", "toggle"]); }
+}, 30000);
+
+test("revoked consent or a failed holder queue write cannot change a completed turn", async () => {
+  for (const mode of ["consent", "off", "write"]) {
+    const w = traceWorld();
+    try {
+      expect(w.launch("silent", w.task(`${BRIEF} HOLD`)).ok).toBe(true);
+      if (mode === "consent") writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: { ...w.config.otel, consent: "a".repeat(32) } }));
+      if (mode === "off") writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: undefined }));
+      if (mode === "write") rmSync(join(w.home, ".cache/routr/otel/traces"), { recursive: true });
+      w.release(); expect(await w.settled("silent")).toBe(true);
+      expect(w.state("silent")).toMatchObject({ state: "idle", turns: [expect.objectContaining({ outcome: "finished" })] });
+      expect(readFileSync(w.state("silent").turns[0].report, "utf8")).toContain("VERDICT: done");
+      if (mode !== "write") expect(w.spans().filter((s) => s.name === "invoke_agent silent")).toEqual([]);
+    } finally { w.release(); w.run(["stop", "--name", "silent"]); await w.settled("silent"); w.run(["cleanup", "--worker", "silent"]); }
+  }
+}, 90000);
+
+test("workers launched with export off record independent root turns after opt-in and give resumed processes their turn context", async () => {
+  for (const kind of Object.keys(ADAPTERS)) {
+    const saved = { TRACEPARENT: "invalid-off-parent", TRACESTATE: "vendor=PRIVATE_STATE", BAGGAGE: "a=PRIVATE_BAGGAGE" };
+    const w = traceWorld(saved); w.env.FAKE_ENV = join(w.home, "env.jsonl");
+    if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor/cli-config.json"), "{}"); }
+    writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: undefined }));
+    try {
+      expect([kind, w.launch("roots", w.task(BRIEF), [], undefined, kind).ok]).toEqual([kind, true]);
+      expect(await w.settled("roots")).toBe(true);
+      expect(JSON.parse(readFileSync(join(w.runDir("roots"), "worker.json"), "utf8"))).not.toHaveProperty("launch");
+      expect(w.spans()).toEqual([]);
+      writeFileSync(w.configPath, JSON.stringify(w.config));
+      for (const text of [`${SENT} HOLD`, SENT]) {
+        expect(w.run(["send", "--name", "roots", "--task", text], { TRACEPARENT: "00-" + "a".repeat(32) + "-" + "b".repeat(16) + "-01" }).ok).toBe(true);
+        w.release(); expect(await w.settled("roots")).toBe(true);
+      }
+      const turns = w.spans().filter((s) => s.name === "invoke_agent roots").sort((a, b) => wireAttrs(a)["routr.turn"] - wireAttrs(b)["routr.turn"]);
+      expect([kind, turns.length]).toEqual([kind, 2]);
+      expect(turns.map((s) => wireAttrs(s)["routr.turn"])).toEqual([2, 3]);
+      expect(new Set(turns.map((s) => s.traceId)).size).toBe(2);
+      for (const t of turns) {
+        expect(t.parentSpanId).toBeUndefined(); expect(t.flags).toBe(1);
+        expect(t.traceId).not.toBe("4bf92f3577b34da6a3ce929d0e0e4736"); expect(t.traceId).not.toBe("a".repeat(32));
+        expect(wireAttrs(t)).not.toHaveProperty("routr.launch.id");
+        expect(wireAttrs(t)).toMatchObject({ "routr.turn.outcome": "finished", "routr.turn.messages": 1 });
+      }
+      const processes = turnsOf(kind, readFileSync(w.env.FAKE_ENV, "utf8").trim().split("\n").map(JSON.parse));
+      expect(processes).toHaveLength(3); expect(carriersIn(processes[0].env)).toEqual(saved);
+      expect(processes.slice(1).map((p) => carriersIn(p.env))).toEqual(turns.map((s) => ({ TRACEPARENT: spanCarrier(s), BAGGAGE: saved.BAGGAGE })));
+      expect(JSON.stringify(w.batches())).not.toMatch(/PRIVATE-BRIEF|PRIVATE-SEND|PRIVATE_STATE|PRIVATE_BAGGAGE/);
+    } finally { w.release(); w.run(["stop", "--name", "roots"]); await w.settled("roots"); w.run(["cleanup", "--worker", "roots"]); }
+  }
+}, 60000);
+
+test("an unsampled launch saves its sampling decision and every adapter keeps it through export off and on", async () => {
+  for (const kind of Object.keys(ADAPTERS)) {
+    const saved = { TRACEPARENT: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00", TRACESTATE: "vendor=PRIVATE_STATE", BAGGAGE: "a=PRIVATE_BAGGAGE" };
+    const w = traceWorld(saved); w.env.FAKE_ENV = join(w.home, "env.jsonl");
+    if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor/cli-config.json"), "{}"); }
+    try {
+      expect(w.launch("unsampled", w.task(BRIEF), [], undefined, kind).ok).toBe(true); expect(await w.settled("unsampled")).toBe(true);
+      const worker = JSON.parse(readFileSync(join(w.runDir("unsampled"), "worker.json"), "utf8"));
+      expect(worker.launch).toEqual({ sampled: false }); expect(w.spans()).toEqual([]);
+      for (const on of [false, true]) {
+        writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: on ? w.config.otel : undefined }));
+        expect(w.run(["send", "--name", "unsampled", "--task", SENT], { TRACEPARENT: "00-" + "a".repeat(32) + "-" + "b".repeat(16) + "-01" }).ok).toBe(true);
+        expect(await w.settled("unsampled")).toBe(true);
+      }
+      expect(w.spans().filter((s) => s.name.startsWith("invoke_agent "))).toEqual([]);
+      if (["codex", "kiro"].includes(kind)) for (const r of rpcs(w)) { expect(r).not.toHaveProperty("trace"); expect(r).not.toHaveProperty("_meta"); }
+      const processes = turnsOf(kind, readFileSync(w.env.FAKE_ENV, "utf8").trim().split("\n").map(JSON.parse));
+      expect(processes).toHaveLength(3);
+      for (const p of processes) expect(carriersIn(p.env)).toEqual(saved);
+    } finally { w.run(["stop", "--name", "unsampled"]); await w.settled("unsampled"); w.run(["cleanup", "--worker", "unsampled"]); }
+  }
+}, 60000);
+
+test("an initially off holder preserves an unsampled saved parent for its later automatic turn", async () => {
+  const parent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00", w = traceWorld({ TRACEPARENT: parent });
+  w.env.FAKE_ENV = join(w.home, "env.jsonl");
+  writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: undefined }));
+  try {
+    expect(w.launch("later-root", w.task(`${BRIEF} HOLD BACKGROUND`)).ok).toBe(true);
+    expect(JSON.parse(readFileSync(join(w.runDir("later-root"), "worker.json"), "utf8"))).not.toHaveProperty("launch");
+    writeFileSync(w.configPath, JSON.stringify(w.config)); w.release(); expect(await w.settled("later-root")).toBe(true);
+    const turns = w.spans().filter((s) => s.name === "invoke_agent later-root");
+    expect(turns).toHaveLength(0);
+    const processes = turnsOf("claude", readFileSync(w.env.FAKE_ENV, "utf8").trim().split("\n").map(JSON.parse));
+    expect(processes).toHaveLength(1); expect(processes[0].env.TRACEPARENT).toBe(parent);
+  } finally { w.release(); w.run(["stop", "--name", "later-root"]); await w.settled("later-root"); w.run(["cleanup", "--worker", "later-root"]); }
+}, 30000);
+
+function observedTraceWorld(over = {}) {
+  const w = traceWorld({ FAKE_TRACE_WRITES: "1", ...over }), git = Bun.which("git");
+  fakeExecutable(join(w.home, "bin"), "git", `
+    const fs = require("node:fs"), cp = require("node:child_process"), a = process.argv.slice(2);
+    if (process.env.FAKE_HOLDER_TRACE) {
+      fs.appendFileSync(${JSON.stringify(join(w.home, "git-reads.jsonl"))}, JSON.stringify(a) + "\\n");
+      if (a.includes("--show-toplevel")) console.log(${JSON.stringify(realpathSync.native(w.work) + "\n" + join(realpathSync.native(w.work), ".git"))});
+      else if (a.includes("remote.origin.url")) console.log("https://example.test/owner/repo.git");
+      else if (a.includes("symbolic-ref")) console.log("fixture");
+      else process.exit(1);
+    } else { const r = cp.spawnSync(${JSON.stringify(git)}, a, { stdio: "inherit" }); process.exit(r.status ?? 1); }
+  `);
+  return w;
+}
+
+test("the holder saves the report and outcome before it queues each finished turn", async () => {
+  const w = observedTraceWorld();
+  try {
+    expect(w.launch("ordered", w.task(`${BRIEF} BACKGROUND`)).ok).toBe(true); expect(await w.settled("ordered")).toBe(true);
+    const emitted = readFileSync(join(w.home, "emissions.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+    expect(emitted).toEqual([{ outcome: "finished", report: true }, { outcome: "finished", report: true }]);
+  } finally { w.run(["stop", "--name", "ordered"]); await w.settled("ordered"); w.run(["cleanup", "--worker", "ordered"]); }
+}, 30000);
+
+test("a holder computes git identity once for multiple turns in its process", async () => {
+  const w = observedTraceWorld();
+  try {
+    expect(w.launch("identity", w.task(`${BRIEF} BACKGROUND`)).ok).toBe(true); expect(await w.settled("identity")).toBe(true);
+    const reads = readFileSync(join(w.home, "git-reads.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+    expect(reads).toHaveLength(3);
+    const turns = w.spans().filter((s) => s.name === "invoke_agent identity");
+    expect(turns).toHaveLength(2);
+    for (const t of turns) expect(wireAttrs(t)).toMatchObject({ "vcs.repository.url.full": "https://example.test/owner/repo", "vcs.ref.head.name": "fixture", "routr.cwd": "." });
+  } finally { w.run(["stop", "--name", "identity"]); await w.settled("identity"); w.run(["cleanup", "--worker", "identity"]); }
+}, 30000);
+
+test("a failed hand-over discards its prepared span before the next turn captures fresh consent", async () => {
+  const w = observedTraceWorld({ FAKE_REJECT_HANDOVER: "1" });
+  try {
+    expect(w.launch("retry-context", w.task(`${BRIEF} HOLD`), [], undefined, "agy").ok).toBe(true);
+    for (const text of [SENT, `${SENT} TAG-next`]) expect(w.run(["send", "--name", "retry-context", "--task", text]).ok).toBe(true);
+    w.release(); expect(await w.settled("retry-context")).toBe(true);
+    const turns = w.spans().filter((s) => s.name === "invoke_agent retry-context");
+    expect(turns.map((s) => wireAttrs(s)["routr.turn"]).sort()).toEqual([2, 3]);
+    expect(wireAttrs(turns.find((s) => wireAttrs(s)["routr.turn"] === 2))["routr.turn.outcome"]).toBe("not_started");
+    expect(wireAttrs(turns.find((s) => wireAttrs(s)["routr.turn"] === 3))["routr.turn.outcome"]).toBe("finished");
+    const rejected = JSON.parse(readFileSync(join(w.home, "rejected-context.json"), "utf8")).TRACEPARENT;
+    expect(rejected).toMatch(/^00-[a-f0-9]{32}-[a-f0-9]{16}-01$/);
+    expect(turns.map(spanCarrier)).not.toContain(rejected);
+  } finally { w.release(); w.run(["stop", "--name", "retry-context"]); await w.settled("retry-context"); w.run(["cleanup", "--worker", "retry-context"]); }
+}, 30000);
+
+test("an export-off holder reads no git identity until its first generated turn", async () => {
+  for (const enable of [false, true]) {
+    const w = observedTraceWorld(), reads = () => existsSync(join(w.home, "git-reads.jsonl")) ? readFileSync(join(w.home, "git-reads.jsonl"), "utf8").trim().split("\n").map(JSON.parse) : [];
+    writeFileSync(w.configPath, JSON.stringify({ ...w.config, otel: undefined }));
+    try {
+      expect(w.launch("lazy", w.task(`${BRIEF} HOLD BACKGROUND`)).ok).toBe(true);
+      expect(reads()).toEqual([]);
+      if (enable) writeFileSync(w.configPath, JSON.stringify(w.config));
+      w.release(); expect(await w.settled("lazy")).toBe(true);
+      expect(reads()).toHaveLength(enable ? 3 : 0);
+      expect(w.spans().filter((s) => s.name === "invoke_agent lazy")).toHaveLength(enable ? 1 : 0);
+    } finally { w.release(); w.run(["stop", "--name", "lazy"]); await w.settled("lazy"); w.run(["cleanup", "--worker", "lazy"]); }
+  }
+}, 30000);
+
+test("a refused concurrent Codex send preserves the first send's prepared turn context", async () => {
+  const w = traceWorld({ FAKE_STEER_NEXT: "1" });
+  w.env.FAKE_START_GATE = join(w.home, "start-gate"); w.env.FAKE_START_PENDING = join(w.home, "start-pending");
+  let peer;
+  try {
+    expect(w.launch("pending", w.task(`${BRIEF} HOLD`), [], undefined, "codex").ok).toBe(true);
+    const p = await probe(w.runDir("pending")); peer = await connect(w.runDir("pending"), p.gen, p.ready.endpoint);
+    const first = peer.request("send", { text: SENT }, 10000); first.catch(() => {});
+    expect(await until(() => existsSync(w.env.FAKE_START_PENDING))).toBe(true);
+    const prepared = rpcs(w).filter((r) => r.worker && r.method === "turn/start").at(-1).trace;
+    expect(await peer.request("send", { text: `${SENT} second` }, 10000)).toMatchObject({ code: "refused", why: "harness_refused" });
+    writeFileSync(w.env.FAKE_START_GATE, "");
+    expect(await first).toMatchObject({ code: "accepted" }); peer.close(); peer = null;
+    expect(await w.settled("pending")).toBe(true);
+    const turns = w.spans().filter((s) => s.name === "invoke_agent pending").sort((a, b) => wireAttrs(a)["routr.turn"] - wireAttrs(b)["routr.turn"]);
+    expect(turns).toHaveLength(2);
+    expect(spanCarrier(turns[1])).toBe(prepared.traceparent);
+    expect(turns.map((s) => wireAttrs(s)["routr.turn.messages"])).toEqual([1, 1]);
+  } finally { writeFileSync(w.env.FAKE_START_GATE, ""); w.release(); peer?.close(); w.run(["stop", "--name", "pending"]); await w.settled("pending"); w.run(["cleanup", "--worker", "pending"]); }
+}, 30000);

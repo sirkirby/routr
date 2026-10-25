@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { encodeTraces } from "../src/lib/otel.mjs";
-import { checkPaneTrace, paneFixtureDeps, checkSmokeTraces, fixtureHarness, fixturePaneRun, smokeOtel, smokeParent, guardSmoke, SMOKE_ACTIVE, smokeProcessRows, smokeProcessesIn, teardownSmoke } from "../scripts/smoke-otel.mjs";
+import { checkPaneTrace, checkHeadlessTrace, paneFixtureDeps, checkSmokeTraces, fixtureHarness, fixturePaneRun, smokeOtel, smokeParent, guardSmoke, SMOKE_ACTIVE, smokeProcessRows, smokeProcessesIn, teardownSmoke } from "../scripts/smoke-otel.mjs";
 
 const span = { traceId: "4bf92f3577b34da6a3ce929d0e0e4736", spanId: "1234567890abcdef", parentSpanId: "00f067aa0ba902b7", flags: 1, name: "routr usage", kind: 1, startTimeUnixNano: "1", endTimeUnixNano: "2", attributes: {} };
 const batch = (s = span) => encodeTraces([s], { schemaUrl: "https://opentelemetry.io/schemas/1.44.0" });
@@ -116,4 +116,18 @@ test("the pane smoke verifies its generated launch carrier and cleanup link", ()
   expect(() => checkPaneTrace([launched, cleaned], ["pane", "split", "--env", `TRACEPARENT=${smokeParent}`])).toThrow();
   expect(() => checkPaneTrace([launched, { ...cleaned, links: [] }], split)).toThrow();
   expect(() => checkPaneTrace([cleaned], split)).toThrow();
+});
+
+test("the smoke checks both invoke_agent turns under the launch and the carrier of each fixture process", () => {
+  const attr = (key, value) => ({ key, value: typeof value === "number" ? { intValue: String(value) } : { stringValue: value } });
+  const launched = { ...span, name: "routr launch", attributes: [attr("gen_ai.agent.name", "fixture")] };
+  const turns = [1, 2].map((n) => ({ ...span, name: "invoke_agent fixture", kind: 3, spanId: String(n).repeat(16), parentSpanId: span.spanId,
+    attributes: [attr("gen_ai.operation.name", "invoke_agent"), attr("gen_ai.provider.name", "anthropic"), attr("gen_ai.agent.name", "fixture"), attr("routr.turn", n), attr("routr.turn.outcome", "finished"), attr("routr.turn.messages", 1)] }));
+  const carriers = [{ TRACEPARENT: `00-${span.traceId}-${span.spanId}-01` }, { TRACEPARENT: `00-${span.traceId}-${turns[1].spanId}-01` }];
+  expect(() => checkHeadlessTrace([launched, ...turns], carriers)).not.toThrow();
+  expect(() => checkHeadlessTrace([launched, ...turns], [carriers[0], carriers[0]])).toThrow();
+  expect(() => checkHeadlessTrace([launched, turns[0]], carriers)).toThrow();
+  expect(() => checkHeadlessTrace([launched, turns[0], { ...turns[1], parentSpanId: "a".repeat(16) }], carriers)).toThrow();
+  const body = encodeTraces([span, { ...turns[0], attributes: { "gen_ai.operation.name": "invoke_agent", "gen_ai.agent.name": "fixture", "routr.turn": 1 } }], { schemaUrl: "https://opentelemetry.io/schemas/1.44.0" });
+  expect(() => checkSmokeTraces([body], { counts: { "invoke_agent fixture": 1 } })).not.toThrow();
 });
