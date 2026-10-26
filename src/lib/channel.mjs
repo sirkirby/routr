@@ -15,7 +15,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { basename, dirname, join } from "node:path";
-import { STATE_DIR, writeJsonAtomic } from "./runtime.mjs";
+import { readJsonFile, STATE_DIR, writeJsonAtomic } from "./runtime.mjs";
 
 export const PROTO = 1;
 // One frame holds a whole task: launch and send refuse a message over MESSAGE_MAX before anything starts. Until a peer
@@ -27,7 +27,6 @@ const HEX64 = /^[0-9a-f]{64}$/, NONCE = /^[0-9a-f]{32}$/;
 const WIN = () => process.platform === "win32";
 const hmac = (key, s) => createHmac("sha256", key).update(s).digest("hex");
 const same = (a, b) => typeof a === "string" && typeof b === "string" && HEX64.test(a) && HEX64.test(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
-const readJson = (f) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return null; } };
 const alivePid = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } };
 const fail = (code, message = code) => Object.assign(new Error(message), { code });
 
@@ -82,15 +81,17 @@ export const markReleased = (dir, n, info) => writeJsonAtomic(genFile(dir, n, "r
 // alive), abandoned (claimed, never bound, claimant gone: it never started a harness), alive (answered and proved the
 // secret), dead (a definite no-listener), unreachable (anything else). A claimant's live pid may be a reused one,
 // which only errs toward "starting", the safe side. A claim is never seen half written (claim, below); one with no
-// readable pid was not written by routr, and is unreachable: nothing is assumed about it.
+// readable pid was not written by routr, and is unreachable: nothing is assumed about it. So is a ready or released
+// marker that is there and cannot be read (readJsonFile): it says neither that the holder ended nor that it did not.
 export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
   const n = generations(dir).at(-1);
   if (!n) return { state: "none", gen: 0 };
-  const released = readJson(genFile(dir, n, "released"));
-  const ready = readJson(genFile(dir, n, "ready"));
+  const releasedRead = readJsonFile(genFile(dir, n, "released")), readyRead = readJsonFile(genFile(dir, n, "ready"));
+  if (releasedRead.unreadable || readyRead.unreadable) return { state: "unreachable", gen: n };
+  const released = releasedRead.value ?? null, ready = readyRead.value ?? null;
   if (released) return { state: "released", gen: n, ready, released };
   if (!ready) {
-    const c = readJson(genFile(dir, n, "claim"));
+    const c = readJsonFile(genFile(dir, n, "claim")).value;
     if (Number.isInteger(c?.pid)) return { state: alivePid(c.pid) ? "starting" : "abandoned", gen: n };
     return { state: "unreachable", gen: n };
   }
@@ -100,7 +101,7 @@ export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
     return { state: "alive", gen: n, ready, ping: r };
   } catch (e) {
     // A holder that has just ended closes its channel right after it says so: read again before calling it dead.
-    const late = readJson(genFile(dir, n, "released"));
+    const late = readJsonFile(genFile(dir, n, "released")).value;
     if (late) return { state: "released", gen: n, ready, released: late };
     return { state: ["ENOENT", "ECONNREFUSED"].includes(e?.code) ? "dead" : "unreachable", gen: n, ready };
   }

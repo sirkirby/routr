@@ -72,6 +72,26 @@ export function ensureParent(file, { mkdir = mkdirSync } = {}) {
 // write that fails removes its temp file. `now` and `pause` are the clock and the wait, for tests.
 const replacePause = new Int32Array(new SharedArrayBuffer(4));
 export const REPLACE_BUSY_MS = 100;
+
+// A JSON file routr wrote, read back: { value }, { absent: true } when there is no such file, or { unreadable: code }
+// when it is there and could not be read or parsed (`not_json`, or the system's code). A caller never takes the last
+// for the second: a worker's state it could not read is not a worker with none (a holder that did so wrote over its
+// session). On Windows a reader can meet a file another process holds or is replacing (writeJsonAtomic, above), so an
+// unreadable one is read again for up to `busyFor` ms; elsewhere routr's writers replace whole files, so one that does
+// not parse is broken, and is read once. `read`, `now` and `pause` are the file read, the clock and the wait, for tests.
+export function readJsonFile(file, { busyFor = process.platform === "win32" ? REPLACE_BUSY_MS : 0, now = () => performance.now(),
+  pause = (ms) => Atomics.wait(replacePause, 0, 0, ms), read = (f) => readFileSync(f, "utf8") } = {}) {
+  for (const began = now(); ;) {
+    let unreadable;
+    try { return { value: JSON.parse(read(file)) }; }
+    catch (e) {
+      if (e?.code === "ENOENT") return { absent: true };
+      unreadable = e instanceof SyntaxError ? "not_json" : typeof e?.code === "string" ? e.code : "read_failed";
+    }
+    if (now() - began >= busyFor) return { unreadable };
+    pause(5);
+  }
+}
 export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync,
   busyFor = process.platform === "win32" ? REPLACE_BUSY_MS : 0, now = () => performance.now(), pause = (ms) => Atomics.wait(replacePause, 0, 0, ms) } = {}) {
   if (mkdir) ensureParent(file);

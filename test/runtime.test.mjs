@@ -695,3 +695,37 @@ test("the per-turn runtime loads only node built-ins", () => {
   const imports = new Bun.Transpiler({ loader: "js" }).scanImports(text);
   expect(imports.every((entry) => entry.path.startsWith("node:"))).toBe(true);
 });
+
+// A file routr wrote and reads back is read, absent, or unreadable: never "absent" for one it could not read. On Windows
+// a reader can meet a file another process holds or is replacing, so an unreadable one is read again for up to
+// REPLACE_BUSY_MS; elsewhere routr's writers replace whole files, so one that does not parse is read once.
+test("readJsonFile tells a file read from one absent and one there but unreadable, reading again on Windows", () => {
+  const dir = scratch("read-json-file"), file = join(dir, "state.json");
+  expect(runtime.readJsonFile(file)).toEqual({ absent: true });
+  writeFileSync(file, '{"turn":2}');
+  expect(runtime.readJsonFile(file)).toEqual({ value: { turn: 2 } });
+  for (const bad of ["", '{"turn":', "not json"]) { writeFileSync(file, bad); expect(runtime.readJsonFile(file)).toEqual({ unreadable: "not_json" }); }
+  // In use, then readable: read again with the old file in place, within the budget.
+  let t = 0, tries = 0;
+  const clock = { now: () => t, pause: (ms) => { expect(ms).toBe(5); t += ms; } };
+  const inUse = () => Object.assign(new Error("in use"), { code: "EBUSY" });
+  expect(runtime.readJsonFile(file, { busyFor: 100, ...clock, read: () => (++tries < 3 ? (() => { throw inUse(); })() : '{"turn":3}') })).toEqual({ value: { turn: 3 } });
+  expect(tries).toBe(3);
+  // Half written until the writer finishes: also read again.
+  tries = 0; t = 0;
+  expect(runtime.readJsonFile(file, { busyFor: 100, ...clock, read: () => (++tries < 2 ? '{"tu' : '{"turn":4}') })).toEqual({ value: { turn: 4 } });
+  // Unreadable throughout: given up once the budget is spent, slow reads counted in.
+  for (const [cost, want] of [[0, 21], [40, 3]]) {
+    tries = 0; t = 0;
+    expect(runtime.readJsonFile(file, { busyFor: 100, ...clock, read: () => { tries++; t += cost; throw inUse(); } })).toEqual({ unreadable: "EBUSY" });
+    expect([cost, tries]).toEqual([cost, want]);
+  }
+  // Absent is absent at once, and off Windows (busyFor 0, the default there) nothing is read twice.
+  tries = 0;
+  expect(runtime.readJsonFile(file, { busyFor: 100, ...clock, read: () => { tries++; throw Object.assign(new Error("gone"), { code: "ENOENT" }); } })).toEqual({ absent: true });
+  expect(tries).toBe(1);
+  tries = 0;
+  expect(runtime.readJsonFile(file, { busyFor: 0, ...clock, read: () => { tries++; throw inUse(); } })).toEqual({ unreadable: "EBUSY" });
+  expect(tries).toBe(1);
+  if (process.platform !== "win32") { tries = 0; expect(runtime.readJsonFile(file, { read: () => { tries++; throw inUse(); } })).toEqual({ unreadable: "EBUSY" }); expect(tries).toBe(1); }
+});

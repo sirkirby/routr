@@ -44,18 +44,20 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, privateDir, probe, removeEndpoint, serve } from "./channel.mjs";
 import { HARNESSES, plan } from "./harnesses.mjs";
-import { installedAt, lockIsStale, probe as collect, savedCarriers, start, STATE_DIR, stop, UNINSTALL_LOCK, workerEnv, writeJsonAtomic } from "./runtime.mjs";
+import { installedAt, lockIsStale, probe as collect, readJsonFile, savedCarriers, start, STATE_DIR, stop, UNINSTALL_LOCK, workerEnv, writeJsonAtomic } from "./runtime.mjs";
 import { besidesHelper, groupMembers } from "./process-boundary.mjs";
 
 export const FORMAT = 1;
 export const WORKERS_DIR = () => join(STATE_DIR(), "workers");
 export const runDir = (name) => join(WORKERS_DIR(), name);
-const readJson = (f) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return null; } };
 // What launch wrote: { format, id, name, kind, model, effort, cwd, created_at, carriers }. Never the brief, and of the
 // environment only the trace-context carriers within routr's limits, which every load checks again (savedCarriers).
-export const readWorker = (name) => { const w = readJson(join(runDir(name), "worker.json")); if (w?.format !== FORMAT || w.name !== name) return null; linkWorker(w); return w; };
-// What the holder wrote last (headless.mjs is its only writer).
-export const readState = (name) => readJson(join(runDir(name), "state.json"));
+// One that cannot be read is not routr's to act on, as one of another shape: callers keep its folder.
+export const readWorker = (name) => { const w = readJsonFile(join(runDir(name), "worker.json")).value; if (w?.format !== FORMAT || w.name !== name) return null; linkWorker(w); return w; };
+// What the holder wrote last (headless.mjs is its only writer), as readJsonFile reads it: { value }, { absent: true }
+// before a holder has written one, or { unreadable } (stateUnknown says that to a person).
+export const stateOf = (name) => readJsonFile(join(runDir(name), "state.json"));
+export const stateUnknown = (name) => `${name}'s state could not be read just now, so what it is doing is not known; try again in a moment`;
 export const reportPath = (name, turn) => join(runDir(name), "reports", `turn-${turn}.md`);
 const STREAM = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
 const message = (text) => JSON.stringify({ type: "user", message: { role: "user", content: text } }) + "\n";
@@ -431,7 +433,10 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   if (!w) return;
   const p = await probe(dir);
   if (["alive", "starting", "unreachable"].includes(p.state)) return; // another holder has it, or may
-  const prior = readJson(join(dir, "state.json")) ?? {};
+  // A state it cannot read is never started over: a new one would drop the session and turns it holds.
+  const read = stateOf(name);
+  if (read.unreadable) return;
+  const prior = read.value ?? {};
   // A harness an earlier generation started may still be working (its holder was killed, or a tool command outlived
   // it): never start a second Claude on its session while that group has members.
   if (await groupAlive(prior.harness_pgid, w.kind)) return;
