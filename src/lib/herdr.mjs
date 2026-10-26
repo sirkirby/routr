@@ -135,10 +135,16 @@ function transport(args, timeout, { via = start } = {}) {
   });
 }
 
+// A pane's recent lines with the terminal's wrapping undone (herdr's recent-unwrapped): a line wider than the pane is
+// one line again. The shell wait reads them only to finish a prompt the visible screen shows wrapped (shellLine).
+export const promptReadArgs = (pane) => ["pane", "read", pane, "--source", "recent-unwrapped", "--lines", "40"];
+
 // A pane as routr reads and types into it, through `call` (one herdr command, which throws on failure): its screen,
-// its processes, and keys. launch drives the user's panes with it, terminal.mjs its private session's.
+// its recent lines unwrapped (promptReadArgs), its processes, and keys. launch drives the user's panes with it,
+// terminal.mjs its private session's.
 export const paneView = (call, pane) => ({
   read: async () => paneText((await call(["pane", "read", pane, "--source", "visible"])).data),
+  unwrapped: async () => paneText((await call(promptReadArgs(pane))).data),
   info: async () => (await call(["pane", "process-info", "--pane", pane])).data.result.process_info,
   keys: (...keys) => call(["pane", "send-keys", pane, ...keys]),
 });
@@ -192,6 +198,37 @@ async function processesWhileWaiting(pane) {
   catch (e) { if (e?.code !== "herdr_invalid_response") throw e; return null; }
 }
 
+// The state of the shell's current line (shellPrompt), from the visible screen; when its last row is not a state routr
+// can act on (unrecognized), or reads as a question, from the pane's last line unwrapped, but only when that line is
+// the screen's own wrapped: two or more of the visible screen's last rows, in order, are exactly it, apart from spaces
+// where a row ends (a row can end where the line had one). A visible question gives way only to a ready prompt.
+// Measured 2026-10-26, herdr 0.9.5 on Windows 11 (PowerShell 5.1): a worktree pane split to 57 columns showed
+// `PS C:\Users\…\routr-smoke-…>` over two rows, its last row no drive path, and the wait ran out at 30 s;
+// recent-unwrapped gave it on one line. A prompt wrapped just before its `>` leaves a row that reads as a continuation
+// question. The visible screen stays the authority: herdr's recent range reaches into scrollback under a blank screen
+// and can miss the top of an alternate screen taller than the rows read (its 0.9.5 source), and a line that only ends
+// like the last row may be another one. `unwrapped()` is read only when needed.
+export async function shellLine(text, unwrapped) {
+  const state = shellPrompt(text);
+  if (state !== "unrecognized" && state !== "question") return state;
+  const rows = clean(text).split("\n"), line = clean(await unwrapped()).split("\n").at(-1).trim();
+  if (!wrappedOnScreen(rows, line)) return state;
+  const joined = shellPrompt(line);
+  return state === "unrecognized" || joined === "ready" ? joined : state;
+}
+const wrappedOnScreen = (rows, line) => {
+  for (let k = 2; line && k <= rows.length; k++) {
+    let at = 0, same = true;
+    for (const row of rows.slice(-k).map((r) => r.trim())) {
+      if (!row || !line.startsWith(row, at)) { same = false; break; }
+      at += row.length;
+      while (/\s/.test(line[at] ?? "")) at++;
+    }
+    if (same && at === line.length) return true;
+  }
+  return false;
+};
+
 // True when the shell is the only thing running in the pane: a command typed into it has exited, or never started.
 export async function shellAlone(pane) {
   const info = await processesWhileWaiting(pane);
@@ -213,7 +250,8 @@ export function deadline(timeout, now, message) {
 // stops the wait and is returned with the screen: routr answers no question, the orchestrator reads it and decides.
 // (A dotenv plugin's "Source it?" was once answered here; the next plugin would have needed its own rule. The standard
 // signal would be the shell's own prompt marks, OSC 133, which herdr parses but does not expose yet.)
-// `pane` is { read(): screen text, info(): herdr's process_info, keys(...keys) }. Something else running in the pane is
+// `pane` is { read(): screen text, unwrapped(): its lines unwrapped, info(): herdr's process_info, keys(...keys) }.
+// Something else running in the pane is
 // waited out (new shells and directory hooks run short commands), unless `refuseBusy` (a pane adopted from the caller).
 // `cwd`, when given, must be where the shell is. Returns { ok: true, name, cwd } or { ok: false, why, text }.
 export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBusy = false, onShell } = {}) {
@@ -244,7 +282,7 @@ export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBus
       previous = null; await pause(); continue;
     }
     if (!shell) { previous = null; await pause(); continue; }
-    const state = shellPrompt(text);
+    const state = await shellLine(text, () => look(() => pane.unwrapped()));
     if (state === "question") return fail("The shell asked a question before its prompt");
     // Even a recognized prompt must settle while the shell remains in the foreground.
     if (state === "ready" && promptSettled(text, previous)) {

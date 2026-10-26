@@ -119,7 +119,8 @@ process.stdin.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\\n"
   else if (e.method === "turn/start") run(e.id, p.input[0].text);
   else if (e.method === "turn/steer") { if (process.env.FAKE_STEER_NEXT && turn) { nextSteer = e.id; continue; } if (turn && p.expectedTurnId === turn) { steered++; out({ id: e.id, result: { turnId: turn } }); } else out({ id: e.id, error: { code: -32600, message: "no active turn to steer" } }); }
 } });
-process.stdin.on("end", () => { ended = true; if (!busy) { const leave = () => (held ? setTimeout(leave, 50) : process.exit(0)); leave(); } });
+// FAKE_HOLD_EXIT: once its input closes, it stays until the test writes FAKE_EXIT_GATE, as Claude's fake does.
+process.stdin.on("end", () => { ended = true; if (!busy) { const leave = () => (held || (process.env.FAKE_HOLD_EXIT && !fs.existsSync(process.env.FAKE_EXIT_GATE)) ? setTimeout(leave, 50) : process.exit(0)); leave(); } });
 `;
 // Antigravity's stream-json, as measured (p39): init with the conversation, step_update steps (a tool's name), result
 // with the response; a line written while a turn runs waits and runs as the next turn in the same process; closing
@@ -1693,9 +1694,12 @@ test("each fake harness that queues or prompts finishes a turn whose input ended
 test("an earlier request's late success keeps only the context it carried, not the next turn's", async () => {
   // The first send starts turn 2 and its reply comes only after turn 2 has ended and a second send, carrying turn 3's
   // context, is waiting; that one fails, after the first's success or before it. The third send's turn must not get
-  // the failed send's context.
+  // the failed send's context. With nothing left to run, the holder closes Codex's input once both have answered; Codex
+  // is held there until the third send is queued for the next process (once it has exited, the holder has ended and
+  // refuses, and routr send starts the next generation: seen on CI 2026-10-26 as a flaky "refused").
   for (const refuseFirst of [false, true]) {
-  const w = traceWorld({ FAKE_STEER_NEXT: "1", ...(refuseFirst ? { FAKE_REPLY_REFUSE_FIRST: "1" } : {}) }); w.env.FAKE_REPLY_GATE = join(w.home, "reply-gate");
+  const w = traceWorld({ FAKE_STEER_NEXT: "1", FAKE_HOLD_EXIT: "1", ...(refuseFirst ? { FAKE_REPLY_REFUSE_FIRST: "1" } : {}) }); w.env.FAKE_REPLY_GATE = join(w.home, "reply-gate");
+  w.env.FAKE_EXIT_GATE = join(w.home, "exit-gate");
   const starts = () => rpcs(w).filter((r) => r.worker && r.method === "turn/start");
   let peer;
   try {
@@ -1712,13 +1716,14 @@ test("an earlier request's late success keeps only the context it carried, not t
     writeFileSync(w.env.FAKE_REPLY_GATE, "");
     expect(await first).toMatchObject({ code: "accepted" });
     if (!refuseFirst) expect(await second).toMatchObject({ code: "refused" });
-    expect((await peer.request("send", { text: `${SENT} third` }, 20000)).code).toMatch(/accepted|queued/); peer.close(); peer = null;
+    expect((await peer.request("send", { text: `${SENT} third` }, 20000)).code).toBe("queued"); peer.close(); peer = null;
+    writeFileSync(w.env.FAKE_EXIT_GATE, "");
     expect(await w.settled("late")).toBe(true);
     const turns = w.spans().filter((s) => s.name === "invoke_agent late").sort((a, b) => wireAttrs(a)["routr.turn"] - wireAttrs(b)["routr.turn"]);
     expect(turns).toHaveLength(3);
     expect([refuseFirst, spanCarrier(turns[2])]).not.toEqual([refuseFirst, failed.traceparent]);
     expect(spanCarrier(turns[2])).toBe(starts().at(-1).trace.traceparent);
-  } finally { writeFileSync(w.env.FAKE_REPLY_GATE, ""); w.release(); peer?.close(); w.run(["stop", "--name", "late"]); await w.settled("late"); w.run(["cleanup", "--worker", "late"]); }
+  } finally { writeFileSync(w.env.FAKE_REPLY_GATE, ""); writeFileSync(w.env.FAKE_EXIT_GATE, ""); w.release(); peer?.close(); w.run(["stop", "--name", "late"]); await w.settled("late"); w.run(["cleanup", "--worker", "late"]); }
   }
 }, 80000);
 

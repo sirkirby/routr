@@ -1116,7 +1116,7 @@ test("waitForShell: ready at a settled prompt; stops at any question, a busy ado
   const here = process.cwd();
   const pane = (screens, { busy = false } = {}) => {
     const pressed = [];
-    return { pressed, read: async () => screens.length > 1 ? screens.shift() : screens[0], keys: async (...k) => { pressed.push(k); },
+    return { pressed, read: async () => screens.length > 1 ? screens.shift() : screens[0], unwrapped: async () => screens[0], keys: async (...k) => { pressed.push(k); },
       info: async () => ({ shell_pid: 1, foreground_processes: busy ? [{ pid: 1, name: "zsh", cwd: here }, { pid: 2 }] : [{ pid: 1, name: "zsh", cwd: here }] }) };
   };
   let t = 0;
@@ -1147,6 +1147,62 @@ test("launch refuses a subscription the user turned off, before any herdr call",
   expect(r.steps.at(-1).detail).toBe("Codex is turned off in your settings: turn it on with routr setup --enable codex");
   expect(f.calls).toEqual([]);
   expect(r.next.some((n) => n.template?.startsWith("routr record "))).toBe(false);
+});
+
+// Measured 2026-10-26, herdr 0.9.5 on Windows 11 (PowerShell 5.1): a worktree pane split to 57 columns showed its
+// prompt over two rows, the last not a drive path, and the shell wait ran out. The visible screen stays the authority:
+// the unwrapped lines finish a prompt only when their last line ends with the visible last row.
+test("waitForShell finishes a prompt wider than its pane from its unwrapped line, tied to the visible screen", async () => {
+  const { deadline, paneView, shellPrompt, waitForShell } = await import("../src/lib/herdr.mjs");
+  const here = process.cwd(), prompt = `PS C:\\Users\\chris\\.herdr\\worktrees\\repo\\routr-smoke-008e1983>`;
+  const wrapped = `${prompt.slice(0, 57)}\n${prompt.slice(57)}`;
+  expect(shellPrompt(wrapped)).toBe("unrecognized"); // the visible screen alone: no drive path on its last row
+  const world = (visible, lines) => {
+    const asked = [];
+    const call = async (a) => {
+      asked.push(a);
+      if (a[1] === "read") return { ok: true, data: { result: { read: { text: a.includes("recent-unwrapped") ? lines : visible } } } };
+      return { ok: true, data: { result: { process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "powershell.exe", cwd: here }] } } } };
+    };
+    let t = 0;
+    const time = { sleep: async (ms) => { t += ms; }, now: () => t, remaining: deadline(30000, () => t, "did not come to a prompt in 30 s") };
+    const unwrappedReads = () => asked.filter((a) => a.includes("recent-unwrapped")).length;
+    return { wait: () => waitForShell(paneView(call, "w3:p2"), time), unwrappedReads };
+  };
+  const wide = world(wrapped, `older output\n${prompt}`);
+  expect(await wide.wait()).toEqual({ ok: true, name: "powershell.exe", cwd: here });
+  expect(wide.unwrappedReads()).toBeGreaterThan(0);
+  // A blank screen is still waiting, whatever an old prompt in scrollback says; the unwrapped lines are not read.
+  const blank = world("\n\n\n", "PS C:\\old>");
+  await expect(blank.wait()).rejects.toThrow("did not come to a prompt in 30 s");
+  expect(blank.unwrappedReads()).toBe(0);
+  // A prompt the visible screen shows (at the top of a tall alternate screen) needs no unwrapped read, which can miss it.
+  const tall = world(`PS C:\\Users\\chris>${"\n".repeat(59)}`, "");
+  expect(await tall.wait()).toEqual({ ok: true, name: "powershell.exe", cwd: here });
+  expect(tall.unwrappedReads()).toBe(0);
+  // Unwrapped lines that are not the visible rows joined are not this screen's: still waiting, even when they end alike.
+  const other = world(`some output\n${prompt.slice(57)}x`, prompt);
+  await expect(other.wait()).rejects.toThrow("did not come to a prompt in 30 s");
+  const alike = world("not the same line\nx>", "PS C:\\old\\x>");
+  await expect(alike.wait()).rejects.toThrow("did not come to a prompt in 30 s");
+  // A prompt wrapped just before its `>`: the lone `>` row reads as a continuation question until the line is joined.
+  const edge = `PS C:\\${"x".repeat(51)}>`;
+  expect(shellPrompt(`${edge.slice(0, 57)}\n${edge.slice(57)}`)).toBe("question");
+  expect(await world(`${edge.slice(0, 57)}\n${edge.slice(57)}`, edge).wait()).toEqual({ ok: true, name: "powershell.exe", cwd: here });
+  // Spaces inside a row are compared: a row that differs only by them is another line.
+  expect(await world("PS C:\\my project\n>", "PS C:\\myproject>").wait()).toMatchObject({ ok: false, why: "The shell asked a question before its prompt" });
+  // A row wrapped where the line had a space still joins.
+  const spaced = `PS C:\\Users\\chris\\My Projects\\${"y".repeat(24)} with space>`;
+  const cut = spaced.lastIndexOf(" ");
+  expect(await world(`${spaced.slice(0, cut)}\n${spaced.slice(cut + 1)}`, spaced).wait()).toEqual({ ok: true, name: "powershell.exe", cwd: here });
+  // A visible question gives way only to a ready prompt: an input prompt wrapped before its `>` stays a question.
+  expect(await world("Enter value\n>", "Enter value >").wait()).toMatchObject({ ok: false, why: "The shell asked a question before its prompt", text: "Enter value\n>" });
+  // A continuation `>` on a line of its own stays a question: the unwrapped lines show it apart, not joined.
+  expect(await world("PS C:\\Users\\chris> echo 'a\n>", "PS C:\\Users\\chris> echo 'a\n>").wait()).toMatchObject({ ok: false, why: "The shell asked a question before its prompt" });
+  // A question is returned as the visible screen, as the contract says.
+  const question = "Remove the folder C:\\Users\\chris\\.herdr\\worktrees\\repo\\routr-smoke-008e1983 and everything in it?";
+  const asking = world(`${question.slice(0, 57)}\n${question.slice(57)} `, question);
+  expect(await asking.wait()).toEqual({ ok: false, why: "The shell asked a question before its prompt", text: `${question.slice(0, 57)}\n${question.slice(57)} ` });
 });
 
 test("a pane whose folder is gone is a person's call, not a crash; no process information is waited out", async () => {

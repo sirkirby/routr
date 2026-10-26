@@ -1,5 +1,5 @@
 // Explicit fixture-only smoke: never loaded for side effects by bun test. No subscription, no real harness.
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, join, win32 } from "node:path";
 import { createServer } from "node:http";
@@ -16,7 +16,7 @@ import { briefSha } from "../src/lib/ledger.mjs";
 import { launch } from "../src/lib/launch.mjs";
 import { cleanup } from "../src/lib/cleanup.mjs";
 import { runHerdr } from "../src/lib/herdr.mjs";
-import { fixtureCommand } from "./smoke-carriers.mjs";
+import { fixtureCommand, removeWhenFree } from "./smoke-carriers.mjs";
 
 export const smokeParent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01";
 export const SMOKE_ACTIVE = "ROUTR_SMOKE_OTEL_ACTIVE";
@@ -371,7 +371,7 @@ async function runSmoke({ env: original, log }) {
     }); } catch { errors = ["cannot verify smoke teardown"]; }
     if (server) { server.closeAllConnections(); if (server.listening) await new Promise((r) => server.close(r)); }
     if (errors.length) { for (const error of errors) log(`smoke:otel: ${error}`); throw new Error(`smoke teardown failed; retained ${home}`); }
-    rmSync(home, { recursive: true, force: true });
+    await removeWhenFree(home); // Windows can hold it a moment after the processes in it end
     if (summary) log(summary); // Success includes teardown, not just delivery.
   }
 }
