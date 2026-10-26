@@ -52,12 +52,21 @@ export const WORKERS_DIR = () => join(STATE_DIR(), "workers");
 export const runDir = (name) => join(WORKERS_DIR(), name);
 // What launch wrote: { format, id, name, kind, model, effort, cwd, created_at, carriers }. Never the brief, and of the
 // environment only the trace-context carriers within routr's limits, which every load checks again (savedCarriers).
-// One that cannot be read is not routr's to act on, as one of another shape: callers keep its folder.
-export const readWorker = (name) => { const w = readJsonFile(join(runDir(name), "worker.json")).value; if (w?.format !== FORMAT || w.name !== name) return null; linkWorker(w); return w; };
+// As readJsonFile reads it: { worker } for one routr's launch wrote, { absent: true }, { foreign: true } (another
+// shape: not routr's), or { unreadable } (there, and not read: what it is is not known, so nothing acts on it).
+export const workerOf = (name) => {
+  const r = readJsonFile(join(runDir(name), "worker.json"));
+  if (r.absent || r.unreadable) return r;
+  const w = r.value;
+  if (w?.format !== FORMAT || w.name !== name) return { foreign: true };
+  linkWorker(w); return { worker: w };
+};
+export const readWorker = (name) => workerOf(name).worker ?? null;
 // What the holder wrote last (headless.mjs is its only writer), as readJsonFile reads it: { value }, { absent: true }
-// before a holder has written one, or { unreadable } (stateUnknown says that to a person).
+// before a holder has written one, or { unreadable }.
 export const stateOf = (name) => readJsonFile(join(runDir(name), "state.json"));
-export const stateUnknown = (name) => `${name}'s state could not be read just now, so what it is doing is not known; try again in a moment`;
+// A worker file that is there and cannot be read, said to a person: the file, the code, and that it may pass.
+export const unreadableWhy = (name, file, code) => `${name}'s ${file} could not be read just now (${code}), so what it is doing is not known: try again in a moment`;
 export const reportPath = (name, turn) => join(runDir(name), "reports", `turn-${turn}.md`);
 const STREAM = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
 const message = (text) => JSON.stringify({ type: "user", message: { role: "user", content: text } }) + "\n";

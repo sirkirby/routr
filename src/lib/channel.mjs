@@ -81,15 +81,17 @@ export const markReleased = (dir, n, info) => writeJsonAtomic(genFile(dir, n, "r
 // alive), abandoned (claimed, never bound, claimant gone: it never started a harness), alive (answered and proved the
 // secret), dead (a definite no-listener), unreachable (anything else). A claimant's live pid may be a reused one,
 // which only errs toward "starting", the safe side. A claim is never seen half written (claim, below); one with no
-// readable pid was not written by routr, and is unreachable: nothing is assumed about it. So is a ready or released
-// marker that is there and cannot be read (readJsonFile): it says neither that the holder ended nor that it did not.
+// readable pid was not written by routr, and is unreachable: nothing is assumed about it. So is a released marker that
+// is there and cannot be read (readJsonFile), which says neither that the holder ended nor that it did not, and a
+// ready marker that cannot be read when no release was recorded: a readable release is still the holder's word.
 export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
   const n = generations(dir).at(-1);
   if (!n) return { state: "none", gen: 0 };
   const releasedRead = readJsonFile(genFile(dir, n, "released")), readyRead = readJsonFile(genFile(dir, n, "ready"));
-  if (releasedRead.unreadable || readyRead.unreadable) return { state: "unreachable", gen: n };
+  if (releasedRead.unreadable) return { state: "unreachable", gen: n };
   const released = releasedRead.value ?? null, ready = readyRead.value ?? null;
   if (released) return { state: "released", gen: n, ready, released };
+  if (readyRead.unreadable) return { state: "unreachable", gen: n };
   if (!ready) {
     const c = readJsonFile(genFile(dir, n, "claim")).value;
     if (Number.isInteger(c?.pid)) return { state: alivePid(c.pid) ? "starting" : "abandoned", gen: n };
@@ -101,8 +103,9 @@ export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
     return { state: "alive", gen: n, ready, ping: r };
   } catch (e) {
     // A holder that has just ended closes its channel right after it says so: read again before calling it dead.
-    const late = readJsonFile(genFile(dir, n, "released")).value;
-    if (late) return { state: "released", gen: n, ready, released: late };
+    const late = readJsonFile(genFile(dir, n, "released"));
+    if (late.unreadable) return { state: "unreachable", gen: n, ready };
+    if (late.value) return { state: "released", gen: n, ready, released: late.value };
     return { state: ["ENOENT", "ECONNREFUSED"].includes(e?.code) ? "dead" : "unreachable", gen: n, ready };
   }
 }

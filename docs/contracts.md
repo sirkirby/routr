@@ -633,8 +633,9 @@ Inputs:
   otherwise.
 - Outside herdr (`HERDR_ENV` is not `1`), the list and `--worktree`/`--path` modes read and remove worktrees through
   git, with the same checks, and `warnings` says cleanup cannot see whether anything runs in a worktree's folder.
-- `--worker` refuses (`refused`) while the worker runs or does not answer, while its state cannot be read (then nothing
-  says whether its harness runs: the headline says to try again), or while a process group it recorded still
+- `--worker` refuses (`refused`) while the worker runs or does not answer, while its `worker.json` or `state.json` is
+  there and cannot be read (then nothing says whether its harness runs: the headline names the file and says to try
+  again; `next` says what to do if it stays so), or while a process group it recorded still
   has members (a harness's own helper aside, as in `workers`); for a worker launch gave a worktree, it first removes the worktree as `--path` would (`--delete-branch`
   and `--dry-run` pass on), and keeps the worker whole, with that refusal's reason and `next`, when it would not;
   `worktree` and `branch` are then as for `--path`. It refuses too when the worktree at that path is on another
@@ -722,8 +723,9 @@ message is the text given, with the report reminder appended, at most 3 MB.
 Inputs: required: `--name`, and one of `--task` or `--task-file`. Refused (`error`): an unknown worker, an empty or too
 large message, the subscription turned off; and when a new holder must start: a worker whose process does not answer,
 a process group of its still running, a sandbox it can see, a worker with no session to resume, the harness not signed
-in, and a worker whose state cannot be read just now (whether it has a session, or a process group still running, is
-then not known: the `error` says to try again; never "no session").
+in, and a worker whose `worker.json` or `state.json` is there and cannot be read (whether it has a session, or a
+process group still running, is then not known: the `error` names the file and says to try again, never "no session",
+and `next` says what to do if it stays so). A holder never starts over a file it cannot read; send then says so.
 
 `state`: `delivered` (into the running worker. Claude: written into its input, `message.code` `handed_to_harness`, not
 proven read. Antigravity and Kiro, between turns: written into its input, or Kiro's `session/prompt` written
@@ -760,10 +762,12 @@ turn, seconds_since_event, last_tool, tasks, queued, session, report, carriers_w
 saved with the worker are now outside routr's limits; present only then, never a value. `state` is `starting`,
 `working`, `waiting` (between turns: background commands running, a message queued, or the harness exiting), `idle`,
 `failed`, `stopped`, `no_task` (its process started and no task came), `lost` (its process ended mid-turn without
-settling), `unreachable` (its channel does not answer, or a marker its holder writes is there and cannot be read), or
-`unreadable` (its state file is there and cannot be read just now; never shown as `starting`, which is a worker whose
-holder has not written one yet). On Windows a file another process holds or is replacing is read again for up to
-100 ms first. `last_tool` is one of the harness's own tool names (Claude's
+settling), `unreachable` (its channel does not answer, or a marker its holder writes is there and cannot be read; a readable
+release is still taken as the holder's word), or
+`unreadable` (its `state.json` is there and cannot be read, never shown as `starting`, which is a worker whose holder
+has not written one yet; or its `worker.json` cannot be read, and then `kind`, `model`, `effort` and `cwd` are null:
+never left out as no worker). On Windows a file another process holds or is replacing is read again for up to 100 ms
+first. One that stays unreadable is damaged: the orchestrator guide says what to do. `last_tool` is one of the harness's own tool names (Claude's
 tools; Codex's item types, such as `commandExecution` and `fileChange`; Antigravity's tools, such as `run_command`; Kiro's tool kinds, such as `execute` and `edit`; Cursor's `shell`),
 `mcp`, `other`, or null. `report` is the path of the latest turn's report that has one, or null. `tasks` counts Claude's background commands;
 it is 0 for Codex, Cursor, Antigravity and Kiro, which report none. `harness_group`: a process group it
@@ -782,8 +786,9 @@ Stops a headless worker through its own process. Inputs: required: `--name`.
 `state`: `stopped` (the harness and its process group are gone, a harness's own helper aside: see `workers`), `still_exiting` (told to stop; the harness not gone
 within six seconds, or something of its group other than that helper still there two seconds after it went, a stop
 between two of its processes included), `absent` (not running), `lost` (its process is gone, or a group it recorded still has members),
-`unreachable`, `unknown` (also when it is not running and its state cannot be read, so whether its harness's group
-still runs is not known: the headline says to try again), `failed` (refused). `ok`: true for `stopped` and `absent`. For `lost` and `unreachable`,
+`unreachable`, `unknown` (also when it is not running and its `worker.json` or `state.json` cannot be read, so whether
+its harness's group still runs is not known: the headline names the file and says to try again, and `next` says what
+to do if it stays so), `failed` (refused). `ok`: true for `stopped` and `absent`. For `lost` and `unreachable`,
 `warnings` says routr never stops a process by a saved id and `next` says what to look at; for `still_exiting` and
 `unknown`, `next` adds `routr workers --name <name>` to look again in a moment. Inside a sandbox it can see,
 `warnings` says so, as for `wait`. Own fields: `state`, `name`. Messages the holder still keeps (`queued`, Kiro's held ones included) are dropped by a stop, and `warnings` says

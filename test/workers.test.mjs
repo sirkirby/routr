@@ -332,27 +332,38 @@ test("a worker state routr cannot read is unknown to every command, never absent
   expect(w.launch(name, w.task(BRIEF)).ok).toBe(true);
   expect(await w.settled(name)).toBe(true);
   expect(await until(() => existsSync(join(dir, "gen-1.released")))).toBe(true);
-  const good = readFileSync(join(dir, "state.json"), "utf8"), broken = '{"format":1,"turn":';
+  const keep = (f) => readFileSync(join(dir, f), "utf8"), put = (f, text) => writeFileSync(join(dir, f), text);
+  const good = keep("state.json"), record = keep("worker.json"), released = keep("gen-1.released"), ready = keep("gen-1.ready"), broken = '{"format":1,"turn":';
   expect(JSON.parse(good).session_id).toBeTruthy();
-  writeFileSync(join(dir, "state.json"), broken);
-  expect(w.run(["workers", "--name", name]).workers[0]).toMatchObject({ name, state: "unreadable" });
-  expect(w.run(["wait", "--name", name, "--timeout", "300"])).toMatchObject({ ok: true, state: "running", headline: `routr: still running: ${name} (its state could not be read)` });
-  const unknown = `${name}'s state could not be read just now, so what it is doing is not known; try again in a moment`;
-  expect(w.run(["send", "--name", name, "--task", SENT])).toMatchObject({ ok: false, error: unknown });
-  expect(w.run(["stop", "--name", name])).toMatchObject({ ok: false, state: "unknown", headline: `routr: ${unknown}` });
-  expect(w.run(["cleanup", "--worker", name])).toMatchObject({ ok: false, state: "refused", headline: `routr: kept ${name}: ${unknown}` });
-  // A holder asked to start (as send or launch would) leaves it as it is and claims nothing.
-  w.run(["workers", "--hold", name]);
-  expect([readFileSync(join(dir, "state.json"), "utf8"), existsSync(join(dir, "gen-2.claim"))]).toEqual([broken, false]);
+  const why = (file) => `${name}'s ${file} could not be read just now (not_json), so what it is doing is not known: try again in a moment`;
+  const damaged = expect.objectContaining({ kind: "do", why: expect.stringContaining(`If it stays unreadable, it is damaged and routr will not act on ${name}`) });
+  // Its state, then its record: each unknown, never absent.
+  for (const [file, more] of [["state.json", {}], ["worker.json", { kind: null }]]) {
+    put(file, broken);
+    expect([file, w.run(["workers", "--name", name]).workers[0]]).toEqual([file, expect.objectContaining({ name, state: "unreadable", ...more })]);
+    expect(w.run(["wait", "--name", name, "--timeout", "300"])).toMatchObject({ ok: true, state: "running", headline: `routr: still running: ${name} (its state could not be read)` });
+    const sent = w.run(["send", "--name", name, "--task", SENT]);
+    expect([file, sent.ok, sent.error, sent.next]).toEqual([file, false, why(file), expect.arrayContaining([damaged])]);
+    const stopped = w.run(["stop", "--name", name]);
+    expect([file, stopped.ok, stopped.state, stopped.headline, stopped.next]).toEqual([file, false, "unknown", `routr: ${why(file)}`, expect.arrayContaining([damaged])]);
+    const kept = w.run(["cleanup", "--worker", name]);
+    expect([file, kept.state, kept.headline, kept.next]).toEqual([file, "refused", `routr: kept ${name}: ${why(file)}`, expect.arrayContaining([damaged])]);
+    // A holder asked to start (as send or launch would) leaves it as it is and claims nothing.
+    w.run(["workers", "--hold", name]);
+    expect([keep(file), existsSync(join(dir, "gen-2.claim"))]).toEqual([broken, false]);
+    put(file, file === "state.json" ? good : record);
+  }
   // A released marker that is there and cannot be read says neither that it ended nor that it did not.
-  writeFileSync(join(dir, "state.json"), good);
-  const released = readFileSync(join(dir, "gen-1.released"), "utf8");
-  writeFileSync(join(dir, "gen-1.released"), "{");
+  put("gen-1.released", "{");
   expect(w.run(["stop", "--name", name])).toMatchObject({ ok: false, state: "unreachable" });
   expect(w.run(["cleanup", "--worker", name])).toMatchObject({ ok: false, state: "refused" });
-  writeFileSync(join(dir, "gen-1.released"), released);
+  put("gen-1.released", released);
+  // A readable release is the holder's word, whatever its ready marker now holds.
+  put("gen-1.ready", "{");
+  expect(w.run(["stop", "--name", name])).toMatchObject({ ok: true, state: "absent" });
+  put("gen-1.ready", ready);
   expect(w.run(["cleanup", "--worker", name]).state).toBe("removed");
-}, 60000);
+}, 90000);
 
 test("a headless Claude worker: launch, a message mid-turn, wait, a follow-up that resumes its session, stop and cleanup", async () => {
   const w = world(), file = w.task(`${BRIEF} HOLD`);
