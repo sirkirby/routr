@@ -14,8 +14,8 @@ A short history of what changed in each routr release, one line per change. Each
   having no session. (#121)
 - On Windows, launch no longer waits out its 30 s and stops when PowerShell's prompt is wider than the worker's pane
   (a long worktree path in a half-width pane): the shell wait reads a wrapped prompt's whole line from herdr. (#120)
-- routr's shared file lock holds when a process pauses or crashes, a background usage refresh that resumes late no
-  longer overwrites a newer reading, concurrent sends to a headless worker keep each turn's trace context, and a
+- routr's shared file lock holds when a process pauses or crashes (on file systems with hard links), a background
+  usage refresh that resumes late no longer overwrites a newer reading, concurrent sends to a headless worker keep each turn's trace context, and a
   clock change no longer distorts span durations. (#119)
 - Setup, help and the guides describe what OpenTelemetry export sends (traces, logs and the headroom gauge, with
   repository names, relative paths and ids) and what commands do with export on. (#118)
