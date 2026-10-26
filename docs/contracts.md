@@ -762,7 +762,7 @@ turn, seconds_since_event, last_tool, tasks, queued, session, report, carriers_w
 saved with the worker are now outside routr's limits; present only then, never a value. `state` is `starting`,
 `working`, `waiting` (between turns: background commands running, a message queued, or the harness exiting), `idle`,
 `failed`, `stopped`, `no_task` (its process started and no task came), `lost` (its process ended mid-turn without
-settling), `unreachable` (its channel does not answer, or a marker its holder writes, `gen-<n>.ready` or `gen-<n>.released`, is
+settling), `unreachable` (its channel does not answer, or a marker its holder writes, `gen-<n>.claim`, `.ready` or `.released`, is
 there and cannot be read; a readable release is still taken as the holder's word. For such a marker, `send`, `stop`
 and `cleanup --worker` name it and say what to do if it stays so, as for an unreadable `state.json`), or
 `unreadable` (its `state.json` is there and cannot be read, never shown as `starting`, which is a worker whose holder

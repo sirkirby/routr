@@ -423,7 +423,7 @@ async function sendCommandBody(args, { env = process.env, settings = () => loadC
         return becomeHolder(name, { spawn, assertOwned });
       });
       if (p.state === "replaced") throw new Error(`${name} was cleaned up and launched again meanwhile; nothing was sent`);
-      if (p.state === "unreadable") { out.next.push(...damagedNext(name, w)); throw new Error(p.why); }
+      if (p.state === "unreadable" || p.unreadable) { out.next.push(...damagedNext(name, w)); throw new Error(p.unreadable ? markerWhy(name, p) : p.why); }
       if (p.state !== "alive") throw new Error(`${name}: ${NOT_STARTED(p)}`);
       r = await deliver("send", 45000);
     }

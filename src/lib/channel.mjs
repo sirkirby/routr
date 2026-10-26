@@ -83,7 +83,8 @@ export const markReleased = (dir, n, info) => writeJsonAtomic(genFile(dir, n, "r
 // which only errs toward "starting", the safe side. A claim is never seen half written (claim, below); one with no
 // readable pid was not written by routr, and is unreachable: nothing is assumed about it. So is a released marker that
 // is there and cannot be read (readJsonFile), which says neither that the holder ended nor that it did not, and a
-// ready marker that cannot be read when no release was recorded: a readable release is still the holder's word. Such
+// ready marker (or, before it, a claim) that cannot be read when no release was recorded: a readable release is still
+// the holder's word. Such
 // an answer carries `unreadable: { file, code }`, so a command can name the file.
 export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
   const n = generations(dir).at(-1);
@@ -95,7 +96,9 @@ export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
   if (released) return { state: "released", gen: n, ready, released };
   if (readyRead.unreadable) return unreadable("ready", readyRead.unreadable);
   if (!ready) {
-    const c = readJsonFile(genFile(dir, n, "claim")).value;
+    const claimRead = readJsonFile(genFile(dir, n, "claim"));
+    if (claimRead.unreadable) return unreadable("claim", claimRead.unreadable);
+    const c = claimRead.value;
     if (Number.isInteger(c?.pid)) return { state: alivePid(c.pid) ? "starting" : "abandoned", gen: n };
     return { state: "unreachable", gen: n };
   }

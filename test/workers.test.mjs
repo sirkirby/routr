@@ -363,6 +363,12 @@ test("a worker state routr cannot read is unknown to every command, never absent
   expect([unkept.state, unkept.headline, unkept.next]).toEqual(["refused", `routr: kept ${name}: ${marker}`, expect.arrayContaining([damaged])]);
   expect(w.run(["send", "--name", name, "--task", SENT])).toMatchObject({ ok: false, error: marker });
   put("gen-1.released", released);
+  // So is a claim with no ready or released marker beside it.
+  const claim = keep("gen-1.claim");
+  for (const f of ["gen-1.ready", "gen-1.released"]) rmSync(join(dir, f));
+  put("gen-1.claim", "{");
+  expect(w.run(["stop", "--name", name])).toMatchObject({ ok: false, state: "unreachable", headline: `routr: ${why("gen-1.claim")}` });
+  put("gen-1.claim", claim); put("gen-1.ready", ready); put("gen-1.released", released);
   // A readable release is the holder's word, whatever its ready marker now holds.
   put("gen-1.ready", "{");
   expect(w.run(["stop", "--name", name])).toMatchObject({ ok: true, state: "absent" });
