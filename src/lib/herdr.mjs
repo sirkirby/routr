@@ -135,10 +135,18 @@ function transport(args, timeout, { via = start } = {}) {
   });
 }
 
+// A pane's recent lines with the terminal's wrapping undone (herdr's recent-unwrapped), as a shell prompt is judged on:
+// a prompt wider than its pane is still one line. Measured 2026-10-26, herdr 0.9.5 on Windows 11 (PowerShell 5.1): a
+// worktree pane split to 57 columns showed `PS C:\Users\…\routr-smoke-…>` over two rows, its last row no drive path,
+// and the shell wait ran out at 30 s; recent-unwrapped gave the prompt on one line.
+export const promptReadArgs = (pane) => ["pane", "read", pane, "--source", "recent-unwrapped", "--lines", "40"];
+
 // A pane as routr reads and types into it, through `call` (one herdr command, which throws on failure): its screen,
-// its processes, and keys. launch drives the user's panes with it, terminal.mjs its private session's.
+// its lines as a shell wrote them (promptReadArgs), its processes, and keys. launch drives the user's panes with it,
+// terminal.mjs its private session's.
 export const paneView = (call, pane) => ({
   read: async () => paneText((await call(["pane", "read", pane, "--source", "visible"])).data),
+  unwrapped: async () => paneText((await call(promptReadArgs(pane))).data),
   info: async () => (await call(["pane", "process-info", "--pane", pane])).data.result.process_info,
   keys: (...keys) => call(["pane", "send-keys", pane, ...keys]),
 });
@@ -213,7 +221,7 @@ export function deadline(timeout, now, message) {
 // stops the wait and is returned with the screen: routr answers no question, the orchestrator reads it and decides.
 // (A dotenv plugin's "Source it?" was once answered here; the next plugin would have needed its own rule. The standard
 // signal would be the shell's own prompt marks, OSC 133, which herdr parses but does not expose yet.)
-// `pane` is { read(): screen text, info(): herdr's process_info, keys(...keys) }. Something else running in the pane is
+// `pane` is { unwrapped(): its lines unwrapped (promptReadArgs), info(): herdr's process_info, keys(...keys) }. Something else running in the pane is
 // waited out (new shells and directory hooks run short commands), unless `refuseBusy` (a pane adopted from the caller).
 // `cwd`, when given, must be where the shell is. Returns { ok: true, name, cwd } or { ok: false, why, text }.
 export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBusy = false, onShell } = {}) {
@@ -231,7 +239,7 @@ export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBus
   };
   const pause = () => sleep(Math.min(250, left()));
   for (;;) {
-    const text = await look(() => pane.read());
+    const text = await look(() => pane.unwrapped());
     const read = await look(() => processesWhileWaiting(pane));
     unreadable = read == null;
     const info = read ?? {}; // no process information: the shell is waited for, like a busy one

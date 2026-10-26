@@ -11,7 +11,7 @@ import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesse
 import { dispatchAdvice, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
 import { displayCommand, doNext, launchNext, runNext, templateCommand } from "./next.mjs";
 import { CLOSING, OFF } from "./wording.mjs";
-import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, runHerdr, SHELLS, shellFamily, splitArgs, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
+import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, promptReadArgs, runHerdr, SHELLS, shellFamily, splitArgs, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
 import { CARRIERS, carrierValues, ensureParent, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
@@ -195,10 +195,10 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       out.would_run = [
         ...(o.worktree ? [command(worktreeArgs(out.cwd, o.worktree, o.base)), command(splitArgs("right", "<worktree-path>", carried, { pane: "<root-pane>", shown: true })), command(["pane", "close", "<root-pane>"])] : []),
         ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true }))] : []),
-        command(["pane", "read", pane, "--source", "visible"]),
+        command(promptReadArgs(pane)),
         command(["pane", "process-info", "--pane", pane]),
         ...(o.pane ? [command(["pane", "run", pane, SHELLS[shell].cd(out.cwd)]),
-          command(["pane", "read", pane, "--source", "visible"]), command(["pane", "process-info", "--pane", pane])] : []),
+          command(promptReadArgs(pane)), command(["pane", "process-info", "--pane", pane])] : []),
         ...(o.kind === "cursor" && SHELLS[shell].cursorEnv ? [command(["pane", "run", pane, SHELLS[shell].cursorEnv(privateDir)])] : []),
         command(startArgs(pane, Math.min(o.timeout, 30000))),
         command(["pane", "read", pane, "--source", "visible"]),
@@ -258,10 +258,11 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     const pane = () => paneView(call, out.pane); // the pane id is known only once it is split or adopted
     const herdrCall = (a, shown, tolerate = false) => call(a, tolerate, shown); // as herdr.mjs's splitPane takes it
     const readPane = async () => { touchedPane = true; return pane().read(); };
+    const readLines = async () => { touchedPane = true; return pane().unwrapped(); };
     const pause = async () => sleep(Math.min(250, remaining()));
     let shellCwd = null;
     const shellReady = async (expectedCwd) => {
-      const r = await waitForShell({ ...pane(), read: readPane }, { sleep, now, remaining, cwd: expectedCwd, refuseBusy: Boolean(o.pane && !expectedCwd),
+      const r = await waitForShell({ ...pane(), unwrapped: readLines }, { sleep, now, remaining, cwd: expectedCwd, refuseBusy: Boolean(o.pane && !expectedCwd),
         onShell: (name) => { shell = shellFamily(name); } });
       if (!r.ok) return needsInput("shell_not_ready", r.why, r.text);
       shellCwd = r.cwd;
@@ -552,7 +553,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     if (out.pane && touchedPane && promptAttempted) out.screen = PANE_WITHHELD; // sent: the pane may show the brief, so it is not read
     else if (out.pane && touchedPane) {
       try {
-        const a = ["pane", "read", out.pane, "--source", "recent-unwrapped", "--lines", "40"];
+        const a = promptReadArgs(out.pane);
         logCommand(out.ran, command(a));
         const tail = shown(clean(paneText((await safeRun(a, 1000)).data)))
           .split("\n").filter((l) => l.trim()).slice(-8).map((l) => (l.length > 200 ? `${l.slice(0, 200)}…` : l)).join("\n");

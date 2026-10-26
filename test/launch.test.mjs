@@ -1116,7 +1116,7 @@ test("waitForShell: ready at a settled prompt; stops at any question, a busy ado
   const here = process.cwd();
   const pane = (screens, { busy = false } = {}) => {
     const pressed = [];
-    return { pressed, read: async () => screens.length > 1 ? screens.shift() : screens[0], keys: async (...k) => { pressed.push(k); },
+    return { pressed, unwrapped: async () => screens.length > 1 ? screens.shift() : screens[0], keys: async (...k) => { pressed.push(k); },
       info: async () => ({ shell_pid: 1, foreground_processes: busy ? [{ pid: 1, name: "zsh", cwd: here }, { pid: 2 }] : [{ pid: 1, name: "zsh", cwd: here }] }) };
   };
   let t = 0;
@@ -1149,14 +1149,33 @@ test("launch refuses a subscription the user turned off, before any herdr call",
   expect(r.next.some((n) => n.template?.startsWith("routr record "))).toBe(false);
 });
 
+// Measured 2026-10-26, herdr 0.9.5 on Windows 11 (PowerShell 5.1): a worktree pane split to 57 columns showed its
+// prompt over two rows, the last not a drive path, and the shell wait ran out. The wait reads the lines unwrapped.
+test("waitForShell judges a prompt wider than its pane on its whole line, as herdr gives it unwrapped", async () => {
+  const { deadline, paneView, shellPrompt, waitForShell } = await import("../src/lib/herdr.mjs");
+  const here = process.cwd(), prompt = `PS C:\\Users\\chris\\.herdr\\worktrees\\repo\\routr-smoke-008e1983>`;
+  const wrapped = `${prompt.slice(0, 57)}\n${prompt.slice(57)}`;
+  expect(shellPrompt(wrapped)).toBe("unrecognized"); // what the visible screen gives: no drive path on its last row
+  const asked = [];
+  const call = async (a) => {
+    asked.push(a);
+    if (a[1] === "read") return { ok: true, data: { result: { read: { text: a.includes("recent-unwrapped") ? prompt : wrapped } } } };
+    return { ok: true, data: { result: { process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "powershell.exe", cwd: here }] } } } };
+  };
+  let t = 0;
+  const time = { sleep: async (ms) => { t += ms; }, now: () => t, remaining: deadline(30000, () => t, "did not come to a prompt in 30 s") };
+  expect(await waitForShell(paneView(call, "w3:p2"), time)).toEqual({ ok: true, name: "powershell.exe", cwd: here });
+  expect(asked.filter((a) => a[1] === "read").every((a) => a.includes("recent-unwrapped"))).toBe(true);
+});
+
 test("a pane whose folder is gone is a person's call, not a crash; no process information is waited out", async () => {
   const { waitForShell } = await import("../src/lib/herdr.mjs");
   let t = 0, infos = 0;
   const time = { sleep: async (ms) => { t += ms; }, now: () => t, remaining: () => 60000 };
-  const pane = { read: async () => "chris % ", keys: async () => {}, info: async () => (++infos < 3 ? undefined : { shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh", cwd: "/no/such/folder-routr" }] }) };
+  const pane = { unwrapped: async () => "chris % ", keys: async () => {}, info: async () => (++infos < 3 ? undefined : { shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh", cwd: "/no/such/folder-routr" }] }) };
   expect(await waitForShell(pane, { ...time, cwd: SCRATCH })).toMatchObject({ ok: false, why: expect.stringContaining("folder is gone") });
   expect(infos).toBeGreaterThan(2); // the empty answers were waited out, not a TypeError
-  const noCwd = { read: async () => "chris % ", keys: async () => {}, info: async () => ({ shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh" }] }) };
+  const noCwd = { unwrapped: async () => "chris % ", keys: async () => {}, info: async () => ({ shell_pid: 1, foreground_processes: [{ pid: 1, name: "zsh" }] }) };
   expect(await waitForShell(noCwd, { ...time, cwd: SCRATCH })).toMatchObject({ ok: false, why: "The pane's shell did not say which folder it is in" });
 });
 // The task is sent once, and herdr's lifecycle state says whether the worker took it: never a second send, never a key
