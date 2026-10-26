@@ -4,7 +4,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { dirname, join, resolve } from "node:path";
 import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 import { ROUTR_VERSION } from "../src/lib/version.mjs";
-import { writeJsonAtomic } from "../src/lib/runtime.mjs";
+import { REPLACE_BUSY_MS, writeJsonAtomic } from "../src/lib/runtime.mjs";
 import { carryOut, uninstall } from "../src/lib/uninstall.mjs";
 import { COMMANDS, formatCommandHelp } from "../src/lib/help.mjs";
 import { briefSha, read as readLedger } from "../src/lib/ledger.mjs";
@@ -127,17 +127,45 @@ test("no-mkdir atomic writes cannot recreate a removed queue", () => {
   expect(JSON.parse(readFileSync(file))).toEqual({ a: 1 });
 });
 
-test("atomic writes retain the default remove-and-rename fallback", () => {
+// Windows refuses a rename over a file another process is reading (EPERM), and removing the file first left it missing
+// for a reader in between (a headless worker's state read as none, on CI). On Windows a refused rename is tried again
+// with the old file in place; only one still refused after 100 ms is replaced by removing first. Elsewhere, no retry.
+test("atomic writes retry a refused rename in place on Windows, for 100 ms, then keep the remove-and-rename fallback", () => {
   const file = join(scratch("otel-atomic-default"), "value.json"); writeFileSync(file, '{"a":1}');
   const defaultMode = statSync(file).mode & 0o777;
+  expect(REPLACE_BUSY_MS).toBe(100); // the measured budget (the writer's comment), Windows' default
+  const inUse = () => Object.assign(new Error("in use"), { code: "EPERM" });
+  let t = 0; const clock = { now: () => t, pause: (ms) => { expect(ms).toBe(2); t += ms; } };
   let calls = 0;
-  writeJsonAtomic(file, { a: 2 }, { rename: (from, to) => {
-    calls++; expect(existsSync(to)).toBe(calls === 1);
-    if (calls === 1) throw Object.assign(new Error("replace failed"), { code: "EPERM" });
+  writeJsonAtomic(file, { a: 2 }, { busyFor: 100, ...clock, rename: (from, to) => {
+    calls++; expect(existsSync(to)).toBe(true); // never a moment without the file
+    if (calls < 3) throw inUse();
     renameSync(from, to);
   } });
-  expect(calls).toBe(2); expect(JSON.parse(readFileSync(file))).toEqual({ a: 2 });
+  expect(calls).toBe(3); expect(JSON.parse(readFileSync(file))).toEqual({ a: 2 });
   if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(defaultMode);
+  // Refused throughout: tried until 100 ms have passed, slow tries counted in, then replaced by removing first.
+  for (const [cost, tries] of [[0, 51], [30, 4]]) {
+    t = 0; let refused = 0;
+    writeJsonAtomic(file, { tries }, { busyFor: 100, ...clock, rename: (from, to) => {
+      t += cost;
+      if (existsSync(to)) { refused++; throw inUse(); }
+      renameSync(from, to);
+    } });
+    expect([cost, refused, JSON.parse(readFileSync(file))]).toEqual([cost, tries, { tries }]);
+  }
+  // Not a file in use, or not on Windows (busyFor 0, the default there): no retry.
+  for (const [code, busyFor] of [["ENOSPC", 100], ["EPERM", 0]]) {
+    let once = 0;
+    writeJsonAtomic(file, { code }, { busyFor, ...clock, rename: (from, to) => { if (existsSync(to)) { once++; throw Object.assign(new Error(code), { code }); } renameSync(from, to); } });
+    expect([code, once]).toEqual([code, 1]);
+  }
+  if (process.platform !== "win32") { let once = 0; writeJsonAtomic(file, {}, { rename: (from, to) => { if (existsSync(to)) { once++; throw inUse(); } renameSync(from, to); } }); expect(once).toBe(1); }
+  // A write that fails leaves no temp file, strict or not.
+  const dir = dirname(file);
+  expect(() => writeJsonAtomic(file, { a: 5 }, { busyFor: 0, preserveOnError: true, rename: () => { throw inUse(); } })).toThrow("in use");
+  expect(() => writeJsonAtomic(file, { a: 6 }, { busyFor: 0, rename: () => { throw Object.assign(new Error("gone"), { code: "EIO" }); } })).toThrow("gone");
+  expect(readdirSync(dir).filter((n) => n.includes(".tmp."))).toEqual([]);
 });
 
 test("atomic writes keep the explicit mode option", () => {
@@ -704,11 +732,10 @@ test("setup reports a failed config replacement and preserves the previous setti
   const inspect = async () => ({ config: { exists: true, subscriptions: [] }, harnesses: {}, decision: [{ works: true }], next_steps: [],
     skill: ["routr", "routr-orchestrate"].map((name) => ({ name, where: `~/.agents/skills/${name}`, version: ROUTR_VERSION })) });
   await expect(setup(["--yes", "--json", "--config", f.configPath, "--channel", "beta"], { inspect, interactive: false, env: {}, otelHome: f.home,
-    writeConfig: (file, value, options) => writeJsonAtomic(file, value, { ...options, rename: (from, to) => {
-      if (++replacements === 1) throw Object.assign(new Error("replace denied"), { code: "EPERM" });
-      renameSync(from, to);
+    writeConfig: (file, value, options) => writeJsonAtomic(file, value, { ...options, rename: () => {
+      replacements++; throw Object.assign(new Error("replace denied"), { code: "EPERM" }); // refused on every try
     } }) })).rejects.toThrow("replace denied");
-  expect(replacements).toBe(1); expect(readFileSync(f.configPath, "utf8")).toBe(before);
+  expect(replacements).toBeGreaterThan(0); expect(readFileSync(f.configPath, "utf8")).toBe(before);
 });
 
 test("strict sender-state replacement works repeatedly over an existing file on every platform", () => {

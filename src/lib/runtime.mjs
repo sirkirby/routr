@@ -61,14 +61,34 @@ export function ensureParent(file, { mkdir = mkdirSync } = {}) {
   }
 }
 
-// A temp file, then rename. Keep the existing remove-and-rename fallback for callers that need it on Windows.
-// OTel retry state opts out: a failed replacement must retain its previous recorded backoff.
-export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync } = {}) {
+// A temp file, then rename. Windows refuses a rename over a file another process has open (EPERM), as any reader of it
+// does for a moment, and removing the file first leaves it missing for a reader in between: a headless worker's state
+// read as none, on CI. So on Windows a refused rename is tried again, with the old file in place, for up to `busyFor`
+// ms (REPLACE_BUSY_MS), and only then replaced by removing first. Measured 2026-10-26 on Windows 11 with Bun 1.4.3, a
+// writer in a loop against three readers in loops: 15-25% of reads found no file before, 1-2% after (each write at most
+// about 190 ms); readers 5 ms apart, 1 read in about 740 before, 0 or 1 in about 900 after. Elsewhere a rename over an
+// open file succeeds, and a refusal is a permission that waiting will not change, so there is no retry. OTel retry
+// state opts out of removing first (preserveOnError): a failed replacement must retain its previous recorded backoff. A
+// write that fails removes its temp file. `now` and `pause` are the clock and the wait, for tests.
+const replacePause = new Int32Array(new SharedArrayBuffer(4));
+export const REPLACE_BUSY_MS = 100;
+export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync,
+  busyFor = process.platform === "win32" ? REPLACE_BUSY_MS : 0, now = () => performance.now(), pause = (ms) => Atomics.wait(replacePause, 0, 0, ms) } = {}) {
   if (mkdir) ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(value, null, indent) + "\n", { mode });
-  try { rename(tmp, file); }
-  catch (e) { if (preserveOnError) throw e; try { unlinkSync(file); } catch {} rename(tmp, file); }
+  try {
+    writeFileSync(tmp, JSON.stringify(value, null, indent) + "\n", { mode });
+    for (const began = now(); ;) {
+      try { rename(tmp, file); return; }
+      catch (e) {
+        if (["EPERM", "EACCES", "EBUSY"].includes(e?.code) && now() - began < busyFor) { pause(2); continue; }
+        if (preserveOnError) throw e;
+        break;
+      }
+    }
+    try { unlinkSync(file); } catch {}
+    rename(tmp, file);
+  } catch (e) { try { unlinkSync(tmp); } catch {} throw e; }
 }
 
 // Take a lock file, or say someone else holds it. Exclusive create, so two processes in a burst cannot both win; the
