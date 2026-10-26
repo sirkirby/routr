@@ -72,10 +72,10 @@ export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnErr
   if (mkdir) ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
   writeFileSync(tmp, JSON.stringify(value, null, indent) + "\n", { mode });
-  for (let tries = 0; ; tries++) {
+  for (const began = performance.now(); ;) {
     try { rename(tmp, file); return; }
     catch (e) {
-      if (["EPERM", "EACCES", "EBUSY"].includes(e?.code) && tries < 50) { Atomics.wait(replacePause, 0, 0, 2); continue; }
+      if (["EPERM", "EACCES", "EBUSY"].includes(e?.code) && performance.now() - began < 100) { Atomics.wait(replacePause, 0, 0, 2); continue; }
       if (preserveOnError) throw e;
       break;
     }
