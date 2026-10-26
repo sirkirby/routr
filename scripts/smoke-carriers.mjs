@@ -230,14 +230,21 @@ export async function smokeCarriers({ herdr = runHerdr, git = gitIn, env = proce
       let r; try { r = await herdr(["workspace", "close", id], 5000); } catch { r = { ok: false, code: "herdr_unreachable" }; }
       if (!r?.ok) fail(`could not close workspace ${id}, on the throwaway repository (${r?.code ?? "no answer"}); ${dir} is kept: close it with ${displayCommand(["herdr", "workspace", "close", id])}, then remove the folder`);
     }
-    // Windows: the folder can stay held for a while after its workspaces close (EBUSY, seen 2026-10-26 on Windows 11,
-    // herdr 0.9.5: still held after 11 s, free within 30 s), so the removal retries for up to about a minute and says
-    // how long it took; one that still fails is named, never thrown.
-    const began = performance.now();
-    if (!keep) try { rmSync(dir, { recursive: true, force: true, maxRetries: 25, retryDelay: 200 }); }
+    if (!keep) try { const waited = await removeWhenFree(dir); if (waited > 1) log(`temporary folder removed after ${waited.toFixed(1)} s`); }
     catch (e) { fail(`could not remove the temporary folder ${dir} (${e?.code ?? e}): remove it`); }
-    if (!keep && performance.now() - began > 1000) log(`temporary folder removed after ${((performance.now() - began) / 1000).toFixed(1)} s`);
   }
   return failed;
 }
+// Removes a temporary folder, waiting up to `ms` for Windows to let it go: a workspace just closed, or a process just
+// ended, can still hold it (EBUSY, seen 2026-10-26 on Windows 11, herdr 0.9.5). Bun 1.4.3's rmSync ignores maxRetries
+// (it threw EBUSY after 1 ms there), so the retry is here. Returns the seconds it waited; throws what the last try threw.
+export async function removeWhenFree(path, ms = 60000) {
+  const began = performance.now();
+  for (;;) {
+    try { rmSync(path, { recursive: true, force: true }); return (performance.now() - began) / 1000; }
+    catch (e) { if (!["EBUSY", "EPERM", "ENOTEMPTY"].includes(e?.code) || performance.now() - began >= ms) throw e; }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+}
+
 if (import.meta.main) process.exitCode = (await smokeCarriers()) ? 1 : 0;
