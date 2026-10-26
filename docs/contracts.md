@@ -768,7 +768,7 @@ and `cleanup --worker` name it and say what to do if it stays so, as for an unre
 `unreadable` (its `state.json` is there and cannot be read, never shown as `starting`, which is a worker whose holder
 has not written one yet; or its `worker.json` cannot be read, and then `kind`, `model`, `effort` and `cwd` are null:
 never left out as no worker). On Windows a file another process holds or is replacing is read again for up to 100 ms
-first. One that stays unreadable is damaged: the orchestrator guide says what to do. `last_tool` is one of the harness's own tool names (Claude's
+first. For one that stays unreadable (its permissions, or damage), the orchestrator guide says what to do. `last_tool` is one of the harness's own tool names (Claude's
 tools; Codex's item types, such as `commandExecution` and `fileChange`; Antigravity's tools, such as `run_command`; Kiro's tool kinds, such as `execute` and `edit`; Cursor's `shell`),
 `mcp`, `other`, or null. `report` is the path of the latest turn's report that has one, or null. `tasks` counts Claude's background commands;
 it is 0 for Codex, Cursor, Antigravity and Kiro, which report none. `harness_group`: a process group it
