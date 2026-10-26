@@ -62,11 +62,12 @@ export function ensureParent(file, { mkdir = mkdirSync } = {}) {
 }
 
 // A temp file, then rename. Windows refuses a rename over a file another process has open (EPERM), as any reader of it
-// does for a moment: measured 2026-10-26 on Windows 11 with Bun 1.4.3, a reader in a loop made 6% of renames fail, the
-// longest for 20 tries 2 ms apart. Removing the file first then left it missing for a reader in between (a headless
-// worker's state read as none, on CI). So a refused rename is tried again for up to about 100 ms with the old file in
-// place, and only then replaced by removing first; OTel retry state opts out of that (preserveOnError): a failed
-// replacement must retain its previous recorded backoff.
+// does for a moment, and removing the file first leaves it missing for a reader in between: a headless worker's state
+// read as none, on CI. So a refused rename is tried again, with the old file in place, for up to 100 ms, and only then
+// replaced by removing first. Measured 2026-10-26 on Windows 11 with Bun 1.4.3, a writer in a loop against three
+// readers in loops: 15-25% of reads found no file before, about 1% after (each write at most 120 ms); readers 5 ms
+// apart, 1 read in about 740 before, none in about 900 after. OTel retry state opts out of removing first
+// (preserveOnError): a failed replacement must retain its previous recorded backoff.
 const replacePause = new Int32Array(new SharedArrayBuffer(4));
 export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync } = {}) {
   if (mkdir) ensureParent(file);

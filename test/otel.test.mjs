@@ -127,10 +127,9 @@ test("no-mkdir atomic writes cannot recreate a removed queue", () => {
   expect(JSON.parse(readFileSync(file))).toEqual({ a: 1 });
 });
 
-// Measured 2026-10-26 on Windows 11 (Bun 1.4.3): a rename over a file another process is reading fails (EPERM), 6% of
-// them with a reader in a loop, and removing the file first left it missing for a reader in between (a headless
-// worker's state read as none, on CI). A refused rename is tried again with the old file in place; only one still
-// refused is replaced by removing first.
+// Windows refuses a rename over a file another process is reading (EPERM), and removing the file first left it missing
+// for a reader in between (a headless worker's state read as none, on CI). A refused rename is tried again with the
+// old file in place; only one still refused after 100 ms is replaced by removing first.
 test("atomic writes retry a refused rename in place, and keep the remove-and-rename fallback for one that stays refused", () => {
   const file = join(scratch("otel-atomic-default"), "value.json"); writeFileSync(file, '{"a":1}');
   const defaultMode = statSync(file).mode & 0o777;
