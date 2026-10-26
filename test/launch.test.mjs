@@ -1189,6 +1189,14 @@ test("waitForShell finishes a prompt wider than its pane from its unwrapped line
   const edge = `PS C:\\${"x".repeat(51)}>`;
   expect(shellPrompt(`${edge.slice(0, 57)}\n${edge.slice(57)}`)).toBe("question");
   expect(await world(`${edge.slice(0, 57)}\n${edge.slice(57)}`, edge).wait()).toEqual({ ok: true, name: "powershell.exe", cwd: here });
+  // Spaces inside a row are compared: a row that differs only by them is another line.
+  expect(await world("PS C:\\my project\n>", "PS C:\\myproject>").wait()).toMatchObject({ ok: false, why: "The shell asked a question before its prompt" });
+  // A row wrapped where the line had a space still joins.
+  const spaced = `PS C:\\Users\\chris\\My Projects\\${"y".repeat(24)} with space>`;
+  const cut = spaced.lastIndexOf(" ");
+  expect(await world(`${spaced.slice(0, cut)}\n${spaced.slice(cut + 1)}`, spaced).wait()).toEqual({ ok: true, name: "powershell.exe", cwd: here });
+  // A visible question gives way only to a ready prompt: an input prompt wrapped before its `>` stays a question.
+  expect(await world("Enter value\n>", "Enter value >").wait()).toMatchObject({ ok: false, why: "The shell asked a question before its prompt", text: "Enter value\n>" });
   // A continuation `>` on a line of its own stays a question: the unwrapped lines show it apart, not joined.
   expect(await world("PS C:\\Users\\chris> echo 'a\n>", "PS C:\\Users\\chris> echo 'a\n>").wait()).toMatchObject({ ok: false, why: "The shell asked a question before its prompt" });
   // A question is returned as the visible screen, as the contract says.
