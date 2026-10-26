@@ -429,8 +429,9 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   stops a worker process that answers, and send still delivers to one when only `state.json` is unreadable; otherwise
   they refuse too. A marker its process writes (`gen-<n>.claim`, `.ready`, `.released`) that cannot be read makes the
   worker `unreachable`, and send, stop and cleanup name it the same way.
-  Run the command again in a moment (on Windows another process may have held it). If it stays unreadable, the file
-  is damaged and routr will not act on that worker: make sure nothing of it still runs, finish its worktree with
+  Run the command again in a moment (on Windows another process may have held it). If it stays unreadable, routr will
+  not act on that worker: check the file's permissions, or whether it is damaged; then make sure nothing of it still
+  runs, finish its worktree with
   `routr cleanup --path`, keep what you need from its run folder (the error's `next` names it), and remove that folder
   yourself.
 

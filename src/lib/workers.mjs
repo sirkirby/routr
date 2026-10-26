@@ -55,9 +55,9 @@ async function locked(name, fn) {
   const assertOwned = () => { if (!took || !lockOwned(file, token)) throw new Error(`the worker lock for ${name} is held by another routr command; run it again in a moment`); };
   try { assertOwned(); return await fn(assertOwned); } finally { if (took) releaseFileLock(file, token); }
 }
-// A worker file that stays unreadable is damaged, and routr acts on none of the worker: what a person does then.
+// A worker file that stays unreadable (its permissions, or damage), and routr acts on none of the worker: what a person does then.
 const damagedNext = (name, w = null) => [runNext("Look again in a moment.", ["routr", "workers", "--name", name]),
-  doNext(`If it stays unreadable, it is damaged and routr will not act on ${name}: make sure nothing of it still runs${w?.worktree ? `, finish its worktree with ${displayCommand(["routr", "cleanup", "--cwd", w.worktree.source, "--path", w.worktree.path])}` : ""}, keep what you need from ${runDir(name)}, then remove that folder yourself.`)];
+  doNext(`If it stays unreadable, routr will not act on ${name}: check the file's permissions, or whether it is damaged; then make sure nothing of it still runs${w?.worktree ? `, finish its worktree with ${displayCommand(["routr", "cleanup", "--cwd", w.worktree.source, "--path", w.worktree.path])}` : ""}, keep what you need from ${runDir(name)}, then remove that folder yourself.`)];
 // The same, for a probe that could not read one of its holder's markers (channel.mjs's `unreadable`).
 const markerWhy = (name, p) => unreadableWhy(name, p.unreadable.file, p.unreadable.code);
 // Start the next holder of a worker (launch, or send to an idle one) and wait until its channel answers. Under the lock.

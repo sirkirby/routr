@@ -337,7 +337,7 @@ test("a worker state routr cannot read is unknown to every command, never absent
   expect(JSON.parse(good).session_id).toBeTruthy();
   expect(w.run(["wait", "--timeout", "300"]).state).toBe("finished"); // its turn is reported: nothing new after this
   const why = (file) => `${name}'s ${file} could not be read just now (not_json), so what it is doing is not known: try again in a moment`;
-  const damaged = expect.objectContaining({ kind: "do", why: expect.stringContaining(`If it stays unreadable, it is damaged and routr will not act on ${name}`) });
+  const damaged = expect.objectContaining({ kind: "do", why: expect.stringContaining(`If it stays unreadable, routr will not act on ${name}`) });
   // Its state, then its record: each unknown, never absent.
   for (const [file, more] of [["state.json", {}], ["worker.json", { kind: null }]]) {
     put(file, broken);
