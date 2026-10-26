@@ -7,7 +7,7 @@ import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, read
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { connect, generations, MESSAGE_MAX, probe, removeEndpoint, socketPathFits, writeSecret } from "./channel.mjs";
-import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, ownedBy, readWorker, reserve, runDir, stateOf, unreadableWhy, WORKERS_DIR, workerOf } from "./headless.mjs";
+import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, ownedBy, reserve, runDir, stateOf, unreadableWhy, WORKERS_DIR, workerOf } from "./headless.mjs";
 import { HARNESSES, notReady } from "./harnesses.mjs";
 import { loadConfig } from "./config.mjs";
 import { readTask } from "./advice-file.mjs";
@@ -57,7 +57,9 @@ async function locked(name, fn) {
 }
 // A worker file that stays unreadable is damaged, and routr acts on none of the worker: what a person does then.
 const damagedNext = (name, w = null) => [runNext("Look again in a moment.", ["routr", "workers", "--name", name]),
-  doNext(`If it stays unreadable, it is damaged and routr will not act on ${name}: make sure nothing of it still runs${w?.worktree ? `, finish its worktree with routr cleanup --cwd ${w.worktree.source} --path ${w.worktree.path}` : ""}, keep what you need from ${runDir(name)}, then remove that folder yourself.`)];
+  doNext(`If it stays unreadable, it is damaged and routr will not act on ${name}: make sure nothing of it still runs${w?.worktree ? `, finish its worktree with ${displayCommand(["routr", "cleanup", "--cwd", w.worktree.source, "--path", w.worktree.path])}` : ""}, keep what you need from ${runDir(name)}, then remove that folder yourself.`)];
+// The same, for a probe that could not read one of its holder's markers (channel.mjs's `unreadable`).
+const markerWhy = (name, p) => unreadableWhy(name, p.unreadable.file, p.unreadable.code);
 // Start the next holder of a worker (launch, or send to an idle one) and wait until its channel answers. Under the lock.
 async function becomeHolder(name, { spawn = spawnSelf, timeoutMs = 15000, assertOwned = () => {} } = {}) {
   const before = generations(runDir(name)).at(-1) ?? 0;
@@ -323,7 +325,7 @@ async function waitCommandBody(args, { now = () => Date.now(), pause = sleep, en
     if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 600000) throw new Error("--timeout must be milliseconds, at most 600000");
     // Unnamed: every worker still running, or with a turn this wait has not reported yet.
     // One whose state cannot be read just now is watched: it may be running.
-    const watched = o.names.length ? o.names : names().filter((n) => { const r = stateOf(n), s = r.value; return r.unreadable || (s && (RUNNING.has(s.state) || (s.turns ?? []).some((t) => t.turn > seenOf(n).turn && t.outcome))); });
+    const watched = o.names.length ? o.names : names().filter((n) => { const r = stateOf(n), s = r.value; return r.unreadable || workerOf(n).unreadable || (s && (RUNNING.has(s.state) || (s.turns ?? []).some((t) => t.turn > seenOf(n).turn && t.outcome))); });
     for (const n of watched) { const r = workerOf(n); if (!r.worker && !r.unreadable) throw new Error(`no headless worker named ${n}; routr workers lists them`); }
     if (!watched.length) { out.ok = true; out.state = "none"; out.headline = "routr: no headless worker to wait on"; return answer(out); }
     const deadline = now() + timeout;
@@ -379,7 +381,9 @@ async function sendCommandBody(args, { env = process.env, settings = () => loadC
     if (rec.unreadable) { out.next.push(...damagedNext(name)); throw new Error(unreadableWhy(name, "worker.json", rec.unreadable)); }
     if (!w) throw new Error(`no headless worker named ${name}; routr workers lists them`);
     // The worker it was asked for, by its run id: one cleaned up and launched again under that name meanwhile is not it.
-    const same = () => readWorker(name)?.id === w.id;
+    // Still the worker it was asked for: "replaced" only when its record says so; one it cannot read is said as that.
+    const identity = () => { const r = workerOf(name); return r.unreadable ? { unreadable: r.unreadable } : { same: r.worker?.id === w.id }; };
+    const same = () => { const r = identity(); if (r.unreadable) { out.next.push(...damagedNext(name, w)); throw new Error(unreadableWhy(name, "worker.json", r.unreadable)); } return r.same; };
     // A holder this send starts gives its harness the carriers saved with the worker, checked again: any withheld is said.
     out.warnings.push(...savedCarriers(w.carriers).withheld.map(carrierWithheld));
     const text = o["task-file"] != null ? readTask(resolve(o["task-file"])) : o.task;
@@ -398,6 +402,7 @@ async function sendCommandBody(args, { env = process.env, settings = () => loadC
     if (p.state === "alive") r = await deliver("send", 45000);
     if (p.state !== "alive" || (r?.code === "refused" && r.why === "ended")) {
       // A new holder: everything a launch checks before it starts one.
+      if (p.unreadable) { out.next.push(...damagedNext(name, w)); throw new Error(markerWhy(name, p)); }
       if (["unreachable", "starting"].includes(p.state)) throw new Error(`${name}'s process does not answer; run routr workers, and wait or stop it before sending`);
       // Its session and process group come from its state: one that cannot be read is neither "no session" nor "no group".
       const read = stateOf(name);
@@ -411,7 +416,12 @@ async function sendCommandBody(args, { env = process.env, settings = () => loadC
       if (signedOut) throw new Error(`${HARNESSES[w.kind].label} cannot take work: ${signedOut}`);
       // A holder that has just ended still answers for a moment: let it go first.
       for (let i = 0; i < 20 && p.state === "alive"; i++) { await sleep(150); p = await probe(runDir(name)); }
-      p = await locked(name, async (assertOwned) => { if (!same()) return { state: "replaced" }; return becomeHolder(name, { spawn, assertOwned }); });
+      p = await locked(name, async (assertOwned) => {
+        const r = identity();
+        if (r.unreadable) return { state: "unreadable", why: unreadableWhy(name, "worker.json", r.unreadable) };
+        if (!r.same) return { state: "replaced" };
+        return becomeHolder(name, { spawn, assertOwned });
+      });
       if (p.state === "replaced") throw new Error(`${name} was cleaned up and launched again meanwhile; nothing was sent`);
       if (p.state === "unreadable") { out.next.push(...damagedNext(name, w)); throw new Error(p.why); }
       if (p.state !== "alive") throw new Error(`${name}: ${NOT_STARTED(p)}`);
@@ -475,7 +485,8 @@ async function stopCommandBody(args, { env = process.env } = {}) {
       out.ok = true; out.state = "absent"; out.headline = `routr: ${name} is not running`;
     } else {
       out.state = p.state === "unreachable" ? "unreachable" : "lost";
-      out.headline = p.state === "unreachable" ? `routr: ${name}'s process does not answer`
+      if (p.unreadable) out.next.push(...damagedNext(name, w));
+      out.headline = p.unreadable ? `routr: ${markerWhy(name, p)}` : p.state === "unreachable" ? `routr: ${name}'s process does not answer`
         : `routr: ${name}'s process is gone${left ? `, and its harness may still be running (process group ${pg()})` : ""}`;
       out.warnings.push(warning("process_unseen", "routr stops a worker only through its own process, never by a saved process id: it cannot see whether the harness is still running"));
       out.next.push(doNext(left ? `Look at process group ${pg()} (${lookAt(pg())}) and stop it yourself if it is this worker's, then clean the worker up.` : "Clean the worker up once you are sure nothing of it runs."));
@@ -509,6 +520,7 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
     if (!w) return refuse(again.unreadable ? unreadableWhy(name, "worker.json", again.unreadable) : "its record changed while cleanup waited", damagedNext(name));
     const p = await probe(runDir(name));
     if (["alive", "starting"].includes(p.state)) return refuse(`${name} is still running`, [runNext("Wait for it to finish.", ["routr", "wait", "--name", name]), runNext("Or stop it first.", ["routr", "stop", "--name", name])]);
+    if (p.unreadable) return refuse(markerWhy(name, p), damagedNext(name, w));
     if (p.state === "unreachable") return refuse(`${name}'s process does not answer, so whether it runs is not known`, runNext("Look at it.", ["routr", "workers", "--name", name]));
     const read = stateOf(name);
     if (read.unreadable) return refuse(unreadableWhy(name, "state.json", read.unreadable), damagedNext(name, w));

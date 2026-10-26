@@ -335,13 +335,14 @@ test("a worker state routr cannot read is unknown to every command, never absent
   const keep = (f) => readFileSync(join(dir, f), "utf8"), put = (f, text) => writeFileSync(join(dir, f), text);
   const good = keep("state.json"), record = keep("worker.json"), released = keep("gen-1.released"), ready = keep("gen-1.ready"), broken = '{"format":1,"turn":';
   expect(JSON.parse(good).session_id).toBeTruthy();
+  expect(w.run(["wait", "--timeout", "300"]).state).toBe("finished"); // its turn is reported: nothing new after this
   const why = (file) => `${name}'s ${file} could not be read just now (not_json), so what it is doing is not known: try again in a moment`;
   const damaged = expect.objectContaining({ kind: "do", why: expect.stringContaining(`If it stays unreadable, it is damaged and routr will not act on ${name}`) });
   // Its state, then its record: each unknown, never absent.
   for (const [file, more] of [["state.json", {}], ["worker.json", { kind: null }]]) {
     put(file, broken);
     expect([file, w.run(["workers", "--name", name]).workers[0]]).toEqual([file, expect.objectContaining({ name, state: "unreadable", ...more })]);
-    expect(w.run(["wait", "--name", name, "--timeout", "300"])).toMatchObject({ ok: true, state: "running", headline: `routr: still running: ${name} (its state could not be read)` });
+    for (const named of [["--name", name], []]) expect(w.run(["wait", ...named, "--timeout", "300"])).toMatchObject({ ok: true, state: "running", headline: `routr: still running: ${name} (its state could not be read)` });
     const sent = w.run(["send", "--name", name, "--task", SENT]);
     expect([file, sent.ok, sent.error, sent.next]).toEqual([file, false, why(file), expect.arrayContaining([damaged])]);
     const stopped = w.run(["stop", "--name", name]);
@@ -355,8 +356,12 @@ test("a worker state routr cannot read is unknown to every command, never absent
   }
   // A released marker that is there and cannot be read says neither that it ended nor that it did not.
   put("gen-1.released", "{");
-  expect(w.run(["stop", "--name", name])).toMatchObject({ ok: false, state: "unreachable" });
-  expect(w.run(["cleanup", "--worker", name])).toMatchObject({ ok: false, state: "refused" });
+  const marker = why("gen-1.released");
+  const unstopped = w.run(["stop", "--name", name]);
+  expect([unstopped.ok, unstopped.state, unstopped.headline, unstopped.next]).toEqual([false, "unreachable", `routr: ${marker}`, expect.arrayContaining([damaged])]);
+  const unkept = w.run(["cleanup", "--worker", name]);
+  expect([unkept.state, unkept.headline, unkept.next]).toEqual(["refused", `routr: kept ${name}: ${marker}`, expect.arrayContaining([damaged])]);
+  expect(w.run(["send", "--name", name, "--task", SENT])).toMatchObject({ ok: false, error: marker });
   put("gen-1.released", released);
   // A readable release is the holder's word, whatever its ready marker now holds.
   put("gen-1.ready", "{");

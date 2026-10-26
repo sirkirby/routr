@@ -425,7 +425,9 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   command that outlived it), and send and cleanup refuse until it is empty. routr never stops a process by a saved
   id: look at the group (`pgrep -lf -g <group>` on macOS, `pgrep -a -g <group>` on Linux), stop it if it is this worker's, then clean up.
 - **Unreadable.** When a worker's `state.json` or `worker.json` is there and cannot be read, `workers` says
-  `unreadable`, `wait` keeps waiting, and send, stop and cleanup refuse rather than guess: the error names the file.
+  `unreadable`, `wait` keeps waiting, and cleanup refuses rather than guess: the error names the file. Send and stop
+  still go through a worker process that answers; when none does, they refuse too, and so they do when a marker its
+  process writes (`gen-<n>.ready`, `gen-<n>.released`) cannot be read.
   Run the command again in a moment (on Windows another process may have held it). If it stays unreadable, the file
   is damaged and routr will not act on that worker: make sure nothing of it still runs, finish its worktree with
   `routr cleanup --path`, keep what you need from its run folder (the error's `next` names it), and remove that folder
