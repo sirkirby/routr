@@ -371,7 +371,9 @@ async function runSmoke({ env: original, log }) {
     }); } catch { errors = ["cannot verify smoke teardown"]; }
     if (server) { server.closeAllConnections(); if (server.listening) await new Promise((r) => server.close(r)); }
     if (errors.length) { for (const error of errors) log(`smoke:otel: ${error}`); throw new Error(`smoke teardown failed; retained ${home}`); }
-    rmSync(home, { recursive: true, force: true });
+    // Windows: a process the smoke just stopped can still hold a file there for a moment (as smoke:carriers saw), so
+    // the removal retries.
+    rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     if (summary) log(summary); // Success includes teardown, not just delivery.
   }
 }
