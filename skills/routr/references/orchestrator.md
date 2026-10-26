@@ -424,6 +424,15 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   and Linux they name the process group its harness ran in while that group still has members (a lost harness, or a
   command that outlived it), and send and cleanup refuse until it is empty. routr never stops a process by a saved
   id: look at the group (`pgrep -lf -g <group>` on macOS, `pgrep -a -g <group>` on Linux), stop it if it is this worker's, then clean up.
+- **Unreadable.** When a worker's `state.json` or `worker.json` is there and cannot be read, `workers` says
+  `unreadable`, `wait` keeps waiting, and cleanup refuses rather than guess: the error names the file. Stop still
+  stops a worker process that answers, and send still delivers to one when only `state.json` is unreadable; otherwise
+  they refuse too. A marker its process writes (`gen-<n>.claim`, `.ready`, `.released`) that cannot be read makes the
+  worker `unreachable`, and send, stop and cleanup name it the same way.
+  Run the command again in a moment (on Windows another process may have held it). If it stays unreadable, the file
+  is damaged and routr will not act on that worker: make sure nothing of it still runs, finish its worktree with
+  `routr cleanup --path`, keep what you need from its run folder (the error's `next` names it), and remove that folder
+  yourself.
 
 ## Trace context
 

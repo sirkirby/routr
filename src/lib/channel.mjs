@@ -15,7 +15,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { basename, dirname, join } from "node:path";
-import { STATE_DIR, writeJsonAtomic } from "./runtime.mjs";
+import { readJsonFile, STATE_DIR, writeJsonAtomic } from "./runtime.mjs";
 
 export const PROTO = 1;
 // One frame holds a whole task: launch and send refuse a message over MESSAGE_MAX before anything starts. Until a peer
@@ -27,7 +27,6 @@ const HEX64 = /^[0-9a-f]{64}$/, NONCE = /^[0-9a-f]{32}$/;
 const WIN = () => process.platform === "win32";
 const hmac = (key, s) => createHmac("sha256", key).update(s).digest("hex");
 const same = (a, b) => typeof a === "string" && typeof b === "string" && HEX64.test(a) && HEX64.test(b) && timingSafeEqual(Buffer.from(a), Buffer.from(b));
-const readJson = (f) => { try { return JSON.parse(readFileSync(f, "utf8")); } catch { return null; } };
 const alivePid = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } };
 const fail = (code, message = code) => Object.assign(new Error(message), { code });
 
@@ -82,15 +81,24 @@ export const markReleased = (dir, n, info) => writeJsonAtomic(genFile(dir, n, "r
 // alive), abandoned (claimed, never bound, claimant gone: it never started a harness), alive (answered and proved the
 // secret), dead (a definite no-listener), unreachable (anything else). A claimant's live pid may be a reused one,
 // which only errs toward "starting", the safe side. A claim is never seen half written (claim, below); one with no
-// readable pid was not written by routr, and is unreachable: nothing is assumed about it.
+// readable pid was not written by routr, and is unreachable: nothing is assumed about it. So is a released marker that
+// is there and cannot be read (readJsonFile), which says neither that the holder ended nor that it did not, and a
+// ready marker (or, before it, a claim) that cannot be read when no release was recorded: a readable release is still
+// the holder's word. Such
+// an answer carries `unreadable: { file, code }`, so a command can name the file.
 export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
   const n = generations(dir).at(-1);
   if (!n) return { state: "none", gen: 0 };
-  const released = readJson(genFile(dir, n, "released"));
-  const ready = readJson(genFile(dir, n, "ready"));
+  const releasedRead = readJsonFile(genFile(dir, n, "released")), readyRead = readJsonFile(genFile(dir, n, "ready"));
+  const unreadable = (kind, code) => ({ state: "unreachable", gen: n, unreadable: { file: `gen-${n}.${kind}`, code } });
+  if (releasedRead.unreadable) return unreadable("released", releasedRead.unreadable);
+  const released = releasedRead.value ?? null, ready = readyRead.value ?? null;
   if (released) return { state: "released", gen: n, ready, released };
+  if (readyRead.unreadable) return unreadable("ready", readyRead.unreadable);
   if (!ready) {
-    const c = readJson(genFile(dir, n, "claim"));
+    const claimRead = readJsonFile(genFile(dir, n, "claim"));
+    if (claimRead.unreadable) return unreadable("claim", claimRead.unreadable);
+    const c = claimRead.value;
     if (Number.isInteger(c?.pid)) return { state: alivePid(c.pid) ? "starting" : "abandoned", gen: n };
     return { state: "unreachable", gen: n };
   }
@@ -100,8 +108,9 @@ export async function probe(dir, { timeout = HANDSHAKE_MS } = {}) {
     return { state: "alive", gen: n, ready, ping: r };
   } catch (e) {
     // A holder that has just ended closes its channel right after it says so: read again before calling it dead.
-    const late = readJson(genFile(dir, n, "released"));
-    if (late) return { state: "released", gen: n, ready, released: late };
+    const late = readJsonFile(genFile(dir, n, "released"));
+    if (late.unreadable) return { ...unreadable("released", late.unreadable), ready };
+    if (late.value) return { state: "released", gen: n, ready, released: late.value };
     return { state: ["ENOENT", "ECONNREFUSED"].includes(e?.code) ? "dead" : "unreachable", gen: n, ready };
   }
 }
