@@ -65,8 +65,8 @@ export function ensureParent(file, { mkdir = mkdirSync } = {}) {
 // does for a moment, and removing the file first leaves it missing for a reader in between: a headless worker's state
 // read as none, on CI. So on Windows a refused rename is tried again, with the old file in place, for up to `busyFor`
 // ms (REPLACE_BUSY_MS), and only then replaced by removing first. Measured 2026-10-26 on Windows 11 with Bun 1.4.3, a
-// writer in a loop against three readers in loops: 15-25% of reads found no file before, about 1% after (each write at
-// most 120 ms); readers 5 ms apart, 1 read in about 740 before, none in about 900 after. Elsewhere a rename over an
+// writer in a loop against three readers in loops: 15-25% of reads found no file before, 1-2% after (each write at most
+// about 190 ms); readers 5 ms apart, 1 read in about 740 before, 0 or 1 in about 900 after. Elsewhere a rename over an
 // open file succeeds, and a refusal is a permission that waiting will not change, so there is no retry. OTel retry
 // state opts out of removing first (preserveOnError): a failed replacement must retain its previous recorded backoff. A
 // write that fails removes its temp file. `now` and `pause` are the clock and the wait, for tests.
