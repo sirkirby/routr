@@ -5,11 +5,20 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.9.0 — 2026-10-26
+
+[Full notes](docs/releases/v0.9.0.md)
+
 - On Windows, a headless worker's saved state is now far less likely to be missing for a moment while another routr
   command reads it, which could make `routr workers` show a finished worker as starting, or `routr send` refuse it as
   having no session. (#121)
 - On Windows, launch no longer waits out its 30 s and stops when PowerShell's prompt is wider than the worker's pane
   (a long worktree path in a half-width pane): the shell wait reads a wrapped prompt's whole line from herdr. (#120)
+- routr's shared file lock holds when a process pauses or crashes (on file systems with hard links), a background
+  usage refresh that resumes late no longer overwrites a newer reading, concurrent sends to a headless worker keep
+  each turn's trace context, and a clock change no longer distorts span durations. (#119)
+- Setup, help and the guides describe what OpenTelemetry export sends (traces, logs and the headroom gauge, with
+  repository names, relative paths and ids) and what commands do with export on. (#118)
 - OpenTelemetry export now includes structured warning, input, usage-failure and worker-state logs, plus subscription headroom per usage window. (#117)
 - OpenTelemetry export now includes each headless worker turn, with turn context passed through each harness’s process or request channel; workers launched with export off can begin tracing after opt-in, preserving inherited sampling. (#116)
 - OpenTelemetry export now traces orchestration and decisions, joins workers to their launches and lead sessions, and publishes every sent field. (#115)
