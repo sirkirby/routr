@@ -61,14 +61,27 @@ export function ensureParent(file, { mkdir = mkdirSync } = {}) {
   }
 }
 
-// A temp file, then rename. Keep the existing remove-and-rename fallback for callers that need it on Windows.
-// OTel retry state opts out: a failed replacement must retain its previous recorded backoff.
+// A temp file, then rename. Windows refuses a rename over a file another process has open (EPERM), as any reader of it
+// does for a moment: measured 2026-10-26 on Windows 11 with Bun 1.4.3, a reader in a loop made 6% of renames fail, the
+// longest for 20 tries 2 ms apart. Removing the file first then left it missing for a reader in between (a headless
+// worker's state read as none, on CI). So a refused rename is tried again for up to about 100 ms with the old file in
+// place, and only then replaced by removing first; OTel retry state opts out of that (preserveOnError): a failed
+// replacement must retain its previous recorded backoff.
+const replacePause = new Int32Array(new SharedArrayBuffer(4));
 export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync } = {}) {
   if (mkdir) ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
   writeFileSync(tmp, JSON.stringify(value, null, indent) + "\n", { mode });
-  try { rename(tmp, file); }
-  catch (e) { if (preserveOnError) throw e; try { unlinkSync(file); } catch {} rename(tmp, file); }
+  for (let tries = 0; ; tries++) {
+    try { rename(tmp, file); return; }
+    catch (e) {
+      if (["EPERM", "EACCES", "EBUSY"].includes(e?.code) && tries < 50) { Atomics.wait(replacePause, 0, 0, 2); continue; }
+      if (preserveOnError) throw e;
+      break;
+    }
+  }
+  try { unlinkSync(file); } catch {}
+  rename(tmp, file);
 }
 
 // Take a lock file, or say someone else holds it. Exclusive create, so two processes in a burst cannot both win; the

@@ -127,17 +127,32 @@ test("no-mkdir atomic writes cannot recreate a removed queue", () => {
   expect(JSON.parse(readFileSync(file))).toEqual({ a: 1 });
 });
 
-test("atomic writes retain the default remove-and-rename fallback", () => {
+// Measured 2026-10-26 on Windows 11 (Bun 1.4.3): a rename over a file another process is reading fails (EPERM), 6% of
+// them with a reader in a loop, and removing the file first left it missing for a reader in between (a headless
+// worker's state read as none, on CI). A refused rename is tried again with the old file in place; only one still
+// refused is replaced by removing first.
+test("atomic writes retry a refused rename in place, and keep the remove-and-rename fallback for one that stays refused", () => {
   const file = join(scratch("otel-atomic-default"), "value.json"); writeFileSync(file, '{"a":1}');
   const defaultMode = statSync(file).mode & 0o777;
   let calls = 0;
   writeJsonAtomic(file, { a: 2 }, { rename: (from, to) => {
-    calls++; expect(existsSync(to)).toBe(calls === 1);
-    if (calls === 1) throw Object.assign(new Error("replace failed"), { code: "EPERM" });
+    calls++; expect(existsSync(to)).toBe(true); // never a moment without the file
+    if (calls < 3) throw Object.assign(new Error("in use"), { code: "EPERM" });
     renameSync(from, to);
   } });
-  expect(calls).toBe(2); expect(JSON.parse(readFileSync(file))).toEqual({ a: 2 });
+  expect(calls).toBe(3); expect(JSON.parse(readFileSync(file))).toEqual({ a: 2 });
   if (process.platform !== "win32") expect(statSync(file).mode & 0o777).toBe(defaultMode);
+  let stuck = 0; const began = performance.now();
+  writeJsonAtomic(file, { a: 3 }, { rename: (from, to) => {
+    if (existsSync(to)) { stuck++; throw Object.assign(new Error("in use"), { code: "EBUSY" }); }
+    renameSync(from, to);
+  } });
+  expect(JSON.parse(readFileSync(file))).toEqual({ a: 3 });
+  expect(stuck).toBeGreaterThan(1); expect(performance.now() - began).toBeLessThan(1000); // retried, briefly, then replaced
+  // Not a file in use: no retry.
+  let full = 0;
+  writeJsonAtomic(file, { a: 4 }, { rename: (from, to) => { if (existsSync(to)) { full++; throw Object.assign(new Error("full disk"), { code: "ENOSPC" }); } renameSync(from, to); } });
+  expect(full).toBe(1);
 });
 
 test("atomic writes keep the explicit mode option", () => {
@@ -704,11 +719,10 @@ test("setup reports a failed config replacement and preserves the previous setti
   const inspect = async () => ({ config: { exists: true, subscriptions: [] }, harnesses: {}, decision: [{ works: true }], next_steps: [],
     skill: ["routr", "routr-orchestrate"].map((name) => ({ name, where: `~/.agents/skills/${name}`, version: ROUTR_VERSION })) });
   await expect(setup(["--yes", "--json", "--config", f.configPath, "--channel", "beta"], { inspect, interactive: false, env: {}, otelHome: f.home,
-    writeConfig: (file, value, options) => writeJsonAtomic(file, value, { ...options, rename: (from, to) => {
-      if (++replacements === 1) throw Object.assign(new Error("replace denied"), { code: "EPERM" });
-      renameSync(from, to);
+    writeConfig: (file, value, options) => writeJsonAtomic(file, value, { ...options, rename: () => {
+      replacements++; throw Object.assign(new Error("replace denied"), { code: "EPERM" }); // refused on every try
     } }) })).rejects.toThrow("replace denied");
-  expect(replacements).toBe(1); expect(readFileSync(f.configPath, "utf8")).toBe(before);
+  expect(replacements).toBeGreaterThan(1); expect(readFileSync(f.configPath, "utf8")).toBe(before);
 });
 
 test("strict sender-state replacement works repeatedly over an existing file on every platform", () => {
