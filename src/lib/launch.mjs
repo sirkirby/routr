@@ -195,10 +195,10 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       out.would_run = [
         ...(o.worktree ? [command(worktreeArgs(out.cwd, o.worktree, o.base)), command(splitArgs("right", "<worktree-path>", carried, { pane: "<root-pane>", shown: true })), command(["pane", "close", "<root-pane>"])] : []),
         ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true }))] : []),
-        command(promptReadArgs(pane)),
+        command(["pane", "read", pane, "--source", "visible"]),
         command(["pane", "process-info", "--pane", pane]),
         ...(o.pane ? [command(["pane", "run", pane, SHELLS[shell].cd(out.cwd)]),
-          command(promptReadArgs(pane)), command(["pane", "process-info", "--pane", pane])] : []),
+          command(["pane", "read", pane, "--source", "visible"]), command(["pane", "process-info", "--pane", pane])] : []),
         ...(o.kind === "cursor" && SHELLS[shell].cursorEnv ? [command(["pane", "run", pane, SHELLS[shell].cursorEnv(privateDir)])] : []),
         command(startArgs(pane, Math.min(o.timeout, 30000))),
         command(["pane", "read", pane, "--source", "visible"]),
@@ -262,7 +262,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     const pause = async () => sleep(Math.min(250, remaining()));
     let shellCwd = null;
     const shellReady = async (expectedCwd) => {
-      const r = await waitForShell({ ...pane(), unwrapped: readLines }, { sleep, now, remaining, cwd: expectedCwd, refuseBusy: Boolean(o.pane && !expectedCwd),
+      const r = await waitForShell({ ...pane(), read: readPane, unwrapped: readLines }, { sleep, now, remaining, cwd: expectedCwd, refuseBusy: Boolean(o.pane && !expectedCwd),
         onShell: (name) => { shell = shellFamily(name); } });
       if (!r.ok) return needsInput("shell_not_ready", r.why, r.text);
       shellCwd = r.cwd;
