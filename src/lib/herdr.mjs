@@ -198,19 +198,30 @@ async function processesWhileWaiting(pane) {
   catch (e) { if (e?.code !== "herdr_invalid_response") throw e; return null; }
 }
 
-// The state of the shell's current line (shellPrompt), from the visible screen; when its last row is not one routr
-// knows, from the pane's lines unwrapped, but only when their last line ends with that row. Measured 2026-10-26, herdr
-// 0.9.5 on Windows 11 (PowerShell 5.1): a worktree pane split to 57 columns showed `PS C:\Users\…\routr-smoke-…>` over
-// two rows, its last row no drive path, and the wait ran out at 30 s; recent-unwrapped gave it on one line. The
-// visible screen stays the authority: herdr's recent range reaches into scrollback under a blank screen and can miss
-// the top of an alternate screen taller than the rows read (its 0.9.5 source), and the row ties the line to the screen
-// now. `unwrapped()` gives the lines; it is read only when needed.
+// The state of the shell's current line (shellPrompt), from the visible screen; when its last row is not a state routr
+// can act on (unrecognized), or reads as a question, from the pane's last line unwrapped, but only when that line is
+// the screen's own wrapped: two or more of the visible screen's last rows, joined, are exactly it. Measured 2026-10-26,
+// herdr 0.9.5 on Windows 11 (PowerShell 5.1): a worktree pane split to 57 columns showed `PS C:\Users\…\routr-smoke-…>`
+// over two rows, its last row no drive path, and the wait ran out at 30 s; recent-unwrapped gave it on one line. A
+// prompt wrapped just before its `>` leaves a row that reads as a continuation question. The visible screen stays the
+// authority: herdr's recent range reaches into scrollback under a blank screen and can miss the top of an alternate
+// screen taller than the rows read (its 0.9.5 source), and a line that only ends like the last row may be another one.
+// A row can end where the line had a space, so spaces are not compared. `unwrapped()` is read only when needed.
 export async function shellLine(text, unwrapped) {
   const state = shellPrompt(text);
-  if (state !== "unrecognized") return state;
-  const row = clean(text).split("\n").at(-1).trim(), lines = clean(await unwrapped()).split("\n").at(-1).trim();
-  return row && lines.length > row.length && lines.endsWith(row) ? shellPrompt(lines) : state;
+  if (state !== "unrecognized" && state !== "question") return state;
+  const rows = clean(text).split("\n"), line = clean(await unwrapped()).split("\n").at(-1).trim();
+  return wrappedOnScreen(rows, line) ? shellPrompt(line) : state;
 }
+const wrappedOnScreen = (rows, line) => {
+  const want = line.replace(/\s+/g, "");
+  let got = "";
+  for (let k = 1; want && k <= rows.length; k++) {
+    got = rows[rows.length - k].replace(/\s+/g, "") + got;
+    if (got.length >= want.length) return k > 1 && got === want;
+  }
+  return false;
+};
 
 // True when the shell is the only thing running in the pane: a command typed into it has exited, or never started.
 export async function shellAlone(pane) {

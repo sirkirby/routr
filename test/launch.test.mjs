@@ -1116,7 +1116,7 @@ test("waitForShell: ready at a settled prompt; stops at any question, a busy ado
   const here = process.cwd();
   const pane = (screens, { busy = false } = {}) => {
     const pressed = [];
-    return { pressed, read: async () => screens.length > 1 ? screens.shift() : screens[0], keys: async (...k) => { pressed.push(k); },
+    return { pressed, read: async () => screens.length > 1 ? screens.shift() : screens[0], unwrapped: async () => screens[0], keys: async (...k) => { pressed.push(k); },
       info: async () => ({ shell_pid: 1, foreground_processes: busy ? [{ pid: 1, name: "zsh", cwd: here }, { pid: 2 }] : [{ pid: 1, name: "zsh", cwd: here }] }) };
   };
   let t = 0;
@@ -1180,9 +1180,17 @@ test("waitForShell finishes a prompt wider than its pane from its unwrapped line
   const tall = world(`PS C:\\Users\\chris>${"\n".repeat(59)}`, "");
   expect(await tall.wait()).toEqual({ ok: true, name: "powershell.exe", cwd: here });
   expect(tall.unwrappedReads()).toBe(0);
-  // Unwrapped lines that do not end with the visible last row are not this screen's: still waiting.
+  // Unwrapped lines that are not the visible rows joined are not this screen's: still waiting, even when they end alike.
   const other = world(`some output\n${prompt.slice(57)}x`, prompt);
   await expect(other.wait()).rejects.toThrow("did not come to a prompt in 30 s");
+  const alike = world("not the same line\nx>", "PS C:\\old\\x>");
+  await expect(alike.wait()).rejects.toThrow("did not come to a prompt in 30 s");
+  // A prompt wrapped just before its `>`: the lone `>` row reads as a continuation question until the line is joined.
+  const edge = `PS C:\\${"x".repeat(51)}>`;
+  expect(shellPrompt(`${edge.slice(0, 57)}\n${edge.slice(57)}`)).toBe("question");
+  expect(await world(`${edge.slice(0, 57)}\n${edge.slice(57)}`, edge).wait()).toEqual({ ok: true, name: "powershell.exe", cwd: here });
+  // A continuation `>` on a line of its own stays a question: the unwrapped lines show it apart, not joined.
+  expect(await world("PS C:\\Users\\chris> echo 'a\n>", "PS C:\\Users\\chris> echo 'a\n>").wait()).toMatchObject({ ok: false, why: "The shell asked a question before its prompt" });
   // A question is returned as the visible screen, as the contract says.
   const question = "Remove the folder C:\\Users\\chris\\.herdr\\worktrees\\repo\\routr-smoke-008e1983 and everything in it?";
   const asking = world(`${question.slice(0, 57)}\n${question.slice(57)} `, question);
