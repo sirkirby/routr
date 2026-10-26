@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.9.1 — 2026-10-26
+
+[Full notes](docs/releases/v0.9.1.md)
+
 - A headless worker whose saved state or record cannot be read just now is shown as `unreadable` and handled as
   unknown: `send` and `cleanup` say to try again instead of "no session to resume" or removing it, `stop` says it
   cannot tell, `wait` keeps waiting, a new holder never starts over it (one could write over the worker's session), and
