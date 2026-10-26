@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.9.0 — 2026-10-26
+
+[Full notes](docs/releases/v0.9.0.md)
+
 - On Windows, a headless worker's saved state is now far less likely to be missing for a moment while another routr
   command reads it, which could make `routr workers` show a finished worker as starting, or `routr send` refuse it as
   having no session. (#121)
