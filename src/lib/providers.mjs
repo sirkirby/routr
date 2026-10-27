@@ -13,10 +13,10 @@
 //   0.8 (39 of 44, 89%), with confidence normalized as systemone.mjs does.
 // - torn: the level as routr presents it, on the 36 real runs: right, one level low, one level high.
 import { warning } from "./warnings.mjs";
-import { home } from "./runtime.mjs";
+import { CONFIG_DIR } from "./runtime.mjs";
 import { join } from "node:path";
 
-export const SECRETS_FILE = join(home(), ".config/routr/env");
+export const SECRETS_FILE = (h) => join(CONFIG_DIR(h), "env");
 
 // Ollama's own variable for where its server listens (`ollama serve` reads it), read the way Ollama's own
 // client reads it (envconfig.Host): a bare host or host:port is http on 11434; a URL with a scheme and no port
@@ -241,7 +241,7 @@ const DECISION_MESSAGES = {
 export const DECISION_CODES = Object.keys(DECISION_MESSAGES);
 
 export class DecisionError extends Error {
-  constructor(target, code, status, { secret, file = SECRETS_FILE, host } = {}) {
+  constructor(target, code, status, { secret, file = SECRETS_FILE(), host } = {}) {
     const { provider, model } = target, P = PROVIDERS[provider];
     const get = typeof P?.get === "function" ? P.get(model) : P?.get;
     const missing = P?.secrets.find((s) => s.name === secret) ?? P?.secrets[0];

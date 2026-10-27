@@ -4,11 +4,11 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { LEVELS } from "./questions.mjs";
 import { HARDEST, NO_CONFIG, RESERVE } from "./wording.mjs";
-import { home } from "./runtime.mjs";
+import { CONFIG_DIR } from "./runtime.mjs";
 import { DEFAULT_PROVIDER, decisionSettings } from "./providers.mjs";
 import { otelSwitch } from "./otel-settings.mjs";
 
-export const CONFIG_PATH = join(home(), ".config/routr/config.json");
+export const CONFIG_PATH = (h) => join(CONFIG_DIR(h), "config.json");
 export const DEFAULTS = {
   fallback_level: "standard",  // advised when the decision model cannot be reached
   sure_at: null,               // confidence from which a level is presented as settled; null: the decision model's own (providers.mjs; Jev's is 0.8, P23)
@@ -31,7 +31,7 @@ export const accountUse = (s, cls) => s.use ?? (cls === "metered" && s.metered_r
 const isLevel = (v) => LEVELS.includes(v);
 
 // Never throws: a missing or broken config means defaults plus a note, so the router still answers.
-export function loadConfig(path = CONFIG_PATH) {
+export function loadConfig(path = CONFIG_PATH()) {
   const notes = [];
   let raw = {};
   try {
@@ -84,6 +84,12 @@ export function loadConfig(path = CONFIG_PATH) {
   }
   return { config, notes };
 }
+
+// One command's reading of the config: its trace and its body see the same one, read once (a file edited meanwhile
+// can otherwise give the two different settings). `settings` is a command's own loader, or the user's file.
+export const oneReading = (settings = () => loadConfig()) => { let r; return () => (r ??= settings()); };
+// A loader may give `{ config, notes }` (loadConfig) or, in tests, the config itself.
+export const configOf = (loaded) => loaded.config ?? loaded;
 
 // The same provider/model checks and duplicate warnings as setup, without changing the user's file.
 function decisionSetting(setting, notes) {

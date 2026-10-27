@@ -21,9 +21,13 @@ try { COMPILED = /^(?:\/\$bunfs\/|[A-Za-z]:\/~BUN\/)/i.test(fileURLToPath(import
 if (!COMPILED) try { ROUTR_ENTRY = fileURLToPath(new URL("../routr.mjs", import.meta.url)); } catch {}
 export const standalone = () => COMPILED;
 
-export const CACHE_DIR = () => join(home(), ".cache/routr");
+export const CACHE_DIR = (h = home()) => join(h, ".cache/routr");
 // Headless workers: each one's run folder, and the sockets of their channels (channel.mjs, headless.mjs).
-export const STATE_DIR = () => join(home(), ".local/state/routr");
+export const STATE_DIR = (h = home()) => join(h, ".local/state/routr");
+// The user's settings and keys, and routr's ledger and headless worktrees.
+export const CONFIG_DIR = (h = home()) => join(h, ".config/routr");
+export const DATA_DIR = (h = home()) => join(h, ".local/share/routr");
+export const WORKTREES_DIR = (h = home()) => join(DATA_DIR(h), "worktrees"); // headless launches' git worktrees
 // Which folder this is, not where: a worktree removed and made again at the same path, even on the same branch,
 // is another folder. Device and file number, read whole (Windows' file IDs exceed 2^53). Its birth time too,
 // where the file system keeps one: Linux may give a removed folder's number to the next one made. `link: true`
@@ -31,16 +35,16 @@ export const STATE_DIR = () => join(home(), ".local/state/routr");
 export const folderId = (path, { link = false } = {}) => { try { const st = (link ? lstatSync : statSync)(path, { bigint: true }); return st.isSymbolicLink() ? null : `${st.dev}:${st.ino}:${st.birthtimeNs}`; } catch { return null; } };
 // Held by `routr uninstall` from its last check through its removal (its pid inside); a headless launch that reserves
 // a run folder while it is held backs out (headless.mjs reserve), so neither misses the other.
-export const UNINSTALL_LOCK = (h = home()) => join(h, ".local/state/routr", "uninstalling");
+export const UNINSTALL_LOCK = (h = home()) => join(STATE_DIR(h), "uninstalling");
 export const UPDATE_STAMP = () => join(CACHE_DIR(), "update-check");
 export const TELEMETRY_LOG = () => join(CACHE_DIR(), "telemetry.log");
 export const UPDATE_LOCK = () => join(CACHE_DIR(), "update.lock");
 // Written by `routr statusline` on each Claude Code turn, read by the usage reader.
-export const CLAUDE_SNAPSHOT = join(home(), ".cache/routr/claude-usage.json");
+export const CLAUDE_SNAPSHOT = () => join(CACHE_DIR(), "claude-usage.json");
 // Written by `routr usage cursor` (by hand, or in the background when the reading is old), read by the usage reader.
-export const CURSOR_SNAPSHOT = join(home(), ".cache/routr/cursor-usage.json");
+export const CURSOR_SNAPSHOT = () => join(CACHE_DIR(), "cursor-usage.json");
 // Written by `routr usage kiro` the same way, read by the usage reader.
-export const KIRO_SNAPSHOT = join(home(), ".cache/routr/kiro-usage.json");
+export const KIRO_SNAPSHOT = () => join(CACHE_DIR(), "kiro-usage.json");
 
 // A path as the file system names it, for comparing two paths. The native call: on Windows it also expands 8.3 short
 // names and folds case, which the JS one leaves as written (measured 2026-10-22, Bun 1.4.3 on Windows 11 x64:
@@ -455,6 +459,8 @@ const LEAD_SESSION = /^(?:HERDR_(?:ENV|SOCKET_PATH|CLIENT_SOCKET_PATH|SESSION|BI
 // opaque strings; traces owns W3C parsing and sampled launch parentage. Harness reads and detached routr jobs get none
 // (harnessEnv); a worker start adds the checked ones back (workerEnv).
 export const CARRIERS = ["TRACEPARENT", "TRACESTATE", "BAGGAGE"];
+// A worker's name (launch --name), which cleanup --worker, the worker commands and a span's agent name take.
+export const NAME_RULE = "[a-z][a-z0-9_-]{0,31}", WORKER_NAME = new RegExp(`^${NAME_RULE}$`);
 const CARRIER = new RegExp(`^(?:${CARRIERS.join("|")})$`, "i");
 // routr's own limit on what it hands on, not the W3C grammar: printable ASCII and horizontal tab (Baggage's optional
 // whitespace; nothing in the three formats needs more), so no control character reaches a child's environment or

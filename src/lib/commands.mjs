@@ -20,7 +20,7 @@ import { CHECK_VERSION, checkQuestions, LEVELS, MEANING, questions, VERSION } fr
 import { ADVICE_STEPS, count } from "./wording.mjs";
 import { rankSubscriptions, levelExcludedWhy } from "./pick.mjs";
 import { enabledSubscriptions } from "./config.mjs";
-import { readUsage, SOURCES } from "./harnesses.mjs";
+import { HARNESSES, readUsage, SOURCES } from "./harnesses.mjs";
 import { failedUsage } from "./usage.mjs";
 import { staleReaders, USAGE_BY_HAND, usageFailure, usageUnavailable } from "./usage-failure.mjs";
 
@@ -122,7 +122,7 @@ async function checkCommandBody({ brief: briefFile, report: reportFile }, { askF
 }
 
 // An advice command: an unreadable ledger still gets an answer.
-export function assessCommand({ ledger = LEDGER_PATH }, config) {
+export function assessCommand({ ledger = LEDGER_PATH() }, config) {
   let entries = [], unreadable = "";
   try { entries = read(ledger); } catch (e) { unreadable = `routr: could not read the ledger (${short(e, 120)}); reporting as if it were empty.\n`; }
   return unreadable + assess(entries, config);
@@ -130,7 +130,7 @@ export function assessCommand({ ledger = LEDGER_PATH }, config) {
 
 // `o` holds record's flags by name; the advice JSON comes from `--advice <file>` or stdin.
 function recordCommandBody(o, subagentFlags = [], config = null, { warnings = [] } = {}) {
-  const ledger = o.ledger ?? LEDGER_PATH;
+  const ledger = o.ledger ?? LEDGER_PATH();
   let advice;
   try {
     for (const flag of ["subscription", "model", "effort", "verdict", "check"]) if (typeof o[flag] !== "string" || !o[flag].trim() || o[flag].startsWith("--")) throw new Error(`record requires --${flag}`);
@@ -158,7 +158,7 @@ function recordCommandBody(o, subagentFlags = [], config = null, { warnings = []
 }
 
 // `routr share`: write exactly what telemetry sends to a file the user can read. Sends nothing itself.
-export function shareCommand({ ledger = LEDGER_PATH, out }, config = null, { env = process.env, isStandalone = standalone } = {}) {
+export function shareCommand({ ledger = LEDGER_PATH(), out }, config = null, { env = process.env, isStandalone = standalone } = {}) {
   const entries = read(ledger);
   if (!entries.length) return "The ledger is empty: there is nothing to share yet.";
   const rows = telemetryRows(entries, installId(ledger, { create: false }) ?? "not-yet-created"); // looking must not create an id
@@ -225,6 +225,8 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
   if (extra.length || unknown.length) return refuse(`usage: routr usage [--config <path>] [--headroom <subscription>=<share, 0.9 or 90%>]... [<subscription> | --level <${LEVELS.join("|")}>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}`);
   if (explicit && (name || flags.includes("--background"))) return refuse("usage: --level is for unnamed usage only; omit the subscription and --background. Eligibility was not refreshed");
   const fresh = name && Object.hasOwn(sources, name) && sources[name]?.check;
+  // What the answer keeps and says of a fresh reading is the harness's own (its registry entry), whoever reads it.
+  const reader = fresh ? { label: HARNESSES[name].label, ...HARNESSES[name].usage } : null;
   if (name && !configured.includes(name) && !fresh) return { ...refuse(`${name} is not a configured subscription (configured: ${configured.join(", ") || "none, run routr setup"})`), subscription: name };
   const out = { ok: true, warnings: [...warnings], next: [], unavailable: [], level, ...(name ? { subscription: name } : {}) };
   try {
@@ -232,12 +234,8 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
     if (fresh) {
       try { reading = await fresh({ background: flags.includes("--background"), ...(token ? { token } : {}) }); } catch { reading = { ok: false, ...usageFailure("read_failed") }; }
       out.ok = reading?.ok === true;
-      if (name === "kiro" && reading?.note) out.warnings.push(warning("kiro_session_left", "Kiro kept an empty usage session"));
-      if (name === "kiro" && reading?.note) out.next.push(doNext("Inspect Kiro's saved sessions to remove the empty usage session"));
-      if (out.ok) {
-        const fields = name === "cursor" ? ["plan", "included_used_pct", "auto_used_pct", "api_used_pct", "headroom"] : ["plan", "credits_used", "credits_limit", "used_pct", "resets_at", "unrecognized_lines", "headroom"];
-        out.reading = Object.fromEntries(fields.filter((k) => Object.hasOwn(reading, k)).map((k) => [k, reading[k]]));
-      }
+      if (reading?.note && reader.left) { out.warnings.push(reader.left.warning()); out.next.push(doNext(reader.left.next)); }
+      if (out.ok) out.reading = Object.fromEntries(reader.fields.filter((k) => Object.hasOwn(reading, k)).map((k) => [k, reading[k]]));
       if (!configured.includes(name)) out.warnings.push(warning("subscription_unconfigured", `${name} is not configured, so it is not ranked`));
     }
     const names = name ? configured.filter((n) => n === name) : configured;
@@ -265,7 +263,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
     }
     out.next = [...capacityNext(out.subscriptions, out.unavailable, level, config, name), ...out.next];
     if (explicit && hasCandidates(out.subscriptions)) out.next.push(doNext("Choose from subscriptions.candidates, normal before fallback, and keep the original dispatch advice for launch and record"));
-    out.headline = fresh ? reading?.ok ? `routr: ${name === "cursor" ? "Cursor" : "Kiro"}, ${name === "cursor" ? `Included ${reading.included_used_pct}% used` : `${reading.used_pct}% used`}, read now${!out.subscriptions.ranked.length ? `; ${out.subscriptions.note}` : ""}` : `routr: no fresh ${name === "cursor" ? "Cursor" : "Kiro"} reading (${reading?.excluded ? "not signed in" : usageFailure(reading?.code).code})`
+    out.headline = fresh ? reading?.ok ? `routr: ${reader.label}, ${reader.used(reading)}, read now${!out.subscriptions.ranked.length ? `; ${out.subscriptions.note}` : ""}` : `routr: no fresh ${reader.label} reading (${reading?.excluded ? "not signed in" : usageFailure(reading?.code).code})`
       : `routr: ${out.subscriptions.most_room ? `${out.subscriptions.most_room} has the most usable headroom for ${level} work; normal: ${out.subscriptions.candidates.normal.join(", ") || "none"}, fallback: ${out.subscriptions.candidates.fallback.join(", ") || "none"}` : out.subscriptions.note}${out.unavailable.length ? `; ${count(out.unavailable.length, "reading")} unavailable` : ""}`;
   } catch {
     out.ok = false;

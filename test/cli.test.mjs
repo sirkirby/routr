@@ -522,7 +522,7 @@ test("routr's own code in the test process sees the scratch home, not the mainta
   const { home, CACHE_DIR } = await import("../src/lib/runtime.mjs");
   const { CONFIG_PATH } = await import("../src/lib/config.mjs");
   expect(home()).toBe(process.env.HOME);
-  expect(CONFIG_PATH.startsWith(process.env.HOME)).toBe(true);
+  expect(CONFIG_PATH().startsWith(process.env.HOME)).toBe(true);
   expect(CACHE_DIR().startsWith(process.env.HOME)).toBe(true);
 });
 

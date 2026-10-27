@@ -132,7 +132,7 @@ export async function meteredRanks(fresh, harnesses, ranks, ask) {
 export async function setup(args, { inspect: look = inspect, question, interactive: tty = Boolean(process.stdin.isTTY), env = process.env,
   install = installSkill, share: shareOn = setTelemetry, key = setKey, hasKey = (provider) => { try { secretsFor(provider, { env }); return true; } catch { return false; } }, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI, isStandalone = standalone, otelStart = startOtelSender, otelHome, writeConfig = writeJsonAtomic } = {}) {
   const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
-  const path = flag("--config") ?? CONFIG_PATH;
+  const path = flag("--config") ?? CONFIG_PATH();
   const interactive = tty && !args.includes("--yes");
   const say = (s) => { if (!args.includes("--json")) print(s); };
   const did = [], skipped = [];

@@ -113,7 +113,7 @@ export async function inspect({ configPath, quiet } = {}) {
   const found = KINDS.filter((n) => which(HARNESSES[n].executable));
   const tty = Boolean(process.stderr.isTTY) && !quiet;
   const step = async (label, p) => { try { return await p; } finally { if (tty) process.stderr.write(`  checked ${label}\n`); } };
-  const path = configPath ?? CONFIG_PATH;
+  const path = configPath ?? CONFIG_PATH();
   const { config, notes } = loadConfig(path); // read once: the usage step and the config report use the same reading
   const targets = decisionTargets(config);
   if (tty) process.stderr.write(`Checking ${["the decision models", ...found.map((n) => `\`${HARNESSES[n].executable}\``)].join(" and ")}${found.length ? " (a harness can take up to 20 s to answer)" : ""}…\n`);
@@ -121,7 +121,7 @@ export async function inspect({ configPath, quiet } = {}) {
     for (const target of targets) {
       const P = PROVIDERS[target.provider];
       const k = { provider: target.provider, label: P.label, asked: target.model, measured: target.measured, local: Boolean(P.local), ...(P.unversioned ? { unversioned: true } : {}),
-        where: P.local ? ollamaHost() : P.secrets.map((x) => `${x.name} (environment, or ${SECRETS_FILE})`).join(", ") };
+        where: P.local ? ollamaHost() : P.secrets.map((x) => `${x.name} (environment, or ${SECRETS_FILE()})`).join(", ") };
       r.decision.push(k);
       try {
         secretsFor(target.provider, { target }); k.found = true;

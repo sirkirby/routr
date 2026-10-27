@@ -45,7 +45,7 @@ export function checkValue(s, v) {
   return v.length < 12 || /\s/.test(v) ? `that does not look like a ${s.label}` : null;
 }
 
-export async function setKey({ provider, file = SECRETS_FILE, verify = true, config = loadConfig().config } = {}) {
+export async function setKey({ provider, file = SECRETS_FILE(), verify = true, config = loadConfig().config } = {}) {
   if (provider === "otel-headers") {
     try {
       const text = process.stdin.isTTY ? await readTyped("OpenTelemetry headers: ", true) : (await readStdin()).replace(/\r?\n$/, "");

@@ -9,7 +9,7 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSy
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { notOursWhy, owner, removeOwned, skillPlaces } from "./skill-install.mjs";
-import { folderId, lockIsStale, home as userHome, releaseFileLock, standalone, start, takeLock, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
+import { CACHE_DIR, CONFIG_DIR, DATA_DIR, folderId, lockIsStale, home as userHome, releaseFileLock, standalone, start, STATE_DIR, takeLock, UNINSTALL_LOCK, WORKER_NAME, writeJsonAtomic, WORKTREES_DIR } from "./runtime.mjs";
 import { FORMAT } from "./headless.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { otelSenderRunning } from "./otel.mjs";
@@ -19,21 +19,20 @@ import { otelSenderRunning } from "./otel.mjs";
 const entries = (p) => { try { return readdirSync(p).sort(); } catch (e) { if (e?.code === "ENOENT") return []; throw Object.assign(new Error(p), { path: p }); } };
 const isDir = (p) => { try { return statSync(p).isDirectory(); } catch (e) { if (e?.code === "ENOENT") return false; throw Object.assign(new Error(p), { path: p }); } };
 const emptyTree = (p) => isDir(p) && entries(p).every((n) => emptyTree(join(p, n)));
-const NAME = /^[a-z][a-z0-9_-]{0,31}$/; // launch's --name rule, which cleanup --worker takes
 // What would stop uninstall: headless workers (a run folder launch finished writing, running or not), run folders it did
 // not finish, and anything under worktrees/ but empty folders (a worktree is <repo folder>/<branch> today; any other
 // layout is reported, never trusted), plus paths it could not read.
 export function leftovers(home = userHome()) {
   const workers = [], unknown = [], worktrees = [], unreadable = [];
-  const dir = join(home, ".local/state/routr/workers");
+  const dir = join(STATE_DIR(home), "workers");
   try {
     for (const n of entries(dir)) {
       if (!isDir(join(dir, n))) continue; // a worker's lock file
       let w = null; try { w = JSON.parse(readFileSync(join(dir, n, "worker.json"), "utf8")); } catch {}
-      if (NAME.test(n) && w?.format === FORMAT && w.name === n) workers.push(n); else unknown.push(join(dir, n));
+      if (WORKER_NAME.test(n) && w?.format === FORMAT && w.name === n) workers.push(n); else unknown.push(join(dir, n));
     }
   } catch (e) { unreadable.push(e.path ?? dir); }
-  const root = join(home, ".local/share/routr/worktrees");
+  const root = WORKTREES_DIR(home);
   try {
     for (const repo of entries(root)) {
       const r = join(root, repo);
@@ -64,14 +63,14 @@ export function uninstallPlan({ home = userHome(), purge = false, binary = null 
     if (p.state === "ours") remove.push({ path: p.path, what: `the ${p.skill} skill`, skill: p.skill });
     else if (p.state === "theirs") notOurs.push({ path: p.path, what: p.why });
   }
-  remove.push({ path: join(home, ".cache/routr"), what: "cache: usage snapshots, update log, OpenTelemetry queue and sender state" });
+  remove.push({ path: CACHE_DIR(home), what: "cache: usage snapshots, update log, OpenTelemetry queue and sender state" });
   const left = leftovers(home);
-  const data = [{ path: join(home, ".config/routr"), what: "your config and decision provider keys" },
-    { path: join(home, ".local/share/routr"), what: left.worktrees.length ? "your ledger, and worktrees a headless launch made (yours to finish)" : "your ledger" }];
+  const data = [{ path: CONFIG_DIR(home), what: "your config and decision provider keys" },
+    { path: DATA_DIR(home), what: left.worktrees.length ? "your ledger, and worktrees a headless launch made (yours to finish)" : "your ledger" }];
   (purge ? remove : keep).push(...data);
   // Last: it holds the uninstall lock, which keeps a launch from starting until everything else is gone. With no worker
   // left (blockedBy), what remains here is routr's own bookkeeping: sockets and locks.
-  remove.push({ path: join(home, ".local/state/routr"), what: "state: headless workers' sockets and locks", state: true });
+  remove.push({ path: STATE_DIR(home), what: "state: headless workers' sockets and locks", state: true });
   const present = (l) => l.filter((x) => { try { lstatSync(x.path); return true; } catch { return false; } });
   let statusline = false;
   try { statusline = isOurStatusline(JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8")).statusLine?.command); } catch {}
@@ -114,7 +113,7 @@ export async function uninstall(args, { home = userHome(), platform = process.pl
   // Again now, under the uninstall lock: the person may have been asked for minutes, and a launch that reserves a run
   // folder from here on sees the lock and backs out (headless.mjs reserve). The lock goes with the state folder.
   const lock = UNINSTALL_LOCK(home);
-  try { mkdirSync(join(home, ".local/state/routr"), { recursive: true, mode: 0o700 }); } catch {}
+  try { mkdirSync(STATE_DIR(home), { recursive: true, mode: 0o700 }); } catch {}
   // Never taken over, even from a process that is gone: two uninstalls could both decide it is stale.
   if (!takeLock(lock, () => false)) {
     let gone = false; try { gone = lockIsStale(lock); } catch {}
@@ -159,7 +158,7 @@ export async function uninstall(args, { home = userHome(), platform = process.pl
 // reserves a run folder backs out; one that comes after finds no lock and keeps its folder, which then keeps this one
 // (said, not removed). `between` is for a test to act at the moment the lock is the only thing left.
 export function removeState(home, lock, { between = () => {} } = {}) {
-  const root = join(home, ".local/state/routr"), removed = [], failed = [], notOurs = [];
+  const root = STATE_DIR(home), removed = [], failed = [], notOurs = [];
   // A linked state folder is unlinked, never walked: what it points at is not known to be routr's. The link goes
   // first, while the lock behind it still holds; the lock is then removed where it really is.
   try {

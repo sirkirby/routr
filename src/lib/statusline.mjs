@@ -36,7 +36,7 @@ function run() {
 
   // Every render is written, windows or not: a seat with no quota never sends `rate_limits`, and the usage reader must
   // be able to tell that from a statusline that was never installed.
-  const out = CLAUDE_SNAPSHOT;
+  const out = CLAUDE_SNAPSHOT();
   let previous = null;
   try { previous = JSON.parse(readFileSync(out, "utf8")); } catch {}
   const snap = snapshotFrom(data, previous, Math.floor(Date.now() / 1000));

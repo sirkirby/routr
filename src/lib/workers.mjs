@@ -9,16 +9,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { connect, generations, MESSAGE_MAX, probe, removeEndpoint, socketPathFits, writeSecret } from "./channel.mjs";
 import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, ownedBy, reserve, runDir, stateOf, unreadableWhy, WORKERS_DIR, workerOf } from "./headless.mjs";
 import { HARNESSES, notReady } from "./harnesses.mjs";
-import { loadConfig } from "./config.mjs";
+import { configOf, loadConfig, oneReading } from "./config.mjs";
 import { readTask } from "./advice-file.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { answer } from "./output.mjs";
 import { CLOSING, count, OFF } from "./wording.mjs";
 import { callGit } from "./process-boundary.mjs";
 import { dropCopy } from "./cleanup.mjs";
-import { CARRIERS, ensureParent, folderId, FORWARDED, home, lockIsStale, lockOwned, lockToken, releaseFileLock, probe as runProbe, readJsonFile, realOr, realPath, savedCarriers, spawnSelf, takeLock, writeJsonAtomic } from "./runtime.mjs";
+import { CARRIERS, ensureParent, NAME_RULE, WORKER_NAME, folderId, FORWARDED, home, lockIsStale, lockOwned, lockToken, releaseFileLock, probe as runProbe, readJsonFile, realOr, realPath, savedCarriers, spawnSelf, takeLock, writeJsonAtomic, WORKTREES_DIR } from "./runtime.mjs";
 
-const NAME = /^[a-z][a-z0-9_-]{0,31}$/;
 const RUNNING = new Set(["working", "waiting", "starting"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // A lead's sandbox carries over to what it starts (prototype p36, 2026-10-22): inside Claude Code's Bash sandbox a
@@ -32,7 +31,7 @@ const sandboxNote = (env) => { const s = sandboxOf(env); return s ? [warning("sa
 const TOO_BIG = `the message is over ${MESSAGE_MAX / 1024 / 1024} MB, more than a worker's channel takes; shorten it or point the worker at a file`;
 
 // Every name a worker can be given, the folders that exist: the holder writes state, launch the worker file.
-const names = () => { try { return readdirSync(WORKERS_DIR()).filter((n) => NAME.test(n)).sort(); } catch { return []; } };
+const names = () => { try { return readdirSync(WORKERS_DIR()).filter((n) => WORKER_NAME.test(n)).sort(); } catch { return []; } };
 const ago = (iso) => { const t = Date.parse(iso ?? ""); return Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 1000)) : null; };
 const size = (text) => Buffer.byteLength(JSON.stringify(text));
 
@@ -117,7 +116,6 @@ export async function view(name, { check = true } = {}) {
 // A headless worker's own git worktree, made by routr with git (herdr makes it in a pane session): in routr's own
 // folder, one per repository and branch, its branch new and starting at --base (or the checkout's HEAD).
 const git = (dir, args) => callGit((d, a) => runProbe("git", ["-C", d, ...a], { timeoutMs: 20000, separate: true }), dir, args);
-export const WORKTREES_DIR = () => join(home(), ".local", "share", "routr", "worktrees");
 const worktreePath = (source, branch) => join(WORKTREES_DIR(), `${basename(source)}-${createHash("sha1").update(source).digest("hex").slice(0, 8)}`, branch.replace(/[\\/]/g, "-"));
 // git's one-line answer, its line ending dropped and nothing else (a folder's name may end in a space).
 const line = (out) => out.replace(/\r?\n$/, "");
@@ -195,7 +193,7 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
   if (existsSync(runDir(o.name))) throw new Error(`a worker named ${o.name} exists; finish it with routr cleanup --worker ${o.name}, or choose another --name`);
   if (!socketPathFits()) throw new Error(PATH_TOO_LONG);
   const plannedTree = o.worktree ? await planWorktree(o, out.cwd) : null;
-  const loaded = settings(), config = loaded.config ?? loaded;
+  const loaded = settings(), config = configOf(loaded);
   out.warnings.push(...(loaded.notes ?? []));
   if (config.subscriptions[o.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[o.kind].label, o.kind));
   const signedOut = await ready(o.kind);
@@ -299,7 +297,7 @@ export function parseNamed(args, cmd, values, flags = []) {
     if (args[i].startsWith("--") && flags.includes(key)) { o[key] = true; continue; }
     if (!args[i].startsWith("--") || !values.includes(key)) throw new Error(`Unknown ${cmd} option: ${args[i]}`);
     if (!args[i + 1]?.trim() || /^-\S/.test(args[i + 1])) throw new Error(`--${key} requires a value`);
-    if (key === "name") { if (!NAME.test(args[i + 1])) throw new Error("--name must match [a-z][a-z0-9_-]{0,31}"); o.names.push(args[++i]); continue; }
+    if (key === "name") { if (!WORKER_NAME.test(args[i + 1])) throw new Error(`--name must match ${NAME_RULE}`); o.names.push(args[++i]); continue; }
     if (Object.hasOwn(o, key)) throw new Error(`Repeated ${cmd} option: --${key}`);
     o[key] = args[++i];
   }
@@ -390,7 +388,7 @@ async function sendCommandBody(args, { env = process.env, settings = () => loadC
     if (!text?.trim()) throw new Error("The message must not be empty");
     const message = `${text.trim()}\n\n${CLOSING}`;
     if (size(message) > MESSAGE_MAX) throw new Error(TOO_BIG);
-    const loaded = settings(), config = loaded.config ?? loaded;
+    const loaded = settings(), config = configOf(loaded);
     out.warnings.push(...(loaded.notes ?? []));
     if (config.subscriptions[w.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[w.kind].label, w.kind));
     let p = await probe(runDir(name)), r;
@@ -563,10 +561,12 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
   });
 }
 
-export const sendCommand = (args, opts = {}) => commandTrace("send", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }), () => sendCommandBody(args, opts));
-
-export const waitCommand = (args, opts = {}) => commandTrace("wait", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }), () => waitCommandBody(args, opts));
-
-export const workersCommand = (args, opts = {}) => commandTrace("workers", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }), () => workersCommandBody(args, opts));
-
-export const stopCommand = (args, opts = {}) => commandTrace("stop", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts }), () => stopCommandBody(args, opts));
+// The trace and the body read the config once between them (oneReading).
+const traced = (name, body) => (args, opts = {}) => {
+  const settings = oneReading(opts.settings);
+  return commandTrace(name, () => ({ config: configOf(settings()), ...opts }), () => body(args, { ...opts, settings }));
+};
+export const sendCommand = traced("send", sendCommandBody);
+export const waitCommand = traced("wait", waitCommandBody);
+export const workersCommand = traced("workers", workersCommandBody);
+export const stopCommand = traced("stop", stopCommandBody);

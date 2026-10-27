@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { usageFailure } from "./usage-failure.mjs";
 
 export { CLAUDE_SNAPSHOT };
-export const CODEX_SESSIONS = join(home(), ".codex/sessions");
+export const CODEX_SESSIONS = () => join(home(), ".codex/sessions");
 const now = () => Date.now() / 1000;
 
 // Source time is internal provenance, not a new command field. Headroom observations must not timestamp a
@@ -110,7 +110,7 @@ function newestFile(dir) {
 }
 
 export function readCodex() {
-  const f = newestFile(CODEX_SESSIONS);
+  const f = newestFile(CODEX_SESSIONS());
   if (!f) return summarize({ pool: "codex", source: "session log" });
   const lines = readFileSync(f, "utf8").split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -241,7 +241,7 @@ function removeProjectFolder(folder) {
 // each read's private folder, `projects` Claude's projects folder. It is only called once readUsage's sign-in gate says Claude is signed in. That
 // answer is kept up to 6 hours (signin.mjs, as for every harness), so one read may follow a sign-out; Claude's `-p`
 // does not open a browser sign-in.
-export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT, nowSec = now(), exec = run, tmp = tmpdir(), projects = claudeProjectsDir() } = {}) {
+export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT(), nowSec = now(), exec = run, tmp = tmpdir(), projects = claudeProjectsDir() } = {}) {
   const snap = readJson(file);
   const fromSnap = snap ? claudeSnapshot(snap, nowSec) : null;
   // A snapshot from the future (a clock set back) is not fresh: its age says nothing.

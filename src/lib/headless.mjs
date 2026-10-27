@@ -44,7 +44,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, privateDir, probe, removeEndpoint, serve } from "./channel.mjs";
 import { HARNESSES, plan } from "./harnesses.mjs";
-import { installedAt, lockIsStale, probe as collect, readJsonFile, savedCarriers, start, STATE_DIR, stop, UNINSTALL_LOCK, workerEnv, writeJsonAtomic } from "./runtime.mjs";
+import { CARRIERS, installedAt, lockIsStale, probe as collect, readJsonFile, savedCarriers, start, STATE_DIR, stop, UNINSTALL_LOCK, workerEnv, writeJsonAtomic } from "./runtime.mjs";
 import { besidesHelper, groupMembers } from "./process-boundary.mjs";
 
 export const FORMAT = 1;
@@ -335,7 +335,7 @@ export const ADAPTERS = {
       const { rpc, outcome, open, take } = rpcPipe(c), r = kiroReader();
       // ACP reserves these keys; Kiro 2.34.0 reads none (2026-10-24 research). Consumption is unmeasured.
       const meta = (v) => {
-        const m = Object.fromEntries(["TRACEPARENT", "TRACESTATE", "BAGGAGE"].filter((k) => v[k]).map((k) => [k.toLowerCase(), v[k]]));
+        const m = Object.fromEntries(CARRIERS.filter((k) => v[k]).map((k) => [k.toLowerCase(), v[k]]));
         return Object.keys(m).length ? { _meta: m } : {};
       };
       let sid = session ?? null, ready = null, running = false;

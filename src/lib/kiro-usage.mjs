@@ -44,10 +44,10 @@ export async function kiroUsage({ exec = run, cwd = tmpdir() } = {}) {
 const number = (x) => Number.isFinite(x) ? x : null;
 const keepKiro = (r) => ({ plan: kiroPlan(r.plan), credits_used: number(r.credits_used), credits_limit: number(r.credits_limit), used_pct: number(r.used_pct), resets_at: number(r.resets_at),
   ...(Number.isSafeInteger(r.unrecognized_lines) && r.unrecognized_lines > 0 ? { unrecognized_lines: r.unrecognized_lines } : {}) });
-export const refreshKiro = ({ read = kiroUsage, file = KIRO_SNAPSHOT, ...o } = {}) => refreshSnapshot({ read, file, ...o,
+export const refreshKiro = ({ read = kiroUsage, file = KIRO_SNAPSHOT(), ...o } = {}) => refreshSnapshot({ read, file, ...o,
   keep: keepKiro });
 // A reset on a UTC month boundary makes the window that month, so the reserve tapers toward it as for Codex's cap.
-export const readKiro = ({ file = KIRO_SNAPSHOT, ...o } = {}) => readSnapshot({ name: "kiro", source: "kiro /usage", byHand: KIRO_BY_HAND, file, ...o,
+export const readKiro = ({ file = KIRO_SNAPSHOT(), ...o } = {}) => readSnapshot({ name: "kiro", source: "kiro /usage", byHand: KIRO_BY_HAND, file, ...o,
   keep: keepKiro,
   windows: (r) => [{ name: "monthly_credits", usedPct: r.used_pct, windowMin: monthMinutes(r.resets_at), resetsAt: r.resets_at }],
   describe: (r) => `${kiroPlan(r.plan) ? `${kiroPlan(r.plan)}: ` : ""}${r.credits_used} of ${r.credits_limit} credits used${Number.isSafeInteger(r.unrecognized_lines) && r.unrecognized_lines > 0 ? ` (${r.unrecognized_lines} additional lines not read)` : ""}` });

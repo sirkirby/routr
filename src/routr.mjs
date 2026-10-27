@@ -34,13 +34,17 @@ let traceOutput = () => {};
 const print = (r, indent) => { traceOutput(r); console.log(JSON.stringify(r, null, indent)); };
 const failed = (e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) });
 const { loadConfig } = await import("./lib/config.mjs");
+// One reading of a config file per run: a command's trace and the command itself see the same settings, read once.
+const readings = new Map();
+const configAt = (path) => { if (!readings.has(path)) readings.set(path, loadConfig(path)); return readings.get(path); };
+const settings = { settings: () => configAt(undefined) }; // the acting commands read the user's own file
 
 async function main() {
 const { warning } = await import("./lib/warnings.mjs");
 // The commands that act, each given its own arguments as typed. Each returns the exit code.
 const ACT = {
-  launch: async (args) => { const r = await (await import("./lib/launch.mjs")).launch(args); print(r); return r.ok ? 0 : 1; },
-  cleanup: async (args) => { const r = await (await import("./lib/cleanup.mjs")).cleanup(args); print(r); return r.ok ? 0 : 1; },
+  launch: async (args) => { const r = await (await import("./lib/launch.mjs")).launch(args, settings); print(r); return r.ok ? 0 : 1; },
+  cleanup: async (args) => { const r = await (await import("./lib/cleanup.mjs")).cleanup(args, settings); print(r); return r.ok ? 0 : 1; },
   update: async (args) => {
     const u = await import("./lib/update.mjs");
     if (args.includes("--background")) { await u.backgroundUpdate(); return 0; }
@@ -77,13 +81,13 @@ const ACT = {
   feedback: async (args) => { const r = await (await import("./lib/telemetry.mjs")).sendFeedback(args.join(" ")); print(r); return r.ok ? 0 : 1; },
   // Headless workers (outside herdr). wait and workers read; send and stop act. `workers --hold` is the holder
   // itself, which launch and send start detached; it prints nothing.
-  wait: async (args) => { print(await (await import("./lib/workers.mjs")).waitCommand(args)); return 0; },
+  wait: async (args) => { print(await (await import("./lib/workers.mjs")).waitCommand(args, settings)); return 0; },
   workers: async (args) => {
     if (args[0] === "--hold" && args[1]) { await (await import("./lib/headless.mjs")).hold(args[1]); return null; }
-    print(await (await import("./lib/workers.mjs")).workersCommand(args)); return 0;
+    print(await (await import("./lib/workers.mjs")).workersCommand(args, settings)); return 0;
   },
-  send: async (args) => { const r = await (await import("./lib/workers.mjs")).sendCommand(args); print(r); return r.ok ? 0 : 1; },
-  stop: async (args) => { const r = await (await import("./lib/workers.mjs")).stopCommand(args); print(r); return r.ok ? 0 : 1; },
+  send: async (args) => { const r = await (await import("./lib/workers.mjs")).sendCommand(args, settings); print(r); return r.ok ? 0 : 1; },
+  stop: async (args) => { const r = await (await import("./lib/workers.mjs")).stopCommand(args, settings); print(r); return r.ok ? 0 : 1; },
   skill: async (args) => { const r = (await import("./lib/skill-install.mjs")).installSkill({ dryRun: args.includes("--dry-run") }); print(r, 1); return r.ok ? 0 : 1; },
 };
 // Which of those a command line reaches (launch and update are dispatched first, below): `key set` and `skill install`
@@ -119,7 +123,7 @@ if (mode === "usage" && levelFlags !== rest.filter((word) => /^--level(?:=|$)/.t
   print({ ...(await import("./lib/output.mjs")).refusal("no usage view", "usage: --level cannot be a value for --config or --headroom; eligibility was not refreshed"), level: "basic" });
   return 0;
 }
-const loaded = () => loadConfig(configPath);
+const loaded = () => configAt(configPath);
 // At most once a day this starts a detached background updater; it never delays or changes the command itself.
 if (["subagent", "dispatch", "check", "record", "assess", "share", "doctor", "usage"].includes(mode)) (await import("./lib/update.mjs")).maybeAutoUpdate(loaded().config);
 
@@ -192,7 +196,7 @@ let invoke = main;
 if (command && !(argv[0] === "workers" && argv[1] === "--hold" && argv[2]) && !(command === "usage" && argv.includes("--background"))) {
   try {
     const tracing = await import("./lib/traces.mjs"), configPath = value("--config"), { takeLeadSession } = await import("./lib/trace-context.mjs"); traceOutput = tracing.traceOutput;
-    invoke = () => tracing.commandTrace(command, () => ({ config: loadConfig(configPath).config, otel: { configPath },
+    invoke = () => tracing.commandTrace(command, () => ({ config: configAt(configPath).config, otel: { configPath },
       lead: takeLeadSession(argv).lead, cwd: value("--cwd"), explicitLevel: argv.includes("--level") }), main);
   } catch {} // Optional tracing must not prevent a command from starting.
 }

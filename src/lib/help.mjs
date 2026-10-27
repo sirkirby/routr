@@ -1,6 +1,7 @@
 // Single source of truth for routr CLI commands, flags, descriptions, and help formatting.
 import { HARDEST, RESERVE } from "./wording.mjs";
 import { KINDS } from "./harnesses.mjs";
+import { NAME_RULE } from "./runtime.mjs";
 export const DESCRIPTION = "routr: quick, calibrated advice for an agent that is about to hand out work.";
 
 export const COMMANDS = {
@@ -45,7 +46,7 @@ export const COMMANDS = {
     flags: [
       { name: "--lead-session", arg: "<id>", description: "your known session id when routr cannot read it from the harness environment; UUIDv4, UUIDv7 or 16–64 lowercase hex characters; malformed values are ignored with a fixed warning; never invent one", required: false },
       { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
-      { name: "--name", arg: "<name>", description: "worker agent name ([a-z][a-z0-9_-]{0,31})", required: true },
+      { name: "--name", arg: "<name>", description: `worker agent name (${NAME_RULE})`, required: true },
       { name: "--model", arg: "<id>", description: "model id", required: true },
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
       { name: "--effort", arg: "<level>", description: "reasoning effort", required: false },

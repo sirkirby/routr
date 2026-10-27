@@ -1,12 +1,16 @@
 // All signals share this typed allow-list. Values are classified at their origin before projection; no text catch-all.
 import { FACTS, CHECKS } from "./questions.mjs";
+// The semantic conventions every batch follows (docs/opentelemetry.md), named once so a bump moves every signal.
+export const SCHEMA_URL = "https://opentelemetry.io/schemas/1.44.0";
+// The GenAI token counts a span may carry, as gen_ai.usage.<key>. A dotted one (a part of another) is sent only when above 0.
+export const TOKEN_USAGE = Object.freeze(["input_tokens", "output_tokens", "cache_read.input_tokens", "cache_write.input_tokens", "reasoning.output_tokens"]);
 export const TRACE_ATTRIBUTES = Object.freeze({ "routr.lead.session_id": "string", "routr.question_set.version": "string", "routr.candidates": "string[]", "routr.unavailable": "string[]",
   "vcs.repository.url.full": "string", "vcs.ref.head.name": "string", "routr.cwd": "string", "routr.worktree": "string",
   "routr.kind": "string", "routr.backend": "string", "routr.launch.id": "string", "gen_ai.agent.name": "string", "gen_ai.conversation.id": "string", "routr.model": "string", "routr.advice.matched": "boolean", "routr.carriers.forwarded": "string[]",
   ...Object.fromEntries([...Object.keys(FACTS), "level", "high_blast_radius"].map((k) => [`routr.assessment.${k}`, "double"])), "routr.assessment.work_type": "string",
   ...Object.fromEntries(Object.keys(CHECKS).map((k) => [`routr.check.${k}`, "double"])), "routr.check.flags": "string[]",
   "gen_ai.operation.name": "string", "gen_ai.provider.name": "string", "gen_ai.request.model": "string", "gen_ai.response.model": "string",
-  ...Object.fromEntries(["input_tokens", "output_tokens", "cache_read.input_tokens", "cache_write.input_tokens", "reasoning.output_tokens"].map((k) => [`gen_ai.usage.${k}`, "int"])),
+  ...Object.fromEntries(TOKEN_USAGE.map((k) => [`gen_ai.usage.${k}`, "int"])),
   "routr.turn": "int", "routr.turn.outcome": "string", "routr.turn.messages": "int",
   "routr.usage.state": "string", "routr.usage.source": "string",
   ...Object.fromEntries(["launch", "send", "wait", "workers", "stop", "cleanup", "record"].map((k) => [`routr.${k}.state`, "string"])),
