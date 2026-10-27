@@ -1,7 +1,8 @@
 // update.mjs: releases, the binary swap, and the daily check
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { startSync } from "../src/lib/runtime.mjs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { SCRATCH, scratch } from "./helpers.mjs";
 
@@ -61,13 +62,13 @@ test("routr update reports a real swap as an update and reinstalls the skill (th
   const { assetName } = await import("../src/lib/update.mjs");
   const fetchFn = async (u) => served(String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : fresh);
   const calls = [];
-  const spawn = (file, args, opts) => { calls.push([file, args[0], opts?.timeout]); return { status: 0, stdout: args[0] === "--version" ? "9.9.9\n" : "" }; };
+  const spawn = (file, args, opts) => { calls.push([file, args[0], opts?.timeout, opts?.killSignal]); return { status: 0, stdout: args[0] === "--version" ? "9.9.9\n" : "" }; };
   const r = await update({ base: "http://fake.invalid/r", self, fetchFn, spawn, isStandalone: () => true });
   expect(r).toMatchObject({ ok: true, updated: true, now: "9.9.9", skill_reinstalled: true });
   expect(readFileSync(self, "utf8")).toBe("NEW-BINARY");
   // Each start of the new binary has a limit: a hang must not keep the update lock (held by a live pid) forever.
   const { ASK_BINARY_MS, SKILL_INSTALL_MS } = await import("../src/lib/update.mjs");
-  expect(calls).toEqual([[self, "--version", ASK_BINARY_MS], [self, "skill install".split(" ")[0], SKILL_INSTALL_MS]]);
+  expect(calls).toEqual([[self, "--version", ASK_BINARY_MS, "SIGKILL"], [self, "skill install".split(" ")[0], SKILL_INSTALL_MS, "SIGKILL"]]);
   // A failure after the swap is still an update, and says so.
   writeFileSync(self, "OLD");
   const bad = await update({ base: "http://fake.invalid/r", self, fetchFn, spawn: () => { throw new Error("spawn broke"); }, isStandalone: () => true });
@@ -548,4 +549,11 @@ test("doctor's inspection makes no network call for updates: fetch is never call
     globalThis.fetch = before.fetch; process.env.PATH = before.PATH; process.env.ROUTR_NO_UPDATE = before.NO;
     if (before.KEY === undefined) delete process.env.TYPESAFE_API_KEY; else process.env.TYPESAFE_API_KEY = before.KEY;
   }
+});
+
+test.skipIf(process.platform === "win32")("a binary that ignores SIGTERM is still ended at the limit: the updater's starts kill, not ask", () => {
+  const bin = join(scratch("upd-hang"), "routr"); writeFileSync(bin, "#!/bin/sh\ntrap '' TERM\nsleep 20\n"); chmodSync(bin, 0o755);
+  const began = performance.now();
+  startSync(bin, ["--version"], { encoding: "utf8", timeout: 300, killSignal: "SIGKILL" });
+  expect(performance.now() - began).toBeLessThan(5000);
 });

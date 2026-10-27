@@ -1,7 +1,7 @@
 // runtime.mjs: every process routr starts, and the environment a harness read gets
 import { expect, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { chmodSync, existsSync, lstatSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, win32 } from "node:path";
 import { cmdArg, cmdLine, ensureParent, harnessEnv, npmShimScript, probe, resolveCommand, run, start, startOptions, startSync, stop, windowsCommand } from "../src/lib/runtime.mjs";
 import * as runtime from "../src/lib/runtime.mjs";
@@ -738,4 +738,15 @@ test.skipIf(process.platform === "win32")("writeJsonAtomic userFile writes throu
   expect(JSON.parse(readFileSync(real, "utf8"))).toEqual({ a: 1 });
   expect(statSync(real).mode & 0o777).toBe(0o600);
   expect(readdirSync(dir).sort()).toEqual(["dotfiles-settings.json", "settings.json"]); // no temporary file left
+});
+
+test.skipIf(process.platform === "win32")("writeJsonAtomic userFile keeps a link to a file not made yet, and a group-writable mode the umask would narrow", () => {
+  const dir = scratch("user-file-edge"), target = join(dir, "dotfiles", "config.json"), link = join(dir, "config.json");
+  mkdirSync(join(dir, "dotfiles")); symlinkSync("dotfiles/config.json", link); // relative, and dangling
+  runtime.writeJsonAtomic(link, { a: 1 }, { userFile: true, preserveOnError: true });
+  expect(lstatSync(link).isSymbolicLink()).toBe(true); expect(JSON.parse(readFileSync(target, "utf8"))).toEqual({ a: 1 });
+  chmodSync(target, 0o660);
+  const was = process.umask(0o022);
+  try { runtime.writeJsonAtomic(link, { a: 2 }, { userFile: true, preserveOnError: true }); } finally { process.umask(was); }
+  expect(statSync(target).mode & 0o777).toBe(0o660);
 });

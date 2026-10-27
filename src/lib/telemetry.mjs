@@ -87,7 +87,7 @@ export const telemetryState = (ledger) => state(ledger); // read-only view, for 
 
 function state(ledger) { try { return JSON.parse(readFileSync(STATE(ledger), "utf8")); } catch { return {}; } }
 // Written whole: a reader (the daily send, telemetry status) never sees it half written.
-function saveState(s, ledger) { writeJsonAtomic(STATE(ledger), s); }
+function saveState(s, ledger) { writeJsonAtomic(STATE(ledger), s, { preserveOnError: true }); } // never missing for a moment: consent and install id live here
 // A random id made on this machine, so rows from one install can be grouped. It is not derived from anything about you.
 export function installId(ledger, { create = true } = {}) { const s = state(ledger); if (s.install_id || !create) return s.install_id ?? null; s.install_id = randomUUID(); saveState(s, ledger); return s.install_id; }
 

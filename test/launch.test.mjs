@@ -1559,3 +1559,11 @@ test("a pane worktree's --copy never overwrites a file the commit has and never 
   expect(through.ok).toBe(false); expect(through.error).toContain("a link or not a folder");
   expect(existsSync(join(outside, "local.json"))).toBe(false);
 });
+
+test.skipIf(process.platform === "win32")("--copy of a POSIX file name holding a backslash copies that file, not a folder of that name", async () => {
+  const repo = scratch("wt-bs-repo"), path = scratch("wt-bs-tree");
+  writeFileSync(join(repo, "part\\name.json"), "{}");
+  const r = await launch([...launchArgs, "--cwd", repo, "--worktree", "b", "--copy", "part\\name.json", "--task", "Task"], { ...worktreeHerdr(path).deps, env: { HERDR_ENV: "1" } });
+  expect(r.steps.find((s) => s.step === "copy")?.ok).toBe(true);
+  expect(existsSync(join(path, "part\\name.json"))).toBe(true); expect(existsSync(join(path, "part"))).toBe(false);
+});

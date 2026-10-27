@@ -6,7 +6,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { loadConfig } from "./config.mjs";
-import { CACHE_DIR, ensureParent, lockIsStale, lockOwned, lockToken, releaseFileLock, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
+import { CACHE_DIR, ensureParent, lockIsStale, lockOwned, lockToken, releaseFileLock, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP, writeJsonAtomic } from "./runtime.mjs";
 import { forgetConsentUnlessOn, hoursAgo, sendRows, telemetryStatus } from "./telemetry.mjs";
 import { newer, ROUTR_VERSION } from "./version.mjs";
 
@@ -76,7 +76,8 @@ export const DOWNLOAD_STALL_MS = 30_000;
 export const DOWNLOAD_MAX_MS = 30 * 60_000;
 // Every start of a binary the updater asks something (`--version`, `skill install`) has a limit: one that hangs (a
 // first-run Gatekeeper check, a bad build) would otherwise keep the update lock held by a live pid, which never
-// reads as stale, and every later update would say another one is running.
+// reads as stale, and every later update would say another one is running. SIGKILL: a child that ignores SIGTERM
+// outlived a 15 s limit by as long as it liked (measured 16.5 s for one that exited itself then).
 export const ASK_BINARY_MS = 15_000;
 export const SKILL_INSTALL_MS = 60_000;
 const span = (ms) => (ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`);
@@ -160,7 +161,7 @@ export function sweepStaging(self) {
 // against the running process's version could let an older detached update overwrite a newer one a person
 // had installed by hand meanwhile; the swap now compares against what is actually there.
 export function installedVersion(self, spawn = startSync) {
-  try { const v = String(spawn(self, ["--version"], { encoding: "utf8", timeout: ASK_BINARY_MS })?.stdout ?? "").trim(); return /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(v) ? v.replace(/^v/, "") : null; }
+  try { const v = String(spawn(self, ["--version"], { encoding: "utf8", timeout: ASK_BINARY_MS, killSignal: "SIGKILL" })?.stdout ?? "").trim(); return /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(v) ? v.replace(/^v/, "") : null; }
   catch { return null; }
 }
 
@@ -238,9 +239,9 @@ export async function update({ checkOnly = false, force = false, base = process.
     // From here on the new binary is in place: whatever happens next, the result must say so (0.1.14 to 0.1.16 threw
     // on an undeclared name here and reported "Nothing was changed" after every successful update).
     out.updated = true;
-    const v = spawn(self, ["--version"], { encoding: "utf8", timeout: ASK_BINARY_MS });
+    const v = spawn(self, ["--version"], { encoding: "utf8", timeout: ASK_BINARY_MS, killSignal: "SIGKILL" });
     out.now = (v.stdout ?? "").trim() || null;
-    const skill = skillOutcome(spawn(self, ["skill", "install"], { encoding: "utf8", timeout: SKILL_INSTALL_MS }));
+    const skill = skillOutcome(spawn(self, ["skill", "install"], { encoding: "utf8", timeout: SKILL_INSTALL_MS, killSignal: "SIGKILL" }));
     const s = skill.skill, said = s && (s.kept.length || s.failed.length) ? ` · skills: ${s.installed.length} installed, ${s.kept.length} kept, ${s.failed.length} failed${s.kept.length ? " (skill_repair says what to do)" : ""}` : "";
     return { ...out, ok: true, updated: true, ...skill, note: `updated ${current} → ${out.now ?? out.latest}${on}${said}` };
   } catch (e) {
@@ -320,10 +321,10 @@ export async function backgroundUpdate({ run = update } = {}) {
     const { config } = loadConfig();
     // Telemetry first: it is quick, and an update that swaps the binary should not take it with it.
     forgetConsentUnlessOn(config);
-    if (telemetryStatus(config).on) { const t = await sendRows().catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) })); writeFileSync(TELEMETRY_LOG(), JSON.stringify({ at: new Date().toISOString(), ...t }) + "\n"); }
+    if (telemetryStatus(config).on) { const t = await sendRows().catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) })); writeJsonAtomic(TELEMETRY_LOG(), { at: new Date().toISOString(), ...t }); }
     if (!updatesOn(config)) return;
     const r = await run({ channel: config.update_channel }, { owned: () => lockOwned(LOCK(), token) });
-    if (lockOwned(LOCK(), token)) writeFileSync(UPDATE_LOG(), JSON.stringify(updateRecord(r, config.update_channel)) + "\n");
+    if (lockOwned(LOCK(), token)) writeJsonAtomic(UPDATE_LOG(), updateRecord(r, config.update_channel)); // whole: status never reads a half-written one
   } finally { releaseFileLock(LOCK(), token); }
 }
 
