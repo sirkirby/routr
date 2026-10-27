@@ -1567,3 +1567,19 @@ test.skipIf(process.platform === "win32")("--copy of a POSIX file name holding a
   expect(r.steps.find((s) => s.step === "copy")?.ok).toBe(true);
   expect(existsSync(join(path, "part\\name.json"))).toBe(true); expect(existsSync(join(path, "part"))).toBe(false);
 });
+
+test("Antigravity launched into a worktree is given the worktree, never the main checkout (issue #22)", async () => {
+  const repo = scratch("wt-agy-repo"), path = scratch("wt-agy-tree");
+  const f = worktreeHerdr(path, { kind: "agy" });
+  const args = ["--kind", "agy", "--name", "worker", "--model", "gemini-3.8-flash-low", "--cwd", repo, "--worktree", "b"];
+  const r = await launch(args, f.deps);
+  expect(r).toMatchObject({ ok: true, cwd: path });
+  const start = f.calls.find((a) => a[1] === "start"), argv = start.slice(start.indexOf("--") + 1);
+  expect(argv.slice(argv.indexOf("--add-dir"), argv.indexOf("--add-dir") + 2)).toEqual(["--add-dir", path]);
+  expect(r.start.argv).toEqual(argv);
+  expect([...argv, ...r.start.argv]).not.toContain(repo);
+  // A dry run shows where it will be, not the main checkout: the worktree does not exist yet.
+  const plan = await launch([...args, "--dry-run"], fakeHerdr({ kind: "agy" }).deps);
+  expect(plan.start.argv).toContain("<worktree-path>"); expect(plan.start.argv).not.toContain(repo);
+  expect(plan.would_run.find((l) => l.includes("agent start"))).toContain('--add-dir "<worktree-path>"');
+});

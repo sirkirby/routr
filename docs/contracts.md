@@ -465,7 +465,9 @@ a folder whose path has neither, or a pane running PowerShell." A pane launch sp
 A `--worktree` launch opens the worker's pane itself. `ran` shows, in order: `herdr worktree create`, then (after any
 `--copy`) `herdr pane split <root pane> --direction right --cwd <worktree path> --no-focus --env …`, a split of the
 pane herdr opened with the worktree, then `herdr pane close <root pane>`; the agent starts in the new pane, which is
-`pane`. A dry run's `would_run` shows the same three with `<root-pane>` and `<worktree-path>`. When the split, or the
+`pane`. A dry run's `would_run` shows the same three with `<root-pane>` and `<worktree-path>`. A harness whose command
+names its folder (Antigravity's `--add-dir`) is given the worktree's path, in `start.argv` and in the agent start
+(`<worktree-path>` in a dry run), never the repository's. When the split, or the
 close of the root pane, fails, the launch fails before any agent starts (`state: "failed"`): `error` says the worktree
 was created (after a failed close, also that its workspace has an extra shell pane, naming it) and gives the
 `routr cleanup --cwd <repo> --worktree <branch>` that removes it, which is also the cleanup step in `next`. A launch
