@@ -36,13 +36,19 @@ function readRecord(dir, name, now) {
   } catch { return null; }
 }
 
+// A folder of routr's own: there and a real folder ("yes"), not there yet ("absent"), or a link or something else
+// ("no"). Neither the state folder nor the history folder is ever used through a link: writes and the sweep would act
+// outside routr's folders.
+const folder = (path) => { try { return lstatSync(path).isDirectory() ? "yes" : "no"; } catch (e) { return e?.code === "ENOENT" ? "absent" : "no"; } };
+
 // Launches per subscription over the window. `unreadable` when the folder or one of its records is there but cannot
 // be read (or the folder is a link, which countLaunch would not write through): the caller
 // shows no share then, since a count it cannot see is not a count of zero. Reads never write or sweep.
 export function recentLaunches({ home = userHome(), now = Date.now() } = {}) {
-  const dir = LAUNCH_COUNTS_DIR(home);
+  const dir = LAUNCH_COUNTS_DIR(home), state = folder(STATE_DIR(home)), own = state === "yes" ? folder(dir) : state;
+  if (own === "absent") return { counts: {} };
   let names;
-  try { names = lstatSync(dir).isDirectory() ? readdirSync(dir) : null; } catch (e) { return e?.code === "ENOENT" ? { counts: {} } : { counts: {}, unreadable: true }; }
+  try { names = own === "yes" ? readdirSync(dir) : null; } catch { names = null; }
   if (!names) return { counts: {}, unreadable: true };
   const counts = {};
   for (const n of names) {
@@ -59,9 +65,11 @@ export function countLaunch(subscription, { home = userHome(), now = Date.now() 
   try {
     if (!SUBSCRIPTION.test(subscription ?? "") || existsSync(UNINSTALL_LOCK(home))) return false;
     const dir = LAUNCH_COUNTS_DIR(home);
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-    // Never through a link: a linked folder would have this write, and the sweep below, act outside routr's own.
-    if (existsSync(UNINSTALL_LOCK(home)) || !lstatSync(STATE_DIR(home)).isDirectory() || !lstatSync(dir).isDirectory()) return false;
+    // Each folder is checked before anything is made in it, and again once made.
+    for (const f of [STATE_DIR(home), dir]) {
+      if (folder(f) === "absent") mkdirSync(f, { recursive: true, mode: 0o700 });
+      if (folder(f) !== "yes" || existsSync(UNINSTALL_LOCK(home))) return false;
+    }
     writeJsonAtomic(join(dir, `${randomUUID()}.json`), { subscription, at: new Date(now).toISOString() }, { mkdir: false, mode: 0o600 });
     for (const n of readdirSync(dir)) {
       const r = readRecord(dir, n, now);
@@ -86,9 +94,9 @@ export function shareView(ranked, launches, subscriptions) {
   const total = sharers.reduce((n, r) => n + weight(r), 0);
   const of = sharers.reduce((n, r) => n + (launches.counts[r.subscription] ?? 0), 0);
   const r2 = (x) => Math.round(x * 100) / 100;
-  // How far below its target, compared in whole numbers: weight/total − n/of over the common denominator total·of
+  // How far below its target (0 at or above it, as `left`), compared in whole numbers: weight/total − n/of over the common denominator total·of
   // (with no launches, every account's used is 0, so the weight alone). Floating point would break exact ties.
-  const below = (r) => { const n = launches.counts[r.subscription] ?? 0; return of ? weight(r) * of - n * total : weight(r); };
+  const below = (r) => { const n = launches.counts[r.subscription] ?? 0; return Math.max(0, of ? weight(r) * of - n * total : weight(r)); };
   const view = Object.fromEntries(sharers.map((r) => {
     const target = weight(r) / total, n = launches.counts[r.subscription] ?? 0, used = of ? n / of : 0;
     return [r.subscription, { weight: weight(r), target: r2(target), used_pct: Math.round(used * 100), left: r2(Math.max(0, target - used)), launches: n, of }];

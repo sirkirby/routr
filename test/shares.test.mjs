@@ -151,6 +151,25 @@ test("a linked history folder is never written through or swept, and reads as un
   expect(recentLaunches({ home, now: NOW })).toEqual({ counts: {}, unreadable: true });
 });
 
+test("a linked state folder gets no history folder made in it, and its history reads as unreadable", () => {
+  const home = scratch("share-state-link"), outside = scratch("share-state-outside");
+  mkdirSync(join(home, ".local/state"), { recursive: true });
+  try { symlinkSync(outside, join(home, ".local/state/routr"), "dir"); } catch { return; }
+  expect(countLaunch("claude", { home, now: NOW })).toBe(false);
+  expect(readdirSync(outside)).toEqual([]);
+  mkdirSync(join(outside, "launch-counts"));
+  writeFileSync(join(outside, "launch-counts/55555555-5555-4555-8555-555555555555.json"), JSON.stringify({ subscription: "claude", at: new Date(NOW).toISOString() }));
+  expect(recentLaunches({ home, now: NOW })).toEqual({ counts: {}, unreadable: true });
+});
+
+test("accounts at or above their targets keep the larger weight first", () => {
+  // Weights 3, 1, 1 with 8, 2, 0 launches: claude and codex are both at or above target (left 0); kiro is due.
+  const ranked = ["claude", "codex", "kiro"].map((subscription) => ({ subscription, class: "metered", use: "normal" }));
+  const v = shareView(ranked, { counts: { claude: 8, codex: 2, kiro: 0 } }, { claude: { share: 3 }, codex: { share: 1 }, kiro: { share: 1 } });
+  expect(v.due).toBe("kiro");
+  expect(v.order).toEqual(["kiro", "claude", "codex"]);
+});
+
 test.skipIf(process.platform === "win32" || process.getuid?.() === 0)("a record that is there but cannot be read makes the whole history unreadable, not a smaller count", () => {
   const home = scratch("share-perm");
   mkdirSync(join(home, ".local/state/routr"), { recursive: true });

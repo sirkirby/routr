@@ -131,7 +131,7 @@ only metered candidates remain. Numbers may be labelled assumed. Neither field i
 account. If there are no candidates, hold the work or ask the user. Routr never offers a reserve.
 
 With a `share` set, the normal metered rows are ordered among themselves by how far each is below its target, and
-`subscriptions.share_due` names the first. routr counts its own launches: one record per worker that took its task,
+`subscriptions.share_due` names the first. routr counts its own launches: one record per worker that took its task or was left ready,
 kept 7 days, holding only the subscription and the time. A launch made while an account read `included` still
 counts for it. Each row's `share` reads like a window: `weight`, `target` (its weight's fraction), `used_pct` (the percent of
 these launches it took), `left` (how far below its target; 0 at or above), `launches` (its own) and `of` (all of
