@@ -454,7 +454,8 @@ continuity.
 
 ## herdr's worktree folders (read from herdr 0.9.5's source, 2026-10-27)
 
-`herdr worktree create` without `--path` makes the worktree at `~/.herdr/worktrees/<repository folder>/<slug>`: the
+`herdr worktree create` without `--path` makes the worktree at `<worktree directory>/<repository folder>/<slug>` (herdr's `worktrees.directory`
+setting, `~/.herdr/worktrees` by default): the
 branch lowercased, each run of characters other than ASCII letters and digits one `-`, `-` trimmed from both ends,
 and `worktree` when nothing is left (`feat/X_y` → `feat-x-y`). routr relies on it only to point at a worker's
 worktree left detached from its branch, which `cleanup --worktree` keeps and names instead of calling absent; it

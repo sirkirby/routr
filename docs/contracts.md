@@ -634,18 +634,19 @@ Inputs:
   otherwise.
 - Outside herdr (`HERDR_ENV` is not `1`), the list and `--worktree`/`--path` modes read and remove worktrees through
   git, with the same checks, and `warnings` says cleanup cannot see whether anything runs in a worktree's folder.
-- `--worktree <branch>` with no worktree on that branch, but a detached one in the folder herdr or a headless launch
-  names for it, refuses (`refused`, `worktree` naming it when there is one) instead of answering
-  `absent`: a worker that checked out a commit left it there. `next` runs `cleanup --path` for each such folder, to
-  use once it is checked to be the worker's; cleanup never removes one on that guess. `--worker` refuses the same way
-  for its own folder left detached.
+- `--worktree <branch>` with no worktree on that branch refuses (`refused`) instead of answering `absent` when one or
+  more of the repository's detached linked worktrees are in a folder with the name herdr or a headless launch gives
+  that branch: a worker that checked out a commit left it there. `worktree` names it when there is just one, and
+  `next` has one `run` step per such folder, `cleanup --path` for it, to use once it is checked to be the worker's;
+  cleanup never removes one on that name alone.
 - `--worker` refuses (`refused`) while the worker runs or does not answer, while its `worker.json` or `state.json` is
   there and cannot be read (then nothing says whether its harness runs: the headline names the file and says to try
   again; `next` says what to do if it stays so), or while a process group it recorded still
   has members (a harness's own helper aside, as in `workers`); for a worker launch gave a worktree, it first removes the worktree as `--path` would (`--delete-branch`
   and `--dry-run` pass on), and keeps the worker whole, with that refusal's reason and `next`, when it would not;
   `worktree` and `branch` are then as for `--path`. It refuses too when the worktree at that path is on another
-  branch than the one launch made (it is someone else's), when it is not the folder launch made (removed and made
+  branch than the one launch made (it is someone else's), when it is launch's own folder left detached (what it holds
+  is not checked; `next` says to look at it and finish it with `cleanup --path`), when it is not the folder launch made (removed and made
   again there), or when git lists no worktree there but a folder is. `headline` `routr: removed worker <name>`,
   `routr: kept <name>: <why>`, `routr: would remove <folder>[ and <worktree path>]`, `routr: nothing to remove: no
   worker <name>`; a worktree it could not check is refused ("its worktree could not be checked"), and so is a run
