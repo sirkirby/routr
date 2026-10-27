@@ -6,6 +6,8 @@ import { join, resolve } from "node:path";
 import { templateCommand } from "../src/lib/next.mjs";
 import { cleanup, dropCopy, linkedWorktree, parseCleanupArgs, parseStatus, parseWorktreeHeads, sameFile } from "./contract.mjs";
 import { herdrError, herdrOK, scratch } from "./helpers.mjs";
+import { herdrWorktreeFolder } from "../src/lib/herdr.mjs";
+import { worktreeFolder } from "../src/lib/runtime.mjs";
 
 test("cleanup names one worker, by branch, folder, or pane; --delete-branch only for a worktree", () => {
   expect(parseCleanupArgs(["--cwd", "/r", "--worktree", "feat/x", "--delete-branch"])).toMatchObject({ cwd: "/r", worktree: "feat/x", deleteBranch: true, dryRun: false });
@@ -302,4 +304,21 @@ test("cleanup next keeps Windows paths exact, and uses argv for UNC paths", asyn
     expect(step.command).toBe(path.startsWith("\\\\") ? null : 'routr cleanup --cwd /repo --path "C:\\Users\\Jane Doe\\worker"');
     expect(r).not.toHaveProperty("refused");
   }
+});
+
+test("a worker's worktree left detached is not absent: cleanup by branch refuses and names its folder", async () => {
+  const f = fake({ worktrees: [wt(null, { path: "/wt/rev-a", is_detached: true }), wt(null, { path: "/wt/feat-x", is_detached: true }), wt(null, { path: "/wt/other", is_detached: true })] });
+  const r = await cleanup(["--cwd", "/repo", "--worktree", "rev-a"], f.deps);
+  expect(r).toMatchObject({ ok: false, state: "refused", worktree: { path: "/wt/rev-a", detached: true } });
+  expect(r.headline).toContain("no worktree is on branch rev-a");
+  expect(r.next[0].argv).toEqual(["routr", "cleanup", "--cwd", resolve("/repo"), "--path", "/wt/rev-a"]);
+  // Headless names it feat-x; herdr lowercases and makes each run of other characters one "-".
+  for (const b of ["feat/x", "feat_x", "Feat/X", "feat.x", "feat--x", "feat/x-"]) expect((await cleanup(["--cwd", "/repo", "--worktree", b], f.deps)).next[0].argv).toContain("/wt/feat-x");
+  expect(await cleanup(["--cwd", "/repo", "--worktree", "typo"], f.deps)).toMatchObject({ ok: true, state: "absent" });
+  expect(f.calls.some((a) => a[1] === "remove") || f.gits.some((g) => g[1] === "worktree" && g[2] === "remove")).toBe(false);
+});
+
+test("a branch's worktree folder, as herdr (its own examples, 0.9.5) and a headless launch name it", () => {
+  expect(["worktree/brave-river", "issue/137 Worktree Spaces", "///", "Feat_X.y"].map(herdrWorktreeFolder)).toEqual(["worktree-brave-river", "issue-137-worktree-spaces", "worktree", "feat-x-y"]);
+  expect(["feat/x", "a\\b", "Feat_X"].map(worktreeFolder)).toEqual(["feat-x", "a-b", "Feat_X"]);
 });

@@ -16,7 +16,7 @@ import { answer } from "./output.mjs";
 import { CLOSING, count, OFF } from "./wording.mjs";
 import { callGit } from "./process-boundary.mjs";
 import { dropCopy } from "./cleanup.mjs";
-import { CARRIERS, ensureParent, NAME_RULE, WORKER_NAME, folderId, FORWARDED, home, lockIsStale, lockOwned, lockToken, releaseFileLock, probe as runProbe, readJsonFile, realOr, realPath, savedCarriers, spawnSelf, takeLock, writeJsonAtomic, WORKTREES_DIR } from "./runtime.mjs";
+import { CARRIERS, ensureParent, NAME_RULE, WORKER_NAME, folderId, FORWARDED, home, lockIsStale, lockOwned, lockToken, releaseFileLock, probe as runProbe, readJsonFile, realOr, realPath, savedCarriers, spawnSelf, takeLock, writeJsonAtomic, WORKTREES_DIR, worktreeFolder } from "./runtime.mjs";
 
 const RUNNING = new Set(["working", "waiting", "starting"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -116,7 +116,7 @@ export async function view(name, { check = true } = {}) {
 // A headless worker's own git worktree, made by routr with git (herdr makes it in a pane session): in routr's own
 // folder, one per repository and branch, its branch new and starting at --base (or the checkout's HEAD).
 const git = (dir, args) => callGit((d, a) => runProbe("git", ["-C", d, ...a], { timeoutMs: 20000, separate: true }), dir, args);
-const worktreePath = (source, branch) => join(WORKTREES_DIR(), `${basename(source)}-${createHash("sha1").update(source).digest("hex").slice(0, 8)}`, branch.replace(/[\\/]/g, "-"));
+const worktreePath = (source, branch) => join(WORKTREES_DIR(), `${basename(source)}-${createHash("sha1").update(source).digest("hex").slice(0, 8)}`, worktreeFolder(branch));
 // git's one-line answer, its line ending dropped and nothing else (a folder's name may end in a space).
 const line = (out) => out.replace(/\r?\n$/, "");
 // Before anything is written: the repository, a branch not taken, a folder not there, and the commit it starts at
@@ -531,6 +531,8 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
       const there = listed.ok ? worktreesFromGit(listed.out).worktrees.find((x) => x.is_linked_worktree && realOr(x.path) === realOr(w.worktree.path)) : null;
       if (!listed.ok) return refuse(`git could not list the worktrees of ${w.worktree.source} (${listed.code})`, runNext("Look at them.", ["git", "-C", w.worktree.source, "worktree", "list"]));
       const finish = doNext(`Look at ${w.worktree.path}; finish it with routr cleanup --cwd ${w.worktree.source} --path ${w.worktree.path} if it should go.`);
+      // A detached one may still be the worker's own (it checked out a commit): never removed on that guess either.
+      if (there?.is_detached && folderId(w.worktree.path) === w.worktree.folder) return refuse(`the worktree at ${w.worktree.path} is detached, no longer on ${w.worktree.branch}: what it holds is not checked`, finish);
       if (there && there.branch !== w.worktree.branch) return refuse(`the worktree at ${w.worktree.path} is ${there.branch ? `on branch ${there.branch}` : "detached"}, not on ${w.worktree.branch}: it is not the one launch made`, finish);
       if (there && folderId(w.worktree.path) !== w.worktree.folder) return refuse(`the worktree at ${w.worktree.path} was made again since launch: it is not the one launch made`, finish);
       const r = await cleanup(["--cwd", w.worktree.source, "--path", w.worktree.path, ...(deleteBranch ? ["--delete-branch"] : []), ...(dryRun ? ["--dry-run"] : [])], { env: {}, assertOwned });

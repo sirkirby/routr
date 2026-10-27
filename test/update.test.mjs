@@ -1,7 +1,7 @@
 // update.mjs: releases, the binary swap, and the daily check
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { startSync } from "../src/lib/runtime.mjs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { SCRATCH, scratch } from "./helpers.mjs";
@@ -551,9 +551,10 @@ test("doctor's inspection makes no network call for updates: fetch is never call
   }
 });
 
-test.skipIf(process.platform === "win32")("a binary that ignores SIGTERM is still ended at the limit: the updater's starts kill, not ask", () => {
-  const bin = join(scratch("upd-hang"), "routr"); writeFileSync(bin, "#!/bin/sh\ntrap '' TERM\nsleep 20\n"); chmodSync(bin, 0o755);
+// On every platform, Windows included: there the kill is TerminateProcess, whatever the signal.
+test("a binary that ignores SIGTERM is still ended at the limit: the updater's starts kill, not ask", () => {
   const began = performance.now();
-  startSync(bin, ["--version"], { encoding: "utf8", timeout: 300, killSignal: "SIGKILL" });
+  const r = startSync(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setTimeout(() => {}, 20000)"], { encoding: "utf8", timeout: 300, killSignal: "SIGKILL" });
   expect(performance.now() - began).toBeLessThan(5000);
+  expect(r.signal).toBe("SIGKILL");
 });
