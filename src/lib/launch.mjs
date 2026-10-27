@@ -23,13 +23,13 @@ const STARTUP_INPUT = orchestratorGuide.match(/<!-- startup-input -->\s*([\s\S]*
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
 // around it, so it points at the installed skill (written by the installer or `routr skill install`).
 const besideSource = fileURLToPath(new URL("../../skills/routr/references/worker.md", import.meta.url));
-export const WORKER_GUIDE = existsSync(besideSource) ? besideSource : join(home(), ".agents/skills/routr/references/worker.md");
+export const WORKER_GUIDE = () => existsSync(besideSource) ? besideSource : join(home(), ".agents/skills/routr/references/worker.md");
 // The first words of every launch prompt.
 export const PROMPT_OPENING = "You are a routr worker.";
 // `rules` is the lead's process text (what the worker may and may not do, how to report, git steps): the worker reads it
 // after the task, and routr never does. Only the task is the work that `dispatch` and `--advice` judge. (Measured
 // 2026-09-26: 18 of 36 real tasks carried such text, 5 to 38% of each, and it moved Jev's readings.)
-export function composePrompt(task, guide = WORKER_GUIDE, rules = null) {
+export function composePrompt(task, guide = WORKER_GUIDE(), rules = null) {
   return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}${rules ? `\n\n${rules.trim()}` : ""}\n\n${CLOSING}`;
 }
 
@@ -143,7 +143,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     if (task != null && !task.trim()) throw new Error("The task must not be empty");
     const rules = o["rules-file"] != null ? readFileSync(resolve(o["rules-file"]), "utf8") : null;
     if (rules != null && !rules.trim()) throw new Error("The rules file must not be empty");
-    const prompt = task == null ? null : composePrompt(task, WORKER_GUIDE, rules);
+    const prompt = task == null ? null : composePrompt(task, WORKER_GUIDE(), rules);
     out.prompt_chars = prompt?.length ?? null;
     // Observed 2026-10-18: reviewers launched on a standing model choice without dispatch were later recorded with
     // another worker's advice. No escape flag: fallback dispatch still answers, while model and effort stay the lead's.

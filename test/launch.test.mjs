@@ -61,8 +61,8 @@ test("launch prompt preserves the required opening, task with verification, and 
   const task = "TASK\nFix the parser. Work only in /work.\n\nHOW TO VERIFY\nbun test";
   const prompt = composePrompt(task);
   const doc = readFileSync(new URL("../skills/routr/references/orchestrator.md", import.meta.url), "utf8");
-  const opening = doc.match(/       You are a routr worker\.[\s\S]*?orchestrator parses\./)[0].trim().replace(/\s*\n\s*/g, " ").replace("~/.agents/skills/routr/references/worker.md", WORKER_GUIDE);
-  expect(isAbsolute(WORKER_GUIDE)).toBe(true);
+  const opening = doc.match(/       You are a routr worker\.[\s\S]*?orchestrator parses\./)[0].trim().replace(/\s*\n\s*/g, " ").replace("~/.agents/skills/routr/references/worker.md", WORKER_GUIDE());
+  expect(isAbsolute(WORKER_GUIDE())).toBe(true);
   expect(prompt).toBe(`${opening}\n\n${task}\n\nFinish with the report block from the worker guide, starting with the line \`VERDICT: done | partial | blocked\`.`);
 });
 
@@ -75,7 +75,7 @@ test("--rules-file goes to the worker after the task, and only the task is compa
   writeFileSync(advice, JSON.stringify({ mode: "dispatch", id: "advice-test", brief_sha: briefSha("Fix the flaky retry test in src/retry.mjs.") }));
   const r = await launch([...launchArgs, "--task-file", task, "--rules-file", rules, "--advice", advice, "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); } });
   expect(r.advice).toEqual({ file: advice, matches: true }); // the rules are not part of what routr judged
-  expect(r.prompt_chars).toBe(composePrompt(readFileSync(task, "utf8"), WORKER_GUIDE, readFileSync(rules, "utf8")).length);
+  expect(r.prompt_chars).toBe(composePrompt(readFileSync(task, "utf8"), WORKER_GUIDE(), readFileSync(rules, "utf8")).length);
   expect(() => parseLaunchArgs([...launchArgs, "--rules-file", rules])).toThrow("--rules-file goes with a task");
   writeFileSync(rules, "  \n");
   expect((await launch([...launchArgs, "--task-file", task, "--rules-file", rules, "--dry-run"])).steps.at(-1).detail).toContain("The rules file must not be empty");
