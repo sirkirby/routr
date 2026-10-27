@@ -68,7 +68,8 @@ routr's shipped questions (r5, c1). Those questions were worded and tuned on Jev
 
 ### Moving the pin: Jev 1.14 (2026-10-27)
 
-routr stays on `jev-1.13.0`. The maintainers' gate held `jev-1.14.0` on the level, judged by what a lead acts on.
+routr stays on `jev-1.13.0` while its questions are re-tuned for `jev-1.14.0`: the maintainers' gate held 1.14 on the
+level, judged by what a lead acts on.
 
 **What a lead acts on.** Fresh Claude Code and Codex leads were given routr's real `dispatch` output on 12 real tasks
 from the maintainer's work, with one fact's reading flipped at a time and the level unchanged, and asked to decide.
@@ -104,7 +105,8 @@ may not rise at all, judged on the mean of three runs, because one run moves by 
 each), it over-rated less (9 against 14 of the 329 where the chosen level was enough), under-rated the same (10 of 10
 that fell short below strong were read no higher), and read 35 fewer tasks as strong. On the labelled briefs it is right
 a little less often. Changing `sure_at` changes no level (a torn reading is presented as its most likely level), so
-routr cannot close the gap itself. The gate is run again on the next Jev version.
+presentation alone cannot close the gap. The level question is being re-worded and measured for 1.14 (a question's
+wording changes only with a measurement against the old wording on the same items, and a new question-set version).
 
 ### Backup model or constant fallback
 
