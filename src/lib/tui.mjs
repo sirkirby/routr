@@ -99,7 +99,10 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
       settle([c.gray(g.bar), `${value === CANCEL ? c.red(g.cancel) : c.green(g.done)}  ${message}`, `${c.gray(g.bar)}  ${said}`]);
       resolve(value);
     };
-    if (!rawOn) { try { input.setRawMode?.(true); rawOn = true; } catch {} input.resume?.(); }
+    // Every prompt takes the terminal back as it needs it: something else that read the terminal in between (the key
+    // prompt reads a hidden line, then turns raw mode off and pauses input) would otherwise leave this one deaf.
+    if (!rawOn || input.isRaw === false) { try { input.setRawMode?.(true); rawOn = true; } catch {} }
+    input.resume?.();
     input.on("keypress", onKey);
     draw(frame(c.cyan(g.active)));
   });

@@ -26,7 +26,7 @@ old), and otherwise a number you set (`assumed_headroom`), and says which.
 ## Your settings
 
 You decide where work may go, with three settings per subscription, and a fourth for metered accounts (`share`,
-below), which you set with `routr setup --share`. `routr setup` asks you for the three, for every
+below), which `routr setup` asks for when two or more metered accounts are in normal use. `routr setup` asks you for the three, for every
 subscription you let routr use, with each level's meaning beside it and the suggestion already chosen. It saves them
 in `~/.config/routr/config.json` when you pick Save and exit.
 
@@ -64,8 +64,8 @@ invalid, with the command that fixes it.
   accounts. Metered accounts have no headroom number, so two of them tie; `claude` 3 and `codex` 1 says you want about
   three workers on Claude for every one on Codex. It counts only while the account reads `metered`, and only when at
   least two normal metered accounts take the work (one without a `share` counts as 1). Included accounts are
-  balanced by headroom instead, because what is left of a window expires at its reset. Set it with
-  `routr setup --share claude=3 --share codex=1`; `--share claude=off` removes it.
+  balanced by headroom instead, because what is left of a window expires at its reset. `routr setup` asks for it
+  as Launch share, or set it with `routr setup --share claude=3 --share codex=1`; `--share claude=off` removes it.
 
 `assumed_headroom` is the share routr assumes when it cannot read an included or unknown account's usage. It is
 labelled assumed. Metered accounts always have unknown remaining budget.

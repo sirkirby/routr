@@ -270,6 +270,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     Object.assign(models, choices.models); Object.assign(efforts, choices.efforts); Object.assign(hardest, choices.hardest);
     Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches); Object.assign(ranks, choices.ranks);
     Object.assign(uses, choices.uses);
+    Object.assign(launchShares, choices.shares);
     if (choices.channel) channel = choices.channel;
     if (choices.otelEndpoint !== undefined) otelEndpointValue = choices.otelEndpoint;
     if (choices.decision) { decision = choices.decision; for (const entry of decision) await keyFor(entry); }

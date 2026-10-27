@@ -141,8 +141,8 @@ the command that fixes it.
     accounts: `claude` 3 and `codex` 1 is about three workers on Claude for every one on Codex. It counts only while
     the account reads `metered` and at least two normal metered accounts take the work (one without `share` counts as
     1); headroom balances included accounts. routr counts its own launches over the last 7 days and the advice names
-    the account below its target (`share_due`); the lead still chooses model and effort fit first. Set it with
-    `--share name=<1-99>`, remove it with `--share name=off`.
+    the account below its target (`share_due`); the lead still chooses model and effort fit first. Guided setup asks
+    for it (Launch share) only in that case. Set it with `--share name=<1-99>`, remove it with `--share name=off`.
   - `metered_rank`: legacy preference, applied only when `use` is absent. Metered `after` (default) means fallback;
     `with` means normal. Nonmetered accounts default to normal. The legacy `--metered` flag also sets `use`; explicit
     `--use` wins if both flags are given. Actual observed caps remain windows, including with a billing override.
