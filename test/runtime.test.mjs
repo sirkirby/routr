@@ -763,3 +763,10 @@ test.skipIf(process.platform === "win32")("writeJsonAtomic userFile takes a link
   expect(() => runtime.writeJsonAtomic(join(dir, "a.json"), { a: 1 }, { userFile: true })).toThrow("too many links");
   expect(lstatSync(join(dir, "a.json")).isSymbolicLink()).toBe(true);
 });
+
+test("run() with exitZero answers null for a command that printed and then exited non-zero; without it, what it printed", async () => {
+  const script = "process.stdout.write('{\"subtype\":\"success\"}'); process.exitCode = 1";
+  expect(await run(process.execPath, ["-e", script], { timeoutMs: 15000, exitZero: true })).toBeNull();
+  expect(await run(process.execPath, ["-e", script], { timeoutMs: 15000 })).toBe('{"subtype":"success"}');
+  expect(await run(process.execPath, ["-e", "process.stdout.write('ok')"], { timeoutMs: 15000, exitZero: true })).toBe("ok");
+});

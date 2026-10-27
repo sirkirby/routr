@@ -93,7 +93,7 @@ export function claudeSnapshot(s, nowSec = now()) {
   if (!ws.length && s.seen) { ws = toWs(s.seen.rate_limits); ts = s.seen.ts; }
   if (ws.length) return summarize({ pool: "claude", source: "statusline", ts, windows: ws, cls: ws.some((w) => w.name === "spend_limit") ? "capped" : "included", nowSec });
   return summarize({ pool: "claude", source: "statusline", ts: s.ts, note: s.answered
-    ? "Claude reports no usage windows for this seat. A plan with no quota (usage-based Enterprise) sends none: a seat with no quota is set with `billing: \"metered\"` for claude in the config"
+    ? "Claude reports no usage windows for this seat. A plan with no quota that routr does not recognise sends none: a seat with no quota is set with `billing: \"metered\"` for claude in the config"
     : "no windows yet: Claude reports usage after its first response of a session", nowSec, reason: s.answered ? NO_WINDOWS_AFTER_ANSWER : undefined });
 }
 
@@ -183,9 +183,10 @@ export function parseClaudeReset(text, nowSec = now(), maxSec = Infinity) {
 // The text of Claude's `/usage` → the windows routr ranks on, and a note. Pure, so the measured text is a test.
 export function parseClaudeUsage(text, nowSec = now()) {
   const windows = [], scoped = [], unread = [];
+  let unparsed = 0; // lines that start like a usage window but do not read as one
   for (const line of String(text ?? "").split("\n")) {
     const m = line.trim().match(/^Current (session|week \(([^)]*)\))\s*:\s*(\d+(?:\.\d+)?)%\s*used(?:\s*·\s*resets\s+(.+))?$/i);
-    if (!m) continue;
+    if (!m) { if (/^current (session|week)\b/i.test(line.trim())) unparsed++; continue; }
     const used = Number(m[3]), key = m[1].toLowerCase(), known = CLAUDE_LINES[key];
     if (!known) { scoped.push(used); continue; } // a weekly limit for one model: counted, never named
     const resetsAt = m[4] ? parseClaudeReset(m[4], nowSec, known.windowMin * 60 + 86400) : null;
@@ -196,7 +197,7 @@ export function parseClaudeUsage(text, nowSec = now()) {
     scoped.length && `plus ${scoped.length} model-specific weekly limit${scoped.length === 1 ? "" : "s"} (highest ${Math.max(...scoped)}% used), not ranked on`,
     unread.length && `reset time not read for ${unread.join(", ")}: that window is not rolled over at its reset`,
   ].filter(Boolean).join("; ");
-  return { windows, note: note || undefined };
+  return { windows, note: note || undefined, ...(unparsed ? { unparsed } : {}) };
 }
 
 // How routr reads Claude's usage. The statusline snapshot costs nothing and is written on every Claude turn, so a
@@ -260,7 +261,7 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT(), nowSec 
   let why, code, answered = false, out = null;
   if (!priv) { code = "private_folder"; why = usageFailure(code).why; }
   else {
-    try { out = await exec("claude", claudeUsageArgs(quiet), { cwd: priv.cwd, timeoutMs: CLAUDE_TIMEOUT_MS }); }
+    try { out = await exec("claude", claudeUsageArgs(quiet), { cwd: priv.cwd, timeoutMs: CLAUDE_TIMEOUT_MS, exitZero: true }); }
     catch { code = "read_failed"; }
     finally {
       // run() answers null on a timeout (it kills Claude and does not wait), an error, or no output: the project
@@ -271,9 +272,12 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT(), nowSec 
   if (priv && out == null) { code ??= "no_response"; why = usageFailure(code).why; }
   else if (priv) {
     let o = null; try { o = JSON.parse(out); } catch {}
-    if (typeof o?.result !== "string" || o.is_error) { code = "invalid_response"; why = usageFailure(code).why; }
+    const p = typeof o?.result === "string" ? parseClaudeUsage(o.result, nowSec) : null;
+    // "No windows" is an answer only when Claude said it succeeded and printed something with no usage line routr
+    // could not read: an empty result, or a "Current session" line cut short, is unreadable, not a seat with no quota
+    // (which a sign-in status naming Enterprise or an API key would then rank as metered).
+    if (!p || o.is_error || o.subtype !== "success" || !o.result.trim() || (!p.windows.length && p.unparsed)) { code = "invalid_response"; why = usageFailure(code).why; }
     else {
-      const p = parseClaudeUsage(o.result, nowSec);
       if (p.windows.length) return summarize({ pool: "claude", source: "claude /usage", ts: nowSec, windows: p.windows, note: p.note, nowSec });
       answered = true; why = "Claude's /usage shows no usage windows for this seat";
     }
@@ -282,7 +286,7 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT(), nowSec 
   // from before a switch to an API key or a metered seat would rank the previous subscription's windows,
   // exhausted ones included; the snapshot is only for a live read that failed.
   if (answered) return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: NO_WINDOWS_AFTER_ANSWER,
-    note: `${why}. A plan with no quota (usage-based Enterprise) shows none: a seat with no quota is set with \`billing: "metered"\` for claude in the config` });
+    note: `${why}. A plan with no quota that routr does not recognise shows none: a seat with no quota is set with \`billing: "metered"\` for claude in the config` });
   // The statusline's reading however old (its age is shown), as before this reader existed; else nothing, and why.
   if (fromSnap?.headroom != null) return { ...fromSnap, source: "claude /usage", failure: usageFailure(code), kept: { source: "statusline", ageSec: fromSnap.ageSec }, note: [fromSnap.note, `${why} This is the statusline's last reading`].filter(Boolean).join("; ") };
   // A snapshot that says Claude sent no windows after a response keeps saying so: doctor's step keys on it.

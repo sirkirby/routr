@@ -16,10 +16,10 @@ const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8"))
 
 // What the same answer said about billing (the registry's `auth.billing`), kept beside the state with the same
 // lifetime. Where it decides a class (a reading without windows), readUsage asks again first (`billingFor`, fresh):
-// a login switched within the 6 hours must not keep the old class. Only the class and the
-// reader's fixed reason are kept, never anything else the status printed (Claude's carries the email, organisation and
+// a login switched within the 6 hours must not keep the old class. Only the class, the
+// reader's fixed reason and its fixed condition are kept, never anything else the status printed (Claude's carries the email, organisation and
 // ids). A reader that throws, or answers anything else, is no reading.
-const billingOf = (b) => (b?.billing === "metered" && typeof b.why === "string" ? { billing: "metered", why: b.why.slice(0, 200) } : null);
+const billingOf = (b) => (b?.billing === "metered" && typeof b.why === "string" ? { billing: "metered", why: b.why.slice(0, 200), ...(b.when === "no_windows" ? { when: "no_windows" } : {}) } : null);
 // The billing reading of each harness this process last asked (or found kept), for readUsage beside the sign-in gate:
 // in memory too, so a cache that cannot be written still carries it through this call.
 const billingSeen = new Map();

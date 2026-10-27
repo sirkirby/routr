@@ -106,7 +106,8 @@ A seat billed per use with no quota has no window to measure. Its `headroom` and
 legacy `metered_rank: "with"` is set. Routr cannot infer a shared prepaid balance or a personal allowance from this.
 A cap the harness reports is still enforced as a window, even with a `billing: "metered"` override.
 routr knows a seat is billed this way from what the harness reports: its usage shape (a Codex Enterprise seat with
-no windows and unlimited credits) or its own sign-in status (Claude signed in with an API key). Your `billing`
+no windows and unlimited credits) or its own sign-in status (Claude signed in with an API key, or on an Enterprise seat whose `/usage` answered with no
+windows). Your `billing`
 setting wins over either when no window arrived; a window that does arrive is always ranked.
 
 ## The order

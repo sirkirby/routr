@@ -86,7 +86,7 @@ export function nextSteps(r) {
   // Claude's sign-in status already said how it bills (an API key login: `usage_billing`, readUsage).
   const cl = r.harnesses.claude;
   if (cl?.installed && cl.usage_reason === NO_WINDOWS_AFTER_ANSWER && !cl.usage_billing && !r.config.billing?.claude)
-    steps.push(`Claude reports no usage windows, and routr cannot tell why. If this seat has no quota (usage-based Enterprise), add "billing": "metered" under subscriptions.claude in ${r.config.path} and routr ranks it as billed usage. If it has a quota (routr has not yet seen an Enterprise seat send windows), add "billing": "included", or check again after another turn`);
+    steps.push(`Claude reports no usage windows, and routr cannot tell why. If this seat has no quota, add "billing": "metered" under subscriptions.claude in ${r.config.path} and routr ranks it as billed usage. If it has a quota, add "billing": "included", or check again after another turn`);
   if (skillsMissing(r).length || skillsIncomplete(r).length || skillsStale(r).length) steps.push("Install the routr skills that match this routr: routr skill install");
   // A folder of the same name that routr did not write is never replaced: the user moves it, or keeps theirs.
   for (const k of r.skill.filter((x) => x.ours === false && x.where.endsWith(`.agents/skills/${x.name}`))) steps.push(k.why

@@ -38,7 +38,7 @@ import { warning } from "./warnings.mjs";
 import { dirname } from "node:path";
 import { run } from "./runtime.mjs";
 import { billingFromSignIn, signInHint, signInState } from "./signin.mjs";
-import { readAgy, readClaude, readCodexLive, summarize, failedUsage, usageReadingTime, withUsageReadingTime } from "./usage.mjs";
+import { NO_WINDOWS_AFTER_ANSWER, readAgy, readClaude, readCodexLive, summarize, failedUsage, usageReadingTime, withUsageReadingTime } from "./usage.mjs";
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 // The levels a help text lists after its --effort flag: "(low, medium, high, xhigh, max)", as Claude Code and Kiro print them.
@@ -76,9 +76,15 @@ const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 
 // checked first, and a cloud provider counts only beside `third_party`. Only an ABSENT apiProvider is
 // first-party (an older answer); an explicit null or any non-string is no reading (`null` once read as
 // first-party, and a cloud provider once counted whatever authMethod said).
+// A usage-based Enterprise seat, measured 2026-10-27 (Claude Code 2.1.311, macOS): `"authMethod": "claude.ai"`,
+// `"apiProvider": "firstParty"` and `"subscriptionType": "enterprise"`, with `/usage` showing no windows and only
+// credits spent. An Enterprise seat with a quota keeps the same subscriptionType (Anthropic's Team/Enterprise
+// article: older Enterprise seats carry limits), so the plan name alone does not decide: this reading applies only
+// to a `/usage` that answered with no windows (`when`, withBilling). A failed read stays a failed read.
 const CLAUDE_AUTH = new Set(["none", "third_party", "claude.ai", "api_key_helper", "oauth_token", "api_key"]);
 const CLAUDE_CLOUD = new Set(["bedrock", "vertex", "foundry", "anthropicAws", "anthropicGoogleCloud", "mantle"]);
 const CLAUDE_CLOUD_WHY = "Claude Code runs through a cloud provider's account, billed per token by that provider (from its docs, not measured)";
+const CLAUDE_ENTERPRISE_WHY = "signed in to a Claude Enterprise seat whose /usage shows no usage windows, billed by usage";
 const CLAUDE_KEY_WHY = { api_key: "signed in with an API key, billed per token", api_key_helper: "signed in with an API key from apiKeyHelper, billed per token (not measured)" };
 export function claudeBilling(out) {
   const text = String(out ?? "");
@@ -90,7 +96,9 @@ export function claudeBilling(out) {
   const provider = Object.hasOwn(o, "apiProvider") ? o.apiProvider : "firstParty";
   if (typeof provider !== "string") return null;
   if (CLAUDE_CLOUD.has(provider)) return auth === "third_party" ? { billing: "metered", why: CLAUDE_CLOUD_WHY } : null;
-  if (provider !== "firstParty" || !Object.hasOwn(CLAUDE_KEY_WHY, auth)) return null;
+  if (provider !== "firstParty") return null;
+  if (auth === "claude.ai") return o.subscriptionType === "enterprise" ? { billing: "metered", why: CLAUDE_ENTERPRISE_WHY, when: "no_windows" } : null;
+  if (!Object.hasOwn(CLAUDE_KEY_WHY, auth)) return null;
   return { billing: "metered", why: CLAUDE_KEY_WHY[auth] };
 }
 
@@ -279,6 +287,9 @@ export async function billingFor(name, { fresh = false, harness = HARNESSES[name
 // the disagreement is noted, not resolved by a guess. The user's own `billing` still wins over this (pick.mjs).
 export function withBilling(name, u, b) {
   if (b?.billing !== "metered" || !u) return u;
+  // A reading that holds only when the seat answered with no windows (an Enterprise login) leaves windows, and a
+  // read that failed, as they are: a failed read can carry the reason from an old snapshot, and is still a failure.
+  if (b.when === "no_windows" && (u.reason !== NO_WINDOWS_AFTER_ANSWER || u.failure)) return u;
   const from = HARNESSES[name] ? `${HARNESSES[name].executable} ${HARNESSES[name].auth.check.join(" ")}` : "sign-in check";
   if (u.headroom != null) return withUsageReadingTime({ ...u, note: [u.note, `\`${from}\` says ${b.why}, yet usage windows arrived: ranked on the windows`].filter(Boolean).join("; ") }, usageReadingTime(u));
   const rest = { ...u };

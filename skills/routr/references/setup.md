@@ -128,9 +128,10 @@ the command that fixes it.
   - `billing`: `included` or `metered`, only when the harness cannot show which it is. A Codex Enterprise seat on
     flexible pricing is detected (measured: no windows, unlimited credits). So is Claude signed in with an API key,
     from `claude auth status` (measured: `"authMethod": "api_key"`), and Claude through a cloud provider such as
-    Bedrock or Vertex (from Claude Code's docs, not measured): both read as `metered`. Any other Claude seat that
-    shows no usage windows (usage-based Enterprise is expected to, not yet observed, and so may a plan routr has not
-    seen) is left to you: the advice says "no usage windows", and `routr doctor` lists it as a next step. Set
+    Bedrock or Vertex (from Claude Code's docs, not measured): both read as `metered`. So is a usage-based Claude
+    Enterprise seat (measured: `"subscriptionType": "enterprise"` and a `/usage` with no windows), but only when its
+    `/usage` answered with no windows; an Enterprise seat with a quota is ranked on its windows. Any other Claude seat
+    that shows no usage windows (a plan routr has not seen) is left to you: the advice says "no usage windows", and `routr doctor` lists it as a next step. Set
     `"billing": "metered"` for such a Claude seat by hand; `"billing": "included"` says the seat has a quota and clears
     the same step. Your setting wins over what routr detected, while no windows arrive. Leave it out otherwise.
   - `use`: `normal` or `fallback`, independent of billing. Normal accounts are considered for suitable model/effort

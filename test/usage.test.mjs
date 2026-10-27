@@ -860,6 +860,59 @@ test("windows that arrive while the sign-in status says metered are kept, and th
   expect(u.note).toContain("yet usage windows arrived: ranked on the windows");
   expect(rankSubscriptions("standard", [u], cfg()).ranked.find((x) => x.subscription === "claude")).toMatchObject({ usage: "live", class: "included" });
 });
+// `claude auth status` on a usage-based Enterprise seat, measured 2026-10-27 (Claude Code 2.1.311, macOS); its /usage
+// showed no windows and only credits spent. Email, organisation and ids made up.
+const AUTH_ENTERPRISE = JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty", analyticsDisabled: false, email: "someone@example.com", orgId: "00000000-0000-0000-0000-000000000000", orgName: "Example Org", subscriptionType: "enterprise" }, null, 2);
+test("an Enterprise login is metered only when its /usage answered with no windows", async () => {
+  const billing = HARNESSES.claude.auth.billing;
+  expect(billing(AUTH_ENTERPRISE, 0)).toMatchObject({ billing: "metered", when: "no_windows" });
+  expect(billing(AUTH_API_KEY, 0).when).toBeUndefined();
+  // Only that exact plan name, on a first-party claude.ai login: anything else is no reading.
+  for (const t of ["Enterprise", "enterprise ", "team", "max", "pro", "", null, 1, ["enterprise"], {}])
+    expect([t, billing(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty", subscriptionType: t }), 0)]).toEqual([t, null]);
+  expect(billing(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "enterprise" }), 0)).toMatchObject({ when: "no_windows" }); // absent provider is first-party
+  for (const p of ["gateway", "bedrock", null])
+    expect([p, billing(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: p, subscriptionType: "enterprise" }), 0)]).toEqual([p, null]);
+  const ent = { billing: billing(AUTH_ENTERPRISE, 0), not: null };
+  const read = (exec) => readUsage(["claude"], {}, { sources: { claude: { read: () => readClaude({ file: join(scratch("claude-enterprise"), "none.json"), nowSec: OCT5, exec }) } }, why: async () => null, billing: () => ent });
+  // No windows after an answer: metered, and doctor no longer asks for `billing`.
+  const [u] = await read(async () => claudeAnswer("Total cost: $0.0000\nUsage: 0 input, 0 output, 0 cache read, 0 cache write"));
+  expect(u).toMatchObject({ class: "metered", headroom: null, source: "claude auth status", billing: { billing: "metered", source: "claude auth status" } });
+  expect(u.reason).toBeUndefined(); expect(u.note).toContain("Enterprise");
+  expect(rankSubscriptions("standard", [u], cfg()).ranked.find((x) => x.subscription === "claude")).toMatchObject({ class: "metered", usage: "metered", usable: null });
+  // A read that failed is not a seat without a quota: it stays a failure on the assumed headroom.
+  const [failed] = await read(async () => null);
+  expect(failed.class).not.toBe("metered"); expect(failed.billing).toBeUndefined(); expect(failed.failure).toBeDefined();
+  // Claude's /usage is read with its exit status: an answer printed before a non-zero exit is no answer (run's exitZero).
+  let opts; await read(async (cmd, args, o) => { opts = o; return null; }); expect(opts).toMatchObject({ exitZero: true });
+  // An answer routr cannot read is not "no windows": an empty result, a window line cut short, or one Claude did not mark a success.
+  for (const exec of [async () => claudeAnswer(""), async () => claudeAnswer("  \n"), async () => claudeAnswer("Current session: 100%"),
+    async () => claudeAnswer("Current week (all models): 30% used · resets"), async () => claudeAnswer("Total cost: $0.0000", { subtype: "error_during_execution" }),
+    async () => JSON.stringify({ type: "result", is_error: false, result: "Total cost: $0.0000" })]) {
+    const [bad] = await read(exec);
+    expect([bad.class, bad.billing, bad.failure?.code, bad.reason]).toEqual(["unknown", undefined, "invalid_response", undefined]);
+  }
+  // Nor when an old snapshot said Claude answered with no windows: the failed read keeps that reason, and is still a failure.
+  for (const [exec, age] of [[async () => null, 60], [async () => { throw new Error("hung"); }, 30 * 86400], [async () => "not json", 60]]) {
+    const file = join(scratch("claude-enterprise-snap"), "snap.json"); writeFileSync(file, JSON.stringify({ ts: OCT5 - age, answered: true }));
+    const [kept] = await readUsage(["claude"], {}, { sources: { claude: { read: () => readClaude({ file, nowSec: OCT5, exec }) } }, why: async () => null, billing: () => ent });
+    expect([kept.reason, kept.class, kept.billing, Boolean(kept.failure)]).toEqual(["no_windows_after_answer", "unknown", undefined, true]);
+  }
+  // An Enterprise seat with a quota shows windows: ranked on them, with no disagreement noted.
+  const [quota] = await readUsage(["claude"], {}, { sources: { claude: { read: async () => live("claude", 0.6) } }, why: async () => null, billing: () => ent });
+  expect(quota).toMatchObject({ headroom: 0.6 }); expect(quota.class).not.toBe("metered"); expect(String(quota.note ?? "")).not.toContain("yet usage windows arrived");
+  // The user's `billing: "included"` still wins.
+  expect(rankSubscriptions("standard", [u], cfg({ subscriptions: { claude: { ...cfg().subscriptions.claude, billing: "included" } } })).ranked.find((x) => x.subscription === "claude")).toMatchObject({ class: "included", usage: "assumed" });
+});
+test("the Enterprise reading is kept with its condition, and nothing the status printed about the account", async () => {
+  const { billingFromSignIn, signInState } = await import("../src/lib/signin.mjs");
+  const file = join(scratch("signin-enterprise"), "signed-in.json"), name = "claude-enterprise-fixture"; // not "claude": other tests read that name
+  expect(await signInState(name, HARNESSES.claude, { file, nowSec: 1_800_000_000, ask: async () => ({ out: AUTH_ENTERPRISE, code: 0 }) })).toBe("yes");
+  expect(billingFromSignIn(name)).toMatchObject({ billing: "metered", when: "no_windows" });
+  const kept = readFileSync(file, "utf8");
+  expect(JSON.parse(kept)[name].billing).toEqual(billingFromSignIn(name));
+  for (const leak of ["someone@example.com", "Example Org", "00000000-0000", "orgId", "email", "subscriptionType"]) expect(kept).not.toContain(leak);
+});
 test("a login switched within the sign-in cache's 6 hours: a reading without windows asks the status again, one with windows does not", async () => {
   const { signInState } = await import("../src/lib/signin.mjs");
   const { billingFor } = await import("../src/lib/harnesses.mjs");
