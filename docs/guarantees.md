@@ -154,8 +154,8 @@ writes only:
 - its own binary, when it updates itself;
 - the skill folders, on `skill install` (and the updater's reinstall);
 - a file at a path you name for that command (`share --out`, a `--ledger` or `--config` you give);
-- the files `launch --copy` copies into a worker's worktree (which `cleanup` removes again only while they are
-  unchanged);
+- the files `launch --copy` copies into a worker's worktree, in a pane or headless, never through a link and never
+  over a file the worktree has (which `cleanup` removes again only while they are unchanged);
 - temporary files it removes: the private herdr session `usage cursor` makes, the empty Kiro session `usage kiro`
   deletes again, the private folder each Claude `/usage` read runs in, with the empty `~/.claude/projects` folder
   Claude makes for it, removed after a normal exit (a timed-out read can leave that one empty folder), and the private
@@ -163,7 +163,7 @@ writes only:
   shell removes the launch copy when Cursor exits; a launch that failed after Cursor started keeps it and says so).
 
 One exception: `uninstall` removes the `statusLine` entry an earlier routr's `setup` set in `~/.claude/settings.json`,
-after a backup, and only when it runs `routr statusline`.
+after a backup, and only when it runs `routr statusline`. It writes the file whole, where a link to it points.
 
 `uninstall` removes the binary, routr's own skills (above), `~/.cache/routr` and `~/.local/state/routr` (sockets
 and locks). It reports a running OpenTelemetry sender. A request already in flight can finish within its 10 s

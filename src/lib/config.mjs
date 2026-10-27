@@ -40,6 +40,11 @@ export function loadConfig(path = CONFIG_PATH) {
   } catch (e) {
     notes.push(warning("config_unreadable", `config unreadable (${String(e?.message ?? e).slice(0, 80)}): using defaults`));
   }
+  // Valid JSON that is not an object (`null`, a list, a number) holds no settings: the same as an unreadable file.
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    notes.push(warning("config_unreadable", `config unreadable (${Array.isArray(raw) ? "a list" : JSON.stringify(raw)}, not an object): using defaults`));
+    raw = {};
+  }
   // Every number here is a share between 0 and 1. Anything else (a reserve of -1 would turn an empty subscription into
   // a full one) is reported and replaced by the default.
   const share = (v, fallback, where) => { if (v === undefined) return fallback; if (typeof v === "number" && v >= 0 && v <= 1) return v; notes.push(warning("config_share", `${where}: ${JSON.stringify(v)} is not a number from 0 to 1, using ${fallback ?? "the decision model's own"}`)); return fallback; };

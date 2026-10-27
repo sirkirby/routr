@@ -5,11 +5,11 @@
 // which is this binary) is routr's, and only `routr cleanup --worker` removes one with its checks. And the worktrees a
 // headless launch made sit inside ~/.local/share/routr, so `--purge` would delete them unchecked. While any is there,
 // uninstall removes nothing and says what to run (found in the doc sweep of 2026-10-23: `--purge` removed them whole).
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { notOursWhy, owner, removeOwned, skillPlaces } from "./skill-install.mjs";
-import { folderId, lockIsStale, home as userHome, releaseFileLock, standalone, start, takeLock, UNINSTALL_LOCK } from "./runtime.mjs";
+import { folderId, lockIsStale, home as userHome, releaseFileLock, standalone, start, takeLock, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
 import { FORMAT } from "./headless.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { otelSenderRunning } from "./otel.mjs";
@@ -131,7 +131,7 @@ export async function uninstall(args, { home = userHome(), platform = process.pl
     if (isOurStatusline(settings.statusLine?.command)) {
       copyFileSync(file, `${file}.bak-before-routr-uninstall`);
       delete settings.statusLine;
-      writeFileSync(file, JSON.stringify(settings, null, 2) + "\n");
+      writeJsonAtomic(file, settings, { indent: 2, preserveOnError: true, userFile: true }); // Claude's file: whole, through its link
       removed.push("the statusline entry in ~/.claude/settings.json");
     }
   } catch (e) { failed.push(`~/.claude/settings.json: ${String(e?.message ?? e).slice(0, 100)}`); }

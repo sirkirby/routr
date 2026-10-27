@@ -92,8 +92,11 @@ export function readJsonFile(file, { busyFor = process.platform === "win32" ? RE
     pause(5);
   }
 }
-export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync,
+// `userFile`: a file the person may keep elsewhere (config.json, Claude's settings.json linked from a dotfiles folder):
+// written where its link points, keeping the link, and with the mode it has.
+export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync, userFile = false,
   busyFor = process.platform === "win32" ? REPLACE_BUSY_MS : 0, now = () => performance.now(), pause = (ms) => Atomics.wait(replacePause, 0, 0, ms) } = {}) {
+  if (userFile) { file = realOr(file); try { mode ??= statSync(file).mode & 0o777; } catch {} }
   if (mkdir) ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
   try {

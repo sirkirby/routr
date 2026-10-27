@@ -136,10 +136,10 @@ async function planWorktree(o, cwd) {
 }
 // A folder itself, reached through no link or junction on the way: its real path is the path.
 const realFolder = (p) => { try { return lstatSync(p).isDirectory() && realPath(p) === p; } catch { return false; } };
-// --copy: from the folder launch was given, to the same place in the worktree, never through a link (a folder in the
+// --copy, in a pane's worktree and a headless one: from the folder launch was given, to the same place in the worktree, never through a link (a folder in the
 // commit that links elsewhere) and never over a file the worktree has. Records each file it made relative to the
 // worktree, as dropCopy takes it, and each folder by its full path in the worktree.
-function copyInto(from, root, rel, made) {
+export function copyInto(from, root, rel, made = { files: [], dirs: [] }) {
   const parts = rel.split(/[\\/]/).filter(Boolean);
   let at = root;
   for (const part of parts.slice(0, -1)) {

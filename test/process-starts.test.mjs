@@ -141,9 +141,8 @@ const ALLOWED = [
   ["lib/runtime.mjs", "platform adapters", "via(...prepare(cmd, args, opts, platform))", 2],
   ["lib/runtime.mjs", "Windows taskkill", '(via ?? spawn)(exe, ["/PID", String(child.pid), "/T", "/F"], startOptions({ stdio: "ignore" }))', 1],
   ["lib/herdr.mjs", "herdr clients", 'via("herdr", args, { stdio: ["ignore", "pipe", "pipe"] })', 1],
-  ["lib/update.mjs", "updater version inspection", 'spawn(self, ["--version"], { encoding: "utf8", timeout: 15000 })', 1],
-  ["lib/update.mjs", "updater version confirmation", 'spawn(self, ["--version"], { encoding: "utf8" })', 1],
-  ["lib/update.mjs", "updater skill install", 'spawn(self, ["skill", "install"], { encoding: "utf8" })', 1],
+  ["lib/update.mjs", "updater version inspection and confirmation", 'spawn(self, ["--version"], { encoding: "utf8", timeout: ASK_BINARY_MS })', 2],
+  ["lib/update.mjs", "updater skill install", 'spawn(self, ["skill", "install"], { encoding: "utf8", timeout: SKILL_INSTALL_MS })', 1],
   ["lib/update.mjs", "detached updater", 'spawn(["update", "--background"])', 1],
   ["lib/uninstall.mjs", "uninstall's Windows removal", 'start("cmd", ["/c", `ping -n 4 127.0.0.1 >nul & del /f /q ${basename(aside)}`], { cwd: dirname(aside), detached: true, stdio: "ignore" })', 1],
 ].map(([file, why, call, count]) => ({ file, why, call: compact(call), count }));

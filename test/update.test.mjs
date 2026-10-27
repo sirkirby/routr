@@ -61,11 +61,13 @@ test("routr update reports a real swap as an update and reinstalls the skill (th
   const { assetName } = await import("../src/lib/update.mjs");
   const fetchFn = async (u) => served(String(u).endsWith("SHA256SUMS") ? Buffer.from(`${sum}  ${assetName()}\n`) : fresh);
   const calls = [];
-  const spawn = (file, args) => { calls.push([file, args[0]]); return { status: 0, stdout: args[0] === "--version" ? "9.9.9\n" : "" }; };
+  const spawn = (file, args, opts) => { calls.push([file, args[0], opts?.timeout]); return { status: 0, stdout: args[0] === "--version" ? "9.9.9\n" : "" }; };
   const r = await update({ base: "http://fake.invalid/r", self, fetchFn, spawn, isStandalone: () => true });
   expect(r).toMatchObject({ ok: true, updated: true, now: "9.9.9", skill_reinstalled: true });
   expect(readFileSync(self, "utf8")).toBe("NEW-BINARY");
-  expect(calls).toEqual([[self, "--version"], [self, "skill install".split(" ")[0]]]);
+  // Each start of the new binary has a limit: a hang must not keep the update lock (held by a live pid) forever.
+  const { ASK_BINARY_MS, SKILL_INSTALL_MS } = await import("../src/lib/update.mjs");
+  expect(calls).toEqual([[self, "--version", ASK_BINARY_MS], [self, "skill install".split(" ")[0], SKILL_INSTALL_MS]]);
   // A failure after the swap is still an update, and says so.
   writeFileSync(self, "OLD");
   const bad = await update({ base: "http://fake.invalid/r", self, fetchFn, spawn: () => { throw new Error("spawn broke"); }, isStandalone: () => true });

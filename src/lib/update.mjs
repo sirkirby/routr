@@ -74,6 +74,11 @@ const isPre = (v) => String(v).includes("-");
 // trickle cannot hold the update lock forever (82 MB in 30 min is ~0.05 MB/s, far below the slowest link seen).
 export const DOWNLOAD_STALL_MS = 30_000;
 export const DOWNLOAD_MAX_MS = 30 * 60_000;
+// Every start of a binary the updater asks something (`--version`, `skill install`) has a limit: one that hangs (a
+// first-run Gatekeeper check, a bad build) would otherwise keep the update lock held by a live pid, which never
+// reads as stale, and every later update would say another one is running.
+export const ASK_BINARY_MS = 15_000;
+export const SKILL_INSTALL_MS = 60_000;
 const span = (ms) => (ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`);
 
 // Fetch `url` and hand each chunk of its body to `onChunk` as it arrives: nothing holds the whole binary in
@@ -155,7 +160,7 @@ export function sweepStaging(self) {
 // against the running process's version could let an older detached update overwrite a newer one a person
 // had installed by hand meanwhile; the swap now compares against what is actually there.
 export function installedVersion(self, spawn = startSync) {
-  try { const v = String(spawn(self, ["--version"], { encoding: "utf8", timeout: 15000 })?.stdout ?? "").trim(); return /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(v) ? v.replace(/^v/, "") : null; }
+  try { const v = String(spawn(self, ["--version"], { encoding: "utf8", timeout: ASK_BINARY_MS })?.stdout ?? "").trim(); return /^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(v) ? v.replace(/^v/, "") : null; }
   catch { return null; }
 }
 
@@ -233,9 +238,9 @@ export async function update({ checkOnly = false, force = false, base = process.
     // From here on the new binary is in place: whatever happens next, the result must say so (0.1.14 to 0.1.16 threw
     // on an undeclared name here and reported "Nothing was changed" after every successful update).
     out.updated = true;
-    const v = spawn(self, ["--version"], { encoding: "utf8" });
+    const v = spawn(self, ["--version"], { encoding: "utf8", timeout: ASK_BINARY_MS });
     out.now = (v.stdout ?? "").trim() || null;
-    const skill = skillOutcome(spawn(self, ["skill", "install"], { encoding: "utf8" }));
+    const skill = skillOutcome(spawn(self, ["skill", "install"], { encoding: "utf8", timeout: SKILL_INSTALL_MS }));
     const s = skill.skill, said = s && (s.kept.length || s.failed.length) ? ` · skills: ${s.installed.length} installed, ${s.kept.length} kept, ${s.failed.length} failed${s.kept.length ? " (skill_repair says what to do)" : ""}` : "";
     return { ...out, ok: true, updated: true, ...skill, note: `updated ${current} → ${out.now ?? out.latest}${on}${said}` };
   } catch (e) {

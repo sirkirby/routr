@@ -1,7 +1,7 @@
 // setup.mjs, doctor.mjs, uninstall.mjs: what the user sees when setting routr up and taking it down
 import { expect, test } from "bun:test";
 import { dirname, join } from "node:path";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { claudeSnapshot } from "../src/lib/usage.mjs";
 import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
@@ -461,8 +461,11 @@ test("routr uninstall keeps the user's data unless purged, removes only routr's 
   for (const d of [".config/routr", ".local/share/routr", ".cache/routr", ".claude", ".kiro"]) mkdirSync(join(home, d), { recursive: true });
   installSkill({ home });
   writeFileSync(join(home, ".config/routr/config.json"), "{}");
-  writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ model: "opus", statusLine: { type: "command", command: "/x/routr statusline" } }));
   const linked = process.platform !== "win32";
+  // Claude's settings kept in a dotfiles folder and linked: the link is the person's, and stays one.
+  const settingsAt = linked ? join(checkout, "claude-settings.json") : join(home, ".claude/settings.json");
+  writeFileSync(settingsAt, JSON.stringify({ model: "opus", statusLine: { type: "command", command: "/x/routr statusline" } }));
+  if (linked) (await import("node:fs")).symlinkSync(settingsAt, join(home, ".claude/settings.json"));
   // A developer's own link into their checkout, where routr's link was: not routr's, so it stays.
   if (linked) { rmSync(join(home, ".claude/skills/routr"), { recursive: true, force: true }); (await import("node:fs")).symlinkSync(checkout, join(home, ".claude/skills/routr"), "dir"); }
   expect(uninstallPlan({ home }).keep.length).toBe(2);
@@ -480,6 +483,7 @@ test("routr uninstall keeps the user's data unless purged, removes only routr's 
   expect(existsSync(join(home, ".kiro/skills/routr-orchestrate")) || existsSync(join(home, ".agents/skills/routr-orchestrate"))).toBe(false);
   if (linked) expect(readFileSync(join(home, ".claude/skills/routr/SKILL.md"), "utf8")).toBe("mine"); // the developer's link and its target stay
   expect(JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8"))).toEqual({ model: "opus" });
+  if (linked) { expect(lstatSync(join(home, ".claude/settings.json")).isSymbolicLink()).toBe(true); expect(JSON.parse(readFileSync(settingsAt, "utf8"))).toEqual({ model: "opus" }); }
   expect(Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes", "--purge"], { env }).exitCode).toBe(0);
   expect(existsSync(join(home, ".config/routr"))).toBe(false);
   // Someone else's statusline is not ours to remove.
