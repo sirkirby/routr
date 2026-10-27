@@ -99,9 +99,11 @@ const linkTarget = (file) => {
   for (let i = 0; i < 40; i++) {
     let st; try { st = lstatSync(file); } catch { return file; }
     if (!st.isSymbolicLink()) return realOr(file);
-    file = resolve(dirname(file), readlinkSync(file));
+    // From the folder's real path: `..` in a link is taken where the folder really is (a lexical resolve of
+    // alias/nested -> ../x landed beside the alias, on another file).
+    file = resolve(realOr(dirname(file)), readlinkSync(file));
   }
-  return file; // a loop of links: rename then fails on it, and the error is said
+  throw new Error(`${file}: too many links (a loop?); nothing was written`);
 };
 export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync, userFile = false,
   busyFor = process.platform === "win32" ? REPLACE_BUSY_MS : 0, now = () => performance.now(), pause = (ms) => Atomics.wait(replacePause, 0, 0, ms) } = {}) {

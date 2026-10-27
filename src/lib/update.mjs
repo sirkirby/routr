@@ -321,10 +321,10 @@ export async function backgroundUpdate({ run = update } = {}) {
     const { config } = loadConfig();
     // Telemetry first: it is quick, and an update that swaps the binary should not take it with it.
     forgetConsentUnlessOn(config);
-    if (telemetryStatus(config).on) { const t = await sendRows().catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) })); writeJsonAtomic(TELEMETRY_LOG(), { at: new Date().toISOString(), ...t }); }
+    if (telemetryStatus(config).on) { const t = await sendRows().catch((e) => ({ ok: false, error: String(e?.message ?? e).slice(0, 160) })); writeJsonAtomic(TELEMETRY_LOG(), { at: new Date().toISOString(), ...t }, { preserveOnError: true }); }
     if (!updatesOn(config)) return;
     const r = await run({ channel: config.update_channel }, { owned: () => lockOwned(LOCK(), token) });
-    if (lockOwned(LOCK(), token)) writeJsonAtomic(UPDATE_LOG(), updateRecord(r, config.update_channel)); // whole: status never reads a half-written one
+    if (lockOwned(LOCK(), token)) writeJsonAtomic(UPDATE_LOG(), updateRecord(r, config.update_channel), { preserveOnError: true }); // whole and never missing: status reads it
   } finally { releaseFileLock(LOCK(), token); }
 }
 

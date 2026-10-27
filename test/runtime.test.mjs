@@ -750,3 +750,16 @@ test.skipIf(process.platform === "win32")("writeJsonAtomic userFile keeps a link
   try { runtime.writeJsonAtomic(link, { a: 2 }, { userFile: true, preserveOnError: true }); } finally { process.umask(was); }
   expect(statSync(target).mode & 0o777).toBe(0o660);
 });
+
+test.skipIf(process.platform === "win32")("writeJsonAtomic userFile takes a link's .. where its folder really is, and refuses a loop of links", () => {
+  const dir = scratch("user-file-links");
+  mkdirSync(join(dir, "physical", "nested"), { recursive: true }); symlinkSync("physical/nested", join(dir, "alias"));
+  writeFileSync(join(dir, "physical", "target.json"), "{}"); writeFileSync(join(dir, "target.json"), JSON.stringify({ owner: "unrelated" }));
+  symlinkSync("../target.json", join(dir, "physical", "nested", "settings.json"));
+  runtime.writeJsonAtomic(join(dir, "alias", "settings.json"), { a: 1 }, { userFile: true, preserveOnError: true });
+  expect(JSON.parse(readFileSync(join(dir, "physical", "target.json"), "utf8"))).toEqual({ a: 1 });
+  expect(JSON.parse(readFileSync(join(dir, "target.json"), "utf8"))).toEqual({ owner: "unrelated" });
+  symlinkSync("b.json", join(dir, "a.json")); symlinkSync("a.json", join(dir, "b.json"));
+  expect(() => runtime.writeJsonAtomic(join(dir, "a.json"), { a: 1 }, { userFile: true })).toThrow("too many links");
+  expect(lstatSync(join(dir, "a.json")).isSymbolicLink()).toBe(true);
+});
