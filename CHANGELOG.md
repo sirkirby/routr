@@ -17,6 +17,8 @@ A short history of what changed in each routr release, one line per change. Each
 - `routr cleanup --worktree <branch>` no longer answers "nothing to remove" when the worker left its worktree detached
   from the branch: it keeps the worktree and gives the `--path` command that removes it once checked. `cleanup --worker` no longer calls
   its own detached worktree someone else's (#127).
+- A usage-based Claude Enterprise seat, whose `/usage` shows no usage windows, is now ranked as `metered` instead of
+  `unknown` on an assumed headroom; an Enterprise seat that shows windows is still ranked on them (#PR).
 
 ## v0.9.1 — 2026-10-26
 
