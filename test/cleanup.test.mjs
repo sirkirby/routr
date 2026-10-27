@@ -303,3 +303,14 @@ test("cleanup next keeps Windows paths exact, and uses argv for UNC paths", asyn
     expect(r).not.toHaveProperty("refused");
   }
 });
+
+test("a worker's worktree left detached is not absent: cleanup by branch refuses and names its folder", async () => {
+  const f = fake({ worktrees: [wt(null, { path: "/wt/rev-a", is_detached: true }), wt(null, { path: "/wt/feat-x", is_detached: true }), wt(null, { path: "/wt/other", is_detached: true })] });
+  const r = await cleanup(["--cwd", "/repo", "--worktree", "rev-a"], f.deps);
+  expect(r).toMatchObject({ ok: false, state: "refused", worktree: { path: "/wt/rev-a", detached: true } });
+  expect(r.headline).toContain("no worktree is on branch rev-a");
+  expect(r.next[0].argv).toEqual(["routr", "cleanup", "--cwd", resolve("/repo"), "--path", "/wt/rev-a"]);
+  expect((await cleanup(["--cwd", "/repo", "--worktree", "feat/x"], f.deps)).next[0].argv).toContain("/wt/feat-x");
+  expect(await cleanup(["--cwd", "/repo", "--worktree", "typo"], f.deps)).toMatchObject({ ok: true, state: "absent" });
+  expect(f.calls.some((a) => a[1] === "remove") || f.gits.some((g) => g[1] === "worktree" && g[2] === "remove")).toBe(false);
+});

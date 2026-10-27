@@ -998,6 +998,11 @@ test("cleanup --worker keeps a worktree that took the place of the one launch ma
   expect(l.state).toBe("prompted");
   w.run(["wait", "--name", "r1", "--timeout", "20000"]);
   await w.settled("r1");
+  // The worker's own folder, detached from its branch: still the worker's, but what it holds is not checked.
+  g("-C", l.worktree.path, "checkout", "-q", "--detach");
+  const detached = w.run(["cleanup", "--worker", "r1"]);
+  expect([detached.state, detached.headline]).toEqual(["refused", `routr: kept r1: the worktree at ${l.worktree.path} is detached, no longer on work/r1: what it holds is not checked`]);
+  expect(detached.next[0].why).toContain(`--path ${l.worktree.path}`);
   g("worktree", "remove", l.worktree.path); g("worktree", "add", "-q", "-b", "other", l.worktree.path);
   const kept = w.run(["cleanup", "--worker", "r1"]);
   expect([kept.state, kept.headline]).toEqual(["refused", `routr: kept r1: the worktree at ${l.worktree.path} is on branch other, not on work/r1: it is not the one launch made`]);

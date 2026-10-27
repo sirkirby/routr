@@ -17,7 +17,7 @@ import { warning } from "./warnings.mjs";
 import { commandTrace, cleanupLink } from "./traces.mjs";
 import { configOf, oneReading } from "./config.mjs";
 import { lstatSync, readFileSync, readlinkSync, rmSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { BRANCH, runHerdr } from "./herdr.mjs";
 import { count } from "./wording.mjs";
@@ -273,6 +273,16 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
     if (!w) {
       const main = (list.worktrees ?? []).find((x) => !x.is_linked_worktree);
       if (main && (main.branch === o.worktree || (o.path != null && real(main.path) === real(resolve(o.path))))) return refuse("That is the main checkout, not a worker's worktree", doNext("Name a worker's worktree"));
+      // A worker that checked out a commit leaves its worktree on no branch, but the folder made for the branch is
+      // still there: not absent. Found by its folder name and never removed on that guess.
+      const names = o.worktree != null ? [o.worktree, o.worktree.replace(/[\\/]/g, "-"), o.worktree.split("/").pop()] : [];
+      const detached = linked.filter((x) => x.is_detached && names.includes(basename(x.path)));
+      if (detached.length) {
+        if (detached.length === 1) out.worktree = brief(detached[0]);
+        const which = detached.length === 1 ? "this detached one" : `${count(detached.length, "detached worktree")} (${few(detached.map((x) => x.path))})`;
+        return refuse(`no worktree is on branch ${o.worktree}, but ${which} may be its worker's`,
+          detached.map((x) => runNext(`Check ${x.path} is this worker's, then remove it by its folder.`, ["routr", "cleanup", "--cwd", out.cwd, "--path", x.path])));
+      }
       out.ok = true; out.state = "absent";
       step("worktree", true, `No worktree of ${source} ${o.worktree != null ? `is on branch ${o.worktree}` : `at ${o.path}`}: nothing to remove`);
       if (linked.length) {

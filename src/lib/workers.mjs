@@ -531,6 +531,8 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
       const there = listed.ok ? worktreesFromGit(listed.out).worktrees.find((x) => x.is_linked_worktree && realOr(x.path) === realOr(w.worktree.path)) : null;
       if (!listed.ok) return refuse(`git could not list the worktrees of ${w.worktree.source} (${listed.code})`, runNext("Look at them.", ["git", "-C", w.worktree.source, "worktree", "list"]));
       const finish = doNext(`Look at ${w.worktree.path}; finish it with routr cleanup --cwd ${w.worktree.source} --path ${w.worktree.path} if it should go.`);
+      // A detached one may still be the worker's own (it checked out a commit): never removed on that guess either.
+      if (there?.is_detached && folderId(w.worktree.path) === w.worktree.folder) return refuse(`the worktree at ${w.worktree.path} is detached, no longer on ${w.worktree.branch}: what it holds is not checked`, finish);
       if (there && there.branch !== w.worktree.branch) return refuse(`the worktree at ${w.worktree.path} is ${there.branch ? `on branch ${there.branch}` : "detached"}, not on ${w.worktree.branch}: it is not the one launch made`, finish);
       if (there && folderId(w.worktree.path) !== w.worktree.folder) return refuse(`the worktree at ${w.worktree.path} was made again since launch: it is not the one launch made`, finish);
       const r = await cleanup(["--cwd", w.worktree.source, "--path", w.worktree.path, ...(deleteBranch ? ["--delete-branch"] : []), ...(dryRun ? ["--dry-run"] : [])], { env: {}, assertOwned });
