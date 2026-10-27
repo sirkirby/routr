@@ -15,7 +15,7 @@
 // limit this narrows and does not close.
 import { warning } from "./warnings.mjs";
 import { commandTrace, cleanupLink } from "./traces.mjs";
-import { loadConfig } from "./config.mjs";
+import { configOf, oneReading } from "./config.mjs";
 import { lstatSync, readFileSync, readlinkSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
@@ -23,7 +23,7 @@ import { BRANCH, runHerdr } from "./herdr.mjs";
 import { count } from "./wording.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, callGit, processError, processSteps } from "./process-boundary.mjs";
-import { probe, realOr, realPath } from "./runtime.mjs";
+import { probe, realOr, realPath, WORKER_NAME } from "./runtime.mjs";
 
 const herdrLine = (args) => displayCommand(["herdr", ...args]);
 const gitIn = (dir, args) => probe("git", ["-C", dir, ...args], { timeoutMs: 15000, separate: true });
@@ -45,7 +45,7 @@ export function parseCleanupArgs(args) {
     o[key] = args[++i];
   }
   if ([o.worktree, o.path, o.pane, o.worker].filter((v) => v != null).length > 1) throw new Error("Name one worker: --worktree, --path, --pane, or --worker");
-  if (o.worker != null && !/^[a-z][a-z0-9_-]{0,31}$/.test(o.worker)) throw new Error("--worker must be a worker's name");
+  if (o.worker != null && !WORKER_NAME.test(o.worker)) throw new Error("--worker must be a worker's name");
   if (o.worker != null && o.cwd != null) throw new Error("--worker takes no --cwd: the worker's run folder says where its worktree is");
   if (o.worktree != null && !BRANCH.test(o.worktree)) throw new Error("--worktree must be a plain branch name");
   if (o.deleteBranch && o.worktree == null && o.path == null && o.worker == null) throw new Error("--delete-branch goes with --worktree, --path or --worker");
@@ -331,4 +331,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
   return out;
 }
 
-export const cleanup = (args, opts = {}) => commandTrace("cleanup", () => ({ config: ((opts.settings ?? (() => loadConfig()))()).config, ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined }), () => cleanupBody(args, opts));
+export const cleanup = (args, opts = {}) => {
+  const settings = oneReading(opts.settings);
+  return commandTrace("cleanup", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined }), () => cleanupBody(args, { ...opts, settings }));
+};

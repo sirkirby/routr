@@ -3,12 +3,13 @@
 // exact answers, latency and tokens.
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { ensureParent } from "./runtime.mjs";
+import { TOKEN_USAGE } from "./otel-schema.mjs";
 import { DecisionError, DecisionListError, decisionTarget, decisionTargets, decisionUnavailable, isModel, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 
 // ---------------------------------------------------------------- secrets
 // One owner-only file of NAME=value lines outside any project, so workers in worktrees and other folders find it too.
 // An environment variable of the same name wins (the names the providers' own tools read).
-export function readSecretsFile(file = SECRETS_FILE) {
+export function readSecretsFile(file = SECRETS_FILE()) {
   const out = {};
   if (!existsSync(file)) return out;
   for (const line of readFileSync(file, "utf8").split("\n")) {
@@ -21,7 +22,7 @@ export function readSecretsFile(file = SECRETS_FILE) {
 // The values a provider needs, read per call (never at import: a missing one is a catchable error, nothing
 // stale is kept). Throws with what to do when one is missing. The file is read only when the environment does
 // not supply everything: an unreadable file must not block a key given in the environment.
-export function secretsFor(provider, { env = process.env, file = SECRETS_FILE, target = { provider } } = {}) {
+export function secretsFor(provider, { env = process.env, file = SECRETS_FILE(), target = { provider } } = {}) {
   const P = PROVIDERS[provider], out = {};
   let saved = null;
   for (const s of P.secrets) {
@@ -37,7 +38,7 @@ export function secretsFor(provider, { env = process.env, file = SECRETS_FILE, t
 // Merges into the file: the other lines (another provider's key, a comment) stay as they were. A name set more
 // than once keeps one line, the new value in the first one's place: readSecretsFile takes the last, so a stale
 // duplicate left below would win.
-export function writeSecrets(values, file = SECRETS_FILE) {
+export function writeSecrets(values, file = SECRETS_FILE()) {
   let lines = existsSync(file) ? readFileSync(file, "utf8").split("\n").filter((l, i, a) => l !== "" || i < a.length - 1) : [];
   const nameOf = (l) => l.match(/^\s*([A-Za-z_][A-Za-z0-9_-]*)\s*=/)?.[1];
   for (const [name, value] of Object.entries(values)) {
@@ -168,7 +169,7 @@ async function askOne(state, questions, { config, deadlineMs, env = process.env,
     const j = P.unwrap(raw);
     if (!j) throw new DecisionError(t, P.errorCode?.(raw) ?? "invalid_response");
     const answers = readAnswers(j?.answers, questions, t);
-    const usage = object(j.usage) ? Object.fromEntries(Object.entries(j.usage).filter(([k, v]) => ["input_tokens", "output_tokens", "total_tokens", "cache_read.input_tokens", "cache_write.input_tokens", "reasoning.output_tokens"].includes(k) && Number.isSafeInteger(v) && v >= 0)) : undefined;
+    const usage = object(j.usage) ? Object.fromEntries(Object.entries(j.usage).filter(([k, v]) => [...TOKEN_USAGE, "total_tokens"].includes(k) && Number.isSafeInteger(v) && v >= 0)) : undefined;
     const model = P.identity(j.model) ? j.model : t.model;
     // A validated identity can still be an unmeasured version. Keep the fallback profile for reading its answers,
     // but only claim a measurement for the model that answered, not the pin or alias it was requested through.

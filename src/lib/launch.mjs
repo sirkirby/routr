@@ -6,7 +6,7 @@ import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, s
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "./config.mjs";
+import { configOf, loadConfig, oneReading } from "./config.mjs";
 import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesses.mjs";
 import { dispatchAdvice, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
 import { displayCommand, doNext, launchNext, runNext, templateCommand } from "./next.mjs";
@@ -14,7 +14,7 @@ import { CLOSING, OFF } from "./wording.mjs";
 import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, promptReadArgs, runHerdr, SHELLS, shellFamily, splitArgs, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
-import { CARRIERS, carrierValues, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
+import { CARRIERS, carrierValues, FORWARDED, home, NAME_RULE, WORKER_NAME, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
 import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
 
 // The guide is the source of this instruction, embedded at build time just like the installed skills.
@@ -23,13 +23,13 @@ const STARTUP_INPUT = orchestratorGuide.match(/<!-- startup-input -->\s*([\s\S]*
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
 // around it, so it points at the installed skill (written by the installer or `routr skill install`).
 const besideSource = fileURLToPath(new URL("../../skills/routr/references/worker.md", import.meta.url));
-export const WORKER_GUIDE = existsSync(besideSource) ? besideSource : join(home(), ".agents/skills/routr/references/worker.md");
+export const WORKER_GUIDE = () => existsSync(besideSource) ? besideSource : join(home(), ".agents/skills/routr/references/worker.md");
 // The first words of every launch prompt.
 export const PROMPT_OPENING = "You are a routr worker.";
 // `rules` is the lead's process text (what the worker may and may not do, how to report, git steps): the worker reads it
 // after the task, and routr never does. Only the task is the work that `dispatch` and `--advice` judge. (Measured
 // 2026-09-26: 18 of 36 real tasks carried such text, 5 to 38% of each, and it moved Jev's readings.)
-export function composePrompt(task, guide = WORKER_GUIDE, rules = null) {
+export function composePrompt(task, guide = WORKER_GUIDE(), rules = null) {
   return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}${rules ? `\n\n${rules.trim()}` : ""}\n\n${CLOSING}`;
 }
 
@@ -78,7 +78,7 @@ export function parseLaunchArgs(args) {
   if (o.worktree && !BRANCH.test(o.worktree)) throw new Error("--worktree must be a plain branch name");
   // A branch, tag, commit, or one relative to them (main~2, HEAD^): never an option or a range (a..b, HEAD^@, HEAD^-1).
   if (o.base && (!/^[A-Za-z0-9][A-Za-z0-9._\/@^~-]{0,200}$/.test(o.base) || o.base.includes("..") || /\^[-@!]/.test(o.base))) throw new Error("--base must name one commit: a branch, tag, or commit id");
-  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(o.name ?? "")) throw new Error("--name must match [a-z][a-z0-9_-]{0,31}");
+  if (!WORKER_NAME.test(o.name ?? "")) throw new Error(`--name must match ${NAME_RULE}`);
   if (o.direction && !["right", "down"].includes(o.direction)) throw new Error("--direction must be right or down");
   if (o.task != null && o["task-file"] != null) throw new Error("Use only one of --task and --task-file");
   if (o["rules-file"] != null && o.task == null && o["task-file"] == null) throw new Error("--rules-file goes with a task: pass --task-file (or --task) too");
@@ -143,7 +143,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     if (task != null && !task.trim()) throw new Error("The task must not be empty");
     const rules = o["rules-file"] != null ? readFileSync(resolve(o["rules-file"]), "utf8") : null;
     if (rules != null && !rules.trim()) throw new Error("The rules file must not be empty");
-    const prompt = task == null ? null : composePrompt(task, WORKER_GUIDE, rules);
+    const prompt = task == null ? null : composePrompt(task, WORKER_GUIDE(), rules);
     out.prompt_chars = prompt?.length ?? null;
     // Observed 2026-10-18: reviewers launched on a standing model choice without dispatch were later recorded with
     // another worker's advice. No escape flag: fallback dispatch still answers, while model and effort stay the lead's.
@@ -240,7 +240,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     }
     const carried = paneCarriers();
     // The user turned this subscription off: it gets no work, launched by hand or not.
-    const loaded = settings(), config = loaded.config ?? loaded;
+    const loaded = settings(), config = configOf(loaded);
     out.warnings.push(...(loaded.notes ?? []));
     if (config.subscriptions[o.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[o.kind].label, o.kind));
     // A harness that is not signed in would wait at its own sign-in in a pane nobody watches: refuse before any pane.
@@ -596,5 +596,6 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
 
 export function launch(args, opts = {}) {
   const lead = takeLeadSession(args); args = [...lead.args, ...(lead.lead ? ["--lead-session", lead.lead] : [])];
-  return commandTrace("launch", () => { const loaded = (opts.settings ?? (() => loadConfig()))(); return { config: loaded.config ?? loaded, ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead }; }, async () => { const r = await launchBody(args, opts); r.warnings.push(...lead.warnings); try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane") }); } catch {} return r; });
+  const settings = oneReading(opts.settings);
+  return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead }), async () => { const r = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings); try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane") }); } catch {} return r; });
 }

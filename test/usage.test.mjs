@@ -990,3 +990,13 @@ test("smoke:usage reads each subscription live, asks sign-in fresh, takes a mete
   await smokeUsage({ config: { subscriptions: { kiro: {} } }, live: { kiro: async () => { throw new Error("read while signed out"); } }, ready: async () => "not signed in: run `kiro-cli login`", log: (l) => out.push(l) });
   expect(out).toEqual(["kiro: not signed in: run `kiro-cli login`, not read"]);
 });
+
+test("every harness `routr usage <name>` reads now declares, in its registry entry, what the answer keeps and says", () => {
+  for (const [name, h] of Object.entries(HARNESSES).filter(([, h]) => h.usage?.check)) {
+    expect(typeof h.label).toBe("string");
+    expect(h.usage.fields).toContain("headroom");
+    expect(typeof h.usage.used({})).toBe("string");
+    if (h.usage.left) { expect(h.usage.left.warning()).toBeString(); expect(h.usage.left.next).toBeString(); }
+    expect(name).toBeOneOf(["cursor", "kiro"]); // a third one also needs its reading named in docs/contracts.md
+  }
+});

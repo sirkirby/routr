@@ -20,7 +20,7 @@ import { lockIsStale, standalone, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP, writ
 import { ROUTR_VERSION } from "./version.mjs";
 
 export const ENDPOINT = process.env.ROUTR_TELEMETRY_URL || "https://telemetry.routr.build";
-const STATE = (ledger = LEDGER_PATH) => join(dirname(ledger), "telemetry.json"); // beside the ledger: { install_id, sent_through }
+const STATE = (ledger = LEDGER_PATH()) => join(dirname(ledger), "telemetry.json"); // beside the ledger: { install_id, sent_through }
 const OS = `${process.platform}-${process.arch}`;
 const off = (v) => /^(0|false|off|no)$/i.test(String(v ?? "").trim());
 
@@ -69,7 +69,7 @@ export function dailyTelemetrySend(config, env = process.env, isStandalone = sta
 export const hoursAgo = (iso, nowMs = Date.now()) => { const t = Date.parse(iso ?? ""); return Number.isFinite(t) ? Math.max(0, Math.round((nowMs - t) / 3600000)) : null; };
 
 // How many ledger rows the next send would carry: only rows after the mark (`telemetry on` sets it to that moment).
-export function pendingCount(ledger = LEDGER_PATH) {
+export function pendingCount(ledger = LEDGER_PATH()) {
   const mark = state(ledger).sent_through;
   if (!mark) return 0; // not turned on yet: turning it on starts from that moment
   return read(ledger).filter((e) => isRow(e) && String(e.ts ?? "") > mark).length;
@@ -131,7 +131,7 @@ export function telemetryRows(entries, install) {
 // the mark to that moment, so only rows recorded after the person's yes go; `--all` (a person's explicit choice) adds
 // the rows before it. A state with no mark starts from now as well. Batches are cut by size, far below the endpoint's limit, and the mark moves only on success.
 const BATCH_BYTES = 200 * 1024;
-export async function sendRows({ ledger = LEDGER_PATH, fetchFn = fetch, timeoutMs = 15000, all = false, now = new Date().toISOString() } = {}) {
+export async function sendRows({ ledger = LEDGER_PATH(), fetchFn = fetch, timeoutMs = 15000, all = false, now = new Date().toISOString() } = {}) {
   let s = state(ledger);
   const install = installId(ledger);
   if (!s.started && !all) { s = { ...state(ledger), started: now, sent_through: s.sent_through ?? now }; saveState(s, ledger); }
@@ -172,7 +172,7 @@ export async function sendFeedback(text, { fetchFn = fetch, ledger } = {}) {
 // `routr telemetry on|off`: the one config key this writes (everything else in the file is kept as it is), plus the
 // person's yes in the state file. Turning it on starts the send mark NOW: nothing recorded while it was off, or before,
 // is ever sent by the daily job.
-export function setTelemetry(on, path = CONFIG_PATH, { ledger, now = new Date().toISOString() } = {}) {
+export function setTelemetry(on, path = CONFIG_PATH(), { ledger, now = new Date().toISOString() } = {}) {
   let config = {};
   if (existsSync(path)) { try { config = JSON.parse(readFileSync(path, "utf8")); } catch { return { ok: false, error: `${path} is not valid JSON; fix it first` }; } }
   try {

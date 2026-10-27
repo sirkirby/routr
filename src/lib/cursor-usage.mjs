@@ -103,9 +103,9 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
 const pct = (x) => (x == null ? "?" : `${x}%`);
 const number = (x) => Number.isFinite(x) ? x : null;
 const keepCursor = (r) => ({ plan: cursorPlan(r.plan), included_used_pct: number(r.included_used_pct), auto_used_pct: number(r.auto_used_pct), api_used_pct: number(r.api_used_pct) });
-export const refreshCursor = ({ read = cursorUsage, file = CURSOR_SNAPSHOT, ...o } = {}) => refreshSnapshot({ read, file, ...o,
+export const refreshCursor = ({ read = cursorUsage, file = CURSOR_SNAPSHOT(), ...o } = {}) => refreshSnapshot({ read, file, ...o,
   keep: keepCursor });
-export const readCursor = ({ file = CURSOR_SNAPSHOT, ...o } = {}) => readSnapshot({ name: "cursor", source: "cursor /usage", byHand: CURSOR_BY_HAND, file, ...o,
+export const readCursor = ({ file = CURSOR_SNAPSHOT(), ...o } = {}) => readSnapshot({ name: "cursor", source: "cursor /usage", byHand: CURSOR_BY_HAND, file, ...o,
   keep: keepCursor,
   windows: (r) => [{ name: "included", usedPct: r.included_used_pct, windowMin: null, resetsAt: null }],
   describe: (r) => `Included ${pct(r.included_used_pct)} used (Auto ${pct(r.auto_used_pct)}, API ${pct(r.api_used_pct)})` });

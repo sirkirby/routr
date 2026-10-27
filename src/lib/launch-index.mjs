@@ -2,7 +2,7 @@
 // paths.
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { home as userHome, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
+import { home as userHome, STATE_DIR, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const OWN = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.json$/;
@@ -10,8 +10,8 @@ const hash = (v) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
 const id = (v, len) => typeof v === "string" && new RegExp(`^[a-f0-9]{${len}}$`).test(v) && !/^0+$/.test(v);
 export const launchContext = (v) => v && UUID.test(v.launch_id) && id(v.traceId, 32) && id(v.spanId, 16) ? { launch_id: v.launch_id, traceId: v.traceId, spanId: v.spanId } : null;
 export class LaunchIndex {
-  constructor({ home = userHome(), now = Date.now } = {}) { this.home = home; this.now = now; this.dir = join(home, ".local/state/routr/launches"); }
-  permitted() { try { return !existsSync(UNINSTALL_LOCK(this.home)) && lstatSync(join(this.home, ".local/state/routr")).isDirectory(); } catch { return false; } }
+  constructor({ home = userHome(), now = Date.now } = {}) { this.home = home; this.now = now; this.dir = join(STATE_DIR(home), "launches"); }
+  permitted() { try { return !existsSync(UNINSTALL_LOCK(this.home)) && lstatSync(STATE_DIR(this.home)).isDirectory(); } catch { return false; } }
   entries({ expired = false } = {}) {
     try {
       if (!lstatSync(this.dir).isDirectory()) return [];

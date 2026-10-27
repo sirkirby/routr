@@ -1,5 +1,5 @@
 // The OTLP boundary: consent, encoding, queue and detached delivery. Separate from anonymous outcome telemetry.
-import { SUBSCRIPTIONS, USAGE_WINDOWS, signalAttributes } from "./otel-schema.mjs";
+import { SCHEMA_URL, SUBSCRIPTIONS, USAGE_WINDOWS, signalAttributes } from "./otel-schema.mjs";
 export { USAGE_WINDOWS } from "./otel-schema.mjs";
 import { LaunchIndex } from "./launch-index.mjs";
 import { otelSwitch } from "./otel-settings.mjs";
@@ -8,10 +8,11 @@ import { request as httpRequest, validateHeaderName } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { readSecretsFile } from "./systemone.mjs";
 import { SECRETS_FILE } from "./providers.mjs";
+import { CONFIG_PATH } from "./config.mjs";
 import { existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { home as userHome, lockIsStale, lockOwned, olderThan, releaseFileLock, spawnSelf, takeLock, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
+import { CACHE_DIR, home as userHome, lockIsStale, lockOwned, olderThan, releaseFileLock, spawnSelf, STATE_DIR, takeLock, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 const RESERVED_HEADERS = new Set(["content-type", "content-length", "host", "transfer-encoding", "connection", "accept-encoding", "content-encoding", "te", "upgrade", "expect", "trailer", "keep-alive"]);
@@ -33,7 +34,7 @@ export function parseOtelHeaders(text) {
     return { headers, stored: Object.entries(headers).map(([k, v]) => `${escaped(k)}=${escaped(v)}`).join(",") };
   } catch { throw new Error("invalid OpenTelemetry headers; nothing was written"); }
 }
-export function otelHeaders(file = SECRETS_FILE) {
+export function otelHeaders(file = SECRETS_FILE()) {
   const text = readSecretsFile(file).ROUTR_OTEL_HEADERS;
   return text === undefined ? {} : parseOtelHeaders(text).headers; // Never read the environment for this secret
 }
@@ -53,7 +54,7 @@ export function otelGaugeInstanceId({ home = userHome() } = {}) {
   return bytes.toString("hex").replace(/^(.{8})(.{4})(.{4})(.{4})(.{12})$/, "$1-$2-$3-$4-$5");
 }
 function installInstanceId(home) {
-  const dir = join(home, ".local/state/routr"), file = join(dir, "service-instance-id");
+  const dir = STATE_DIR(home), file = join(dir, "service-instance-id");
   const permitted = () => { if (existsSync(UNINSTALL_LOCK(home)) || !lstatSync(dir).isDirectory()) throw new Error("gauge identity unavailable during uninstall or without its state folder"); };
   permitted();
   try { return readFileSync(file, "utf8").trim(); } catch (e) { if (e?.code !== "ENOENT") throw e; }
@@ -131,8 +132,8 @@ const SIGNALS = ["traces", "logs", "metrics"], CAP = 10 * 1024 * 1024, WEEK = 7 
 const UUID = "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}";
 const BATCH = new RegExp(`^(\\d+)-([a-f0-9]{8})-(${UUID})\\.json$`), DROP = new RegExp(`^${UUID}\\.json$`);
 const paths = (home = userHome()) => {
-  const root = join(home, ".cache/routr/otel");
-  return { root, lock: join(root, "sender.lock"), state: join(root, "sender.json"), secrets: join(home, ".config/routr/env"), config: join(home, ".config/routr/config.json"), uninstall: UNINSTALL_LOCK(home) };
+  const root = join(CACHE_DIR(home), "otel");
+  return { root, lock: join(root, "sender.lock"), state: join(root, "sender.json"), secrets: SECRETS_FILE(home), config: CONFIG_PATH(home), uninstall: UNINSTALL_LOCK(home) };
 };
 const names = (dir) => { try { return readdirSync(dir); } catch (e) { if (e?.code === "ENOENT") return []; throw e; } };
 // An absent config revokes export; a failed read or parse gives no evidence about consent and stops a sweep.
@@ -155,7 +156,7 @@ export function prepareOtel({ home = userHome(), sender = false } = {}) {
     if (!sender) {
       mkdirSync(p.root, { recursive: true, mode: 0o700 });
       if (existsSync(p.uninstall)) return false;
-      mkdirSync(join(home, ".local/state/routr"), { recursive: true, mode: 0o700 });
+      mkdirSync(STATE_DIR(home), { recursive: true, mode: 0o700 });
     }
     if (!lstatSync(p.root).isDirectory()) return false;
     for (const name of [...SIGNALS, "drops"]) {
@@ -374,7 +375,7 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
         break;
       }
       const body = metrics ? Buffer.from(JSON.stringify(encodeHeadroom(metrics.map((m) => m.observation), {
-        resource: gaugeResource, schemaUrl: "https://opentelemetry.io/schemas/1.44.0" }))) : readFileSync(`${file.file}.sending`);
+        resource: gaugeResource, schemaUrl: SCHEMA_URL }))) : readFileSync(`${file.file}.sending`);
       if (!held()) break;
       const reply = await postOtel(new URL(`${sw.endpoint}/v1/${file.signal}`), body, headers, timeoutMs);
       // Acknowledge the response under this lock before reading consent again. A broken config must stop the next

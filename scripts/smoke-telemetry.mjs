@@ -7,7 +7,7 @@ import { LEDGER_PATH, read } from "../src/lib/ledger.mjs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { pendingCount, telemetryRows, telemetryState, telemetryStatus } from "../src/lib/telemetry.mjs";
 
-const entries = read(LEDGER_PATH), rows = telemetryRows(entries, "smoke");
+const entries = read(LEDGER_PATH()), rows = telemetryRows(entries, "smoke");
 const lost = {};
 const valid = entries.filter((e) => e && e.advised && e.chose && e.outcome);
 rows.forEach((r, i) => {

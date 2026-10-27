@@ -7,7 +7,7 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { HARNESSES } from "./harnesses.mjs";
 import { LEVELS } from "./questions.mjs";
-import { ensureParent, home } from "./runtime.mjs";
+import { DATA_DIR, ensureParent } from "./runtime.mjs";
 
 // The ledger is one file per user, shared by every project on the machine. Each row is labelled with its project so
 // `assess` can tell them apart: the folder name of the git repository the work happened in. A worktree counts as its
@@ -26,7 +26,7 @@ export function projectName(cwd = process.cwd()) {
   }
 }
 
-export const LEDGER_PATH = join(home(), ".local/share/routr/ledger.jsonl");
+export const LEDGER_PATH = () => join(DATA_DIR(), "ledger.jsonl");
 
 // advice = the JSON that `routr dispatch|subagent` printed. chose/outcome = what the agent did and what it verified.
 export function parseSubagent(s) {
@@ -121,7 +121,7 @@ export function toEntry(advice, { subscription, model, effort, level, verdict, c
   };
 }
 
-export function append(entry, path = LEDGER_PATH, { revision = false } = {}) {
+export function append(entry, path = LEDGER_PATH(), { revision = false } = {}) {
   if (revision) {
     const prior = read(path).findLast((e) => e.run_id === entry.run_id);
     if (!prior) throw new RunIdError("--run-id was not found in this ledger; use the run_id field from record's earlier output, not id; omit it for a new worker run");
@@ -137,7 +137,7 @@ export function append(entry, path = LEDGER_PATH, { revision = false } = {}) {
   ensureParent(path); appendFileSync(path, JSON.stringify(entry) + "\n");
 }
 
-export function read(path = LEDGER_PATH) {
+export function read(path = LEDGER_PATH()) {
   if (!existsSync(path)) return [];
   return readFileSync(path, "utf8").split("\n").filter(Boolean).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } });
 }

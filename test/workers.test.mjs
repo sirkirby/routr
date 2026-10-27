@@ -1097,6 +1097,10 @@ test("outside herdr, launch refuses what a headless worker cannot do, before it 
     const deps = { env: {}, settings: () => cfg(), ready: async () => null, spawn: () => false };
     expect((await launch(args, { ...deps, ready: async () => "not signed in: run `claude auth login`" })).error).toBe("Claude Code cannot take work: not signed in: run `claude auth login`");
     expect((await launch(args, { ...deps, settings: () => cfg({ subscriptions: { claude: { enabled: false } } }) })).error).toContain("turned off");
+    // One reading of the config for the whole launch: its trace and its body share it.
+    let reads = 0;
+    await launch(args, { ...deps, ready: async () => "not signed in", settings: () => { reads++; return cfg(); } });
+    expect(reads).toBe(1);
     const never = await launch(args, deps);
     expect([never.state, never.error, never.worker]).toEqual(["failed", "the worker's process did not start (not_started)", null]);
     // Kiro's model list is read only once it is on and signed in: asking a signed-out harness can open its sign-in.
