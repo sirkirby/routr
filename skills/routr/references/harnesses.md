@@ -451,3 +451,11 @@ The value can lag or be null (Codex was null in the probe). Launch and cleanup r
 format-checked non-null value of kind `id`. A pane/terminal match establishes terminal continuity only: shell
 respawn can retain that terminal id and restore allocates a new one. It does not prove agent or conversation
 continuity.
+
+## herdr's worktree folders (read from herdr 0.9.5's source, 2026-10-27)
+
+`herdr worktree create` without `--path` makes the worktree at `~/.herdr/worktrees/<repository folder>/<slug>`: the
+branch lowercased, each run of characters other than ASCII letters and digits one `-`, `-` trimmed from both ends,
+and `worktree` when nothing is left (`feat/X_y` → `feat-x-y`). routr relies on it only to point at a worker's
+worktree left detached from its branch, which `cleanup --worktree` keeps and names instead of calling absent; it
+never removes a folder on that name alone.

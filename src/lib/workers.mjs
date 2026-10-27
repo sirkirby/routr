@@ -16,7 +16,7 @@ import { answer } from "./output.mjs";
 import { CLOSING, count, OFF } from "./wording.mjs";
 import { callGit } from "./process-boundary.mjs";
 import { dropCopy } from "./cleanup.mjs";
-import { CARRIERS, ensureParent, NAME_RULE, WORKER_NAME, folderId, FORWARDED, home, lockIsStale, lockOwned, lockToken, releaseFileLock, probe as runProbe, readJsonFile, realOr, realPath, savedCarriers, spawnSelf, takeLock, writeJsonAtomic, WORKTREES_DIR } from "./runtime.mjs";
+import { CARRIERS, ensureParent, NAME_RULE, WORKER_NAME, folderId, FORWARDED, home, lockIsStale, lockOwned, lockToken, releaseFileLock, probe as runProbe, readJsonFile, realOr, realPath, savedCarriers, spawnSelf, takeLock, writeJsonAtomic, WORKTREES_DIR, worktreeFolder } from "./runtime.mjs";
 
 const RUNNING = new Set(["working", "waiting", "starting"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -116,7 +116,7 @@ export async function view(name, { check = true } = {}) {
 // A headless worker's own git worktree, made by routr with git (herdr makes it in a pane session): in routr's own
 // folder, one per repository and branch, its branch new and starting at --base (or the checkout's HEAD).
 const git = (dir, args) => callGit((d, a) => runProbe("git", ["-C", d, ...a], { timeoutMs: 20000, separate: true }), dir, args);
-const worktreePath = (source, branch) => join(WORKTREES_DIR(), `${basename(source)}-${createHash("sha1").update(source).digest("hex").slice(0, 8)}`, branch.replace(/[\\/]/g, "-"));
+const worktreePath = (source, branch) => join(WORKTREES_DIR(), `${basename(source)}-${createHash("sha1").update(source).digest("hex").slice(0, 8)}`, worktreeFolder(branch));
 // git's one-line answer, its line ending dropped and nothing else (a folder's name may end in a space).
 const line = (out) => out.replace(/\r?\n$/, "");
 // Before anything is written: the repository, a branch not taken, a folder not there, and the commit it starts at

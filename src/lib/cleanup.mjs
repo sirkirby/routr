@@ -19,11 +19,11 @@ import { configOf, oneReading } from "./config.mjs";
 import { lstatSync, readFileSync, readlinkSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
-import { BRANCH, runHerdr } from "./herdr.mjs";
+import { BRANCH, herdrWorktreeFolder, runHerdr } from "./herdr.mjs";
 import { count } from "./wording.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, callGit, processError, processSteps } from "./process-boundary.mjs";
-import { probe, realOr, realPath, WORKER_NAME } from "./runtime.mjs";
+import { probe, realOr, realPath, WORKER_NAME, worktreeFolder } from "./runtime.mjs";
 
 const herdrLine = (args) => displayCommand(["herdr", ...args]);
 const gitIn = (dir, args) => probe("git", ["-C", dir, ...args], { timeoutMs: 15000, separate: true });
@@ -274,8 +274,9 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
       const main = (list.worktrees ?? []).find((x) => !x.is_linked_worktree);
       if (main && (main.branch === o.worktree || (o.path != null && real(main.path) === real(resolve(o.path))))) return refuse("That is the main checkout, not a worker's worktree", doNext("Name a worker's worktree"));
       // A worker that checked out a commit leaves its worktree on no branch, but the folder made for the branch is
-      // still there: not absent. Found by its folder name and never removed on that guess.
-      const names = o.worktree != null ? [o.worktree, o.worktree.replace(/[\\/]/g, "-"), o.worktree.split("/").pop()] : [];
+      // still there: not absent. Found by the folder name herdr or a headless launch gives the branch, and never
+      // removed on that guess.
+      const names = o.worktree != null ? [worktreeFolder(o.worktree), herdrWorktreeFolder(o.worktree)] : [];
       const detached = linked.filter((x) => x.is_detached && names.includes(basename(x.path)));
       if (detached.length) {
         if (detached.length === 1) out.worktree = brief(detached[0]);

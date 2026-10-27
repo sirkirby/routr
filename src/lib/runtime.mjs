@@ -28,6 +28,8 @@ export const STATE_DIR = (h = home()) => join(h, ".local/state/routr");
 export const CONFIG_DIR = (h = home()) => join(h, ".config/routr");
 export const DATA_DIR = (h = home()) => join(h, ".local/share/routr");
 export const WORKTREES_DIR = (h = home()) => join(DATA_DIR(h), "worktrees"); // headless launches' git worktrees
+// The folder name a headless launch gives a branch's worktree, under WORKTREES_DIR.
+export const worktreeFolder = (branch) => branch.replace(/[\\/]/g, "-");
 // Which folder this is, not where: a worktree removed and made again at the same path, even on the same branch,
 // is another folder. Device and file number, read whole (Windows' file IDs exceed 2^53). Its birth time too,
 // where the file system keeps one: Linux may give a removed folder's number to the next one made. `link: true`

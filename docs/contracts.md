@@ -634,8 +634,8 @@ Inputs:
   otherwise.
 - Outside herdr (`HERDR_ENV` is not `1`), the list and `--worktree`/`--path` modes read and remove worktrees through
   git, with the same checks, and `warnings` says cleanup cannot see whether anything runs in a worktree's folder.
-- `--worktree <branch>` with no worktree on that branch, but a detached one whose folder is named for it (the branch,
-  its `/` as `-`, or its last part), refuses (`refused`, `worktree` naming it when there is one) instead of answering
+- `--worktree <branch>` with no worktree on that branch, but a detached one in the folder herdr or a headless launch
+  names for it, refuses (`refused`, `worktree` naming it when there is one) instead of answering
   `absent`: a worker that checked out a commit left it there. `next` runs `cleanup --path` for each such folder, to
   use once it is checked to be the worker's; cleanup never removes one on that guess. `--worker` refuses the same way
   for its own folder left detached.
