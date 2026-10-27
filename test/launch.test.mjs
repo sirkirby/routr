@@ -191,6 +191,18 @@ test("startup waits for the shell, recovers agent_not_ready, then prompts", asyn
   expect(r.steps.map((s) => s.step).indexOf("ready")).toBeLessThan(r.steps.map((s) => s.step).indexOf("prompt"));
 });
 
+test("a worker that took its task counts once toward the launch share; a dry run and a failed start count nothing", async () => {
+  const { recentLaunches } = await import("../src/lib/shares.mjs");
+  const home = scratch("launch-share"); mkdirSync(join(home, ".local/state/routr"), { recursive: true });
+  const r = await launch([...launchArgs, "--task", "Fix the parser. Verify with bun test."], { ...fakeHerdr().deps, home });
+  expect(r.state).toBe("prompted");
+  expect(recentLaunches({ home }).counts).toEqual({ claude: 1 });
+  await launch([...launchArgs, "--task", "Fix the parser. Verify with bun test.", "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); }, home });
+  const failed = await launch([...launchArgs, "--task", "Fix the parser. Verify with bun test."], { run: () => { throw new Error("herdr is gone"); }, home });
+  expect(failed.state).toBe("failed");
+  expect(recentLaunches({ home }).counts).toEqual({ claude: 1 });
+});
+
 test("startup next uses the guide's trust rule and leaves an unauthorized question waiting", async () => {
   const f = fakeHerdr({ trust: claudeTrust, notReady: true });
   const r = await launch([...launchArgs, "--task", "Task"], f.deps);

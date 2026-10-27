@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- A `share` setting splits work between metered accounts by a ratio you choose: with `claude` 3 and `codex` 1, the
+  advice names the account below its target (`share_due`) from routr's own launches in the last 7 days, and the lead
+  takes it among suitable options. Set it with `routr setup --share <subscription>=<1-99>` (#131).
+
 ## v0.9.2 — 2026-10-27
 
 [Full notes](docs/releases/v0.9.2.md)

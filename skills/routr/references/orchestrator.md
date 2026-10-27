@@ -56,6 +56,8 @@ questions.
 Follow "Deciding" in `SKILL.md`: settle the work level, identify suitable model/effort options, then compare accounts.
 Use `facts`, `notes`, `subscriptions.candidates`, `subscriptions.ranked` and relevant repository or verified outcome
 evidence. Consult the harness's models when needed (see `harnesses.md`); an everyday default does not establish fit.
+Between normal metered accounts, `subscriptions.share_due` is the user's launch ratio speaking: take it among
+suitable options, or say in the launch line why this work goes elsewhere.
 
 Dispatch's candidates were filtered for the advised level. If you choose a different level, refresh eligibility:
 

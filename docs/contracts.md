@@ -398,10 +398,20 @@ Own fields:
   probabilities }`, `work_type` `{ choice, confidence }`, `high_blast_radius`), absent on fallback.
 - The advice: `level`, `sure`, `between` (when torn), `work_type`, `high_risk`, `worker` `{ suggestion, why }`,
   `facts` (each `{ reading, p, means? }`), `notes`, `meaning`.
-- `dispatch` only: `subscriptions` `{ most_room, candidates: { normal, fallback }, ranked, excluded, note }`. A ranked
+- `dispatch` only: `subscriptions` `{ most_room, share_due?, candidates: { normal, fallback }, ranked, excluded, note }`. A ranked
   row: `subscription`, `class`, `use`, `reserve`, `hardest_work`, `your_default`?, `usable`, `headroom`, `windows`? (each
   `{ window, used_pct, resets_in_h, left, reserve_now, usable }`), `usage` (`live`, `given`, `assumed`, `metered`),
-  `age_sec`, `note`?. An excluded row: `{ subscription, why }`.
+  `age_sec`, `note`?, `share`?. An excluded row: `{ subscription, why }`.
+- The launch share: when at least two ranked rows are `class: "metered"` with `use: "normal"`, and at least one has a
+  `share` setting (one without counts as 1), each of them gets `share` `{ weight, target, used_pct, left, launches, of }`
+  and `subscriptions` gets `share_due`. Over the last 7 days of routr's own launches on those accounts (`of` in all,
+  `launches` on this one, whatever class they read when launched), `target` is the weight's fraction of their weights,
+  `used_pct` the percent of those launches it took, and `left` how far it is below its target (0 at or above it).
+  `share_due` is the account with the most `left`, ties to the larger weight and then the name; null when none is
+  below its target. Those rows are ordered by `left` among themselves; `headroom` and `usable` stay null and
+  `candidates` stay in name order. `note` gives the reading in a line. Without such rows neither field appears; with
+  them, when the history cannot be read (its folder, a record in it, or the folder is a link), neither appears and
+  `note` says the share is not shown. `usage <subscription>` shows one row, so never a share.
 
 ## check
 
@@ -447,6 +457,10 @@ Inputs:
   `--dry-run`.
 
 `state`: `planned`, `ready`, `prompted`, `needs_input`, `failed`.
+
+A launch that ends `prompted` or `ready` writes one launch record for the launch share (`dispatch`): the subscription
+and the time, nothing else. A dry run, a refusal, a failed start or a `needs_input` stop writes none; a `--pane` rerun
+that finishes a `needs_input` or failed launch writes one. Writing it is best effort and never changes the launch's result.
 
 `ok`:
 
@@ -858,7 +872,7 @@ for plain usage, `--level` and a named subscription alike:
 
 `[]` only when none of these applies: a plain view with nothing at its reserve and every reading made.
 
-Own fields: `level`; `subscriptions` (the same object as `dispatch`'s; for a named subscription, its row alone);
+Own fields: `level`; `subscriptions` (the same object as `dispatch`'s; for a named subscription, its row alone, with no `share` or `share_due`);
 named only: `subscription`; named `cursor` or `kiro` with a fresh reading: `reading`, the harness's own numbers for a
 person to check against its screen (Cursor `{ plan, included_used_pct, auto_used_pct, api_used_pct, headroom }`; Kiro
 `{ plan, credits_used, credits_limit, used_pct, resets_at, unrecognized_lines?, headroom }`).

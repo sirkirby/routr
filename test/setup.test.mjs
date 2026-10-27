@@ -742,6 +742,27 @@ test("account-use flags handle unknown billing and legacy settings without chang
   expect(rebuilt.saved.subscriptions.codex.metered_rank).toBe("with");
 });
 
+test("--share sets a launch weight, off removes it, --force keeps it, and --show refuses it", async () => {
+  const { parseLaunchShare } = await import("../src/lib/setup.mjs");
+  expect(parseLaunchShare(["--share", "claude=3", "--share", "codex=off"])).toEqual({ claude: 3, codex: "off" });
+  for (const value of ["claude=0", "claude=100", "claude=2.5", "claude=-1", "claude=three", "claude", "nope=3"]) expect(() => parseLaunchShare(["--share", value])).toThrow("--share takes <subscription>=<1-99>|off");
+  const config = { telemetry: false, subscriptions: { claude: { hardest_work: "strong", reserve: 0, use: "normal" }, codex: { hardest_work: "strong", reserve: 0, use: "normal", share: 2 } } };
+  const set = await runSetup({ config, found: ["claude", "codex"], usage: { claude: "metered", codex: "metered" }, args: ["--yes", "--share", "claude=3", "--share", "codex=off"] });
+  expect(set.r.ok).toBe(true);
+  expect(set.saved.subscriptions.claude).toEqual({ ...config.subscriptions.claude, share: 3 });
+  expect(set.saved.subscriptions.codex).not.toHaveProperty("share");
+  expect(set.r.did.join("; ")).toContain("changed claude.share set to 3, codex.share 2 → null");
+  // off on an account with no share changes nothing.
+  const quiet = await runSetup({ config: set.saved, found: ["claude", "codex"], args: ["--yes", "--share", "codex=off"] });
+  expect(quiet.saved).toEqual(set.saved);
+  const forced = await runSetup({ config: set.saved, found: ["claude", "codex"], usage: { claude: "metered", codex: "metered" }, args: ["--yes", "--force"] });
+  expect(forced.saved.subscriptions.claude.share).toBe(3);
+  const show = await runSetup({ config, args: ["--show", "--share", "claude=3"] });
+  expect(show.r.ok).toBe(false); expect(show.saved).toEqual(config);
+  const unknown = await runSetup({ config, found: ["claude", "codex"], args: ["--yes", "--share", "kiro=3"] });
+  expect(unknown.r.ok).toBe(false); expect(unknown.r.error).toContain("--share kiro=…");
+});
+
 test("guided setup offers normal use for unknown billing and fallback for an included account", async () => {
   const unknown = await runSetup({ found: ["claude"], usage: { claude: "unknown" }, answers: ["", "", "", "", "1", "n", ""] });
   expect(unknown.saved.subscriptions.claude.use).toBe("normal");

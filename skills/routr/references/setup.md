@@ -99,7 +99,7 @@ It writes `~/.config/routr/config.json` for the harnesses found, and nothing of 
 live list; one with no `--hardest` or `--reserve` gets the suggestion. An existing config is kept: setup adds
 harnesses found since, fills a missing `hardest_work` or `reserve`, and applies any flag given, leaving everything
 else alone. Every write keeps the old file as `config.json.bak`. `--force` rebuilds it from the suggestions, keeping
-telemetry, updates and channel, the decision models, which subscriptions are off, and account use and billing. **To change a setting later**, run
+telemetry, updates and channel, the decision models, which subscriptions are off, and account use, billing and launch share. **To change a setting later**, run
 setup with just that flag, for example `routr setup --yes --hardest cursor=strong`. A subscription that reads as
 metered when first written (billed per token, no quota: a ChatGPT Enterprise seat) gets `metered_rank` written out,
 `after` unless `--metered <name>=with` is passed. An explicit `use` takes precedence. Every value is
@@ -137,6 +137,12 @@ the command that fixes it.
   - `use`: `normal` or `fallback`, independent of billing. Normal accounts are considered for suitable model/effort
     options before comparing headroom. Fallback is considered when none suitably takes the task. This preference
     does not infer or enforce a shared prepaid balance or personal allowance. Set it with `--use name=normal|fallback`.
+  - `share`: a whole number from 1 to 99, the account's weight in the user's ratio of launches between normal metered
+    accounts: `claude` 3 and `codex` 1 is about three workers on Claude for every one on Codex. It counts only while
+    the account reads `metered` and at least two normal metered accounts take the work (one without `share` counts as
+    1); headroom balances included accounts. routr counts its own launches over the last 7 days and the advice names
+    the account below its target (`share_due`); the lead still chooses model and effort fit first. Set it with
+    `--share name=<1-99>`, remove it with `--share name=off`.
   - `metered_rank`: legacy preference, applied only when `use` is absent. Metered `after` (default) means fallback;
     `with` means normal. Nonmetered accounts default to normal. The legacy `--metered` flag also sets `use`; explicit
     `--use` wins if both flags are given. Actual observed caps remain windows, including with a billing override.
@@ -174,6 +180,7 @@ can be combined with the others in one run.
 | add a harness installed since | `routr setup --yes` (it adds every harness that is installed and signed in) |
 | use a funded account for everyday work | `routr setup --yes --use codex=normal` |
 | keep an account for fallback | `routr setup --yes --use codex=fallback` |
+| split launches between normal metered accounts, or stop | `routr setup --yes --share claude=3 --share codex=1` / `routr setup --yes --share claude=off` |
 | get early builds (beta and release candidates), or stop | `routr setup --yes --channel beta` / `routr setup --yes --channel stable` |
 | set the ordered decision models | `routr setup --yes --decision typesafe,cloudflare:clef-flash` (a single choice also works); then the user stores its key with `routr key set <provider>` in their own terminal. Ollama needs none, but its model must be pulled: setup's note says when it is not, and the pull is the user's to agree to |
 | share anonymous outcomes, or stop | `routr telemetry on` / `routr telemetry off`: only when the user says so |

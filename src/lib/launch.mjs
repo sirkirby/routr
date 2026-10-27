@@ -13,6 +13,7 @@ import { displayCommand, doNext, launchNext, runNext, templateCommand } from "./
 import { CLOSING, OFF } from "./wording.mjs";
 import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, promptReadArgs, runHerdr, SHELLS, shellFamily, splitArgs, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { answer } from "./output.mjs";
+import { countLaunch } from "./shares.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
 import { CARRIERS, carrierValues, FORWARDED, home, NAME_RULE, WORKER_NAME, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
 import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
@@ -602,5 +603,9 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
 export function launch(args, opts = {}) {
   const lead = takeLeadSession(args); args = [...lead.args, ...(lead.lead ? ["--lead-session", lead.lead] : [])];
   const settings = oneReading(opts.settings);
-  return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead }), async () => { const r = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings); try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane") }); } catch {} return r; });
+  return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead }), async () => { const r = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings);
+    // A worker that took its task, or was left ready for one, counts toward the user's launch share (shares.mjs). A dry
+    // run, a refusal and a failed start count nothing; a --pane rerun that finishes a failed launch counts once.
+    if (r.state === "prompted" || r.state === "ready") countLaunch(r.kind, { home: opts.home });
+    try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane") }); } catch {} return r; });
 }

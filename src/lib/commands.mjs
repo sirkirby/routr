@@ -19,6 +19,7 @@ import { ensureParent, standalone } from "./runtime.mjs";
 import { CHECK_VERSION, checkQuestions, LEVELS, MEANING, questions, VERSION } from "./questions.mjs";
 import { ADVICE_STEPS, count } from "./wording.mjs";
 import { rankSubscriptions, levelExcludedWhy } from "./pick.mjs";
+import { recentLaunches } from "./shares.mjs";
 import { enabledSubscriptions } from "./config.mjs";
 import { HARNESSES, readUsage, SOURCES } from "./harnesses.mjs";
 import { failedUsage } from "./usage.mjs";
@@ -70,7 +71,7 @@ async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] 
   if (mode === "dispatch") {
     const usage = await usageP;
     try {
-      out.subscriptions = rankSubscriptions(advice.level, usage, config);
+      out.subscriptions = rankSubscriptions(advice.level, usage, config, recentLaunches());
       out.unavailable.push(...usageUnavailable(usage).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
       for (const s of staleReaders(usage, config)) { out.warnings.push(s.warning); out.next.push(runNext(`Try reading ${s.pool}'s usage again.`, ["routr", "usage", s.pool])); }
     } catch {
@@ -243,7 +244,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
     const viewConfig = { ...config, subscriptions: subs };
     const readingNames = fresh && !configured.includes(name) ? [name] : names.filter((n) => subs[n].enabled !== false);
     const rows = reading?.excluded ? [{ pool: name, signedIn: false, note: reading.why }] : await usageSpans((observe) => read(readingNames, given, { sources, background: fresh ? [] : names, observe }), fresh ? { since: readingStart } : {});
-    out.subscriptions = rankSubscriptions(level, rows, viewConfig);
+    out.subscriptions = rankSubscriptions(level, rows, viewConfig, name ? null : recentLaunches());
     out.unavailable.push(...usageUnavailable(rows).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
     // A fresh read that just worked clears its own warning; one that failed again keeps it (the retry is this call).
     for (const s of staleReaders(rows, viewConfig).filter((x) => !(fresh && reading?.ok && x.pool === name))) {
