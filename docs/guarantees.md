@@ -138,7 +138,7 @@ The binary is self-contained: the files under `skills/` are embedded at build ti
 repository checkout at run time. It reads your harness state read-only (usage sources, settings, model lists) and
 writes only:
 
-- under `~/.config/routr`, `~/.cache/routr`, `~/.local/share/routr` (headless workers' worktrees in its `worktrees`)
+- under `~/.config/routr` (`config.json` written whole, where a link to it points), `~/.cache/routr`, `~/.local/share/routr` (headless workers' worktrees in its `worktrees`)
   and `~/.local/state/routr` (headless workers);
 - OpenTelemetry's trace and log requests, four-field usage observations, drop markers, sender state (including per-stream gauge watermarks) and lock under `~/.cache/routr/otel`. Trace and log
   resources use a random UUIDv4 per process, held only in memory, and write no identity file. The gauge's
