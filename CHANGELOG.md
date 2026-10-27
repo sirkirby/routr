@@ -15,7 +15,7 @@ A short history of what changed in each routr release, one line per change. Each
   keeping their permissions and any link to them, so another command never reads them half written (#125).
 - `routr usage --level` with an unknown level lists only the real levels (#125).
 - `routr cleanup --worktree <branch>` no longer answers "nothing to remove" when the worker left its worktree detached
-  from the branch: it keeps the worktree and gives the `--path` command that removes it once checked (#PR).
+  from the branch: it keeps the worktree and gives the `--path` command that removes it once checked (#127).
 
 ## v0.9.1 — 2026-10-26
 
