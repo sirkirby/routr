@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.9.2 — 2026-10-27
+
+[Full notes](docs/releases/v0.9.2.md)
+
 - A config file holding JSON `null`, a list or any value that is not an object no longer crashes the advice commands,
   `usage` or `doctor`: it is read as unreadable, and routr answers on the defaults (#125).
 - `launch --worktree --copy` in a herdr pane no longer overwrites a file the commit has or copies through a link, as a
