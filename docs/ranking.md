@@ -65,7 +65,7 @@ invalid, with the command that fixes it.
   three workers on Claude for every one on Codex. It counts only while the account reads `metered`, and only when at
   least two normal metered accounts take the work (one without a `share` counts as 1). Included accounts are
   balanced by headroom instead, because what is left of a window expires at its reset. `routr setup` asks for it
-  as Launch share, or set it with `routr setup --share claude=3 --share codex=1`; `--share claude=off` removes it.
+  as Launch share (no share, 1 to 5, or another weight up to 99; no share removes it), or set it with `routr setup --share claude=3 --share codex=1`; `--share claude=off` removes it.
 
 `assumed_headroom` is the share routr assumes when it cannot read an included or unknown account's usage. It is
 labelled assumed. Metered accounts always have unknown remaining budget.

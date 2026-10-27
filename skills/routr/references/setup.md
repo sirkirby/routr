@@ -88,7 +88,8 @@ reserve suggestions. Existing choices stand until the user changes them. Then ru
 A person can instead run `routr setup` alone in a terminal: it is a guided screen. The first time it asks which
 subscriptions routr may use, then each one's model (from the harness's live list, typed to filter; for Claude Code a full model name that is not
 listed is offered "as typed", chosen by its number in accessible mode), effort, hardest
-work, reserve, and account use, then lists the changes with Save and exit as the default (nothing is written before it). Run again,
+work, reserve, and account use, then, when two or more accounts read metered and are in normal use, each one's launch
+share (no share, 1 to 5, or another weight up to 99; no share removes it), then lists the changes with Save and exit as the default (nothing is written before it). Run again,
 it shows what is set and a menu to change one thing, turn a subscription on or off, or walk through everything, then
 Save and exit or Exit without saving. Arrow keys choose, Esc goes back,
 Ctrl+C stops without writing. `ACCESSIBLE=1` asks the same questions as numbered lines, for a screen reader. Suggest it
@@ -142,7 +143,7 @@ the command that fixes it.
     the account reads `metered` and at least two normal metered accounts take the work (one without `share` counts as
     1); headroom balances included accounts. routr counts its own launches over the last 7 days and the advice names
     the account below its target (`share_due`); the lead still chooses model and effort fit first. Guided setup asks
-    for it (Launch share) only in that case. Set it with `--share name=<1-99>`, remove it with `--share name=off`.
+    for it (Launch share) when two or more enabled accounts read metered and are in normal use. Set it with `--share name=<1-99>`, remove it with `--share name=off`.
   - `metered_rank`: legacy preference, applied only when `use` is absent. Metered `after` (default) means fallback;
     `with` means normal. Nonmetered accounts default to normal. The legacy `--metered` flag also sets `use`; explicit
     `--use` wins if both flags are given. Actual observed caps remain windows, including with a billing override.

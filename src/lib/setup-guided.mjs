@@ -113,7 +113,9 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   };
   // The launch share balances metered accounts, which have no headroom number (shares.mjs): asked only for an account
   // that reads metered and is in normal use, and only when another one is too. Headroom balances the rest.
-  const reads = (n) => draft[n].billing ?? r.harnesses[n]?.usage_class;
+  // As the ranking reads it (pick.mjs): windows that arrived decide, whatever `billing` says; otherwise `billing`, then
+  // what the harness reported.
+  const reads = (n) => { const seen = r.harnesses[n]?.usage_class; return seen === "included" || seen === "capped" ? seen : draft[n].billing ?? seen; };
   const sharer = (x) => draft[x].enabled && reads(x) === "metered" && useOf(x) === "normal";
   const shares = (n) => sharer(n) && candidates.filter(sharer).length >= 2;
   ask.share = async (n) => {
@@ -128,6 +130,19 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
     return v;
   };
   const fieldsOf = (n) => Object.keys(FIELDS).filter((k) => (k !== "effort" || TAKES_EFFORT.includes(n)) && (k !== "share" || shares(n)));
+  // Walking an account's settings asks the share last and separately (askShares): whether it applies depends on every
+  // account's use, and a new metered account only becomes normal use when its own Account use is answered.
+  const walkFields = (n) => fieldsOf(n).filter((k) => k !== "share");
+  const askShares = async (names) => {
+    const list = names.filter(shares);
+    for (let i = 0; i < list.length;) {
+      const v = await ask.share(list[i]);
+      if (v === CANCEL) return CANCEL;
+      if (v === BACK) { if (i === 0) return BACK; i--; continue; }
+      i++;
+    }
+    return "done";
+  };
   // Several fields in order; Esc goes back one field, and back past the first returns BACK.
   const fields = async (n, list) => {
     for (let i = 0; i < list.length;) {
@@ -218,14 +233,15 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
 
   // First run: every step in order; Esc steps back.
   const full = async () => {
-    const steps = ["choose", "settings", "extras", "finish"];
+    const steps = ["choose", "settings", "shares", "extras", "finish"];
     for (let s = 0; s < steps.length;) {
       let v;
       if (steps[s] === "choose") v = await choose();
       else if (steps[s] === "settings") {
         v = "done";
-        for (const n of candidates.filter((x) => draft[x].enabled && signedIn(x))) { v = await fields(n, fieldsOf(n)); if (v !== "done") break; }
-      } else if (steps[s] === "extras") v = await extras();
+        for (const n of candidates.filter((x) => draft[x].enabled && signedIn(x))) { v = await fields(n, walkFields(n)); if (v !== "done") break; }
+      } else if (steps[s] === "shares") v = await askShares(candidates.filter((x) => signedIn(x)));
+      else if (steps[s] === "extras") v = await extras();
       else { v = await finish(); if (v === "back") { s = 0; continue; } if (v === "quit") return CANCEL; if (v === "write" || v === "nothing") return v; }
       if (v === CANCEL) return CANCEL;
       if (v === "none") return "none";
@@ -256,7 +272,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       if (v === "save") { ui.note("Saving", changes()); return "write"; }
       // Esc with changes not saved: the same way out as at the end of a first run, so nothing is lost by accident.
       if (v === BACK) { const w = await finish(); if (w === "write") return "write"; if (w === "quit" || w === CANCEL) return CANCEL; continue; }
-      if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) for (const n of c.filter((x) => !current[x])) if (await fields(n, fieldsOf(n)) === CANCEL) return CANCEL; continue; }
+      if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) { const added = c.filter((x) => !current[x]); for (const n of added) if (await fields(n, walkFields(n)) === CANCEL) return CANCEL; if (await askShares(added) === CANCEL) return CANCEL; } continue; }
       if (v === "extras") { if (await extras() === CANCEL) return CANCEL; continue; }
       if (v === "otel") { if (await askOtel() === CANCEL) return CANCEL; continue; }
       if (v === "channel") { if (await askChannel() === CANCEL) return CANCEL; continue; }

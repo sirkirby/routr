@@ -794,6 +794,18 @@ test("guided setup asks for a launch share only for a normal metered account bes
   // "no share" removes it again.
   const off = await runSetup({ config: x.saved, found: ["claude", "codex"], usage: { claude: "metered", codex: "metered" }, answers: ["", "", "6", "1", "b", "b", "7"] });
   expect(off.saved.subscriptions.claude).not.toHaveProperty("share");
+  // First run: both metered accounts start as fallback and become normal in the walk; the share is asked after it.
+  const first = await runSetup({ found: ["claude", "codex"], usage: { claude: "metered", codex: "metered" }, answers: ["", "", "", "", "1", "", "", "", "1", "4", "", "n", ""] });
+  expect(first.asked.filter((a) => a.includes(": launch share")).length).toBe(2);
+  expect(first.saved.subscriptions.claude).toMatchObject({ use: "normal", share: 3 });
+  expect(first.saved.subscriptions.codex).not.toHaveProperty("share");
+  // Walk through everything (the fifth entry), turning Claude to fallback: no share question is left queued for it, or for Codex alone.
+  const walked = await runSetup({ config, found: ["claude", "codex"], usage: { claude: "metered", codex: "metered" }, answers: ["5", "", "", "", "", "2", "", "", "", "", "n", ""] });
+  expect(walked.saved.subscriptions.claude.use).toBe("fallback");
+  expect(walked.asked.join("\n")).not.toContain(": launch share");
+  // billing says metered, but windows arrived: the ranking reads included, so the share would do nothing and is not offered.
+  const windows = await runSetup({ config: { ...config, subscriptions: { ...config.subscriptions, claude: { ...config.subscriptions.claude, billing: "metered" } } }, found: ["claude", "codex"], usage: { claude: "included", codex: "metered" }, answers: ["", "", "b", "b", "7"] });
+  expect(windows.asked.join("\n")).not.toContain("Launch share");
   // Codex included (headroom balances it), or in fallback use: no other normal metered account, so no question.
   for (const [usage, subs] of [[{ claude: "metered", codex: "included" }, config.subscriptions], [{ claude: "metered", codex: "metered" }, { ...config.subscriptions, codex: { ...config.subscriptions.codex, use: "fallback" } }]]) {
     const y = await runSetup({ config: { ...config, subscriptions: subs }, found: ["claude", "codex"], usage, answers: ["", "", "b", "b", "7"] });
