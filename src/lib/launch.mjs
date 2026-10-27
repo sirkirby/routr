@@ -135,7 +135,11 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     resumeSteps = () => out.pane ? [doNext(STARTUP_INPUT, templateCommand(["herdr", "pane", "send-keys", out.pane, "<keys>"])), rerun()] : [];
     if (!statSync(out.cwd).isDirectory()) throw new Error("--cwd must be a directory");
     const privateDir = join(tempRoot, `routr-cursor-${randomUUID()}`);
-    const p = plan({ ...o, cwd: out.cwd, cursorConfigDir: privateDir });
+    // A harness that names its folder in its command (Antigravity's --add-dir) is planned for the worktree: a
+    // placeholder until herdr has made it, then planned again for its path (issue #22: it was given the main checkout,
+    // where a worker launched into its own worktree would have written).
+    const planFor = (cwd) => plan({ ...o, cwd, cursorConfigDir: privateDir });
+    let p = planFor(o.worktree ? "<worktree-path>" : out.cwd);
     Object.assign(out, { start: { executable: p.executable, argv: p.argv, env: p.env }, warnings: [...out.warnings, ...p.warnings.filter((w) => !w.startsWith("Plan only:"))] });
     if (!o.model) out.next.push(doNext("Choose --model before launching"));
     if (o.kind === "kiro" && o.effort && o.effort !== "auto") out.next.push(doNext("Check the model’s /effort panel in the pane"));
@@ -345,6 +349,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         throw new Error("herdr worktree create returned an answer routr cannot read (herdr_invalid_response)");
       }
       const root = w.root_pane.pane_id; out.cwd = w.worktree.path;
+      p = planFor(out.cwd); out.start = { ...out.start, argv: p.argv };
       out.worktree = { branch: o.worktree, ...(o.base ? { base: o.base } : {}), path: w.worktree.path, workspace: w.workspace?.workspace_id ?? null };
       // How this worker is finished: never by closing its pane, which closes the workspace and leaves the worktree.
       cleanupArgs = ["routr", "cleanup", "--cwd", repoCwd, "--worktree", o.worktree];
