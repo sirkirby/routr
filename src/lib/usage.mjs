@@ -261,7 +261,7 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT(), nowSec 
   let why, code, answered = false, out = null;
   if (!priv) { code = "private_folder"; why = usageFailure(code).why; }
   else {
-    try { out = await exec("claude", claudeUsageArgs(quiet), { cwd: priv.cwd, timeoutMs: CLAUDE_TIMEOUT_MS }); }
+    try { out = await exec("claude", claudeUsageArgs(quiet), { cwd: priv.cwd, timeoutMs: CLAUDE_TIMEOUT_MS, exitZero: true }); }
     catch { code = "read_failed"; }
     finally {
       // run() answers null on a timeout (it kills Claude and does not wait), an error, or no output: the project

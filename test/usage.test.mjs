@@ -883,6 +883,8 @@ test("an Enterprise login is metered only when its /usage answered with no windo
   // A read that failed is not a seat without a quota: it stays a failure on the assumed headroom.
   const [failed] = await read(async () => null);
   expect(failed.class).not.toBe("metered"); expect(failed.billing).toBeUndefined(); expect(failed.failure).toBeDefined();
+  // Claude's /usage is read with its exit status: an answer printed before a non-zero exit is no answer (run's exitZero).
+  let opts; await read(async (cmd, args, o) => { opts = o; return null; }); expect(opts).toMatchObject({ exitZero: true });
   // An answer routr cannot read is not "no windows": an empty result, a window line cut short, or one Claude did not mark a success.
   for (const exec of [async () => claudeAnswer(""), async () => claudeAnswer("  \n"), async () => claudeAnswer("Current session: 100%"),
     async () => claudeAnswer("Current week (all models): 30% used · resets"), async () => claudeAnswer("Total cost: $0.0000", { subtype: "error_during_execution" }),
