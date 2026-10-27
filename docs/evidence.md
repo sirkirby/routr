@@ -66,6 +66,46 @@ routr's shipped questions (r5, c1). Those questions were worded and tuned on Jev
 | Time per brief | ~130 ms | ~420 ms | ~525 ms | 5-7 s (M4 Max) | ~5 s (M4 Max) |
 | `sure_at` | 0.8 | 0.7 | 0.5 | 0.6 | 0.6 |
 
+### Moving the pin: Jev 1.14 (2026-10-27)
+
+routr stays on `jev-1.13.0`. The maintainers' gate held `jev-1.14.0` on the level, judged by what a lead acts on.
+
+**What a lead acts on.** Fresh Claude Code and Codex leads were given routr's real `dispatch` output on 12 real tasks
+from the maintainer's work, with one fact's reading flipped at a time and the level unchanged, and asked to decide.
+- Flipping a work fact (where to work, approach open, cause unknown, cross-cutting, concurrency or stored data, hard to
+  undo, needs the user) changed the level, model or effort 0 of 40 times with Claude and 5 of 55 with Codex, about as
+  often as Codex disagreed with itself.
+- Flipping `standalone` to no made the lead rewrite the brief 12 of 12 and 11 of 12 times.
+- Flipping the other brief and worker facts was mostly overridden: states a check 2 of 10, tiny 0 of 12, needs the
+  user 0 of 4, separable 1 of 11.
+
+So leads check most facts against the brief and override a wrong one, but follow the level and `standalone`. A flipped
+reading is usually false for its brief, so this measures whether a lead acts on routr's reading against the brief's own
+evidence, not the value of a true reading the lead would have missed. Small samples (12 tasks, 318 decisions).
+
+**The gate, since then** (CONTRIBUTING.md): the level (exact, under- and over-rated, the real tasks, stability),
+`standalone`, and the report and reviewer verdicts are gated. The other facts are reported but not gated. Under-rating
+may not rise at all, judged on the mean of three runs, because one run moves by about one item.
+
+**The result, three runs per version:**
+
+| | 1.13.0 | 1.14.0 |
+|---|---|---|
+| Level right, 104 labelled briefs | 82.7 | 81.3 |
+| One level too low / too high | 7.7 / 13.7 | 8.7 / 14.0 |
+| Level right, the 36 real tasks | 29.3 | 27.7 |
+| Level the same on 5 repeats (of 12) | 11 | 11.7 |
+| "Standalone" decisively wrong (78) | 2 | 2 |
+| Report checks: expected readings (23) / claimed verdict (12) | 20.3 / 12 | 21.3 / 12 |
+| Reviewer verdicts right (80) | 68.7 | 67.3 |
+| Fact readings the same on 5 repeats (144, not gated) | 140.3 | 136.3 |
+
+1.14 reads levels lower. Scored against verified outcomes on 339 real tasks from the maintainer's ledger (three asks
+each), it over-rated less (9 against 14 of the 329 where the chosen level was enough), under-rated the same (10 of 10
+that fell short below strong were read no higher), and read 35 fewer tasks as strong. On the labelled briefs it is right
+a little less often. Changing `sure_at` changes no level (a torn reading is presented as its most likely level), so
+routr cannot close the gap itself. The gate is run again on the next Jev version.
+
 ### Backup model or constant fallback
 
 Private workbench P33, 2026-10-18, compared the model gate's 104 labelled briefs with constant levels. The real
