@@ -210,7 +210,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
   const refuse = (error) => ({ ...refusal("no usage view", error, warnings), level });
   if (explicit) {
     if (words.lastIndexOf("--level") !== at || !LEVELS.includes(words[at + 1]))
-      return refuse("usage: --level takes one of basic, standard, strong, once; eligibility was not refreshed");
+      return refuse(`usage: --level takes one of ${LEVELS.join(", ")}, given once; eligibility was not refreshed`);
     level = words[at + 1]; words.splice(at, 2);
   }
   // The background refresh's lock token, handed over by the call that took the lock (snapshot.mjs).
@@ -222,7 +222,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
   const flags = words.filter((w) => w.startsWith("-")), configured = Object.keys(config.subscriptions);
   const [name, ...extra] = words.filter((w) => !w.startsWith("-"));
   const unknown = flags.filter((f) => f !== "--json" && f !== "--background");
-  if (extra.length || unknown.length) return refuse(`usage: routr usage [--config <path>] [--headroom <subscription>=<share, 0.9 or 90%>]... [<subscription> | --level <basic|standard|strong>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}`);
+  if (extra.length || unknown.length) return refuse(`usage: routr usage [--config <path>] [--headroom <subscription>=<share, 0.9 or 90%>]... [<subscription> | --level <${LEVELS.join("|")}>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}`);
   if (explicit && (name || flags.includes("--background"))) return refuse("usage: --level is for unnamed usage only; omit the subscription and --background. Eligibility was not refreshed");
   const fresh = name && Object.hasOwn(sources, name) && sources[name]?.check;
   if (name && !configured.includes(name) && !fresh) return { ...refuse(`${name} is not a configured subscription (configured: ${configured.join(", ") || "none, run routr setup"})`), subscription: name };

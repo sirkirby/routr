@@ -470,7 +470,8 @@ close of the root pane, fails, the launch fails before any agent starts (`state:
 was created (after a failed close, also that its workspace has an extra shell pane, naming it) and gives the
 `routr cleanup --cwd <repo> --worktree <branch>` that removes it, which is also the cleanup step in `next`. A launch
 never goes on with two panes in a worktree's workspace, where `routr cleanup --pane` would close the worker's pane and
-leave the worktree.
+leave the worktree. `--copy` copies as a headless launch does: never through a link and never over a file the
+worktree has. A copy it refuses fails the launch before the split, and `error` gives the same cleanup command.
 
 With export off, the `TRACEPARENT`, `TRACESTATE` and `BAGGAGE` in launch's own environment (any case, on
 Windows; an empty one is absent) go to every pane launch splits (beside the caller, or in a new worktree), as

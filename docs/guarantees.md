@@ -138,7 +138,7 @@ The binary is self-contained: the files under `skills/` are embedded at build ti
 repository checkout at run time. It reads your harness state read-only (usage sources, settings, model lists) and
 writes only:
 
-- under `~/.config/routr`, `~/.cache/routr`, `~/.local/share/routr` (headless workers' worktrees in its `worktrees`)
+- under `~/.config/routr` (`config.json` written whole, where a link to it points), `~/.cache/routr`, `~/.local/share/routr` (headless workers' worktrees in its `worktrees`)
   and `~/.local/state/routr` (headless workers);
 - OpenTelemetry's trace and log requests, four-field usage observations, drop markers, sender state (including per-stream gauge watermarks) and lock under `~/.cache/routr/otel`. Trace and log
   resources use a random UUIDv4 per process, held only in memory, and write no identity file. The gauge's
@@ -154,8 +154,8 @@ writes only:
 - its own binary, when it updates itself;
 - the skill folders, on `skill install` (and the updater's reinstall);
 - a file at a path you name for that command (`share --out`, a `--ledger` or `--config` you give);
-- the files `launch --copy` copies into a worker's worktree (which `cleanup` removes again only while they are
-  unchanged);
+- the files `launch --copy` copies into a worker's worktree, in a pane or headless, never through a link and never
+  over a file the worktree has (which `cleanup` removes again only while they are unchanged);
 - temporary files it removes: the private herdr session `usage cursor` makes, the empty Kiro session `usage kiro`
   deletes again, the private folder each Claude `/usage` read runs in, with the empty `~/.claude/projects` folder
   Claude makes for it, removed after a normal exit (a timed-out read can leave that one empty folder), and the private
@@ -163,7 +163,7 @@ writes only:
   shell removes the launch copy when Cursor exits; a launch that failed after Cursor started keeps it and says so).
 
 One exception: `uninstall` removes the `statusLine` entry an earlier routr's `setup` set in `~/.claude/settings.json`,
-after a backup, and only when it runs `routr statusline`.
+after a backup, and only when it runs `routr statusline`. It writes the file whole, where a link to it points.
 
 `uninstall` removes the binary, routr's own skills (above), `~/.cache/routr` and `~/.local/state/routr` (sockets
 and locks). It reports a running OpenTelemetry sender. A request already in flight can finish within its 10 s

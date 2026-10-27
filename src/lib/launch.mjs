@@ -2,7 +2,7 @@ import { warning } from "./warnings.mjs";
 import { inputNeeded, commandTrace, launchCarriers, launchCarrierWarnings, adviceForLaunch, completeLaunch } from "./traces.mjs";
 import { takeLeadSession } from "./trace-context.mjs";
 import { randomUUID } from "node:crypto";
-import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +14,7 @@ import { CLOSING, OFF } from "./wording.mjs";
 import { BRANCH, clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, promptReadArgs, runHerdr, SHELLS, shellFamily, splitArgs, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
-import { CARRIERS, carrierValues, ensureParent, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
+import { CARRIERS, carrierValues, FORWARDED, home, realPath, redactCarriers, spawnSelf } from "./runtime.mjs";
 import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
 
 // The guide is the source of this instruction, embedded at build time just like the installed skills.
@@ -351,10 +351,13 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       step("worktree", true, `Created ${out.cwd} on branch ${o.worktree}${o.base ? ` from ${o.base}` : ""}, workspace ${out.worktree.workspace}, root pane ${root}`);
       // A worktree holds tracked files only. --copy brings named untracked files or folders (a local config, test data)
       // across from the main checkout, at the same relative path.
+      // The same copy as a headless worktree's (copyInto): never over a file the commit has, never through a link.
+      const { copyInto } = o.copy?.length ? await import("./workers.mjs") : {};
       for (const rel of o.copy ?? []) {
-        const from = join(repoCwd, rel), to = join(out.cwd, rel);
+        const from = join(repoCwd, rel);
         if (!existsSync(from)) { out.warnings.push(warning("copy_missing", `--copy ${rel}: not found in ${repoCwd}; skipped`)); continue; }
-        ensureParent(to); cpSync(from, to, { recursive: true });
+        try { copyInto(from, out.cwd, rel); }
+        catch (e) { throw new Error(`launch created the worktree ${out.cwd} but did not copy into it (${e?.message ?? e}); no agent was started. Remove the worktree with ${displayCommand(cleanupArgs)}`); }
         step("copy", true, `Copied ${rel} into the worktree`);
       }
       // The worker gets a pane of launch's own, with its carriers, never the root pane herdr opened (worktreePane);

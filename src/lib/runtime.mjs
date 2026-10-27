@@ -3,7 +3,7 @@
 // this on every Claude Code turn. It is the only module that imports node:child_process (a test holds every other file
 // in src/ to that), so every process routr starts gets the same platform defaults from `start` / `startSync`.
 import { spawn, spawnSync } from "node:child_process";
-import { accessSync, closeSync, constants, existsSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { accessSync, chmodSync, closeSync, constants, existsSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
@@ -92,12 +92,28 @@ export function readJsonFile(file, { busyFor = process.platform === "win32" ? RE
     pause(5);
   }
 }
-export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync,
+// `userFile`: a file the person may keep elsewhere (config.json, Claude's settings.json linked from a dotfiles folder):
+// written where its link points, even a link to a file not made yet, keeping the link, and with exactly the mode it
+// has (set on the new file, so the umask cannot narrow it: 0660 under umask 022 came back 0640).
+const linkTarget = (file) => {
+  for (let i = 0; i < 40; i++) {
+    let st; try { st = lstatSync(file); } catch { return file; }
+    if (!st.isSymbolicLink()) return realOr(file);
+    // From the folder's real path: `..` in a link is taken where the folder really is (a lexical resolve of
+    // alias/nested -> ../x landed beside the alias, on another file).
+    file = resolve(realOr(dirname(file)), readlinkSync(file));
+  }
+  throw new Error(`${file}: too many links (a loop?); nothing was written`);
+};
+export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync, userFile = false,
   busyFor = process.platform === "win32" ? REPLACE_BUSY_MS : 0, now = () => performance.now(), pause = (ms) => Atomics.wait(replacePause, 0, 0, ms) } = {}) {
+  let exact;
+  if (userFile) { file = linkTarget(file); try { exact = mode ??= statSync(file).mode & 0o777; } catch {} }
   if (mkdir) ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
   try {
     writeFileSync(tmp, JSON.stringify(value, null, indent) + "\n", { mode });
+    if (exact !== undefined && process.platform !== "win32") chmodSync(tmp, exact);
     for (const began = now(); ;) {
       try { rename(tmp, file); return; }
       catch (e) {

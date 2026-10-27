@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import * as otel from "../src/lib/otel.mjs";
-import { readdirSync } from "node:fs";
+import { readdirSync, writeFileSync } from "node:fs";
+import { writeJsonAtomic } from "../src/lib/runtime.mjs";
 import { join } from "node:path";
 import { ids, install, points, receiver } from "./fixtures/otel-signals.mjs";
 
@@ -38,4 +39,19 @@ test("the sender folds latest per stream, persists watermarks across restarts, a
 test("logs encode observedTimeUnixNano and the causing span's flags", () => {
   const body = otel.encodeLogs([{ ...ids, flags: 1, eventName: "routr.warning", timeUnixNano: 1700000000000000000n, observedTimeUnixNano: 1700000000000000000n, severityNumber: 13, severityText: "WARN", attributes: {} }]);
   expect(body.resourceLogs[0].scopeLogs[0].logRecords[0]).toMatchObject({ timeUnixNano: "1700000000000000000", observedTimeUnixNano: "1700000000000000000", flags: 1 });
+});
+
+test("a metrics batch from an earlier consent, met after the sweep, ends the send loop instead of spinning on it", async () => {
+  await receiver(async (endpoint, requests) => {
+    const f = install(endpoint), consent = f.config.otel.consent, renewed = "fedcba0987654321fedcba0987654321";
+    f.queue.queue("metrics", { subscription: "claude", window: "five_hour", value: 0.2, time: 1000 });
+    // The person sets OpenTelemetry up again (a new consent) between the sender's sweep and its first claim.
+    let t = 0, renewedOnce = false;
+    const write = (file, value, o) => { writeJsonAtomic(file, value, o); if (!renewedOnce && value.consent === consent) { renewedOnce = true; writeFileSync(f.opts.configPath, JSON.stringify({ ...f.config, otel: { ...f.config.otel, consent: renewed } })); } };
+    await otel.sendOtel({ ...f.opts, write, monotonic: () => t++ });
+    expect(renewedOnce).toBe(true);
+    expect(requests).toEqual([]);
+    expect(t).toBeLessThan(1000); // the loop stopped at once; it once spun until its 60 s limit
+    expect(readdirSync(join(f.root, "metrics"))).toEqual([]); // the closing sweep removes the old consent's batch
+  });
 });

@@ -1,7 +1,7 @@
 // launch.mjs, herdr.mjs, harnesses.mjs: starting a worker in a herdr pane
 import { expect, test } from "bun:test";
 import { isAbsolute, join, resolve } from "node:path";
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { plan } from "../src/lib/harnesses.mjs";
 import { composePrompt, launch as rawLaunch, parseLaunchArgs, WORKER_GUIDE } from "./contract.mjs";
 import { paneText, promptSettled, quote, runHerdr, shellPrompt } from "../src/lib/herdr.mjs";
@@ -1545,4 +1545,25 @@ test("a screen launch returns never carries a carrier value routr holds: the nee
   expect(f.screen).toContain("Error: bad flag");
   expect(f.screen).toContain("TRACEPARENT=<carrier> BAGGAGE=<carrier>");
   noCarrierValue(f);
+});
+
+test("a pane worktree's --copy never overwrites a file the commit has and never copies through a link, as a headless one", async () => {
+  const repo = scratch("wt-copy-repo"), path = scratch("wt-copy-tree"), outside = scratch("wt-copy-outside");
+  writeFileSync(join(repo, "package.json"), "edited"); writeFileSync(join(path, "package.json"), "committed");
+  const over = await launch([...launchArgs, "--cwd", repo, "--worktree", "b", "--copy", "package.json", "--task", "Task"], { ...worktreeHerdr(path).deps, env: { HERDR_ENV: "1" } });
+  expect(over.ok).toBe(false); expect(over.error).toContain("the worktree already has it"); expect(over.error).toContain("routr cleanup");
+  expect(readFileSync(join(path, "package.json"), "utf8")).toBe("committed");
+  mkdirSync(join(repo, "config")); writeFileSync(join(repo, "config", "local.json"), "{}");
+  const linked = scratch("wt-copy-linked"); symlinkSync(outside, join(linked, "config"));
+  const through = await launch([...launchArgs, "--cwd", repo, "--worktree", "c", "--copy", "config/local.json", "--task", "Task"], { ...worktreeHerdr(linked).deps, env: { HERDR_ENV: "1" } });
+  expect(through.ok).toBe(false); expect(through.error).toContain("a link or not a folder");
+  expect(existsSync(join(outside, "local.json"))).toBe(false);
+});
+
+test.skipIf(process.platform === "win32")("--copy of a POSIX file name holding a backslash copies that file, not a folder of that name", async () => {
+  const repo = scratch("wt-bs-repo"), path = scratch("wt-bs-tree");
+  writeFileSync(join(repo, "part\\name.json"), "{}");
+  const r = await launch([...launchArgs, "--cwd", repo, "--worktree", "b", "--copy", "part\\name.json", "--task", "Task"], { ...worktreeHerdr(path).deps, env: { HERDR_ENV: "1" } });
+  expect(r.steps.find((s) => s.step === "copy")?.ok).toBe(true);
+  expect(existsSync(join(path, "part\\name.json"))).toBe(true); expect(existsSync(join(path, "part"))).toBe(false);
 });

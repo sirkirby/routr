@@ -345,6 +345,10 @@ export async function sendOtel({ home = userHome(), configPath, env = process.en
       if (!sw.on || st.next_attempt_at > now()) break;
       const file = SIGNALS.flatMap((s) => queued(p, s))[0];
       if (!file) break;
+      // A batch of an earlier consent, met here when consent changed after the sweep: never sent, and the closing sweep
+      // removes it. Stop now, for every signal: a metrics one is skipped by metricBatch, so `continue` met it again
+      // with nothing awaited, and spun until the 60 s limit.
+      if (file.nonce !== sw.consent?.slice(0, 8)) break;
       let headers;
       try { headers = otelHeaders(p.secrets); }
       catch {

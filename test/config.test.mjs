@@ -53,3 +53,12 @@ test("the decision model is a setting: a provider routr knows and a model it has
   expect(at(undefined).config.sure_at).toBeNull();
   expect(at(undefined, { sure_at: 0.9 }).config.sure_at).toBe(0.9);
 });
+
+test("valid JSON that is not an object is an unreadable config, never a throw", () => {
+  for (const text of ["null", "[]", "3", "\"x\""]) {
+    const f = join(scratch("cfg-shape"), "config.json"); writeFileSync(f, text);
+    const r = loadConfig(f);
+    expect(r.config.fallback_level).toBe(DEFAULTS.fallback_level);
+    expect(r.notes).toHaveLength(1); expect(r.notes[0]).toContain("config unreadable");
+  }
+});

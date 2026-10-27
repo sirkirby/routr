@@ -614,3 +614,14 @@ test("a Cloudflare account ID in capitals is taken, and saved in lower case", ()
   expect(r.exitCode).toBe(0);
   expect(readFileSync(join(home, ".config/routr/env"), "utf8")).toContain("CLOUDFLARE_ACCOUNT_ID=0123456789abcdef0123456789abcdef\n");
 });
+
+test("a config file holding JSON null still answers the advice commands on the defaults (fail open)", () => {
+  const home = scratch("nullcfg"); mkdirSync(join(home, ".config/routr"), { recursive: true });
+  writeFileSync(join(home, ".config/routr/config.json"), "null");
+  for (const args of [["dispatch", "fix the typo"], ["usage"]]) {
+    const res = Bun.spawnSync([process.execPath, SCRIPT, ...args], { env: cliEnv(home, { PATH: home }) });
+    expect(res.exitCode).toBe(0);
+    expect(res.stderr.toString()).toBe("");
+    expect(JSON.stringify(JSON.parse(res.stdout.toString()).warnings)).toContain("config unreadable");
+  }
+});

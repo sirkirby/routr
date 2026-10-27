@@ -9,14 +9,14 @@
 // Sending happens only in the detached daily job (update.mjs) or on an explicit command: never inside advice.
 import { pick, shaped, modelName as model, EFFORTS, questionSet, VERDICTS, CHECK_RESULTS } from "./shaped.mjs";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONFIG_PATH } from "./config.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { decisionOf, LEDGER_PATH, read } from "./ledger.mjs";
 import { KNOWN_MODELS, PROVIDER_NAMES } from "./providers.mjs";
 import { FACTS, questions } from "./questions.mjs";
-import { ensureParent, lockIsStale, standalone, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP } from "./runtime.mjs";
+import { lockIsStale, standalone, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP, writeJsonAtomic } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 export const ENDPOINT = process.env.ROUTR_TELEMETRY_URL || "https://telemetry.routr.build";
@@ -86,7 +86,8 @@ export function forgetConsentUnlessOn(config, ledger) {
 export const telemetryState = (ledger) => state(ledger); // read-only view, for callers that pass their own ledger
 
 function state(ledger) { try { return JSON.parse(readFileSync(STATE(ledger), "utf8")); } catch { return {}; } }
-function saveState(s, ledger) { ensureParent(STATE(ledger)); writeFileSync(STATE(ledger), JSON.stringify(s) + "\n"); }
+// Written whole: a reader (the daily send, telemetry status) never sees it half written.
+function saveState(s, ledger) { writeJsonAtomic(STATE(ledger), s, { preserveOnError: true }); } // never missing for a moment: consent and install id live here
 // A random id made on this machine, so rows from one install can be grouped. It is not derived from anything about you.
 export function installId(ledger, { create = true } = {}) { const s = state(ledger); if (s.install_id || !create) return s.install_id ?? null; s.install_id = randomUUID(); saveState(s, ledger); return s.install_id; }
 
@@ -179,8 +180,8 @@ export function setTelemetry(on, path = CONFIG_PATH, { ledger, now = new Date().
     const s = state(ledger);
     saveState(on ? { ...s, opted_in_at: now, started: now, sent_through: now } : { ...s, opted_in_at: null }, ledger);
     config.telemetry = on;
-    ensureParent(path);
-    writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+    // As setup writes it: whole, so another command never reads it half written, and never missing for a moment.
+    writeJsonAtomic(path, config, { indent: 2, preserveOnError: true, userFile: true });
   } catch (e) { return { ok: false, error: String(e?.message ?? e).slice(0, 160) }; }
   return { ok: true, telemetry: on ? "on" : "off", config: path };
 }

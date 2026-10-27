@@ -111,6 +111,8 @@ test("usage rejects invalid level combinations before any usage read or named re
     expect(result.error).toContain("usage:");
   }
   expect(calls).toBe(0);
+  // The refusal names the levels there are, and only those: a lead retries with what it reads.
+  expect((await usageCommand(["--level", "huge"], cfg(), {}, deps)).error).toBe("usage: --level takes one of basic, standard, strong, given once; eligibility was not refreshed");
 });
 
 test("usage level CLI fails open and keeps headroom overrides and default behavior", () => {

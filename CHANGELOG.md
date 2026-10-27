@@ -5,6 +5,16 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- A config file holding JSON `null`, a list or any value that is not an object no longer crashes the advice commands,
+  `usage` or `doctor`: it is read as unreadable, and routr answers on the defaults (#125).
+- `launch --worktree --copy` in a herdr pane no longer overwrites a file the commit has or copies through a link, as a
+  headless launch already refused (#125).
+- An update whose new binary hangs no longer blocks every later update as "another routr update is running" (#125).
+- The OpenTelemetry sender no longer busy-loops for up to a minute when you set export up again while it is sending (#125).
+- `routr setup`, `routr telemetry on|off` and `routr uninstall` write config.json and Claude's settings.json whole,
+  keeping their permissions and any link to them, so another command never reads them half written (#125).
+- `routr usage --level` with an unknown level lists only the real levels (#125).
+
 ## v0.9.1 — 2026-10-26
 
 [Full notes](docs/releases/v0.9.1.md)
