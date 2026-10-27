@@ -8,14 +8,15 @@ import { LEVELS } from "./questions.mjs";
 import { BACK, CANCEL } from "./tui.mjs";
 import { NOTICE } from "./telemetry.mjs";
 import { LEVEL_MEANING, RESERVE } from "./wording.mjs";
-import { accountUse, UPDATE_CHANNELS } from "./config.mjs";
+import { accountUse, isShare, SHARE_MAX, UPDATE_CHANNELS } from "./config.mjs";
 import { decisionTargets, modelsHere, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
 import { otelEndpoint } from "./otel.mjs";
 
 const LEAVE = ""; // "leave the model to the lead agent": no default_model
+const NO_SHARE = "none"; // no launch share: the account counts as 1 beside one that has a share
 const PRESETS = [0, 0.1, 0.2, 0.25, 0.3, 0.5];
 const pct = (x) => `${Math.round(x * 100)}%`;
-const FIELDS = { model: "Everyday model", effort: "Everyday effort", hardest: "Hardest work", reserve: "Reserve", use: "Account use" };
+const FIELDS = { model: "Everyday model", effort: "Everyday effort", hardest: "Hardest work", reserve: "Reserve", use: "Account use", share: "Launch share" };
 
 // Which decision model reads each brief: every model routr has measured that runs on this machine, with what it needs
 // and how it did on routr's own items (providers.mjs, `hint`). Returns a list of { provider, model }, BACK or CANCEL.
@@ -33,7 +34,7 @@ export async function askDecision(ui, now) {
 
 // One line per subscription: what it runs and what it takes.
 export const describe = (n, s) => (s.enabled === false ? "off (settings kept)"
-  : `${s.default_model || "model left to the lead agent"}${s.default_effort ? ` @ ${s.default_effort}` : ""} · ${s.hardest_work} work · reserve ${pct(s.reserve ?? 0)}${s.use ? ` · ${s.use} use` : ""}`);
+  : `${s.default_model || "model left to the lead agent"}${s.default_effort ? ` @ ${s.default_effort}` : ""} · ${s.hardest_work} work · reserve ${pct(s.reserve ?? 0)}${s.use ? ` · ${s.use} use` : ""}${s.share != null ? ` · share ${s.share}` : ""}`);
 
 // `r` is doctor's inspection, `config` the file as it is (null on a first run). `efforts(n, model)` lists a harness's
 // levels for a model. Returns the choices, or CANCEL when the person quits without writing.
@@ -110,7 +111,38 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
     if (typeof v === "string") draft[n].use = v;
     return v;
   };
-  const fieldsOf = (n) => Object.keys(FIELDS).filter((k) => k !== "effort" || TAKES_EFFORT.includes(n));
+  // The launch share balances metered accounts, which have no headroom number (shares.mjs): asked only for an account
+  // that reads metered and is in normal use, and only when another one is too. Headroom balances the rest.
+  // As the ranking reads it (pick.mjs): windows that arrived decide, whatever `billing` says; otherwise `billing`, then
+  // what the harness reported.
+  const reads = (n) => { const seen = r.harnesses[n]?.usage_class; return seen === "included" || seen === "capped" ? seen : draft[n].billing ?? seen; };
+  const sharer = (x) => draft[x].enabled && reads(x) === "metered" && useOf(x) === "normal";
+  const shares = (n) => sharer(n) && candidates.filter(sharer).length >= 2;
+  ask.share = async (n) => {
+    const now = draft[n].share ?? NO_SHARE;
+    const options = [...new Set([1, 2, 3, 4, 5, ...(now === NO_SHARE ? [] : [now])])].sort((a, b) => a - b).map((x) => ({ value: x, label: String(x) }));
+    let v = await ui.select({ message: `${HARNESSES[n].label}: launch share ${ui.style.dim("(its weight in how you split launches between metered accounts: 3 here and 1 on another is about three for every one)")}`,
+      initial: now, options: [{ value: NO_SHARE, label: "no share", hint: "counts as 1 when another metered account has one" }, ...options, { value: "other", label: "another weight…" }] });
+    if (v === "other") v = await ui.text({ message: `${HARNESSES[n].label}: launch share, 1 to ${SHARE_MAX}`, initial: now === NO_SHARE ? "" : String(now),
+      parse: (t) => { const x = Number(String(t).trim()); if (!/^\d+$/.test(String(t).trim()) || !isShare(x)) throw new Error(`a whole number from 1 to ${SHARE_MAX}`); return x; } });
+    if (v === NO_SHARE) draft[n].share = null;
+    else if (typeof v === "number") draft[n].share = v;
+    return v;
+  };
+  const fieldsOf = (n) => Object.keys(FIELDS).filter((k) => (k !== "effort" || TAKES_EFFORT.includes(n)) && (k !== "share" || shares(n)));
+  // Walking an account's settings asks the share last and separately (askShares): whether it applies depends on every
+  // account's use, and a new metered account only becomes normal use when its own Account use is answered.
+  const walkFields = (n) => fieldsOf(n).filter((k) => k !== "share");
+  const askShares = async (names) => {
+    const list = names.filter(shares);
+    for (let i = 0; i < list.length;) {
+      const v = await ask.share(list[i]);
+      if (v === CANCEL) return CANCEL;
+      if (v === BACK) { if (i === 0) return BACK; i--; continue; }
+      i++;
+    }
+    return "done";
+  };
   // Several fields in order; Esc goes back one field, and back past the first returns BACK.
   const fields = async (n, list) => {
     for (let i = 0; i < list.length;) {
@@ -178,7 +210,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       const was = current[n], now = draft[n];
       if (!was) { out.push(`${HARNESSES[n].label}: ${now.enabled ? `added · ${describe(n, now)}` : "added, turned off"}`); continue; }
       if ((was.enabled !== false) !== now.enabled) out.push(`${HARNESSES[n].label}: ${now.enabled ? "turned on" : "turned off (settings kept)"}`);
-      for (const [k, label] of [["default_model", "model"], ["default_effort", "effort"], ["hardest_work", "hardest work"], ["reserve", "reserve"], ["use", "account use"]]) {
+      for (const [k, label] of [["default_model", "model"], ["default_effort", "effort"], ["hardest_work", "hardest work"], ["reserve", "reserve"], ["use", "account use"], ["share", "launch share"]]) {
         const a = was[k] ?? null, b = now[k] ?? null;
         if (a !== b) out.push(`${HARNESSES[n].label}: ${label} ${k === "reserve" ? pct(a ?? 0) : a ?? "none"} ${ui.glyphs.arrow} ${k === "reserve" ? pct(b ?? 0) : b ?? "none"}`);
       }
@@ -201,14 +233,15 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
 
   // First run: every step in order; Esc steps back.
   const full = async () => {
-    const steps = ["choose", "settings", "extras", "finish"];
+    const steps = ["choose", "settings", "shares", "extras", "finish"];
     for (let s = 0; s < steps.length;) {
       let v;
       if (steps[s] === "choose") v = await choose();
       else if (steps[s] === "settings") {
         v = "done";
-        for (const n of candidates.filter((x) => draft[x].enabled && signedIn(x))) { v = await fields(n, fieldsOf(n)); if (v !== "done") break; }
-      } else if (steps[s] === "extras") v = await extras();
+        for (const n of candidates.filter((x) => draft[x].enabled && signedIn(x))) { v = await fields(n, walkFields(n)); if (v !== "done") break; }
+      } else if (steps[s] === "shares") v = await askShares(candidates.filter((x) => signedIn(x)));
+      else if (steps[s] === "extras") v = await extras();
       else { v = await finish(); if (v === "back") { s = 0; continue; } if (v === "quit") return CANCEL; if (v === "write" || v === "nothing") return v; }
       if (v === CANCEL) return CANCEL;
       if (v === "none") return "none";
@@ -225,7 +258,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
     for (;;) {
       const pending = changes().length;
       const v = await ui.select({ message: "What would you like to do?", initial: "one", options: [
-        { value: "one", label: "Change one subscription's settings", hint: "model, effort, hardest work, reserve" },
+        { value: "one", label: "Change one subscription's settings", hint: "model, effort, hardest work, reserve, account use, launch share" },
         { value: "choose", label: "Choose which subscriptions routr uses", hint: "turn one on or off" },
         ...(telemetry ? [{ value: "extras", label: "Anonymous outcomes (telemetry)" }] : []),
         { value: "channel", label: "Update channel", hint: `${answers.channel ?? channelNow}: stable releases, or beta builds too` },
@@ -239,7 +272,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       if (v === "save") { ui.note("Saving", changes()); return "write"; }
       // Esc with changes not saved: the same way out as at the end of a first run, so nothing is lost by accident.
       if (v === BACK) { const w = await finish(); if (w === "write") return "write"; if (w === "quit" || w === CANCEL) return CANCEL; continue; }
-      if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) for (const n of c.filter((x) => !current[x])) if (await fields(n, fieldsOf(n)) === CANCEL) return CANCEL; continue; }
+      if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) { const added = c.filter((x) => !current[x]); for (const n of added) if (await fields(n, walkFields(n)) === CANCEL) return CANCEL; if (await askShares(added) === CANCEL) return CANCEL; } continue; }
       if (v === "extras") { if (await extras() === CANCEL) return CANCEL; continue; }
       if (v === "otel") { if (await askOtel() === CANCEL) return CANCEL; continue; }
       if (v === "channel") { if (await askChannel() === CANCEL) return CANCEL; continue; }
@@ -257,7 +290,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
         if (!signedIn(n)) { ui.line(`${HARNESSES[n].label}: ${signInOf(n)}, then change its settings here.`, { dim: true }); continue; }
         let f = "model";
         for (;;) {
-          const now = { model: draft[n].default_model || "left to the lead agent", effort: draft[n].default_effort ?? "not set", hardest: draft[n].hardest_work, reserve: pct(draft[n].reserve ?? 0), use: useOf(n) };
+          const now = { model: draft[n].default_model || "left to the lead agent", effort: draft[n].default_effort ?? "not set", hardest: draft[n].hardest_work, reserve: pct(draft[n].reserve ?? 0), use: useOf(n), share: draft[n].share ?? "none" };
           f = await ui.select({ message: `${HARNESSES[n].label}: which setting?`, initial: f, options: [
             ...fieldsOf(n).map((k) => ({ value: k, label: FIELDS[k], hint: now[k] })),
             { value: BACK, label: "Back" }] });
@@ -272,7 +305,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   const outcome = config ? await menu() : await full();
   if (outcome === CANCEL) return CANCEL;
   // In the flags' shape, so setup applies them as it applies --model, --effort, --hardest, --reserve, --enable/--disable.
-  const out = { models: {}, efforts: {}, hardest: {}, reserves: {}, switches: {}, ranks: {}, uses: {}, ...answers, write: outcome === "write" };
+  const out = { models: {}, efforts: {}, hardest: {}, reserves: {}, switches: {}, ranks: {}, uses: {}, shares: {}, ...answers, write: outcome === "write" };
   if (out.channel === channelNow) delete out.channel; // as --channel: only a change is applied
   if (out.decision && decisionLabel(out.decision) === decisionLabel(decisionNow)) delete out.decision; // as --decision
   for (const n of candidates) {
@@ -284,6 +317,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
     if (d.reserve !== was.reserve) out.reserves[n] = d.reserve;
     if (!current[n] || (was.enabled !== false) !== d.enabled) out.switches[n] = d.enabled;
     if (d.use && d.use !== was.use) out.uses[n] = d.use;
+    if ((d.share ?? null) !== (was.share ?? null)) out.shares[n] = d.share ?? "off";
   }
   return out;
 }

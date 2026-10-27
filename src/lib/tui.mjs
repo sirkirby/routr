@@ -55,7 +55,8 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
   let rawOn = false, prev = null, timer = null, lines = null;
   // Accessible mode reads a line at a time: from the caller, or from the terminal itself.
   let reader = null;
-  if (accessible && !ask) { reader = createInterface({ input, output, terminal: false }); ask = (q) => new Promise((done) => reader.question(q, done)); }
+  // Each question resumes input first: the key prompt pauses it when it is done, which left the next question unanswered.
+  if (accessible && !ask) { reader = createInterface({ input, output, terminal: false }); ask = (q) => new Promise((done) => { input.resume?.(); reader.question(q, done); }); }
   // Raw mode off first: a terminal left in raw mode is the worst way to leave, so nothing that can throw comes before it.
   const restore = () => {
     if (rawOn) { try { input.setRawMode(false); } catch {} rawOn = false; }
@@ -99,7 +100,10 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
       settle([c.gray(g.bar), `${value === CANCEL ? c.red(g.cancel) : c.green(g.done)}  ${message}`, `${c.gray(g.bar)}  ${said}`]);
       resolve(value);
     };
-    if (!rawOn) { try { input.setRawMode?.(true); rawOn = true; } catch {} input.resume?.(); }
+    // Every prompt takes the terminal back as it needs it: something else that read the terminal in between (the key
+    // prompt reads a hidden line, then turns raw mode off and pauses input) would otherwise leave this one deaf.
+    if (!rawOn || input.isRaw === false) { try { input.setRawMode?.(true); rawOn = true; } catch {} }
+    input.resume?.();
     input.on("keypress", onKey);
     draw(frame(c.cyan(g.active)));
   });

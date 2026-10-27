@@ -159,6 +159,34 @@ test("ACCESSIBLE=1 without a line reader given (as routr setup runs it) reads th
   expect(await ui.select({ message: "Pick", options: [{ value: "a", label: "A" }, { value: "b", label: "B" }] })).toBe("b");
   ui.close();
 });
+test("a prompt after something else turned raw mode off and paused input (the key prompt) takes the terminal back", async () => {
+  const input = new EventEmitter(), calls = [];
+  input.isRaw = false; input.paused = true;
+  input.setRawMode = (on) => { input.isRaw = on; calls.push(`raw ${on}`); }; input.resume = () => { input.paused = false; calls.push("resume"); }; input.pause = () => { input.paused = true; };
+  const ui = createUI({ input, output: Object.assign(new EventEmitter(), { isTTY: true, columns: 80, rows: 24, write: () => {} }), env: {}, accessible: false });
+  const press = (name) => setTimeout(() => input.emit("keypress", undefined, { name }), 0);
+  press("return");
+  expect(await ui.select({ message: "first", options: [{ value: 1, label: "one" }] })).toBe(1);
+  // As the key prompt leaves it: raw mode off, input paused.
+  input.setRawMode(false); input.pause(); calls.length = 0;
+  press("return");
+  expect(await ui.select({ message: "second", options: [{ value: 2, label: "two" }] })).toBe(2);
+  expect(calls).toEqual(["raw true", "resume"]);
+  expect([input.isRaw, input.paused]).toEqual([true, false]);
+  ui.close();
+});
+test("accessible mode answers again after something else paused input (the key prompt)", async () => {
+  const { PassThrough } = await import("node:stream");
+  const input = new PassThrough(), output = new PassThrough();
+  const ui = createUI({ input, output, env: {}, accessible: true });
+  setTimeout(() => input.write("2\n"), 0);
+  expect(await ui.select({ message: "first", options: [{ value: "a", label: "A" }, { value: "b", label: "B" }] })).toBe("b");
+  input.pause(); // as the key prompt leaves it
+  setTimeout(() => input.write("1\n"), 0);
+  const answer = await Promise.race([ui.select({ message: "second", options: [{ value: "c", label: "C" }] }), new Promise((done) => setTimeout(() => done("no answer"), 300))]);
+  expect(answer).toBe("c");
+  ui.close();
+});
 test("raw mode is switched off even when writing to the terminal throws", () => {
   const input = new EventEmitter(), raw = [];
   input.setRawMode = (on) => raw.push(on); input.resume = () => {}; input.pause = () => {};
