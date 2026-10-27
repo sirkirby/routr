@@ -93,7 +93,7 @@ export function claudeSnapshot(s, nowSec = now()) {
   if (!ws.length && s.seen) { ws = toWs(s.seen.rate_limits); ts = s.seen.ts; }
   if (ws.length) return summarize({ pool: "claude", source: "statusline", ts, windows: ws, cls: ws.some((w) => w.name === "spend_limit") ? "capped" : "included", nowSec });
   return summarize({ pool: "claude", source: "statusline", ts: s.ts, note: s.answered
-    ? "Claude reports no usage windows for this seat. A plan with no quota (usage-based Enterprise) sends none: a seat with no quota is set with `billing: \"metered\"` for claude in the config"
+    ? "Claude reports no usage windows for this seat. A plan with no quota that routr does not recognise sends none: a seat with no quota is set with `billing: \"metered\"` for claude in the config"
     : "no windows yet: Claude reports usage after its first response of a session", nowSec, reason: s.answered ? NO_WINDOWS_AFTER_ANSWER : undefined });
 }
 
@@ -282,7 +282,7 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT(), nowSec 
   // from before a switch to an API key or a metered seat would rank the previous subscription's windows,
   // exhausted ones included; the snapshot is only for a live read that failed.
   if (answered) return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: NO_WINDOWS_AFTER_ANSWER,
-    note: `${why}. A plan with no quota (usage-based Enterprise) shows none: a seat with no quota is set with \`billing: "metered"\` for claude in the config` });
+    note: `${why}. A plan with no quota that routr does not recognise shows none: a seat with no quota is set with \`billing: "metered"\` for claude in the config` });
   // The statusline's reading however old (its age is shown), as before this reader existed; else nothing, and why.
   if (fromSnap?.headroom != null) return { ...fromSnap, source: "claude /usage", failure: usageFailure(code), kept: { source: "statusline", ageSec: fromSnap.ageSec }, note: [fromSnap.note, `${why} This is the statusline's last reading`].filter(Boolean).join("; ") };
   // A snapshot that says Claude sent no windows after a response keeps saying so: doctor's step keys on it.

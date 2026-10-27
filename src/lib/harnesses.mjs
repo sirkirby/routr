@@ -288,8 +288,8 @@ export async function billingFor(name, { fresh = false, harness = HARNESSES[name
 export function withBilling(name, u, b) {
   if (b?.billing !== "metered" || !u) return u;
   // A reading that holds only when the seat answered with no windows (an Enterprise login) leaves windows, and a
-  // read that failed, as they are.
-  if (b.when === "no_windows" && u.reason !== NO_WINDOWS_AFTER_ANSWER) return u;
+  // read that failed, as they are: a failed read can carry the reason from an old snapshot, and is still a failure.
+  if (b.when === "no_windows" && (u.reason !== NO_WINDOWS_AFTER_ANSWER || u.failure)) return u;
   const from = HARNESSES[name] ? `${HARNESSES[name].executable} ${HARNESSES[name].auth.check.join(" ")}` : "sign-in check";
   if (u.headroom != null) return withUsageReadingTime({ ...u, note: [u.note, `\`${from}\` says ${b.why}, yet usage windows arrived: ranked on the windows`].filter(Boolean).join("; ") }, usageReadingTime(u));
   const rest = { ...u };

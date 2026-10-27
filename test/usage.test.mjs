@@ -883,6 +883,12 @@ test("an Enterprise login is metered only when its /usage answered with no windo
   // A read that failed is not a seat without a quota: it stays a failure on the assumed headroom.
   const [failed] = await read(async () => null);
   expect(failed.class).not.toBe("metered"); expect(failed.billing).toBeUndefined(); expect(failed.failure).toBeDefined();
+  // Nor when an old snapshot said Claude answered with no windows: the failed read keeps that reason, and is still a failure.
+  for (const [exec, age] of [[async () => null, 60], [async () => { throw new Error("hung"); }, 30 * 86400], [async () => "not json", 60]]) {
+    const file = join(scratch("claude-enterprise-snap"), "snap.json"); writeFileSync(file, JSON.stringify({ ts: OCT5 - age, answered: true }));
+    const [kept] = await readUsage(["claude"], {}, { sources: { claude: { read: () => readClaude({ file, nowSec: OCT5, exec }) } }, why: async () => null, billing: () => ent });
+    expect([kept.reason, kept.class, kept.billing, Boolean(kept.failure)]).toEqual(["no_windows_after_answer", "unknown", undefined, true]);
+  }
   // An Enterprise seat with a quota shows windows: ranked on them, with no disagreement noted.
   const [quota] = await readUsage(["claude"], {}, { sources: { claude: { read: async () => live("claude", 0.6) } }, why: async () => null, billing: () => ent });
   expect(quota).toMatchObject({ headroom: 0.6 }); expect(quota.class).not.toBe("metered"); expect(String(quota.note ?? "")).not.toContain("yet usage windows arrived");
