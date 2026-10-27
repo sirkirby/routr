@@ -38,7 +38,7 @@ export const OFF = {
 };
 
 // The one-line summary of what is set.
-export const settingSummary = (name, s) => `${name} takes ${s.hardest_work} work, reserve ${Math.round(s.reserve * 100)}%${s.use ? `, ${s.use} use` : ""}`;
+export const settingSummary = (name, s) => `${name} takes ${s.hardest_work} work, reserve ${Math.round(s.reserve * 100)}%${s.use ? `, ${s.use} use` : ""}${s.share != null ? `, share ${s.share}` : ""}`;
 
 // A missing config is not an error: routr answers on its defaults, and says how to write one.
 export const NO_CONFIG = (path) => `no config at ${path}: using defaults (run \`routr setup\`)`;

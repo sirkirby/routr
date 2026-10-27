@@ -24,11 +24,21 @@ export const DEFAULTS = {
 // `use` is independent of billing. Absent it, keep the legacy metered after/with preference without inventing capacity.
 // `enabled: false` turns a subscription off without forgetting its settings: routr gives it no work until it is on again.
 export const UPDATE_CHANNELS = ["stable", "beta"];
-export const SUB_DEFAULTS = { enabled: true, hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after", use: null };
+export const SUB_DEFAULTS = { enabled: true, hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after", use: null, share: null };
 const BILLING = ["included", "metered"], METERED_RANK = ["after", "with"];
 export const ACCOUNT_USE = ["normal", "fallback"];
 export const accountUse = (s, cls) => s.use ?? (cls === "metered" && s.metered_rank !== "with" ? "fallback" : "normal");
 const isLevel = (v) => LEVELS.includes(v);
+// `share`: this account's weight in the user's ratio of launches between metered accounts (shares.mjs). A whole number,
+// so 3 and 1 read as "three for every one"; anything else is reported and left out, which means no ratio of its own.
+export const SHARE_MAX = 99;
+export const isShare = (v) => Number.isInteger(v) && v >= 1 && v <= SHARE_MAX;
+function launchShare(v, name, notes) {
+  if (v === undefined || v === null) return SUB_DEFAULTS.share;
+  if (isShare(v)) return v;
+  notes.push(warning("config_choice", `subscriptions.${name}.share: ${JSON.stringify(v)} is not a whole number from 1 to ${SHARE_MAX}, so it is left out`));
+  return SUB_DEFAULTS.share;
+}
 
 // Never throws: a missing or broken config means defaults plus a note, so the router still answers.
 export function loadConfig(path = CONFIG_PATH()) {
@@ -80,6 +90,7 @@ export function loadConfig(path = CONFIG_PATH()) {
       billing: oneOf("billing", BILLING, SUB_DEFAULTS.billing),
       metered_rank: oneOf("metered_rank", METERED_RANK, SUB_DEFAULTS.metered_rank),
       use: oneOf("use", ACCOUNT_USE, SUB_DEFAULTS.use),
+      share: launchShare(s?.share, name, notes),
     };
   }
   return { config, notes };

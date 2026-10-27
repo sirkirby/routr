@@ -398,10 +398,19 @@ Own fields:
   probabilities }`, `work_type` `{ choice, confidence }`, `high_blast_radius`), absent on fallback.
 - The advice: `level`, `sure`, `between` (when torn), `work_type`, `high_risk`, `worker` `{ suggestion, why }`,
   `facts` (each `{ reading, p, means? }`), `notes`, `meaning`.
-- `dispatch` only: `subscriptions` `{ most_room, candidates: { normal, fallback }, ranked, excluded, note }`. A ranked
+- `dispatch` only: `subscriptions` `{ most_room, share_due?, candidates: { normal, fallback }, ranked, excluded, note }`. A ranked
   row: `subscription`, `class`, `use`, `reserve`, `hardest_work`, `your_default`?, `usable`, `headroom`, `windows`? (each
   `{ window, used_pct, resets_in_h, left, reserve_now, usable }`), `usage` (`live`, `given`, `assumed`, `metered`),
-  `age_sec`, `note`?. An excluded row: `{ subscription, why }`.
+  `age_sec`, `note`?, `share`?. An excluded row: `{ subscription, why }`.
+- The launch share: when at least two ranked rows are `class: "metered"` with `use: "normal"`, and at least one has a
+  `share` setting (one without counts as 1), each of them gets `share` `{ weight, target, used_pct, left, launches, of }`
+  and `subscriptions` gets `share_due`. Over the last 7 days of routr's own launches on those accounts (`of` in all,
+  `launches` on this one, whatever class they read when launched), `target` is the weight's fraction of their weights,
+  `used_pct` the percent of those launches it took, and `left` how far it is below its target (0 at or above it).
+  `share_due` is the account with the most `left`, ties to the larger weight and then the name; null when none is
+  below its target. Those rows are ordered by `left` among themselves; `headroom` and `usable` stay null and
+  `candidates` stay in name order. `note` gives the reading in a line. Without such rows, or when the history cannot
+  be read (`note` then says the share is not shown), neither field appears.
 
 ## check
 
@@ -447,6 +456,10 @@ Inputs:
   `--dry-run`.
 
 `state`: `planned`, `ready`, `prompted`, `needs_input`, `failed`.
+
+A launch that ends `prompted` or `ready` writes one launch record for the launch share (`dispatch`): the subscription
+and the time, nothing else. A dry run, a refusal or a failed start writes none; a `--pane` rerun that finishes a
+failed launch writes one. Writing it is best effort and never changes the launch's result.
 
 `ok`:
 

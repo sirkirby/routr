@@ -146,6 +146,11 @@ writes only:
   concurrent first calls agree, and derives its UUIDv5 service instance id from it. Identity writes require an
   existing state folder and stop during uninstall. The sender alone removes queue files or changes delivery totals;
   secrets stay in the secrets file;
+- one launch record per worker that took its task or was left ready (`prompted` or `ready`), under
+  `~/.local/state/routr/launch-counts`: the subscription and the time, nothing else, for the launch share. A dry run,
+  a refusal or a failed start writes none; a `needs_input` launch writes one when its `--pane` rerun finishes it.
+  Records older than 7 days are removed by the next launch's write, never by a read. Writing one never changes a
+  launch's result, and none is written while routr is being uninstalled;
 - the sampled launch index under `~/.local/state/routr/launches`, only while exporting, after queueing its span, and
   only for a started worker (`ready`, `prompted` or `needs_input`); never for dry runs, failed or refused launches.
   It holds ids, canonical repository identity and native-path hashes, never absolute paths or content. Cleanup keeps
@@ -166,7 +171,7 @@ One exception: `uninstall` removes the `statusLine` entry an earlier routr's `se
 after a backup, and only when it runs `routr statusline`. It writes the file whole, where a link to it points.
 
 `uninstall` removes the binary, routr's own skills (above), `~/.cache/routr` and `~/.local/state/routr` (sockets
-and locks). It reports a running OpenTelemetry sender. A request already in flight can finish within its 10 s
+and locks, and the launch share's records). It reports a running OpenTelemetry sender. A request already in flight can finish within its 10 s
 timeout, under the consent in force when it started. The sender checks the uninstall lock before each request and
 state write and cannot recreate removed queue folders. A removal race can report FAILED with ENOTEMPTY: a second
 uninstall finishes it. On Windows the binary stays for removal after that sender exits, about a minute.
