@@ -51,7 +51,7 @@ export function rankSubscriptions(level, usage, c, launches = null) {
   ranked.sort((x, y) => key(y) - key(x));
   // The user's launch ratio orders the normal metered accounts among themselves, the account furthest below its
   // target first. It is never a headroom: a share of launches and a share of a usage window are different units.
-  const share = shareView(ranked, launches, c.subscriptions);
+  const view = shareView(ranked, launches, c.subscriptions), share = view?.unreadable ? null : view;
   if (share) {
     for (const r of ranked) if (share.view[r.subscription]) r.share = share.view[r.subscription];
     const slots = ranked.map((r, i) => (r.share ? i : -1)).filter((i) => i >= 0), byShare = share.order.map((n) => ranked.find((r) => r.subscription === n));
@@ -64,7 +64,7 @@ export function rankSubscriptions(level, usage, c, launches = null) {
   const note = !ranked.length ? !Object.keys(c.subscriptions).length ? "no subscriptions are configured: routr setup has not been run"
     : `no eligible subscriptions for ${level} work${excluded.length ? `; ${excluded.map((e) => `${e.subscription}: ${e.why}`).join("; ")}` : ""}`
     : !open.length && !metered.length ? `every subscription that takes ${level} work is at its reserve`
-    : `${open.length ? `${open[0].subscription} has the most usable headroom among accounts with a number` : "remaining capacity is unknown"}. Metered budget is unknown.${share ? ` ${shareNote(share)}` : launches?.unreadable && ranked.some((r) => c.subscriptions[r.subscription]?.share != null) ? " Your share is not shown: routr's launch history could not be read." : ""}`;
+    : `${open.length ? `${open[0].subscription} has the most usable headroom among accounts with a number` : "remaining capacity is unknown"}. Metered budget is unknown.${share ? ` ${shareNote(share)}` : view?.unreadable ? " Your share is not shown: routr's launch history could not be read." : ""}`;
   return { most_room: open[0]?.subscription ?? null, ...(share ? { share_due: share.due } : {}), candidates, ranked, excluded, note };
 }
 

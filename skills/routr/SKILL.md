@@ -118,9 +118,9 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   (a spend cap the vendor enforces, shown as one more window), `metered` (a seat with no quota, billed per token:
   no headroom number or known remaining budget), or `unknown`. `use` is the user's normal/fallback preference,
   independent of billing. A normal metered account is considered alongside normal included accounts. When the user
-  set a launch `share` and two or more normal metered accounts are ranked, each carries `share` (`target`, `used_pct`
-  and `left`, read like a window: its weight's fraction, the percent of routr's launches on these accounts it took in
-  the last 7 days, and how far it is below its target) and `share_due` names the one furthest below. It is a ratio
+  set a launch `share` and two or more normal metered accounts are ranked, each carries `share` (`weight`, `target`,
+  `used_pct`, `left`, `launches` and `of`, read like a window: its weight and that weight's fraction, the percent of
+  routr's launches on these accounts it took in the last 7 days, how far it is below its target, and the counts) and `share_due` names the one furthest below. It is a ratio
   of launches the user asked for, not a budget or a headroom.
 
 ## Deciding
@@ -142,7 +142,7 @@ failures can justify stronger initial execution; a larger model needs a reason t
    permission in those circumstances. Weigh unknown capacity or budget alongside explicit spending limits; an
    assumed reading is the user's assumption, not a measurement. Headroom does not estimate whether a task fits.
    Among suitable metered options, prefer `share_due` unless the work has a reason to go elsewhere, and say why in
-   the launch line when you don't. Whether leads following it reaches the user's ratio is not measured.
+   the launch line when you don't. Whether leads following it reach the user's ratio is not measured.
 
 You own the final choice within those boundaries. Before launch, state the advised and chosen level, model, effort
 and account, with separate reasons for model and effort; keep those reasons in the record's `--note`. After inspecting

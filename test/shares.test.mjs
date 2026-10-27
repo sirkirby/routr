@@ -1,6 +1,6 @@
 // The launch share between metered accounts: the pure view, its place in the ranking, and the launch history it reads.
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { countLaunch, LAUNCH_COUNTS_DIR, recentLaunches, shareView } from "../src/lib/shares.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
@@ -77,6 +77,21 @@ test("a share shows only among two or more normal metered accounts, with at leas
   expect(unreadable.note).toContain("Your share is not shown: routr's launch history could not be read.");
 });
 
+test("an exact tie goes to the larger weight, never to floating-point noise", () => {
+  // Weights 1, 1, 2 with 2, 5, 5 of 12 launches: claude and kiro are both exactly 1/12 below their targets.
+  const ranked = ["claude", "codex", "kiro"].map((subscription) => ({ subscription, class: "metered", use: "normal" }));
+  const v = shareView(ranked, { counts: { claude: 2, codex: 5, kiro: 5 } }, { claude: { share: 1 }, codex: { share: 1 }, kiro: { share: 2 } });
+  expect(v.due).toBe("kiro");
+  expect(v.order).toEqual(["kiro", "claude", "codex"]);
+});
+
+test("unreadable history says the share is not shown only where a share would apply", () => {
+  const unreadable = { counts: {}, unreadable: true };
+  expect(rankSubscriptions("strong", [metered("claude"), metered("codex")], subs(), unreadable).note).toContain("Your share is not shown");
+  // One metered sharer left (codex is fallback): no share would show, so the note says nothing about it.
+  expect(rankSubscriptions("strong", [metered("claude"), metered("codex")], subs({ codex: { use: "fallback" } }), unreadable).note).not.toContain("share");
+});
+
 test("the pure view needs a ranked list and never reads a file", () => {
   const ranked = [{ subscription: "a", class: "metered", use: "normal" }, { subscription: "b", class: "metered", use: "normal" }];
   expect(shareView(ranked, { counts: { a: 1, b: 1 } }, { a: { share: 1 }, b: { share: 1 } })).toMatchObject({ due: null, order: ["a", "b"] });
@@ -123,6 +138,27 @@ test("countLaunch writes nothing while routr is being uninstalled, and never thr
   writeFileSync(LAUNCH_COUNTS_DIR(blocked), "");
   expect(countLaunch("claude", { home: blocked, now: NOW })).toBe(false);
   expect(recentLaunches({ home: blocked, now: NOW })).toEqual({ counts: {}, unreadable: true });
+});
+
+test("a linked history folder is never written through or swept, and reads as unreadable", () => {
+  const home = scratch("share-link"), outside = scratch("share-outside");
+  mkdirSync(join(home, ".local/state/routr"), { recursive: true });
+  const old = join(outside, "44444444-4444-4444-8444-444444444444.json");
+  writeFileSync(old, JSON.stringify({ subscription: "claude", at: new Date(NOW - 30 * DAY).toISOString() }));
+  try { symlinkSync(outside, LAUNCH_COUNTS_DIR(home), "dir"); } catch { return; } // Windows without the right to make links
+  expect(countLaunch("claude", { home, now: NOW })).toBe(false);
+  expect(readdirSync(outside)).toEqual(["44444444-4444-4444-8444-444444444444.json"]);
+  expect(recentLaunches({ home, now: NOW })).toEqual({ counts: {}, unreadable: true });
+});
+
+test.skipIf(process.platform === "win32" || process.getuid?.() === 0)("a record that is there but cannot be read makes the whole history unreadable, not a smaller count", () => {
+  const home = scratch("share-perm");
+  mkdirSync(join(home, ".local/state/routr"), { recursive: true });
+  countLaunch("claude", { home, now: NOW }); countLaunch("codex", { home, now: NOW });
+  const claude = readdirSync(LAUNCH_COUNTS_DIR(home)).find((f) => readFileSync(join(LAUNCH_COUNTS_DIR(home), f), "utf8").includes("claude"));
+  chmodSync(join(LAUNCH_COUNTS_DIR(home), claude), 0o000);
+  try { expect(recentLaunches({ home, now: NOW })).toEqual({ counts: {}, unreadable: true }); }
+  finally { chmodSync(join(LAUNCH_COUNTS_DIR(home), claude), 0o600); }
 });
 
 test("config: share is a whole number from 1 to 99; anything else is reported and left out", () => {

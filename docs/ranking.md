@@ -25,7 +25,8 @@ old), and otherwise a number you set (`assumed_headroom`), and says which.
 
 ## Your settings
 
-You decide where work may go, with three settings per subscription. `routr setup` asks you for each, for every
+You decide where work may go, with three settings per subscription, and a fourth for metered accounts (`share`,
+below), which you set with `routr setup --share`. `routr setup` asks you for the three, for every
 subscription you let routr use, with each level's meaning beside it and the suggestion already chosen. It saves them
 in `~/.config/routr/config.json` when you pick Save and exit.
 
@@ -132,8 +133,9 @@ account. If there are no candidates, hold the work or ask the user. Routr never 
 With a `share` set, the normal metered rows are ordered among themselves by how far each is below its target, and
 `subscriptions.share_due` names the first. routr counts its own launches: one record per worker that took its task,
 kept 7 days, holding only the subscription and the time. A launch made while an account read `included` still
-counts for it. Each row's `share` reads like a window: `target` (its weight's fraction), `used_pct` (the percent of
-these launches it took) and `left` (how far below its target; 0 at or above). With weights 3 and 1 and 9 of the last
+counts for it. Each row's `share` reads like a window: `weight`, `target` (its weight's fraction), `used_pct` (the percent of
+these launches it took), `left` (how far below its target; 0 at or above), `launches` (its own) and `of` (all of
+them). With weights 3 and 1 and 9 of the last
 20 launches on the first, its target is 0.75, it used 45%, and 0.3 is left, so it is due. This is a ratio of
 launches, never a headroom: `headroom` and `usable` stay null, and it is not compared with a window. The lead still
 chooses model and effort fit first. Whether leads following `share_due` reach your ratio is not measured.

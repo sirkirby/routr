@@ -99,7 +99,7 @@ It writes `~/.config/routr/config.json` for the harnesses found, and nothing of 
 live list; one with no `--hardest` or `--reserve` gets the suggestion. An existing config is kept: setup adds
 harnesses found since, fills a missing `hardest_work` or `reserve`, and applies any flag given, leaving everything
 else alone. Every write keeps the old file as `config.json.bak`. `--force` rebuilds it from the suggestions, keeping
-telemetry, updates and channel, the decision models, which subscriptions are off, and account use and billing. **To change a setting later**, run
+telemetry, updates and channel, the decision models, which subscriptions are off, and account use, billing and launch share. **To change a setting later**, run
 setup with just that flag, for example `routr setup --yes --hardest cursor=strong`. A subscription that reads as
 metered when first written (billed per token, no quota: a ChatGPT Enterprise seat) gets `metered_rank` written out,
 `after` unless `--metered <name>=with` is passed. An explicit `use` takes precedence. Every value is
@@ -180,6 +180,7 @@ can be combined with the others in one run.
 | add a harness installed since | `routr setup --yes` (it adds every harness that is installed and signed in) |
 | use a funded account for everyday work | `routr setup --yes --use codex=normal` |
 | keep an account for fallback | `routr setup --yes --use codex=fallback` |
+| split launches between normal metered accounts, or stop | `routr setup --yes --share claude=3 --share codex=1` / `routr setup --yes --share claude=off` |
 | get early builds (beta and release candidates), or stop | `routr setup --yes --channel beta` / `routr setup --yes --channel stable` |
 | set the ordered decision models | `routr setup --yes --decision typesafe,cloudflare:clef-flash` (a single choice also works); then the user stores its key with `routr key set <provider>` in their own terminal. Ollama needs none, but its model must be pulled: setup's note says when it is not, and the pull is the user's to agree to |
 | share anonymous outcomes, or stop | `routr telemetry on` / `routr telemetry off`: only when the user says so |
