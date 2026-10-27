@@ -883,6 +883,13 @@ test("an Enterprise login is metered only when its /usage answered with no windo
   // A read that failed is not a seat without a quota: it stays a failure on the assumed headroom.
   const [failed] = await read(async () => null);
   expect(failed.class).not.toBe("metered"); expect(failed.billing).toBeUndefined(); expect(failed.failure).toBeDefined();
+  // An answer routr cannot read is not "no windows": an empty result, a window line cut short, or one Claude did not mark a success.
+  for (const exec of [async () => claudeAnswer(""), async () => claudeAnswer("  \n"), async () => claudeAnswer("Current session: 100%"),
+    async () => claudeAnswer("Current week (all models): 30% used · resets"), async () => claudeAnswer("Total cost: $0.0000", { subtype: "error_during_execution" }),
+    async () => JSON.stringify({ type: "result", is_error: false, result: "Total cost: $0.0000" })]) {
+    const [bad] = await read(exec);
+    expect([bad.class, bad.billing, bad.failure?.code, bad.reason]).toEqual(["unknown", undefined, "invalid_response", undefined]);
+  }
   // Nor when an old snapshot said Claude answered with no windows: the failed read keeps that reason, and is still a failure.
   for (const [exec, age] of [[async () => null, 60], [async () => { throw new Error("hung"); }, 30 * 86400], [async () => "not json", 60]]) {
     const file = join(scratch("claude-enterprise-snap"), "snap.json"); writeFileSync(file, JSON.stringify({ ts: OCT5 - age, answered: true }));
