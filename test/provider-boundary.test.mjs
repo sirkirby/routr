@@ -162,9 +162,9 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
   expect([...covered].sort()).toEqual([...new Set([...cases(provider).map(([, code]) => code), "internal_error", ...(provider !== "ollama" ? ["no_key", "secrets_unreadable"] : [])])].sort());
   if (provider === "typesafe") {
     const stdout = run(["doctor"], "identity", false, { ROUTR_DECISION_MODEL: "jev-preview" });
-    expect(stdout).toContain("jev-1.14.0, asked as jev-preview answers");
+    expect(stdout).toContain("jev-1.15.0, asked as jev-preview answers");
     expect(JSON.parse(run(["doctor", "--json"], "identity")).decision[0].measured).toBe(false);
-    expect(JSON.parse(run(["dispatch", BRIEF_MARKER], "identity"))).toMatchObject({ decision_model: "jev-1.14.0", unmeasured: true });
+    expect(JSON.parse(run(["dispatch", BRIEF_MARKER], "identity"))).toMatchObject({ decision_model: "jev-1.15.0", unmeasured: true });
   }
   if (provider === "ollama") {
     const r = JSON.parse(run(["doctor", "--json"], "digest")); expect(r.decision[0].note).toBeNull();
@@ -199,7 +199,7 @@ for (const provider of providers) test(`${provider}: declared choices, numbers a
 test("model identities resolve aliases and expose pin mismatches only through each provider's validator", async () => {
   for (const provider of providers) {
     const config = { decision: { provider } }, target = decisionTarget(config, {});
-    const identities = provider === "typesafe" ? ["jev-1.14.0", "jev-1.13.0"] : Object.keys(PROVIDERS[provider].models);
+    const identities = provider === "typesafe" ? ["jev-1.14.0", "jev-1.15.0"] : Object.keys(PROVIDERS[provider].models);
     for (const requested of provider === "typesafe" ? ["jev-preview", target.model] : [target.model]) {
       for (const identity of [...identities, `${BRIEF_MARKER} ${KEY_MARKER}`, null, 7, {}, "constructor", "jev-preview", "jev-1.14.0 evil"]) {
         const fetchFn = async (url, init) => {
@@ -334,11 +334,13 @@ test("check names a missing or unreadable input file through the CLI and still e
 
 test("measurement and profile follow the answering identity, including aliases and pin mismatches", async () => {
   const cases = [
-    ["typesafe", "jev-1.13.0", "jev-1.13.1", false, "jev-1.13.0"],
-    ["typesafe", "jev-1.13.0", "jev-1.13.0", true, "jev-1.13.0"],
-    ["typesafe", "jev-preview", "jev-1.13.0", true, "jev-1.13.0"],
-    ["typesafe", "jev-preview", "jev-1.13.1", false, "jev-1.13.0"],
-    ["typesafe", "jev-9.0.0", "jev-9.0.0", false, "jev-1.13.0"],
+    ["typesafe", "jev-1.14.0", "jev-1.14.1", false, "jev-1.14.0"],
+    ["typesafe", "jev-1.14.0", "jev-1.14.0", true, "jev-1.14.0"],
+    ["typesafe", "jev-preview", "jev-1.14.0", true, "jev-1.14.0"],
+    ["typesafe", "jev-preview", "jev-1.14.1", false, "jev-1.14.0"],
+    // A version routr no longer offers is read like any unmeasured one: the pin's profile, and not measured.
+    ["typesafe", "jev-1.13.0", "jev-1.13.0", false, "jev-1.14.0"],
+    ["typesafe", "jev-9.0.0", "jev-9.0.0", false, "jev-1.14.0"],
     ["cloudflare", "clef", "clef-flash", true, "clef-flash"],
     ["cloudflare", "clef-flash", "clef", true, "clef"],
     ["ollama", "clef-flash:9b-q8_0", "clef-flash:9b-mxfp8", true, "clef-flash:9b-mxfp8"],

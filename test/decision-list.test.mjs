@@ -13,7 +13,7 @@ import { parseDecision } from "../src/lib/setup.mjs";
 import { BRIEF_MARKER, KEY_MARKER, PROVIDER_MARKER, replyFetch } from "./fixtures/provider-fetch.mjs";
 import { cfg, cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 
-const ts = { provider: "typesafe", model: "jev-1.13.0" }, cf = { provider: "cloudflare", model: "clef" };
+const ts = { provider: "typesafe", model: "jev-1.14.0" }, cf = { provider: "cloudflare", model: "clef" };
 const local = { provider: "ollama", model: "clef-flash:9b-q8_0" };
 const credentials = { TYPESAFE_API_KEY: KEY_MARKER, CLOUDFLARE_API_TOKEN: KEY_MARKER, CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef" };
 const clean = (value) => { const text = typeof value === "string" ? value : JSON.stringify(value); for (const marker of [KEY_MARKER, BRIEF_MARKER, PROVIDER_MARKER]) expect(text).not.toContain(marker); };
@@ -147,7 +147,7 @@ test("ROUTR_DECISION_MODEL replaces the whole list, including an override withou
 test("guided setup chooses a first model and an optional backup; the flag preserves ordered choices", async () => {
   expect(parseDecision(["--decision", "typesafe,cloudflare:clef-flash"])).toEqual([ts, { provider: "cloudflare", model: "clef-flash" }]);
   for (const backup of ["none", "cloudflare\u0000clef"]) {
-    const values = ["typesafe\u0000jev-1.13.0", backup], screens = [];
+    const values = ["typesafe\u0000jev-1.14.0", backup], screens = [];
     const r = await askDecision({ style: { dim: (s) => s }, select: async (screen) => { screens.push(screen); return values.shift(); } }, [ts]);
     expect(r).toEqual(backup === "none" ? [ts] : [ts, cf]); expect(screens[0].message).toContain("local models are tried after hosted models");
   }
@@ -195,6 +195,6 @@ test("source CLI: dispatch/check/doctor/setup/key, launch and record preserve ba
   // Storing a key for an unused provider names the preserving command and leaves the list unchanged.
   writeFileSync(config, JSON.stringify({ decision: [ts], auto_update: false, telemetry: false, subscriptions: {} }));
   const before = readFileSync(config, "utf8"), key = JSON.parse(run(["key", "set", "cloudflare"], { input: `${KEY_MARKER}\n${credentials.CLOUDFLARE_ACCOUNT_ID}\n` }));
-  expect(key).toMatchObject({ ok: true, works: true }); expect(key.note).toContain("routr setup --decision typesafe:jev-1.13.0,cloudflare"); expect(readFileSync(config, "utf8")).toBe(before);
+  expect(key).toMatchObject({ ok: true, works: true }); expect(key.note).toContain("routr setup --decision typesafe:jev-1.14.0,cloudflare"); expect(readFileSync(config, "utf8")).toBe(before);
   const defaultKey = JSON.parse(run(["key", "set"], { input: `${KEY_MARKER}\n`, replies: {} })); expect(defaultKey.provider).toBe("typesafe");
 }, 20000);

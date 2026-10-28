@@ -132,14 +132,14 @@ test("the provider boundary preserves requested identity separately and never ec
     await adviseCommand("subagent", "BRIEF_MARKER", { config: x.config }, {}, { env: {}, otel: x.otel,
       askFn: (state, questions, opts) => ask(state, questions, { ...opts, env: { TYPESAFE_API_KEY: "KEY_MARKER" }, fetchFn: async (url, init) => {
         const j = await (await valid(url, init)).json();
-        if (named) j.model = "jev-1.14.0";
+        if (named) j.model = "jev-1.15.0";
         j.usage["reasoning.output_tokens"] = 3;
         return Response.json(j);
       } }),
     });
     const span = x.spans().slice(before).find((s) => s.kind === 3);
-    expect(attrs(span)["gen_ai.request.model"]).toBe("jev-1.13.0");
-    expect(attrs(span)["gen_ai.response.model"]).toBe(named ? "jev-1.14.0" : undefined);
+    expect(attrs(span)["gen_ai.request.model"]).toBe("jev-1.14.0");
+    expect(attrs(span)["gen_ai.response.model"]).toBe(named ? "jev-1.15.0" : undefined);
     expect(attrs(span)["gen_ai.usage.reasoning.output_tokens"]).toBe(3);
   }
 });

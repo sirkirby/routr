@@ -196,7 +196,7 @@ test("feedback sends what the person wrote, and nothing when there is nothing to
 
 test("each provider's decision model is pinned to an exact build, and ROUTR_DECISION_MODEL names another for the gate", async () => {
   const { decisionTarget, PROVIDERS } = await import("../src/lib/providers.mjs");
-  expect(decisionTarget(null, {})).toMatchObject({ provider: "typesafe", model: "jev-1.13.0", measured: true });
+  expect(decisionTarget(null, {})).toMatchObject({ provider: "typesafe", model: "jev-1.14.0", measured: true });
   expect(Object.keys(PROVIDERS.typesafe.models).every((m) => /^jev-\d+\.\d+\.\d+$/.test(m))).toBe(true); // an exact version, never an alias that moves under the evidence
   expect(Object.keys(PROVIDERS.ollama.models).every((m) => /:/.test(m) && !/:latest$/.test(m))).toBe(true);    // an explicit tag: latest is a different build per platform
   for (const p of Object.values(PROVIDERS)) for (const prof of Object.values(p.models)) {
@@ -204,7 +204,7 @@ test("each provider's decision model is pinned to an exact build, and ROUTR_DECI
   }
   expect(decisionTarget({ decision: { provider: "cloudflare" } }, {})).toMatchObject({ provider: "cloudflare", model: "clef" });
   expect(decisionTarget({ decision: { provider: "cloudflare", model: "clef-flash" } }, {}).profile).toBe(PROVIDERS.cloudflare.models["clef-flash"]);
-  expect(decisionTarget(null, { ROUTR_DECISION_MODEL: " jev-preview " })).toMatchObject({ provider: "typesafe", model: "jev-preview", measured: false, profile: PROVIDERS.typesafe.models["jev-1.13.0"] });
+  expect(decisionTarget(null, { ROUTR_DECISION_MODEL: " jev-preview " })).toMatchObject({ provider: "typesafe", model: "jev-preview", measured: false, profile: PROVIDERS.typesafe.models["jev-1.14.0"] });
   expect(decisionTarget(null, { ROUTR_DECISION_MODEL: "cloudflare:clef-flash" })).toMatchObject({ provider: "cloudflare", model: "clef-flash", measured: true });
 });
 
@@ -221,8 +221,8 @@ test("one client asks every provider: its endpoint, its key, its envelope, and c
     return Response.json(url.includes("cloudflare") ? { success: true, errors: [], messages: [], result: answer } : answer);
   };
   const jev = await ask({}, requested, { env: {}, file, fetchFn });
-  expect(sent[0]).toMatchObject({ url: "https://api.typesafe.ai/v1/systemone", auth: "Bearer ts_test_1234567890", body: { model: "jev-1.13.0" } });
-  expect(jev).toMatchObject({ provider: "typesafe", model: "jev-1.13.0" });
+  expect(sent[0]).toMatchObject({ url: "https://api.typesafe.ai/v1/systemone", auth: "Bearer ts_test_1234567890", body: { model: "jev-1.14.0" } });
+  expect(jev).toMatchObject({ provider: "typesafe", model: "jev-1.14.0" });
   expect(jev.answers.level.confidence).toBe(0.75);                                // TypeSafe's own confidence is kept as sent
   const cf = await ask({}, requested, { config: { decision: { provider: "cloudflare" } }, env: {}, file, fetchFn });
   expect(sent[1]).toMatchObject({ url: "https://api.cloudflare.com/client/v4/accounts/0123456789abcdef0123456789abcdef/ai/run/@cf/cloudflare/clef", auth: "Bearer cf_test_1234567890", body: { model: "clef" } });

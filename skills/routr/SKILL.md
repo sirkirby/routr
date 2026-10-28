@@ -94,8 +94,8 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   approach), or `strong` (a wrong or shallow result would be expensive and hard to notice). `sure: false` means routr
   was torn between the two levels in `between`; it then reports the more likely one (the lower, if they are equally likely; and when the model gives
   no spread there is no `between`, and the level is its score rounded). Its note says how often that was right on 36
-  real tasks for the model that answered (`decision_model`), and which way it was wrong: Jev, 29 times, one level too
-  low otherwise. routr never names a model for the work.
+  real tasks for the model that answered (`decision_model`), and which way it was wrong (Jev 1.14: right 28 times; when
+  wrong, one level too low 7 times and too high once). routr never names a model for the work.
 - `notes`: the user's standing preferences and any risk warning, written for you to weigh. They are advice.
 - `warnings` (always a list): facts about this call: a config setting routr could not use, an input it ignored or
   read differently, a skipped check, or something left behind. Input examples include an unreadable `--headroom`,

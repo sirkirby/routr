@@ -343,7 +343,7 @@ test("the decision model: --decision writes it, a key is the person's to set, an
   const cf = await runSetup({ config, found: ["agy"], args: ["--yes", "--decision", "cloudflare"], env });
   expect(cf.saved.decision).toEqual([{ provider: "cloudflare", model: null }]);        // the default model: follows routr's pin
   expect(cf.saved.sure_at).toBeUndefined();                                            // Jev's 0.8, written by an older setup, gives way to Clef's own
-  expect(cf.r.did.join(" ")).toContain("decision TypeSafe · jev-1.13.0 → Cloudflare Workers AI · clef");
+  expect(cf.r.did.join(" ")).toContain("decision TypeSafe · jev-1.14.0 → Cloudflare Workers AI · clef");
   expect(cf.keys).toEqual([]);                                                         // an agent's run never asks for a key
   const flash = await runSetup({ config: cf.saved, found: ["agy"], args: ["--yes", "--decision", "cloudflare:clef-flash"] });
   expect(flash.saved.decision).toEqual([{ provider: "cloudflare", model: "clef-flash" }]);
@@ -423,9 +423,9 @@ test("doctor names the decision model, its provider, and the fix that provider n
   const { nextSteps, render } = await import("../src/lib/doctor.mjs");
   const r = (key) => ({ runtime: "routr 0.0.0-dev (from source)", from_source: true, herdr: { path: "/bin/herdr", skill: true }, skill: [], harnesses: {}, decision: [key],
     config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] }, auto_update: { on: false, why_off: "running from source" }, next_steps: [] });
-  expect(render(r({ provider: "typesafe", label: "TypeSafe", asked: "jev-1.13.0", model: "jev-1.13.0", works: true, ms: 271, measured: true }))).toContain("ok decision model TypeSafe: jev-1.13.0 answers (271 ms)");
+  expect(render(r({ provider: "typesafe", label: "TypeSafe", asked: "jev-1.14.0", model: "jev-1.14.0", works: true, ms: 271, measured: true }))).toContain("ok decision model TypeSafe: jev-1.14.0 answers (271 ms)");
   expect(render(r({ provider: "cloudflare", label: "Cloudflare Workers AI", asked: "clef", model: "clef", works: true, ms: 577, measured: true, unversioned: true }))).toContain("Cloudflare does not version this name");
-  expect(render(r({ provider: "typesafe", label: "TypeSafe", asked: "jev-preview", model: "jev-1.14.0", works: true, ms: 300, measured: false }))).toContain("jev-1.14.0, asked as jev-preview answers (300 ms) · not a model routr has measured");
+  expect(render(r({ provider: "typesafe", label: "TypeSafe", asked: "jev-preview", model: "jev-1.15.0", works: true, ms: 300, measured: false }))).toContain("jev-1.15.0, asked as jev-preview answers (300 ms) · not a model routr has measured");
   // Each provider's own fix, first among the next steps.
   expect(nextSteps(r({ provider: "cloudflare", works: false, found: false, error: "no token" }))[0]).toContain("Add your Cloudflare Workers AI key. Create an API token with Workers AI Read (Account > Workers AI > Read)");
   expect(nextSteps(r({ provider: "typesafe", works: false, found: true, error: "TypeSafe 401" }))[0]).toContain("The TypeSafe key was found but the test call failed (TypeSafe 401)");

@@ -8,7 +8,8 @@
 // sure_at, and the numbers the "torn" note quotes. Profiles describe routr's instrument, never a worker model: nothing
 // here ranks or prices the models that do the work. Results per model: docs/evidence.md, "Decision models".
 //
-// Profiles, from the gate of 2026-10-11 (104 labelled briefs; 36 real runs from the maintainer's worker runs):
+// Profiles, from the gate of 2026-10-11, and for jev-1.14.0 the gate of 2026-10-27 (three runs; docs/evidence.md,
+// "Moving the pin") (104 labelled briefs; 36 real runs from the maintainer's worker runs):
 // - sure_at: the lowest bar on 0.5..0.8 at which the model's level, when "sure", is right at least as often as Jev's at
 //   0.8 (39 of 44, 89%), with confidence normalized as systemone.mjs does.
 // - torn: the level as routr presents it, on the 36 real runs: right, one level low, one level high.
@@ -58,9 +59,12 @@ export const PROVIDERS = {
     nativeConfidence: true, // TypeSafe's own definition: kept as sent (its probabilities arrive rounded to 0.01)
     deadlineMs: 10000,
     models: {
-      // P23, P32 and docs/evidence.md were all measured on this version.
-      "jev-1.13.0": { sure_at: 0.8, torn: { right: 29, of: 36, low: 7, high: 0 },
-        hint: "needs a TypeSafe API key · reads the level most accurately on routr's tests: 83 of 104 right" },
+      // The pin since 2026-10-27, replacing jev-1.13.0 (P23, P32 and most of docs/evidence.md were measured on that one),
+      // a maintainer decision on mixed gate results: slightly lower on labelled levels, within the gate's run-to-run noise;
+      // on verified outcomes it over-rated less and read fewer tasks as strong (docs/evidence.md, "Moving the pin").
+      // sure_at 0.7: its sure levels were right 145 of 160 there, against 1.13's 115 of 129 at 0.8; 0.65 fell below.
+      "jev-1.14.0": { sure_at: 0.7, torn: { right: 28, of: 36, low: 7, high: 1 },
+        hint: "needs a TypeSafe API key · reads the level most accurately on routr's tests: 81-82 of 104 right" },
     },
   },
   cloudflare: {

@@ -49,10 +49,15 @@ newest one that does at least as well.
 
 1. The maintainers' workbench watches `jev-latest` and `jev-preview` daily and flags a version that differs from the pin.
 2. The candidate is run side by side with the pinned Jev on the saved items behind the evidence (labelled briefs,
-   worker reports, reviewer reports, repeated readings), and each question is compared: exact, under- and
-   over-rating, how decisive the answers are, and stability. The gate takes any provider:
+   worker reports, reviewer reports, repeated readings), three runs each, and each measure is compared on its mean.
+   What is gated is what a lead acts on (`docs/evidence.md`, "Moving the pin": measured for the facts, inferred for the
+   level): the level (exact, under- and over-rated, the real tasks, stability), `standalone`, and the report and
+   reviewer verdicts. Under-rating may not
+   rise at all. The other facts' decisiveness and stability are reported, not gated. Beside it, the maintainers'
+   workbench scores both versions against verified outcomes on real tasks from their own ledger, with tolerances set
+   from a same-version run. The gate takes any provider:
    `--candidate jev-preview`, `--candidate cloudflare:clef`, `--candidate ollama:<tag>`. For a new Jev version, a
-   candidate that does worse on any question is not taken until that question is re-worded or the regression is
+   candidate that does worse on a gated measure is not taken until the question is re-worded or the regression is
    understood. A new model on another provider is offered beside Jev, not instead of it, with its own column in
    `docs/evidence.md` and its profile measured from the same run.
 3. A model that is taken lands in a pull request that names the gate's result, adds or moves its profile in

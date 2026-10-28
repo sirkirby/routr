@@ -48,7 +48,7 @@ model. routr spreads the work across what you have, and starts each piece at the
 
     $ routr dispatch "The nightly export job times out on large accounts. Find the cause, fix it, add a regression test, run bun test."
 
-    headline   routr: standard, debug work; approach_open, cause_unknown; reading by jev-1.13.0 on TypeSafe
+    headline   routr: standard, debug work; approach_open, cause_unknown; reading by jev-1.14.0 on TypeSafe
     worker     worth a worker
     facts      names_location no · approach_open yes · cause_unknown yes · cross_cutting no
                concurrency_or_data unclear · hard_to_reverse no · states_check yes · standalone yes
@@ -223,8 +223,8 @@ more window (Codex: from its protocol, not yet observed on a seat).
 ## Evidence
 
 [docs/evidence.md](docs/evidence.md) shows how the decisions and the scoring were measured. In short: the facts
-routr reads from a brief are decisive and came out the same on 107 of 108 repeat readings; the level is right on 29 of
-36 real worker tasks (and on 53 to 54 of 68 short labelled briefs, where it runs high); the judge questions separate good worker reports from flawed ones; workers on Claude Code, Codex and Cursor follow
+routr reads from a brief are decisive and came out the same on 107 of 108 repeat readings; the level is right on 28 to 29 of
+36 real worker tasks (Jev 1.14 and 1.13; and on 53 to 54 of 68 short labelled briefs, where 1.13 runs high); the judge questions separate good worker reports from flawed ones; workers on Claude Code, Codex and Cursor follow
 the skill when the launch prompt names it; outside herdr, each harness but Kiro ran the whole headless loop once on
 a one-file task (Kiro: its protocol only); and end-to-end runs with a real lead delivered verified work across subscriptions. routr does not estimate
 or manage context; harnesses own that.
