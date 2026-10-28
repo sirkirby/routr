@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.9.4 — 2026-10-27
+
+[Full notes](docs/releases/v0.9.4.md)
+
 - routr reads briefs with Jev `jev-1.14.0`, replacing `jev-1.13.0`, which is no longer offered. A maintainer
   decision on mixed gate results: slightly lower on labelled levels, within the gate's run-to-run noise; on verified
   outcomes it over-rated less and read fewer tasks as strong (#134).
