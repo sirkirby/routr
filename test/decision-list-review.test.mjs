@@ -9,7 +9,7 @@ import { failedUsage } from "../src/lib/usage.mjs";
 import { cfg, cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 import { BRIEF_MARKER, KEY_MARKER, PROVIDER_MARKER, replyFetch } from "./fixtures/provider-fetch.mjs";
 
-const ts = { provider: "typesafe", model: "jev-1.13.0" }, cf = { provider: "cloudflare", model: "clef" }, local = { provider: "ollama", model: "clef-flash:9b-q8_0" };
+const ts = { provider: "typesafe", model: "jev-1.14.0" }, cf = { provider: "cloudflare", model: "clef" }, local = { provider: "ollama", model: "clef-flash:9b-q8_0" };
 const credentials = { TYPESAFE_API_KEY: KEY_MARKER, CLOUDFLARE_API_TOKEN: KEY_MARKER, CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef" };
 function machine(decision) {
   const home = scratch("decision-review"), folder = join(home, ".config/routr"), config = join(folder, "config.json"); mkdirSync(folder, { recursive: true });
@@ -31,7 +31,7 @@ function machine(decision) {
 test("every key provider preserves the list; plain key set skips local entries", () => {
   const m = machine([ts, cf]), before = readFileSync(m.config, "utf8");
   const missing = m.run(["key", "set", "ollama"]).json();
-  expect(missing.note).toContain("not in your decision list"); expect(missing.note).toContain("routr setup --decision typesafe:jev-1.13.0,cloudflare:clef,ollama");
+  expect(missing.note).toContain("not in your decision list"); expect(missing.note).toContain("routr setup --decision typesafe:jev-1.14.0,cloudflare:clef,ollama");
   expect(readFileSync(m.config, "utf8")).toBe(before);
   const localFirst = machine([local, cf]);
   const present = localFirst.run(["key", "set", "ollama"]).json(); expect(present.note).toContain("needs no key"); expect(present.note).not.toContain("routr setup");
@@ -62,7 +62,7 @@ test("doctor tests a broken backup even after a ready first model", () => {
   const r = m.run(["doctor", "--json"], { replies }).json();
   expect(r.decision).toMatchObject([{ provider: "typesafe", works: true }, { provider: "cloudflare", works: false, code: "unreachable" }]);
   const text = m.run(["doctor"], { replies }).stdout;
-  expect(text).toContain("jev-1.13.0 answers"); expect(text).toContain("clef: key found but the test call failed");
+  expect(text).toContain("jev-1.14.0 answers"); expect(text).toContain("clef: key found but the test call failed");
 });
 
 test("429 retries exhaust only the per-entry cap and leave time to ask a backup", async () => {
@@ -103,11 +103,11 @@ test("a warning's concrete setup command repairs dropped entries using the effec
     const m = machine(decision), before = readFileSync(m.config, "utf8");
     const advice = m.run(["subagent", "--task-file", m.brief]).json();
     const fix = advice.warnings[0].split("Set the ordered list with ")[1];
-    expect(fix).toBe("routr setup --decision typesafe:jev-1.13.0");
+    expect(fix).toBe("routr setup --decision typesafe:jev-1.14.0");
     const r = m.run(["setup", "--yes", ...fix.split(" ").slice(2), "--json"]).json();
     expect(JSON.parse(readFileSync(m.config, "utf8")).decision).toEqual([{ provider: "typesafe", model: null }]);
     expect(readFileSync(`${m.config}.bak`, "utf8")).toBe(before);
-    expect(r.did.join(" ")).toContain("decision file"); expect(r.did.join(" ")).toContain("effective list stays TypeSafe · jev-1.13.0");
+    expect(r.did.join(" ")).toContain("decision file"); expect(r.did.join(" ")).toContain("effective list stays TypeSafe · jev-1.14.0");
     expect(r.did.join(" ")).not.toContain("Cloudflare Workers AI · clef → TypeSafe");
     expect(m.run(["subagent", "--task-file", m.brief]).json().warnings).toEqual([]);
     const again = m.run(["setup", "--yes", ...fix.split(" ").slice(2), "--json"]).json();
@@ -120,11 +120,11 @@ test("reviews 5 and 7: settings and setup drop duplicate resolved models and giv
   const r = m.run(["subagent", "--task-file", m.brief], { replies: { typesafe: "network", cloudflare: "network" } }).json();
   expect(r.unavailable).toHaveLength(2); expect(r.warnings).toHaveLength(3);
   expect(r.warnings[0]).toContain('"typesafe"'); expect(r.warnings[0]).toContain('an object'); expect(r.warnings[0]).not.toContain("provider undefined");
-  for (const warning of r.warnings) expect(warning).toContain("routr setup --decision typesafe:jev-1.13.0,cloudflare:clef");
+  for (const warning of r.warnings) expect(warning).toContain("routr setup --decision typesafe:jev-1.14.0,cloudflare:clef");
   expect(r.warnings[1]).toContain("duplicate"); expect(r.warnings[2]).toContain("duplicate");
-  const setup = machine([cf]), out = setup.run(["setup", "--yes", "--decision", "typesafe,typesafe:jev-1.13.0", "--json"]).json();
+  const setup = machine([cf]), out = setup.run(["setup", "--yes", "--decision", "typesafe,typesafe:jev-1.14.0", "--json"]).json();
   expect(JSON.parse(readFileSync(setup.config, "utf8")).decision).toEqual([{ provider: "typesafe", model: null }]);
-  expect(out.skipped.join(" ")).toContain("duplicate"); expect(out.skipped.join(" ")).toContain("routr setup --decision typesafe:jev-1.13.0");
+  expect(out.skipped.join(" ")).toContain("duplicate"); expect(out.skipped.join(" ")).toContain("routr setup --decision typesafe:jev-1.14.0");
 });
 
 test("every no-reading command and headline identify the last failed model", () => {

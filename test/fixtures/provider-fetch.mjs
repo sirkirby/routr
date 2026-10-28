@@ -28,7 +28,7 @@ export const replyFetch = (provider, scenario) => async (url, init) => {
   if (scenario === "confidence") for (const a of Object.values(answers)) a.confidence = text;
   if (scenario === "probability") for (const a of Object.values(answers)) a.probabilities = { [text]: 0.9 };
   if (scenario === "missing_question") delete answers[Object.keys(questions)[0]];
-  const result = { model: scenario === "identity" ? "jev-1.14.0" : text, answers: scenario === "answers" ? text : answers, usage: { input_tokens: 10, output_tokens: text, extra: text }, extra: text };
+  const result = { model: scenario === "identity" ? "jev-1.15.0" : text, answers: scenario === "answers" ? text : answers, usage: { input_tokens: 10, output_tokens: text, extra: text }, extra: text };
   if (scenario === "missing_answers") delete result.answers;
   return Response.json(provider === "cloudflare" ? { success: true, result, errors: [{ message: text }], messages: [text] } : result);
 };

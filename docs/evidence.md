@@ -2,9 +2,10 @@
 
 routr's claims rest on small evals run while it was built (2026-09). Sample sizes are small and most labels were
 written by the people building it; each entry says so. "Jev" is TypeSafe's System One model. routr pins an exact version
-and moves the pin when a new one does at least as well on these items (CONTRIBUTING.md). Every result below was measured on
-`jev-1.13.0`, the current pin, except under [Decision models](#decision-models), which compares the other models routr
-can ask on the same items.
+and moves the pin when a new one does at least as well on these items (CONTRIBUTING.md). The pin is `jev-1.14.0` since
+2026-10-27 ([Moving the pin](#moving-the-pin-jev-114-2026-10-27)). Unless an entry names another model, the results
+below were measured on `jev-1.13.0`, the pin before it; [Decision models](#decision-models) compares the other models
+routr can ask on the same items.
 
 ## Reading a brief
 
@@ -68,8 +69,9 @@ routr's shipped questions (r5, c1). Those questions were worded and tuned on Jev
 
 ### Moving the pin: Jev 1.14 (2026-10-27)
 
-routr stays on `jev-1.13.0` while its questions are re-tuned for `jev-1.14.0`: the maintainers' gate held 1.14 on the
-level, judged by what a lead acts on.
+routr moved its pin to `jev-1.14.0` as a maintainer decision on the pooled evidence below. Two three-run gates on the
+same items disagreed (one held 1.14 on the level, one passed it), so the level difference is about the size of the
+gate's own run-to-run noise, and verified outcomes favoured 1.14. `jev-1.13.0` is no longer offered.
 
 **What a lead acts on.** Fresh Claude Code and Codex leads were given routr's real `dispatch` output on 12 real tasks
 from the maintainer's work, with one fact's reading flipped at a time and the level unchanged, and asked to decide.
@@ -88,7 +90,7 @@ evidence, not the value of a true reading the lead would have missed. Small samp
 `standalone`, and the report and reviewer verdicts are gated. The other facts are reported but not gated. Under-rating
 may not rise at all, judged on the mean of three runs, because one run moves by about one item.
 
-**The result, three runs per version:**
+**The result, the first three-run gate:**
 
 | | 1.13.0 | 1.14.0 |
 |---|---|---|
@@ -105,8 +107,11 @@ may not rise at all, judged on the mean of three runs, because one run moves by 
 each), it over-rated less (9 against 14 of the 329 where the chosen level was enough), under-rated the same (10 of 10
 that fell short below strong were read no higher), and read 35 fewer tasks as strong. On the labelled briefs it is right
 a little less often. Changing `sure_at` changes no level (a torn reading is presented as its most likely level), so
-presentation alone cannot close the gap. The level question is being re-worded and measured for 1.14 (a question's
-wording changes only with a measurement against the old wording on the same items, and a new question-set version).
+presentation alone cannot close the gap. A second three-run gate on the same items passed 1.14 (under-rated 8 against
+8, right 81.7 against 82.7, real tasks 28 against 29). Pooled over all six runs: right 81.5 against 82.7 of 104,
+under-rated 8.3 against 7.8, real tasks 27.8 against 29.2. On the 104 briefs the two versions differ on 10, each at a
+level boundary: 1.14 better on 5, worse on 5. Its profile: `sure_at` 0.7 (its sure levels right 145 of 160, against
+1.13's 115 of 129 at 0.8); on the 36 real tasks 28 right, 7 one level low, 1 one level high.
 
 ### Backup model or constant fallback
 

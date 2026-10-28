@@ -48,7 +48,7 @@ model. routr spreads the work across what you have, and starts each piece at the
 
     $ routr dispatch "The nightly export job times out on large accounts. Find the cause, fix it, add a regression test, run bun test."
 
-    headline   routr: standard, debug work; approach_open, cause_unknown; reading by jev-1.13.0 on TypeSafe
+    headline   routr: standard, debug work; approach_open, cause_unknown; reading by jev-1.14.0 on TypeSafe
     worker     worth a worker
     facts      names_location no · approach_open yes · cause_unknown yes · cross_cutting no
                concurrency_or_data unclear · hard_to_reverse no · states_check yes · standalone yes

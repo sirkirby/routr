@@ -38,7 +38,7 @@ installed since) and leaves the rest alone.
 The first answering model in an ordered list reads each brief and report. Ask for a first choice and optional backup, and say what each needs and how it did on
 routr's tests (`docs/evidence.md`, "Decision models"):
 
-- **TypeSafe's Jev** (the default): reads the level most accurately on routr's tests (83 of 104 right). Needs a
+- **TypeSafe's Jev** (the default): reads the level most accurately on routr's tests (81 to 82 of 104 right). Needs a
   TypeSafe API key. They create one at https://console.typesafe.ai/keys
   (TypeSafe's quick start shows the step: https://docs.typesafe.ai/introduction/quickstart).
 - **Cloudflare's Clef on Workers AI** (`cloudflare`): for someone who already has a Cloudflare account, or whose
