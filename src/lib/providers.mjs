@@ -60,8 +60,8 @@ export const PROVIDERS = {
     deadlineMs: 10000,
     models: {
       // The pin since 2026-10-27, replacing jev-1.13.0 (P23, P32 and most of docs/evidence.md were measured on that one),
-      // on pooled evidence: at parity with 1.13 on the level within the gate's run-to-run noise, and on verified
-      // outcomes it over-rated less and read fewer tasks as strong (docs/evidence.md, "Moving the pin").
+      // a maintainer decision on mixed gate results: slightly lower on labelled levels, within the gate's run-to-run noise;
+      // on verified outcomes it over-rated less and read fewer tasks as strong (docs/evidence.md, "Moving the pin").
       // sure_at 0.7: its sure levels were right 145 of 160 there, against 1.13's 115 of 129 at 0.8; 0.65 fell below.
       "jev-1.14.0": { sure_at: 0.7, torn: { right: 28, of: 36, low: 7, high: 1 },
         hint: "needs a TypeSafe API key · reads the level most accurately on routr's tests: 81-82 of 104 right" },

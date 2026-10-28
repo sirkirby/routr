@@ -11,7 +11,7 @@ import { otelSwitch } from "./otel-settings.mjs";
 export const CONFIG_PATH = (h) => join(CONFIG_DIR(h), "config.json");
 export const DEFAULTS = {
   fallback_level: "standard",  // advised when the decision model cannot be reached
-  sure_at: null,               // confidence from which a level is presented as settled; null: the decision model's own (providers.mjs; Jev's is 0.8, P23)
+  sure_at: null,               // confidence from which a level is presented as settled; null: the decision model's own (providers.mjs; Jev 1.14's is 0.7)
   decision: [{ provider: DEFAULT_PROVIDER, model: null }], // which System One model reads the brief (providers.mjs); model null: the provider's default
   risk_above: 0.75,            // high_blast_radius probability that gets called out as high risk
   prefer: { research: "strong", review: "strong" }, // your preference per kind of work; shown to the agent as advice, never forced

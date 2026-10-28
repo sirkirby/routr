@@ -69,9 +69,10 @@ routr's shipped questions (r5, c1). Those questions were worded and tuned on Jev
 
 ### Moving the pin: Jev 1.14 (2026-10-27)
 
-routr moved its pin to `jev-1.14.0` as a maintainer decision on the pooled evidence below. Two three-run gates on the
-same items disagreed (one held 1.14 on the level, one passed it), so the level difference is about the size of the
-gate's own run-to-run noise, and verified outcomes favoured 1.14. `jev-1.13.0` is no longer offered.
+routr moved its pin to `jev-1.14.0` as a maintainer decision, not on a clean gate pass. Two three-run gates on the same
+items gave mixed results (one held 1.14 on the level, one passed it). Pooled, 1.14 is still slightly lower on the
+labelled levels (under-rated 8.3 against 7.8 of 104), a difference about the size of the gate's run-to-run noise;
+verified outcomes favoured it. `jev-1.13.0` is no longer offered.
 
 **What a lead acts on.** Fresh Claude Code and Codex leads were given routr's real `dispatch` output on 12 real tasks
 from the maintainer's work, with one fact's reading flipped at a time and the level unchanged, and asked to decide.
@@ -82,9 +83,11 @@ from the maintainer's work, with one fact's reading flipped at a time and the le
 - Flipping the other brief and worker facts was mostly overridden: states a check 2 of 10, tiny 0 of 12, needs the
   user 0 of 4, separable 1 of 11.
 
-So leads check most facts against the brief and override a wrong one, but follow the level and `standalone`. A flipped
+So leads check most facts against the brief and override a wrong one, but follow `standalone`. The level was held
+unchanged and not tested here; that leads act on it is inferred from their stated reasons, not measured. A flipped
 reading is usually false for its brief, so this measures whether a lead acts on routr's reading against the brief's own
-evidence, not the value of a true reading the lead would have missed. Small samples (12 tasks, 318 decisions).
+evidence, not the value of a true reading the lead would have missed. Small samples (12 tasks; 318 sessions, 316 valid
+answers).
 
 **The gate, since then** (CONTRIBUTING.md): the level (exact, under- and over-rated, the real tasks, stability),
 `standalone`, and the report and reviewer verdicts are gated. The other facts are reported but not gated. Under-rating

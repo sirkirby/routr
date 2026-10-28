@@ -149,7 +149,7 @@ the command that fixes it.
     `--use` wins if both flags are given. Actual observed caps remain windows, including with a billing override.
 - `prefer`: the user's standing preference per kind of work (`implement`, `debug`, `refactor`, `review`, `research`,
   `test_writing`, `docs`), for example `"research": "strong"`. Shown to agents as advice, never forced.
-- `sure_at` (unset: the decision model's own measured bar; Jev's is 0.8), `risk_above` (0.75), `fallback_level`
+- `sure_at` (unset: the decision model's own measured bar; Jev 1.14's is 0.7), `risk_above` (0.75), `fallback_level`
   (`standard`): leave at the defaults unless asked. A `sure_at` set by hand applies to every decision model.
 - `auto_update` (`true`): routr checks for a new release in the background at most once a day and uses it from the
   next run. Set it to `false` if the user wants to update only by hand with `routr update`. `routr doctor` reports a
