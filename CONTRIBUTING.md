@@ -50,8 +50,9 @@ newest one that does at least as well.
 1. The maintainers' workbench watches `jev-latest` and `jev-preview` daily and flags a version that differs from the pin.
 2. The candidate is run side by side with the pinned Jev on the saved items behind the evidence (labelled briefs,
    worker reports, reviewer reports, repeated readings), three runs each, and each measure is compared on its mean.
-   What is gated is what a lead acts on (measured: `docs/evidence.md`, "Moving the pin"): the level (exact, under- and
-   over-rated, the real tasks, stability), `standalone`, and the report and reviewer verdicts. Under-rating may not
+   What is gated is what a lead acts on (`docs/evidence.md`, "Moving the pin": measured for the facts, inferred for the
+   level): the level (exact, under- and over-rated, the real tasks, stability), `standalone`, and the report and
+   reviewer verdicts. Under-rating may not
    rise at all. The other facts' decisiveness and stability are reported, not gated. Beside it, the maintainers'
    workbench scores both versions against verified outcomes on real tasks from their own ledger, with tolerances set
    from a same-version run. The gate takes any provider:
