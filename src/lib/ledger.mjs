@@ -8,6 +8,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { HARNESSES } from "./harnesses.mjs";
 import { LEVELS } from "./questions.mjs";
 import { DATA_DIR, ensureParent } from "./runtime.mjs";
+import { EFFORTS } from "./shaped.mjs";
 
 // The ledger is one file per user, shared by every project on the machine. Each row is labelled with its project so
 // `assess` can tell them apart: the folder name of the git repository the work happened in. A worktree counts as its
@@ -29,7 +30,7 @@ export function projectName(cwd = process.cwd()) {
 export const LEDGER_PATH = () => join(DATA_DIR(), "ledger.jsonl");
 
 // advice = the JSON that `routr dispatch|subagent` printed. chose/outcome = what the agent did and what it verified.
-const SUBAGENT_EFFORT = /^(.*)\s*(?:→|->)\s*(minimal|low|medium|high|xhigh|max|ultra|auto|default)\s*$/i;
+const SUBAGENT_EFFORT = new RegExp(`^(.*)\\s*(?:→|->)\\s*(${EFFORTS.join("|")})\\s*$`, "i");
 export function parseSubagent(s) {
   if (!s) return null;
   if (typeof s === "object") {
