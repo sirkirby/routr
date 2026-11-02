@@ -47,6 +47,11 @@ test("parsing of →, ->, none, and malformed lines for subagents", async () => 
     effort: "low",
   });
 
+  // only a known level after the last arrow is an effort: a model's own arrow and any extra part stay in the model
+  expect(parseSubagent("Audit → basic → local->small")).toEqual({ subtask: "Audit", advised: "basic", model: "local->small" });
+  expect(parseSubagent("Audit → basic → local->small → low")).toEqual({ subtask: "Audit", advised: "basic", model: "local->small", effort: "low" });
+  expect(parseSubagent("Audit → basic → haiku → low → high")).toEqual({ subtask: "Audit", advised: "basic", model: "haiku → low", effort: "high" });
+
   // none and SUBAGENTS: none
   expect(parseSubagent("none")).toBeNull();
   expect(parseSubagent("SUBAGENTS: none")).toBeNull();

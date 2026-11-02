@@ -29,6 +29,7 @@ export function projectName(cwd = process.cwd()) {
 export const LEDGER_PATH = () => join(DATA_DIR(), "ledger.jsonl");
 
 // advice = the JSON that `routr dispatch|subagent` printed. chose/outcome = what the agent did and what it verified.
+const SUBAGENT_EFFORT = /^(.*)\s*(?:→|->)\s*(minimal|low|medium|high|xhigh|max|ultra|auto|default)\s*$/i;
 export function parseSubagent(s) {
   if (!s) return null;
   if (typeof s === "object") {
@@ -53,13 +54,14 @@ export function parseSubagent(s) {
   if (!text || text.toLowerCase() === "none" || /^none\s*\(.*\)$/i.test(text)) return null;
   const m = text.match(/^(.*?)\s*(?:→|->)\s*(basic|standard|strong)\s*(?:→|->)\s*(.*)$/i);
   if (m && m[1].trim()) {
-    // The fourth part is optional: a row written before it existed, or a worker that left it out, still has its model.
-    const [model, effort] = m[3].split(/\s*(?:→|->)\s*/).map((x) => x.trim());
+    // The fourth part is optional, so a line without it still has its model. Only a known level after the last arrow is
+    // an effort: a model name can hold an arrow (`local->small`), and everything before that arrow stays the model.
+    const e = m[3].match(SUBAGENT_EFFORT);
     return {
       subtask: m[1].trim(),
       advised: m[2].trim().toLowerCase(),
-      model: model || null,
-      ...(effort ? { effort: effort.toLowerCase() } : {}),
+      model: (e ? e[1] : m[3]).trim() || null,
+      ...(e ? { effort: e[2].toLowerCase() } : {}),
     };
   }
   return {
