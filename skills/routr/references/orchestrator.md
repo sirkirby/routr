@@ -193,7 +193,7 @@ object describing what it did.
   prompt would arrive without them.
 
 `references/harnesses.md` records what each harness does and what goes wrong with it. Read it when a launch surprises
-you or when you are choosing a model. Every task handoff uses `routr launch` with its own advice.
+you or when you are choosing a model. A new worker's task always goes through `routr launch` with its own advice.
 The sequence below explains what launch performs; it is not a route around the advice check:
 
 1. `herdr worktree create --cwd <repo> --branch <name> [--base <ref>] --no-focus`; split the root pane it returns
@@ -246,6 +246,9 @@ result against the project's own standards, not just the brief.
   thrashes, use the evidence to change model, effort or harness and attach the relevant report. Correct missing
   context or changed requirements before blaming execution. You may change the execution within the user's account
   boundaries without asking for each adjustment; reassess the work level only when the work warrants it.
+- **Same worker or a fresh one.** As a rule of thumb, related work goes back to the same worker, which already has the
+  context. Unrelated work goes to a fresh worker, even when one is idle: every turn pays for everything a worker already
+  carries.
 - **Size each review round to what it found.** A decision that is the user's goes to the user; a change in behaviour
   goes back to the builder; a trivial fix (one literal, a typo) you check yourself rather than launching another
   round. On 2026-10-24 one orchestration (observed, not measured) spent up to three cross-vendor review rounds per
@@ -395,7 +398,7 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   and Kiro, between turns: written in, starting a turn; Cursor: never, a correction is queued or resumes it; Codex: accepted by its app-server), not that the worker acted
   on it; wait for the turn's report.
   `state: "unknown"` means it was handed over and no answer came: look with `routr workers` before you send it again.
-  New work is a new launch with its own advice.
+  Unrelated work is a new launch with its own advice.
 - **Background commands.** A Claude worker that left a command running in the background may start another turn by
   itself when that command ends. `wait` reports that turn like any other. Codex's, Cursor's, Antigravity's and Kiro's background
   commands are not tracked: routr closes their input once a turn ends (Cursor's as soon as its task is in; its process
