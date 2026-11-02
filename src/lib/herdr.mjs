@@ -65,14 +65,23 @@ const psq = (s) => `'${psEscape(s)}'`;
 export const CMD_PATH = "A cmd shell expands % and ! in a folder path even inside quotes, so routr will not type this one into it. Use a folder whose path has neither, or a pane running PowerShell.";
 export const cmdTypable = (...paths) => !paths.some((p) => /[%!]/.test(String(p)));
 const cmdq = (s) => { if (!cmdTypable(s)) throw new Error(CMD_PATH); return `"${String(s).replaceAll('"', '""')}"`; };
+export const CMD_VALUE = "A cmd shell cannot preserve % or ! or a line break in this environment value; use a pane running PowerShell.";
+// Unlike a Windows path, an environment value can contain quotes. Escape each cmd metacharacter outside quotes:
+// doubling a quote (the path syntax) would change the value and could expose an ampersand to the shell.
+const cmdEnv = (name, value) => {
+  if (!cmdTypable(value) || /[\r\n]/.test(value)) throw new Error(CMD_VALUE);
+  return `set ${`${name}=${value}`.replace(/[\^&|<>()"]/g, "^$&")}`;
+};
 export const SHELLS = {
   posix: {
     cd: (dir) => `cd -- ${quote(dir)}`,
+    env: (name, value) => `export ${name}=${quote(value)}`,
     cursor: (dir, exe, argv) => ["env", `CURSOR_CONFIG_DIR=${dir}`, "sh", "-c",
       `trap 'rm -rf -- "$CURSOR_CONFIG_DIR"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; ${[exe, ...argv].map(quote).join(" ")}`].map(quote).join(" "),
   },
   powershell: {
     cd: (dir) => `Set-Location -LiteralPath ${psq(dir)}`,
+    env: (name, value) => `$env:${name}=${psq(value)}`,
     // A watcher removes the folder once the pane's shell is gone, however it went: an exit hook in the shell itself did
     // not fire when herdr closed the pane, and a watcher started as the shell's child made herdr call the pane busy
     // (both seen on Windows 11). Created through WMI, the watcher is nobody's child. The command line is built by
@@ -84,6 +93,7 @@ export const SHELLS = {
   },
   cmd: {
     cd: (dir) => `cd /d ${cmdq(dir)}`,
+    env: cmdEnv,
     cursorEnv: (dir) => `set ${cmdq(`CURSOR_CONFIG_DIR=${dir}`)}`,
   },
 };

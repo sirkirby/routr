@@ -9,6 +9,8 @@
 //     as no flag at all. noEffort: why a separate effort is refused. dirFlag: the flag naming the working directory,
 //     for a harness that ignores its current one. env(dir): its environment, given a private config folder.
 //     notes(model, effort): what launch tells the orchestrator about this start.
+//   subagents({ model, effort }): optional defaults for unnamed subagent choices, as argv/env/warnings. Absent means
+//     no setting for all subagents was found; launch refuses either default rather than silently ignoring it.
 //   startup: what to tell the orchestrator when the harness stops at a question before it can start (routr answers
 //     none; herdr reports it blocked). unknownModelRunsDefault: it runs its default model on an id it does not know,
 //     without a word, so launch checks the id against its own list (models()) first.
@@ -40,6 +42,8 @@ import { run } from "./runtime.mjs";
 import { billingFromSignIn, signInHint, signInState } from "./signin.mjs";
 import { NO_WINDOWS_AFTER_ANSWER, readAgy, readClaude, readCodexLive, summarize, failedUsage, usageReadingTime, withUsageReadingTime } from "./usage.mjs";
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// JSON's string escapes are TOML basic-string escapes too, except JSON permits a literal DEL and TOML does not.
+const tomlString = (s) => JSON.stringify(s).replaceAll("\x7f", "\\u007f");
 
 // The levels a help text lists after its --effort flag: "(low, medium, high, xhigh, max)", as Claude Code and Kiro print them.
 export const effortsInHelp = (help) => { const m = String(help ?? "").match(/--effort\b[^(]*\((?:e\.g\.\s*)?([a-z]+(?:,\s*[a-z]+)+)\)/i); return m ? m[1].split(/,\s*/) : null; };
@@ -105,6 +109,9 @@ export function claudeBilling(out) {
 export const HARNESSES = {
   claude: { label: "Claude Code", executable: "claude", installAs: "Claude Code", skills: ".claude/skills",
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
+    // Measured 2.1.316, 2026-11-02: plain Agent and /code-review; a spawn's own setting wins (harnesses.md).
+    subagents: ({ model, effort }) => ({ env: { ...(model ? { CLAUDE_CODE_SUBAGENT_MODEL: model } : {}), ...(effort ? { CLAUDE_CODE_SUBAGENT_EFFORT: effort } : {}) },
+      warnings: effort ? [warning("subagent_effort_version", "CLAUDE_CODE_SUBAGENT_EFFORT needs Claude Code 2.1.316 or newer; older Claude Code ignores it.")] : [] }),
     // `"loggedIn": false` and exit 1 when signed out.
     auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`", billing: (out) => claudeBilling(out) },
     // Its help names the latest aliases (fable, opus, sonnet on 2.1.283); its help says `--model` also takes a model's full name.
@@ -135,6 +142,9 @@ export const HARNESSES = {
     // trust_directory), and the trust given in one worktree applied to its repository: later worktrees were not asked.
     startup: "Codex asks to trust a folder not under one already trusted; trust given in a worktree applies to its repository's root. Once the user has trusted the repository in Codex (run `codex` in it and choose Trust and continue), no worker in its worktrees is asked.",
     permissions: ["--yolo", "--dangerously-bypass-hook-trust", "-c", "check_for_update_on_startup=false"], model: "-m", effort: "-c", effortValue: (level) => `model_reasoning_effort=${level}`, list: "codex debug models",
+    // Measured 0.166.0, 2026-11-02: these must be TOML strings, including for ids with punctuation (harnesses.md).
+    subagents: ({ model, effort }) => ({ argv: [...(model ? ["-c", `agents.default_subagent_model=${tomlString(model)}`] : []),
+      ...(effort ? ["-c", `agents.default_subagent_reasoning_effort=${tomlString(effort)}`] : [])] }),
     // "Logged in using ChatGPT" / "Not logged in" (exit 1), both on stderr.
     auth: { check: ["login", "status"], signedIn: (out, code) => code === 0 && /^\s*Logged in\b/m.test(out), signIn: "run `codex login`" },
     // Only the models Codex lists (visibility "list"); each carries its own levels (gpt-5.5 stops at xhigh, measured).
@@ -220,18 +230,25 @@ export const SKILLS = ["routr", "routr-orchestrate"];
 
 
 export const MODEL_REQUIRED = "--model is required; a worker must not use the harness default";
-export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir }) {
+export function subagentDefaults({ kind, subagentModel, subagentEffort }) {
   const h = Object.hasOwn(HARNESSES, kind) && HARNESSES[kind];
   if (!h) throw kindError();
+  if ((subagentModel || subagentEffort) && !h.subagents) throw new Error(`${h.label} (${kind}) has no setting for all subagents; --subagent-model and --subagent-effort are unsupported`);
+  return { argv: [], env: {}, warnings: [], ...(h.subagents?.({ model: subagentModel, effort: subagentEffort }) ?? {}) };
+}
+export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir, subagentModel, subagentEffort }) {
+  const h = Object.hasOwn(HARNESSES, kind) && HARNESSES[kind];
+  if (!h) throw kindError();
+  const subagents = subagentDefaults({ kind, subagentModel, subagentEffort });
   if (!model && !dryRun) throw new Error(MODEL_REQUIRED);
   if (effort && !h.effort) throw new Error(h.noEffort);
   if (h.dirFlag && !cwd) throw new Error(`${kind} requires a directory for ${h.dirFlag}`);
   if (effort === h.autoEffort) effort = undefined;
   const argv = [...h.permissions, ...(h.dirFlag ? [h.dirFlag, cwd] : []), ...(model ? [h.model, model] : []),
-    ...(effort ? [h.effort, h.effortValue?.(effort) ?? effort] : [])];
+    ...(effort ? [h.effort, h.effortValue?.(effort) ?? effort] : []), ...subagents.argv];
   return {
-    executable: h.executable, argv, env: h.env?.(cursorConfigDir) ?? {},
-    warnings: [...(!model ? [warning("model_required", "Plan only: choose --model before launching.")] : []), ...(h.notes?.(model, effort) ?? [])],
+    executable: h.executable, argv, env: { ...h.env?.(cursorConfigDir), ...subagents.env },
+    warnings: [...(!model ? [warning("model_required", "Plan only: choose --model before launching.")] : []), ...(h.notes?.(model, effort) ?? []), ...subagents.warnings],
   };
 }
 

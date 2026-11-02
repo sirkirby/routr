@@ -454,7 +454,21 @@ Inputs:
   use `state: "failed"`, and dry runs follow the `ok` rule below while still planning.
 - Used when given: `--cwd` (default `.`), `--worktree <branch>`, `--base <ref>` and `--copy <path>` (with `--worktree`),
   `--pane <id>`, `--direction`, `--task` or `--task-file`, `--rules-file` (with a task), `--effort`, `--timeout`,
-  `--dry-run`.
+  `--subagent-model <id>`, `--subagent-effort <level>`, `--dry-run`.
+
+`--subagent-model` and `--subagent-effort` are independent defaults chosen by the lead for the worker's subagents.
+Omitting either supplies no setting for it; omitting both preserves existing behavior. Values follow `--model` and
+`--effort`: nonempty, not flag-like, no NUL; no model or effort allow-list. Claude Code receives
+`CLAUDE_CODE_SUBAGENT_MODEL` / `CLAUDE_CODE_SUBAGENT_EFFORT` in its environment, shown in `start.env` and, for a pane,
+as shell-quoted assignments in `ran` / `would_run`. Giving the effort flag adds a warning: it needs Claude Code
+2.1.316 or newer, and older versions ignore it. Codex receives `-c` overrides for `agents.default_subagent_model`
+and `agents.default_subagent_reasoning_effort`, each value encoded as a TOML string, shown in `start.argv` and
+`ran` / `would_run`. A spawn's own setting wins. Cursor, Antigravity and Kiro have no setting for all subagents:
+either flag is refused with `error` before any harness, pane or worktree call, including on dry runs. An existing
+agent in `--pane` is refused with these flags before task submission: startup defaults cannot be applied to it.
+In cmd a typed environment value containing `%`, `!` or a line break is refused before any typing, with `error`
+directing the lead to PowerShell. Other shell metacharacters and quotes are escaped by the shell boundary.
+No new ledger, telemetry or OpenTelemetry fields are sent or recorded.
 
 `state`: `planned`, `ready`, `prompted`, `needs_input`, `failed`.
 
@@ -571,9 +585,9 @@ plans the pane launch as before: it does not check the environment.
 - Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "headless", run, session }` (`run`:
   the run folder; `session`: the harness's session id (Codex: its thread id; Antigravity: its conversation id; Kiro: its ACP session id), or null).
   `start.argv` is the harness's headless command line (Codex: `app-server` with its update check at startup off; its
-  model and effort go in the protocol; Antigravity: with the worker's folder in `--add-dir`; Kiro: `acp` with the pane's flags; Cursor: `-p --output-format stream-json` with the pane's flags, and `--resume <session>` on each later turn); it is set once the worker's folder is known: a launch
+  model and effort go in the protocol, subagent defaults in TOML string config overrides; Antigravity: with the worker's folder in `--add-dir`; Kiro: `acp` with the pane's flags; Cursor: `-p --output-format stream-json` with the pane's flags, and `--resume <session>` on each later turn); it is set once the worker's folder is known: a launch
   refused before that shows the pane command planned first, not the headless one. `ran` displays it. `start.env`
-  lists each trace-context carrier passed, as `"<forwarded>"`, and nothing else: a headless Cursor runs with
+  lists each trace-context carrier passed, as `"<forwarded>"`, plus any Claude Code subagent defaults given: a headless Cursor runs with
   `CURSOR_CONFIG_DIR` set to its run folder's private config copy, which is not shown there. The carriers within
   routr's limits (as for a pane launch, with the same warning for one withheld) are saved with the worker and given to
   every turn of it, whoever starts its next holder: a `send` from another environment does not change them. `steps`: `reserve`, `holder`, `prompt` (Kiro: `model` first, when its list was read). When no holder could have started, launch removes the run folder
@@ -582,6 +596,10 @@ plans the pane launch as before: it does not check the environment.
 - `next`: `routr wait --name <name>` (run), the record template, and `routr cleanup --worker <name>` (run). A failure
   after the task was handed over warns that it may have been sent, with `routr workers --name <name>` (run) to look
   before retrying.
+
+Subagent defaults given at launch are saved as optional `subagent_model` / `subagent_effort` in the headless worker's
+private `worker.json`, so resumed processes receive the same settings. They are removed with the worker's run folder
+by cleanup; they are not ledger fields. `start` shows the same defaults as the pane plan.
 
 ## record
 

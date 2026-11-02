@@ -55,7 +55,7 @@ export function logCommand(log, text) {
 export function parseLaunchArgs(args) {
   const lead = takeLeadSession(args); args = lead.args;
   const o = { timeout: 120000, dryRun: false, ...(lead.lead ? { "lead-session": lead.lead } : {}), ...(lead.warnings.length ? { leadWarnings: lead.warnings } : {}) };
-  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "timeout", "advice"];
+  const values = ["kind", "name", "cwd", "model", "effort", "subagent-model", "subagent-effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "timeout", "advice"];
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
@@ -139,7 +139,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     // A harness that names its folder in its command (Antigravity's --add-dir) is planned for the worktree: a
     // placeholder until herdr has made it, then planned again for its path (issue #22: it was given the main checkout,
     // where a worker launched into its own worktree would have written).
-    const planFor = (cwd) => plan({ ...o, cwd, cursorConfigDir: privateDir });
+    const planFor = (cwd) => plan({ ...o, cwd, cursorConfigDir: privateDir, subagentModel: o["subagent-model"], subagentEffort: o["subagent-effort"] });
     let p = planFor(o.worktree ? "<worktree-path>" : out.cwd);
     Object.assign(out, { start: { executable: p.executable, argv: p.argv, env: p.env }, warnings: [...out.warnings, ...p.warnings.filter((w) => !w.startsWith("Plan only:"))] });
     if (!o.model) out.next.push(doNext("Choose --model before launching"));
@@ -193,6 +193,11 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     const startArgs = (pane, timeout) => o.kind === "cursor" && SHELLS[shell].cursor
       ? ["pane", "run", pane, SHELLS[shell].cursor(privateDir, p.executable, p.argv)]
       : ["agent", "start", o.name, "--kind", o.kind, "--pane", pane, "--timeout", String(timeout), "--", ...p.argv];
+    // Private configuration environment already has lifetime helpers. Type the remaining registry environment through
+    // the shared shell boundary. Build every line before typing any: cmd must refuse before a cd or an earlier value.
+    const configEnv = HARNESSES[o.kind].env?.(privateDir) ?? {};
+    const envCommands = (pane) => Object.entries(p.env).filter(([k]) => !Object.hasOwn(configEnv, k))
+      .map(([k, v]) => ["pane", "run", pane, SHELLS[shell].env(k, v)]);
     const promptArgs = (pane, timeout) => ["agent", "prompt", pane, prompt, "--wait", "--until", "working",
       "--until", "idle", "--until", "done", "--until", "blocked", "--timeout", String(timeout)];
     if (o.dryRun) {
@@ -205,6 +210,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         ...(o.pane ? [command(["pane", "run", pane, SHELLS[shell].cd(out.cwd)]),
           command(["pane", "read", pane, "--source", "visible"]), command(["pane", "process-info", "--pane", pane])] : []),
         ...(o.kind === "cursor" && SHELLS[shell].cursorEnv ? [command(["pane", "run", pane, SHELLS[shell].cursorEnv(privateDir)])] : []),
+        ...envCommands(pane).map(command),
         command(startArgs(pane, Math.min(o.timeout, 30000))),
         command(["pane", "read", pane, "--source", "visible"]),
         command(["agent", "wait", pane, "--timeout", String(Math.min(1000, o.timeout))]),
@@ -308,6 +314,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     if (o.pane) {
       const occupant = (await call(["agent", "get", out.pane], true)).data?.result?.agent;
       if (occupant?.agent) {
+        if (o["subagent-model"] || o["subagent-effort"]) throw new Error("Cannot apply subagent defaults to an already running agent; choose a pane at a shell prompt, or leave --pane off");
         const screen = async () => { try { return await readPane(); } catch { return null; } };
         const other = { next: "Choose another pane, or leave --pane off" };
         const notWaiting = async (state) => needsInput("worker_busy", `The ${o.kind} in the pane is ${stateWords(state)}, not waiting for a task`, await screen(), { next: [runNext("Wait until this worker is idle before repeating the launch.", ["herdr", "agent", "wait", out.pane, "--until", "idle"]), rerun()] });
@@ -395,7 +402,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     cleanupArgs ??= ["routr", "cleanup", "--pane", out.pane];
     // Every folder this launch will type into a cmd shell is checked as soon as the shell is known, so a refusal comes
     // before anything is typed, not between a `cd` and the variable.
-    const typable = () => { if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(o.kind === "cursor" ? [privateDir] : []))) throw new Error(CMD_PATH); };
+    const typable = () => { envCommands(out.pane); if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(o.kind === "cursor" ? [privateDir] : []))) throw new Error(CMD_PATH); };
     // A pane we split already opened in --cwd; one adopted from the caller must be checked before we type `cd`.
     if (o.pane && !adopted) {
       stop = await shellReady(); if (stop) return stop;
@@ -406,6 +413,11 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       if (!same) { await call(["pane", "run", out.pane, SHELLS[shell].cd(out.cwd)]); await pause(); }
     }
     if (!adopted) { stop = await shellReady(out.cwd); if (stop) return stop; typable(); }
+    if (!adopted) for (const a of envCommands(out.pane)) {
+      await call(a); await pause();
+      stop = await shellReady(out.cwd); if (stop) return stop;
+      step("env", true, "Set a harness environment default in the pane's shell");
+    }
     if (o.kind === "cursor" && SHELLS[shell].cursorEnv && !adopted) {
       await call(["pane", "run", out.pane, SHELLS[shell].cursorEnv(privateDir)]);
       await pause();

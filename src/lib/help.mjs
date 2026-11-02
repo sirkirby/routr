@@ -50,6 +50,8 @@ export const COMMANDS = {
       { name: "--model", arg: "<id>", description: "model id", required: true },
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
       { name: "--effort", arg: "<level>", description: "reasoning effort", required: false },
+      { name: "--subagent-model", arg: "<id>", description: "your default model for the worker's subagents (Claude Code or Codex); independent of --subagent-effort; refused on an already running agent", required: false },
+      { name: "--subagent-effort", arg: "<level>", description: "your default effort for the worker's subagents (Claude Code or Codex); independent of --subagent-model; Claude Code before 2.1.316 ignores it; refused on an already running agent", required: false },
       { name: "--rules-file", arg: "<path>", description: "your process rules for the worker (what it may do, how to report, git steps): added after the task, and never read by routr, which judges only the task", required: false },
       { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch refuses unreadable, malformed, nonmatching or `routr subagent` advice; dry runs refuse with ok:false and still plan", required: "required with a task" },
       { name: "--pane", arg: "<id>", description: "existing herdr pane to run in: at a shell prompt, or with an idle agent of --kind already running in --cwd (it is adopted, keeps its model and effort, and is sent the task; one not idle yet is never waited on: run the launch again once it is)", required: false },

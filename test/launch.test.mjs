@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import { isAbsolute, join, resolve } from "node:path";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { plan } from "../src/lib/harnesses.mjs";
+import { headlessArgv } from "../src/lib/headless.mjs";
 import { composePrompt, launch as rawLaunch, parseLaunchArgs, WORKER_GUIDE } from "./contract.mjs";
 import { paneText, promptSettled, quote, runHerdr, shellPrompt } from "../src/lib/herdr.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
@@ -144,6 +145,52 @@ test("launch options are validated before any pane operation", () => {
   expect(quote("a'$(touch /tmp/no);`whoami`\n")).toBe("'a'\\''$(touch /tmp/no);`whoami`\n'");
 });
 
+test("subagent flags use the same argument validation as model and effort, with no allow-list", () => {
+  const value = `odd '" model ; & | < > ^ $() \`x\` % !`;
+  for (const flag of ["--model", "--effort", "--subagent-model", "--subagent-effort"]) {
+    const base = ["--kind", "claude", "--name", "worker"];
+    for (const v of ["", " ", "--other", "-x", "a\0b"]) expect(() => parseLaunchArgs([...base, flag, v])).toThrow();
+    expect(() => parseLaunchArgs([...base, flag])).toThrow("requires a value");
+    expect(() => parseLaunchArgs([...base, flag, "a", flag, "b"])).toThrow("Repeated");
+    expect(parseLaunchArgs([...base, flag, value])[flag.slice(2)]).toBe(value);
+  }
+});
+
+test("registry subagent defaults are optional and independent, identical on pane and headless commands", () => {
+  for (const kind of ["claude", "codex", "cursor", "agy", "kiro"]) {
+    const base = { kind, model: "worker-model", cwd: "/work" };
+    const absent = plan(base), absentHeadless = headlessArgv(base);
+    expect(JSON.stringify([absent, absentHeadless])).not.toContain("SUBAGENT");
+    expect(JSON.stringify([absent, absentHeadless])).not.toContain("default_subagent");
+    for (const defaults of [{ subagentModel: "child-model" }, { subagentEffort: "child-effort" }, { subagentModel: "child-model", subagentEffort: "child-effort" }]) {
+      if (!["claude", "codex"].includes(kind)) {
+        expect(() => plan({ ...base, ...defaults })).toThrow("has no setting for all subagents");
+        expect(() => headlessArgv({ ...base, ...defaults })).toThrow("has no setting for all subagents");
+        continue;
+      }
+      const p = plan({ ...base, ...defaults }), h = headlessArgv({ ...base, ...defaults });
+      if (kind === "claude") {
+        expect(p.argv).toEqual(absent.argv); expect(h).toEqual(absentHeadless);
+        expect(p.env).toEqual({ ...(defaults.subagentModel ? { CLAUDE_CODE_SUBAGENT_MODEL: defaults.subagentModel } : {}), ...(defaults.subagentEffort ? { CLAUDE_CODE_SUBAGENT_EFFORT: defaults.subagentEffort } : {}) });
+        expect(p.warnings.join(" ").includes("older Claude Code ignores it")).toBe(Boolean(defaults.subagentEffort));
+      } else {
+        const extra = [...(defaults.subagentModel ? ["-c", 'agents.default_subagent_model="child-model"'] : []), ...(defaults.subagentEffort ? ["-c", 'agents.default_subagent_reasoning_effort="child-effort"'] : [])];
+        expect(p.argv).toEqual([...absent.argv, ...extra]); expect(h).toEqual([...absentHeadless, ...extra]);
+        expect(p.env).toEqual({}); expect(p.warnings).toEqual([]);
+      }
+    }
+  }
+});
+
+test("unsupported subagent defaults refuse before any harness, pane or worktree call, even on dry runs", async () => {
+  for (const kind of ["cursor", "agy", "kiro"]) for (const env of [{ HERDR_ENV: "1" }, {}]) for (const flag of ["--subagent-model", "--subagent-effort"]) for (const dry of [[], ["--dry-run"]]) {
+    const calls = [], no = async () => { calls.push("called"); throw new Error("must not call"); };
+    const r = await launch(["--kind", kind, "--name", "defaults", "--model", "worker", "--worktree", "unused", flag, "child", ...dry], { env, run: no, ready: no, models: no, spawn: no });
+    expect(r.ok).toBe(false); expect(r.error).toContain(kind); expect(r.error).toContain("has no setting for all subagents");
+    expect(calls).toEqual([]); expect(r.ran).toEqual([]); expect(r.worker).toBeUndefined();
+  }
+});
+
 // A herdr session with one shell pane. `dotenv`: the user's shell asks its plugin's question first (routr answers none).
 function fakeHerdr({ kind = "claude", trust = null, notReady = false, foreground = false, stuck = false, dotenv = false, reply = () => undefined } = {}) {
   let stage = "shell", ticks = 0;
@@ -183,6 +230,92 @@ function fakeHerdr({ kind = "claude", trust = null, notReady = false, foreground
 }
 
 const launchArgs = ["--kind", "claude", "--name", "worker", "--model", "sonnet"];
+
+test("pane launches apply the registry defaults and dry runs show them", async () => {
+  for (const kind of ["claude", "codex", "cursor", "agy", "kiro"]) {
+    const root = scratch("subagent-pane"), source = join(root, "cli-config.json"); writeFileSync(source, "{}");
+    const base = ["--kind", kind, "--name", "worker", "--model", "worker-model"];
+    const cases = [[], ...(["claude", "codex"].includes(kind) ? [["--subagent-model", "child"], ["--subagent-effort", "low"], ["--subagent-model", "child", "--subagent-effort", "low"]] : [])];
+    for (const flags of cases) {
+      const f = fakeHerdr({ kind });
+      const deps = { ...f.deps, tempRoot: root, cursorConfigSource: source, models: async () => ["worker-model"] };
+      const dry = await launch([...base, ...flags, "--dry-run"], deps);
+      expect(dry.state).toBe("planned"); expect(dry.ok).toBe(true); expect(f.calls).toEqual([]);
+      const r = await launch([...base, ...flags], deps);
+      expect([kind, r.state, r.error]).toEqual([kind, "ready", undefined]);
+      const model = flags.includes("--subagent-model"), effort = flags.includes("--subagent-effort");
+      if (kind === "claude") {
+        expect(r.start.env).toEqual({ ...(model ? { CLAUDE_CODE_SUBAGENT_MODEL: "child" } : {}), ...(effort ? { CLAUDE_CODE_SUBAGENT_EFFORT: "low" } : {}) });
+        for (const [k, v] of Object.entries(r.start.env)) {
+          expect(f.calls).toContainEqual(["pane", "run", "w1:p2", `export ${k}=${v}`]);
+          expect(dry.would_run.join(" ")).toContain(`export ${k}=${v}`);
+        }
+      } else if (kind === "codex") {
+        const start = f.calls.find((a) => a[1] === "start");
+        for (const [has, setting, value] of [[model, "model", "child"], [effort, "reasoning_effort", "low"]]) {
+          const arg = `agents.default_subagent_${setting}="${value}"`;
+          expect(start.includes(arg)).toBe(has); expect(r.start.argv.includes(arg)).toBe(has);
+          expect(dry.start.argv.includes(arg)).toBe(has);
+        }
+      }
+      expect(dry.start.argv).toEqual(r.start.argv);
+      // Fake panes do not run Cursor's exit trap.
+      if (kind === "cursor") rmSync(r.start.env.CURSOR_CONFIG_DIR, { recursive: true, force: true });
+    }
+  }
+});
+
+test("subagent values cross the pane shell boundary literally, including quotes, spaces and metacharacters", async () => {
+  const { SHELLS, CMD_VALUE } = await import("../src/lib/herdr.mjs");
+  const value = `child '" \u2019 ; & | < > ^ $() \`literal\``, full = `${value} % !`;
+  for (const [shell, name] of [["posix", "zsh"], ["powershell", "pwsh"], ["cmd", "cmd.exe"]]) {
+    const f = fakeHerdr({ reply: (a) => a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name, cwd: process.cwd() }] } }) : undefined });
+    const r = await launch([...launchArgs, "--subagent-model", value, "--subagent-effort", value], f.deps);
+    expect([r.state, r.error]).toEqual(["ready", undefined]);
+    for (const k of ["CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_SUBAGENT_EFFORT"]) {
+      const line = SHELLS[shell].env(k, value);
+      expect(f.calls).toContainEqual(["pane", "run", "w1:p2", line]);
+      if (shell === "posix") {
+        const read = Bun.spawnSync(["sh", "-c", `${SHELLS.posix.env(k, full)}; printf '%s' "$${k}"`]);
+        expect(read.exitCode).toBe(0); expect(read.stdout.toString()).toBe(full);
+      } else if (shell === "powershell") {
+        const q = psString(line, line.indexOf("=") + 1); expect(q.value).toBe(value); expect(q.end).toBe(line.length);
+        const pwsh = Bun.which("pwsh");
+        if (pwsh) {
+          const read = Bun.spawnSync([pwsh, "-NoProfile", "-Command", `${SHELLS.powershell.env(k, full)}; [Console]::Write($env:${k})`]);
+          expect(read.exitCode).toBe(0); expect(read.stdout.toString()).toBe(full);
+        }
+      } else expect(line).toBe(`set ${k}=child '^" \u2019 ; ^& ^| ^< ^> ^^ $^(^) \`literal\``);
+    }
+  }
+  for (const bad of [full, "line\nbreak", "line\rbreak"]) {
+    expect(() => SHELLS.cmd.env("DEFAULT", bad)).toThrow(CMD_VALUE);
+    const f = fakeHerdr({ reply: (a) => a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "cmd.exe", cwd: process.cwd() }] } }) : undefined });
+    const r = await launch([...launchArgs, "--pane", "w1:p1", "--subagent-model", "safe", "--subagent-effort", bad], f.deps);
+    expect(r.error).toBe(CMD_VALUE); expect(f.calls.filter((a) => a[1] === "run")).toEqual([]);
+  }
+  const p = plan({ kind: "codex", model: "worker", subagentModel: full, subagentEffort: full });
+  const f = fakeHerdr({ kind: "codex" });
+  const c = await launch(["--kind", "codex", "--name", "worker", "--model", "worker", "--subagent-model", full, "--subagent-effort", full], f.deps);
+  expect(c.state).toBe("ready");
+  expect(f.calls.find((a) => a[1] === "start").slice(-4)).toEqual(p.argv.slice(-4));
+  for (const arg of p.argv.filter((a) => a.startsWith("agents.default_subagent"))) {
+    const toml = arg.slice(arg.indexOf("=") + 1);
+    expect(JSON.parse(toml)).toBe(full);
+    expect(Bun.TOML.parse(`value = ${toml}`).value).toBe(full);
+  }
+  const controls = 'tabs\tlines\ncarriage\rbackspace\bformfeed\fcontrol\x01del\x7f';
+  const encoded = plan({ kind: "codex", model: "worker", subagentModel: controls }).argv.at(-1);
+  expect(encoded).not.toContain("\x7f");
+  expect(Bun.TOML.parse(encoded).agents.default_subagent_model).toBe(controls);
+});
+
+test("adopting a running pane cannot silently ignore subagent startup defaults", async () => {
+  const f = fakeHerdr({ reply: (a) => a[1] === "get" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", cwd: process.cwd() } }) : undefined });
+  const r = await launch([...launchArgs, "--pane", "w1:p1", "--subagent-model", "child", "--task", "Check x.js"], f.deps);
+  expect(r.error).toContain("Cannot apply subagent defaults to an already running agent");
+  expect(f.calls.some((a) => ["run", "start", "prompt"].includes(a[1]))).toBe(false);
+});
 
 test("startup waits for the shell, recovers agent_not_ready, then prompts", async () => {
   const f = fakeHerdr({ notReady: true });

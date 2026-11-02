@@ -133,7 +133,7 @@ object describing what it did.
 
     routr launch --kind <claude|codex|cursor|agy|kiro> --name <agent-name> \
         --cwd <repo> --worktree <branch> [--base <ref>] --model <id> [--effort <level>] --task-file <path> \
-        [--rules-file <path>] --advice <file> [--dry-run]
+        [--subagent-model <id>] [--subagent-effort <level>] [--rules-file <path>] --advice <file> [--dry-run]
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
   `--effort` where the harness takes it separately. On Antigravity the model id already carries it, and routr says so
@@ -142,6 +142,14 @@ object describing what it did.
   the user's default for that model, and a model without effort ignores it. Kiro also runs its default on a model id
   it does not know, without a word: launch checks the id against Kiro's own list (`kiro-cli chat --list-models`)
   before it opens a pane or starts a headless worker, and names it in `unavailable` when it could not read the list.
+- `--subagent-model` and `--subagent-effort` are optional, independent defaults you choose for the worker's own
+  subagents, including those a skill starts without naming a model. routr supplies no value for either when omitted.
+  Claude Code takes environment variables; Codex takes TOML string config overrides. A spawn's own setting wins.
+  Claude Code before 2.1.316 ignores the effort variable; launch warns whenever you give that flag. Cursor,
+  Antigravity and Kiro have no setting for all subagents: either flag is refused with `error` before any harness,
+  pane or worktree call. A `--pane` with an agent already running is also refused with these flags: choose a shell
+  pane or leave `--pane` off so the defaults can apply at startup. Both pane and headless workers get the same
+  defaults; `start` and a dry run show them. See the measured subagent table in `references/harnesses.md`.
 - `--task-file` holds your task alone (parts 2 and 3). With neither task form the pane is left ready and unprompted;
   sending work later still requires matching advice.
 - `--rules-file` holds your process rules, added after the task. routr passes them on without judging them, and
@@ -156,6 +164,7 @@ object describing what it did.
   trusted one), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
 - A cmd shell expands `%` and `!` in a folder path even inside quotes, so launch refuses (`failed`) to type such a
   folder into one: use a folder without them, or a pane running PowerShell.
+  Environment values with `%`, `!` or line breaks are also refused before anything is typed into cmd; use PowerShell.
 - `--dry-run` requires `--model` and prints `would_run` without executing worker actions. It may queue a planned
   span when OpenTelemetry export is on, but creates no launch index entry. It returns `ok: false` and `error` when
   a real launch would refuse its arguments, folder, task or advice; otherwise `ok: true`. It does not check the

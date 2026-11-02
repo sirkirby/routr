@@ -480,6 +480,7 @@ producer, including config and input notes forwarded into `warnings`.
 <!-- warning-codes -->
 | Code | Meaning |
 |---|---|
+| `subagent_effort_version` | Claude Code before 2.1.316 ignores the subagent effort default. |
 | `config_missing` | No config; defaults used. |
 | `config_unreadable` | Config unreadable; defaults used. |
 | `config_share` | Invalid share; default used. |
