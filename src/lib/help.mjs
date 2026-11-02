@@ -212,7 +212,7 @@ export const COMMANDS = {
       { name: "--check", arg: "<pass|fail|none>", description: "verification outcome", required: true },
       { name: "--advice", arg: "<file>", description: "path to advice JSON file (or pipe on stdin)", required: false, default: "stdin" },
       { name: "--report", arg: "<file>", description: "path to worker report file", required: false },
-      { name: "--subagent", arg: '"<subtask> → <level advised> → <model chosen>"', description: "subagent sizing decision", required: false, repeatable: true },
+      { name: "--subagent", arg: '"<subtask> → <level advised> → <model chosen> → <effort chosen>"', description: "subagent sizing decision", required: false, repeatable: true },
       { name: "--level", arg: "<level>", description: "actual work level chosen (basic, standard, strong); supply explicitly, even when unchanged. A larger model alone does not change the work level", required: false, default: "advised level" },
       { name: "--seconds", arg: "<n>", description: "elapsed seconds from handoff through verification (or stopping); omit when unknown", required: false },
       { name: "--attempts", arg: "<n>", description: "positive count of worker attempts; activity, not a quality score. Omit when unknown", required: false },

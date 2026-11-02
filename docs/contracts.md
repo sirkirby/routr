@@ -595,7 +595,7 @@ Inputs:
   `--check`. With `--run-id`, the same advice the run was recorded with. Refused (with `error`) when missing,
   unreadable, or not matching `--task-file`.
 - Used when given: `--task-file` (compared with the advice before anything is read or written), `--level` (default:
-  the advised level; the guides ask for it always), `--report`, `--subagent` (repeatable), `--seconds`, `--attempts`,
+  the advised level; the guides ask for it always), `--report`, `--subagent` (repeatable: `<subtask> → <level> → <model> → <effort>`, the effort optional and kept in the local ledger only), `--seconds`, `--attempts`,
   `--cause` (repeatable), `--run-id`, `--project`, `--note`, `--ledger`.
 
 Usable advice. Today `record` without `--task-file` appends a row from any JSON, a saved refusal envelope

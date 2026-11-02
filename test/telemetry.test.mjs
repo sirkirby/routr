@@ -90,7 +90,7 @@ test("telemetry rows carry what tuning needs, never text or anything that points
   expect(r).toMatchObject({ v: 3, day: "2026-09-21", provider: "typesafe", decision_model: "jev-1.13.0", chose: { model: "big-model" }, outcome: { seconds: 60 }, subagents: [{ advised: "basic", model: "small-model" }] });
   // Anything typed by hand is cut to a known value or a short name before it can leave the machine.
   const [h] = telemetryRows([row({ chose: { subscription: "codex", model: "sonnet, since the acme repo's Stripe key handling is subtle", effort: "high", level: "extreme" },
-    outcome: { verdict: "done: fixed the acme migration", check: "pass", attempts: 1 }, subagents: [{ subtask: "x", advised: "strong", model: "sonnet because billing is hard" }] })], "install-a");
+    outcome: { verdict: "done: fixed the acme migration", check: "pass", attempts: 1 }, subagents: [{ subtask: "x", advised: "strong", model: "sonnet because billing is hard" , effort: "low" }] })], "install-a");
   expect(h.chose).toEqual({ subscription: "codex", model: "other", effort: "high", level: "other" });
   expect(h.outcome.verdict).toBe("other");
   expect(h.subagents).toEqual([{ advised: "strong", model: "other" }]);

@@ -8,6 +8,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { HARNESSES } from "./harnesses.mjs";
 import { LEVELS } from "./questions.mjs";
 import { DATA_DIR, ensureParent } from "./runtime.mjs";
+import { EFFORTS } from "./shaped.mjs";
 
 // The ledger is one file per user, shared by every project on the machine. Each row is labelled with its project so
 // `assess` can tell them apart: the folder name of the git repository the work happened in. A worktree counts as its
@@ -29,6 +30,7 @@ export function projectName(cwd = process.cwd()) {
 export const LEDGER_PATH = () => join(DATA_DIR(), "ledger.jsonl");
 
 // advice = the JSON that `routr dispatch|subagent` printed. chose/outcome = what the agent did and what it verified.
+const SUBAGENT_EFFORT = new RegExp(`^(.*)\\s*(?:→|->)\\s*(${EFFORTS.join("|")})\\s*$`, "i");
 export function parseSubagent(s) {
   if (!s) return null;
   if (typeof s === "object") {
@@ -39,6 +41,7 @@ export function parseSubagent(s) {
         subtask: String(s.subtask ?? "").trim(),
         advised,
         model: s.model ? String(s.model).trim() : null,
+        ...(s.effort ? { effort: String(s.effort).trim().toLowerCase() } : {}),
       };
     }
     return {
@@ -52,10 +55,14 @@ export function parseSubagent(s) {
   if (!text || text.toLowerCase() === "none" || /^none\s*\(.*\)$/i.test(text)) return null;
   const m = text.match(/^(.*?)\s*(?:→|->)\s*(basic|standard|strong)\s*(?:→|->)\s*(.*)$/i);
   if (m && m[1].trim()) {
+    // The fourth part is optional, so a line without it still has its model. Only a known level after the last arrow is
+    // an effort: a model name can hold an arrow (`local->small`), and everything before that arrow stays the model.
+    const e = m[3].match(SUBAGENT_EFFORT);
     return {
       subtask: m[1].trim(),
       advised: m[2].trim().toLowerCase(),
-      model: m[3].trim() || null,
+      model: (e ? e[1] : m[3]).trim() || null,
+      ...(e ? { effort: e[2].toLowerCase() } : {}),
     };
   }
   return {
@@ -197,12 +204,12 @@ export function assess(entries, config = null) {
 
   const allSubagents = entries.flatMap((e) => e.subagents ?? []);
   if (allSubagents.length) {
-    out.push(`\nsubagents: ${allSubagents.length} recorded (which models your workers gave their subagents, by the level routr advised)`);
+    out.push(`\nsubagents: ${allSubagents.length} recorded (which models and efforts your workers gave their subagents, by the level routr advised)`);
     for (const L of LEVELS) {
       const at = allSubagents.filter((x) => x.advised === L);
       if (!at.length) continue;
       const counts = {};
-      for (const x of at) counts[x.model ?? "unknown"] = (counts[x.model ?? "unknown"] ?? 0) + 1;
+      for (const x of at) { const k = [x.model ?? "unknown", x.effort].filter(Boolean).join(" "); counts[k] = (counts[k] ?? 0) + 1; }
       out.push(`  ${L}: ${Object.entries(counts).sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).map(([m, c]) => `${m} ${c}`).join(", ")}`);
     }
   }

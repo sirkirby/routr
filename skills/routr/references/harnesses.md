@@ -435,6 +435,19 @@ pane gets.
   worker-server does on the SIGTERM of a stop during the turn that started it, whether a first run in a folder Cursor
   has never trusted needs anything beyond `--trust`.
 
+## Choosing a subagent's model and effort (measured 2026-11-02, one short run each; quality not compared)
+
+A parent told to spawn one subagent that replies with one word, read from the subagent's own record, not its parent's
+account.
+
+| Harness | Per spawn | Default for every subagent | Left unset | Read from |
+|---|---|---|---|---|
+| Claude Code 2.1.316 | Agent tool `model: haiku`, `effort: low` ran Haiku at low under a Sonnet medium parent | `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_SUBAGENT_EFFORT` reached a plain spawn and `/code-review`, whose subagent names no model (vendor's order: the spawn's own setting wins over the variable; `CLAUDE_CODE_EFFORT_LEVEL` wins over the spawn's effort: not measured) | The parent's model | Subagent transcript: `message.model`, `perTurnEffort` |
+| Codex 0.166.0 | `spawn_agent` `model`, `reasoning_effort` ran them | `-c agents.default_subagent_model=…`, `-c agents.default_subagent_reasoning_effort=…` applied when the spawn named neither | The parent's model and effort | The child rollout's `turn_context`. A spawn with no `fork_turns` forks: its rollout starts with the parent's turns |
+| Cursor 2026.10.22-27dcf5f | Task `model: composer-2.5-fast` ran it. The list is short and the id carries the effort: `composer-2.5`, which `cursor-agent models` lists, is not on it, and `composer-2.5[fast=false]` was refused. An agent file's `model: composer-2.5` ran `composer-2.5-fast` | Agent file (per agent) | The parent's id | The subagent's `store.db` |
+| Antigravity 1.4.12 | `invoke_subagent` `Model` (`inherit`, `flash_lite`, `flash`, `pro`, with a required `TypeName`): `flash` ran `gemini-3.8-flash-tiered` under `gemini-4-argon-low`, only with no `model` line in that agent's file. With `model: inherit` there it ran the parent's. Only `flash` was run. No effort setting in the tool or its docs | Agent file `model: flash` (per agent), in `.agents/agents/` | The parent's model | Strings in the subagent's conversation database (private format) |
+| Kiro 2.36.0 | `subagent` stage `model` is accepted, and the child's record changed (no `modelId` where an unset run says `auto`), but nothing names the model it ran. Credits could not tell them apart. No effort setting in the tool or its docs | Not found: a markdown agent in `.kiro/agents/` was not listed by `kiro-cli agent list` nor offered as a role | `auto` | Session files; not conclusive |
+
 ## Lead and pane session identity
 
 Measured 2026-10-25 against each harness's own record (Stage 2 probes):

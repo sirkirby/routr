@@ -263,7 +263,7 @@ ledger.
 
     routr record --advice <file> --task-file <this worker’s task file> --subscription <s> --model <m> --effort <e> \
         --level <the level you settled on> --verdict <done|partial|blocked> \
-        --check <pass|fail|none> [--report <file>] [--subagent "<subtask> → <level> → <model>"] \
+        --check <pass|fail|none> [--report <file>] [--subagent "<subtask> → <level> → <model> → <effort>"] \
         [--attempts <n>] [--seconds <n>] [--cause <cause>] [--run-id <id>] \
         [--note "<reasons for the model, effort and account; what happened>"]
 

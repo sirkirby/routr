@@ -46,7 +46,7 @@ export const NO_CONFIG = (path) => `no config at ${path}: using defaults (run \`
 // Standing advice becomes separate next steps, alongside steps specific to this call.
 export const ADVICE_STEPS = {
   subagent: [
-    "Choose the subagent model and effort from these facts and the codebase, never stronger than yourself and not your own model by default.",
+    "Choose the subagent model and effort from these facts and the codebase, never stronger than yourself and not your own model by default, and set both when you spawn it: left unset they come from your harness's subagent default or from you. references/worker.md says how on each harness.",
     "When you settle on a different level, report ROUTR: <advised> → <chosen> because <reason>.",
     "An orchestrator, in herdr or not, never runs routr subagent or spawns its own subagents; hand work out with routr dispatch and routr launch --advice.",
   ],
