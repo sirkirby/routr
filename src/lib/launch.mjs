@@ -174,6 +174,16 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     }
     // Known once the pane's shell has been seen; until then, this platform's usual shell.
     let shell = process.platform === "win32" ? "powershell" : "posix";
+    const configEnv = HARNESSES[o.kind].env?.(privateDir) ?? {};
+    const fallbackEnv = Object.fromEntries(Object.entries(p.env).filter(([k]) => !Object.hasOwn(configEnv, k)));
+    // Never leave an assignment in a shell the user keeps. Like carriers, a fallback enters only a pane we create;
+    // a --pane retry keeps the environment that its original split supplied and applies nothing again.
+    const paneFallbacks = () => {
+      if (!o.pane) return fallbackEnv;
+      for (const k of Object.keys(fallbackEnv)) delete out.start.env[k];
+      if (Object.keys(fallbackEnv).length) out.warnings.push(warning("subagent_fallback_not_passed", "This launch passed no subagent environment fallback to the existing pane; its shell or agent keeps the environment it started with, including any fallback from the original split on a retry."));
+      return {};
+    };
     // The carriers this launch hands on: a pane it splits (beside the caller, or in a worktree) gets the ones within
     // routr's limits, with a warning for each withheld; an existing pane gets none, said once. Only names and FORWARDED
     // reach the output.
@@ -193,24 +203,18 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     const startArgs = (pane, timeout) => o.kind === "cursor" && SHELLS[shell].cursor
       ? ["pane", "run", pane, SHELLS[shell].cursor(privateDir, p.executable, p.argv)]
       : ["agent", "start", o.name, "--kind", o.kind, "--pane", pane, "--timeout", String(timeout), "--", ...p.argv];
-    // Private configuration environment already has lifetime helpers. Type the remaining registry environment through
-    // the shared shell boundary. Build every line before typing any: cmd must refuse before a cd or an earlier value.
-    const configEnv = HARNESSES[o.kind].env?.(privateDir) ?? {};
-    const envCommands = (pane) => Object.entries(p.env).filter(([k]) => !Object.hasOwn(configEnv, k))
-      .map(([k, v]) => ["pane", "run", pane, SHELLS[shell].env(k, v)]);
     const promptArgs = (pane, timeout) => ["agent", "prompt", pane, prompt, "--wait", "--until", "working",
       "--until", "idle", "--until", "done", "--until", "blocked", "--timeout", String(timeout)];
     if (o.dryRun) {
-      const pane = o.pane ?? "<new-pane>", carried = paneCarriers();
+      const pane = o.pane ?? "<new-pane>", carried = paneCarriers(), extraEnv = paneFallbacks();
       out.would_run = [
-        ...(o.worktree ? [command(worktreeArgs(out.cwd, o.worktree, o.base)), command(splitArgs("right", "<worktree-path>", carried, { pane: "<root-pane>", shown: true })), command(["pane", "close", "<root-pane>"])] : []),
-        ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true }))] : []),
+        ...(o.worktree ? [command(worktreeArgs(out.cwd, o.worktree, o.base)), command(splitArgs("right", "<worktree-path>", carried, { pane: "<root-pane>", shown: true, env: extraEnv })), command(["pane", "close", "<root-pane>"])] : []),
+        ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true, env: extraEnv }))] : []),
         command(["pane", "read", pane, "--source", "visible"]),
         command(["pane", "process-info", "--pane", pane]),
         ...(o.pane ? [command(["pane", "run", pane, SHELLS[shell].cd(out.cwd)]),
           command(["pane", "read", pane, "--source", "visible"]), command(["pane", "process-info", "--pane", pane])] : []),
         ...(o.kind === "cursor" && SHELLS[shell].cursorEnv ? [command(["pane", "run", pane, SHELLS[shell].cursorEnv(privateDir)])] : []),
-        ...envCommands(pane).map(command),
         command(startArgs(pane, Math.min(o.timeout, 30000))),
         command(["pane", "read", pane, "--source", "visible"]),
         command(["agent", "wait", pane, "--timeout", String(Math.min(1000, o.timeout))]),
@@ -249,7 +253,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       }
       return out;
     }
-    const carried = paneCarriers();
+    const carried = paneCarriers(), extraEnv = paneFallbacks();
     // The user turned this subscription off: it gets no work, launched by hand or not.
     const loaded = settings(), config = configOf(loaded);
     out.warnings.push(...(loaded.notes ?? []));
@@ -314,7 +318,6 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     if (o.pane) {
       const occupant = (await call(["agent", "get", out.pane], true)).data?.result?.agent;
       if (occupant?.agent) {
-        if (o["subagent-model"] || o["subagent-effort"]) throw new Error("Cannot apply subagent defaults to an already running agent; choose a pane at a shell prompt, or leave --pane off");
         const screen = async () => { try { return await readPane(); } catch { return null; } };
         const other = { next: "Choose another pane, or leave --pane off" };
         const notWaiting = async (state) => needsInput("worker_busy", `The ${o.kind} in the pane is ${stateWords(state)}, not waiting for a task`, await screen(), { next: [runNext("Wait until this worker is idle before repeating the launch.", ["herdr", "agent", "wait", out.pane, "--until", "idle"]), rerun()] });
@@ -334,7 +337,12 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         if (!["idle", "done"].includes(status)) return await notWaiting(status);
         // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
         if (occupant.interactive_ready === false && occupant.agent_status !== "blocked") return await notWaiting(`${status} but not ready for input`);
-        adopted = true; step("adopt", true, `${o.kind} is already running in ${out.pane}, ${status}, in ${out.cwd}: launch sends it the task (its model and effort are the ones it runs; not changed)`);
+        adopted = true;
+        if (o["subagent-model"] || o["subagent-effort"]) {
+          if (!Object.keys(fallbackEnv).length) out.warnings.push(warning("subagent_fallback_not_passed", "This launch passed no subagent fallback to the already running agent; it keeps the settings it started with."));
+          out.start = { executable: null, argv: [], env: {} };
+        }
+        step("adopt", true, `${o.kind} is already running in ${out.pane}, ${status}, in ${out.cwd}: launch sends it the task (its model and effort are the ones it runs; not changed)`);
       }
     }
     if (!adopted) await checkListed();
@@ -376,7 +384,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       // The worker gets a pane of launch's own, with its carriers, never the root pane herdr opened (worktreePane);
       // cleanup --worktree finds the workspace whichever pane is left in it.
       let opened;
-      try { opened = await worktreePane(herdrCall, root, out.cwd, carried); }
+      try { opened = await worktreePane(herdrCall, root, out.cwd, carried, { env: extraEnv }); }
       catch (e) { throw new Error(`launch created the worktree ${out.cwd} but could not open the worker's pane in it (${e?.message ?? e}); remove the worktree with ${displayCommand(cleanupArgs)}`); }
       out.pane = opened.pane;
       step("split", true, `Created ${out.pane}, right of ${root}, in the worktree`);
@@ -394,7 +402,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         if (!rect) throw new Error("Caller pane geometry is unavailable");
         direction = rect.width > rect.height ? "right" : "down";
       }
-      out.pane = await splitPane(herdrCall, direction, out.cwd, carried);
+      out.pane = await splitPane(herdrCall, direction, out.cwd, carried, { env: extraEnv });
       createdPane = true;
       step("split", true, `Created ${out.pane}, ${direction}`);
     }
@@ -402,7 +410,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     cleanupArgs ??= ["routr", "cleanup", "--pane", out.pane];
     // Every folder this launch will type into a cmd shell is checked as soon as the shell is known, so a refusal comes
     // before anything is typed, not between a `cd` and the variable.
-    const typable = () => { envCommands(out.pane); if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(o.kind === "cursor" ? [privateDir] : []))) throw new Error(CMD_PATH); };
+    const typable = () => { if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(o.kind === "cursor" ? [privateDir] : []))) throw new Error(CMD_PATH); };
     // A pane we split already opened in --cwd; one adopted from the caller must be checked before we type `cd`.
     if (o.pane && !adopted) {
       stop = await shellReady(); if (stop) return stop;
@@ -413,11 +421,6 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       if (!same) { await call(["pane", "run", out.pane, SHELLS[shell].cd(out.cwd)]); await pause(); }
     }
     if (!adopted) { stop = await shellReady(out.cwd); if (stop) return stop; typable(); }
-    if (!adopted) for (const a of envCommands(out.pane)) {
-      await call(a); await pause();
-      stop = await shellReady(out.cwd); if (stop) return stop;
-      step("env", true, "Set a harness environment default in the pane's shell");
-    }
     if (o.kind === "cursor" && SHELLS[shell].cursorEnv && !adopted) {
       await call(["pane", "run", out.pane, SHELLS[shell].cursorEnv(privateDir)]);
       await pause();

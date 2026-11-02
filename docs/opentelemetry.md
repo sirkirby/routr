@@ -481,6 +481,7 @@ producer, including config and input notes forwarded into `warnings`.
 | Code | Meaning |
 |---|---|
 | `subagent_effort_version` | Claude Code before 2.1.316 ignores the subagent effort default. |
+| `subagent_fallback_not_passed` | An existing pane or agent keeps its original settings; launch applied no subagent fallback. |
 | `config_missing` | No config; defaults used. |
 | `config_unreadable` | Config unreadable; defaults used. |
 | `config_share` | Invalid share; default used. |

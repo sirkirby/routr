@@ -456,19 +456,28 @@ Inputs:
   `--pane <id>`, `--direction`, `--task` or `--task-file`, `--rules-file` (with a task), `--effort`, `--timeout`,
   `--subagent-model <id>`, `--subagent-effort <level>`, `--dry-run`.
 
-`--subagent-model` and `--subagent-effort` are independent defaults chosen by the lead for the worker's subagents.
+`--subagent-model` and `--subagent-effort` are independent, opt-in fallbacks for spawns that name no model or effort,
+including those a skill starts. The worker judges each spawn using `routr subagent` and its knowledge of the code;
+the lead judges the worker's model, effort and account and its reported `SUBAGENTS` decisions. Leave the flags off
+unless there is a reason for this worker. No test shows that smaller subagents keep quality.
 Omitting either supplies no setting for it; omitting both preserves existing behavior. Values follow `--model` and
 `--effort`: nonempty, not flag-like, no NUL; no model or effort allow-list. Claude Code receives
-`CLAUDE_CODE_SUBAGENT_MODEL` / `CLAUDE_CODE_SUBAGENT_EFFORT` in its environment, shown in `start.env` and, for a pane,
-as shell-quoted assignments in `ran` / `would_run`. Giving the effort flag adds a warning: it needs Claude Code
+`CLAUDE_CODE_SUBAGENT_MODEL` / `CLAUDE_CODE_SUBAGENT_EFFORT` in its environment, shown in `start.env` and, for a new
+pane, as `--env NAME=VALUE` on its split in `ran` / `would_run`. These values never pass through the pane's shell:
+quotes, metacharacters, `%`, `!` and line breaks require no shell escaping or cmd refusal. An existing `--pane` gets
+none, and `start.env` lists none: a warning says it keeps its original environment. No assignment is left in a shell
+the user keeps. A `needs_input` retry repeats the same flags with `--pane`; it applies no environment setting again,
+and the pane keeps any fallback its original split supplied. Giving the effort flag adds a warning: it needs Claude Code
 2.1.316 or newer, and older versions ignore it. Codex receives `-c` overrides for `agents.default_subagent_model`
 and `agents.default_subagent_reasoning_effort`, each value encoded as a TOML string, shown in `start.argv` and
 `ran` / `would_run`. A spawn's own setting wins. Cursor, Antigravity and Kiro have no setting for all subagents:
-either flag is refused with `error` before any harness, pane or worktree call, including on dry runs. An existing
-agent in `--pane` is refused with these flags before task submission: startup defaults cannot be applied to it.
-In cmd a typed environment value containing `%`, `!` or a line break is refused before any typing, with `error`
-directing the lead to PowerShell. Other shell metacharacters and quotes are escaped by the shell boundary.
-No new ledger, telemetry or OpenTelemetry fields are sent or recorded.
+either flag is refused with `error` before any harness, pane or worktree call, including on dry runs. Codex's argv
+fallback applies to a new process even in an existing shell; it leaves no shell assignment behind. An agent already
+running in `--pane` keeps its original settings: a warning says launch applied no fallback, and `start` is
+`{ executable: null, argv: [], env: {} }` when these flags were given. This also permits startup retries to adopt the
+original agent. Model and effort fallback values are not added to the ledger, telemetry or OpenTelemetry. Only fixed
+warning codes use the existing OpenTelemetry `routr.warning.code` field, including `subagent_effort_version` and
+`subagent_fallback_not_passed`; the displayed warning text stays local.
 
 `state`: `planned`, `ready`, `prompted`, `needs_input`, `failed`.
 

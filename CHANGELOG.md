@@ -5,7 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
-- `launch --subagent-model` and `--subagent-effort` pass the lead's defaults to Claude Code and Codex subagents, in panes and headless; unsupported harnesses refuse them (#<PR>).
+- `launch --subagent-model` and `--subagent-effort` offer opt-in fallbacks for unnamed subagent choices on Claude Code and Codex; explicit spawn settings win, and unsupported harnesses refuse them (#<PR>).
 - The worker guide says how to set a subagent's model and effort on each harness, as measured, and `record --subagent`
   takes an optional effort, kept in the local ledger only (#136).
 

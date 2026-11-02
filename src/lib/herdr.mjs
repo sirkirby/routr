@@ -65,23 +65,14 @@ const psq = (s) => `'${psEscape(s)}'`;
 export const CMD_PATH = "A cmd shell expands % and ! in a folder path even inside quotes, so routr will not type this one into it. Use a folder whose path has neither, or a pane running PowerShell.";
 export const cmdTypable = (...paths) => !paths.some((p) => /[%!]/.test(String(p)));
 const cmdq = (s) => { if (!cmdTypable(s)) throw new Error(CMD_PATH); return `"${String(s).replaceAll('"', '""')}"`; };
-export const CMD_VALUE = "A cmd shell cannot preserve % or ! or a line break in this environment value; use a pane running PowerShell.";
-// Unlike a Windows path, an environment value can contain quotes. Escape each cmd metacharacter outside quotes:
-// doubling a quote (the path syntax) would change the value and could expose an ampersand to the shell.
-const cmdEnv = (name, value) => {
-  if (!cmdTypable(value) || /[\r\n]/.test(value)) throw new Error(CMD_VALUE);
-  return `set ${`${name}=${value}`.replace(/[\^&|<>()"]/g, "^$&")}`;
-};
 export const SHELLS = {
   posix: {
     cd: (dir) => `cd -- ${quote(dir)}`,
-    env: (name, value) => `export ${name}=${quote(value)}`,
     cursor: (dir, exe, argv) => ["env", `CURSOR_CONFIG_DIR=${dir}`, "sh", "-c",
       `trap 'rm -rf -- "$CURSOR_CONFIG_DIR"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; ${[exe, ...argv].map(quote).join(" ")}`].map(quote).join(" "),
   },
   powershell: {
     cd: (dir) => `Set-Location -LiteralPath ${psq(dir)}`,
-    env: (name, value) => `$env:${name}=${psq(value)}`,
     // A watcher removes the folder once the pane's shell is gone, however it went: an exit hook in the shell itself did
     // not fire when herdr closed the pane, and a watcher started as the shell's child made herdr call the pane busy
     // (both seen on Windows 11). Created through WMI, the watcher is nobody's child. The command line is built by
@@ -93,7 +84,6 @@ export const SHELLS = {
   },
   cmd: {
     cd: (dir) => `cd /d ${cmdq(dir)}`,
-    env: cmdEnv,
     cursorEnv: (dir) => `set ${cmdq(`CURSOR_CONFIG_DIR=${dir}`)}`,
   },
 };
@@ -172,14 +162,16 @@ export const paneView = (call, pane) => ({
 // environment-carrier rules read an empty value as absent. herdr is started directly, never through a shell, so nothing
 // here is quoted. `shown: true` is the same command as output may carry it: each forwarded value replaced by FORWARDED
 // (an empty one has nothing to hide). smoke:carriers splits with this too.
-export const splitArgs = (direction, cwd, carriers = {}, { shown = false, pane = null } = {}) => ["pane", "split", ...(pane ? [pane] : ["--current"]),
+// Other launch environment (subagent fallbacks) uses the same split boundary, with its values shown normally.
+export const splitArgs = (direction, cwd, carriers = {}, { shown = false, pane = null, env = {} } = {}) => ["pane", "split", ...(pane ? [pane] : ["--current"]),
   "--direction", direction, "--cwd", cwd, "--no-focus",
-  ...CARRIERS.flatMap((name) => ["--env", `${name}=${!Object.hasOwn(carriers, name) ? "" : shown ? FORWARDED : carriers[name]}`])];
+  ...CARRIERS.flatMap((name) => ["--env", `${name}=${!Object.hasOwn(carriers, name) ? "" : shown ? FORWARDED : carriers[name]}`]),
+  ...Object.entries(env).flatMap(([name, value]) => ["--env", `${name}=${value}`])];
 
 // One split through `call(args, shown, tolerate)` (one herdr command, which throws on failure unless `tolerate`; `shown`
 // is the command as output may carry it): the new pane's id.
-export async function splitPane(call, direction, cwd, carriers, { pane = null } = {}) {
-  const r = await call(splitArgs(direction, cwd, carriers, { pane }), splitArgs(direction, cwd, carriers, { pane, shown: true }));
+export async function splitPane(call, direction, cwd, carriers, { pane = null, env = {} } = {}) {
+  const r = await call(splitArgs(direction, cwd, carriers, { pane, env }), splitArgs(direction, cwd, carriers, { pane, env, shown: true }));
   const id = r.data?.result?.pane?.pane_id;
   if (typeof id !== "string" || !id) throw new Error("Herdr split returned no pane id");
   return id;
@@ -196,8 +188,8 @@ export const worktreeArgs = (cwd, branch, base = null) => ["worktree", "create",
 // fails; a close that fails leaves an extra shell pane and is returned, not thrown, for the caller to decide (launch
 // ends there; smoke:carriers fails its check): { pane, closed }.
 // `call` as splitPane's. smoke:carriers runs this too.
-export async function worktreePane(call, root, cwd, carriers) {
-  const pane = await splitPane(call, "right", cwd, carriers, { pane: root });
+export async function worktreePane(call, root, cwd, carriers, { env = {} } = {}) {
+  const pane = await splitPane(call, "right", cwd, carriers, { pane: root, env });
   const close = ["pane", "close", root];
   let closed = null; try { closed = await call(close, close, true); } catch {}
   return { pane, closed: closed?.ok === true };

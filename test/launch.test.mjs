@@ -247,8 +247,10 @@ test("pane launches apply the registry defaults and dry runs show them", async (
       if (kind === "claude") {
         expect(r.start.env).toEqual({ ...(model ? { CLAUDE_CODE_SUBAGENT_MODEL: "child" } : {}), ...(effort ? { CLAUDE_CODE_SUBAGENT_EFFORT: "low" } : {}) });
         for (const [k, v] of Object.entries(r.start.env)) {
-          expect(f.calls).toContainEqual(["pane", "run", "w1:p2", `export ${k}=${v}`]);
-          expect(dry.would_run.join(" ")).toContain(`export ${k}=${v}`);
+          const split = f.calls.find((a) => a[1] === "split");
+          expect(split).toContain(`${k}=${v}`);
+          expect(dry.would_run.find((a) => a.includes("pane split"))).toContain(`${k}=${v}`);
+          expect(f.calls.filter((a) => a[1] === "run").flat().join(" ")).not.toContain(k);
         }
       } else if (kind === "codex") {
         const start = f.calls.find((a) => a[1] === "start");
@@ -265,34 +267,19 @@ test("pane launches apply the registry defaults and dry runs show them", async (
   }
 });
 
-test("subagent values cross the pane shell boundary literally, including quotes, spaces and metacharacters", async () => {
-  const { SHELLS, CMD_VALUE } = await import("../src/lib/herdr.mjs");
-  const value = `child '" \u2019 ; & | < > ^ $() \`literal\``, full = `${value} % !`;
-  for (const [shell, name] of [["posix", "zsh"], ["powershell", "pwsh"], ["cmd", "cmd.exe"]]) {
+test("subagent environment values cross the split boundary literally on every shell, including quotes and expansion characters", async () => {
+  const full = `child '\" \u2019 ; & | < > ^ $() \`literal\` % ! line\nnext\r`;
+  for (const name of ["zsh", "pwsh", "cmd.exe"]) {
     const f = fakeHerdr({ reply: (a) => a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name, cwd: process.cwd() }] } }) : undefined });
-    const r = await launch([...launchArgs, "--subagent-model", value, "--subagent-effort", value], f.deps);
+    const r = await launch([...launchArgs, "--subagent-model", full, "--subagent-effort", full], f.deps);
     expect([r.state, r.error]).toEqual(["ready", undefined]);
+    const split = f.calls.find((a) => a[1] === "split");
     for (const k of ["CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_SUBAGENT_EFFORT"]) {
-      const line = SHELLS[shell].env(k, value);
-      expect(f.calls).toContainEqual(["pane", "run", "w1:p2", line]);
-      if (shell === "posix") {
-        const read = Bun.spawnSync(["sh", "-c", `${SHELLS.posix.env(k, full)}; printf '%s' "$${k}"`]);
-        expect(read.exitCode).toBe(0); expect(read.stdout.toString()).toBe(full);
-      } else if (shell === "powershell") {
-        const q = psString(line, line.indexOf("=") + 1); expect(q.value).toBe(value); expect(q.end).toBe(line.length);
-        const pwsh = Bun.which("pwsh");
-        if (pwsh) {
-          const read = Bun.spawnSync([pwsh, "-NoProfile", "-Command", `${SHELLS.powershell.env(k, full)}; [Console]::Write($env:${k})`]);
-          expect(read.exitCode).toBe(0); expect(read.stdout.toString()).toBe(full);
-        }
-      } else expect(line).toBe(`set ${k}=child '^" \u2019 ; ^& ^| ^< ^> ^^ $^(^) \`literal\``);
+      expect(split).toContain(`${k}=${full}`);
+      expect(r.start.env[k]).toBe(full);
     }
-  }
-  for (const bad of [full, "line\nbreak", "line\rbreak"]) {
-    expect(() => SHELLS.cmd.env("DEFAULT", bad)).toThrow(CMD_VALUE);
-    const f = fakeHerdr({ reply: (a) => a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "cmd.exe", cwd: process.cwd() }] } }) : undefined });
-    const r = await launch([...launchArgs, "--pane", "w1:p1", "--subagent-model", "safe", "--subagent-effort", bad], f.deps);
-    expect(r.error).toBe(CMD_VALUE); expect(f.calls.filter((a) => a[1] === "run")).toEqual([]);
+    expect(f.calls.filter((a) => a[1] === "run")).toEqual([]);
+    expect(r.ran.find((a) => a.includes("pane split"))).toContain(displayCommand(["--env", `CLAUDE_CODE_SUBAGENT_MODEL=${full}`]));
   }
   const p = plan({ kind: "codex", model: "worker", subagentModel: full, subagentEffort: full });
   const f = fakeHerdr({ kind: "codex" });
@@ -310,11 +297,69 @@ test("subagent values cross the pane shell boundary literally, including quotes,
   expect(Bun.TOML.parse(encoded).agents.default_subagent_model).toBe(controls);
 });
 
-test("adopting a running pane cannot silently ignore subagent startup defaults", async () => {
-  const f = fakeHerdr({ reply: (a) => a[1] === "get" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", cwd: process.cwd() } }) : undefined });
-  const r = await launch([...launchArgs, "--pane", "w1:p1", "--subagent-model", "child", "--task", "Check x.js"], f.deps);
-  expect(r.error).toContain("Cannot apply subagent defaults to an already running agent");
-  expect(f.calls.some((a) => ["run", "start", "prompt"].includes(a[1]))).toBe(false);
+test("existing shells keep their environment fallback, while argv fallbacks apply only to the new process", async () => {
+  for (const kind of ["claude", "codex"]) for (const flags of [["--subagent-model", "child"], ["--subagent-effort", "low"], ["--subagent-model", "child", "--subagent-effort", "low"]]) {
+    const f = fakeHerdr({ kind }), args = ["--kind", kind, "--name", "worker", "--model", "worker", "--pane", "w1:p9", ...flags];
+    const dry = await launch([...args, "--dry-run"], f.deps);
+    expect(dry.ok).toBe(true); expect(f.calls).toEqual([]);
+    const r = await launch(args, f.deps);
+    expect([r.state, r.error]).toEqual(["ready", undefined]);
+    expect(r.start.env).toEqual({}); expect(dry.start.env).toEqual({});
+    expect(f.calls.some((a) => a[1] === "split")).toBe(false);
+    expect(f.calls.filter((a) => a[1] === "run").flat().join(" ")).not.toContain("SUBAGENT");
+    if (kind === "claude") {
+      expect(r.warnings.join(" ")).toContain("passed no subagent environment fallback");
+      expect(dry.warnings.join(" ")).toContain("passed no subagent environment fallback");
+      expect(dry.would_run.join(" ")).not.toContain("SUBAGENT");
+    } else {
+      const start = f.calls.find((a) => a[1] === "start");
+      expect(start.some((a) => a.startsWith("agents.default_subagent_"))).toBe(true);
+      expect(r.warnings.join(" ")).not.toContain("passed no subagent");
+    }
+  }
+});
+
+test("needs_input retries preserve the original fallback without typing into a retained shell or restarting an agent", async () => {
+  for (const kind of ["claude", "codex"]) for (const at of ["shell", "agent"]) {
+    const task = join(scratch("fallback-retry"), "task.md"); writeFileSync(task, "Check x.js");
+    const f = fakeHerdr({ kind, ...(at === "shell" ? { dotenv: true } : { trust: "Continue? [y/N]", notReady: true }) });
+    const flags = ["--subagent-model", "child", "--subagent-effort", "low"];
+    const first = await launch(["--kind", kind, "--name", "worker", "--model", "worker", ...flags, "--task-file", task], f.deps);
+    expect(first.state).toBe("needs_input");
+    if (kind === "claude") expect(f.calls.find((a) => a[1] === "split")).toContain("CLAUDE_CODE_SUBAGENT_MODEL=child");
+    const next = first.next.find((n) => n.kind === "run" && n.argv[1] === "launch");
+    expect(next.argv).toContain("--subagent-model"); expect(next.argv).toContain("--subagent-effort"); expect(next.argv).toContain("--pane");
+    const resumed = fakeHerdr({ kind, reply: at === "agent" ? (a) => a[1] === "get" ? herdrOK({ agent: { agent: kind, agent_status: "idle", interactive_ready: true, cwd: process.cwd() } }) : a[1] === "prompt" ? herdrOK({}) : undefined : () => undefined });
+    const r = await launch(next.argv.slice(2), resumed.deps);
+    expect([kind, at, r.state, r.error]).toEqual([kind, at, "prompted", undefined]);
+    expect(r.start.env).toEqual({});
+    expect(resumed.calls.some((a) => a[1] === "split")).toBe(false);
+    expect(resumed.calls.filter((a) => a[1] === "run").flat().join(" ")).not.toContain("SUBAGENT");
+    if (at === "agent") {
+      expect(resumed.calls.some((a) => a[1] === "start")).toBe(false);
+      expect(r.start).toEqual({ executable: null, argv: [], env: {} });
+      expect(r.warnings.join(" ")).toContain("passed no subagent");
+    } else if (kind === "codex") expect(resumed.calls.find((a) => a[1] === "start")).toContain('agents.default_subagent_model="child"');
+  }
+});
+
+test("worktree fallbacks enter the worker split, with carriers still redacted, and never its shell", async () => {
+  const path = scratch("fallback-worktree"), f = worktreeHerdr(path, { kind: "claude" });
+  const args = [...launchArgs, "--worktree", "fallback", "--subagent-model", "child % ! ' \"\n", "--subagent-effort", "low"];
+  const deps = { ...f.deps, env: { HERDR_ENV: "1", ...CARRIED } };
+  const dry = await launch([...args, "--dry-run"], deps);
+  expect(f.calls).toEqual([]);
+  const r = await launch(args, deps);
+  expect([r.state, r.error]).toEqual(["ready", undefined]);
+  const split = f.calls.find((a) => a[1] === "split");
+  expect(split[2]).toBe("w5:p1"); expect(split).toContain("CLAUDE_CODE_SUBAGENT_MODEL=child % ! ' \"\n");
+  expect(split).toContain("CLAUDE_CODE_SUBAGENT_EFFORT=low");
+  for (const out of [r, dry]) {
+    expect(out.start.env).toEqual({ CLAUDE_CODE_SUBAGENT_MODEL: "child % ! ' \"\n", CLAUDE_CODE_SUBAGENT_EFFORT: "low", TRACEPARENT: "<forwarded>", TRACESTATE: "<forwarded>", BAGGAGE: "<forwarded>" });
+    noCarrierValue(out);
+  }
+  expect(dry.would_run.find((a) => a.includes("pane split"))).toContain("CLAUDE_CODE_SUBAGENT_EFFORT=low");
+  expect(f.calls.filter((a) => a[1] === "run").flat().join(" ")).not.toContain("SUBAGENT");
 });
 
 test("startup waits for the shell, recovers agent_not_ready, then prompts", async () => {
