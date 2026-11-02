@@ -27,6 +27,26 @@ test("parsing of →, ->, none, and malformed lines for subagents", async () => 
     model: "haiku",
   });
 
+  // a fourth part is the effort; the row keeps its model whether or not it is there
+  expect(parseSubagent("Count Python files → basic → haiku → LOW")).toEqual({
+    subtask: "Count Python files",
+    advised: "basic",
+    model: "haiku",
+    effort: "low",
+  });
+  expect(parseSubagent("Review diff -> standard -> sonnet -> default")).toEqual({
+    subtask: "Review diff",
+    advised: "standard",
+    model: "sonnet",
+    effort: "default",
+  });
+  expect(parseSubagent({ subtask: "Count", advised: "basic", model: "haiku", effort: "low" })).toEqual({
+    subtask: "Count",
+    advised: "basic",
+    model: "haiku",
+    effort: "low",
+  });
+
   // none and SUBAGENTS: none
   expect(parseSubagent("none")).toBeNull();
   expect(parseSubagent("SUBAGENTS: none")).toBeNull();
@@ -163,13 +183,14 @@ test("assess includes subagent section with counts and models by advised level",
       "Task 3 → basic → haiku",
       "Task 4 → basic → sonnet",
       "Task 5 → standard → sonnet",
+      "Task 6 → standard → sonnet → low",
     ],
   });
 
   const report = assess([entry]);
-  expect(report).toContain("subagents: 5 recorded");
+  expect(report).toContain("subagents: 6 recorded");
   expect(report).toContain("basic: haiku 3, sonnet 1");
-  expect(report).toContain("standard: sonnet 1");
+  expect(report).toContain("standard: sonnet 1, sonnet low 1");
 });
 
 test("old ledger rows without a subagents field assess without error", async () => {

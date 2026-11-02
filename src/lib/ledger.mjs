@@ -39,6 +39,7 @@ export function parseSubagent(s) {
         subtask: String(s.subtask ?? "").trim(),
         advised,
         model: s.model ? String(s.model).trim() : null,
+        ...(s.effort ? { effort: String(s.effort).trim().toLowerCase() } : {}),
       };
     }
     return {
@@ -52,10 +53,13 @@ export function parseSubagent(s) {
   if (!text || text.toLowerCase() === "none" || /^none\s*\(.*\)$/i.test(text)) return null;
   const m = text.match(/^(.*?)\s*(?:→|->)\s*(basic|standard|strong)\s*(?:→|->)\s*(.*)$/i);
   if (m && m[1].trim()) {
+    // The fourth part is optional: a row written before it existed, or a worker that left it out, still has its model.
+    const [model, effort] = m[3].split(/\s*(?:→|->)\s*/).map((x) => x.trim());
     return {
       subtask: m[1].trim(),
       advised: m[2].trim().toLowerCase(),
-      model: m[3].trim() || null,
+      model: model || null,
+      ...(effort ? { effort: effort.toLowerCase() } : {}),
     };
   }
   return {
@@ -197,12 +201,12 @@ export function assess(entries, config = null) {
 
   const allSubagents = entries.flatMap((e) => e.subagents ?? []);
   if (allSubagents.length) {
-    out.push(`\nsubagents: ${allSubagents.length} recorded (which models your workers gave their subagents, by the level routr advised)`);
+    out.push(`\nsubagents: ${allSubagents.length} recorded (which models and efforts your workers gave their subagents, by the level routr advised)`);
     for (const L of LEVELS) {
       const at = allSubagents.filter((x) => x.advised === L);
       if (!at.length) continue;
       const counts = {};
-      for (const x of at) counts[x.model ?? "unknown"] = (counts[x.model ?? "unknown"] ?? 0) + 1;
+      for (const x of at) { const k = [x.model ?? "unknown", x.effort].filter(Boolean).join(" "); counts[k] = (counts[k] ?? 0) + 1; }
       out.push(`  ${L}: ${Object.entries(counts).sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0])).map(([m, c]) => `${m} ${c}`).join(", ")}`);
     }
   }

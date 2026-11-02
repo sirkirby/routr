@@ -29,6 +29,20 @@ Apply the model and effort guidance under "Deciding" in `SKILL.md` within these 
 reason for model and effort. If you are a routr worker and the work needs execution beyond those boundaries, report
 the evidence to the orchestrator so it can change the assignment.
 
+Set the model and effort on the spawn itself: left unset, a subagent runs on your model. What each harness takes
+(measured 2026-11-02; `references/harnesses.md` has how):
+
+| Harness | Model | Effort |
+|---|---|---|
+| Claude Code | `model` on the Agent tool, an alias | `effort` on the Agent tool; a fork takes none |
+| Codex | `model` on `spawn_agent` | `reasoning_effort` on `spawn_agent` |
+| Cursor | `model` on the Task tool, one of the ids that tool lists | Part of the id; `[effort=…]` is refused there |
+| Antigravity | `Model` on `invoke_subagent`; a `model` line in the agent's file wins, even `inherit` | None found |
+| Kiro | `model` on a `subagent` stage: accepted, but which model ran was not confirmed | None found |
+
+A skill that starts its own subagents (Claude Code's `/code-review`) names no model, so they run on yours: weigh that
+before you run one.
+
 On Cursor, give subagents Cursor's own models only (Grok, Composer). Other vendors' models inside Cursor draw on a
 separate, smaller usage pool.
 
@@ -42,5 +56,5 @@ ends with a report of its own.
     SUMMARY: <what you did, two or three sentences>
     CHECKED: <what you ran to verify it, and the result>
     FILES: <files changed, or "none">
-    SUBAGENTS: <subtask> → <level advised> → <model chosen>      (one line per subagent, or "none")
+    SUBAGENTS: <subtask> → <level advised> → <model chosen> → <effort chosen>      (one line per subagent, or "none"; effort "default" where you set none)
     ROUTR: <advised> → <chosen> because <reason>                  (only where you went against the advice)
