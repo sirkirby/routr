@@ -5,6 +5,9 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- The worker guide says how to set a subagent's model and effort on each harness, as measured, and `record --subagent`
+  takes an optional effort, kept in the local ledger only (#136).
+
 ## v0.9.4 — 2026-10-27
 
 [Full notes](docs/releases/v0.9.4.md)
