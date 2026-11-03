@@ -303,9 +303,12 @@ moves to `subscriptions.note`, the same place as in `dispatch`.
 `dispatch` and `usage` add a `warnings` line saying so (its age and the failure's code, and that routing assumes its
 headroom: a harness or herdr update may have changed what routr reads) and a `next` step to try `routr usage <name>`
 again; in `doctor --json` each signed-in harness so affected carries `usage_stale` (that warning and the command
-to try again), and one that is configured and on adds it to `next_steps`. How to read it by hand stays in `next` too. A metered seat (by its harness, or the
-user's `billing`) is ranked as unknown capacity, not assumed, and gets no such line; nor does a reader that never read
-anything (already `assumed` in `unavailable`). A fresh `usage <name>` read that works clears it; one that fails again
+to try again), and one that is configured and on adds it to `next_steps`. How to read it by hand stays in `next` too. A metered seat whose applicable limit reader failed is also reported: every failure is in `unavailable`, even
+with a fresh kept reading, and a day of consecutive failures adds the warning and doctor's `usage_stale`. This
+includes a limit reader that never succeeded. Retries retain the first-failure time; success clears it. The sentence
+says the limit cannot be seen, so routr will not stop at it; a trusted kept cap still ranks. Metered seats with no
+applicable limit reader, or whose last limit read succeeded, remain exempt. Ordinary readers that never succeeded
+remain `assumed` in `unavailable`, without the stale warning. A fresh `usage <name>` read that works clears it; one that fails again
 keeps it.
 
 **The named readers' `read_yourself`.** Moved into `next`, as a `do` step whose template is the `--headroom` flag to
@@ -1278,3 +1281,17 @@ The launch index contains entries only for workers that actually started (`ready
 Dry runs and failed or refused launches create no entry. Cleanup links exclude finished entries; record can still
 link to a finished launch. Detached jobs inherit no trace carriers; headless holders emit completed turn spans
 when export permits them. Tracing setup failures run the command untraced, without changing its result.
+
+### Screen usage sources
+
+The harness registry declares usage capabilities: `read` returns a routing row; `live` reads without cache or
+fallback for smoke checks; `check` publishes a snapshot, and `backgroundOnly` restricts that action to detached
+jobs. A conditional `limit` recipe supplies `applies(primary, billing)`, `read`, `live`, `refresh` and a fixed-field
+`describe`. Shared advice, usage and smoke code select these capabilities without naming a harness.
+
+Both interactive readers use one screen driver. Recipes declare startup, readiness, parsing, result fields,
+safe answers and optional retry behavior; the driver owns polling, deadlines, error mapping and cleanup.
+`herdr_missing` means the screen reader needs herdr on PATH. `open_once` means the harness must be opened once to
+finish first-run screens. The registry label accompanies these generic fixed sentences. No screen text is output.
+Limit read failures always appear in `unavailable`; a missing current limit with no trusted cap explicitly says
+routr will not stop at it. These diagnostics do not change candidate arithmetic or invent headroom.

@@ -2,7 +2,7 @@
 // background. Cursor's (cursor-usage.mjs) and Kiro's (kiro-usage.mjs) are read this way.
 import { readFileSync } from "node:fs";
 import { adoptLock, lockToken, olderThan, releaseFileLock, spawnSelf, takeLock, whileLockOwned, writeJsonAtomic } from "./runtime.mjs";
-import { summarize } from "./usage.mjs";
+import { summarize, usageReadingTime, withUsageReadingTime } from "./usage.mjs";
 import { usageFailure } from "./usage-failure.mjs";
 import { isVersion, newer, ROUTR_VERSION } from "./version.mjs";
 
@@ -32,6 +32,8 @@ const readJson = (file) => {
   try { return { snapshot: JSON.parse(readFileSync(file, "utf8")) }; }
   catch (e) { return e?.code === "ENOENT" ? {} : { failure: usageFailure(e instanceof SyntaxError ? "invalid_response" : "read_failed") }; }
 };
+// Older cache files predate the first-failure field; their last failed try is the earliest date we know.
+const failureStart = (snap, fallback = null) => [snap?.failedSince, snap?.tried].find(Number.isFinite) ?? fallback;
 const noRefresh = () => process.env.ROUTR_NO_REFRESH === "1"; // tests: nothing detached, nothing written
 // The refresh is handed the lock its starter took, by token: it publishes and releases only while that lock is still its own.
 const startRefresh = (name, token) => spawnSelf(["usage", name, "--background", "--lock-token", token]);
@@ -57,7 +59,7 @@ export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`,
     const last = readJson(file).snapshot;
     const publish = () => writeJsonAtomic(file, r.ok ? { ts: nowSec, tried: nowSec, by: version, reading: keep(r) }
       : { ts: Number.isFinite(last?.ts) ? last.ts : null, tried: nowSec, by: version, reading: last?.reading ? keep(last.reading) : null,
-        ...(r.excluded ? { excluded: true } : { failure: usageFailure(r.code) }) });
+        ...(r.excluded ? { excluded: true } : { failure: usageFailure(r.code), failedSince: last?.failure ? failureStart(last, nowSec) : nowSec }) });
     try { if (background) whileLockOwned(lock, token, publish, { wait: true }); else publish(); } catch {}
     return r;
   } finally { if (owned) releaseFileLock(lock, token); }
@@ -66,14 +68,14 @@ export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`,
 // `background: false` reads without starting a refresh: doctor, for a harness installed but not in the config.
 // `refreshSec` is per source; the default preserves Cursor and Kiro's four-hour interval.
 // `windows(reading)` and `describe(reading)` turn the kept reading into the usage row; `byHand` is said when reading fails.
-export function readSnapshot({ name, source, windows, describe, keep, byHand, file, lock = `${file}.lock`, nowSec = now(), refresh = (token) => startRefresh(name, token), background = true, off = noRefresh(), version = ROUTR_VERSION, classify = () => undefined, emptyClass, refreshSec = REFRESH_SEC }) {
+export function readSnapshot({ name, source, windows, describe, keep, byHand, file, lock = `${file}.lock`, nowSec = now(), refresh = (token) => startRefresh(name, token), background = true, off = noRefresh(), version = ROUTR_VERSION, classify = () => undefined, emptyClass, refreshSec = REFRESH_SEC, label, limitReader = false }) {
   const cached = readJson(file);
   let snap = cached.snapshot ?? (cached.failure ? { failure: cached.failure } : null);
   // Drop the old raw error field on reads and writes; it is never interpreted or copied forward.
   if (snap) {
-    const { ts, tried, by, reading, failure, excluded } = snap;
+    const { ts, tried, by, reading, failure, excluded, failedSince } = snap;
     snap = { ts: Number.isFinite(ts) ? ts : null, tried: Number.isFinite(tried) ? tried : null, by: isVersion(by) ? by : null, reading: reading ? keep(reading) : null,
-      ...(failure ? { failure: usageFailure(failure.code) } : {}), ...(excluded ? { excluded: true } : {}) };
+      ...(failure ? { failure: usageFailure(failure.code, label), failedSince: failureStart({ failedSince, tried }) } : {}), ...(excluded ? { excluded: true } : {}) };
   }
   let started = false;
   const olderFailed = snap && (snap.failure || snap.excluded || !snap.reading) && (snap.by == null || newer(version, snap.by));
@@ -89,10 +91,15 @@ export function readSnapshot({ name, source, windows, describe, keep, byHand, fi
   const ws = r ? windows(r) : [];
   const cls = r ? classify(r) : emptyClass;
   const invalid = r && (!Number.isFinite(age) || (!ws.some((w) => Number.isFinite(w.usedPct)) && cls !== "metered"));
-  const failure = cached.failure ?? snap?.failure ?? (invalid ? usageFailure("invalid_response") : undefined);
+  const failure = cached.failure ? usageFailure(cached.failure.code, label) : snap?.failure ?? (invalid ? usageFailure("invalid_response", label) : undefined);
+  // Persist the first consecutive failure, even before a source has ever succeeded. Retrying must not restart
+  // the day-long warning clock. Older snapshots can only date the failure from their last try.
+  const failedAt = snap?.failedSince ?? snap?.tried;
+  const reported = (row) => withUsageReadingTime({ ...row, ...(label ? { label } : {}), ...(limitReader ? { limitReader: true } : {}),
+    ...(failure && Number.isFinite(failedAt) ? { failureAgeSec: Math.max(0, Math.round(nowSec - failedAt)) } : {}) }, usageReadingTime(row));
   const after = [started && "a fresh reading is being taken in the background", failure && `the last try failed: ${failure.why}`].filter(Boolean).join("; ");
-  if (r && !invalid && age >= 0 && age < TRUST_SEC) return summarize({ pool: name, source, ts: snap.ts, windows: ws, cls, note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec, failure, ...(failure && age >= refreshSec ? { kept: { source: `${name} snapshot`, ageSec: Math.round(age) } } : {}) });
+  if (r && !invalid && age >= 0 && age < TRUST_SEC) return reported(summarize({ pool: name, source, ts: snap.ts, windows: ws, cls, note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec, failure, ...(failure && (limitReader || age >= refreshSec) ? { kept: { source: `${name} snapshot`, ageSec: Math.round(age) } } : {}) }));
   const why = invalid ? "the saved reading cannot be read" : r ? age < 0 ? "the last reading is from the future, so it is not used"
     : `the last reading is ${Math.round(age / 3600)} h old, too old to use` : "no reading yet";
-  return summarize({ pool: name, source, ts: snap?.ts, cls: emptyClass, note: `${why}${after ? `; ${after}` : ""}; ${emptyClass === "metered" ? (failure ? "spend limit could not be read: still metered" : "limit unknown: still metered") : "using the assumed headroom"}.`, nowSec, failure });
+  return reported(summarize({ pool: name, source, ts: snap?.ts, cls: emptyClass, note: `${why}${after ? `; ${after}` : ""}; ${emptyClass === "metered" ? (failure ? "the limit cannot be seen, so routr will not stop at it: still metered" : "limit unknown: still metered") : "using the assumed headroom"}.`, nowSec, failure }));
 }

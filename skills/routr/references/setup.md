@@ -135,6 +135,8 @@ the command that fixes it.
     an admin limit shown there is a `capped` window, with the full reserve until its date-only reset at the end of
     that day in its zone. A spent-only credits line shows no limit and stays metered. Missing or changed credits
     text is a failed read; failures (including herdr missing) say why, and keep an older cap under the trust rule.
+    Every failed applicable limit read stays in `unavailable`, with warnings and a doctor step after a day of
+    consecutive failures. Without a trusted cap, the limit cannot be seen, so routr will not stop at it.
     The saved panel reading and age are returned at once, trusted under 24 hours and refreshed after one hour (a judgment, not a measurement). Cursor and Kiro keep four hours.
     An Enterprise seat with quota windows keeps its existing read and starts no terminal. Any other Claude seat
     that shows no usage windows (a plan routr has not seen) is left to you: the advice says "no usage windows", and `routr doctor` lists it as a next step. Set

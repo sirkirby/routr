@@ -1,55 +1,43 @@
-// Live check of every usage reader on THIS machine: each one takes a fresh reading now, by its own live path (no kept
-// snapshot, no fallback), so a reader that a harness or herdr update broke shows here before routing runs on assumed
-// headroom for days (herdr 0.9.5, 2026-10-22: Cursor's read failed on every try for 89 h unnoticed). Run after updating
-// a harness or herdr, and before a release that changes a reader (CONTRIBUTING.md):
-//   bun run smoke:usage
-// Does not publish snapshots; Claude's panel may make its stable empty state folder. Reads only a subscription that is
-// turned on and signed in (asking a signed-out harness can open its sign-in). Exits 1 when a reader could not read.
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+// Live, read-only check through the registry, with no cached reading or fallback. Run after reader/harness changes
+// and before EVERY release on a signed-in machine (CONTRIBUTING.md). Conditional limit readers report their own
+// exercised/not-exercised line; a primary read passing is not evidence that its limit reader works.
 import { loadConfig } from "../src/lib/config.mjs";
-import { billingFor, HARNESSES, needsClaudePanel, notReady, withBilling } from "../src/lib/harnesses.mjs";
-import { readAgy, readClaude, readCodexLive } from "../src/lib/usage.mjs";
-import { claudePanelUsage } from "../src/lib/claude-panel.mjs";
-import { cursorUsage } from "../src/lib/cursor-usage.mjs";
-import { kiroUsage } from "../src/lib/kiro-usage.mjs";
+import { billingFor, HARNESSES, SOURCES, notReady, withBilling } from "../src/lib/harnesses.mjs";
 
-const LIVE = {
-  claude: () => readClaude({ quiet: HARNESSES.claude.quiet, file: join(tmpdir(), "routr-smoke-no-snapshot.json") }),
-  codex: () => readCodexLive({ fallback: () => null }),
-  cursor: () => cursorUsage(),
-  kiro: () => kiroUsage(),
-  agy: () => readAgy(),
-};
-// A reading as routing would take it: a seat its own sign-in says is billed per token (Claude with a key) is
-// metered, as is one the user's `billing` says is; a reader's own report of something it could not clean up is
-// a failure. A failed read is a failure whatever the billing: only a reading that worked is taken as metered.
 const said = (r, billing) => (!r ? "FAILED (no reading)" : r.ok === false ? `FAILED (${r.code})` : r.failure ? `FAILED (${r.failure.code})`
   : r.ok === true && r.note ? `FAILED (cleanup: ${r.note})`
   : r.headroom != null ? `ok: ${Math.round(r.headroom * 100)}% left` : r.class === "metered" || billing === "metered" ? "ok: metered" : "FAILED (no reading)");
-// The check itself, its seams given (the tests give fakes): one line per subscription, and how many could not read.
-export async function smokeUsage({ config = loadConfig().config, live = LIVE, ready = notReady, billing = billingFor, log = console.log } = {}) {
+// `live` may override registry reads in tests; limit recipes are separate, so each path's evidence is explicit.
+export async function smokeUsage({ config = loadConfig().config, sources = SOURCES, live = Object.fromEntries(Object.entries(sources).map(([n, s]) => [n, s.live])),
+  ready = notReady, billing = billingFor, log = console.log } = {}) {
   let failed = 0;
   for (const name of Object.keys(live)) {
-    const s = config.subscriptions?.[name];
-    if (!s) { log(`${name}: not set up, not read`); continue; }
-    if (s.enabled === false) { log(`${name}: turned off, not read`); continue; }
-    // Asked now, not the answer kept for hours: a harness signed out since must not be read.
+    const src = sources[name], s = config.subscriptions?.[name];
+    const skipped = (why) => { log(`${name}: ${why}, not read`); if (src?.limit) log(`${name} limit: NOT EXERCISED (${why})`); };
+    if (!s) { skipped("not set up"); continue; }
+    if (s.enabled === false) { skipped("turned off"); continue; }
     const why = await ready(name, { fresh: true });
-    if (why) { log(`${name}: ${why}, not read`); continue; }
+    if (why) { skipped(why); continue; }
     const t = performance.now();
     let r; try { r = await live[name](); } catch { r = { ok: false, code: "read_failed" }; }
+    let b = {};
     if (r && r.ok === undefined) {
-      const b = await billing(name, { fresh: r.headroom == null });
-      if (b.not) { log(`${name}: ${b.not}, not read`); continue; }
-      if (name === "claude" && needsClaudePanel(r, b.billing)) {
-        const panel = await claudePanelUsage({ quiet: HARNESSES.claude.quiet });
-        r = panel.ok ? { headroom: panel.used_pct == null ? null : Math.max(0, 1 - panel.used_pct / 100), class: panel.used_pct == null ? "metered" : "capped" } : panel;
-      } else r = withBilling(name, r, b.billing);
+      b = await billing(name, { fresh: r.headroom == null });
+      if (b.not) { skipped(b.not); continue; }
     }
-    const line = said(r, s.billing);
+    const line = said(r?.ok === undefined ? withBilling(name, r, b.billing) : r, s.billing);
     if (line.startsWith("FAILED")) failed++;
-    log(`${name}: ${line} (${HARNESSES[name].usage.source}, ${((performance.now() - t) / 1000).toFixed(1)} s)`);
+    log(`${name}: ${line} (${src?.source ?? HARNESSES[name]?.usage.source}, ${((performance.now() - t) / 1000).toFixed(1)} s)`);
+    if (!src?.limit) continue;
+    if (!src.limit.applies(r, b.billing)) {
+      const reason = r?.windows?.length ? "this seat shows windows" : !r || r.ok === false || r.failure ? "primary usage read failed" : "this sign-in does not need a limit reader";
+      log(`${name} limit: NOT EXERCISED (${reason})`); continue;
+    }
+    const limitAt = performance.now();
+    let limit; try { limit = await src.limit.live(); } catch { limit = { ok: false, code: "read_failed" }; }
+    const found = limit?.ok === true ? `read: ${src.limit.describe(limit)}` : `FAILED (${limit?.code ?? "read_failed"})`;
+    if (!limit?.ok) failed++;
+    log(`${name} limit: ${found} (${((performance.now() - limitAt) / 1000).toFixed(1)} s)`);
   }
   return failed;
 }

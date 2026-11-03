@@ -45,7 +45,9 @@ the first choice could not answer; judge the missing level yourself only on true
 with an 8 s cut per hosted attempt and one overall deadline (10 s hosted-only, 30 s with local).
 Launch carries all saved decision-model entries; older fallback advice
 says the attempted model is unknown. A stale usage snapshot shows its age; unknown metered capacity is a valid
-reading, and excluded accounts remain in `excluded`. These are separate from a failed read. Keep your
+reading when its source succeeded, and excluded accounts remain in `excluded`. An applicable limit reader's
+failure stays in `unavailable` on every call and raises a warning after a day. Without a trusted cap, the limit
+cannot be seen, so routr will not stop at it. Keep your
 process rules for the worker (what it may and may not do, how to report, git steps) out of that file: they go in `--rules-file`, which launch passes
 to the worker and routr does not judge. In 18 of 36 real tasks such rules were 5 to 38% of the text, and they moved routr's
 readings.

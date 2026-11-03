@@ -238,8 +238,11 @@ Each reader goes through the harness's own command or screen, and only once its 
 fallbacks below read what the harness or routr itself wrote (Codex's session log, `routr statusline`'s snapshot). An
 update of the harness, or of herdr for Cursor, can change what a reader sees without a word: when a reader that worked
 before has no reading a day old or newer, its last try failed, and routing is left with the assumed headroom (no
-kept reading to use; a metered seat never), `dispatch`, `usage` and `doctor` warn and give the command to read it
-again.
+kept reading to use), `dispatch`, `usage` and `doctor` warn and give the command to read it again.
+An applicable limit reader failing on a metered seat is also visible: every failure is in `unavailable`, and a day
+of consecutive failures adds the warning even if it never succeeded. Without a trusted kept cap the limit cannot
+be seen, so routr will not stop at it. A successful no-limit reading, or a seat that needed no limit reader, is not
+an outage.
 
 - **Claude Code:** a `routr statusline` snapshot under 5 minutes old when there is one, otherwise its own `/usage`,
   through `claude -p` (next section), in each call; an older snapshot is kept when that read fails.
@@ -522,11 +525,11 @@ The panel's session cost was $0. With no limit set, the same panel showed `Usage
 limit or reset (2.1.317, 2026-11-03). No model request at either seat's limit or close-to-limit read was tried. Linux and Windows were not tested.
 
 Only an answered print read with no windows plus Enterprise sign-in starts the detached panel refresh. It shares
-Cursor's private terminal lifecycle and 24-hour snapshot trust rule. It refreshes after one hour, a judgment
+Cursor's screen driver (readiness, declared safe answers, bounded parsing, retries and cleanup) and 24-hour snapshot trust rule. It refreshes after one hour, a judgment
 rather than a measurement; Cursor and Kiro keep four hours. Public commands return the saved reading and age.
 The private empty working folder is stable under routr's state. Claude's trust screen starts on “No, exit”;
-Down then Enter accepts only that folder. Every other unrecognised screen fails with `claude_open_once`, telling
-the user to open Claude once. No herdr produces `herdr_missing`; either failure leaves the seat metered when no
+Down then Enter accepts only that folder. Every other unrecognised screen fails with generic `open_once`, telling
+the user to open the harness once. No herdr produces generic `herdr_missing`; registry labels name the harness. Either failure leaves the seat metered when no
 usable cap was kept. A recognised spent-only line returns at once as no limit showing. If neither recognised
 shape appears within the bounded wait, the read fails with `invalid_response`, even if the panel itself opened. Screen text and dollar amounts never leave the reader: only percent and reset fields do.
 Date-only resets count at the end of the named day in that zone, with an unknown period and full reserve.

@@ -105,17 +105,27 @@ routr never has to own a harness feature (a statusline slot, a hook) to get its 
   (or `kiro`) to refresh it, says a fresh reading is being taken, and carries on without waiting (unlike the updater,
   also from a source checkout: it swaps nothing).
 
+Interactive usage readers share one driver: startup and readiness, declared safe screens only, the local usage
+command, bounded parser polling, optional retry keys, fixed failure codes, and cleanup. Cursor and Claude each
+supply a recipe; Cursor retains its private config copy, extra Enter and shell-exit check. Registry entries decide
+when a conditional limit reader applies. Missing herdr is `herdr_missing`; unfinished first-run screens are
+`open_once`. Sentences are fixed routr text, labelled from the harness registry, never from a screen.
+
 Failed usage reads have fixed codes and sentences at the reader boundary and in the snapshot cache; harness
 output and exception text are never copied into their diagnostics. A failed refresh keeps the last good reading
 and notes the failed attempt. A fresh usable reading stays available. When a failed source leaves assumed
-headroom or a kept older reading, `unavailable` says which; a kept reading names its source and age. Snapshot
+headroom or a kept older reading, `unavailable` says which; a kept reading names its source and age. A failed
+applicable limit read appears in `unavailable` on every dispatch and usage call, even beside a fresh kept cap. Snapshot
 readings are fresh for their refresh interval: one hour for the Enterprise Claude panel, four hours for Cursor
 and Kiro; local statusline/session-log readings for five minutes. The one-hour interval is a judgment, not a
 measurement: bursts can exhaust a cap and an owner can raise it within four hours. Refreshes remain detached.
 A snapshot at least a day old is too old to use: its age is shown with assumed
 headroom (the Enterprise panel instead remains metered with unknown capacity), and age alone is not a failure. A source whose last reading is a day old or more and whose last try
-failed is also said in `warnings` of `dispatch` and `usage`, with a step to read it again, and `doctor` lists it; a
-metered seat without a usable limit reading is not. Metered accounts without known capacity are valid readings. Accounts
+failed is also said in `warnings` of `dispatch` and `usage`, with a step to read it again, and `doctor` lists it.
+An applicable limit reader that fails for a day gets the same warning, including on a metered seat and when it
+never succeeded. Its first consecutive failure is kept across retries and cleared by success. The sentence says
+that the limit cannot be seen, so routr will not stop at it. A trusted kept cap still ranks until it expires.
+Metered seats whose limit read succeeded, or which needed no limit reader, get no such warning. Metered accounts without known capacity are valid readings. Accounts
 left out by settings or sign-in status stay in `excluded`, outside the failed readings.
 
 A panel cap is trusted only under the same 24-hour snapshot limit. Its date-only reset is the end of that day

@@ -2,8 +2,8 @@
 // screen text never supplies a sentence. Unknown failures are read_failed; no caller parses a note to classify one.
 import { warning } from "./warnings.mjs";
 export const USAGE_FAILURES = Object.freeze({
-  herdr_missing: "Claude's spend limit cannot be seen without herdr installed on PATH.",
-  claude_open_once: "Claude's spend limit could not be read: open Claude Code once to finish its first-run screens, then retry.",
+  herdr_missing: "The screen usage reader needs herdr installed on PATH.",
+  open_once: "Open the harness once to finish its first-run screens, then retry the usage read.",
   internal_error: "An internal error stopped routr from ranking usage.",
   read_failed: "routr could not read this usage source.",
   no_response: "The usage source did not answer.",
@@ -13,31 +13,38 @@ export const USAGE_FAILURES = Object.freeze({
   // Launch says the same of a work folder (herdr's CMD_PATH); here the folder is the read's own, under TEMP.
   cmd_path: "The usage read's shell is cmd, which expands % and ! even inside quotes, and the temporary folder's path holds one. Set TEMP to a folder whose path has neither, or make PowerShell the shell herdr opens.",
 });
-export const usageFailure = (code) => {
+export const usageFailure = (code, label) => {
   code = typeof code === "string" && Object.hasOwn(USAGE_FAILURES, code) ? code : "read_failed";
-  return { code, why: USAGE_FAILURES[code] };
+  return { code, why: `${label && ["herdr_missing", "open_once"].includes(code) ? `${label}: ` : ""}${USAGE_FAILURES[code]}` };
 };
-export const usageUnavailable = (rows) => rows.filter((r) => r.failure && r.signedIn !== false && (r.headroom == null || r.kept))
-  .map((r) => ({ part: "usage", subscription: r.pool, source: r.source, ...usageFailure(r.failure.code),
-    reading: r.kept ? "kept" : "assumed", ...(r.kept ? { reading_source: r.kept.source, age_sec: r.kept.ageSec } : {}) }));
+const limitUnseen = "The limit cannot be seen, so routr will not stop at it.";
+export const usageUnavailable = (rows) => rows.filter((r) => r.failure && r.signedIn !== false && (r.limitReader || r.headroom == null || r.kept))
+  .map((r) => {
+    const failure = usageFailure(r.failure.code, r.label);
+    return { part: "usage", subscription: r.pool, source: r.source, ...failure,
+      ...(r.limitReader ? { why: `${failure.why} ${r.headroom == null ? limitUnseen : "The current limit could not be read; routing uses the kept reading."}` } : {}),
+      reading: r.kept ? "kept" : "assumed", ...(r.kept ? { reading_source: r.kept.source, age_sec: r.kept.ageSec } : {}) };
+  });
 
 // A reader that has not produced a reading for over a day and failed its last try: said in `warnings`, not only in a
 // row's note. From the herdr 0.9.5 change of 2026-10-22: Cursor's reader failed on every try, ranking ran on the
 // assumed headroom, and the only trace was a note inside a ranked row for 89 hours.
 export const STALE_SEC = 24 * 3600;
-// One that never read anything is already `assumed` in `unavailable`; this is for one that worked and stopped. A
-// metered seat (said by its harness, or the user's `billing`) is ranked as unknown capacity, never assumed: it is not
-// said here. Each is `{ pool, warning }`: the warning states what happened; trying again is a step in `next`.
+// A metered seat has no capacity reading to make unless an applicable limit reader failed. That failure must
+// remain visible, including when it never succeeded; its first consecutive failure dates the warning.
 export const staleReaders = (rows, config = {}) => rows
-  .filter((r) => r.failure && r.signedIn !== false && r.headroom == null && r.class !== "metered" && config.subscriptions?.[r.pool]?.billing !== "metered"
-    && r.ageSec != null && r.ageSec >= STALE_SEC)
-  .map((r) => ({ pool: r.pool, warning: warning("usage_stale", `${r.pool}'s usage has not been read for ${Math.round(r.ageSec / 3600)} h, and its last try failed (${r.failure.code}), so routing assumes its headroom: an update of ${r.pool} or herdr may have changed what routr reads`) }));
+  .filter((r) => r.failure && r.signedIn !== false && r.headroom == null && (r.limitReader
+    ? (r.failureAgeSec ?? r.ageSec) >= STALE_SEC
+    : r.class !== "metered" && config.subscriptions?.[r.pool]?.billing !== "metered" && r.ageSec != null && r.ageSec >= STALE_SEC))
+  .map((r) => ({ pool: r.pool, warning: warning("usage_stale", r.limitReader
+    ? `${r.pool}'s spend limit reader has failed for ${Math.round((r.failureAgeSec ?? r.ageSec) / 3600)} h (${r.failure.code}). ${limitUnseen}`
+    : `${r.pool}'s usage has not been read for ${Math.round(r.ageSec / 3600)} h, and its last try failed (${r.failure.code}), so routing assumes its headroom: an update of ${r.pool} or herdr may have changed what routr reads`) }));
 
 // Shared by reader diagnostics and command next steps; never tucked into a ranked row's note.
 export const USAGE_BY_HAND = {
   cursor: 'run `cursor-agent`, type /usage, read "Included N% used", and pass --headroom cursor=<1 - N/100>',
   kiro: 'run `kiro-cli chat --no-interactive /usage`, read "Credits (X of Y covered in plan)", and pass --headroom kiro=<1 - X/Y>',
-  claude: 'open Claude Code and read /usage, then pass --headroom claude=<share left>',
+  claude: 'open Claude Code and read /usage; for a spend limit read its percent used, then pass --headroom claude=<share left>',
   codex: 'open Codex and read /status, then pass --headroom codex=<share left>',
   agy: 'run `agy` and read /usage, then pass --headroom agy=<share left>',
 };

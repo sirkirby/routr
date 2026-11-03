@@ -36,7 +36,10 @@ and verification. Do not turn skill creation or documentation work into a new re
    are embedded in the binary; repository edits reach installed users at the next release. Updates reinstall
    the bundled skill, but an agent that already loaded it may need to reread it or start a new session.
 5. Run `bun test` and the applicable gates from AGENTS.md and CONTRIBUTING.md. Match smoke checks to the changed
-   behavior. Test installs from a clean clone into a throwaway home. Keep the real user's settings, credentials,
+   behavior. Every release also runs `bun run smoke:usage` on a machine signed in to the harnesses; report each
+   reader that was not exercised and why. A primary usage pass does not verify a conditional limit reader whose
+   line says `NOT EXERCISED`; CONTRIBUTING.md describes the Enterprise config-folder invocation.
+   Test installs from a clean clone into a throwaway home. Keep the real user's settings, credentials,
    ledger and installed binary out of artifact tests. If a live worker/eval is needed, smoke one item first and
    verify transcripts. Report simulated inputs and unmeasured quality/cost/time claims explicitly.
 

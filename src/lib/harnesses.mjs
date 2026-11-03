@@ -32,14 +32,14 @@
 //     of it. Only Claude Code has them. None found for agy or kiro; Codex's `-c features.hooks=false` is unverified, so
 //     it is left out. Where there is none the user's hooks run as configured, which is intended: a tool that records
 //     each session (Myco, say) recording routr's read is not a fault.
-//   suggested: the settings setup offers for it. usage: `read` runs on every call and must be fast; `check` takes a
-//     fresh reading now and prints it raw (`routr usage <name>`). Cursor's and Kiro's readers bring herdr's terminal and
-//     their snapshot rules with them, so they load when first read: help, --version, and every command that reads no
-//     usage stay light. (Literal import paths, so the compiled binary still bundles them.)
+//   suggested: the settings setup offers for it. usage: the read/live/check and conditional limit capabilities
+//     described beside SOURCES. Interactive recipes and snapshots load on demand: help, --version and commands
+//     that read no usage stay light. Literal import paths let the compiled binary bundle them.
 import { warning } from "./warnings.mjs";
 import { dirname } from "node:path";
 import { run } from "./runtime.mjs";
 import { billingFromSignIn, signInHint, signInState } from "./signin.mjs";
+import { usageFailure } from "./usage-failure.mjs";
 import { NO_WINDOWS_AFTER_ANSWER, readAgy, readClaude, readCodexLive, summarize, failedUsage, usageReadingTime, withUsageReadingTime } from "./usage.mjs";
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // JSON's string escapes are TOML basic-string escapes too, except JSON permits a literal DEL and TOML does not.
@@ -130,16 +130,16 @@ export const HARNESSES = {
     // took the read from 7.1-8.8 s to 4.4-5.2 s wall. `--bare` is no use: it skips the keychain and shows no numbers.
     quiet: ["--settings", '{"disableAllHooks":true}', "--strict-mcp-config"],
     usage: { source: "claude /usage", read: (o) => readClaude({ ...o, quiet: HARNESSES.claude.quiet }),
-      backgroundOnly: true, // public usage never waits for this screen; only the detached refresh reads it now
-      limit: async (o) => (await import("./claude-panel.mjs")).readClaudePanel(o),
-      check: async (o) => (await import("./claude-panel.mjs")).refreshClaudePanel({ ...o, ready: ready("claude"), read: async () => {
-        const u = await readClaude({ quiet: HARNESSES.claude.quiet }), b = await billingFor("claude", { fresh: true });
-        if (b.not) return { ok: false, excluded: true, why: b.not };
-        if (u.failure) return { ok: false, code: u.failure.code };
-        if (needsClaudePanel(u, b.billing))
-          return (await import("./claude-panel.mjs")).claudePanelUsage({ quiet: HARNESSES.claude.quiet });
-        return { ok: true, headroom: u.headroom, windows: u.windows };
-      } }),
+      live: () => readClaude({ quiet: HARNESSES.claude.quiet, file: null }),
+      backgroundOnly: true,
+      limit: {
+        applies: (u, b) => u?.reason === NO_WINDOWS_AFTER_ANSWER && !u.failure && b?.when === "no_windows",
+        read: async (o) => (await import("./claude-panel.mjs")).readClaudePanel(o),
+        live: async (o) => (await import("./claude-panel.mjs")).claudePanelUsage(o),
+        refresh: async (o) => (await import("./claude-panel.mjs")).refreshClaudePanel(o),
+        describe: (r) => r.used_pct == null ? "no spend limit showing (metered)" : `spend limit ${r.used_pct}% used`,
+      },
+      check: (o) => refreshLimit("claude", o),
       fields: ["used_pct", "resets_at", "headroom", "windows"], used: (r) => Number.isFinite(r.used_pct) ? `spend limit ${r.used_pct}% used` : r.headroom != null ? `${Math.round(r.headroom * 100)}% left` : "no spend limit read" } },
   codex: { label: "Codex", executable: "codex", installAs: "Codex",
     // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
@@ -163,7 +163,7 @@ export const HARNESSES = {
     models: async () => (await readCodexModels())?.filter((m) => m.visibility !== "hide").map((m) => m.slug ?? m.id).filter(Boolean) ?? null,
     efforts: async (model) => (await readCodexModels())?.find((m) => (m.slug ?? m.id) === model)?.supported_reasoning_levels?.map((e) => e.effort ?? e) ?? null,
     suggested: { hardest_work: "strong", reserve: 0.2 },
-    usage: { source: "app-server", read: readCodexLive } },
+    usage: { source: "app-server", read: readCodexLive, live: () => readCodexLive({ fallback: () => null }) } },
   cursor: { label: "Cursor", executable: "cursor-agent", installAs: "Cursor (cursor-agent)",
     permissions: ["--yolo", "--trust"], model: "--model", list: "cursor-agent models",
     noEffort: "cursor has no separate --effort flag; choose a model id with the desired effort",
@@ -182,7 +182,7 @@ export const HARNESSES = {
     models: () => lines("cursor-agent", ["models"], /^\s*([a-z0-9][\w.-]+) - /i),
     suggested: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 },
     // `check`: `routr usage cursor` reads it now; `fields` are what that answer's `reading` keeps, `used` its headline.
-    usage: { source: "cursor /usage", read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor({ ...o, ready: ready("cursor") }),
+    usage: { source: "cursor /usage", live: async (o) => (await import("./cursor-usage.mjs")).cursorUsage(o), read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor({ ...o, ready: ready("cursor") }),
       fields: ["plan", "included_used_pct", "auto_used_pct", "api_used_pct", "headroom"], used: (r) => `Included ${r.included_used_pct}% used` } },
   // Skills: measured 2026-10-05 on agy 1.2.17: asked to list its skills, it named one placed in ~/.gemini/config/skills
   // and none of those in ~/.gemini/antigravity-cli/skills (the folder its web docs name) or ~/.agents/skills (it reads
@@ -195,7 +195,7 @@ export const HARNESSES = {
     auth: { check: ["models"], signedIn: (out, code) => code === 0 && !/\bsign in\b/i.test(out), signIn: "run `agy` and sign in" },
     models: () => lines("agy", ["models"], /^([a-z0-9][\w.-]+)\t/i),
     suggested: { hardest_work: "standard", reserve: 0.1 },
-    usage: { source: "agy /usage", read: readAgy } },
+    usage: { source: "agy /usage", live: readAgy, read: readAgy } },
   // Kiro CLI 2.24.1: `--trust-all-tools` asks "Kiro is running in trust all tools mode" at every start, with "No, exit"
   // selected, and herdr reads that screen as idle (2026-09-26/28). `--trust-tools=*` allows every built-in tool (its
   // /tools list: all 14 "allowed") and asks nothing (measured 2026-09-28; MCP tools not measured).
@@ -219,7 +219,7 @@ export const HARNESSES = {
     // `auto` passes no --effort, which Kiro would otherwise remember as the user's default for that model.
     suggested: { hardest_work: "standard", reserve: 0.1, default_model: "auto", default_effort: "auto" },
     // A read that leaves its usage session behind says so in `note`: `left` is the warning and the step for it.
-    usage: { source: "kiro /usage", read: async (o) => (await import("./kiro-usage.mjs")).readKiro(o), check: async (o) => (await import("./kiro-usage.mjs")).refreshKiro({ ...o, ready: ready("kiro") }),
+    usage: { source: "kiro /usage", live: async (o) => (await import("./kiro-usage.mjs")).kiroUsage(o), read: async (o) => (await import("./kiro-usage.mjs")).readKiro(o), check: async (o) => (await import("./kiro-usage.mjs")).refreshKiro({ ...o, ready: ready("kiro") }),
       fields: ["plan", "credits_used", "credits_limit", "used_pct", "resets_at", "unrecognized_lines", "headroom"], used: (r) => `${r.used_pct}% used`,
       left: { warning: () => warning("kiro_session_left", "Kiro kept an empty usage session"), next: "Inspect Kiro's saved sessions to remove the empty usage session" } } },
 };
@@ -264,6 +264,20 @@ export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir
   };
 }
 
+// Usage recipes: read returns the current routing row; live bypasses caches/fallbacks for smoke checks.
+// check refreshes a snapshot; backgroundOnly restricts that action to detached jobs. A conditional limit recipe
+// declares applies(primary, billing), read (snapshot), live (no cache), refresh (publish), and describe (fixed fields).
+// Shared commands never select a harness's limit path by name.
+export async function refreshLimit(name, options = {}) {
+  const src = HARNESSES[name].usage;
+  return src.limit.refresh({ ...options, ready: ready(name), read: async () => {
+    const u = await src.live(), b = await billingFor(name, { fresh: true });
+    if (b.not) return { ok: false, excluded: true, why: b.not };
+    if (u.failure) return { ok: false, code: u.failure.code };
+    return src.limit.applies(u, b.billing) ? src.limit.live() : { ok: true, headroom: u.headroom, windows: u.windows };
+  } });
+}
+
 // Each harness's usage reader, by name, so doctor, dispatch, and `routr usage` read the same way.
 export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usage]));
 
@@ -274,7 +288,6 @@ export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usag
 // and dispatch leaves it out (pick.mjs). `billing(name, { fresh })`: `{ billing, not }`, what its sign-in answer said
 // about billing (signin.mjs, kept beside `why`'s answer) or null, and, when it was asked again, why it is not signed
 // in now (null when it is).
-export const needsClaudePanel = (u, b) => u?.reason === NO_WINDOWS_AFTER_ANSWER && !u.failure && b?.when === "no_windows";
 export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFor, observe = (read) => read() } = {}) {
   const signedOut = (name, note) => ({ ...summarize({ pool: name, source: "sign-in check", note }), signedIn: false });
   return Promise.all(names.map((name) => observe(async () => {
@@ -294,8 +307,12 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
       // signed-out one (a fresh "loggedIn": false still left it a candidate on assumed headroom).
       const b = await billing(name, { fresh: u?.headroom == null });
       if (b?.not) return signedOut(name, b.not);
-      if (needsClaudePanel(u, b?.billing) && src.limit)
-        return await src.limit({ background: background.includes(name) });
+      if (src?.limit?.applies(u, b?.billing)) {
+        let limit;
+        try { limit = await src.limit.read({ background: background.includes(name) }); }
+        catch { limit = { ...withBilling(name, u, b?.billing), failure: usageFailure("read_failed") }; }
+        return withUsageReadingTime({ ...limit, limitReader: true, label: HARNESSES[name]?.label }, usageReadingTime(limit));
+      }
       return withBilling(name, u, b?.billing);
     } catch { return failedUsage(name, source); }
   })));

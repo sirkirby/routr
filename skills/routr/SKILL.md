@@ -115,7 +115,10 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   windows also reads its interactive panel in a detached private herdr session. A readable admin limit is `capped`;
   a spent-only credits line shows no limit and stays `metered`. Missing or changed credits text is a failed read
   and explains why in `unavailable` (without herdr the limit cannot
-  be seen). Commands report the saved reading and age, never wait for that screen. The snapshot is trusted under
+  be seen, so routr will not stop at it unless a trusted cap reading is kept). Every failed applicable limit read
+  stays in `unavailable`; a day of consecutive failures adds `warnings` and a doctor step, even on a metered seat
+  or one whose limit reader never succeeded. A successful no-limit read, or a seat that needed no limit reader,
+  raises no such warning. Commands report the saved reading and age, never wait for that screen. The snapshot is trusted under
   24 hours and refreshed after one hour (a judgment, not a measurement); Cursor and Kiro retain four hours.
   A date-only cap reset means the end of that day in its zone, and its unknown period holds full reserve.
   “Metered budget is unknown” is said only when a metered account is ranked. Under `windows` it shows each usage window as the harness reports it: percent

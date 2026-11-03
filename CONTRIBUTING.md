@@ -88,9 +88,27 @@ shape), and real values getting LOST (a value seen in real rows arriving as "oth
 
 A reader reads a harness's own screen or answer, which an update of the harness or of herdr can change without a word
 (herdr 0.9.5 stopped answering when it types into a pane, and Cursor's reader failed for days). After changing a
-reader, and after updating a harness or herdr on a machine signed in to them: `bun run smoke:usage`. It takes a live
+reader, after updating a harness or herdr, and before every release, run `bun run smoke:usage` on a machine
+signed in to the harnesses. It takes a live
 reading from each subscription that is on and signed in, by its own path (no kept snapshot, no fallback), and fails
-when one cannot read.
+when one cannot read. Each conditional limit reader has its own line: `read: ...`, `FAILED (...)`, or
+`NOT EXERCISED (...)`. A passing primary reader does not verify a skipped limit reader. State which readers
+were not exercised and why in release verification.
+
+To exercise an Enterprise Claude limit reader, use an already signed-in config folder for that seat, with the
+Claude subscription enabled in routr's config. Its print `/usage` must answer without windows and its sign-in
+must say Enterprise. For example (macOS/Linux):
+
+```sh
+CLAUDE_CONFIG_DIR="$HOME/Sandboxes/claude-enterprise" CODEX_HOME="$HOME/Sandboxes/codex-enterprise" bun --no-env-file scripts/smoke-usage.mjs
+```
+
+The equivalent environment variables work on Windows. Do not sign in or change a seat's limit as part of a smoke.
+A seat that shows windows reports its limit reader as not exercised. Record that gap; do not call it a pass.
+Interactive usage readers share a driver: a recipe supplies preparation/cleanup, startup, screen recognition,
+declared safe answers, parsing and fixed result fields. The driver owns readiness, waits, retries and fixed
+failure codes. Register a reader's `live` path for smoke checks; a conditional `limit` recipe declares applicability,
+snapshot/live reads and refresh. Shared commands select capabilities from this registry.
 
 ## Worker environment
 

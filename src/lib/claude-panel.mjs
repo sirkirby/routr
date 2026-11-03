@@ -5,11 +5,10 @@ import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { CLAUDE_PANEL_SNAPSHOT, STATE_DIR } from "./runtime.mjs";
 import { cmdTypable, shellCommand } from "./herdr.mjs";
-import { withUsageTerminal } from "./terminal.mjs";
+import { screenUsage, screenUsageError } from "./screen-usage.mjs";
 import { parseClaudeReset } from "./usage.mjs";
 import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
 import { HARNESSES } from "./harnesses.mjs";
-import { usageFailure } from "./usage-failure.mjs";
 
 const clean = (s) => stripVTControlCharacters(String(s ?? "")).replaceAll("\r", "");
 // Date only: the END of that day in its zone, never its beginning. The period length is unknown, so full reserve.
@@ -36,48 +35,36 @@ export function claudePanelScreen(text) {
 // same new empty folder changed the project count 4 -> 5 -> 5. Config, history and caches changed on both;
 // the first added one backup, the second none. Claude records project metrics/session ids even with no model turn.
 // Leave those harness-owned files alone; one stable empty cwd avoids a new trust/config entry on every read.
-export async function claudePanelUsage({ quiet = HARNESSES.claude.quiet, cwd = join(STATE_DIR(), "claude-usage-empty"), nowSec = Date.now() / 1000, ...terminalOptions } = {}) {
-  let code = "private_folder";
-  try {
-    mkdirSync(cwd, { recursive: true, mode: 0o700 });
-    const st = lstatSync(cwd);
-    if (st.isSymbolicLink() || !st.isDirectory() || readdirSync(cwd).length) throw new Error();
-    const empty = () => {
-      try { const at = lstatSync(cwd); return !at.isSymbolicLink() && at.dev === st.dev && at.ino === st.ino && readdirSync(cwd).length === 0; }
-      catch { return false; }
-    };
-    cwd = realpathSync(cwd);
-    code = "no_response";
-    return await withUsageTerminal(async ({ t, shell, pause, now }) => {
-      if (shell === "cmd" && !cmdTypable(cwd)) { code = "cmd_path"; throw new Error(); }
+export function claudePanelUsage({ quiet = HARNESSES.claude.quiet, cwd = join(STATE_DIR(), "claude-usage-empty"), nowSec = Date.now() / 1000, ...options } = {}) {
+  return screenUsage({
+    label: HARNESSES.claude.label, startFailure: "no_response", readyMs: 12000,
+    prepare: () => {
+      try {
+        mkdirSync(cwd, { recursive: true, mode: 0o700 });
+        const st = lstatSync(cwd);
+        if (st.isSymbolicLink() || !st.isDirectory() || readdirSync(cwd).length) throw new Error();
+        const empty = () => {
+          try { const at = lstatSync(cwd); return !at.isSymbolicLink() && at.dev === st.dev && at.ino === st.ino && readdirSync(cwd).length === 0; }
+          catch { return false; }
+        };
+        cwd = realpathSync(cwd);
+        return { cwd, verifyCwd: true, empty };
+      } catch { throw screenUsageError("private_folder"); }
+    },
+    start: async ({ t, shell }) => {
+      if (shell === "cmd" && !cmdTypable(cwd)) throw screenUsageError("cmd_path");
       await t.call(["pane", "run", t.pane, shellCommand(shell, "claude", quiet)]);
-      let sent = false, trusted = false, unknownAt = now();
-      for (;;) {
-        const text = await t.read(), screen = claudePanelScreen(text);
-        const parsed = parseClaudePanel(text, nowSec);
-        if (parsed && sent) return { ok: true, ...parsed };
-        // The panel draws before its credits request finishes. Only a recognised limit or spent-only
-        // line is success; missing/changed credits text fails after the bounded wait.
-        if (screen === "trust" && !trusted && !sent) {
-          if (!empty()) { code = "private_folder"; throw new Error(); }
-          await t.keys("down"); await t.keys("enter"); trusted = true; unknownAt = now();
-        } else if (screen === "ready" && !sent) {
-          await t.call(["pane", "send-text", t.pane, "/usage"]); await t.keys("enter"); sent = true; unknownAt = now();
-        } else if (now() - unknownAt > 12000) { code = sent ? "invalid_response" : "claude_open_once"; throw new Error(); }
-        await pause();
-      }
-    }, { ...terminalOptions, cwd, verifyCwd: true });
-  } catch (e) {
-    // Only a fixed boundary code is accepted, never screen/exception prose.
-    if (e?.missing === true) code = "herdr_missing";
-    return { ok: false, ...usageFailure(code) };
-  }
+    },
+    screen: claudePanelScreen,
+    safe: { trust: { keys: ["down", "enter"], check: (state) => { if (!state.empty()) throw screenUsageError("private_folder"); } } },
+    parse: (text) => parseClaudePanel(text, nowSec),
+  }, options);
 }
 const keep = (r) => ({ used_pct: Number.isFinite(r.used_pct) ? r.used_pct : null, resets_at: Number.isFinite(r.resets_at) ? r.resets_at : null });
 export const refreshClaudePanel = ({ read = claudePanelUsage, file = CLAUDE_PANEL_SNAPSHOT(), ...o } = {}) => refreshSnapshot({ read, keep, file, ...o });
 // One hour is a judgment, not a measurement: bursts can exhaust caps and owners can raise them within four hours.
 // Keep Cursor's 24-hour trust rule. A kept cap rolls over only AFTER its conservative reset.
-export const readClaudePanel = ({ file = CLAUDE_PANEL_SNAPSHOT(), ...o } = {}) => readSnapshot({ name: "claude", source: "claude /usage", file, keep, refreshSec: 3600, ...o,
+export const readClaudePanel = ({ file = CLAUDE_PANEL_SNAPSHOT(), ...o } = {}) => readSnapshot({ name: "claude", label: HARNESSES.claude.label, limitReader: true, source: "claude /usage", file, keep, refreshSec: 3600, ...o,
   emptyClass: "metered", classify: (r) => r.used_pct == null ? "metered" : "capped",
   windows: (r) => r.used_pct == null ? [] : [{ name: "spend_limit", usedPct: r.used_pct, windowMin: null, resetsAt: r.resets_at }],
   describe: (r) => r.used_pct == null ? "Claude's panel shows no spend limit: still metered" : "Claude's panel shows an admin spend limit" });

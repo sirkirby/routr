@@ -83,7 +83,7 @@ test("private panel read answers only empty-folder trust, no other first-run scr
   expect(f.calls.filter((a) => a.includes("send-keys")).map((a) => a.at(-1))).toEqual(["down", "enter", "enter"]);
   expect(f.calls.slice(-2).map((a) => a[1])).toEqual(["stop", "delete"]);
   for (const first of ["Choose a theme", "Sign in to continue", "garbled"]) {
-    const f = fakePanel(first); expect(await claudePanelUsage(f.options)).toMatchObject({ ok: false, code: "claude_open_once" });
+    const f = fakePanel(first); expect(await claudePanelUsage(f.options)).toMatchObject({ ok: false, code: "open_once" });
     expect(f.calls.some((a) => a.includes("send-keys") || a.includes("send-text"))).toBe(false);
     expect(f.calls.slice(-2).map((a) => a[1])).toEqual(["stop", "delete"]);
   }
@@ -102,7 +102,7 @@ test("private panel read answers only empty-folder trust, no other first-run scr
     await refreshClaudePanel({ file, nowSec: T, read: async () => r });
     const row = readClaudePanel({ file, nowSec: T + 1, background: false });
     expect(row).toMatchObject({ class: "metered", headroom: null, failure: { code: "invalid_response" } });
-    expect(row.note).toContain("spend limit could not be read");
+    expect(row.note).toContain("the limit cannot be seen, so routr will not stop at it");
   }
 });
 
@@ -113,8 +113,8 @@ test("Claude limit snapshots use the shared refresh, keep and 24-hour trust rule
   await refreshClaudePanel({ file, nowSec: T, read: async () => ({ ok: true, used_pct: 100, resets_at: T + 60 }) });
   expect(read(T + 59)).toMatchObject({ class: "capped", headroom: 0 });
   expect(read(T + 61)).toMatchObject({ class: "capped", headroom: 1 });
-  await refreshClaudePanel({ file, nowSec: T + 80, read: async () => ({ ok: false, code: "claude_open_once", error: "SECRET" }) });
-  expect(read(T + 100)).toMatchObject({ class: "capped", failure: { code: "claude_open_once" } });
+  await refreshClaudePanel({ file, nowSec: T + 80, read: async () => ({ ok: false, code: "open_once", error: "SECRET" }) });
+  expect(read(T + 100)).toMatchObject({ class: "capped", failure: { code: "open_once" } });
   expect(read(T + 86400)).toMatchObject({ class: "metered", headroom: null });
   expect(readFileSync(file, "utf8")).not.toContain("SECRET");
   await refreshClaudePanel({ file, nowSec: T, read: async () => ({ ok: true, used_pct: null }) });
@@ -129,7 +129,7 @@ test("only answered no-window Enterprise print usage can start the detached pane
     [print, null, 0], [summarize({ pool: "claude", source: "test", windows: [{ name: "five_hour", usedPct: 11 }] }), { billing: "metered", when: "no_windows" }, 0],
     [{ ...print, failure: { code: "no_response" } }, { billing: "metered", when: "no_windows" }, 0]]) {
     let called = 0;
-    const [r] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: b }), sources: { claude: { read: async () => u, limit: (o) => { called++; expect(o.background).toBe(true); return readClaudePanel({ file, background: false, nowSec: T }); } } } });
+    const [r] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: b }), sources: { claude: { read: async () => u, limit: { applies: HARNESSES.claude.usage.limit.applies, read: (o) => { called++; expect(o.background).toBe(true); return readClaudePanel({ file, background: false, nowSec: T }); } } } } });
     expect(called).toBe(starts); if (starts) expect(r.class).toBe("metered");
   }
 });

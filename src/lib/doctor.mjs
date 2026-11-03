@@ -97,9 +97,21 @@ export function nextSteps(r) {
   if (r.telemetry?.needs_attention) steps.push("Telemetry is on but not sending: `routr telemetry status` says why (last_send, daily_send), and `routr telemetry send` sends now");
   if (r.otel?.queue_error) steps.push(r.otel.queue_error);
   if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
-  if (!r.herdr.path) steps.push("For workers in herdr panes, and to read Cursor's usage, install herdr (https://herdr.dev). Without it, workers run headless");
+  if (!r.herdr.path) steps.push("For workers in herdr panes, and for interactive usage readers, install herdr (https://herdr.dev). Without it, workers run headless");
   else if (!r.herdr.skill) steps.push("Install herdr's agent skill: npx skills add herdrdev/herdr --skill herdr -g");
   return steps;
+}
+
+// The usage portion of doctor is a pure view of the same rows advice ranks, including conditional limit failures.
+export function usageStatus(u, config, signed = true) {
+  const stale = signed ? staleReaders([u], config)[0] : null;
+  return {
+    usage: u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)`
+      : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note} (${u.source})`,
+    usage_source: u.source, usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}),
+    ...(u.billing ? { usage_billing: u.billing } : {}),
+    ...(stale ? { usage_stale: `${stale.warning}. Try it again: routr usage ${u.pool}` } : {}),
+  };
 }
 
 // Everything doctor reports, as data. `routr setup` starts from the same inspection.
@@ -144,20 +156,13 @@ export async function inspect({ configPath, quiet } = {}) {
     statesP,
     ...found.map((n) => statesP.then((st) => (st[n] !== "yes" ? null : step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))))),
   ]);
-  // How a reading reads in one line: a number, a billed seat's note, or why there is none.
-  const said = (u) => (u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)`
-    : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note} (${u.source})`);
   for (const n of KINDS) {
     const command = HARNESSES[n].executable;
     if (!found.includes(n)) { r.harnesses[n] = { command, installed: false, off_path: offPath(command), usage: null }; continue; }
     const u = usage.find((x) => x.pool === n);
     const signed = states[n] === "yes";
     r.harnesses[n] = { command, installed: true, off_path: null, signed_in: signed, ...(signed ? {} : { sign_in: signInHint(HARNESSES[n], states[n]) }),
-      usage: said(u), usage_source: u.source, usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}),
-      // The billing its own sign-in status stated, and where it was read: shown as the usage line (said, above).
-      ...(u.billing ? { usage_billing: u.billing } : {}),
-      // A reader that has failed for over a day, said as a step (usage-failure.mjs).
-      ...(signed && staleReaders([u], { subscriptions: config.subscriptions }).length ? { usage_stale: `${staleReaders([u], { subscriptions: config.subscriptions })[0].warning}. Try it again: routr usage ${n}` } : {}) };
+      ...usageStatus(u, { subscriptions: config.subscriptions }, signed) };
   }
   const lists = Object.fromEntries(found.map((n, i) => [n, models[i]]));
   for (const n of found) r.harnesses[n].models = lists[n];
