@@ -83,7 +83,7 @@ export const COMMANDS = {
     description: "outside herdr: wait for headless workers; returns when one finishes a turn (with its report's path), fails, stops or is lost, or at the timeout with the ones still running; changes nothing of yours",
     flags: [
       { name: "--name", arg: "<name>", description: "a worker to wait on (repeatable)", required: false, default: "every worker still running or with a turn not yet reported", repeatable: true },
-      { name: "--timeout", arg: "<ms>", description: "how long to wait, at most 600000; keep it under your own shell tool's command limit (Claude Code's default is 2 minutes)", required: false, default: 90000 },
+      { name: "--timeout", arg: "<ms>", description: "how long to wait; in a foreground call, keep it under your own shell tool's command limit (Claude Code's default is 2 minutes)", required: false, default: 90000 },
     ],
   },
   send: {

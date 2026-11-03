@@ -387,9 +387,10 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   and the worker may still be running.
 - **Wait with routr.** `routr wait --name <name>` returns when the worker finishes a turn, fails, stops, is lost or
   does not answer (`unreachable`), or at
-  its timeout with `state: "running"`: then wait again, as its `next` says. The default is 90 seconds; keep
-  `--timeout` under your own shell tool's command limit (2 minutes by default in Claude Code). Name several workers to
-  get whichever finishes first.
+  its timeout with `state: "running"`: then wait again, as its `next` says. The default is 90 seconds; in a
+  foreground call, keep `--timeout` under your own shell tool's command limit (2 minutes by default in Claude Code). A
+  wait running in the background can be as long as the work, but it is also the longest you go without hearing about a
+  worker that hangs: a process that dies is still reported at once. Name several workers to get whichever finishes first.
 - **Read each turn's outcome and report.** A turn's `report` is a path to the worker's final message of that turn
   (Codex: its final answer; Cursor: its last assistant message, not the joined `result`; Kiro: the text it wrote after its last tool call, so a Kiro worker that runs a command
   after writing its report leaves only what follows: ask for the report with `routr send`), cut at 1 MB, or null when it wrote none. Read the file and run `routr check --brief <task file> --report <path>`. The final

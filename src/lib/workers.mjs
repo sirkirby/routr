@@ -323,7 +323,7 @@ async function waitCommandBody(args, { now = () => Date.now(), pause = sleep, en
   try {
     const o = parseNamed(args, "wait", ["name", "timeout"]);
     const timeout = o.timeout == null ? 90000 : Number(o.timeout);
-    if (!Number.isSafeInteger(timeout) || timeout < 0 || timeout > 600000) throw new Error("--timeout must be milliseconds, at most 600000");
+    if (!Number.isSafeInteger(timeout) || timeout < 0) throw new Error("--timeout must be a whole number of milliseconds");
     // Unnamed: every worker still running, or with a turn this wait has not reported yet.
     // One whose state cannot be read just now is watched: it may be running.
     const watched = o.names.length ? o.names : names().filter((n) => { const r = stateOf(n), s = r.value; return r.unreadable || workerOf(n).unreadable || (s && (RUNNING.has(s.state) || (s.turns ?? []).some((t) => t.turn > seenOf(n).turn && t.outcome))); });
