@@ -145,7 +145,10 @@ left out by settings or sign-in status stay in `excluded`, outside the failed re
 A failed print read or unreadable signed-in status cannot bypass a trusted panel cap. Successful usage
 windows, including the statusline, or a fresh recognised non-Enterprise status, prove it no longer applies. A skipped
 panel read publishes no new observation. Unknown applicability is reported in output only when a trusted cap
-is held; otherwise the primary reading is returned. The usage smoke still reports unknown applicability as a failure.
+is held; otherwise the primary reading is returned unless a real failed refresh was recorded. Failed primary
+reads, unknown applicability during a refresh, and skips carrying a failure record that failure; only proven
+non-applicability skips without publishing. Such failures remain visible even before the first good reading.
+The usage smoke still reports unknown applicability as a failure.
 
 A complete panel section is required, with exactly one percent/ratio row or the spent-only line alone. Extra
 rows, duplicate limits, malformed percentages and incomplete draws fail. A spent-only reading must hold for
@@ -247,7 +250,8 @@ over: uninstall names the file to remove (launches treat it as free).
 ## Processes and platforms
 
 Detached background work starts routr's own compiled binary, or its source entry resolved from its runtime module.
-It never restarts the script that happened to import routr.
+It never restarts the script that happened to import routr. Source children use --no-env-file: they inherit the
+starter's environment instead of loading a different working-folder .env during the detached refresh.
 
 routr runs on macOS, Linux and Windows. It starts every process directly, never through `sh`, and with no Unix-only
 paths. The binary does not load a `.env` or `bunfig.toml` from the folder you run it in, so routr does not use a

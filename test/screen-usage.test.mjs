@@ -124,3 +124,32 @@ test("an older failed limit snapshot retains its known outage date through marki
     expect(row.failureAgeSec).toBe(86401); expect(staleReaders([row])).toHaveLength(1);
   }
 });
+
+test("a failed conditional refresh records its failure, including hold and skip after a primary failure", async () => {
+  const { refreshLimit } = await import("../src/lib/harnesses.mjs"), { signInState } = await import("../src/lib/signin.mjs");
+  for (const [state, code, expected] of [["hold", null, "limit_unverified"], ["hold", "no_response", "no_response"], ["skip", "invalid_response", "invalid_response"]]) {
+    for (const capped of [false, true]) {
+      const file = join(scratch("refresh-failed-preflight"), "panel.json"), name = "failed-refresh-fixture";
+      if (capped) await refreshClaudePanel({ file, nowSec: T, read: async () => ({ ok: true, used_pct: 100, resets_at: T + 86400 }) });
+      const u = { pool: "claude", source: "fixture", class: "unknown", headroom: null, windows: [], reason: "no_windows_after_answer", ...(code ? { failure: { code } } : {}) };
+      const limit = { ...HARNESSES.claude.usage.limit, state: () => state, read: () => readClaudePanel({ file, nowSec: T + 2, background: false }),
+        refresh: (o) => refreshClaudePanel({ ...o, file }), live: () => { throw new Error("panel must not run"); } };
+      HARNESSES[name] = { executable: "fixture-not-a-harness", auth: { check: [], signedIn: () => true }, usage: { live: async () => u, limit } };
+      try {
+        await signInState(name, HARNESSES[name], { fresh: true, ask: async () => ({ out: "fixture", code: 0 }) });
+        await refreshLimit(name, { nowSec: T + 1 });
+        expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ failure: { code: expected } });
+        const [row] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({}), sources: { claude: { read: async () => u, limit: { ...limit, state: () => "hold" } } } });
+        expect(row.failure?.code).toBe(expected);
+        expect(usageUnavailable([row])[0].code).toBe(expected);
+        if (capped) expect(row.headroom).toBe(0); else expect(row.headroom).toBeNull();
+      } finally { delete HARNESSES[name]; }
+    }
+  }
+});
+
+test("a skipped result carrying a real failure cannot suppress snapshot failure publication", async () => {
+  const file = join(scratch("skipped-failure"), "panel.json");
+  await refreshClaudePanel({ file, nowSec: T, read: async () => ({ ok: false, skipped: true, code: "no_response" }) });
+  expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ failure: { code: "no_response" }, reading: null });
+});

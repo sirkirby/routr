@@ -516,11 +516,12 @@ export const workerEnv = (carriers, extra = {}, env = process.env) => ({ ...harn
 
 // Start routr again, detached, with `args`, and carry on without waiting: the binary itself, or `bun <script>` from a
 // source checkout, located beside this module rather than the importing script. A spawn that fails later (EACCES,
-// EMFILE) is ignored; one that fails at once returns false.
+// EMFILE) is ignored; one that fails at once returns false. Source children keep the inherited environment:
+// reloading cwd's .env could switch a usage refresh to a different login (handson3, 2026-11-03).
 export function spawnSelf(args) {
   try {
     if (!standalone() && !ROUTR_ENTRY) return false;
-    const c = start(process.execPath, [...(standalone() ? [] : [ROUTR_ENTRY]), ...args], { detached: true, stdio: "ignore", env: harnessEnv() });
+    const c = start(process.execPath, [...(standalone() ? [] : ["--no-env-file", ROUTR_ENTRY]), ...args], { detached: true, stdio: "ignore", env: harnessEnv() });
     c.on("error", () => {}); c.unref(); return true;
   } catch { return false; }
 }

@@ -19,7 +19,7 @@ test("spawnSelf invoked by a foreign script starts routr's own entry for every b
     const commands = [["--otel-sender", "--config", "fixture-home/config.json"], ["usage", "cursor", "--background"], ["update", "--background"], ["workers", "--hold", "fixture"]];
     for (const [i, call] of result.calls.entries()) {
       expect(call.cmd).toBe(process.execPath);
-      expect(call.args).toEqual([resolve(import.meta.dir, "../src/routr.mjs"), ...commands[i]]);
+      expect(call.args).toEqual(["--no-env-file", resolve(import.meta.dir, "../src/routr.mjs"), ...commands[i]]);
       expect(call.opts).toMatchObject({ detached: true, stdio: "ignore" });
       expect(call.opts.env).toEqual({ CODEX_HOME: "fixture-config" });
     }
@@ -32,7 +32,7 @@ test("runtime import falls back to source if compiled detection cannot read its 
     expect(r.exitCode, r.stderr.toString()).toBe(0);
     const result = JSON.parse(r.stdout.toString()); expect(result.standalone).toBe(false);
     expect(result.calls).toHaveLength(mode === "once" ? 4 : 0);
-    for (const call of result.calls) expect(call.args[0]).toBe(resolve(import.meta.dir, "../src/routr.mjs"));
+    for (const call of result.calls) expect(call.args.slice(0, 2)).toEqual(["--no-env-file", resolve(import.meta.dir, "../src/routr.mjs")]);
   }
 });
 

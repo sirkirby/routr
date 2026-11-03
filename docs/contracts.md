@@ -1303,7 +1303,9 @@ Limit read failures always appear in `unavailable`; a missing current limit with
 routr will not stop at it. These diagnostics do not change candidate arithmetic or invent headroom.
 
 `read` allows a detached refresh. `hold` consults only an existing trusted cap: it reports `limit_unverified`
-(or the primary failure) if that cap is held, otherwise returns the primary reading. `skip` uses primary windows
+(or the primary failure) if that cap is held, otherwise returns the primary reading unless the snapshot records
+a real failed refresh. A refresh in hold, or a skip after a primary failure, publishes a fixed failure and keeps
+the previous reading; only proven non-applicability may publish nothing. `skip` uses primary windows
 or recognised non-Enterprise status. Raw fresh status is classified only at the registry boundary, kept in
 process memory, never persisted or output. The smoke treats unknown applicability as a failure. A skipped
 refresh publishes no observation; it never manufactures a no-limit reading.

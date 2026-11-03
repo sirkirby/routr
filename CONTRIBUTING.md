@@ -93,7 +93,10 @@ signed in to the harnesses. It takes a live
 reading from each subscription that is on and signed in, by its own path (no kept snapshot, no fallback), and fails
 when one cannot read. Each conditional limit reader has its own line: `read: ...`, `FAILED (...)`, or
 `NOT EXERCISED (...)`. A passing primary reader does not verify a skipped limit reader. State which readers
-were not exercised and why in release verification.
+were not exercised and why in release verification. This smoke reads foreground sources and explicitly reports
+detached refreshes as NOT EXERCISED. To check those, run the ordinary usage command from a throwaway HOME and
+observe its background snapshot acquire a reading or a failure; the detached-command fixture test covers the
+real lock handoff for Claude, Cursor and Kiro without any real harness.
 
 To exercise an Enterprise Claude limit reader, use an already signed-in config folder for that seat, with the
 Claude subscription enabled in routr's config. Its print `/usage` must answer without windows and its sign-in

@@ -584,4 +584,6 @@ boundary and boundary +1 second. A spend-control-only stop with no reset is trus
 from a fallback session log; older readings become unknown so a stopped old log cannot block forever. Skipped
 panel refreshes publish no observation. Failed print/status reads keep a trusted cap when one exists; successful
 windows, including the statusline, or recognised non-Enterprise status bypass it. An unknown state with no cap
-returns the primary reading. These are freshness rules, not budgets.
+returns the primary reading unless a real failed refresh was recorded; that failure remains visible. A hold
+during refresh, or a skip after a primary failure, records the failure without creating a no-limit observation.
+These are freshness rules, not budgets.

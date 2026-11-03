@@ -284,8 +284,10 @@ export async function refreshLimit(name, options = {}) {
   const src = HARNESSES[name].usage;
   return src.limit.refresh({ ...options, ready: ready(name), read: async () => {
     const u = await src.live(), b = await billingFor(name, { fresh: true });
-    if (b.not) return { ok: false, skipped: true };
-    return src.limit.state(u, b.status) === "read" ? src.limit.live() : { ok: false, skipped: true };
+    if (u.failure) return { ok: false, code: u.failure.code };
+    if (b.not) return { ok: false, excluded: true, why: b.not };
+    const state = src.limit.state(u, b.status);
+    return state === "read" ? src.limit.live() : state === "skip" ? { ok: false, skipped: true } : { ok: false, code: "limit_unverified" };
   } });
 }
 
@@ -320,10 +322,10 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
         try { limit = await src.limit.read({ background: state === "read" && background.includes(name) }); }
         catch { limit = { ...withBilling(name, u, src.limit.billing), failure: usageFailure("read_failed") }; }
         if (state === "hold") {
-          if (limit?.class !== "capped" || limit.headroom == null) return withBilling(name, u, b?.billing);
-          const failure = u?.failure ?? usageFailure("limit_unverified");
+          if (!limit?.failure && (limit?.class !== "capped" || limit.headroom == null)) return withBilling(name, u, b?.billing);
+          const failure = u?.failure ?? limit.failure ?? usageFailure("limit_unverified");
           limit = withUsageReadingTime({ ...limit, failure, note: failure.why ?? usageFailure(failure.code).why,
-            kept: { source: limit.kept?.source ?? limit.source ?? source, ageSec: limit.kept?.ageSec ?? limit.ageSec } }, usageReadingTime(limit));
+            ...(limit.headroom != null ? { kept: { source: limit.kept?.source ?? limit.source ?? source, ageSec: limit.kept?.ageSec ?? limit.ageSec } } : {}) }, usageReadingTime(limit));
         }
         return withUsageReadingTime({ ...limit, limitReader: true, label: HARNESSES[name]?.label }, usageReadingTime(limit));
       }

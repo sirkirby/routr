@@ -54,7 +54,7 @@ export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`,
       r = why ? { ok: false, excluded: true, why } : await read();
     }
     catch { r = { ok: false, ...usageFailure("read_failed") }; }
-    if (r?.skipped) return { ok: false, skipped: true }; // no observation: never publish a synthetic no-limit reading
+    if (r?.skipped && !r.code) return { ok: false, skipped: true }; // only proven non-applicability, never a real failure
     // A reader returns a code, never prose for the cache. This also classifies unexpected failures from a reader.
     if (r?.ok !== true && !r?.excluded) r = { ok: false, ...usageFailure(r?.code), ...(r?.note ? { note: r.note } : {}) };
     const last = readJson(file).snapshot;

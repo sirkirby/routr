@@ -45,4 +45,7 @@ export async function smokeUsage({ config = loadConfig().config, sources = SOURC
   }
   return failed;
 }
-if (import.meta.main) process.exitCode = (await smokeUsage()) ? 1 : 0;
+if (import.meta.main) {
+  process.exitCode = (await smokeUsage()) ? 1 : 0;
+  console.log("detached refreshes: NOT EXERCISED (this smoke reads foreground sources only)");
+}
