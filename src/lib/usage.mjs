@@ -62,9 +62,10 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
   const ws = ["primary", "secondary"].filter((k) => rl[k]).map((k) => win(k, rl[k]));
   const cap = g(rl, "individualLimit", "individual_limit"), credits = rl.credits;
   const notes = [];
-  // A member credit limit (the owner's monthly cap) is one more window: the tightest wins, as with any other.
-  if (cap) { const resetsAt = g(cap, "resetsAt", "resets_at"); ws.push({ name: "monthly_cap", usedPct: 100 - g(cap, "remainingPercent", "remaining_percent"), windowMin: monthMinutes(resetsAt), resetsAt }); }
   const stopped = g(rl, "spendControlReached", "spend_control_reached") === true;
+  // A member credit limit (the owner's monthly cap) is one more window: the tightest wins, as with any other.
+  // A stop beside a cap with room is synthetic, not seen live: the stop wins and keeps the cap reset.
+  if (cap) { const resetsAt = g(cap, "resetsAt", "resets_at"); ws.push({ name: "monthly_cap", usedPct: stopped ? 100 : 100 - g(cap, "remainingPercent", "remaining_percent"), windowMin: monthMinutes(resetsAt), resetsAt }); }
   // Resetless stops (unobserved) expire after 5 min, including logs: an old stop cannot block a seat forever.
   if (stopped && !cap) {
     if (!(Number.isFinite(ts) && nowSec - ts >= 0 && nowSec - ts < LOCAL_FRESH_SEC))

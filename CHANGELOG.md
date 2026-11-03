@@ -7,7 +7,6 @@ A short history of what changed in each routr release, one line per change. Each
 
 - Respect Codex member limits and keep capped accounts in your launch ratio while they have room (#143).
 - Skip Claude usage reads shadowed by a user command that would spend (#143).
-
 - `routr wait --timeout` no longer refuses a wait over 10 minutes, so a watcher in the background can wait as long as the work (#142).
 
 ## v0.9.6 — 2026-11-02

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { adviseCommand, checkCommand } from "./contract.mjs";
+import { adviseCommand, checkCommand, usageCommand } from "./contract.mjs";
 import { launch } from "./contract.mjs";
 import { savedDecisionUnavailable } from "../src/lib/advice-file.mjs";
 import { DECISION_CODES, DecisionError, decisionTarget, PROVIDERS } from "../src/lib/providers.mjs";
@@ -276,4 +276,20 @@ test("matching fallback launch preserves dispatch's attempted model through sett
   const projected = await launch([...args, "--dry-run"], deps); expect(projected.unavailable).toEqual(advice.unavailable); clean(projected);
   writeFileSync(adviceFile, JSON.stringify({ ...advice, fallback: false, unavailable: [] }));
   expect((await launch([...args, "--dry-run"], deps)).unavailable).toEqual([]);
+});
+
+
+test("a shadowed usage command never recommends running /usage in usage or dispatch next steps", async () => {
+  const configDir = scratch("shadow-next"), file = join(configDir, "missing");
+  mkdirSync(join(configDir, "skills/usage"), { recursive: true });
+  const row = await readClaude({ configDir, file, exec: async () => { throw new Error("must not execute"); } });
+  const config = cfg({ subscriptions: { claude: cfg().subscriptions.claude } });
+  for (const out of [await dispatchUsage(row), await usageCommand([], config, {}, { read: async () => [row] })]) {
+    expect(out.unavailable).toContainEqual(expect.objectContaining({ code: "command_shadowed" }));
+    expect(JSON.stringify(out.next)).not.toContain("/usage");
+    expect(out.next).toContainEqual(expect.objectContaining({
+      why: "Rename or remove your own usage skill or command, or pass --headroom from a number you already have",
+      template: "--headroom claude=<share left>",
+    }));
+  }
 });

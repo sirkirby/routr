@@ -89,8 +89,9 @@ routr never has to own a harness feature (a statusline slot, a hook) to get its 
 
 - Claude's is read in the call from its own `/usage`, hooks and MCP servers off; a statusline snapshot under 5 minutes
   old is used instead when one exists. Before print, names `skills/usage` and `commands/usage.md` in the Claude
-  config folder are checked without reading contents; either blocks the read with `command_shadowed`, as does
-  a reply with positive `num_turns`, because a user command could spend.
+  config folder are checked without reading contents; either blocks the read with `command_shadowed`.
+  A reply with positive `num_turns` is refused as a reading, though that turn is already spent and later calls
+  would repeat it. Only those named locations are checked; plugin and managed skills are not measured.
 - Claude, Codex and Antigravity are read in the call (1 to 9 s, beside the decision model).
 - Cursor's own screen takes seconds more and starts Cursor, and Kiro's `/usage` takes about 10 s plus its cleanup, so
   their readings are snapshots: when the last try is over 4 hours old, or an older routr made it and got no reading

@@ -1117,3 +1117,12 @@ test("Claude usage shadows are checked by path name after fresh snapshots, witho
   expect(await read({ exec: async () => claudeAnswer(CLAUDE_USAGE, { num_turns: 1 }) })).toMatchObject({ headroom: null, failure: { code: "command_shadowed" } });
   expect(await read({ exec: async () => claudeAnswer("Total cost: $0.00") })).toMatchObject({ reason: NO_WINDOWS_AFTER_ANSWER }); // no local_command field
 });
+
+
+test("a synthetic Codex spend-control stop overrides cap room while retaining its reset", () => {
+  const t = Date.UTC(2026, 10, 3) / 1000, resetsAt = t + 86400;
+  const row = codexSnapshot(capped(resetsAt, 71, { spendControlReached: true }), "app-server", t, t);
+  expect(row).toMatchObject({ class: "capped", headroom: 0 });
+  expect(row.windows).toEqual([{ name: "monthly_cap", usedPct: 100, windowMin: null, resetsAt }]);
+  expect(codexSnapshot(capped(resetsAt, 71, { spendControlReached: true }), "session log", t, resetsAt + 1).headroom).toBe(1);
+});

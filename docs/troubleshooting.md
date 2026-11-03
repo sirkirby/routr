@@ -66,10 +66,14 @@ out every time may be running on the CPU (`ollama ps` says): it took 36-41 s on 
 
 ## Claude's usage shows as "assumed"
 
-routr reads Claude's usage by running `claude -p /usage` (no tokens, about 4 to 5 s) in the system temp folder. The
-usage note says why that failed: `claude` is not on routr's PATH, it did not answer in 12 s, or its answer showed no
-usage windows (a seat with no quota: set `billing` for claude in the config). Run the same command yourself to see
-what Claude says:
+routr reads Claude's usage by running `claude -p /usage` (no tokens for the built-in command, about 4 to 5 s) in
+its private temp folder. A user skill or command named `usage` replaces the built-in command and spends a model
+turn. `command_shadowed` means routr found such a name before starting, or refused a reply with a model turn
+already spent. Rename or remove your own usage skill or command, or pass `--headroom` from a number you already have.
+
+Other causes: `claude` is not on routr's PATH, it did not answer in 12 s, or its answer showed no usage windows
+(a seat with no quota: set `billing` for claude in the config). Only after ruling out a usage skill or command,
+run the same command yourself to see what Claude says; with such a skill, this command spends:
 
     claude -p /usage --output-format json --no-session-persistence --settings '{"disableAllHooks":true}' --strict-mcp-config
 
