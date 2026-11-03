@@ -5,7 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
-- `routr wait --timeout` no longer refuses a wait over 10 minutes, so a watcher in the background can wait as long as the work (#NNN).
+- `routr wait --timeout` no longer refuses a wait over 10 minutes, so a watcher in the background can wait as long as the work (#142).
 ## v0.9.6 — 2026-11-02
 
 [Full notes](docs/releases/v0.9.6.md)
