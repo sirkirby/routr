@@ -95,9 +95,9 @@ export function shellPrompt(text) {
   if (/[?？]\s*(?:\([^\n]*\)|\[[^\n]*\])?\s*$/.test(last)
     || /(?:\[[yn](?:es)?\/[yn](?:o)?\]|\([yn](?:es)?\/[yn](?:o)?\)|:)\s*$/i.test(last)
     || /^(?:>|quote>|dquote>|heredoc>)$/.test(last)) return "question";
-  // Windows: PowerShell shows `PS C:\path>` and cmd shows `C:\path>`. Both end in ">", which on Unix means a
-  // continuation line, so they are matched by their whole shape (a drive path), never by the ">" alone.
-  if (/^(?:PS )?[A-Za-z]:\\[^<>|?*\n]*>$/.test(last)) return "ready";
+  // Windows: PowerShell's `PS C:\path>`, cmd's `C:\path>`, and herdr's `user@host C:\path>` (Windows 11,
+  // 2026-11-02). Match the whole prompt: treating its user/host prefix as arbitrary output timed out before start.
+  if (/^(?:PS |[^\s<>|?@]+@[^\s<>|?@]+\s+)?[A-Za-z]:\\[^<>|?*\n]*>$/.test(last)) return "ready";
   if (/\d(?:\.\d+)?%$/.test(last)) return "unrecognized"; // A stalled progress meter is not a zsh prompt.
   if (/^(?:.*\s)?[❯❱➜λ\uE0B0\uE0B1]$/.test(last) || /(?:^|\S.*)[\s]*[$%#]$/.test(last)) return "ready";
   return last ? "unrecognized" : "waiting";

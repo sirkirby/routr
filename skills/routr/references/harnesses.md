@@ -461,6 +461,29 @@ with `--safe-mode` and `--strict-mcp-config`, inherited session variables unset,
 record. That record still listed plugins, so a plugin-free startup was not established. No test shows that smaller
 subagents keep quality; these runs checked settings, not task quality or savings.
 
+### Windows argument and environment checks (2026-11-02)
+
+Windows 11, herdr 0.9.5, PowerShell 5.1.26100.9818 and cmd: source `routr launch` (Bun with `--no-env-file`) in real
+panes delivered the following arguments unchanged to a compiled `codex.exe` fixture, with no `.cmd` shim. The parent
+model was `gpt-6-luna`, effort `low`; the synthetic fallback model `child model` exercised a space. Both shells
+delivered the double quotes as part of each config value:
+
+```json
+["-c", "agents.default_subagent_model=\"child model\"", "-c", "agents.default_subagent_reasoning_effort=\"low\""]
+```
+
+This proves argument delivery to the fixture, not a real Codex turn on Windows; Codex was not installed or run there.
+On macOS, Codex 0.166.0's app-server `config/read` resolved the exact received values to model `child model`, effort
+`low`. Hypothetical inputs with the double quotes removed resolved identically for these particular values, using
+Codex's raw-string fallback when a value is not TOML. No model request was made for these config reads. Other values
+and shells were not tested by this check. The cmd run first exposed a readiness bug: herdr's `user@host C:\path>`
+prompt timed out before start. The shared shell recognizer now accepts that shape; the fixture launch then passed.
+
+One real Claude Code 2.1.308 worker, Haiku at low in a PowerShell pane, read its own shell environment and wrote
+`CLAUDE_CODE_SUBAGENT_MODEL=haiku` and `CLAUDE_CODE_SUBAGENT_EFFORT=low`. Its transcript confirms version 2.1.308 and
+the shell command; this verifies environment delivery only, not whether that older version applies the effort
+fallback. No subagent was spawned in that run. Every test worker was finished with `routr cleanup`.
+
 ## Lead and pane session identity
 
 Measured 2026-10-25 against each harness's own record (Stage 2 probes):

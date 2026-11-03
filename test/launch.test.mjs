@@ -333,6 +333,18 @@ test("existing shells keep their environment fallback, while argv fallbacks appl
   }
 });
 
+test("cmd's user@host prompt reaches agent start while unrelated lines ending in a drive path do not", async () => {
+  const here = process.cwd(), prompt = "user@WINDOWS-HOST C:\\repo>";
+  expect(shellPrompt(prompt)).toBe("ready");
+  for (const line of ["Build error at C:\\repo>", "user@host C:\\repo>typed input", "user@host >"])
+    expect(shellPrompt(line)).toBe("unrecognized");
+  const f = fakeHerdr({ kind: "codex", reply: (a) => a[1] === "read" ? herdrOK({ text: prompt })
+    : a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "cmd.exe", cwd: here }] } }) : undefined });
+  const r = await launch(["--kind", "codex", "--name", "fixture", "--model", "gpt-6-luna", "--pane", "w1:p9", "--subagent-model", "child model", "--subagent-effort", "low"], f.deps);
+  expect([r.state, r.error]).toEqual(["ready", undefined]);
+  expect(f.calls.find((a) => a[1] === "start")).toContain('agents.default_subagent_model="child model"');
+});
+
 test("needs_input retries preserve the original fallback without typing into a retained shell or restarting an agent", async () => {
   for (const kind of ["claude", "codex"]) for (const at of ["shell", "agent"]) {
     const task = join(scratch("fallback-retry"), "task.md"); writeFileSync(task, "Check x.js");
