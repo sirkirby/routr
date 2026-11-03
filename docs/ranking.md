@@ -118,9 +118,10 @@ windows). Your `billing`
 setting wins over either when no window arrived; a window that does arrive is always ranked.
 For that Enterprise Claude shape only, routr starts a detached private herdr read of the interactive `/usage` panel.
 An admin limit becomes a `spend_limit` window (`capped`), ahead of `billing: metered`. Its date-only reset is the
-end of the named day in its zone; its period is unknown, so the full reserve stays. No readable limit, a failed
-panel read, or no herdr leaves it metered with unknown budget; a failure also carries its usage failure code.
-This panel follows the four-hour refresh and 24-hour trust rule; commands report the saved reading and age.
+end of the named day in its zone; its period is unknown, so the full reserve stays. A spent-only credits line means no limit is showing and stays metered. Missing or changed
+credits text is a failed read, with a usage failure code; absent a trusted kept cap, failures and no herdr leave
+it metered with unknown budget.
+This panel follows a one-hour refresh (a judgment, not a measurement) and the 24-hour trust rule; commands report the saved reading and age.
 Codex member caps use the reported monthly window, accepting the measured UTC boundary plus one second. A
 spend-control-only stop without a reset is trusted for five minutes, including in a fallback log; older stops
 become unknown capacity so an old log cannot exclude the seat forever. These are freshness rules, not budgets.

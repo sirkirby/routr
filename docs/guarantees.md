@@ -92,7 +92,8 @@ routr never has to own a harness feature (a statusline slot, a hook) to get its 
 - Claude, Codex and Antigravity are read in the call (1 to 9 s, beside the decision model).
 - Only when Claude's print `/usage` answered with no windows and fresh sign-in says Enterprise, a detached
   private herdr terminal reads the interactive panel. Public `usage claude` also returns the saved reading and age
-  without waiting. A shown admin cap is a `spend_limit` window; otherwise the seat stays metered. A failed read
+  without waiting. A shown admin cap is a `spend_limit` window; a spent-only credits line is a successful
+  no-limit reading and stays metered. Missing or changed credits text is a failed read, never evidence of no limit. A failed read
   says why through fixed usage failure codes, including herdr missing and first-run screens that need the user.
   Only folder trust is answered, in routr's stable empty state folder. No model prompt or sign-in is sent.
   Claude updates its own config, history and caches: two reads in the separate Enterprise sandbox
@@ -108,7 +109,9 @@ Failed usage reads have fixed codes and sentences at the reader boundary and in 
 output and exception text are never copied into their diagnostics. A failed refresh keeps the last good reading
 and notes the failed attempt. A fresh usable reading stays available. When a failed source leaves assumed
 headroom or a kept older reading, `unavailable` says which; a kept reading names its source and age. Snapshot
-readings, including the Enterprise panel, are fresh for the four-hour refresh interval, local statusline/session-log readings for five minutes.
+readings are fresh for their refresh interval: one hour for the Enterprise Claude panel, four hours for Cursor
+and Kiro; local statusline/session-log readings for five minutes. The one-hour interval is a judgment, not a
+measurement: bursts can exhaust a cap and an owner can raise it within four hours. Refreshes remain detached.
 A snapshot at least a day old is too old to use: its age is shown with assumed
 headroom (the Enterprise panel instead remains metered with unknown capacity), and age alone is not a failure. A source whose last reading is a day old or more and whose last try
 failed is also said in `warnings` of `dispatch` and `usage`, with a step to read it again, and `doctor` lists it; a

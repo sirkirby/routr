@@ -227,7 +227,7 @@ routr classes each pool from the shape of what the harness reports, never from a
 | Codex with a member credit limit set by the workspace owner (measured 2026-11-03, CLI 0.166.0) | `individualLimit { limit, used, remainingPercent, resetsAt }`; remaining 71% under the limit, 0% at it; reset at UTC month boundary or one second after. At limit: `spendControlReached: true`, `rateLimitReachedType: "workspace_owner_usage_limit_reached"`, `credits: { hasCredits: true, unlimited: false, balance: "0" }`; `hasCredits` does not mean usable credit here | `capped` |
 | Claude Code on a seat with quota windows: Pro, Max, Team (measured: the plan does not change what `/usage` prints) | `/usage`: "Current session" and "Current week (all models)" (read as `five_hour` and `seven_day`); statusline `rate_limits.five_hour` and `seven_day` | `included` |
 | Claude Code on an API key (measured 2026-10-07) | `/usage`: a session cost summary, no windows; `claude auth status`: `"authMethod": "api_key"` | `metered`, from the auth status (above) |
-| Claude Code on usage-based Enterprise (measured 2026-10-27 on 2.1.311; 2026-11-03 on 2.1.317) | Before this reader, “only credits spent” described the interactive panel; print `/usage` shows only the subscription line, no windows or spend. Interactive panel with an admin limit: 11% and 100% used, a spent/limit dollar line, and a date-only reset; `claude auth status`: `"subscriptionType": "enterprise"` | `capped` when the background panel shows a limit; otherwise `metered`, from auth status beside an answered no-window print read. Other seats keep their existing path |
+| Claude Code on usage-based Enterprise (measured 2026-10-27 on 2.1.311; 2026-11-03 on 2.1.317) | Before this reader, “only credits spent” described the interactive panel; print `/usage` shows only the subscription line, no windows or spend. Interactive panel with an admin limit: 11% and 100% used, a spent/limit dollar line, and a date-only reset; with no limit set: a spent-only credits line, no percent or reset; `claude auth status`: `"subscriptionType": "enterprise"` | `capped` when the background panel shows a limit; otherwise `metered`, from auth status beside an answered no-window print read. Other seats keep their existing path |
 | Claude Code behind a Claude apps gateway with spend limits (claimed: docs) | `rate_limits.spend_limit`, `used_percentage` may pass 100 | `capped` |
 | Kiro on a Free plan (measured 2026-09-26, Kiro CLI 2.24.1) | `/usage`: "Estimated Usage \| resets on 2026-10-01 \| KIRO FREE", "Credits (0.00 of 50 covered in plan), 0.0%": one monthly pool that every model draws on at its own rate. Takes ~10 s and 0 credits, and leaves an empty saved session. The figure is an estimate that lagged a 0.10-credit turn | `included` |
 | Kiro on a paid plan with overage on (not observed) | unknown: any line beyond the credits line is counted in the reading's note ("N additional lines not read"), never copied or parsed | `included` until measured |
@@ -518,15 +518,17 @@ never removes a folder on that name alone.
 Claude's interactive `/usage` showed `Usage credits`, `11% used`, and
 `$11.28 / $100.00 spent · Resets Dec 1 (America/Detroit)`; at the owner's lowered limit it showed `100% used` and
 `$15.05 / $15.00 spent` with the same reset. Print mode still showed only the subscription line, 0 turns and $0.
-The panel's session cost was $0. No model request at either seat's limit, close-to-limit read, or panel with no
-limit set was tried in that measurement. Linux and Windows were not tested.
+The panel's session cost was $0. With no limit set, the same panel showed `Usage credits` followed by `$23.96 spent` alone, without percent,
+limit or reset (2.1.317, 2026-11-03). No model request at either seat's limit or close-to-limit read was tried. Linux and Windows were not tested.
 
 Only an answered print read with no windows plus Enterprise sign-in starts the detached panel refresh. It shares
-Cursor's private terminal lifecycle and snapshot rules. Public commands return the saved reading and age.
+Cursor's private terminal lifecycle and 24-hour snapshot trust rule. It refreshes after one hour, a judgment
+rather than a measurement; Cursor and Kiro keep four hours. Public commands return the saved reading and age.
 The private empty working folder is stable under routr's state. Claude's trust screen starts on “No, exit”;
 Down then Enter accepts only that folder. Every other unrecognised screen fails with `claude_open_once`, telling
 the user to open Claude once. No herdr produces `herdr_missing`; either failure leaves the seat metered when no
-usable cap was kept. Screen text and dollar amounts never leave the reader: only percent and reset fields do.
+usable cap was kept. A recognised spent-only line returns at once as no limit showing. If neither recognised
+shape appears within the bounded wait, the read fails with `invalid_response`, even if the panel itself opened. Screen text and dollar amounts never leave the reader: only percent and reset fields do.
 Date-only resets count at the end of the named day in that zone, with an unknown period and full reserve.
 
 Claude's `--no-session-persistence` works only in print mode (its help and a failed interactive start, 2.1.317), so

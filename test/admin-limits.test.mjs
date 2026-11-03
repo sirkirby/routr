@@ -8,7 +8,7 @@ import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { cfg, herdrOK, scratch, shellInfo } from "./helpers.mjs";
 const fixture = (name) => readFileSync(new URL(`./fixtures/admin-limits/${name}`, import.meta.url), "utf8");
 const T = Date.UTC(2026, 10, 3, 15) / 1000;
-const hit = fixture("claude-panel.txt");
+const hit = fixture("claude-panel.txt"), noLimitPanel = fixture("claude-panel-no-limit.txt");
 // p46 addendum, 2026-11-03: verbatim section from the earlier under-limit panel.
 const under = `Usage credits
 █████▋                                             11% used
@@ -49,6 +49,9 @@ test("a spend-control-only stop expires instead of making an old fallback log bl
 test("real Claude panels reduce to percent and conservative date-only reset; other text is not room", () => {
   expect(parseClaudePanel(hit, T)).toEqual({ used_pct: 100, resets_at: Date.UTC(2026, 11, 2, 4, 59, 59) / 1000 });
   expect(parseClaudePanel(under, T)).toMatchObject({ used_pct: 11 });
+  expect(parseClaudePanel(noLimitPanel, T)).toEqual({ used_pct: null, resets_at: null });
+  expect(parseClaudePanel(noLimitPanel.replace("$23.96 spent", "$23.96 / ??? spent"), T)).toBeNull();
+  expect(parseClaudePanel(hit.replace(/.*\$15\.05.*\n/, "$23.96 spent\n"), T)).toBeNull();
   expect(parseClaudePanel(hit.replace(/.*\$15\.05.*\n/, ""), T)).toBeNull();
   expect(parseClaudePanel("garbled", T)).toBeNull();
   expect(panelReset("Feb 30 (America/Detroit)", T)).toBeNull();
@@ -61,7 +64,7 @@ test("real Claude panels reduce to percent and conservative date-only reset; oth
 function fakePanel(first = trust, panel = hit) {
   let ticks = 0, stage = "shell";
   const calls = [], cwd = scratch("claude-panel-empty");
-  return { calls, options: { cwd, quiet: HARNESSES.claude.quiet, nowSec: T, now: () => ticks, sleep: async (ms) => { ticks += ms; }, terminal: { start: () => {} },
+  return { calls, elapsed: () => ticks, options: { cwd, quiet: HARNESSES.claude.quiet, nowSec: T, now: () => ticks, sleep: async (ms) => { ticks += ms; }, terminal: { start: () => {} },
     run: async (all) => {
       calls.push(all); const a = all[0] === "--session" ? all.slice(2) : all;
       if (a[0] === "session") return { ok: true, data: { sessions: [] } };
@@ -86,9 +89,21 @@ test("private panel read answers only empty-folder trust, no other first-run scr
   }
   const missing = fakePanel(); missing.options.run = async () => ({ ok: false, missing: true, code: "herdr_unreachable", data: {} });
   expect(await claudePanelUsage(missing.options)).toMatchObject({ ok: false, code: "herdr_missing" });
-  const noLimit = fakePanel(ready, hit.replace(/.*\$15\.05.*\n/, ""));
-  // Start already ready: no confirmation is needed; the panel has no readable limit.
-  expect(await claudePanelUsage(noLimit.options)).toMatchObject({ ok: true, used_pct: null });
+  const noLimit = fakePanel(ready, noLimitPanel);
+  expect(await claudePanelUsage(noLimit.options)).toMatchObject({ ok: true, used_pct: null, resets_at: null });
+  expect(noLimit.elapsed()).toBeLessThan(12000); // the measured spent-only line returns immediately
+  for (const panel of [hit.replace(/.*\$15\.05.*\n/, ""), hit.replace(/Usage credits[^]*/, "Esc to cancel"),
+    noLimitPanel.replace("$23.96 spent", "unrecognised credits format"), "garbled"]) {
+    const unread = fakePanel(ready, panel);
+    const r = await claudePanelUsage(unread.options);
+    expect(r).toMatchObject({ ok: false, code: "invalid_response" });
+    expect(unread.elapsed()).toBeGreaterThanOrEqual(12000);
+    const file = join(scratch("panel-unread"), "snapshot.json");
+    await refreshClaudePanel({ file, nowSec: T, read: async () => r });
+    const row = readClaudePanel({ file, nowSec: T + 1, background: false });
+    expect(row).toMatchObject({ class: "metered", headroom: null, failure: { code: "invalid_response" } });
+    expect(row.note).toContain("spend limit could not be read");
+  }
 });
 
 test("Claude limit snapshots use the shared refresh, keep and 24-hour trust rule without inventing room", async () => {
@@ -103,7 +118,7 @@ test("Claude limit snapshots use the shared refresh, keep and 24-hour trust rule
   expect(read(T + 86400)).toMatchObject({ class: "metered", headroom: null });
   expect(readFileSync(file, "utf8")).not.toContain("SECRET");
   await refreshClaudePanel({ file, nowSec: T, read: async () => ({ ok: true, used_pct: null }) });
-  expect(read()).toMatchObject({ class: "metered", headroom: null, windows: [] });
+  expect(read()).toMatchObject({ class: "metered", headroom: null, windows: [], note: "Claude's panel shows no spend limit: still metered" });
 });
 
 test("only answered no-window Enterprise print usage can start the detached panel refresh", async () => {
@@ -135,4 +150,26 @@ test("the panel refuses a nonempty work folder before any terminal call", async 
   const f = fakePanel(); writeFileSync(join(f.options.cwd, "file"), "user content");
   expect(await claudePanelUsage(f.options)).toMatchObject({ ok: false, code: "private_folder" });
   expect(f.calls).toEqual([]);
+});
+
+test("Claude refreshes after one hour while Cursor and Kiro retain four, with 24-hour trust unchanged", async () => {
+  const { readCursor, refreshCursor } = await import("../src/lib/cursor-usage.mjs");
+  const { readKiro, refreshKiro } = await import("../src/lib/kiro-usage.mjs");
+  for (const [name, read, refresh, good, interval] of [
+    ["claude", readClaudePanel, refreshClaudePanel, { used_pct: 100, resets_at: T + 30 * 86400 }, 3600],
+    ["cursor", readCursor, refreshCursor, { included_used_pct: 100 }, 4 * 3600],
+    ["kiro", readKiro, refreshKiro, { used_pct: 100, resets_at: T + 30 * 86400 }, 4 * 3600],
+  ]) {
+    const file = join(scratch(`interval-${name}`), "snapshot.json");
+    await refresh({ file, nowSec: T, read: async () => ({ ok: true, ...good }) });
+    const starts = [];
+    const view = (at) => read({ file, nowSec: at, off: false, refresh: (token) => { starts.push(token); return true; } });
+    expect(view(T + interval - 1).headroom).toBe(0); expect(starts).toEqual([]);
+    expect(view(T + interval).headroom).toBe(0); expect(starts).toHaveLength(1);
+    await refresh({ file, nowSec: T + interval, background: true, token: starts[0], read: async () => ({ ok: false, code: "invalid_response" }) });
+    const kept = read({ file, nowSec: T + interval + 1, background: false });
+    expect(kept).toMatchObject({ headroom: 0, failure: { code: "invalid_response" }, kept: { ageSec: interval + 1 } });
+    expect(read({ file, nowSec: T + 86400 - 1, background: false }).headroom).toBe(0);
+    expect(read({ file, nowSec: T + 86400, background: false }).headroom).toBeNull();
+  }
 });

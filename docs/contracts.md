@@ -908,7 +908,7 @@ for plain usage, `--level` and a named subscription alike:
 Own fields: `level`; `subscriptions` (the same object as `dispatch`'s; for a named subscription, its row alone, with no `share` or `share_due`);
 named only: `subscription`; named `cursor` or `kiro` with a fresh reading: `reading`, the harness's own numbers for a
 person to check against its screen (Cursor `{ plan, included_used_pct, auto_used_pct, api_used_pct, headroom }`; Kiro
-`{ plan, credits_used, credits_limit, used_pct, resets_at, unrecognized_lines?, headroom }`). Claude's private background refresh keeps only `{ used_pct, resets_at }` for an admin panel limit (null when unreadable), never dollar or screen text.
+`{ plan, credits_used, credits_limit, used_pct, resets_at, unrecognized_lines?, headroom }`). Claude's private background refresh keeps only `{ used_pct, resets_at }` for an admin panel limit (null for a recognised spent-only no-limit reading; an unreadable panel fails with `invalid_response`), never dollar or screen text.
 
 ## The ledger and telemetry
 

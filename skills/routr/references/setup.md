@@ -133,8 +133,9 @@ the command that fixes it.
     Enterprise seat (measured: `"subscriptionType": "enterprise"` and a `/usage` with no windows), but only when its
     print `/usage` answered with no windows. Only that shape starts a detached private herdr panel read:
     an admin limit shown there is a `capped` window, with the full reserve until its date-only reset at the end of
-    that day in its zone. No readable limit stays metered; a failed read (including herdr missing) says why.
-    The saved panel reading and age are returned at once, trusted under 24 hours and refreshed about every four.
+    that day in its zone. A spent-only credits line shows no limit and stays metered. Missing or changed credits
+    text is a failed read; failures (including herdr missing) say why, and keep an older cap under the trust rule.
+    The saved panel reading and age are returned at once, trusted under 24 hours and refreshed after one hour (a judgment, not a measurement). Cursor and Kiro keep four hours.
     An Enterprise seat with quota windows keeps its existing read and starts no terminal. Any other Claude seat
     that shows no usage windows (a plan routr has not seen) is left to you: the advice says "no usage windows", and `routr doctor` lists it as a next step. Set
     `"billing": "metered"` for such a Claude seat by hand; `"billing": "included"` says the seat has a quota and clears

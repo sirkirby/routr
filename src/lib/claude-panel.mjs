@@ -18,8 +18,11 @@ export function parseClaudePanel(text, nowSec = Date.now() / 1000) {
   const t = clean(text), section = t.split(/\bUsage credits\s*\n/)[1];
   if (!section) return null;
   const m = section.match(/^\s*[^\n]*?(\d+(?:\.\d+)?)% used\s*\n\s*\$[\d,]+\.\d{2}\s*\/\s*\$[\d,]+\.\d{2} spent\s*·\s*Resets ([^\n]+)/m);
-  if (!m) return null; // no dollar line is not room, nor proof there is no limit
-  return { used_pct: Math.min(100, +m[1]), resets_at: panelReset(m[2].trim(), nowSec) };
+  if (m) return { used_pct: Math.min(100, +m[1]), resets_at: panelReset(m[2].trim(), nowSec) };
+  // p46 no-limit read, 2.1.317, 2026-11-03: a spent-only line immediately under Usage credits.
+  // Absence or another shape is unreadable, never evidence that the owner removed a limit.
+  if (/^\s*\$[\d,]+\.\d{2} spent[ \t]*(?:\n|$)/.test(section)) return { used_pct: null, resets_at: null };
+  return null;
 }
 export function claudePanelScreen(text) {
   const t = clean(text);
@@ -53,9 +56,8 @@ export async function claudePanelUsage({ quiet = HARNESSES.claude.quiet, cwd = j
         const text = await t.read(), screen = claudePanelScreen(text);
         const parsed = parseClaudePanel(text, nowSec);
         if (parsed && sent) return { ok: true, ...parsed };
-        // The panel draws before its credits request finishes; wait the bounded panel interval before
-        // calling a panel without a dollar line unknown (2.1.317, live p46 verification, 2026-11-03).
-        if (screen === "panel" && sent && now() - unknownAt >= 12000) return { ok: true, used_pct: null, resets_at: null };
+        // The panel draws before its credits request finishes. Only a recognised limit or spent-only
+        // line is success; missing/changed credits text fails after the bounded wait.
         if (screen === "trust" && !trusted && !sent) {
           if (!empty()) { code = "private_folder"; throw new Error(); }
           await t.keys("down"); await t.keys("enter"); trusted = true; unknownAt = now();
@@ -73,8 +75,9 @@ export async function claudePanelUsage({ quiet = HARNESSES.claude.quiet, cwd = j
 }
 const keep = (r) => ({ used_pct: Number.isFinite(r.used_pct) ? r.used_pct : null, resets_at: Number.isFinite(r.resets_at) ? r.resets_at : null });
 export const refreshClaudePanel = ({ read = claudePanelUsage, file = CLAUDE_PANEL_SNAPSHOT(), ...o } = {}) => refreshSnapshot({ read, keep, file, ...o });
-// Same 24-hour trust and four-hour refresh as Cursor. A kept cap rolls over only AFTER its conservative reset.
-export const readClaudePanel = ({ file = CLAUDE_PANEL_SNAPSHOT(), ...o } = {}) => readSnapshot({ name: "claude", source: "claude /usage", file, keep, ...o,
+// One hour is a judgment, not a measurement: bursts can exhaust caps and owners can raise them within four hours.
+// Keep Cursor's 24-hour trust rule. A kept cap rolls over only AFTER its conservative reset.
+export const readClaudePanel = ({ file = CLAUDE_PANEL_SNAPSHOT(), ...o } = {}) => readSnapshot({ name: "claude", source: "claude /usage", file, keep, refreshSec: 3600, ...o,
   emptyClass: "metered", classify: (r) => r.used_pct == null ? "metered" : "capped",
   windows: (r) => r.used_pct == null ? [] : [{ name: "spend_limit", usedPct: r.used_pct, windowMin: null, resetsAt: r.resets_at }],
-  describe: (r) => r.used_pct == null ? "Claude's panel did not show a readable spend limit: still metered" : "Claude's panel shows an admin spend limit" });
+  describe: (r) => r.used_pct == null ? "Claude's panel shows no spend limit: still metered" : "Claude's panel shows an admin spend limit" });

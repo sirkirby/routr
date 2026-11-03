@@ -64,8 +64,9 @@ export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`,
 }
 
 // `background: false` reads without starting a refresh: doctor, for a harness installed but not in the config.
+// `refreshSec` is per source; the default preserves Cursor and Kiro's four-hour interval.
 // `windows(reading)` and `describe(reading)` turn the kept reading into the usage row; `byHand` is said when reading fails.
-export function readSnapshot({ name, source, windows, describe, keep, byHand, file, lock = `${file}.lock`, nowSec = now(), refresh = (token) => startRefresh(name, token), background = true, off = noRefresh(), version = ROUTR_VERSION, classify = () => undefined, emptyClass }) {
+export function readSnapshot({ name, source, windows, describe, keep, byHand, file, lock = `${file}.lock`, nowSec = now(), refresh = (token) => startRefresh(name, token), background = true, off = noRefresh(), version = ROUTR_VERSION, classify = () => undefined, emptyClass, refreshSec = REFRESH_SEC }) {
   const cached = readJson(file);
   let snap = cached.snapshot ?? (cached.failure ? { failure: cached.failure } : null);
   // Drop the old raw error field on reads and writes; it is never interpreted or copied forward.
@@ -76,7 +77,7 @@ export function readSnapshot({ name, source, windows, describe, keep, byHand, fi
   }
   let started = false;
   const olderFailed = snap && (snap.failure || snap.excluded || !snap.reading) && (snap.by == null || newer(version, snap.by));
-  const triedHere = !olderFailed && nowSec - (snap?.tried ?? 0) < REFRESH_SEC;
+  const triedHere = !olderFailed && nowSec - (snap?.tried ?? 0) < refreshSec;
   if (background && !off && !triedHere && takeLock(lock, olderThan(LOCK_SEC * 1000, nowSec * 1000))) {
     // Marked before it starts, so the next call waits its turn; if the mark cannot be written, nothing is started.
     // Marked only while the lock is still this call's: one taken over meanwhile may already have a newer reading in.
@@ -90,8 +91,8 @@ export function readSnapshot({ name, source, windows, describe, keep, byHand, fi
   const invalid = r && (!Number.isFinite(age) || (!ws.some((w) => Number.isFinite(w.usedPct)) && cls !== "metered"));
   const failure = cached.failure ?? snap?.failure ?? (invalid ? usageFailure("invalid_response") : undefined);
   const after = [started && "a fresh reading is being taken in the background", failure && `the last try failed: ${failure.why}`].filter(Boolean).join("; ");
-  if (r && !invalid && age >= 0 && age < TRUST_SEC) return summarize({ pool: name, source, ts: snap.ts, windows: ws, cls, note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec, failure, ...(failure && age >= REFRESH_SEC ? { kept: { source: `${name} snapshot`, ageSec: Math.round(age) } } : {}) });
+  if (r && !invalid && age >= 0 && age < TRUST_SEC) return summarize({ pool: name, source, ts: snap.ts, windows: ws, cls, note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec, failure, ...(failure && age >= refreshSec ? { kept: { source: `${name} snapshot`, ageSec: Math.round(age) } } : {}) });
   const why = invalid ? "the saved reading cannot be read" : r ? age < 0 ? "the last reading is from the future, so it is not used"
     : `the last reading is ${Math.round(age / 3600)} h old, too old to use` : "no reading yet";
-  return summarize({ pool: name, source, ts: snap?.ts, cls: emptyClass, note: `${why}${after ? `; ${after}` : ""}; ${emptyClass === "metered" ? "limit unknown: still metered" : "using the assumed headroom"}.`, nowSec, failure });
+  return summarize({ pool: name, source, ts: snap?.ts, cls: emptyClass, note: `${why}${after ? `; ${after}` : ""}; ${emptyClass === "metered" ? (failure ? "spend limit could not be read: still metered" : "limit unknown: still metered") : "using the assumed headroom"}.`, nowSec, failure });
 }
