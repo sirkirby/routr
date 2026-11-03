@@ -80,7 +80,7 @@ test("complete real panel fixtures pass through snapshots, readUsage and candida
     const r = parseClaudePanel(text.replaceAll("\n", "\r\n"), T);
     expect(r.used_pct).toBe(used);
     await refreshClaudePanel({ file, nowSec: T, read: async () => ({ ok: true, ...r }) });
-    const rows = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "enterprise" }) }), sources: { claude: {
+    const rows = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ status: JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "enterprise" }) }), sources: { claude: {
       read: async () => primary(), limit: { ...HARNESSES.claude.usage.limit, read: () => readClaudePanel({ file, nowSec: T + 1, background: false }) },
     } } });
     const config = cfg({ now: (T + 1) * 1000, subscriptions: { claude: { ...cfg().subscriptions.claude, use: "normal", billing: "metered" } } });

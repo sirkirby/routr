@@ -29,7 +29,7 @@ const BILLING = ["included", "metered"], METERED_RANK = ["after", "with"];
 export const ACCOUNT_USE = ["normal", "fallback"];
 export const accountUse = (s, cls) => s.use ?? (cls === "metered" && s.metered_rank !== "with" ? "fallback" : "normal");
 const isLevel = (v) => LEVELS.includes(v);
-// `share`: this account's weight in the user's ratio of launches between metered accounts (shares.mjs). A whole number,
+// `share`: this account's weight in the user's ratio of launches between normal metered accounts, a limit with room included (shares.mjs). A whole number,
 // so 3 and 1 read as "three for every one"; anything else is reported and left out, which means no ratio of its own.
 export const SHARE_MAX = 99;
 export const isShare = (v) => Number.isInteger(v) && v >= 1 && v <= SHARE_MAX;

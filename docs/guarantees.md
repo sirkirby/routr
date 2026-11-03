@@ -123,7 +123,7 @@ not compared. Otherwise Escape is sent without Enter and
 call on 2.1.317, 2026-11-03. That menu check was measured only with a project skill. A skill in a differently
 named folder with name: usage did not take over (lead measurement, same version/date). Plugins and managed
 skills are unmeasured. A print answer with num_turns > 0 reports command_shadowed; zero turns are required,
-without requiring local_command. No takeover backoff is added.
+without requiring local_command.
 
 Failed usage reads have fixed codes and sentences at the reader boundary and in the snapshot cache; harness
 output and exception text are never copied into their diagnostics. A failed refresh keeps the last good reading

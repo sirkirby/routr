@@ -133,3 +133,10 @@ test("the Claude cmd path refusal is for the settings argument actually typed", 
     expect(r.why).toContain("TEMP"); expect(f.calls.some((a) => a.includes("send-text"))).toBe(false);
   } finally { Object.assign(process.env, original); }
 });
+
+test("a zero or negative reset is no reset: a full window stays full", () => {
+  const T = 1793700000;
+  for (const resetsAt of [0, -62135596800]) for (const cls of ["included", "capped"]) {
+    expect(summarize({ pool: "x", source: "test", ts: T, nowSec: T + 60, cls, windows: [{ name: "w", usedPct: 100, windowMin: 300, resetsAt }] }).headroom).toBe(0);
+  }
+});

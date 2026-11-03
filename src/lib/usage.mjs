@@ -34,7 +34,7 @@ export function summarize({ pool, source, ts = null, windows = [], note, cls, no
   // room. Plan windows still roll over: a source may update its counter only on next use, so blocking it
   // could otherwise prevent recovery. Kept caps roll only when their reset follows the observation.
   const live = windows.map((w) => {
-    if (!Number.isFinite(w.resetsAt) || w.resetsAt >= nowSec || cls === "capped" && (!Number.isFinite(ts) || ts <= 0 || w.resetsAt <= ts)) return w;
+    if (!Number.isFinite(w.resetsAt) || w.resetsAt <= 0 || w.resetsAt >= nowSec || cls === "capped" && (!Number.isFinite(ts) || ts <= 0 || w.resetsAt <= ts)) return w;
     const reset = { ...w, usedPct: 0 };
     // The inferred empty window starts at its reset, never back at the source snapshot's time.
     windowTimes.set(reset, Math.round(w.resetsAt * 1000)); return reset;
