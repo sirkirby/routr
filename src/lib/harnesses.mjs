@@ -28,8 +28,6 @@
 //     brought no windows, never one that did, nor the user's own `billing` (readUsage below, pick.mjs). Only Claude
 //     has one: Codex's metered seat already shows in its usage shape (usage.mjs), and the other status answers say
 //     nothing about billing (measured 2026-09-26).
-//     `limitStatus(out)` optionally classifies applicability as applicable/not_applicable, else unknown. Only
-//     recognised fresh status can disprove a held cap; no outside text is kept.
 //   quiet: the harness's own arguments that keep the user's lifecycle hooks (and MCP servers) out of routr's own read
 //     of it. Only Claude Code has them. None found for agy or kiro; Codex's `-c features.hooks=false` is unverified, so
 //     it is left out. Where there is none the user's hooks run as configured, which is intended: a tool that records
@@ -40,7 +38,7 @@
 import { warning } from "./warnings.mjs";
 import { dirname } from "node:path";
 import { run } from "./runtime.mjs";
-import { billingFromSignIn, limitFromSignIn, signInHint, signInState } from "./signin.mjs";
+import { billingFromSignIn, statusFromSignIn, signInHint, signInState } from "./signin.mjs";
 import { usageFailure } from "./usage-failure.mjs";
 import { NO_WINDOWS_AFTER_ANSWER, claudeUsageShadows, readAgy, readClaude, readCodexLive, summarize, failedUsage, usageReadingTime, withUsageReadingTime } from "./usage.mjs";
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -87,7 +85,7 @@ const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 
 // (the interactive panel showed credits spent). An Enterprise seat with a quota keeps the same subscriptionType
 // (Anthropic's Team/Enterprise
 // article: older Enterprise seats carry limits), so the plan name alone does not decide: this reading applies only
-// to a `/usage` that answered with no windows (`when`, withBilling). A failed read stays a failed read.
+// to a `/usage` that answered with no windows (the limit state below). A failed read stays a failed read.
 const CLAUDE_AUTH = new Set(["none", "third_party", "claude.ai", "api_key_helper", "oauth_token", "api_key"]);
 const CLAUDE_CLOUD = new Set(["bedrock", "vertex", "foundry", "anthropicAws", "anthropicGoogleCloud", "mantle"]);
 const CLAUDE_CLOUD_WHY = "Claude Code runs through a cloud provider's account, billed per token by that provider (from its docs, not measured)";
@@ -108,20 +106,8 @@ export function claudeBilling(out) {
   if (typeof provider !== "string") return null;
   if (CLAUDE_CLOUD.has(provider)) return auth === "third_party" ? { billing: "metered", why: CLAUDE_CLOUD_WHY } : null;
   if (provider !== "firstParty") return null;
-  if (auth === "claude.ai") return o.subscriptionType === "enterprise" ? { billing: "metered", why: CLAUDE_ENTERPRISE_WHY, when: "no_windows" } : null;
   if (!Object.hasOwn(CLAUDE_KEY_WHY, auth)) return null;
   return { billing: "metered", why: CLAUDE_KEY_WHY[auth] };
-}
-
-// A signed-in answer may be unreadable for limits without being signed out. Only recognised non-Enterprise
-// shapes prove that an old Enterprise cap can be bypassed; a renamed/missing plan field is unknown.
-export function claudeLimitStatus(out) {
-  const o = claudeStatus(out);
-  if (!o) return null;
-  const billing = claudeBilling(out);
-  if (billing) return billing.when === "no_windows" ? "applicable" : "not_applicable";
-  const provider = Object.hasOwn(o, "apiProvider") ? o.apiProvider : "firstParty";
-  return o.authMethod === "claude.ai" && provider === "firstParty" && ["pro", "max", "team"].includes(o.subscriptionType) ? "not_applicable" : null;
 }
 
 export const HARNESSES = {
@@ -131,7 +117,7 @@ export const HARNESSES = {
     subagents: ({ model, effort }) => ({ env: { ...(model ? { CLAUDE_CODE_SUBAGENT_MODEL: model } : {}), ...(effort ? { CLAUDE_CODE_SUBAGENT_EFFORT: effort } : {}) },
       warnings: effort ? [warning("subagent_effort_version", "Anthropic's 2.1.316 changelog says CLAUDE_CODE_SUBAGENT_EFFORT was added there; earlier versions were not tested.")] : [] }),
     // `"loggedIn": false` and exit 1 when signed out.
-    auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`", billing: (out) => claudeBilling(out), limitStatus: claudeLimitStatus },
+    auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`", billing: (out) => claudeBilling(out) },
     // Its help names the latest aliases (fable, opus, sonnet on 2.1.283); its help says `--model` also takes a model's full name.
     models: async () => modelsInHelp(await readClaudeHelp()), openList: true,
     efforts: async () => effortsInHelp(await readClaudeHelp()),
@@ -150,8 +136,14 @@ export const HARNESSES = {
       live: () => readClaude({ quiet: HARNESSES.claude.quiet, file: null }),
       backgroundOnly: true,
       limit: {
-        applies: (u, b) => u?.reason === NO_WINDOWS_AFTER_ANSWER && !u.failure && b?.when === "no_windows",
-        excludes: (u, b) => Boolean(!u?.failure && u?.source === "claude /usage" && u?.windows?.length) || b?.limitStatus === "not_applicable",
+        state: (u, status) => {
+          if (!u?.failure && u?.windows?.length) return "skip"; // statusline windows need no fresh status call
+          const o = claudeStatus(status), provider = o && (Object.hasOwn(o, "apiProvider") ? o.apiProvider : "firstParty");
+          if (claudeBilling(status) || o?.authMethod === "claude.ai" && provider === "firstParty" && ["pro", "max", "team"].includes(o.subscriptionType)) return "skip";
+          return o?.authMethod === "claude.ai" && provider === "firstParty" && o.subscriptionType === "enterprise"
+            && u?.reason === NO_WINDOWS_AFTER_ANSWER && !u.failure ? "read" : "hold";
+        },
+        billing: { billing: "metered", why: CLAUDE_ENTERPRISE_WHY },
         read: async (o) => (await import("./claude-panel.mjs")).readClaudePanel(o),
         live: async (o) => (await import("./claude-panel.mjs")).claudePanelUsage(o),
         refresh: async (o) => (await import("./claude-panel.mjs")).refreshClaudePanel(o),
@@ -284,16 +276,16 @@ export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir
 
 // Usage recipes: read returns the current routing row; live bypasses caches/fallbacks for smoke checks.
 // check refreshes a snapshot; backgroundOnly restricts that action to detached jobs. A conditional limit recipe
-// declares applies(primary, billing), excludes(primary, status) as proof a held limit no longer applies,
-// read (snapshot), live (no cache), refresh (publish), and describe (fixed fields). shadows() lists name-only
+// declares state(primary, freshStatus): read (refresh allowed), hold (trust only an existing cap), or skip;
+// billing settles an applicable no-window seat. read/live/refresh/describe own the observation. shadows() lists name-only
 // preflight paths for commands that could replace a local read. Skipped preflights publish no observation.
 // Shared commands never select a harness's limit path by name.
 export async function refreshLimit(name, options = {}) {
   const src = HARNESSES[name].usage;
   return src.limit.refresh({ ...options, ready: ready(name), read: async () => {
     const u = await src.live(), b = await billingFor(name, { fresh: true });
-    if (b.not || u.failure) return { ok: false, skipped: true };
-    return src.limit.applies(u, b.billing) ? src.limit.live() : { ok: false, skipped: true };
+    if (b.not) return { ok: false, skipped: true };
+    return src.limit.state(u, b.status) === "read" ? src.limit.live() : { ok: false, skipped: true };
   } });
 }
 
@@ -319,26 +311,19 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
       let u;
       if (!src?.read) u = failedUsage(name, source, "source_missing");
       else try { u = await src.read({ background: background.includes(name) }); } catch { u = failedUsage(name, source); }
-      // The billing reading settles only a reading without windows, and then it must be today's: a sign-in kept for 6
-      // hours can predate a switch between a subscription and an API key (a switch an hour in still ranked the
-      // old way). So in exactly that case the status check runs again now. A conditional limit source also asks
-      // afresh unless primary windows prove the held cap no longer applies. That
-      // check is a sign-in check too: unless it answers signed in, this call leaves the harness out, as any
-      // signed-out one (a fresh "loggedIn": false still left it a candidate on assumed headroom).
-      const b = await billing(name, { fresh: u?.headroom == null || Boolean(src?.limit && !src.limit.excludes?.(u, {})) });
+      // Only missing/failed usage needs fresh status. Successful windows, including the statusline, stand alone.
+      const b = await billing(name, { fresh: u?.headroom == null || Boolean(u?.failure) });
       if (b?.not) return signedOut(name, b.not);
-      if (src?.limit && !src.limit.excludes?.(u, b)) {
-        const applies = src.limit.applies(u, b?.billing);
+      const state = src?.limit?.state(u, b?.status) ?? "skip";
+      if (state !== "skip") {
         let limit;
-        try { limit = await src.limit.read({ background: applies && background.includes(name) }); }
-        catch { limit = { ...withBilling(name, u, b?.billing), failure: usageFailure("read_failed") }; }
-        if (!applies) {
-          // A failed primary read or unreadable status cannot erase a trusted cap. Do not start a panel when its
-          // prerequisites are unproved; show the failure and retain whatever the limit snapshot can still trust.
-          const held = limit?.headroom != null || limit?.ageSec != null || limit?.failure ? limit : withBilling(name, u, b?.billing);
+        try { limit = await src.limit.read({ background: state === "read" && background.includes(name) }); }
+        catch { limit = { ...withBilling(name, u, src.limit.billing), failure: usageFailure("read_failed") }; }
+        if (state === "hold") {
+          if (limit?.class !== "capped" || limit.headroom == null) return withBilling(name, u, b?.billing);
           const failure = u?.failure ?? usageFailure("limit_unverified");
-          limit = withUsageReadingTime({ ...held, failure, note: failure.why ?? usageFailure(failure.code).why,
-            ...(held?.headroom != null ? { kept: { source: held.kept?.source ?? held.source ?? src.source ?? source, ageSec: held.kept?.ageSec ?? held.ageSec } } : {}) }, usageReadingTime(held));
+          limit = withUsageReadingTime({ ...limit, failure, note: failure.why ?? usageFailure(failure.code).why,
+            kept: { source: limit.kept?.source ?? limit.source ?? source, ageSec: limit.kept?.ageSec ?? limit.ageSec } }, usageReadingTime(limit));
         }
         return withUsageReadingTime({ ...limit, limitReader: true, label: HARNESSES[name]?.label }, usageReadingTime(limit));
       }
@@ -356,7 +341,7 @@ export async function billingFor(name, { fresh = false, harness = HARNESSES[name
     const state = await signInState(name, harness, { ...o, fresh: true });
     if (state !== "yes") return { billing: null, not: signInHint(harness, state) };
   }
-  return { billing: billingFromSignIn(name), ...(harness?.auth?.limitStatus ? { limitStatus: limitFromSignIn(name) } : {}), not: null };
+  return { billing: billingFromSignIn(name), status: statusFromSignIn(name), not: null };
 }
 
 // A reading, settled by what the harness's own status said about billing (`auth.billing`). With no windows it is that
@@ -365,9 +350,6 @@ export async function billingFor(name, { fresh = false, harness = HARNESSES[name
 // the disagreement is noted, not resolved by a guess. The user's own `billing` still wins over this (pick.mjs).
 export function withBilling(name, u, b) {
   if (b?.billing !== "metered" || !u) return u;
-  // A reading that holds only when the seat answered with no windows (an Enterprise login) leaves windows, and a
-  // read that failed, as they are: a failed read can carry the reason from an old snapshot, and is still a failure.
-  if (b.when === "no_windows" && (u.reason !== NO_WINDOWS_AFTER_ANSWER || u.failure)) return u;
   const from = HARNESSES[name] ? `${HARNESSES[name].executable} ${HARNESSES[name].auth.check.join(" ")}` : "sign-in check";
   if (u.headroom != null) return withUsageReadingTime({ ...u, note: [u.note, `\`${from}\` says ${b.why}, yet usage windows arrived: ranked on the windows`].filter(Boolean).join("; ") }, usageReadingTime(u));
   const rest = { ...u };

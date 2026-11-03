@@ -116,10 +116,14 @@ supply a recipe; Cursor retains its private config copy, extra Enter and shell-e
 when a conditional limit reader applies. Missing herdr is `herdr_missing`; unfinished first-run screens are
 `open_once`. Sentences are fixed routr text, labelled from the harness registry, never from a screen. The driver proves a
 foreground harness still runs before typing or pressing Enter. Claude checks documented user command names
-without reading their contents, before both print and panel reads. Its menu must highlight the built-in
-“Show session cost, plan usage, and activity stats”; otherwise Escape is sent without Enter and
+without reading their contents, just before a print command or panel start. A fresh statusline snapshot needs no
+command or extra status call. The panel menu must show exactly one /usage row, highlighted; descriptions are
+not compared. Otherwise Escape is sent without Enter and
 `command_shadowed` reports why the command could spend. The lead measured that a shadow really makes a model
-call on 2.1.317, 2026-11-03; routr does not try a shadowed command.
+call on 2.1.317, 2026-11-03. That menu check was measured only with a project skill. A skill in a differently
+named folder with name: usage did not take over (lead measurement, same version/date). Plugins and managed
+skills are unmeasured. A print answer with num_turns > 0 reports command_shadowed; zero turns are required,
+without requiring local_command. No takeover backoff is added.
 
 Failed usage reads have fixed codes and sentences at the reader boundary and in the snapshot cache; harness
 output and exception text are never copied into their diagnostics. A failed refresh keeps the last good reading
@@ -138,20 +142,21 @@ that the limit cannot be seen, so routr will not stop at it. A trusted kept cap 
 Metered seats whose limit read succeeded, or which needed no limit reader, get no such warning. Metered accounts without known capacity are valid readings. Accounts
 left out by settings or sign-in status stay in `excluded`, outside the failed readings.
 
-A failed print read or unreadable signed-in status cannot bypass a trusted panel cap. Only a successful print
-answer with windows, or a fresh recognised non-Enterprise status, proves it no longer applies. A preflight that
-does not read the panel publishes no new limit observation. Unknown applicability remains visible in output and
-in the usage smoke.
+A failed print read or unreadable signed-in status cannot bypass a trusted panel cap. Successful usage
+windows, including the statusline, or a fresh recognised non-Enterprise status, prove it no longer applies. A skipped
+panel read publishes no new observation. Unknown applicability is reported in output only when a trusted cap
+is held; otherwise the primary reading is returned. The usage smoke still reports unknown applicability as a failure.
 
 A complete panel section is required, with exactly one percent/ratio row or the spent-only line alone. Extra
 rows, duplicate limits, malformed percentages and incomplete draws fail. A spent-only reading must hold for
-750 ms before acceptance; that settle is a judgment, not a measurement. The private Claude pane uses 120 columns
-and 200 rows via routr's own settings file. A panel beyond that bound must fail for lack of a complete section;
-A missing section is a failed read.
+3 s before acceptance; that settle is a judgment, not a measurement. The private Claude pane uses 120 columns
+and 200 rows via routr's own content-addressed settings file. It replaces the user's herdr config for that
+private session, including default_shell. A missing complete section, including one beyond that size, fails.
+Linked settings folders/files are refused as private_folder; changed contents get a new hashed filename.
 
 A panel cap is trusted only under the same 24-hour snapshot limit. Its date-only reset is the end of that day
-in its zone; only a kept observation from before that reset rolls over afterward. A fresh full observation
-after the reset stays full, for every harness. Unknown period means full reserve. A Codex spend-control-only
+in its zone; only a kept cap from before that reset rolls over afterward. A fresh full cap after the reset
+stays full (synthetic inputs, not seen live). Plan windows still roll over, and past resets hold full reserve. Unknown period means full reserve. A Codex spend-control-only
 stop with no cap/reset is trusted for five minutes, including from session logs: older readings become unknown
 capacity rather than blocking a seat forever.
 

@@ -110,26 +110,12 @@ For each subscription that can take the work, routr works out a **usable** share
 3. **Count the tightest window.** A subscription with plenty left this week but little left in the next few hours is
    only as usable as those few hours.
 
-A seat billed per use with no quota has no window to measure. Its `headroom` and `usable` are null, including when
-legacy `metered_rank: "with"` is set. Routr cannot infer a shared prepaid balance or a personal allowance from this.
-A cap the harness reports is still enforced as a window, even with a `billing: "metered"` override.
-routr knows a seat is billed this way from what the harness reports: its usage shape (a Codex Enterprise seat with
-no windows and unlimited credits) or its own sign-in status (Claude signed in with an API key, or on an Enterprise seat whose `/usage` answered with no
-windows). Your `billing`
-setting wins over either when no window arrived; a window that does arrive is always ranked.
-For that Enterprise Claude shape only, routr starts a detached private herdr read of the interactive `/usage` panel.
-An admin limit becomes a `spend_limit` window (`capped`), ahead of `billing: metered`. Its date-only reset is the
-end of the named day in its zone; its period is unknown, so the full reserve stays. Only an observation from before
-that reset rolls over afterward; a fresh full reading with a past reset stays full. A spent-only credits line means no limit is showing and stays metered. Missing or changed
-credits text is a failed read, with a usage failure code; absent a trusted kept cap, failures and no herdr leave
-it metered with unknown budget.
-Failed print reads and unknown signed-in status retain a trusted panel cap. Only answered print windows or a
-fresh recognised non-Enterprise status prove it no longer applies. A skipped panel publishes no observation.
-This panel follows a one-hour refresh (a judgment, not a measurement) and the 24-hour trust rule; commands report the saved reading and age.
-Codex member caps use the reported monthly window, accepting the measured UTC boundary plus one second. A
-spend-control-only stop without a reset is trusted for five minutes, including in a fallback log; older stops
-become unknown capacity so an old log cannot exclude the seat forever. These are freshness rules, not budgets.
-The ranking note says “Metered budget is unknown” only when a metered account is ranked.
+A metered seat has no known remaining budget: `headroom` and `usable` are null. Your `billing` setting applies
+when no window arrived; a reported admin cap is a window and outranks that setting. Existing reserves decide
+whether it has room. Claude Enterprise's limit panel is read in a detached private terminal; commands report
+the saved reading and age. A failed read says why and retains a trusted cap when available. These shapes and
+freshness rules are in the [harness reference](../skills/routr/references/harnesses.md#admin-set-limits-2026-11-03-macos-claude-code-21317-codex-01660).
+The note says “Metered budget is unknown” only when a metered account is ranked.
 
 ## The order
 

@@ -223,8 +223,9 @@ more window: owner-set caps were read under and at the limit on Codex 0.166.0 an
 charge through print/auth failures unless a fresh answer proves the reader no longer applies. An unreadable
 limit is stated, not read as no limit; without a trusted cap routr cannot stop at an unseen limit.
 
-Claude reads refuse documented user commands named `usage`, and the interactive reader confirms the highlighted
-built-in before Enter. It uses a private empty folder, hooks and MCP servers off, and a settings file in routr's
+Claude checks documented user commands named `usage` before running a read. The interactive reader requires
+exactly one /usage menu row, highlighted, before Enter (measured only with a project skill). Plugins and managed
+skills, and the same risk on other harnesses, are not measured. It uses a private empty folder, hooks and MCP servers off, and a settings file in routr's
 state; screen text and dollar figures are never output. Uninstall leaves Claude's own trusted-project entry.
 
 ## Evidence

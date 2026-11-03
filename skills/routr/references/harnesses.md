@@ -287,7 +287,7 @@ to own Claude's single statusline slot. The read, run in the system temp folder:
   never named and never ranked on: routr's advice carries no model names. The first line and the breakdown are not
   read. Reset times seen: "Oct 5 at 4pm", "Oct 5 at 3:59pm", "Oct 5 at 10pm", always with an IANA zone in
   parentheses. No year is shown: routr takes the nearest occurrence (a reset just past stays past, and the window
-  rolls over), converts it with the zone's own offset at that time, and leaves a reset unset when it cannot read it,
+  rolls over for plan windows), converts it with the zone's own offset at that time, and leaves a reset unset when it cannot read it,
   when the clock skips that time, or when it is further away than the window plus a day. A time the clock shows twice
   takes the later instant, so a window never rolls over early.
 - Hooks: without `--settings '{"disableAllHooks":true}'` the user's SessionStart and SessionEnd hooks ran (seen in
@@ -545,23 +545,43 @@ without a model turn. Its own files are left alone. No model prompt was sent.
 
 The lead measured a project skill named `usage` replacing the built-in in both print and interactive mode,
 causing a real model turn. Disabling slash commands removed the built-in too, and a zero turn limit did not
-prevent spending. routr does not run a shadowed command to test it. Before either read it checks only the names
+prevent spending. routr does not run a shadowed command to test it. Just before a print exec or panel start it
+checks only the names
 `skills/usage/` and `commands/usage.md` under `CLAUDE_CONFIG_DIR` or `~/.claude`. Before Enter it also requires the
-highlighted built-in description “Show session cost, plan usage, and activity stats”; otherwise it sends Escape
-and reports `command_shadowed`. Plugin skills are documented as `plugin:skill`; that namespacing was not measured.
+menu to contain exactly one /usage row, highlighted; descriptions are not compared. Otherwise it sends Escape
+and reports `command_shadowed`. This count was measured only with a project skill. On the same version/date,
+a differently named skill folder with name: usage did not take over: 0 turns, local_command usage. Plugins and
+managed skills are unmeasured; plugin:skill namespacing is vendor documentation only. A print answer with
+num_turns > 0 is command_shadowed; num_turns must be zero, but local_command is not required (not recorded for
+an API-key login). A fresh statusline reading serves even with a usage skill present, without a print command
+or extra status call. No backoff is added.
 The same shadow risk on Cursor, Kiro and Antigravity has not been measured; their command behavior is unchanged.
 
 The panel must contain a complete Usage credits section ending at Esc to cancel on the panel screen. Exactly one
-percent/ratio row, or a spent-only line alone, is accepted. A spent-only draw settles unchanged for 750 ms (a
-judgment). Extra rows, duplicate limits, comma-grouped percentages and incomplete draws fail. A fresh reading
-whose reset is already past is evidence of a full window that did not roll; only older pre-reset observations roll.
+percent/ratio row, or a spent-only line alone, is accepted. A spent-only draw settles unchanged for 3 s (a
+judgment). Extra rows, duplicate limits, comma-grouped percentages and incomplete draws fail. Caps with a
+reset at or before their observation stay as observed (synthetic tests, not seen live). Plan windows roll over
+as before. A past reset holds the full reserve.
 
 Interactive Claude starts with a hooks-off settings file in routr's own state, outside the empty working folder,
 on every shell. No JSON quotes are typed into PowerShell 5.1. Other typed usage starts were checked: Cursor's
 arguments carry no JSON; print reads use direct argv. Windows remains untested live. The private Claude terminal
-uses a generated herdr config with 120 columns and 200 rows; beyond that bound a missing complete section fails.
+uses a generated herdr config with 120 columns and 200 rows, replacing the user's config for that private
+session: their default_shell does not apply. Both settings files use hashes of their contents, so an upgrade
+gets a new file without a hand-set version. Linked folders/files fail as private_folder. Beyond that size a
+missing complete section fails.
 A source read on the maintainer's default login, with its plugins unchanged (2026-11-03), showed a 49-row panel,
 with Usage credits at row 46 and its footer visible. The credits body was neither measured supported shape, so
 the reader returned invalid_response rather than no limit. The built-in menu guard passed. An early trust answer
 was ignored; a 750 ms settle before answering the same recognised trust screen worked (a judgment).
 Claude's own trusted-project entry remains after uninstall removes routr's empty folder and settings.
+
+
+Claude's panel refreshes after one hour (a judgment), retaining a last good observation for less than 24 hours.
+Its date-only reset is the end of the named day in its zone; unknown period holds full reserve. Only a cap
+observed before that reset rolls over afterward. Codex monthly member caps accept the measured UTC month
+boundary and boundary +1 second. A spend-control-only stop with no reset is trusted for five minutes, including
+from a fallback session log; older readings become unknown so a stopped old log cannot block forever. Skipped
+panel refreshes publish no observation. Failed print/status reads keep a trusted cap when one exists; successful
+windows, including the statusline, or recognised non-Enterprise status bypass it. An unknown state with no cap
+returns the primary reading. These are freshness rules, not budgets.

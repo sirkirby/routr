@@ -25,10 +25,11 @@ const pidAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e)
 const ageMs = (dir) => { try { return Date.now() - statSync(dir).mtimeMs; } catch { return 0; } };
 // A spawn can fail after it returns (EACCES, EMFILE, herdr gone since the last call): report it, never let it throw.
 // Its shells start harnesses, so the server must drop the lead's session too. Measured 2026-10-24, herdr 0.9.5:
-// `--session` server and `pane list` work with the pane names removed. Herdr's settings stay; clients keep all their env.
-const startServer = (name, failed, { rows } = {}) => {
-  const settings = rows ? { HERDR_CONFIG_PATH: usageStateFile(`terminal-${rows}-v1.toml`, `[server]\nheadless_cols = 120\nheadless_rows = ${rows}\n`) } : {};
-  const c = startProcess("herdr", ["--session", name, "server"], { env: { ...harnessEnv(), ...settings }, detached: true, stdio: "ignore" }); c.on("error", failed); c.unref();
+// `--session` server and `pane list` work with the pane names removed. A requested size replaces the
+// user's config for this private session, including default_shell; clients keep their own environment.
+export const startServer = (name, failed, { rows, spawn = startProcess } = {}) => {
+  const settings = rows ? { HERDR_CONFIG_PATH: usageStateFile("toml", `[server]\nheadless_cols = 120\nheadless_rows = ${rows}\n`) } : {};
+  const c = spawn("herdr", ["--session", name, "server"], { env: { ...harnessEnv(), ...settings }, detached: true, stdio: "ignore" }); c.on("error", failed); c.unref();
 };
 
 // `call(args)` runs one herdr command in the private session and throws on failure; `pane` is where to type; `read`,

@@ -16,7 +16,7 @@ export function fakePanel(first = trust, panel = hit, { menu = "❯ /usage Show 
       if (a[1] === "create") return herdrOK({ root_pane: { pane_id: "w:p" } });
       if (a[1] === "process-info") return shellInfo(stage === "shell" || !running ? [{ pid: 1, cwd }] : [{ pid: 1, cwd }, { pid: 2 }]);
       if (a[1] === "read") return herdrOK({ text: stage === "shell" ? "chris % " : stage === "first" ? first : stage === "ready" ? ready : stage === "menu" ? menu : typeof panel === "function" ? panel(ticks) : panel });
-      if (a[1] === "run") { expect(a[3]).not.toContain("disableAllHooks"); expect(a[3]).toContain("claude-hooks-off-v1.json"); expect(a[3]).toContain("--strict-mcp-config"); stage = "first"; }
+      if (a[1] === "run") { expect(a[3]).not.toContain("disableAllHooks"); expect(a[3]).toMatch(/[a-f0-9]{64}\.json/); expect(a[3]).toContain("--strict-mcp-config"); stage = "first"; }
       if (a[1] === "send-keys" && a[3] === "down" && stage === "first") first = first.replace("❯ No, exit", "  No, exit").replace("  Yes, I trust", "❯ Yes, I trust");
       if (a[1] === "send-keys" && a.slice(3).includes("enter")) { if (stage === "first") stage = "ready"; else if (stage === "menu") stage = "panel"; }
       if (a[1] === "send-text") { expect(a[3]).toBe("/usage"); stage = "menu"; }

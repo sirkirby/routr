@@ -117,6 +117,16 @@ Run `routr usage kiro` to read it now; if it cannot be read, pass `--headroom ki
 interactive menu did not confirm the built-in. Claude checks the names `skills/usage/` and `commands/usage.md`
 under its config folder (`CLAUDE_CONFIG_DIR`, otherwise `~/.claude`) without reading their contents. Rename or
 remove your conflicting command yourself if you want routr to read usage. The reader never runs it to find out.
-The interactive built-in must be highlighted with its measured description; a changed description or absent
-menu is a stated failure and Escape is sent without Enter. Plugin namespacing and the same risk on other
-harnesses have not been measured.
+The menu must contain exactly one /usage row and highlight it. Duplicate rows, an unhighlighted row or an
+absent menu cause Escape without Enter. Only a project-skill shadow was measured. A differently named skill
+folder with name: usage did not take over; plugins and managed skills remain unmeasured. A print answer that
+reports a model turn also gets this code. A fresh statusline snapshot still serves without a command.
+
+
+## Limit applicability could not be confirmed
+
+`limit_unverified` means the current usage/status answer did not prove whether an existing trusted cap still
+applies. routr keeps that cap and its age until it expires; it starts no panel while the prerequisites are
+unknown. Successful windows, including a statusline snapshot, are sufficient and need no fresh status call.
+Without a trusted cap this condition returns the primary reading rather than claiming a limit failure. The
+usage smoke still fails when it cannot confirm whether its limit reader should run.

@@ -37,7 +37,7 @@ export function rankSubscriptions(level, usage, c, launches = null) {
     // One line per window, so the numbers can be checked against the harness's own usage screen. A window whose length
     // is unknown (a cap with an odd reset) holds the full reserve instead of tapering it.
     const windows = (live ? u.windows ?? [] : []).filter((w) => Number.isFinite(w.usedPct)).map((w) => {
-      const ahead = w.resetsAt && w.windowMin ? Math.min(1, Math.max(0, (w.resetsAt - nowSec) / (w.windowMin * 60))) : 1;
+      const ahead = w.resetsAt > nowSec && w.windowMin ? Math.min(1, Math.max(0, (w.resetsAt - nowSec) / (w.windowMin * 60))) : 1;
       const left = Math.max(0, 1 - w.usedPct / 100);
       return { window: w.name, used_pct: Math.round(w.usedPct), resets_in_h: w.resetsAt ? Math.round(Math.max(0, w.resetsAt - nowSec) / 360) / 10 : null, left: r2(left), reserve_now: r2(s.reserve * ahead), usable: r2(Math.max(0, left - s.reserve * ahead)) };
     });

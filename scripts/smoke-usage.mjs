@@ -25,12 +25,13 @@ export async function smokeUsage({ config = loadConfig().config, sources = SOURC
       b = await billing(name, { fresh: r.headroom == null });
       if (b.not) { skipped(b.not); continue; }
     }
-    const line = said(r?.ok === undefined ? withBilling(name, r, b.billing) : r, s.billing);
+    const state = src?.limit?.state(r, b.status);
+    const line = said(r?.ok === undefined ? withBilling(name, r, b.billing ?? (state === "read" ? src.limit.billing : null)) : r, s.billing);
     if (line.startsWith("FAILED")) failed++;
     log(`${name}: ${line} (${src?.source ?? HARNESSES[name]?.usage.source}, ${((performance.now() - t) / 1000).toFixed(1)} s)`);
     if (!src?.limit) continue;
-    if (!src.limit.applies(r, b.billing)) {
-      if (src.limit.excludes?.(r, b)) {
+    if (state !== "read") {
+      if (state === "skip") {
         const reason = r?.windows?.length ? "this seat shows windows" : "this sign-in does not need a limit reader";
         log(`${name} limit: NOT EXERCISED (${reason})`);
       } else { log(`${name} limit: FAILED (limit_unverified)`); failed++; }

@@ -16,15 +16,15 @@ const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8"))
 
 // What the same answer said about billing (the registry's `auth.billing`), kept beside the state with the same
 // lifetime. Where it decides a class (a reading without windows), readUsage asks again first (`billingFor`, fresh):
-// a login switched within the 6 hours must not keep the old class. Only the class, the
-// reader's fixed reason and its fixed condition are kept, never anything else the status printed (Claude's carries the email, organisation and
+// a login switched within the 6 hours must not keep the old class. Only the class and the
+// reader's fixed reason are kept, never anything else the status printed (Claude's carries the email, organisation and
 // ids). A reader that throws, or answers anything else, is no reading.
-const billingOf = (b) => (b?.billing === "metered" && typeof b.why === "string" ? { billing: "metered", why: b.why.slice(0, 200), ...(b.when === "no_windows" ? { when: "no_windows" } : {}) } : null);
+const billingOf = (b) => (b?.billing === "metered" && typeof b.why === "string" ? { billing: "metered", why: b.why.slice(0, 200) } : null);
 // The billing reading of each harness this process last asked (or found kept), for readUsage beside the sign-in gate:
 // in memory too, so a cache that cannot be written still carries it through this call.
-const billingSeen = new Map(), limitSeen = new Map();
-const limitOf = (s) => ["applicable", "not_applicable"].includes(s) ? s : null;
-export const limitFromSignIn = (name) => limitSeen.get(name) ?? null;
+const billingSeen = new Map(), statusSeen = new Map();
+// Fresh status text stays only in this process, for the registry boundary to classify; it is never cached or output.
+export const statusFromSignIn = (name) => statusSeen.get(name) ?? null;
 export const billingFromSignIn = (name) => billingSeen.get(name) ?? null;
 
 // `harness` is the registry entry. The state is "yes", "no", or "no answer" (not installed, or it hung): only "yes" gets
@@ -32,7 +32,7 @@ export const billingFromSignIn = (name) => billingSeen.get(name) ?? null;
 export async function signInState(name, harness, { fresh = false, nowSec = Date.now() / 1000, file = SIGNED_IN_FILE(), ask = probe } = {}) {
   const kept = readJson(file)[name];
   if (!fresh && kept?.state && nowSec - kept.ts < KEEP_SEC[kept.state === "yes"]) {
-    limitSeen.set(name, kept.state === "yes" ? limitOf(kept.limitStatus) : null);
+    statusSeen.delete(name);
     billingSeen.set(name, kept.state === "yes" ? billingOf(kept.billing) : null);
     return kept.state;
   }
@@ -40,11 +40,9 @@ export async function signInState(name, harness, { fresh = false, nowSec = Date.
   const state = !r ? "no answer" : harness.auth.signedIn(r.out, r.code) ? "yes" : "no";
   let billing = null;
   if (state === "yes") try { billing = billingOf(harness.auth.billing?.(r.out, r.code)); } catch {}
-  let limitStatus = null;
-  if (state === "yes") try { limitStatus = limitOf(harness.auth.limitStatus?.(r.out, r.code)); } catch {}
-  limitSeen.set(name, limitStatus);
+  statusSeen.set(name, state === "yes" ? r.out : null);
   billingSeen.set(name, billing);
-  try { writeJsonAtomic(file, { ...readJson(file), [name]: { ts: nowSec, state, ...(billing ? { billing } : {}), ...(limitStatus ? { limitStatus } : {}) } }); } catch {}
+  try { writeJsonAtomic(file, { ...readJson(file), [name]: { ts: nowSec, state, ...(billing ? { billing } : {}) } }); } catch {}
   return state;
 }
 export const signedIn = async (name, harness, o) => (await signInState(name, harness, o)) === "yes";

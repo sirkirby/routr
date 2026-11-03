@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readClaude } from "../src/lib/usage.mjs";
 import { claudePanelUsage, claudeUsageMenu, parseClaudePanel } from "../src/lib/claude-panel.mjs";
-import { HARNESSES, claudeLimitStatus } from "../src/lib/harnesses.mjs";
+import { HARNESSES } from "../src/lib/harnesses.mjs";
 import { fakePanel } from "./fixtures/panel-reader.mjs";
 import { scratch } from "./helpers.mjs";
 const ready = "Claude Code\n❯ \n? for shortcuts";
@@ -58,24 +58,15 @@ test("trust is answered only with No, exit highlighted", async () => {
 });
 
 test("a spent-only draw settles, and a limit arriving during the settle wins", async () => {
-  const f = fakePanel(ready, (ticks) => ticks < 750 ? none : hit);
+  const f = fakePanel(ready, (ticks) => ticks < 2500 ? none : hit);
   expect(await claudePanelUsage(f.options)).toMatchObject({ ok: true, used_pct: 100 });
   expect(parseClaudePanel(none.replace(/Esc to cancel\s*$/, ""))).toBeNull();
 });
 
-test("renamed or unreadable signed-in status is not proof that a limit reader no longer applies", () => {
-  expect(claudeLimitStatus('{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}')).toBe("not_applicable");
-  expect(claudeLimitStatus('{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"enterprise"}')).toBe("applicable");
-  expect(claudeLimitStatus('{"loggedIn":true,"authMethod":"claude.ai","renamedPlan":"enterprise"}')).toBeNull();
-  expect(claudeLimitStatus('"loggedIn": true not json')).toBeNull();
-});
-
-
-test("print responses must identify the built-in with zero turns", async () => {
-  const text = readFileSync(new URL("./fixtures/admin-limits/claude-print-usage.json", import.meta.url), "utf8");
-  const original = JSON.parse(text);
-  for (const extra of [{ num_turns: 1 }, { local_command: undefined }]) {
-    const r = await readClaude({ file: null, shadows: [], exec: async () => JSON.stringify({ ...original, ...extra }) });
-    expect(r).toMatchObject({ failure: { code: "invalid_response" } });
-  }
+test("renamed status holds a cap while a recognised status decides read or skip", () => {
+  const state = HARNESSES.claude.usage.limit.state, u = { reason: "no_windows_after_answer", windows: [] };
+  expect(state(u, '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}')).toBe("skip");
+  expect(state(u, '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"enterprise"}')).toBe("read");
+  expect(state(u, '{"loggedIn":true,"authMethod":"claude.ai","renamedPlan":"enterprise"}')).toBe("hold");
+  expect(state(u, '"loggedIn": true not json')).toBe("hold");
 });

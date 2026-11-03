@@ -121,10 +121,11 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   raises no such warning. Commands report the saved reading and age, never wait for that screen. The snapshot is trusted under
   24 hours and refreshed after one hour (a judgment, not a measurement); Cursor and Kiro retain four hours.
   A date-only cap reset means the end of that day in its zone, and its unknown period holds full reserve. Only
-  an observation from before a reset rolls over afterward; a fresh full reading after it stays full. Failed print
-  reads and unknown signed-in status retain a trusted cap. Only answered print windows or a fresh recognised
+  a cap observed before its reset rolls over afterward; a fresh full cap after it stays full. Plan windows
+  still roll over and a past reset holds full reserve. Failed print
+  reads and unknown signed-in status retain a trusted cap. Successful windows, including the statusline, or a fresh recognised
   non-Enterprise status prove it no longer applies. Claude reads refuse a user command named `usage`, and its
-  panel confirms the highlighted built-in before Enter; a refusal is visible as `command_shadowed`.
+  panel requires exactly one /usage row, highlighted, before Enter (measured with a project skill only); a refusal is visible as `command_shadowed`.
   “Metered budget is unknown” is said only when a metered account is ranked. Under `windows` it shows each usage window as the harness reports it: percent
   used and hours until it resets. The user's reserve shrinks as a window nears its reset, because unused capacity
   expires then. `your_default` is the user's everyday model on that subscription. `excluded` lists subscriptions the

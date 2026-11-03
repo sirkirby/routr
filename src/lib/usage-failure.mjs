@@ -13,7 +13,7 @@ export const USAGE_FAILURES = Object.freeze({
   private_folder: "routr could not make a private folder for the usage read.",
   source_missing: "No usage reader is available for this subscription.",
   // Launch says the same of a work folder (herdr's CMD_PATH); here it applies to actual typed arguments.
-  cmd_path: "The pane shell is cmd, which expands % and ! in typed arguments even inside quotes. Use a path without those characters, or a PowerShell pane.",
+  cmd_path: "The pane shell is cmd, which expands % and ! in typed arguments even inside quotes. Set TEMP to a safe path for temporary reads; otherwise use a path without those characters, or a PowerShell pane when the reader uses your shell settings.",
 });
 export const usageFailure = (code, label) => {
   code = typeof code === "string" && Object.hasOwn(USAGE_FAILURES, code) ? code : "read_failed";

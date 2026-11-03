@@ -80,7 +80,7 @@ const OCT5 = Date.UTC(2026, 9, 5, 17, 35) / 1000; // 1:35pm in Detroit, when it 
 const utc = (...a) => Date.UTC(...a) / 1000;
 // A displayed reset is the END of the minute it shows: the last second of it.
 const endOf = (...a) => utc(...a) + 59;
-const claudeAnswer = (result, over = {}) => JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 0, local_command: "usage", total_cost_usd: 0, result, ...over });
+const claudeAnswer = (result, over = {}) => JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 0, total_cost_usd: 0, result, ...over });
 
 test("Claude's /usage text: the session and all-models week are the statusline's windows; a model's own week is counted, never named", () => {
   const p = parseClaudeUsage(CLAUDE_USAGE, OCT5);
@@ -461,7 +461,7 @@ test("a cmd shell is never typed a temporary folder that holds % or !: the read 
       : all[3] === "create" ? herdrOK({ root_pane: { pane_id: "w1:p1" } }) : f.deps.run(all);
     const r = await cursorUsage({ ...f.deps, tmp, run });
     expect(r).toEqual({ ok: false, ...usageFailure("cmd_path"), read_yourself: CURSOR_BY_HAND });
-    expect(r.why).toBe("The pane shell is cmd, which expands % and ! in typed arguments even inside quotes. Use a path without those characters, or a PowerShell pane.");
+    expect(r.why).toBe("The pane shell is cmd, which expands % and ! in typed arguments even inside quotes. Set TEMP to a safe path for temporary reads; otherwise use a path without those characters, or a PowerShell pane when the reader uses your shell settings.");
     expect(f.calls.some((a) => ["run", "send-text", "send-keys"].includes(a[3]))).toBe(false);
     expect(readdirSync(tmp)).toEqual([]); // the private folder goes with the read
     expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
@@ -814,14 +814,14 @@ test("the billing reading is kept with the sign-in answer, the same lifetime, an
   const o = (out, nowSec, extra = {}) => ({ file, nowSec, ask: async () => (out == null ? null : { out, code: 0 }), ...extra });
   expect(await signInState(name, HARNESSES.claude, o(AUTH_API_KEY, T))).toBe("yes");
   expect(billingFromSignIn(name)).toMatchObject({ billing: "metered" });
-  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: T, state: "yes", billing: { billing: "metered", why: billingFromSignIn(name).why }, limitStatus: "not_applicable" });
+  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: T, state: "yes", billing: { billing: "metered", why: billingFromSignIn(name).why } });
   expect(await signInState(name, HARNESSES.claude, o(null, T + 5 * 3600))).toBe("yes"); // kept: not asked, still metered
   expect(billingFromSignIn(name)).toMatchObject({ billing: "metered" });
   // A subscription login: no reading, and none of what the status printed about the account is kept.
   expect(await signInState(name, HARNESSES.claude, o(AUTH_MAX, T + 7 * 3600))).toBe("yes");
   expect(billingFromSignIn(name)).toBeNull();
   const kept = readFileSync(file, "utf8");
-  expect(JSON.parse(kept)[name]).toEqual({ ts: T + 7 * 3600, state: "yes", limitStatus: "not_applicable" });
+  expect(JSON.parse(kept)[name]).toEqual({ ts: T + 7 * 3600, state: "yes" });
   for (const leak of ["someone@example.com", "Example Org", "00000000-0000", "max", "orgId", "email"]) expect(kept).not.toContain(leak);
   // A reader that throws is no reading, never a failed sign-in check.
   expect(await signInState(name, { ...HARNESSES.claude, auth: { ...HARNESSES.claude.auth, billing: () => { throw new Error("x"); } } }, o(AUTH_API_KEY, T, { fresh: true }))).toBe("yes");
@@ -863,55 +863,21 @@ test("windows that arrive while the sign-in status says metered are kept, and th
 // `claude auth status` on a usage-based Enterprise seat, measured 2026-10-27 (Claude Code 2.1.311, macOS); its /usage
 // showed no windows and only credits spent. Email, organisation and ids made up.
 const AUTH_ENTERPRISE = JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty", analyticsDisabled: false, email: "someone@example.com", orgId: "00000000-0000-0000-0000-000000000000", orgName: "Example Org", subscriptionType: "enterprise" }, null, 2);
-test("an Enterprise login is metered only when its /usage answered with no windows", async () => {
-  const billing = HARNESSES.claude.auth.billing;
-  expect(billing(AUTH_ENTERPRISE, 0)).toMatchObject({ billing: "metered", when: "no_windows" });
-  expect(billing(AUTH_API_KEY, 0).when).toBeUndefined();
-  // Only that exact plan name, on a first-party claude.ai login: anything else is no reading.
-  for (const t of ["Enterprise", "enterprise ", "team", "max", "pro", "", null, 1, ["enterprise"], {}])
-    expect([t, billing(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: "firstParty", subscriptionType: t }), 0)]).toEqual([t, null]);
-  expect(billing(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "enterprise" }), 0)).toMatchObject({ when: "no_windows" }); // absent provider is first-party
-  for (const p of ["gateway", "bedrock", null])
-    expect([p, billing(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: p, subscriptionType: "enterprise" }), 0)]).toEqual([p, null]);
-  const ent = { billing: billing(AUTH_ENTERPRISE, 0), not: null };
-  const read = (exec) => readUsage(["claude"], {}, { sources: { claude: { read: () => readClaude({ file: join(scratch("claude-enterprise"), "none.json"), nowSec: OCT5, exec }) } }, why: async () => null, billing: () => ent });
-  // No windows after an answer: metered, and doctor no longer asks for `billing`.
-  const [u] = await read(async () => claudeAnswer("Total cost: $0.0000\nUsage: 0 input, 0 output, 0 cache read, 0 cache write"));
-  expect(u).toMatchObject({ class: "metered", headroom: null, source: "claude auth status", billing: { billing: "metered", source: "claude auth status" } });
-  expect(u.reason).toBeUndefined(); expect(u.note).toContain("Enterprise");
-  expect(rankSubscriptions("standard", [u], cfg()).ranked.find((x) => x.subscription === "claude")).toMatchObject({ class: "metered", usage: "metered", usable: null });
-  // A read that failed is not a seat without a quota: it stays a failure on the assumed headroom.
-  const [failed] = await read(async () => null);
-  expect(failed.class).not.toBe("metered"); expect(failed.billing).toBeUndefined(); expect(failed.failure).toBeDefined();
-  // Claude's /usage is read with its exit status: an answer printed before a non-zero exit is no answer (run's exitZero).
-  let opts; await read(async (cmd, args, o) => { opts = o; return null; }); expect(opts).toMatchObject({ exitZero: true });
-  // An answer routr cannot read is not "no windows": an empty result, a window line cut short, or one Claude did not mark a success.
-  for (const exec of [async () => claudeAnswer(""), async () => claudeAnswer("  \n"), async () => claudeAnswer("Current session: 100%"),
-    async () => claudeAnswer("Current week (all models): 30% used · resets"), async () => claudeAnswer("Total cost: $0.0000", { subtype: "error_during_execution" }),
-    async () => JSON.stringify({ type: "result", is_error: false, result: "Total cost: $0.0000" })]) {
-    const [bad] = await read(exec);
-    expect([bad.class, bad.billing, bad.failure?.code, bad.reason]).toEqual(["unknown", undefined, "invalid_response", undefined]);
-  }
-  // Nor when an old snapshot said Claude answered with no windows: the failed read keeps that reason, and is still a failure.
-  for (const [exec, age] of [[async () => null, 60], [async () => { throw new Error("hung"); }, 30 * 86400], [async () => "not json", 60]]) {
-    const file = join(scratch("claude-enterprise-snap"), "snap.json"); writeFileSync(file, JSON.stringify({ ts: OCT5 - age, answered: true }));
-    const [kept] = await readUsage(["claude"], {}, { sources: { claude: { read: () => readClaude({ file, nowSec: OCT5, exec }) } }, why: async () => null, billing: () => ent });
-    expect([kept.reason, kept.class, kept.billing, Boolean(kept.failure)]).toEqual(["no_windows_after_answer", "unknown", undefined, true]);
-  }
-  // An Enterprise seat with a quota shows windows: ranked on them, with no disagreement noted.
-  const [quota] = await readUsage(["claude"], {}, { sources: { claude: { read: async () => live("claude", 0.6) } }, why: async () => null, billing: () => ent });
-  expect(quota).toMatchObject({ headroom: 0.6 }); expect(quota.class).not.toBe("metered"); expect(String(quota.note ?? "")).not.toContain("yet usage windows arrived");
-  // The user's `billing: "included"` still wins.
-  expect(rankSubscriptions("standard", [u], cfg({ subscriptions: { claude: { ...cfg().subscriptions.claude, billing: "included" } } })).ranked.find((x) => x.subscription === "claude")).toMatchObject({ class: "included", usage: "assumed" });
-});
-test("the Enterprise reading is kept with its condition, and nothing the status printed about the account", async () => {
-  const { billingFromSignIn, signInState } = await import("../src/lib/signin.mjs");
-  const file = join(scratch("signin-enterprise"), "signed-in.json"), name = "claude-enterprise-fixture"; // not "claude": other tests read that name
+test("Enterprise applicability is one registry decision, with fresh status text never cached", async () => {
+  const state = HARNESSES.claude.usage.limit.state;
+  const u = summarize({ pool: "claude", reason: NO_WINDOWS_AFTER_ANSWER });
+  expect(HARNESSES.claude.auth.billing(AUTH_ENTERPRISE)).toBeNull();
+  expect(state(u, AUTH_ENTERPRISE)).toBe("read");
+  expect(state({ ...u, failure: { code: "no_response" } }, AUTH_ENTERPRISE)).toBe("hold");
+  expect(state(live("claude", 0.6), AUTH_ENTERPRISE)).toBe("skip"); // observed windows decide
+  expect(state({ ...u, windows: [{ usedPct: 20 }] }, null)).toBe("skip");
+  for (const p of ["gateway", "bedrock", null]) expect(state(u, JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: p, subscriptionType: "enterprise" }))).toBe("hold");
+  const { billingFromSignIn, statusFromSignIn, signInState } = await import("../src/lib/signin.mjs");
+  const file = join(scratch("signin-enterprise"), "signed-in.json"), name = "claude-enterprise-fixture";
   expect(await signInState(name, HARNESSES.claude, { file, nowSec: 1_800_000_000, ask: async () => ({ out: AUTH_ENTERPRISE, code: 0 }) })).toBe("yes");
-  expect(billingFromSignIn(name)).toMatchObject({ billing: "metered", when: "no_windows" });
-  const kept = readFileSync(file, "utf8");
-  expect(JSON.parse(kept)[name].billing).toEqual(billingFromSignIn(name));
-  for (const leak of ["someone@example.com", "Example Org", "00000000-0000", "orgId", "email", "subscriptionType"]) expect(kept).not.toContain(leak);
+  expect(billingFromSignIn(name)).toBeNull(); expect(state(u, statusFromSignIn(name))).toBe("read");
+  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: 1_800_000_000, state: "yes" });
+  for (const leak of ["someone@example.com", "Example Org", "00000000-0000", "orgId", "email", "subscriptionType"]) expect(readFileSync(file, "utf8")).not.toContain(leak);
 });
 test("a login switched within the sign-in cache's 6 hours: a reading without windows asks the status again, one with windows does not", async () => {
   const { signInState } = await import("../src/lib/signin.mjs");
@@ -933,13 +899,13 @@ test("a login switched within the sign-in cache's 6 hours: a reading without win
   // And back: an hour later a subscription again, its windows not read this time: no longer metered.
   const [toSub] = await read(noWindows, AUTH_MAX, T + 7200);
   expect(toSub).toMatchObject({ class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER });
-  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: T + 7200, state: "yes", limitStatus: "not_applicable" });
+  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: T + 7200, state: "yes" });
   // Windows arrived: they decide, and the status is not asked again.
   asked.length = 0;
   const [w] = await read(withWindows, AUTH_API_KEY, T + 7300);
   expect(asked).toEqual([]); expect(w).toMatchObject({ headroom: 0.6 }); expect(w.class).not.toBe("metered");
   // A harness without a billing reader is never asked again either.
-  expect(await billingFor("codex-switch", { fresh: true, harness: HARNESSES.codex, file, nowSec: T, ask: ask("Logged in using ChatGPT\n") })).toEqual({ billing: null, not: null });
+  expect(await billingFor("codex-switch", { fresh: true, harness: HARNESSES.codex, file, nowSec: T, ask: ask("Logged in using ChatGPT\n") })).toEqual({ billing: null, status: null, not: null });
   expect(asked).toEqual([]);
 });
 test("the fresh status check is a sign-in check: signed out or no answer now leaves the harness out of this call", async () => {
@@ -1027,7 +993,7 @@ test("smoke:usage reads each subscription live, asks sign-in fresh, takes a mete
     agy: async () => { throw new Error("turned off: never read"); },
   };
   const ready = async (name, o) => { asked.push([name, o?.fresh]); return null; };
-  const billing = async (name) => ({ billing: name === "claude" ? { billing: "metered", why: "an API key" } : null, limitStatus: name === "claude" ? "not_applicable" : null, not: null });
+  const billing = async (name) => ({ billing: name === "claude" ? { billing: "metered", why: "an API key" } : null, status: name === "claude" ? AUTH_API_KEY : null, not: null });
   const failed = await smokeUsage({ config, live, ready, billing, log: (l) => lines.push(l.replace(/ \([^)]*, [\d.]+ s\)$/, "")) });
   expect(asked).toEqual([["claude", true], ["codex", true], ["cursor", true], ["kiro", true]]);
   expect(lines).toEqual(["claude: ok: metered", "claude limit: NOT EXERCISED (this sign-in does not need a limit reader)", "codex: ok: 90% left", "cursor: FAILED (read_failed)", "kiro: FAILED (cleanup: Kiro kept an empty usage session; inspect its saved sessions to remove it.)", "agy: turned off, not read"]);
@@ -1035,7 +1001,7 @@ test("smoke:usage reads each subscription live, asks sign-in fresh, takes a mete
   // A read that failed is a failure on a metered seat too, whether its sign-in or the user's billing says metered.
   const metered = [];
   const failedCount = await smokeUsage({ config: { subscriptions: { claude: { billing: "metered" }, codex: {}, agy: {} } }, ready, log: (l) => metered.push(l.replace(/ \([^)]*, [\d.]+ s\)$/, "")),
-    billing: async () => ({ billing: { billing: "metered", why: "an API key" }, limitStatus: "not_applicable", not: null }),
+    billing: async () => ({ billing: { billing: "metered", why: "an API key" }, status: AUTH_API_KEY, not: null }),
     live: { claude: async () => summarize({ pool: "claude", source: "claude /usage", nowSec: NOW, failure: usageFailure("no_response") }), codex: async () => summarize({ pool: "codex", source: "app-server", nowSec: NOW, failure: usageFailure("read_failed") }), agy: async () => null } });
   expect([metered, failedCount]).toEqual([["claude: FAILED (no_response)", "claude limit: NOT EXERCISED (this sign-in does not need a limit reader)", "codex: FAILED (read_failed)", "agy: FAILED (no reading)"], 3]);
   // Signed out now (whatever was kept): not read at all.

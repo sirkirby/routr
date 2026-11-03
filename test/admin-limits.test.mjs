@@ -77,7 +77,7 @@ test("private panel read answers only empty-folder trust, no other first-run scr
   expect(await claudePanelUsage(missing.options)).toMatchObject({ ok: false, code: "herdr_missing" });
   const noLimit = fakePanel(ready, noLimitPanel);
   expect(await claudePanelUsage(noLimit.options)).toMatchObject({ ok: true, used_pct: null, resets_at: null });
-  expect(noLimit.elapsed()).toBeGreaterThanOrEqual(750); // no-limit draws must settle before they can remove a cap
+  expect(noLimit.elapsed()).toBeGreaterThanOrEqual(3000); // no-limit draws must settle before they can remove a cap
   for (const panel of [hit.replace(/.*\$15\.05.*\n/, ""), hit.replace(/Usage credits[^]*/, "Esc to cancel"),
     noLimitPanel.replace("$23.96 spent", "unrecognised credits format"), "garbled"]) {
     const unread = fakePanel(ready, panel);
@@ -111,11 +111,11 @@ test("only answered no-window Enterprise print usage can start the detached pane
   const file = join(scratch("panel-gate"), "none.json");
   const print = await readClaude({ file, nowSec: T, exec: async () => fixture("claude-print-usage.json") });
   expect(print.reason).toBe(NO_WINDOWS_AFTER_ANSWER);
-  for (const [u, b, starts] of [[print, { billing: "metered", when: "no_windows" }, 1], [print, { billing: "metered" }, 0],
-    [print, null, 0], [summarize({ pool: "claude", source: "test", windows: [{ name: "five_hour", usedPct: 11 }] }), { billing: "metered", when: "no_windows" }, 0],
-    [{ ...print, failure: { code: "no_response" } }, { billing: "metered", when: "no_windows" }, 0]]) {
+  for (const [u, b, starts] of [[print, JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "enterprise" }), 1], [print, JSON.stringify({ loggedIn: true, authMethod: "api_key" }), 0],
+    [print, null, 0], [summarize({ pool: "claude", source: "test", windows: [{ name: "five_hour", usedPct: 11 }] }), JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "enterprise" }), 0],
+    [{ ...print, failure: { code: "no_response" } }, JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "enterprise" }), 0]]) {
     let called = 0;
-    const [r] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: b, limitStatus: b && !b.when ? "not_applicable" : null }), sources: { claude: { read: async () => u, limit: { applies: HARNESSES.claude.usage.limit.applies, excludes: HARNESSES.claude.usage.limit.excludes, read: (o) => { if (o.background) called++; return readClaudePanel({ file, background: false, nowSec: T }); } } } } });
+    const [r] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ status: b }), sources: { claude: { read: async () => u, limit: { ...HARNESSES.claude.usage.limit, read: (o) => { if (o.background) called++; return readClaudePanel({ file, background: false, nowSec: T }); } } } } });
     expect(called).toBe(starts); if (starts) expect(r.class).toBe("metered");
   }
 });

@@ -11,11 +11,10 @@ import { parseClaudeReset } from "./usage.mjs";
 import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 
-// The menu must highlight this measured built-in description (2.1.317, p46 shadow-command probe, 2026-11-03).
+// p46 project-skill shadow probe, 2.1.317, 2026-11-03: two /usage rows vs one. Descriptions may change.
 export function claudeUsageMenu(text) {
-  const selected = clean(text).split("\n").map((l) => l.match(/^[ \t]*❯[ \t]*\/?usage[ \t]+(.+?)\s*$/)?.[1]).filter(Boolean);
-  if (!selected.length) return null;
-  return selected.length === 1 && selected[0] === "Show session cost, plan usage, and activity stats";
+  const rows = clean(text).split("\n").map((l) => l.trim().match(/^(❯\s*)?\/?usage\s+\S.*$/)).filter(Boolean);
+  return rows.length ? rows.length === 1 && Boolean(rows[0][1]) : null;
 }
 const clean = (s) => stripVTControlCharacters(String(s ?? "")).replaceAll("\r", "");
 // Date only: the END of that day in its zone, never its beginning. The period length is unknown, so full reserve.
@@ -52,8 +51,8 @@ export function claudePanelUsage({ quiet = HARNESSES.claude.quiet, cwd = join(ST
   return screenUsage({
     label: HARNESSES.claude.label, startFailure: "no_response", readyMs: 12000, shellExitMs: 3000,
     shadows: HARNESSES.claude.usage.shadows(), menu: { check: claudeUsageMenu, timeoutMs: 2000 },
-    // A no-limit draw can precede a cap row. A 750 ms unchanged result is a judgment, not a measurement.
-    settle: { ms: 750, when: (r) => r.used_pct == null },
+    // A no-limit draw can precede a cap row. A 3 s unchanged result is a judgment, not a measurement.
+    settle: { ms: 3000, when: (r) => r.used_pct == null },
     prepare: () => {
       try {
         mkdirSync(cwd, { recursive: true, mode: 0o700 });
@@ -70,7 +69,7 @@ export function claudePanelUsage({ quiet = HARNESSES.claude.quiet, cwd = join(ST
     start: async ({ t, shell }) => {
       const settingsAt = quiet.indexOf("--settings");
       const args = [...quiet];
-      if (settingsAt >= 0) args[settingsAt + 1] = usageStateFile("claude-hooks-off-v1.json", quiet[settingsAt + 1]);
+      if (settingsAt >= 0) args[settingsAt + 1] = usageStateFile("json", quiet[settingsAt + 1]);
       await t.call(["pane", "run", t.pane, shellCommand(shell, "claude", args)]);
     },
     screen: claudePanelScreen,

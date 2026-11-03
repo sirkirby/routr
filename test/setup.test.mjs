@@ -461,7 +461,7 @@ test("routr uninstall keeps the user's data unless purged, removes only routr's 
   for (const d of [".config/routr", ".local/share/routr", ".cache/routr", ".claude", ".kiro"]) mkdirSync(join(home, d), { recursive: true });
   installSkill({ home });
   for (const d of [".local/state/routr/usage-settings", ".local/state/routr/claude-usage-empty"]) mkdirSync(join(home, d), { recursive: true });
-  writeFileSync(join(home, ".local/state/routr/usage-settings/claude-hooks-off-v1.json"), '{"disableAllHooks":true}');
+  writeFileSync(join(home, ".local/state/routr/usage-settings/settings.json"), '{"disableAllHooks":true}');
   const ownTrust = JSON.stringify({ projects: { [join(home, ".local/state/routr/claude-usage-empty")]: { hasTrustDialogAccepted: true } } });
   writeFileSync(join(home, ".claude.json"), ownTrust);
   writeFileSync(join(home, ".config/routr/config.json"), "{}");

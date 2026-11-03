@@ -451,7 +451,8 @@ export function stop(child, { platform = process.platform, via, after = later, g
 // The lead's own session variables go too: CLAUDECODE and Claude Code's session and messaging ones make a Claude that
 // routr starts take itself for a child of the lead's session, and CODEX_THREAD_ID ties a Codex to the lead's thread
 // (measured 2026-10-21: a child otherwise inherited the lead identity). Herdr 0.9.5 binary strings list the eight pane
-// names: config (HERDR_CONFIG_PATH, HERDR_HOME, HERDR_LOG) must stay so server and clients use the same settings.
+// names: config (HERDR_CONFIG_PATH, HERDR_HOME, HERDR_LOG) stays; a private usage terminal may replace
+// its server config to set its size, so the user's default_shell does not apply to that session.
 // The other harness session names were checked in vendor source and installed binaries
 // 2026-10-24 (versions and sources in references/harnesses.md). Exact names, not harness prefixes: sign-in, provider
 // and config settings (CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_USE_BEDROCK, CODEX_HOME, CURSOR_CONFIG_DIR, …) stay.

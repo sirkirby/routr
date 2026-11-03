@@ -13,13 +13,13 @@ const limit = "████ 100% used\n$15.05 / $15.00 spent · Resets Dec 1 (Am
 const primary = (extra = {}) => ({ pool: "claude", source: "claude /usage", headroom: null, windows: [], reason: NO_WINDOWS_AFTER_ANSWER, class: "unknown", ...extra });
 
 for (const [name, u, b] of [
-  ["print failure", primary({ failure: { code: "no_response" } }), { billing: "metered", when: "no_windows" }],
+  ["print failure", primary({ failure: { code: "no_response" } }), JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "enterprise" })],
   ["signed-in unreadable auth", primary(), null],
 ]) test(`review 1: a trusted cap survives ${name}`, async () => {
   const file = join(scratch("cap-retained"), "panel.json");
   await refreshClaudePanel({ file, nowSec: T, read: async () => ({ ok: true, used_pct: 100, resets_at: T + 86400 }) });
   await refreshClaudePanel({ file, nowSec: T + 1, read: async () => ({ ok: false, code: "invalid_response" }) });
-  const [row] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: b }), sources: { claude: {
+  const [row] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ status: b }), sources: { claude: {
     read: async () => u, limit: { ...HARNESSES.claude.usage.limit, read: (o) => readClaudePanel({ ...o, file, nowSec: T + 1, background: false }) },
   } } });
   expect(row).toMatchObject({ class: "capped", headroom: 0, kept: { source: "claude snapshot" } });
@@ -29,9 +29,9 @@ for (const [name, u, b] of [
 
 test("review 2: fresh readings after a reset stay full, while pre-reset kept readings roll", () => {
   const w = { name: "spend_limit", usedPct: 100, windowMin: null, resetsAt: T - 1 };
-  expect(summarize({ pool: "x", source: "x", ts: T, nowSec: T + 1, windows: [w] }).headroom).toBe(0);
+  expect(summarize({ pool: "x", source: "x", ts: T, nowSec: T + 1, cls: "capped", windows: [w] }).headroom).toBe(0);
   expect(summarize({ pool: "x", source: "x", ts: T - 100, nowSec: T + 1, windows: [w] }).headroom).toBe(1);
-  expect(claudeSnapshot({ ts: T, rate_limits: { five_hour: { used_percentage: 100, resets_at: T - 1 } } }, T + 1).headroom).toBe(0);
+  expect(claudeSnapshot({ ts: T, rate_limits: { five_hour: { used_percentage: 100, resets_at: T - 1 } } }, T + 1).headroom).toBe(1);
   expect(codexSnapshot({ individualLimit: { remainingPercent: 0, resetsAt: T - 1 }, spendControlReached: true }, "app-server", T, T + 1).headroom).toBe(0);
 });
 
@@ -80,7 +80,7 @@ test("complete real panel fixtures pass through snapshots, readUsage and candida
     const r = parseClaudePanel(text.replaceAll("\n", "\r\n"), T);
     expect(r.used_pct).toBe(used);
     await refreshClaudePanel({ file, nowSec: T, read: async () => ({ ok: true, ...r }) });
-    const rows = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: { billing: "metered", when: "no_windows" } }), sources: { claude: {
+    const rows = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "enterprise" }) }), sources: { claude: {
       read: async () => primary(), limit: { ...HARNESSES.claude.usage.limit, read: () => readClaudePanel({ file, nowSec: T + 1, background: false }) },
     } } });
     const config = cfg({ now: (T + 1) * 1000, subscriptions: { claude: { ...cfg().subscriptions.claude, use: "normal", billing: "metered" } } });
@@ -95,7 +95,7 @@ test("unknown signed-in applicability fails the smoke instead of silently skippi
   const { smokeUsage } = await import("../scripts/smoke-usage.mjs");
   const lines = [];
   const failed = await smokeUsage({ config: { subscriptions: { claude: {} } }, ready: async () => null,
-    billing: async () => ({ billing: null, limitStatus: null }), log: (s) => lines.push(s), sources: { claude: {
+    billing: async () => ({ billing: null, status: null }), log: (s) => lines.push(s), sources: { claude: {
       source: "claude /usage", live: async () => primary(), limit: HARNESSES.claude.usage.limit,
     } }, live: { claude: async () => primary() } });
   expect(failed).toBeGreaterThan(0);
@@ -107,12 +107,12 @@ test("only successful print windows or recognised non-Enterprise status bypass t
   for (const [u, status, shouldRead] of [
     [primary({ headroom: 0.5, windows: [{ usedPct: 50 }] }), null, false],
     [primary({ headroom: 0.5, windows: [{ usedPct: 50 }], failure: { code: "no_response" } }), null, true],
-    [primary({ source: "statusline", headroom: 0.5, windows: [{ usedPct: 50 }] }), null, true],
-    [primary(), "not_applicable", false],
+    [primary({ source: "statusline", headroom: 0.5, windows: [{ usedPct: 50 }] }), null, false],
+    [primary(), JSON.stringify({ loggedIn: true, authMethod: "api_key" }), false],
     [primary(), null, true],
   ]) {
     let read = false;
-    const [row] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ limitStatus: status }), sources: { claude: {
+    const [row] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ status }), sources: { claude: {
       read: async () => u, limit: { ...HARNESSES.claude.usage.limit, read: async (o) => { read = true; expect(o.background).toBe(false); return summarize({ pool: "claude", cls: "capped", ts: T, nowSec: T, windows: [{ usedPct: 100 }] }); } },
     } } });
     expect(read).toBe(shouldRead);

@@ -54,9 +54,10 @@ Names that mean one thing everywhere:
 | `pane`, `worktree` | `pane` or `path` | `cleanup` (what runs in a pane, or a worktree's git state, could not be read) |
 
 Codes are the fixed lists routr already has (the decision-model failure codes, the usage failure codes) plus
-`unreadable` for a file, a model list, a pane or a worktree. Cursor's usage read adds `cmd_path`: the private
+`unreadable` for a file, a model list, a pane or a worktree. Interactive usage reads use `cmd_path`: the private
 session's shell is cmd and an argument that would be typed holds `%` or `!`, so nothing is typed. Its fixed
-`why` names the quoting limitation and asks for a safe path or PowerShell. A folder passed only as process cwd
+`why` names the quoting limitation: TEMP fixes temporary paths, otherwise use a safe path. PowerShell is an
+option where the reader uses your shell settings; the sized private pane replaces the user's herdr config. A folder passed only as process cwd
 is not refused for that reason.
 
 ## Ordered decision models
@@ -205,9 +206,9 @@ The rule, as #82 made it for the decision-model providers:
   `herdr_refused` (herdr answered with an error), `herdr_invalid_response` (an answer without what routr asked for),
   `git_unreachable`, `git_refused` (a nonzero exit), `git_invalid_response`. herdr's own error code may choose among
   routr's codes (as launch already treats `agent_not_running` and `timeout` apart) but is never printed.
-- While launch or Cursor's usage read waits for a shell prompt, an unreadable `pane process-info` answer is waited
+- While launch or an interactive usage read waits for a shell prompt, an unreadable `pane process-info` answer is waited
   out within the command's deadline. The shell wait's deadline error names unreadable processes only when the last
-  process look could not be read (Cursor still returns its fixed `read_failed` usage failure). Before either shell
+  process look could not be read (the usage reader still returns its fixed failure code). Before either shell
   readiness read, less than 50 ms left ends the wait with its deadline error; a herdr timeout during those reads
   also becomes that error if the deadline has passed. Earlier timeouts, other unreachable calls and refusals still
   stop immediately. Cursor also keeps waiting for its UI when the process read is unreadable; cleanup still refuses
@@ -1290,8 +1291,9 @@ when export permits them. Tracing setup failures run the command untraced, witho
 
 The harness registry declares usage capabilities: `read` returns a routing row; `live` reads without cache or
 fallback for smoke checks; `check` publishes a snapshot, and `backgroundOnly` restricts that action to detached
-jobs. A conditional `limit` recipe supplies `applies(primary, billing)`, `read`, `live`, `refresh` and a fixed-field
-`describe`. Shared advice, usage and smoke code select these capabilities without naming a harness.
+jobs. A conditional `limit` recipe supplies one `state(primary, freshStatus)` decision: `read`, `hold` or `skip`,
+plus `read`, `live`, `refresh` and fixed-field `describe`/`billing`. Successful windows, including statusline
+windows, skip the panel without asking for fresh status. Shared commands select these capabilities without naming a harness.
 
 Both interactive readers use one screen driver. Recipes declare startup, readiness, parsing, result fields,
 safe answers and optional retry behavior; the driver owns polling, deadlines, error mapping and cleanup.
@@ -1300,16 +1302,17 @@ finish first-run screens. The registry label accompanies these generic fixed sen
 Limit read failures always appear in `unavailable`; a missing current limit with no trusted cap explicitly says
 routr will not stop at it. These diagnostics do not change candidate arithmetic or invent headroom.
 
-A conditional limit recipe also declares `excludes(primary, status)`: positive proof that a held cap no longer
-applies. Failed primary reads and unknown signed-in status do not supply that proof. Such calls keep the trusted
-cap, report `limit_unverified` (or the primary failure), and start no panel until prerequisites are confirmed.
-The smoke treats unknown applicability as a failure, not a clean unexercised reader. A skipped refresh publishes
-no observation and returns only its internal `skipped` result; it never manufactures a no-limit reading.
+`read` allows a detached refresh. `hold` consults only an existing trusted cap: it reports `limit_unverified`
+(or the primary failure) if that cap is held, otherwise returns the primary reading. `skip` uses primary windows
+or recognised non-Enterprise status. Raw fresh status is classified only at the registry boundary, kept in
+process memory, never persisted or output. The smoke treats unknown applicability as a failure. A skipped
+refresh publishes no observation; it never manufactures a no-limit reading.
 
-A fresh observation reporting a past reset stays as observed. Rollover requires the reset to be after the
-observation and before now; an observation with no trustworthy time cannot roll. This applies to every harness.
+Plan windows with past resets roll over. A capped observation reporting a reset at or before its own time
+stays as observed (synthetic tests, not seen live); a kept cap from before the reset can roll over afterward.
+A past reset holds the full reserve.
 
 Recipes can declare command-shadow paths and a menu predicate checked before Enter. `command_shadowed` is a
 fixed refusal to run a possibly substituted command; file contents and menu text are never output. A no-limit
-panel needs a complete, unambiguous section and a 750 ms unchanged reading (a judgment), whereas a cap is returned
+panel needs a complete, unambiguous section and a 3 s unchanged reading (a judgment), whereas a cap is returned
 as soon as the complete section parses. Only one ratio/percent row or one spent-only line is accepted.
