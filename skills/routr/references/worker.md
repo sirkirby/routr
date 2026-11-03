@@ -30,7 +30,8 @@ reason for model and effort. If you are a routr worker and the work needs execut
 the evidence to the orchestrator so it can change the assignment.
 
 Set the model and effort on the spawn itself: left unset, a subagent gets the default your harness has been given for
-subagents, or if it has none, your model. What each harness takes (measured 2026-11-02 except where marked;
+subagents, or if it has none, your model. Set both on the spawn: that beat a differing fallback on Claude Code and
+Codex, measured once each; one setting alone was not measured. What each harness takes (measured 2026-11-02 except where marked;
 `references/harnesses.md` has how):
 
 | Harness | Model | Effort |

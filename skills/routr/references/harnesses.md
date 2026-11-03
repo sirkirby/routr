@@ -442,11 +442,47 @@ account.
 
 | Harness | Per spawn | Default for every subagent | Left unset | Read from |
 |---|---|---|---|---|
-| Claude Code 2.1.316 | Agent tool `model: haiku`, `effort: low` ran Haiku at low under a Sonnet medium parent | `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_SUBAGENT_EFFORT` reached a plain spawn and `/code-review`, whose subagent names no model (vendor's order: the spawn's own setting wins over the variable; `CLAUDE_CODE_EFFORT_LEVEL` wins over the spawn's effort: not measured) | The parent's model | Subagent transcript: `message.model`, `perTurnEffort` |
-| Codex 0.166.0 | `spawn_agent` `model`, `reasoning_effort` ran them | `-c agents.default_subagent_model=…`, `-c agents.default_subagent_reasoning_effort=…` applied when the spawn named neither | The parent's model and effort | The child rollout's `turn_context`. A spawn with no `fork_turns` forks: its rollout starts with the parent's turns |
+| Claude Code 2.1.316 | Agent tool `model: haiku`, `effort: low` ran Haiku at low under a Sonnet medium parent | `CLAUDE_CODE_SUBAGENT_MODEL`, `CLAUDE_CODE_SUBAGENT_EFFORT` (added in 2.1.316 according to Anthropic's changelog; earlier versions not tested) reached a plain spawn and `/code-review`, whose subagent names no model. An explicit `model: haiku`, `effort: low` beat Sonnet/high variables under a Haiku low parent (one further run, 2026-11-02). `CLAUDE_CODE_EFFORT_LEVEL` winning over spawn effort is vendor documentation only, not measured | The parent's model | Subagent transcript: `message.model`, `perTurnEffort` |
+| Codex 0.166.0 | `spawn_agent` `model`, `reasoning_effort` ran them | `-c 'agents.default_subagent_model="…"'`, `-c 'agents.default_subagent_reasoning_effort="…"'` (TOML strings) applied when the spawn named neither. Explicit `model: gpt-6-luna`, `reasoning_effort: low` beat `gpt-6.1-sol`/high fallbacks under a `gpt-6-luna` low parent (one further run, 2026-11-02) | The parent's model and effort | The child rollout's `turn_context`. A spawn with no `fork_turns` forks: its rollout starts with the parent's turns |
 | Cursor 2026.10.22-27dcf5f | Task `model: composer-2.5-fast` ran it. The list is short and the id carries the effort: `composer-2.5`, which `cursor-agent models` lists, is not on it, and `composer-2.5[fast=false]` was refused. An agent file's `model: composer-2.5` ran `composer-2.5-fast` | Agent file (per agent) | The parent's id | The subagent's `store.db` |
 | Antigravity 1.4.12 | `invoke_subagent` `Model` (`inherit`, `flash_lite`, `flash`, `pro`, with a required `TypeName`): `flash` ran `gemini-3.8-flash-tiered` under `gemini-4-argon-low`, only with no `model` line in that agent's file. With `model: inherit` there it ran the parent's. Only `flash` was run. No effort setting in the tool or its docs | Agent file `model: flash` (per agent), in `.agents/agents/` | The parent's model | Strings in the subagent's conversation database (private format) |
 | Kiro 2.36.0 | `subagent` stage `model` is accepted, and the child's record changed (no `modelId` where an unset run says `auto`), but nothing names the model it ran. Credits could not tell them apart. No effort setting in the tool or its docs | Not found: a markdown agent in `.kiro/agents/` was not listed by `kiro-cli agent list` nor offered as a role | `auto` | Session files; not conclusive |
+
+Anthropic's [2.1.316 changelog](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21316) says the
+subagent effort variable was added in that version. This is the vendor's statement, not a measurement of older
+versions; no older version was run for this check.
+
+The two further precedence runs used the exact `start.argv` and `start.env` from `routr launch --dry-run`, with
+headless transport flags added, directly in temporary folders outside a repository. Each parent spawned one child
+that replied with one word. Claude's child transcript recorded `message.model: claude-haiku-5-5` and
+`perTurnEffort: low`; Codex's child rollout recorded `turn_context` model `gpt-6-luna`, effort `low`. Model and effort
+were set together on each spawn; precedence when only one is explicit was not measured in these runs. Claude ran
+with `--safe-mode` and `--strict-mcp-config`, inherited session variables unset, and no MCP servers in its startup
+record. That record still listed plugins, so a plugin-free startup was not established. No test shows that smaller
+subagents keep quality; these runs checked settings, not task quality or savings.
+
+### Windows argument and environment checks (2026-11-02)
+
+Windows 11, herdr 0.9.5, PowerShell 5.1.26100.9818 and cmd: source `routr launch` (Bun with `--no-env-file`) in real
+panes delivered the following arguments unchanged to a compiled `codex.exe` fixture, with no `.cmd` shim. The parent
+model was `gpt-6-luna`, effort `low`; the synthetic fallback model `child model` exercised a space. Both shells
+delivered the double quotes as part of each config value:
+
+```json
+["-c", "agents.default_subagent_model=\"child model\"", "-c", "agents.default_subagent_reasoning_effort=\"low\""]
+```
+
+This proves argument delivery to the fixture, not a real Codex turn on Windows; Codex was not installed or run there.
+On macOS, Codex 0.166.0's app-server `config/read` resolved the exact received values to model `child model`, effort
+`low`. Hypothetical inputs with the double quotes removed resolved identically for these particular values, using
+Codex's raw-string fallback when a value is not TOML. No model request was made for these config reads. Other values
+and shells were not tested by this check. The cmd run first exposed a readiness bug: herdr's `user@host C:\path>`
+prompt timed out before start. The shared shell recognizer now accepts that shape; the fixture launch then passed.
+
+One real Claude Code 2.1.308 worker, Haiku at low in a PowerShell pane, read its own shell environment and wrote
+`CLAUDE_CODE_SUBAGENT_MODEL=haiku` and `CLAUDE_CODE_SUBAGENT_EFFORT=low`. Its transcript confirms version 2.1.308 and
+the shell command; this verifies environment delivery only, not whether that older version applies the effort
+fallback. No subagent was spawned in that run. Every test worker was finished with `routr cleanup`.
 
 ## Lead and pane session identity
 

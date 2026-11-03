@@ -95,9 +95,9 @@ export function shellPrompt(text) {
   if (/[?？]\s*(?:\([^\n]*\)|\[[^\n]*\])?\s*$/.test(last)
     || /(?:\[[yn](?:es)?\/[yn](?:o)?\]|\([yn](?:es)?\/[yn](?:o)?\)|:)\s*$/i.test(last)
     || /^(?:>|quote>|dquote>|heredoc>)$/.test(last)) return "question";
-  // Windows: PowerShell shows `PS C:\path>` and cmd shows `C:\path>`. Both end in ">", which on Unix means a
-  // continuation line, so they are matched by their whole shape (a drive path), never by the ">" alone.
-  if (/^(?:PS )?[A-Za-z]:\\[^<>|?*\n]*>$/.test(last)) return "ready";
+  // Windows: PowerShell's `PS C:\path>`, cmd's `C:\path>`, and herdr's `user@host C:\path>` (Windows 11,
+  // 2026-11-02). Match the whole prompt: treating its user/host prefix as arbitrary output timed out before start.
+  if (/^(?:PS |[^\s<>|?@]+@[^\s<>|?@]+\s+)?[A-Za-z]:\\[^<>|?*\n]*>$/.test(last)) return "ready";
   if (/\d(?:\.\d+)?%$/.test(last)) return "unrecognized"; // A stalled progress meter is not a zsh prompt.
   if (/^(?:.*\s)?[❯❱➜λ\uE0B0\uE0B1]$/.test(last) || /(?:^|\S.*)[\s]*[$%#]$/.test(last)) return "ready";
   return last ? "unrecognized" : "waiting";
@@ -162,14 +162,16 @@ export const paneView = (call, pane) => ({
 // environment-carrier rules read an empty value as absent. herdr is started directly, never through a shell, so nothing
 // here is quoted. `shown: true` is the same command as output may carry it: each forwarded value replaced by FORWARDED
 // (an empty one has nothing to hide). smoke:carriers splits with this too.
-export const splitArgs = (direction, cwd, carriers = {}, { shown = false, pane = null } = {}) => ["pane", "split", ...(pane ? [pane] : ["--current"]),
+// Other launch environment (subagent fallbacks) uses the same split boundary, with its values shown normally.
+export const splitArgs = (direction, cwd, carriers = {}, { shown = false, pane = null, env = {} } = {}) => ["pane", "split", ...(pane ? [pane] : ["--current"]),
   "--direction", direction, "--cwd", cwd, "--no-focus",
-  ...CARRIERS.flatMap((name) => ["--env", `${name}=${!Object.hasOwn(carriers, name) ? "" : shown ? FORWARDED : carriers[name]}`])];
+  ...CARRIERS.flatMap((name) => ["--env", `${name}=${!Object.hasOwn(carriers, name) ? "" : shown ? FORWARDED : carriers[name]}`]),
+  ...Object.entries(env).flatMap(([name, value]) => ["--env", `${name}=${value}`])];
 
 // One split through `call(args, shown, tolerate)` (one herdr command, which throws on failure unless `tolerate`; `shown`
 // is the command as output may carry it): the new pane's id.
-export async function splitPane(call, direction, cwd, carriers, { pane = null } = {}) {
-  const r = await call(splitArgs(direction, cwd, carriers, { pane }), splitArgs(direction, cwd, carriers, { pane, shown: true }));
+export async function splitPane(call, direction, cwd, carriers, { pane = null, env = {} } = {}) {
+  const r = await call(splitArgs(direction, cwd, carriers, { pane, env }), splitArgs(direction, cwd, carriers, { pane, env, shown: true }));
   const id = r.data?.result?.pane?.pane_id;
   if (typeof id !== "string" || !id) throw new Error("Herdr split returned no pane id");
   return id;
@@ -186,8 +188,8 @@ export const worktreeArgs = (cwd, branch, base = null) => ["worktree", "create",
 // fails; a close that fails leaves an extra shell pane and is returned, not thrown, for the caller to decide (launch
 // ends there; smoke:carriers fails its check): { pane, closed }.
 // `call` as splitPane's. smoke:carriers runs this too.
-export async function worktreePane(call, root, cwd, carriers) {
-  const pane = await splitPane(call, "right", cwd, carriers, { pane: root });
+export async function worktreePane(call, root, cwd, carriers, { env = {} } = {}) {
+  const pane = await splitPane(call, "right", cwd, carriers, { pane: root, env });
   const close = ["pane", "close", root];
   let closed = null; try { closed = await call(close, close, true); } catch {}
   return { pane, closed: closed?.ok === true };

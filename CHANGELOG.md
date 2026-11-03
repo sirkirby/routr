@@ -6,6 +6,8 @@ A short history of what changed in each routr release, one line per change. Each
 ## Unreleased
 
 - The orchestrator guide gives a rule of thumb for when work goes back to the same worker and when it goes to a fresh one (#139).
+- Windows cmd launches recognize a `user@host C:\path>` prompt instead of timing out before agent start (#138).
+- `launch --subagent-model` and `--subagent-effort` offer opt-in fallbacks for unnamed subagent choices on Claude Code and Codex; both explicit spawn settings won in one measurement per supported harness, and unsupported harnesses refuse them (#138).
 
 ## v0.9.5 — 2026-11-02
 

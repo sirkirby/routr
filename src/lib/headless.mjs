@@ -43,7 +43,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, privateDir, probe, removeEndpoint, serve } from "./channel.mjs";
-import { HARNESSES, plan } from "./harnesses.mjs";
+import { HARNESSES, plan, subagentDefaults } from "./harnesses.mjs";
 import { CARRIERS, installedAt, lockIsStale, probe as collect, readJsonFile, savedCarriers, start, STATE_DIR, stop, UNINSTALL_LOCK, workerEnv, writeJsonAtomic } from "./runtime.mjs";
 import { besidesHelper, groupMembers } from "./process-boundary.mjs";
 
@@ -392,7 +392,10 @@ export const ADAPTERS = {
 };
 // The harnesses that can run headless.
 export const HEADLESS_KINDS = Object.keys(ADAPTERS);
-export const headlessArgv = ({ kind = "claude", model, effort, session, cwd }) => ADAPTERS[kind].argv({ model, effort, session, cwd });
+export const headlessArgv = ({ kind = "claude", model, effort, session, cwd, subagentModel, subagentEffort }) => {
+  const defaults = subagentDefaults({ kind, subagentModel, subagentEffort });
+  return [...ADAPTERS[kind].argv({ model, effort, session, cwd }), ...defaults.argv];
+};
 
 // Whether a process group still has members, every one counted (POSIX). Windows: never known here (the holder's job
 // took the tree with it).
@@ -542,8 +545,9 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       const processCarriers = w.kind === "cursor" || st.turn > 1 || w.launch == null ? turnCarriers() : savedCarriers(w.carriers).carriers;
       let c, h;
       try {
-        c = run(HARNESSES[w.kind].executable, headlessArgv({ kind: w.kind, model: w.model, effort: w.effort, session, cwd: w.cwd }),
-          { cwd: w.cwd, env: workerEnv(processCarriers, ADAPTERS[w.kind].env?.(dir)), stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
+        const defaults = { kind: w.kind, subagentModel: w.subagent_model, subagentEffort: w.subagent_effort };
+        c = run(HARNESSES[w.kind].executable, headlessArgv({ ...defaults, model: w.model, effort: w.effort, session, cwd: w.cwd }),
+          { cwd: w.cwd, env: workerEnv(processCarriers, { ...ADAPTERS[w.kind].env?.(dir), ...subagentDefaults(defaults).env }), stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
       } catch { endTurn("not_started", null); answer({ code: "failed", why: "harness_not_started" }); return settle(); }
       child = c;
       // What it says, as events: bound to this process, and ignored once it has finished.

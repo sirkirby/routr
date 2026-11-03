@@ -8,7 +8,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { connect, generations, MESSAGE_MAX, probe, removeEndpoint, socketPathFits, writeSecret } from "./channel.mjs";
 import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, ownedBy, reserve, runDir, stateOf, unreadableWhy, WORKERS_DIR, workerOf } from "./headless.mjs";
-import { HARNESSES, notReady } from "./harnesses.mjs";
+import { HARNESSES, notReady, subagentDefaults } from "./harnesses.mjs";
 import { configOf, loadConfig, oneReading } from "./config.mjs";
 import { readTask } from "./advice-file.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
@@ -184,6 +184,8 @@ const andList = (xs) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} and ${xs
 // `out` is launch's answer, filled in place.
 export async function launchHeadless(o, out, { prompt, env, settings, ready, spawn, checkListed = async () => {} }) {
   const step = (s, ok, detail) => out.steps.push({ step: s, ok, detail });
+  const defaults = { kind: o.kind, subagentModel: o["subagent-model"], subagentEffort: o["subagent-effort"] };
+  const subagents = subagentDefaults(defaults);
   if (!HEADLESS_KINDS.includes(o.kind)) throw new Error(`outside herdr, routr launch starts ${andList(HEADLESS_KINDS.map((k) => HARNESSES[k].label))} workers only; run the lead inside herdr for a ${HARNESSES[o.kind].label} worker`);
   for (const f of ["pane", "direction"]) if (o[f] != null) throw new Error(`--${f} needs herdr; outside herdr a worker runs headless, with no pane`);
   if (prompt == null) throw new Error("outside herdr a worker starts with its task: pass --task-file (or --task) and --advice");
@@ -202,7 +204,7 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
   const until = Date.now() + o.timeout, left = () => Math.max(1000, until - Date.now());
   // Checked now, so a flag the harness would refuse is refused before anything is written; shown once the worker's
   // folder is known (Antigravity's --add-dir names it).
-  headlessArgv({ kind: o.kind, model: o.model, effort: o.effort, cwd: plannedTree?.path ?? out.cwd });
+  headlessArgv({ ...defaults, model: o.model, effort: o.effort, cwd: plannedTree?.path ?? out.cwd });
   let dir;
   let token;
   try { ({ dir, token } = reserve(o.name)); }
@@ -238,15 +240,16 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
       out.worktree = { branch: o.worktree, ...(o.base ? { base: o.base } : {}), path: wt.path, workspace: null };
       step("worktree", true, `Created ${wt.path} on branch ${o.worktree}${o.base ? ` from ${o.base}` : ""}`);
     }
-    const argv = headlessArgv({ kind: o.kind, model: o.model, effort: o.effort, cwd: out.cwd });
+    const argv = headlessArgv({ ...defaults, model: o.model, effort: o.effort, cwd: out.cwd });
     // The trace-context carriers in launch's environment, within routr's limits, are saved with the worker: every turn
     // gets these, whoever starts its holder later (a `send` from another environment). Shown by name only;
     // CURSOR_CONFIG_DIR, the run folder's, is not listed.
     const found = launchCarriers(env), launchTrace = currentLaunch(config, env);
     out.warnings.push(...launchCarrierWarnings(found));
-    out.start = { executable: HARNESSES[o.kind].executable, argv, env: Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) };
+    out.start = { executable: HARNESSES[o.kind].executable, argv, env: { ...subagents.env, ...Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) } };
     out.ran.push(displayCommand([HARNESSES[o.kind].executable, ...argv]));
     const w = { format: FORMAT, id: randomUUID().replace(/-/g, ""), name: o.name, kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(), carriers: found.carriers,
+      ...(o["subagent-model"] ? { subagent_model: o["subagent-model"] } : {}), ...(o["subagent-effort"] ? { subagent_effort: o["subagent-effort"] } : {}),
       ...(launchTrace ? { launch: launchTrace } : {}),
       ...(wt ? { worktree: { branch: wt.branch, base: wt.base, path: wt.path, source: wt.source, start: wt.start, folder: wt.folder } } : {}) };
     writeJsonAtomic(join(dir, "worker.json"), w, { mkdir: false, mode: 0o600 }); // whole: a reader never sees it half written
