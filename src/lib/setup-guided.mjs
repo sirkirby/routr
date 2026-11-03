@@ -8,7 +8,7 @@ import { LEVELS } from "./questions.mjs";
 import { BACK, CANCEL } from "./tui.mjs";
 import { NOTICE } from "./telemetry.mjs";
 import { LEVEL_MEANING, RESERVE } from "./wording.mjs";
-import { accountUse, isShare, SHARE_MAX, UPDATE_CHANNELS } from "./config.mjs";
+import { isShare, SHARE_MAX, UPDATE_CHANNELS } from "./config.mjs";
 import { decisionTargets, modelsHere, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
 import { otelEndpoint } from "./otel.mjs";
 
@@ -102,21 +102,21 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       return v;
     },
   };
-  const useOf = (n) => accountUse(draft[n], draft[n].billing ?? r.harnesses[n]?.usage_class);
+  const useOf = (n) => draft[n].use ?? "normal";
   ask.use = async (n) => {
     const v = await ui.select({ message: `${HARNESSES[n].label}: how may routr use this account?`, initial: useOf(n), options: [
       { value: "normal", label: "Normal use", hint: "consider it for everyday work, including funded enterprise usage" },
       { value: "fallback", label: "Fallback", hint: "use when normal accounts cannot suitably take the work" }] });
-    // Visiting this setting is an explicit choice, even when it matches today's inferred default.
+    // Visiting this setting is an explicit choice, even when it matches the default.
     if (typeof v === "string") draft[n].use = v;
     return v;
   };
-  // Offer weights for normal metered/capped pairs; ranking excludes caps with no usable room.
+  // Offer weights for normal metered pairs; ranking excludes caps with no usable room.
   // Inspection gives the class, not usable room: a weight can be configured before room returns.
   // As the ranking reads it (pick.mjs): windows that arrived decide, whatever `billing` says; otherwise `billing`, then
   // what the harness reported.
-  const reads = (n) => { const seen = r.harnesses[n]?.usage_class; return seen === "included" || seen === "capped" ? seen : draft[n].billing ?? seen; };
-  const sharer = (x) => draft[x].enabled && ["metered", "capped"].includes(reads(x)) && useOf(x) === "normal";
+  const reads = (n) => { const seen = r.harnesses[n]?.usage_class; return seen === "included" ? seen : draft[n].billing ?? seen; };
+  const sharer = (x) => draft[x].enabled && reads(x) === "metered" && useOf(x) === "normal";
   const shares = (n) => sharer(n) && candidates.filter(sharer).length >= 2;
   ask.share = async (n) => {
     const now = draft[n].share ?? NO_SHARE;
@@ -305,7 +305,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   const outcome = config ? await menu() : await full();
   if (outcome === CANCEL) return CANCEL;
   // In the flags' shape, so setup applies them as it applies --model, --effort, --hardest, --reserve, --enable/--disable.
-  const out = { models: {}, efforts: {}, hardest: {}, reserves: {}, switches: {}, ranks: {}, uses: {}, shares: {}, ...answers, write: outcome === "write" };
+  const out = { models: {}, efforts: {}, hardest: {}, reserves: {}, switches: {}, uses: {}, shares: {}, ...answers, write: outcome === "write" };
   if (out.channel === channelNow) delete out.channel; // as --channel: only a change is applied
   if (out.decision && decisionLabel(out.decision) === decisionLabel(decisionNow)) delete out.decision; // as --decision
   for (const n of candidates) {

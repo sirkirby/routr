@@ -24,7 +24,7 @@ const reading = async () => ({ answers: fact(ans(1, 1), {}), provider: "typesafe
 const empty = async () => [];
 const dispatchUsage = (row) => adviseCommand("dispatch", marker, { config: cfg({ subscriptions: { [row.pool]: cfg().subscriptions.codex } }) }, {}, { askFn: reading, read: async () => [row] });
 
-test("failed background refreshes leave fresh snapshots available; older and assumed readings say what was used", async () => {
+test("failed background refreshes leave fresh snapshots available; older and unknown readings say what was used", async () => {
   const T = 1800000000;
   for (const [name, refresh, read, good] of [
     ["cursor", refreshCursor, readCursor, { included_used_pct: 40 }],
@@ -40,8 +40,8 @@ test("failed background refreshes leave fresh snapshots available; older and ass
     expect(older.unavailable).toEqual([{ part: "usage", subscription: name, source: `${name} /usage`, ...usageFailure("read_failed"),
       reading: "kept", reading_source: `${name} snapshot`, age_sec: 4 * 3600 }]);
     const expired = await dispatchUsage(read({ file, nowSec: T + 86400, background: false }));
-    expect(expired.unavailable).toEqual([{ part: "usage", subscription: name, source: `${name} /usage`, ...usageFailure("read_failed"), reading: "assumed" }]);
-    expect(expired.subscriptions.ranked[0]).toMatchObject({ usage: "assumed", age_sec: 86400 });
+    expect(expired.unavailable).toEqual([{ part: "usage", subscription: name, source: `${name} /usage`, ...usageFailure("read_failed"), reading: "unknown" }]);
+    expect(expired.subscriptions.ranked[0]).toMatchObject({ usage: "unknown", age_sec: 86400 });
     clean([fresh, older, expired]);
   }
 });
@@ -72,7 +72,7 @@ test("a failed live Codex read reports its metered session-log fallback, includi
     expect(r.unavailable).toEqual([{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("no_response"),
       reading: "kept", reading_source: "session log", age_sec: age }]);
     expect(r.subscriptions.ranked[0]).toMatchObject({ class: "metered", usable: null, headroom: null, age_sec: age });
-    expect(row.note).toContain("Using the session log's last reading"); expect(row.note).not.toContain("assumed headroom"); clean(r);
+    expect(row.note).toContain("Using the session log's last reading"); expect(row.note).not.toContain("unknown capacity"); clean(r);
   }
 });
 
@@ -122,7 +122,7 @@ test("aggregate usage rejection and synchronous throws name every unread enabled
     const r = await adviseCommand("dispatch", marker, { config: cfg() }, {}, { askFn: reading, read });
     expect(r.fallback).toBeUndefined(); expect(r.headline).not.toContain("no reading");
     expect(r.unavailable).toEqual(["claude", "codex", "cursor"].map((subscription) => ({ part: "usage", subscription,
-      source: { claude: "claude /usage", codex: "app-server", cursor: "cursor /usage" }[subscription], ...usageFailure("read_failed"), reading: "assumed" })));
+      source: { claude: "claude /usage", codex: "app-server", cursor: "cursor /usage" }[subscription], ...usageFailure("read_failed"), reading: "unknown" })));
     expect(r.subscriptions.ranked).toHaveLength(3); clean(r);
   }
   const malformed = await adviseCommand("dispatch", marker, { config: cfg() }, {}, { askFn: reading, read: async () => null });
@@ -152,7 +152,7 @@ test("one source's failed read is isolated, structured at the reader, and never 
   } });
   const config = cfg({ subscriptions: { codex: cfg().subscriptions.codex, cursor: cfg().subscriptions.cursor } });
   const r = await adviseCommand("dispatch", marker, { config }, {}, { askFn: reading, read });
-  expect(r.unavailable).toEqual([{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("read_failed"), reading: "assumed" }]);
+  expect(r.unavailable).toEqual([{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("read_failed"), reading: "unknown" }]);
   expect(r.subscriptions.ranked.find((r) => r.subscription === "cursor").usage).toBe("live"); clean(r);
 });
 
@@ -171,8 +171,8 @@ test("CLI distinguishes failed reads, stale snapshots with age, valid metered un
   };
   writeFileSync(snapshot, JSON.stringify({ ts, tried: ts, reading: { included_used_pct: 40 } }));
   const r = run("four_cases");
-  expect(r.unavailable).toEqual([{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("read_failed"), reading: "assumed" }]);
-  expect(r.subscriptions.ranked.find((r) => r.subscription === "cursor")).toMatchObject({ usage: "assumed" });
+  expect(r.unavailable).toEqual([{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("read_failed"), reading: "unknown" }]);
+  expect(r.subscriptions.ranked.find((r) => r.subscription === "cursor")).toMatchObject({ usage: "unknown" });
   expect(r.subscriptions.ranked.find((r) => r.subscription === "cursor").age_sec).toBeGreaterThanOrEqual(90000);
   expect(r.subscriptions.ranked.find((r) => r.subscription === "kiro")).toMatchObject({ class: "metered", usable: null, headroom: null, usage: "metered" });
   expect(r.subscriptions.excluded).toContainEqual({ subscription: "agy", why: expect.stringContaining("off") });
@@ -180,7 +180,7 @@ test("CLI distinguishes failed reads, stale snapshots with age, valid metered un
   expect(signedOut.unavailable).toEqual([]);
   expect(signedOut.subscriptions.excluded).toContainEqual({ subscription: "codex", why: expect.stringContaining("not signed in") });
   const failed = run("snapshot_failure", false);
-  expect(failed.unavailable).toEqual([{ part: "usage", subscription: "cursor", source: "cursor /usage", ...usageFailure("invalid_response"), reading: "assumed" }]);
+  expect(failed.unavailable).toEqual([{ part: "usage", subscription: "cursor", source: "cursor /usage", ...usageFailure("invalid_response"), reading: "unknown" }]);
   const saved = readFileSync(snapshot, "utf8"); clean(saved);
   expect(JSON.parse(saved).failure).toEqual(usageFailure("invalid_response")); expect(JSON.parse(saved)).not.toHaveProperty("error");
   writeFileSync(snapshot, JSON.stringify({ ts: Date.now() / 1000, reading: { included_used_pct: 40 } }));

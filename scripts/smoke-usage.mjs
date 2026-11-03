@@ -1,6 +1,6 @@
 // Live check of every usage reader on THIS machine: each one takes a fresh reading now, by its own live path (no kept
-// snapshot, no fallback), so a reader that a harness or herdr update broke shows here before routing runs on assumed
-// headroom for days (herdr 0.9.5, 2026-10-22: Cursor's read failed on every try for 89 h unnoticed). Run after updating
+// snapshot, no fallback), so a reader that a harness or herdr update broke shows here before routing has unknown
+// capacity for days (herdr 0.9.5, 2026-10-22: Cursor's read failed on every try for 89 h unnoticed). Run after updating
 // a harness or herdr, and before a release that changes a reader (CONTRIBUTING.md):
 //   bun run smoke:usage
 // Reads only, writes nothing of routr's (each reader cleans up after itself), and reads only a subscription that is

@@ -29,8 +29,8 @@ Names that mean one thing everywhere:
 
 - `why`: the reason for the entry it sits in (a `next` step, an `unavailable` entry, an excluded subscription, a
   worktree cleanup cannot remove, a launch that needs input). Never a field of its own at the top level.
-- `note`: an explanation that travels with a number or a setting, for the lead to weigh: why a usage number is
-  assumed, what a harness showed beside it, how the ranking treats the user's settings, what routr knows about a
+- `note`: an explanation that travels with a number or a setting, for the lead to weigh: why capacity is
+  unknown, what a harness showed beside it, how the ranking treats the user's settings, what routr knows about a
   harness's startup question. A note is not a warning: nothing is wrong with the call.
 - `notes`: in `subagent` and `dispatch` only, the advice's own reasoning (the user's preferences, a risk warning, how a
   torn level was settled, a brief to fix). Part of the advice, not about the call.
@@ -48,7 +48,7 @@ Names that mean one thing everywhere:
 | `part` | extra fields | from |
 |---|---|---|
 | `decision model` | `provider`, `model` (attempted), `status` (a provider error's HTTP status) | `subagent`, `dispatch`, `check`; `launch` copies the saved advice's entries |
-| `usage` | `subscription` (null for routr's own ranking failure), `source`, `reading` (`assumed` or `kept`), `reading_source` and `age_sec` for a kept reading | `dispatch`, `usage` |
+| `usage` | `subscription` (null for routr's own ranking failure), `source`, `reading` (`unknown` or `kept`), `reading_source` and `age_sec` for a kept reading | `dispatch`, `usage` |
 | `brief`, `report` | none | `check` |
 | `model list` | `subscription` | `launch` (a harness whose model list routr checks could not be read) |
 | `pane`, `worktree` | `pane` or `path` | `cleanup` (what runs in a pane, or a worktree's git state, could not be read) |
@@ -246,7 +246,7 @@ plain, with `--level`, or named):
 | `subscriptions.note`, everything at its reserve | "every subscription that takes strong work is at its reserve" | "Hold the work or ask the user: every subscription that takes strong work is at its reserve", first in `next`, in place of the launch step |
 | `subscriptions.note`, nothing takes the level | "no eligible subscriptions for strong work", followed by each exclusion’s reason | "Hold the work, or choose a lower level and refresh with routr usage --level, or ask the user" when the level excluded an account; otherwise use an eligible subscription or ask the user. Never offer a level below basic |
 | `subscriptions.note`, nothing configured | "no subscriptions are configured: routr setup has not been run" | "Tell the user routr is not set up (routr setup), and ask which subscription to use meanwhile" |
-| a ranked row's note "… By hand: run `cursor-agent`, …" | "the last try failed: …; using the assumed headroom" | "Read Cursor's usage by hand: …, and pass --headroom cursor=<share left>", with that row's `usage` entry |
+| a ranked row's note "… By hand: run `cursor-agent`, …" | "the last try failed: …; remaining capacity is unknown" | "Read Cursor's usage by hand: …, and pass --headroom cursor=<share left>", with that row's `usage` entry |
 | a Claude row's note "… set `billing: \"metered\"` for claude in the config" | reworded as the remedy: "a seat with no quota is set with `billing: \"metered\"`" | (none: the user's setting) |
 | `unavailable` `internal_error` why "… Read capacity yourself before choosing an account." | "An internal error stopped routr from ranking usage." | "Read capacity yourself before choosing an account" |
 | decision-model `why` ("Try again; if it keeps timing out, check the decision provider") | kept: the recovery action that makes the read work again, as #85 set | (the lead's step is the fallback's "judge the level yourself") |
@@ -297,18 +297,17 @@ worktree's commit, status or file flags), that read is also an `unavailable` ent
 (a working agent, uncommitted changes) is not.
 
 **Usage's `note`.** Kept, and not a warning. `subscriptions.note` explains the ranking and the user's account policy
-(who has the most room, normal before fallback, metered budget unknown, everything at its reserve, nothing
-configured); each ranked row's `note` explains its number (what the harness showed beside it, why it is assumed).
+(who has the most room, normal before fallback, room unknown, everything at its reserve, nothing
+configured); each ranked row's `note` explains its number (what the harness showed beside it, why room is unknown).
 Nothing is wrong with the call when they appear, and the lead reads them to choose. Plain `usage`'s top-level `note`
 moves to `subscriptions.note`, the same place as in `dispatch`.
 
 **A reader that stopped working.** When a subscription's last reading is over a day old and its last try failed,
-`dispatch` and `usage` add a `warnings` line saying so (its age and the failure's code, and that routing assumes its
-headroom: a harness or herdr update may have changed what routr reads) and a `next` step to try `routr usage <name>`
+`dispatch` and `usage` add a `warnings` line saying so (its age and the failure's code, and that room is unknown: a harness or herdr update may have changed what routr reads) and a `next` step to try `routr usage <name>`
 again; in `doctor --json` each signed-in harness so affected carries `usage_stale` (that warning and the command
 to try again), and one that is configured and on adds it to `next_steps`. How to read it by hand stays in `next` too. A metered seat (by its harness, or the
-user's `billing`) is ranked as unknown capacity, not assumed, and gets no such line; nor does a reader that never read
-anything (already `assumed` in `unavailable`). A fresh `usage <name>` read that works clears it; one that fails again
+user's `billing`) is ranked as unknown capacity, and gets no such line; nor does a reader that never read
+anything (already `unknown` in `unavailable`). A fresh `usage <name>` read that works clears it; one that fails again
 keeps it.
 
 **The named readers' `read_yourself`.** Moved into `next`, as a `do` step whose template is the `--headroom` flag to
@@ -382,7 +381,7 @@ Inputs:
 |---|---|
 | a reading made | true |
 | no decision model answers: the advice is the user's fallback level | true. The answer is still advice the lead acts on and launch accepts. `unavailable` holds each failed `decision model` entry, `headline` starts `routr: no reading`, and `next` says to judge the level yourself. |
-| some usage readings failed (`dispatch`) | true; each is a `usage` entry in `unavailable`, and its ranked row says `assumed` or `kept` |
+| some usage readings failed (`dispatch`) | true; each is a `usage` entry in `unavailable`, and its ranked row says `unknown` or `kept` |
 | the brief refused | false, with `error`; no reading fields |
 
 `headline`: today's (the worker suggestion, level, kind of work, facts that bear on difficulty, `HIGH RISK`, `FIX THE
@@ -402,17 +401,17 @@ Own fields:
 - The advice: `level`, `sure`, `between` (when torn), `work_type`, `high_risk`, `worker` `{ suggestion, why }`,
   `facts` (each `{ reading, p, means? }`), `notes`, `meaning`.
 - `dispatch` only: `subscriptions` `{ most_room, share_due?, candidates: { normal, fallback }, ranked, excluded, note }`. A ranked
-  row: `subscription`, `class`, `use`, `reserve`, `hardest_work`, `your_default`?, `usable`, `headroom`, `windows`? (each
-  `{ window, used_pct, resets_in_h, left, reserve_now, usable }`), `usage` (`live`, `given`, `assumed`, `metered`),
+  row: `subscription`, `class` (`included`, `metered`, `unknown`), `use` (`normal` when unset), `reserve`, `hardest_work`, `your_default`?, `usable`, `headroom`, `windows`? (each
+  `{ window, used_pct, resets_in_h, left, reserve_now, usable }`), `usage` (`live`, `given`, `unknown`, `metered`),
   `age_sec`, `note`?, `share`?. An excluded row: `{ subscription, why }`.
-- The launch share: normal rows qualify when metered, or capped with `usable > 0`. When at least two qualify and one has a
+- The launch share: normal metered rows qualify with `usable: null` or `usable > 0`. When at least two qualify and one has a
   `share` setting (one without counts as 1), each of them gets `share` `{ weight, target, used_pct, left, launches, of }`
   and `subscriptions` gets `share_due`. Over the last 7 days of routr's own launches on those accounts (`of` in all,
   `launches` on this one, whatever class they read when launched), `target` is the weight's fraction of their weights,
   `used_pct` the percent of those launches it took, and `left` how far it is below its target (0 at or above it).
   `share_due` is the account with the most `left`, ties to the larger weight and then the name; null when none is
-  below its target. Those rows are ordered by `left` within their existing slots; capped numbers stay as read,
-  metered numbers stay null, `most_room` remains the largest positive usable number, and
+  below its target. Those rows are ordered by `left` within their existing slots; window numbers stay as read,
+  unknown room stays null, `most_room` remains the largest positive usable number, and
   `candidates` stay in name order. `note` gives the reading in a line. Without such rows neither field appears; with
   them, when the history cannot be read (its folder, a record in it, or the folder is a link), neither appears and
   `note` says the share is not shown. `usage <subscription>` shows one row, so never a share.
@@ -874,7 +873,7 @@ Inputs:
 
 | case | `ok` |
 |---|---|
-| no name, or `--level`: the view made | true, also when some readings failed (each is a `usage` entry in `unavailable`, its row `assumed` or `kept`) or a subscription is excluded |
+| no name, or `--level`: the view made | true, also when some readings failed (each is a `usage` entry in `unavailable`, its row `unknown` or `kept`) or a subscription is excluded |
 | the ranking itself failed | false, no `error`; `unavailable` holds routr's `internal_error` entry |
 | named `claude`, `codex` or `agy` | as no name, for that one subscription: these are read on every call, and naming one narrows the view. A failed read is `ok: true` with its entry; a signed-out one is `ok: true` with it in `excluded`. |
 | named `cursor` or `kiro`: a fresh reading taken and kept | true |
@@ -948,7 +947,7 @@ Shared fields that are new to a command are listed as added.
 | `meaning` | kept | says what the advised level means; changes with the level |
 | `subscriptions.most_room`, `.candidates.normal`, `.candidates.fallback` | kept | the ranking |
 | `subscriptions.note` | kept, its instructions moved to `next` (hold the work, ask or tell the user, normal before fallback) | the ranking's policy explanation; instructions are `next` steps in their situation |
-| `subscriptions.ranked[]`: `subscription`, `class`, `use`, `reserve`, `your_default`, `usable`, `headroom`, `usage`, `age_sec`, `note` | kept | the ranking; `subscription`, `usable`, `usage` are ledger inputs |
+| `subscriptions.ranked[]`: `subscription`, `class` (`included`, `metered`, `unknown`), `use` (`normal` when unset), `reserve`, `your_default`, `usable`, `headroom`, `usage`, `age_sec`, `note` | kept | the ranking; `subscription`, `usable`, `usage` are ledger inputs |
 | `subscriptions.ranked[].windows[]`: `window`, `used_pct`, `resets_in_h`, `left`, `reserve_now`, `usable` | kept | per-window numbers to check against the harness |
 | `subscriptions.ranked[].hardest_work` | added | one row shape with `usage` |
 | `subscriptions.excluded[].subscription` | kept | |

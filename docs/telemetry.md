@@ -94,3 +94,5 @@ keeps it), so note it first if you may want your rows deleted later.
 
 The client is [`src/lib/telemetry.mjs`](../src/lib/telemetry.mjs). A new field in a sent row changes this page in the
 same pull request.
+
+Account class and usage reading state are not sent. Removing a billing kind changes no telemetry field.

@@ -96,7 +96,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `feedback "<text>"` | Send the maintainers a note in your own words. |
 | `key set [typesafe\|cloudflare]` | Store your decision model's key (TypeSafe's API key, or a Cloudflare API token and account ID): typed without echo, saved readable only by you, then tested. Ollama needs none. |
 | `update` | Update to the newest release on your update channel now (routr also does this by itself in the background, at most once a day). |
-| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use, and a launch share for metered or capped accounts in normal use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--share`, `--enable`, `--disable`, `--channel`, `--decision`) and reads them first with `--show`. |
+| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use, and a launch share for metered accounts in normal use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--share`, `--enable`, `--disable`, `--channel`, `--decision`) and reads them first with `--show`. |
 | `uninstall` | Remove routr: the binary, its two skills, the cache and its own state, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, keys, and ledger; `--purge` removes those too. It removes nothing while a headless worker is still there (`cleanup --worker` finishes it), nor with `--purge` while a worktree a headless launch made is. |
 | `doctor` | Check the setup: harnesses found, live usage, every decision-list entry in order, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
@@ -198,11 +198,9 @@ goes stale when models change.
 
 - Per subscription, asked by `routr setup` and changed with `routr setup --hardest <name>=<level>` or
   `--reserve <name>=<share>`: `reserve` (the share routr must never offer), `hardest_work` (the hardest work you would hand
-  it), `default_model` and `default_effort` (your everyday choice there, picked from the harness's live list; for Claude Code, whose help says it also takes a model's full name, setup accepts an id it does not list), and
-  `assumed_headroom` for a subscription whose usage cannot be read. For a seat billed per token with no quota (an
-  Enterprise seat), remaining budget is unknown. `--use <name>=normal` makes an account a candidate for everyday
+  it), `default_model` and `default_effort` (your everyday choice there, picked from the harness's live list; for Claude Code, whose help says it also takes a model's full name, setup accepts an id it does not list), and account use. Without a usable reading, capacity is unknown and the account stays offered. `--use <name>=normal` makes an account a candidate for everyday
   work; `=fallback` keeps it for when normal accounts cannot suitably take the task. This is independent of billing.
-  Without `use`, legacy metered `after` means fallback and `with` means normal; other accounts are normal.
+  Without `use`, every account is normal; readings never change this choice.
   `billing` names the kind when the harness cannot show it.
 - `prefer`: your standing preference per kind of work, for example `"review": "strong"`.
 
@@ -215,8 +213,8 @@ routr reads from `claude auth status` and calls `metered` too; and on a usage-ba
 `claude auth status` names the Enterprise plan, called `metered` only when its `/usage` answered with no windows (an
 Enterprise seat with a quota shows windows and is ranked on them). For any other Claude seat without windows the class
 is your `billing` setting, because Claude shows nothing to tell a seat with no quota from a plan routr has not seen
-(your setting also wins over what routr detected). A metered seat gets
-no headroom number and is a normal or fallback candidate by your setting. With two or more normal metered seats or capped seats with usable room,
+(your setting also wins over what routr detected). A metered seat without a window gets
+no headroom number and is a normal or fallback candidate by your setting. With two or more normal metered seats with room,
 a launch share (asked in `routr setup`, or `routr setup --share claude=3 --share codex=1`) tells the agent how you
 want launches split between them. A cap the vendor enforces is read as one
 more window (Codex member limits observed under and at the limit, 2026-11-03).

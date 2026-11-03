@@ -101,11 +101,11 @@ routr never has to own a harness feature (a statusline slot, a hook) to get its 
 
 Failed usage reads have fixed codes and sentences at the reader boundary and in the snapshot cache; harness
 output and exception text are never copied into their diagnostics. A failed refresh keeps the last good reading
-and notes the failed attempt. A fresh usable reading stays available. When a failed source leaves assumed
-headroom or a kept older reading, `unavailable` says which; a kept reading names its source and age. Snapshot
+and notes the failed attempt. A fresh usable reading stays available. When a failed source leaves unknown
+capacity or a kept older reading, `unavailable` says which; a kept reading names its source and age. Snapshot
 readings are fresh for the four-hour refresh interval, local statusline/session-log readings for five minutes.
-A snapshot at least a day old is too old to use: its age is shown with assumed
-headroom, and age alone is not a failure. A source whose last reading is a day old or more and whose last try
+A snapshot at least a day old is too old to use: its age is shown with unknown
+capacity, and age alone is not a failure. A source whose last reading is a day old or more and whose last try
 failed is also said in `warnings` of `dispatch` and `usage`, with a step to read it again, and `doctor` lists it; a
 metered seat, which has no reading to make, is not. Metered accounts without known capacity are valid readings. Accounts
 left out by settings or sign-in status stay in `excluded`, outside the failed readings.
@@ -113,8 +113,12 @@ left out by settings or sign-in status stay in `excluded`, outside the failed re
 Codex spend-control stops without a member limit or reset block capacity for five minutes only, including from
 session logs; older stops leave capacity unknown. Caps roll over only when the reset follows the reading's time;
 plan windows still roll over as before. A past reset holds the full reserve (a synthetic case, not seen live).
-Normal capped seats join the launch ratio while they have usable room; at their limit or reserve they leave it.
+Normal metered seats with a limit join the launch ratio while they have usable room; at their limit or reserve they leave it.
 `most_room` still names the largest positive usable number. Claude Enterprise budgets are not visible to routr.
+
+An unset `use` means normal, independent of readings. Without a usable reading, `usable` stays null and the account
+stays offered, including an included plan. The payment classes are `included`, `metered` and `unknown`; a limit is
+one more window, with the same reserve arithmetic.
 
 How usage is ranked: [ranking.md](ranking.md). A reserve is never offered.
 

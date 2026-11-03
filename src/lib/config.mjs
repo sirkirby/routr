@@ -21,15 +21,14 @@ export const DEFAULTS = {
   subscriptions: {},
 };
 // `billing` fills a gap when the harness reports no capacity; a measured cap always counts.
-// `use` is independent of billing. Absent it, keep the legacy metered after/with preference without inventing capacity.
+// `use` is the user's choice, independent of any reading; unset means normal.
 // `enabled: false` turns a subscription off without forgetting its settings: routr gives it no work until it is on again.
 export const UPDATE_CHANNELS = ["stable", "beta"];
-export const SUB_DEFAULTS = { enabled: true, hardest_work: "strong", reserve: 0, assumed_headroom: 0.5, default_model: null, default_effort: null, billing: null, metered_rank: "after", use: null, share: null };
-const BILLING = ["included", "metered"], METERED_RANK = ["after", "with"];
+export const SUB_DEFAULTS = { enabled: true, hardest_work: "strong", reserve: 0, default_model: null, default_effort: null, billing: null, use: null, share: null };
+const BILLING = ["included", "metered"];
 export const ACCOUNT_USE = ["normal", "fallback"];
-export const accountUse = (s, cls) => s.use ?? (cls === "metered" && s.metered_rank !== "with" ? "fallback" : "normal");
 const isLevel = (v) => LEVELS.includes(v);
-// `share`: this account's weight in the user's ratio of launches between normal metered/capped accounts with room. A whole number,
+// `share`: this account's weight in the user's ratio of launches between normal metered accounts with room. A whole number,
 // so 3 and 1 read as "three for every one"; anything else is reported and left out, which means no ratio of its own.
 export const SHARE_MAX = 99;
 export const isShare = (v) => Number.isInteger(v) && v >= 1 && v <= SHARE_MAX;
@@ -77,18 +76,17 @@ export function loadConfig(path = CONFIG_PATH()) {
     const validReserve = typeof s?.reserve === "number" && s.reserve >= 0 && s.reserve <= 1;
     if (s?.reserve === undefined) notes.push(warning("config_reserve", `${RESERVE.unset(name)}. ${RESERVE.choose(name)}`));
     else if (!validReserve) notes.push(warning("config_reserve", `${RESERVE.invalid(name, s.reserve)}. ${RESERVE.choose(name)}`));
-    const oneOf = (k, allowed, fallback) => { const v = s?.[k]; if (v === undefined || v === null) return fallback; if (allowed.includes(v)) return v; notes.push(warning("config_choice", `subscriptions.${name}.${k}: ${JSON.stringify(v)} is not one of ${allowed.join(", ")}, using ${fallback ?? (k === "use" ? "the legacy account-use preference" : "the harness's own reading")}`)); return fallback; };
+    const oneOf = (k, allowed, fallback) => { const v = s?.[k]; if (v === undefined || v === null) return fallback; if (allowed.includes(v)) return v; notes.push(warning("config_choice", `subscriptions.${name}.${k}: ${JSON.stringify(v)} is not one of ${allowed.join(", ")}, using ${fallback ?? (k === "use" ? "normal use" : "the harness's own reading")}`)); return fallback; };
     if (s?.enabled !== undefined && typeof s.enabled !== "boolean") notes.push(warning("config_enabled", `subscriptions.${name}.enabled: ${JSON.stringify(s.enabled)} is not true or false, so it stays on`));
+    if (s?.metered_rank !== undefined || s?.assumed_headroom !== undefined) notes.push(warning("config_choice", `subscriptions.${name}: metered_rank and assumed_headroom no longer do anything; routr setup --use ${name}=fallback keeps this seat out of everyday work`));
     config.subscriptions[name] = {
       enabled: s?.enabled !== false,
       hardest_work: isLevel(s?.hardest_work) ? s.hardest_work : SUB_DEFAULTS.hardest_work,
       reserve: validReserve ? s.reserve : SUB_DEFAULTS.reserve, // noted above when missing or invalid
-      assumed_headroom: share(s?.assumed_headroom, SUB_DEFAULTS.assumed_headroom, `subscriptions.${name}.assumed_headroom`),
       // The user's everyday model for this harness: where the orchestrator starts before moving up or down. Passed through, never interpreted.
       default_model: typeof s?.default_model === "string" ? s.default_model : null,
       default_effort: typeof s?.default_effort === "string" ? s.default_effort : null,
       billing: oneOf("billing", BILLING, SUB_DEFAULTS.billing),
-      metered_rank: oneOf("metered_rank", METERED_RANK, SUB_DEFAULTS.metered_rank),
       use: oneOf("use", ACCOUNT_USE, SUB_DEFAULTS.use),
       share: launchShare(s?.share, name, notes),
     };

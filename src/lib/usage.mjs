@@ -1,7 +1,6 @@
 // Live usage per subscription, read from what each harness writes locally or answers through its own CLI. Read-only.
 // headroom = remaining share of the TIGHTEST window (0..1). No pace or burn modelling: the router decides on what is left.
-// Every pool is a list of windows plus a CLASS: `included` (windows that expire: a subscription), `capped` (a spend cap
-// the vendor enforces, read as one more window), `metered` (billed usage with no quota, and a working source says so),
+// Every pool has windows and a payment class: `included` (a plan), `metered` (billed per use),
 // or `unknown` (nothing readable). Measured 2026-09-22 on a ChatGPT Enterprise seat: no windows at all, only
 // `credits.unlimited: true`, and a plan name of `business`. So the shape is the key, never the plan name.
 import { CLAUDE_SNAPSHOT, home, run } from "./runtime.mjs";
@@ -31,7 +30,7 @@ export function summarize({ pool, source, ts = null, windows = [], note, cls, no
   if (!windows.length) return withUsageReadingTime({ pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? missing.failure?.why ?? "no usage data", ...(reason ? { reason } : {}), ...missing }, Math.round(ts * 1000));
   // Synthetic probes, 2026-11-03, not seen live: caps roll only after the observation; plan windows roll as before.
   const live = windows.map((w) => {
-    if (!Number.isFinite(w.resetsAt) || w.resetsAt <= 0 || w.resetsAt >= nowSec || cls === "capped" && (!Number.isFinite(ts) || ts <= 0 || w.resetsAt <= ts)) return w;
+    if (!Number.isFinite(w.resetsAt) || w.resetsAt <= 0 || w.resetsAt >= nowSec || ["monthly_cap", "spend_limit"].includes(w.name) && (!Number.isFinite(ts) || ts <= 0 || w.resetsAt <= ts)) return w;
     const reset = { ...w, usedPct: 0 };
     // The inferred empty window starts at its reset, never back at the source snapshot's time.
     windowTimes.set(reset, Math.round(w.resetsAt * 1000)); return reset;
@@ -85,7 +84,7 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
   if (metered) notes.push(credits.unlimited ? "metered: unlimited credits, usage is billed, no quota reported"
     : `metered: workspace credits${Number.isFinite(balance) ? ` (balance ${balance})` : ""}, usage is billed, no window reported`);
   else if (!cap && !stopped && ws.length && (credits?.unlimited || hasCredits)) notes.push("workspace credits are on: the harness keeps working past 100% on billed usage");
-  return summarize({ pool: "codex", source, ts, windows: ws, note: notes.join("; ") || undefined, cls: cap || stopped ? "capped" : metered ? "metered" : undefined, nowSec });
+  return summarize({ pool: "codex", source, ts, windows: ws, note: notes.join("; ") || undefined, cls: cap || stopped || metered ? "metered" : undefined, nowSec });
 }
 
 // The Claude snapshot `routr statusline` writes. Windows come from `rate_limits`; `spend_limit` (behind a Claude apps
@@ -101,7 +100,7 @@ export function claudeSnapshot(s, nowSec = now()) {
   const toWs = (rl) => Object.entries(rl ?? {}).filter(([k, v]) => k in mins && v?.used_percentage != null).map(([k, v]) => ({ name: k, usedPct: Math.min(100, v.used_percentage), windowMin: mins[k], resetsAt: v.resets_at }));
   let ws = toWs(s.rate_limits), ts = s.ts;
   if (!ws.length && s.seen) { ws = toWs(s.seen.rate_limits); ts = s.seen.ts; }
-  if (ws.length) return summarize({ pool: "claude", source: "statusline", ts, windows: ws, cls: ws.some((w) => w.name === "spend_limit") ? "capped" : "included", nowSec });
+  if (ws.length) return summarize({ pool: "claude", source: "statusline", ts, windows: ws, cls: ws.some((w) => w.name === "spend_limit") ? "metered" : "included", nowSec });
   return summarize({ pool: "claude", source: "statusline", ts: s.ts, note: s.answered
     ? "Claude reports no usage windows for this seat. A plan with no quota that routr does not recognise sends none: a seat with no quota is set with `billing: \"metered\"` for claude in the config"
     : "no windows yet: Claude reports usage after its first response of a session", nowSec, reason: s.answered ? NO_WINDOWS_AFTER_ANSWER : undefined });
@@ -305,7 +304,7 @@ export async function readClaude({ configDir = process.env.CLAUDE_CONFIG_DIR || 
   // The statusline's reading however old (its age is shown), as before this reader existed; else nothing, and why.
   if (fromSnap?.headroom != null) return { ...fromSnap, source: "claude /usage", failure: usageFailure(code), kept: { source: "statusline", ageSec: fromSnap.ageSec }, note: [fromSnap.note, `${why} This is the statusline's last reading`].filter(Boolean).join("; ") };
   // A snapshot that says Claude sent no windows after a response keeps saying so: doctor's step keys on it.
-  return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: fromSnap?.reason, failure: usageFailure(code), note: `${why} Using the assumed headroom` });
+  return summarize({ pool: "claude", source: "claude /usage", nowSec, reason: fromSnap?.reason, failure: usageFailure(code), note: `${why} Remaining capacity is unknown` });
 }
 
 // Codex: the CLI's own app server answers account/rateLimits/read live (~0.4 s, no tokens). It is marked experimental,
@@ -332,7 +331,7 @@ export async function readCodexLive({ exec = run, fallback = readCodex, nowSec =
   const failure = usageFailure(code ?? (out == null ? "no_response" : "invalid_response"));
   return withUsageReadingTime({ ...(kept ?? failedUsage("codex", "app-server")), source: "app-server", failure,
     ...(kept?.class === "metered" || kept?.headroom != null && !(Number.isFinite(kept.ageSec) && kept.ageSec >= 0 && kept.ageSec < LOCAL_FRESH_SEC) ? { kept: { source: "session log", ageSec: kept.ageSec } } : {}),
-    note: `${failure.why}${kept?.headroom != null || kept?.class === "metered" ? " Using the session log's last reading." : " Using the assumed headroom."}` }, usageReadingTime(kept));
+    note: `${failure.why}${kept?.headroom != null || kept?.class === "metered" ? " Using the session log's last reading." : " Remaining capacity is unknown."}` }, usageReadingTime(kept));
 }
 
 // Antigravity: `/usage` in print mode is answered without an agent turn (0 tokens, ~2 s). It reports two pools;

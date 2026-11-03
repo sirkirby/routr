@@ -88,7 +88,7 @@ reserve suggestions. Existing choices stand until the user changes them. Then ru
 A person can instead run `routr setup` alone in a terminal: it is a guided screen. The first time it asks which
 subscriptions routr may use, then each one's model (from the harness's live list, typed to filter; for Claude Code a full model name that is not
 listed is offered "as typed", chosen by its number in accessible mode), effort, hardest
-work, reserve, and account use, then, when two or more accounts read metered or capped and are in normal use, each one's launch
+work, reserve, and account use, then, when two or more accounts read metered and are in normal use, each one's launch
 share (no share, 1 to 5, or another weight up to 99; no share removes it), then lists the changes with Save and exit as the default (nothing is written before it). Run again,
 it shows what is set and a menu to change one thing, turn a subscription on or off, or walk through everything, then
 Save and exit or Exit without saving. Arrow keys choose, Esc goes back,
@@ -101,9 +101,7 @@ live list; one with no `--hardest` or `--reserve` gets the suggestion. An existi
 harnesses found since, fills a missing `hardest_work` or `reserve`, and applies any flag given, leaving everything
 else alone. Every write keeps the old file as `config.json.bak`. `--force` rebuilds it from the suggestions, keeping
 telemetry, updates and channel, the decision models, which subscriptions are off, and account use, billing and launch share. **To change a setting later**, run
-setup with just that flag, for example `routr setup --yes --hardest cursor=strong`. A subscription that reads as
-metered when first written (billed per token, no quota: a ChatGPT Enterprise seat) gets `metered_rank` written out,
-`after` unless `--metered <name>=with` is passed. An explicit `use` takes precedence. Every value is
+setup with just that flag, for example `routr setup --yes --hardest cursor=strong`. Unset `use` means normal, whatever the reading. Every value is
 the user's preference, and none describes a model. `routr doctor` flags a setting that is missing or invalid, with
 the command that fixes it.
 
@@ -121,11 +119,7 @@ the command that fixes it.
     Code stops taking one, a pane worker's pane says so, and a headless worker's turn fails. Kiro's are
     suggested as `auto` and `auto`: Kiro's own router, with effort left to the model (no `--effort` is passed, so
     nothing is saved to the user's Kiro settings).
-  - `assumed_headroom`: used only when nothing better is known. Claude, Codex, and Antigravity are read live; Cursor's
-    shows only in its own `/usage` screen and Kiro's `/usage` takes about 10 s, so routr reads those two in the
-    background about once per working session (the first time during setup, and at once after an update when the last
-    try got no reading). The advice marks the rest `assumed`.
-    Metered remaining budget stays unknown, even with legacy `metered_rank: "with"`. `routr usage` shows each reading.
+  - Missing usage means room unknown (`usable: null`), still offered; a failed read is listed in `unavailable`.
   - `billing`: `included` or `metered`, only when the harness cannot show which it is. A Codex Enterprise seat on
     flexible pricing is detected (measured: no windows, unlimited credits). So is Claude signed in with an API key,
     from `claude auth status` (measured: `"authMethod": "api_key"`), and Claude through a cloud provider such as
@@ -135,20 +129,17 @@ the command that fixes it.
     that shows no usage windows (a plan routr has not seen) is left to you: the advice says "no usage windows", and `routr doctor` lists it as a next step. Set
     `"billing": "metered"` for such a Claude seat by hand; `"billing": "included"` says the seat has a quota and clears
     the same step. Your setting wins over what routr detected, while no windows arrive. Leave it out otherwise.
-  - `use`: `normal` or `fallback`, independent of billing. Normal accounts are considered for suitable model/effort
+  - `use`: `normal` or `fallback`, independent of billing; unset means normal. Normal accounts are considered for suitable model/effort
     options before comparing headroom. Fallback is considered when none suitably takes the task. This preference
     does not infer or enforce a shared prepaid balance or personal allowance. Set it with `--use name=normal|fallback`.
   - `share`: a whole number from 1 to 99, the account's weight in the user's ratio of launches between normal metered
-    accounts and capped accounts with usable room after reserve: `claude` 3 and `codex` 1 is about three workers on
+    accounts with room after reserve: `claude` 3 and `codex` 1 is about three workers on
     Claude for every one on Codex. A cap keeps its seat in the ratio while there is room; at its limit or reserve
     it leaves, and launches are shared among those left. At least two eligible accounts are needed (one without
     `share` counts as 1); headroom balances included accounts. routr counts its own launches over the last 7 days and the advice names
     the account below its target (`share_due`); the lead still chooses model and effort fit first. Guided setup asks
-    for it (Launch share) when two or more enabled accounts read metered or capped and are in normal use;
-    a capped weight can be configured before room returns. Set it with `--share name=<1-99>`, remove it with `--share name=off`.
-  - `metered_rank`: legacy preference, applied only when `use` is absent. Metered `after` (default) means fallback;
-    `with` means normal. Nonmetered accounts default to normal. The legacy `--metered` flag also sets `use`; explicit
-    `--use` wins if both flags are given. Actual observed caps remain windows, including with a billing override.
+    for it (Launch share) when two or more enabled accounts read metered and are in normal use;
+    a metered weight can be configured before room returns. Set it with `--share name=<1-99>`, remove it with `--share name=off`.
 - `prefer`: the user's standing preference per kind of work (`implement`, `debug`, `refactor`, `review`, `research`,
   `test_writing`, `docs`), for example `"research": "strong"`. Shown to agents as advice, never forced.
 - `sure_at` (unset: the decision model's own measured bar; Jev 1.14's is 0.7), `risk_above` (0.75), `fallback_level`
@@ -183,7 +174,7 @@ can be combined with the others in one run.
 | add a harness installed since | `routr setup --yes` (it adds every harness that is installed and signed in) |
 | use a funded account for everyday work | `routr setup --yes --use codex=normal` |
 | keep an account for fallback | `routr setup --yes --use codex=fallback` |
-| split launches between normal metered or capped accounts with room, or stop | `routr setup --yes --share claude=3 --share codex=1` / `routr setup --yes --share claude=off` |
+| split launches between normal metered accounts with room, or stop | `routr setup --yes --share claude=3 --share codex=1` / `routr setup --yes --share claude=off` |
 | get early builds (beta and release candidates), or stop | `routr setup --yes --channel beta` / `routr setup --yes --channel stable` |
 | set the ordered decision models | `routr setup --yes --decision typesafe,cloudflare:clef-flash` (a single choice also works); then the user stores its key with `routr key set <provider>` in their own terminal. Ollama needs none, but its model must be pulled: setup's note says when it is not, and the pull is the user's to agree to |
 | share anonymous outcomes, or stop | `routr telemetry on` / `routr telemetry off`: only when the user says so |

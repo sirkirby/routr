@@ -391,7 +391,7 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `gen_ai.usage.cache_read.input_tokens` | `int` | Observed positive integer cache-read input tokens, part of input count. |
 | `gen_ai.usage.cache_write.input_tokens` | `int` | Observed positive integer cache-write input tokens, part of input count. |
 | `gen_ai.usage.reasoning.output_tokens` | `int` | Observed positive integer reasoning output tokens, part of output count. |
-| `routr.usage.state` | `string` | `excluded`, `kept`, `given`, `live` or `assumed`. |
+| `routr.usage.state` | `string` | `excluded`, `kept`, `given`, `live` or `unknown`. |
 | `routr.usage.source` | `string` | `claude /usage`, `app-server`, `cursor /usage`, `agy /usage`, `kiro /usage`, `sign-in check`, `given by caller`, `none`, `statusline`, `session log`; unknown becomes `other`. |
 | `routr.launch.state` | `string` | Classified launch outcome: `planned`, `ready`, `prompted`, `needs_input`, `failed`, `refused`, `none`, `finished`, `running`, `idle`, `resumed`, `queued`, `delivered`, `unknown`, `stopped`, `absent`, `listed`, `closed`, `removed`, `done`; unrecognized states become `other`. |
 | `routr.send.state` | `string` | Classified send outcome: `planned`, `ready`, `prompted`, `needs_input`, `failed`, `refused`, `none`, `finished`, `running`, `idle`, `resumed`, `queued`, `delivered`, `unknown`, `stopped`, `absent`, `listed`, `closed`, `removed`, `done`; unrecognized states become `other`. |
@@ -428,7 +428,7 @@ operation, `failed` a classified command or turn failure, `not_started` a harnes
 Assessment fact and check probabilities range from 0 to 1; the assessment level score ranges from 0 to 2. Work
 types and flags come from routr's fixed question set. Check flag codes are the check question names in the table,
 plus `verdict_partial`, `verdict_blocked` and `verdict_unstated` for a report that does not claim done. Candidates and subscription are harness registry names.
-Usage state is `excluded`, `kept`, `given`, `live` or `assumed`; source is a registered usage source, `sign-in check`,
+Usage state is `excluded`, `kept`, `given`, `live` or `unknown`; source is a registered usage source, `sign-in check`,
 `given by caller`, `statusline`, `session log`, `none` or `other`. Backend is `pane` or `headless`. Command states come from their documented
 outcomes, with `done`/`failed` when the command has no separate state. Effort and outcome enum values match
 [anonymous telemetry's projection](telemetry.md), with causes from record's contract and effort origin `given`,
@@ -545,7 +545,7 @@ Commands queue each numeric window of a live reading as only `{ subscription, wi
 the source reading's Unix milliseconds, except that a window inferred empty after its reset is stamped at the
 reset time. Other windows in that snapshot keep their own source time. No usage note, harness text or resource path
 is stored in an observation.
-Kept, given, assumed or signed-out readings queue no point. A failed refresh can still leave a live numeric
+Kept, given, unknown or signed-out readings queue no point. A failed refresh can still leave a live numeric
 snapshot; it retains its original reading time and also emits a failure event. Metered/unknown capacity with no
 number queues no point. `statusline` queues nothing; a later usage-reading command may observe its fresh snapshot. Missing source
 time also queues nothing, rather than inventing a new time for a cached reading.
@@ -590,3 +590,5 @@ checks the holder pids recorded in its own claims. Unreadable inventory or a sur
 the home for inspection. A reused pid belonging to another command is never signalled. Success is reported only
 after teardown. In-process queueing and every other background caller start routr's own source
 entry resolved from its runtime module, or its compiled binary, independently of the importing script.
+
+Account class is not exported. Missing usage uses `routr.usage.state=unknown` and carries no headroom number.

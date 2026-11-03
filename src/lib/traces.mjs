@@ -132,7 +132,7 @@ export async function decisionSpan(config, run) {
   } catch (e) { try { identity(e.provider ?? t.provider, e.model ?? t.model); error(span, e.code); } catch {} throw e; }
   finally { try { span.endTimeUnixNano = spanNow(span); c.spans.push(span); } catch {} }
 }
-const usageState = (row) => row.signedIn === false ? "excluded" : row.kept ? "kept" : row.given ? "given" : row.ageSec != null ? "live" : "assumed";
+const usageState = (row) => row.signedIn === false ? "excluded" : row.kept ? "kept" : row.given ? "given" : row.ageSec != null ? "live" : "unknown";
 function usageObservations(row, observations) {
   if (!subscriptions.includes(row?.pool) || usageState(row) !== "live" || !Number.isFinite(row.headroom)) return;
   // Metrics have their own consent, independent of trace sampling.

@@ -72,7 +72,7 @@ const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 
 // "claude.ai"` and a subscriptionType: windows decide. Read from Claude Code's own code (2.1.293), not
 // measured: `api_key_helper` is an API key from the user's apiKeyHelper; the apiProvider values its code sets
 // for a cloud provider (below) are that provider's account, billed per token by it (its docs); `gateway` is a
-// Claude apps gateway, whose spend limit arrives as a window (capped, usage.mjs), so it is left to the windows.
+// Claude apps gateway, whose spend limit arrives as a window, so it is left to the windows.
 // Both are allow-lists: any other value, or one that is not a string, is null (an unknown provider once counted
 // as metered, its raw text in the reason). Every reason is a fixed string from these tables, never text from
 // the answer, which also carries the email, organisation and ids. Its code always sets authMethod, to one of
@@ -168,7 +168,7 @@ export const HARNESSES = {
     // "✓ Logged in as <email>" / "Not logged in", and exit 0 BOTH ways: only the text tells.
     auth: { check: ["status"], signedIn: (out) => /\bLogged in as\b/.test(out) && !/\bNot logged in\b/.test(out), signIn: "run `cursor-agent login`" },
     models: () => lines("cursor-agent", ["models"], /^\s*([a-z0-9][\w.-]+) - /i),
-    suggested: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 },
+    suggested: { hardest_work: "standard", reserve: 0.1 },
     // `check`: `routr usage cursor` reads it now; `fields` are what that answer's `reading` keeps, `used` its headline.
     usage: { source: "cursor /usage", read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor({ ...o, ready: ready("cursor") }),
       fields: ["plan", "included_used_pct", "auto_used_pct", "api_used_pct", "headroom"], used: (r) => `Included ${r.included_used_pct}% used` } },
@@ -278,7 +278,7 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
       // hours can predate a switch between a subscription and an API key (a switch an hour in still ranked the
       // old way). So in exactly that case the status check runs again now. With windows there is no call. That
       // check is a sign-in check too: unless it answers signed in, this call leaves the harness out, as any
-      // signed-out one (a fresh "loggedIn": false still left it a candidate on assumed headroom).
+      // signed-out one (a fresh "loggedIn": false still left it a candidate with unknown room).
       const b = await billing(name, { fresh: u?.headroom == null });
       if (b?.not) return signedOut(name, b.not);
       return withBilling(name, u, b?.billing);

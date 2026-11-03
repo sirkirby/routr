@@ -1,172 +1,94 @@
-# How routr decides where work can go
+# How routr picks an account
 
-When your orchestrator, the agent handing work out to workers, is about to launch one, it asks `routr dispatch`.
-Three parties take part:
+The decision model reads the brief and advises a work level. routr adds the eligible accounts and their capacity;
+the lead chooses the account, model and effort. See the [command contracts](contracts.md) for output fields and
+[guarantees](guarantees.md) for how readings are kept and refreshed. `routr usage` shows the basic-work view without
+a brief; `routr usage --level standard` refreshes eligibility when the lead chooses a different level.
 
-- **The decision model judges the work.** A small, fast model (TypeSafe's Jev, or Cloudflare's Clef if you chose it)
-  reads the brief and says how demanding the work is (`basic`, `standard`, or `strong`), what kind of work it is, and
-  whether the brief is ready to send. It knows nothing about your subscriptions or their usage.
-- **routr lists candidates and capacity.** Your account-use settings decide which accounts are normal or fallback
-  candidates. Separately, routr ranks the capacity it can read or that you have told it to assume.
-  This is plain arithmetic on your usage and your settings: no model, the same inputs always give the same answer.
-- **The orchestrator decides.** Quality comes first: it chooses model and effort options it trusts to deliver a
-  verified result, then weighs efficiency and capacity among suitable options. Efficiency includes corrections.
-  Headroom alone says nothing about quality, speed or the cost of finishing the task.
+## What you set per account
 
-You can see the ranking any time, with no brief, by running `routr usage`.
+| Setting | Means | If unset |
+|---|---|---|
+| On or off | Off gets no work | On |
+| Hardest work | The most demanding level it may take: basic, standard or strong | Asked in setup |
+| Use | `normal`: everyday work. `fallback`: only when no normal account suitably fits | Normal |
+| Reserve | Share of a usage window to hold back; `0` uses it until exhausted | Asked in setup |
+| Share | Weight in your launch ratio between normal metered accounts | No ratio |
+| Default model and effort | Where the lead starts; never changes which account gets work | Lead chooses |
+| `billing` | Corrects the kind when routr reads it wrong; most people never set it | Read from the harness |
 
-## The usage routr sees
-
-routr reads each subscription's usage from the harness itself: how much of each usage window is used and when it
-resets. It reads usage the way the harness shows it to you, without sending it a prompt, and sends the numbers
-nowhere. Every reading shows how old it is. If routr cannot read a subscription now, it uses the last reading it
-kept, with its age (Cursor's and Kiro's for up to a day; Claude's statusline snapshot and Codex's session log however
-old, except a resetless Codex spend-control stop, trusted for five minutes), and otherwise a number you set (`assumed_headroom`), and says which.
-
-## Your settings
-
-You decide where work may go, with three settings per subscription, and a fourth for metered or capped accounts (`share`,
-below), which `routr setup` asks for when two or more metered or capped accounts are in normal use. `routr setup` asks you for the three, for every
-subscription you let routr use, with each level's meaning beside it and the suggestion already chosen. It saves them
-in `~/.config/routr/config.json` when you pick Save and exit.
-
-To change them later, run `routr setup` again: it shows your settings and a menu to change one thing. Or change one
-directly:
+Run `routr setup` to review these choices, or change one directly:
 
     routr setup --yes --hardest cursor=strong
     routr setup --yes --reserve claude=30%
-    routr setup --yes --use codex=normal
+    routr setup --yes --use codex=fallback
+    routr setup --yes --share claude=2 --share codex=1
 
-A subscription you turn off (`routr setup --yes --disable agy`) keeps its settings and gets no work until it is on
-again.
+Hardest work uses these levels:
 
-An agent setting routr up for you asks you the same questions and passes your answers the same way. A change applies
-from the next call, `routr usage` shows the values in effect, and `routr doctor` tells you if a setting is missing or
-invalid, with the command that fixes it.
+| Level | Meaning |
+|---|---|
+| basic | rote or well-specified work; a small, fast model is enough |
+| standard | the worker must find something out or choose an approach |
+| strong | a wrong or shallow result would be expensive and hard to notice |
 
-- **`hardest_work`**: the most demanding level of work you are willing to send there.
+For reserve, 0% holds nothing back.
 
-  | Level | What the decision model means by it |
-  |---|---|
-  | `basic` | rote or well-specified work; a small, fast model is enough |
-  | `standard` | the worker must find something out or choose an approach |
-  | `strong` | a wrong or shallow result would be expensive and hard to notice |
+Use is only ever your choice. routr never changes it because of what it reads. A metered seat with no `use` set
+gets everyday work. To prefer included plans, set the metered seat to `fallback`. Reading config never rewrites it.
+The removed settings `metered_rank` and `assumed_headroom` do nothing; an old config containing either gets a warning.
 
-  The suggestion setup offers is a starting point, not a measurement. Raise it for a subscription you trust with your
-  hardest work; lower it for one you would rather give only lighter work.
-- **`reserve`**: the share of the subscription routr holds back from workers, for example 25%, so the orchestrator
-  (which usually runs on one of your subscriptions) and anything you run outside routr still have room. routr stops
-  sending workers to a subscription when less than its reserve is left; 0% holds nothing back.
-- **`use`**: `normal` means consider this account for everyday work, including funded enterprise usage. `fallback`
-  means use it when no normal account can suitably take the work. This is independent of billing: either an included
-  subscription or a metered account can be normal or fallback. It does not set or enforce a spending budget.
-- **`share`**: a whole number from 1 to 99, the weight in your launch ratio among normal metered accounts
-  and capped accounts with usable room above zero. A cap at its limit or reserve leaves the ratio; launches split
-  among those left (an unset weight counts as 1). Set it with `routr setup --share claude=2 --share codex=1`,
-  or remove it with `--share claude=off`. Guided setup offers weights for metered/capped pairs, including before room returns.
+## What routr reads
 
-`assumed_headroom` is the share routr assumes when it cannot read an included or unknown account's usage. It is
-labelled assumed. Metered accounts always have unknown remaining budget.
+- **Kind: how it is paid for.** `included` is a plan; `metered` is pay per use; `unknown` means routr cannot tell.
+  Setting a budget does not change the kind. `billing` corrects the kind when no usable window arrived; a window
+  the harness reports always counts, and `--headroom` remains a number the caller supplies.
+- **Windows: how much is left.** A plan's windows, or an admin budget the harness reports, which is simply one
+  more window. Today only Codex reports an admin budget in a form routr reads. routr does not see a Claude
+  Enterprise budget.
+- **Sign-in.** From the harness itself.
 
-Existing configurations keep their use preference: without `use`, a metered account with legacy `metered_rank:
-"after"` (the default) is fallback; `"with"` is normal. Other accounts are normal. Reading config never rewrites it.
-Explicit `use` wins. The legacy `--metered name=after|with` flag remains a setter for fallback or normal respectively;
-when passed with `--use`, `--use` wins. Prefer `--use` for new settings, including seats whose billing is unknown.
-After updating, run `routr setup` to review Account use and your other settings. Version-specific upgrade steps
-are in the [release notes](https://github.com/sirkirby/routr/releases).
+For each window, routr subtracts your reserve from what is left and uses the tightest result. The reserve shrinks
+as a window nears its reset, because unused capacity expires then. A window of unknown length, or with a past
+reset, holds the full reserve. A metered account with a budget window has a usable number by this same arithmetic.
 
-Your default model on each subscription is shown beside it in the ranking but does not change the order. It is an
-everyday preference, not a model assignment for a difficulty level. The orchestrator explains its model and effort
-choices from the task and relevant experience. Choosing a larger model does not itself make the work harder.
+No usable reading means room is unknown: `usable: null`, with a note saying why. This includes an included plan
+whose usage cannot be read and a metered seat with no window. Both stay offered. A failed read also appears in
+`unavailable`; a kept reading is used as before. Unknown room is never treated as full.
 
-## Which subscriptions can take the work
+## How one launch gets its account
 
-A subscription takes work at its `hardest_work` level and below. For `strong` work, a subscription you set to
-`standard` is left out of the ranking, and the output says why. A subscription whose harness is not signed in is left
-out of every ranking, with the command that signs it in.
+1. **Left out, with the reason:** off, not signed in, or the work is harder than its hardest-work setting.
+2. **Is there room?** A window at its limit or reserve leaves the account out of candidates. No reading leaves
+   room unknown and keeps the account in.
+3. **Normal accounts first.** Fallback accounts count only when no normal account suitably fits.
+4. **The lead chooses, model and effort fit first.** Among included accounts that fit, prefer the most room,
+   because unused capacity expires at the reset. Among normal metered accounts, follow the launch ratio until
+   one is out of room. Between an included plan and a metered seat, there is no preference rule: the lead chooses.
+5. **Nothing left:** the lead holds the work or asks you. routr never spends a reserve.
 
-Dispatch filters candidates for the level it advised. When the orchestrator chooses a different level from user
-preferences or repository evidence, it refreshes eligibility with:
+The capacity diagnostic puts positive usable numbers first, then unknown room, then accounts at their reserve.
+`most_room` names only an account with a positive number. The candidate lists are alphabetical permissions,
+not recommendations about model quality.
 
-    routr usage --level standard
+## Your launch ratio
 
-Use `basic`, `standard` or `strong` as chosen. This returns `level` with fresh capacity diagnostics and candidates,
-without reassessing the brief. Plain `routr usage` retains its basic-work view. `--level` is accepted once, only on
-unnamed usage; combining it with a subscription name or `--background` returns an error before any named refresh.
-An error means eligibility was not refreshed. Both upgrades and downgrades use the same account limits, reserves
-and normal/fallback preferences. Keep the original advice for launch and record, and record the chosen level explicitly.
+With at least two eligible normal metered accounts and a `share` set, routr orders those accounts among their
+existing positions by how far each is below its target. A metered account qualifies with unknown room or a
+positive usable number. A limit at its reserve leaves the ratio; launches split among those left.
 
-## How much room each subscription has
+With Claude weight 2 and Codex weight 1, about two Claude launches are due per Codex launch. A Codex budget at
+40% does not change that ratio. At the budget, Codex leaves candidates; after the budget is raised, it returns on
+the next call. A budget on Claude is invisible to routr, so its ratio continues until Anthropic stops the seat.
 
-For each subscription that can take the work, routr works out a **usable** share between 0 and 1:
+The ratio counts routr's own launches over seven days, whatever kind the account read as when launched. An unset
+weight counts as 1; `--share name=off` removes a weight. `share_due` names the account furthest below its target,
+with ties to the larger weight and then the name; it is null when none is due. Each row's `share` shows the weight,
+target fraction, percent of launches used, fraction below target, and launch counts. This is a ratio of launches,
+separate from capacity: `most_room` still names the largest positive usable number. Whether leads following the
+ratio reach it is not measured.
 
-1. **Start with what is left** in each usage window. A subscription can have several, for example one that resets
-   every few hours and one that resets weekly.
-2. **Hold back your reserve.** The reserve shrinks as a window nears its reset, because whatever is unused at the
-   reset is lost anyway: with half the window still to run, half the reserve is held back.
-3. **Count the tightest window.** A subscription with plenty left this week but little left in the next few hours is
-   only as usable as those few hours.
-
-A seat billed per use with no quota has no window to measure. Its `headroom` and `usable` are null, including when
-legacy `metered_rank: "with"` is set. Routr cannot infer a shared prepaid balance or a personal allowance from this.
-Claude Enterprise budgets are not visible in print `/usage`; routr cannot see them and the vendor enforces them.
-A cap the harness reports is still enforced as a window, even with a `billing: "metered"` override.
-routr knows a seat is billed this way from what the harness reports: its usage shape (a Codex Enterprise seat with
-no windows and unlimited credits) or its own sign-in status (Claude signed in with an API key, or on an Enterprise seat whose `/usage` answered with no
-windows). Your `billing`
-setting wins over either when no window arrived; a window that does arrive is always ranked.
-
-## The order
-
-`subscriptions.candidates.normal` and `subscriptions.candidates.fallback` list eligible names alphabetically, without ranking model quality.
-Accounts at their reserve are absent. The lead starts with suitable model/effort options on normal accounts and may
-use fallback when none suitably takes the work, including when the remaining normal models do not fit the task.
-Those settings authorize use in those circumstances. An unknown metered budget is uncertainty to weigh with the
-user's explicit spending limits; it does not by itself revoke that permission.
-
-`subscriptions.ranked` remains a capacity diagnostic: accounts with a number come first, most usable at the top, then metered
-accounts, then accounts at their reserve. `subscriptions.most_room` names only an account with a positive number; it is null when
-only metered candidates remain. Numbers may be labelled assumed. Neither field is a recommendation to choose that
-account. If there are no candidates, hold the work or ask the user. Routr never offers a reserve.
-
-With a `share` set, eligible normal metered/capped rows are ordered among themselves by how far each is below its target, and
-`subscriptions.share_due` names the first. routr counts its own launches: one record per worker that took its task or was left ready,
-kept 7 days, holding only the subscription and the time. A launch made while an account read `included` still
-counts for it. Each row's `share` reads like a window: `weight`, `target` (its weight's fraction), `used_pct` (the percent of
-these launches it took), `left` (how far below its target; 0 at or above), `launches` (its own) and `of` (all of
-them). With weights 3 and 1 and 9 of the last
-20 launches on the first, its target is 0.75, it used 45%, and 0.3 is left, so it is due. This is a ratio of
-launches, never a headroom: metered numbers stay null and capped numbers stay as read.
-`most_room` still names the largest positive usable number, independent of the ratio. The lead still
-chooses model and effort fit first. Whether leads following `share_due` reach your ratio is not measured.
-
-## An example
-
-Subscription A has a reserve of 0.25 and two windows:
-
-- The 5-hour window is 40% used and resets in 1.4 hours, so little of it is still to run and only 0.07 of the reserve
-  is held back: 0.60 left − 0.07 = **0.53** usable.
-- The weekly window is 19% used with most of the week to go: 0.81 left − 0.18 held back = 0.63 usable.
-- A counts as **0.53**, its tighter window.
-
-Beside it: B at 0.55 and C at 0.24, both set to `standard`, and D, a metered account set to normal use. For `standard`
-work the capacity order is B, A, C, then D, but all four are normal candidates. For `strong` work B and C are left out.
-A and D are candidates; the lead may select D for task fit even though its remaining budget is unknown.
-
-## What routr leaves to the orchestrator
-
-- **Which model.** routr never names or compares models, and knows no prices, so nothing in it goes out of date when
-  models change.
-- **How big the work is.** routr ranks by room left, not by whether a large task fits in it. The level says
-  something about size; the orchestrator judges the rest.
-- **The decision.** routr advises; the orchestrator chooses.
-
-The orchestrator verifies the result and can change model, effort or harness within the user's settings when
-evidence warrants it. Immediate recovery and future preferences are separate decisions: a failed run can warrant
-a retry elsewhere, while later routing should consider comparable verified outcomes and distinguish execution
-problems from brief gaps, scope changes and launch trouble. Changes to persistent user preferences remain explicit.
-This quality-first procedure is working guidance; improved quality or efficiency has not been established by an
-outcome comparison.
-
-Both `dispatch` and `usage` return this `subscriptions` object. Excluded rows use `why` for their reason.
-A usage view always names its `level` (`basic` by default).
+routr only advises. Vendors enforce their own limits; when a budget is gone, the seat stops and the lead moves a
+worker that fails there. routr sets no spending limit, reads no Claude budget from its screen, and puts no money,
+prices or worker model names in advice. Quality comes first; the lead verifies outcomes and weighs corrections
+when choosing future work. An improvement in quality or efficiency from this procedure is not measured.
