@@ -1,0 +1,8 @@
+{
+ "subtype": "success",
+ "is_error": false,
+ "num_turns": 0,
+ "total_cost_usd": 0,
+ "local_command": "usage",
+ "result": "You are currently using your subscription to power your Claude Code usage"
+}

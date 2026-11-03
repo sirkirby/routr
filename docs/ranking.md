@@ -20,7 +20,7 @@ You can see the ranking any time, with no brief, by running `routr usage`.
 routr reads each subscription's usage from the harness itself: how much of each usage window is used and when it
 resets. It reads usage the way the harness shows it to you, without sending it a prompt, and sends the numbers
 nowhere. Every reading shows how old it is. If routr cannot read a subscription now, it uses the last reading it
-kept, with its age (Cursor's and Kiro's for up to a day; Claude's statusline snapshot and Codex's session log however
+kept, with its age (Cursor's, Kiro's and Claude's panel for up to a day; Claude's statusline snapshot and Codex's session log however
 old), and otherwise a number you set (`assumed_headroom`), and says which.
 
 ## Your settings
@@ -116,6 +116,15 @@ routr knows a seat is billed this way from what the harness reports: its usage s
 no windows and unlimited credits) or its own sign-in status (Claude signed in with an API key, or on an Enterprise seat whose `/usage` answered with no
 windows). Your `billing`
 setting wins over either when no window arrived; a window that does arrive is always ranked.
+For that Enterprise Claude shape only, routr starts a detached private herdr read of the interactive `/usage` panel.
+An admin limit becomes a `spend_limit` window (`capped`), ahead of `billing: metered`. Its date-only reset is the
+end of the named day in its zone; its period is unknown, so the full reserve stays. No readable limit, a failed
+panel read, or no herdr leaves it metered with unknown budget; a failure also carries its usage failure code.
+This panel follows the four-hour refresh and 24-hour trust rule; commands report the saved reading and age.
+Codex member caps use the reported monthly window, accepting the measured UTC boundary plus one second. A
+spend-control-only stop without a reset is trusted for five minutes, including in a fallback log; older stops
+become unknown capacity so an old log cannot exclude the seat forever. These are freshness rules, not budgets.
+The ranking note says “Metered budget is unknown” only when a metered account is ranked.
 
 ## The order
 

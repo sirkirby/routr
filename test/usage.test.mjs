@@ -1050,6 +1050,6 @@ test("every harness `routr usage <name>` reads now declares, in its registry ent
     expect(h.usage.fields).toContain("headroom");
     expect(typeof h.usage.used({})).toBe("string");
     if (h.usage.left) { expect(h.usage.left.warning()).toBeString(); expect(h.usage.left.next).toBeString(); }
-    expect(name).toBeOneOf(["cursor", "kiro"]); // a third one also needs its reading named in docs/contracts.md
+    expect(name).toBeOneOf(["claude", "cursor", "kiro"]); // every fresh reader also needs its reading named in docs/contracts.md
   }
 });

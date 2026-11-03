@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { usageFailure } from "./usage-failure.mjs";
 
 export { CLAUDE_SNAPSHOT };
-export const CODEX_SESSIONS = () => join(home(), ".codex/sessions");
+export const CODEX_SESSIONS = () => join(process.env.CODEX_HOME || join(home(), ".codex"), "sessions");
 const now = () => Date.now() / 1000;
 
 // Source time is internal provenance, not a new command field. Headroom observations must not timestamp a
@@ -47,7 +47,10 @@ export const failedUsage = (pool, source, code = "read_failed") => summarize({ p
 export function monthMinutes(resetsAt) {
   if (!resetsAt) return null;
   const d = new Date(resetsAt * 1000);
-  if (d.getUTCDate() !== 1 || d.getUTCHours() || d.getUTCMinutes() || d.getUTCSeconds()) return null;
+  if (d.getUTCDate() !== 1 || d.getUTCHours() || d.getUTCMinutes() || d.getUTCSeconds() > 1) return null;
+  // p46 admin-limit reads, Codex 0.166.0, 2026-11-03: boundary and boundary +1 s both observed.
+  // Accept only that one-second tolerance; use the exact boundary for the period length.
+  d.setUTCSeconds(0, 0);
   return Math.round((d.getTime() - Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)) / 60000);
 }
 
@@ -62,6 +65,15 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
   const notes = [];
   // A member credit limit (the owner's monthly cap) is one more window: the tightest wins, as with any other.
   if (cap) { const resetsAt = g(cap, "resetsAt", "resets_at"); ws.push({ name: "monthly_cap", usedPct: 100 - g(cap, "remainingPercent", "remaining_percent"), windowMin: monthMinutes(resetsAt), resetsAt }); }
+  const stopped = g(rl, "spendControlReached", "spend_control_reached") === true;
+  // An unobserved spend-control-only stop has no reset to roll over. Trust it only for the local freshness
+  // interval (5 min), including session-log fallback, which otherwise never expires. Old logs cannot stop a
+  // seat forever; unknown capacity after expiry is not invented headroom. Explicit caps keep their reset.
+  if (stopped && !cap) {
+    if (!(Number.isFinite(ts) && nowSec - ts >= 0 && nowSec - ts < LOCAL_FRESH_SEC))
+      return summarize({ pool: "codex", source, ts, nowSec, note: "spend control reading is too old to use: its reset is unknown" });
+    ws.push({ name: "spend_limit", usedPct: 100, windowMin: null, resetsAt: null });
+  }
   const reached = g(rl, "rateLimitReachedType", "rate_limit_reached_type");
   if (reached) notes.push("a rate limit was reached");
   if (g(rl, "spendControlReached", "spend_control_reached") === true) notes.push("spend control reached: the cap is used up");
@@ -74,8 +86,8 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
     : typeof credits?.balance === "string" && /^\d+(?:\.\d+)?$/.test(credits.balance) ? Number(credits.balance) : null;
   if (metered) notes.push(credits.unlimited ? "metered: unlimited credits, usage is billed, no quota reported"
     : `metered: workspace credits${Number.isFinite(balance) ? ` (balance ${balance})` : ""}, usage is billed, no window reported`);
-  else if (ws.length && (credits?.unlimited || hasCredits)) notes.push("workspace credits are on: the harness keeps working past 100% on billed usage");
-  return summarize({ pool: "codex", source, ts, windows: ws, note: notes.join("; ") || undefined, cls: cap ? "capped" : metered ? "metered" : undefined, nowSec });
+  else if (!cap && !stopped && ws.length && (credits?.unlimited || hasCredits)) notes.push("workspace credits are on: the harness keeps working past 100% on billed usage");
+  return summarize({ pool: "codex", source, ts, windows: ws, note: notes.join("; ") || undefined, cls: cap || stopped ? "capped" : metered ? "metered" : undefined, nowSec });
 }
 
 // The Claude snapshot `routr statusline` writes. Windows come from `rate_limits`; `spend_limit` (behind a Claude apps
@@ -109,8 +121,8 @@ function newestFile(dir) {
   return files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0] ?? null;
 }
 
-export function readCodex() {
-  const f = newestFile(CODEX_SESSIONS());
+export function readCodex({ sessions = CODEX_SESSIONS(), nowSec = now() } = {}) {
+  const f = newestFile(sessions);
   if (!f) return summarize({ pool: "codex", source: "session log" });
   const lines = readFileSync(f, "utf8").split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -118,8 +130,8 @@ export function readCodex() {
     try {
       const o = JSON.parse(lines[i]);
       const rl = o.payload?.rate_limits ?? o.payload?.info?.rate_limits ?? o.rate_limits;
-      if (!rl?.primary && !rl?.credits) continue;
-      return codexSnapshot(rl, "session log", Date.parse(o.timestamp) / 1000);
+      if (!rl?.primary && !rl?.credits && !rl?.individualLimit && !rl?.individual_limit && !rl?.spendControlReached && !rl?.spend_control_reached) continue;
+      return codexSnapshot(rl, "session log", Date.parse(o.timestamp) / 1000, nowSec);
     } catch {}
   }
   return summarize({ pool: "codex", source: "session log" });
@@ -225,7 +237,7 @@ const readJson = (file) => { try { return existsSync(file) ? JSON.parse(readFile
 // as real folders (a symlink or, on Windows, a junction, which lstat reports as a symlink, is never followed), and
 // only with rmdir, so a folder that is not empty stays, and only while the private folder is still the one routr made.
 // The naming is Claude's own: a folder named otherwise is simply not found, and any surprise leaves things as they are.
-const claudeProjectsDir = () => join(home(), ".claude/projects");
+const claudeProjectsDir = () => join(process.env.CLAUDE_CONFIG_DIR || join(home(), ".claude"), "projects");
 export const claudeProjectFolders = (cwd, projects = claudeProjectsDir()) => {
   let real = cwd; try { real = realpathSync(cwd); } catch {}
   return [...new Set([cwd, real].map((x) => join(projects, x.replace(/[^A-Za-z0-9]/g, "-"))))];

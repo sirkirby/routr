@@ -65,7 +65,7 @@ export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`,
 
 // `background: false` reads without starting a refresh: doctor, for a harness installed but not in the config.
 // `windows(reading)` and `describe(reading)` turn the kept reading into the usage row; `byHand` is said when reading fails.
-export function readSnapshot({ name, source, windows, describe, keep, byHand, file, lock = `${file}.lock`, nowSec = now(), refresh = (token) => startRefresh(name, token), background = true, off = noRefresh(), version = ROUTR_VERSION }) {
+export function readSnapshot({ name, source, windows, describe, keep, byHand, file, lock = `${file}.lock`, nowSec = now(), refresh = (token) => startRefresh(name, token), background = true, off = noRefresh(), version = ROUTR_VERSION, classify = () => undefined, emptyClass }) {
   const cached = readJson(file);
   let snap = cached.snapshot ?? (cached.failure ? { failure: cached.failure } : null);
   // Drop the old raw error field on reads and writes; it is never interpreted or copied forward.
@@ -86,11 +86,12 @@ export function readSnapshot({ name, source, windows, describe, keep, byHand, fi
   }
   const r = snap?.reading, age = snap?.ts == null ? null : nowSec - snap.ts;
   const ws = r ? windows(r) : [];
-  const invalid = r && (!Number.isFinite(age) || !ws.some((w) => Number.isFinite(w.usedPct)));
+  const cls = r ? classify(r) : emptyClass;
+  const invalid = r && (!Number.isFinite(age) || (!ws.some((w) => Number.isFinite(w.usedPct)) && cls !== "metered"));
   const failure = cached.failure ?? snap?.failure ?? (invalid ? usageFailure("invalid_response") : undefined);
   const after = [started && "a fresh reading is being taken in the background", failure && `the last try failed: ${failure.why}`].filter(Boolean).join("; ");
-  if (r && !invalid && age >= 0 && age < TRUST_SEC) return summarize({ pool: name, source, ts: snap.ts, windows: ws, note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec, failure, ...(failure && age >= REFRESH_SEC ? { kept: { source: `${name} snapshot`, ageSec: Math.round(age) } } : {}) });
+  if (r && !invalid && age >= 0 && age < TRUST_SEC) return summarize({ pool: name, source, ts: snap.ts, windows: ws, cls, note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec, failure, ...(failure && age >= REFRESH_SEC ? { kept: { source: `${name} snapshot`, ageSec: Math.round(age) } } : {}) });
   const why = invalid ? "the saved reading cannot be read" : r ? age < 0 ? "the last reading is from the future, so it is not used"
     : `the last reading is ${Math.round(age / 3600)} h old, too old to use` : "no reading yet";
-  return summarize({ pool: name, source, ts: snap?.ts, note: `${why}${after ? `; ${after}` : ""}; using the assumed headroom.`, nowSec, failure });
+  return summarize({ pool: name, source, ts: snap?.ts, cls: emptyClass, note: `${why}${after ? `; ${after}` : ""}; ${emptyClass === "metered" ? "limit unknown: still metered" : "using the assumed headroom"}.`, nowSec, failure });
 }

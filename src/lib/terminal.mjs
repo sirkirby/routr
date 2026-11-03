@@ -10,7 +10,7 @@
 import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import { callHerdr, processError } from "./process-boundary.mjs";
-import { paneView } from "./herdr.mjs";
+import { deadline, paneView, runHerdr, shellFamily, waitForShell } from "./herdr.mjs";
 import { harnessEnv, start as startProcess } from "./runtime.mjs";
 
 // A session routr made carries the pid of the routr that made it, so a run that was killed half way is cleaned up by
@@ -68,4 +68,17 @@ export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAliv
     if (typeof pane !== "string" || !pane) throw new Error("herdr returned no pane id");
     return { pane, call, close, ...paneView(call, pane) };
   } catch (e) { await close(); throw e; }
+}
+
+// Shared deadline, shell-readiness gate and cleanup for interactive usage readers. Screen text never leaves read().
+export async function withUsageTerminal(read, { run = runHerdr, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  now = () => performance.now(), cwd, verifyCwd = false, timeout = 90000, terminal = {} } = {}) {
+  let t;
+  try {
+    const remaining = deadline(timeout, now, "Usage read timed out");
+    t = await openTerminal({ run, cwd, remaining, sleep, ...terminal });
+    const ready = await waitForShell(t, { sleep, now, remaining, ...(verifyCwd ? { cwd } : {}) });
+    if (!ready.ok) throw new Error();
+    return await read({ t, shell: shellFamily(ready.name), remaining, pause: () => sleep(Math.min(250, remaining())), now });
+  } finally { await t?.close(); }
 }

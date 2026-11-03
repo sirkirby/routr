@@ -872,7 +872,8 @@ Inputs:
 |---|---|
 | no name, or `--level`: the view made | true, also when some readings failed (each is a `usage` entry in `unavailable`, its row `assumed` or `kept`) or a subscription is excluded |
 | the ranking itself failed | false, no `error`; `unavailable` holds routr's `internal_error` entry |
-| named `claude`, `codex` or `agy` | as no name, for that one subscription: these are read on every call, and naming one narrows the view. A failed read is `ok: true` with its entry; a signed-out one is `ok: true` with it in `excluded`. |
+| named `codex` or `agy` | as no name, for that one subscription: these are read on every call, and naming one narrows the view. A failed read is `ok: true` with its entry; a signed-out one is `ok: true` with it in `excluded`. |
+| named `claude` | same saved view as unnamed usage for Claude; only an Enterprise no-window print read starts the detached panel refresh. No public call waits for that screen. |
 | named `cursor` or `kiro`: a fresh reading taken and kept | true |
 | named `cursor` or `kiro`: the reading failed | false, no `error`; a `usage` entry in `unavailable` (with the last good reading `kept`, when there is one) and a `next` step to read it by hand |
 | named `cursor` or `kiro`: not signed in | false, no `error`; it is in `subscriptions.excluded` with its `why` (the sign-in command), and nothing is read |
@@ -907,7 +908,7 @@ for plain usage, `--level` and a named subscription alike:
 Own fields: `level`; `subscriptions` (the same object as `dispatch`'s; for a named subscription, its row alone, with no `share` or `share_due`);
 named only: `subscription`; named `cursor` or `kiro` with a fresh reading: `reading`, the harness's own numbers for a
 person to check against its screen (Cursor `{ plan, included_used_pct, auto_used_pct, api_used_pct, headroom }`; Kiro
-`{ plan, credits_used, credits_limit, used_pct, resets_at, unrecognized_lines?, headroom }`).
+`{ plan, credits_used, credits_limit, used_pct, resets_at, unrecognized_lines?, headroom }`). Claude's private background refresh keeps only `{ used_pct, resets_at }` for an admin panel limit (null when unreadable), never dollar or screen text.
 
 ## The ledger and telemetry
 

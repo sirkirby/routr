@@ -2,6 +2,8 @@
 // screen text never supplies a sentence. Unknown failures are read_failed; no caller parses a note to classify one.
 import { warning } from "./warnings.mjs";
 export const USAGE_FAILURES = Object.freeze({
+  herdr_missing: "Claude's spend limit cannot be seen without herdr installed on PATH.",
+  claude_open_once: "Claude's spend limit could not be read: open Claude Code once to finish its first-run screens, then retry.",
   internal_error: "An internal error stopped routr from ranking usage.",
   read_failed: "routr could not read this usage source.",
   no_response: "The usage source did not answer.",

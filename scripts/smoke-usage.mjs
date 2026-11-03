@@ -3,13 +3,14 @@
 // headroom for days (herdr 0.9.5, 2026-10-22: Cursor's read failed on every try for 89 h unnoticed). Run after updating
 // a harness or herdr, and before a release that changes a reader (CONTRIBUTING.md):
 //   bun run smoke:usage
-// Reads only, writes nothing of routr's (each reader cleans up after itself), and reads only a subscription that is
+// Does not publish snapshots; Claude's panel may make its stable empty state folder. Reads only a subscription that is
 // turned on and signed in (asking a signed-out harness can open its sign-in). Exits 1 when a reader could not read.
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig } from "../src/lib/config.mjs";
-import { billingFor, HARNESSES, notReady, withBilling } from "../src/lib/harnesses.mjs";
+import { billingFor, HARNESSES, needsClaudePanel, notReady, withBilling } from "../src/lib/harnesses.mjs";
 import { readAgy, readClaude, readCodexLive } from "../src/lib/usage.mjs";
+import { claudePanelUsage } from "../src/lib/claude-panel.mjs";
 import { cursorUsage } from "../src/lib/cursor-usage.mjs";
 import { kiroUsage } from "../src/lib/kiro-usage.mjs";
 
@@ -38,7 +39,14 @@ export async function smokeUsage({ config = loadConfig().config, live = LIVE, re
     if (why) { log(`${name}: ${why}, not read`); continue; }
     const t = performance.now();
     let r; try { r = await live[name](); } catch { r = { ok: false, code: "read_failed" }; }
-    if (r && r.ok === undefined) { const b = await billing(name, { fresh: r.headroom == null }); if (b.not) { log(`${name}: ${b.not}, not read`); continue; } r = withBilling(name, r, b.billing); }
+    if (r && r.ok === undefined) {
+      const b = await billing(name, { fresh: r.headroom == null });
+      if (b.not) { log(`${name}: ${b.not}, not read`); continue; }
+      if (name === "claude" && needsClaudePanel(r, b.billing)) {
+        const panel = await claudePanelUsage({ quiet: HARNESSES.claude.quiet });
+        r = panel.ok ? { headroom: panel.used_pct == null ? null : Math.max(0, 1 - panel.used_pct / 100), class: panel.used_pct == null ? "metered" : "capped" } : panel;
+      } else r = withBilling(name, r, b.billing);
+    }
     const line = said(r, s.billing);
     if (line.startsWith("FAILED")) failed++;
     log(`${name}: ${line} (${HARNESSES[name].usage.source}, ${((performance.now() - t) / 1000).toFixed(1)} s)`);

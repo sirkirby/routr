@@ -305,3 +305,6 @@ export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBus
 }
 
 export const runHerdr = (args, timeout, options) => callHerdr((a, ms) => transport(a, ms, options), args, timeout);
+
+// A command typed into the pane's own shell; each argument stays one literal word.
+export const shellCommand = (shell, exe, args) => `${shell === "powershell" ? "& " : ""}${[exe, ...args].map(shell === "powershell" ? psq : shell === "cmd" ? cmdq : quote).join(" ")}`;

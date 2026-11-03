@@ -225,7 +225,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
   const unknown = flags.filter((f) => f !== "--json" && f !== "--background");
   if (extra.length || unknown.length) return refuse(`usage: routr usage [--config <path>] [--headroom <subscription>=<share, 0.9 or 90%>]... [<subscription> | --level <${LEVELS.join("|")}>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}`);
   if (explicit && (name || flags.includes("--background"))) return refuse("usage: --level is for unnamed usage only; omit the subscription and --background. Eligibility was not refreshed");
-  const fresh = name && Object.hasOwn(sources, name) && sources[name]?.check;
+  const fresh = name && Object.hasOwn(sources, name) && (!sources[name]?.backgroundOnly || flags.includes("--background")) && sources[name]?.check;
   // What the answer keeps and says of a fresh reading is the harness's own (its registry entry), whoever reads it.
   const reader = fresh ? { label: HARNESSES[name].label, ...HARNESSES[name].usage } : null;
   if (name && !configured.includes(name) && !fresh) return { ...refuse(`${name} is not a configured subscription (configured: ${configured.join(", ") || "none, run routr setup"})`), subscription: name };

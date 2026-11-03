@@ -64,7 +64,7 @@ export function rankSubscriptions(level, usage, c, launches = null) {
   const note = !ranked.length ? !Object.keys(c.subscriptions).length ? "no subscriptions are configured: routr setup has not been run"
     : `no eligible subscriptions for ${level} work${excluded.length ? `; ${excluded.map((e) => `${e.subscription}: ${e.why}`).join("; ")}` : ""}`
     : !open.length && !metered.length ? `every subscription that takes ${level} work is at its reserve`
-    : `${open.length ? `${open[0].subscription} has the most usable headroom among accounts with a number` : "remaining capacity is unknown"}. Metered budget is unknown.${share ? ` ${shareNote(share)}` : view?.unreadable ? " Your share is not shown: routr's launch history could not be read." : ""}`;
+    : `${open.length ? `${open[0].subscription} has the most usable headroom among accounts with a number` : "remaining capacity is unknown"}.${metered.length ? " Metered budget is unknown." : ""}${share ? ` ${shareNote(share)}` : view?.unreadable ? " Your share is not shown: routr's launch history could not be read." : ""}`;
   return { most_room: open[0]?.subscription ?? null, ...(share ? { share_due: share.due } : {}), candidates, ranked, excluded, note };
 }
 

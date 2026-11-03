@@ -81,8 +81,9 @@ const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 
 // first-party (an older answer); an explicit null or any non-string is no reading (`null` once read as
 // first-party, and a cloud provider once counted whatever authMethod said).
 // A usage-based Enterprise seat, measured 2026-10-27 (Claude Code 2.1.311, macOS): `"authMethod": "claude.ai"`,
-// `"apiProvider": "firstParty"` and `"subscriptionType": "enterprise"`, with `/usage` showing no windows and only
-// credits spent. An Enterprise seat with a quota keeps the same subscriptionType (Anthropic's Team/Enterprise
+// `"apiProvider": "firstParty"` and `"subscriptionType": "enterprise"`, with print `/usage` showing no windows
+// (the interactive panel showed credits spent). An Enterprise seat with a quota keeps the same subscriptionType
+// (Anthropic's Team/Enterprise
 // article: older Enterprise seats carry limits), so the plan name alone does not decide: this reading applies only
 // to a `/usage` that answered with no windows (`when`, withBilling). A failed read stays a failed read.
 const CLAUDE_AUTH = new Set(["none", "third_party", "claude.ai", "api_key_helper", "oauth_token", "api_key"]);
@@ -128,7 +129,18 @@ export const HARNESSES = {
     // drops the user's settings. `--strict-mcp-config` with no --mcp-config starts none of their MCP servers, which
     // took the read from 7.1-8.8 s to 4.4-5.2 s wall. `--bare` is no use: it skips the keychain and shows no numbers.
     quiet: ["--settings", '{"disableAllHooks":true}', "--strict-mcp-config"],
-    usage: { source: "claude /usage", read: (o) => readClaude({ ...o, quiet: HARNESSES.claude.quiet }) } },
+    usage: { source: "claude /usage", read: (o) => readClaude({ ...o, quiet: HARNESSES.claude.quiet }),
+      backgroundOnly: true, // public usage never waits for this screen; only the detached refresh reads it now
+      limit: async (o) => (await import("./claude-panel.mjs")).readClaudePanel(o),
+      check: async (o) => (await import("./claude-panel.mjs")).refreshClaudePanel({ ...o, ready: ready("claude"), read: async () => {
+        const u = await readClaude({ quiet: HARNESSES.claude.quiet }), b = await billingFor("claude", { fresh: true });
+        if (b.not) return { ok: false, excluded: true, why: b.not };
+        if (u.failure) return { ok: false, code: u.failure.code };
+        if (needsClaudePanel(u, b.billing))
+          return (await import("./claude-panel.mjs")).claudePanelUsage({ quiet: HARNESSES.claude.quiet });
+        return { ok: true, headroom: u.headroom, windows: u.windows };
+      } }),
+      fields: ["used_pct", "resets_at", "headroom", "windows"], used: (r) => Number.isFinite(r.used_pct) ? `spend limit ${r.used_pct}% used` : r.headroom != null ? `${Math.round(r.headroom * 100)}% left` : "no spend limit read" } },
   codex: { label: "Codex", executable: "codex", installAs: "Codex",
     // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
     // "Update available" just after herdr reported it ready, and the Enter that submitted the task chose "Update now".
@@ -262,6 +274,7 @@ export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usag
 // and dispatch leaves it out (pick.mjs). `billing(name, { fresh })`: `{ billing, not }`, what its sign-in answer said
 // about billing (signin.mjs, kept beside `why`'s answer) or null, and, when it was asked again, why it is not signed
 // in now (null when it is).
+export const needsClaudePanel = (u, b) => u?.reason === NO_WINDOWS_AFTER_ANSWER && !u.failure && b?.when === "no_windows";
 export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFor, observe = (read) => read() } = {}) {
   const signedOut = (name, note) => ({ ...summarize({ pool: name, source: "sign-in check", note }), signedIn: false });
   return Promise.all(names.map((name) => observe(async () => {
@@ -281,6 +294,8 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
       // signed-out one (a fresh "loggedIn": false still left it a candidate on assumed headroom).
       const b = await billing(name, { fresh: u?.headroom == null });
       if (b?.not) return signedOut(name, b.not);
+      if (needsClaudePanel(u, b?.billing) && src.limit)
+        return await src.limit({ background: background.includes(name) });
       return withBilling(name, u, b?.billing);
     } catch { return failedUsage(name, source); }
   })));

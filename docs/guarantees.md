@@ -11,7 +11,7 @@ yours (`doctor --fix` is `setup` under another name). What they do besides answe
 - read your harnesses in the foreground, through each harness's own CLI (its status command, Claude's `/usage`);
 - keep routr's own bookkeeping under `~/.cache/routr` (which harnesses are signed in, when a usage source was last
   refreshed);
-- start one of routr's detached jobs and carry on: the updater, Cursor's or Kiro's usage refresh, or the
+- start one of routr's detached jobs and carry on: the updater, Cursor's, Kiro's or eligible Enterprise Claude's usage refresh, or the
   OpenTelemetry sender when export is configured.
 
 They fail open: any error still prints usable output and exits 0. `dispatch`, `subagent` and `check` return
@@ -90,6 +90,14 @@ routr never has to own a harness feature (a statusline slot, a hook) to get its 
 - Claude's is read in the call from its own `/usage`, hooks and MCP servers off; a statusline snapshot under 5 minutes
   old is used instead when one exists.
 - Claude, Codex and Antigravity are read in the call (1 to 9 s, beside the decision model).
+- Only when Claude's print `/usage` answered with no windows and fresh sign-in says Enterprise, a detached
+  private herdr terminal reads the interactive panel. Public `usage claude` also returns the saved reading and age
+  without waiting. A shown admin cap is a `spend_limit` window; otherwise the seat stays metered. A failed read
+  says why through fixed usage failure codes, including herdr missing and first-run screens that need the user.
+  Only folder trust is answered, in routr's stable empty state folder. No model prompt or sign-in is sent.
+  Claude updates its own config, history and caches: two reads in the separate Enterprise sandbox
+  added one trusted project entry on the first read and none on the second, with one new backup then none. Its own
+  files are left alone; panel text never reaches output, ledger or telemetry.
 - Cursor's own screen takes seconds more and starts Cursor, and Kiro's `/usage` takes about 10 s plus its cleanup, so
   their readings are snapshots: when the last try is over 4 hours old, or an older routr made it and got no reading
   (an update reads again at once), a call starts a detached `routr usage cursor`
@@ -100,12 +108,17 @@ Failed usage reads have fixed codes and sentences at the reader boundary and in 
 output and exception text are never copied into their diagnostics. A failed refresh keeps the last good reading
 and notes the failed attempt. A fresh usable reading stays available. When a failed source leaves assumed
 headroom or a kept older reading, `unavailable` says which; a kept reading names its source and age. Snapshot
-readings are fresh for the four-hour refresh interval, local statusline/session-log readings for five minutes.
+readings, including the Enterprise panel, are fresh for the four-hour refresh interval, local statusline/session-log readings for five minutes.
 A snapshot at least a day old is too old to use: its age is shown with assumed
-headroom, and age alone is not a failure. A source whose last reading is a day old or more and whose last try
+headroom (the Enterprise panel instead remains metered with unknown capacity), and age alone is not a failure. A source whose last reading is a day old or more and whose last try
 failed is also said in `warnings` of `dispatch` and `usage`, with a step to read it again, and `doctor` lists it; a
-metered seat, which has no reading to make, is not. Metered accounts without known capacity are valid readings. Accounts
+metered seat without a usable limit reading is not. Metered accounts without known capacity are valid readings. Accounts
 left out by settings or sign-in status stay in `excluded`, outside the failed readings.
+
+A panel cap is trusted only under the same 24-hour snapshot limit. Its date-only reset is the end of that day
+in its zone; a kept window rolls over afterward. Unknown period means full reserve. A Codex spend-control-only
+stop with no cap/reset is trusted for five minutes, including from session logs: older readings become unknown
+capacity rather than blocking a seat forever.
 
 How usage is ranked: [ranking.md](ranking.md). A reserve is never offered.
 
@@ -135,7 +148,7 @@ so one you copy into another folder makes routr treat that folder as its own.
 ## What routr writes
 
 The binary is self-contained: the files under `skills/` are embedded at build time, and it does not depend on a
-repository checkout at run time. It reads your harness state read-only (usage sources, settings, model lists) and
+repository checkout at run time. Claude may update its own files during the panel read described above. Otherwise it reads your harness state read-only (usage sources, settings, model lists) and
 writes only:
 
 - under `~/.config/routr` (`config.json` written whole, where a link to it points), `~/.cache/routr`, `~/.local/share/routr` (headless workers' worktrees in its `worktrees`)

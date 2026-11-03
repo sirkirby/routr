@@ -131,7 +131,11 @@ the command that fixes it.
     from `claude auth status` (measured: `"authMethod": "api_key"`), and Claude through a cloud provider such as
     Bedrock or Vertex (from Claude Code's docs, not measured): both read as `metered`. So is a usage-based Claude
     Enterprise seat (measured: `"subscriptionType": "enterprise"` and a `/usage` with no windows), but only when its
-    `/usage` answered with no windows; an Enterprise seat with a quota is ranked on its windows. Any other Claude seat
+    print `/usage` answered with no windows. Only that shape starts a detached private herdr panel read:
+    an admin limit shown there is a `capped` window, with the full reserve until its date-only reset at the end of
+    that day in its zone. No readable limit stays metered; a failed read (including herdr missing) says why.
+    The saved panel reading and age are returned at once, trusted under 24 hours and refreshed about every four.
+    An Enterprise seat with quota windows keeps its existing read and starts no terminal. Any other Claude seat
     that shows no usage windows (a plan routr has not seen) is left to you: the advice says "no usage windows", and `routr doctor` lists it as a next step. Set
     `"billing": "metered"` for such a Claude seat by hand; `"billing": "included"` says the seat has a quota and clears
     the same step. Your setting wins over what routr detected, while no windows arrive. Leave it out otherwise.

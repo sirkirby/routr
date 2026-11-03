@@ -1,0 +1,138 @@
+import { expect, test } from "bun:test";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { claudePanelScreen, claudePanelUsage, panelReset, parseClaudePanel, readClaudePanel, refreshClaudePanel } from "../src/lib/claude-panel.mjs";
+import { codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, readClaude, readCodex, readCodexLive, summarize } from "../src/lib/usage.mjs";
+import { HARNESSES, readUsage } from "../src/lib/harnesses.mjs";
+import { rankSubscriptions } from "../src/lib/pick.mjs";
+import { cfg, herdrOK, scratch, shellInfo } from "./helpers.mjs";
+const fixture = (name) => readFileSync(new URL(`./fixtures/admin-limits/${name}`, import.meta.url), "utf8");
+const T = Date.UTC(2026, 10, 3, 15) / 1000;
+const hit = fixture("claude-panel.txt");
+// p46 addendum, 2026-11-03: verbatim section from the earlier under-limit panel.
+const under = `Usage credits
+█████▋                                             11% used
+$11.28 / $100.00 spent · Resets Dec 1 (America/Detroit)`;
+const trust = "Quick safety check: Is this a project you created or one you trust?\n❯ No, exit\n  Yes, I trust this folder";
+const ready = "❯ \n? for shortcuts";
+
+test("recorded Codex admin caps, both reset seconds, and no misleading credits note", () => {
+  for (const [name, used] of [["codex-before-saved.json", 29], ["codex-at-limit.json", 100]]) {
+    const rl = JSON.parse(fixture(name)).rateLimits;
+    for (const seconds of [0, 1]) {
+      rl.individualLimit.resetsAt = 1796083200 + seconds;
+      const r = codexSnapshot(rl, "app-server", T, T);
+      expect(r).toMatchObject({ class: "capped", windows: [{ name: "monthly_cap", usedPct: used, windowMin: 30 * 1440 }] });
+      expect(r.note ?? "").not.toContain("keeps working");
+      const c = cfg({ now: T * 1000, subscriptions: { codex: { ...cfg().subscriptions.codex, billing: "metered" } } });
+      const ranked = rankSubscriptions("basic", [r], c);
+      expect(ranked.note).not.toContain("Metered budget");
+      if (used === 100) expect([...ranked.candidates.normal, ...ranked.candidates.fallback]).toEqual([]);
+    }
+  }
+  expect(monthMinutes(1796083202)).toBeNull();
+});
+
+test("a spend-control-only stop expires instead of making an old fallback log block forever", async () => {
+  const rl = { credits: { hasCredits: true, unlimited: true }, spendControlReached: true };
+  expect(codexSnapshot(rl, "app-server", T, T)).toMatchObject({ class: "capped", headroom: 0 });
+  const sessions = scratch("codex-stopped"), dir = join(sessions, "2026/11/03"); mkdirSync(dir, { recursive: true });
+  const f = join(dir, "s.jsonl");
+  for (const [age, cls] of [[299, "capped"], [300, "unknown"], [864000, "unknown"], [-1, "unknown"]]) {
+    writeFileSync(f, JSON.stringify({ timestamp: new Date((T - age) * 1000).toISOString(), payload: { rate_limits: { spend_control_reached: true } } }));
+    const fallback = () => readCodex({ sessions, nowSec: T });
+    const r = await readCodexLive({ exec: async () => null, fallback, nowSec: T });
+    expect(r.class).toBe(cls); expect(r.headroom).toBe(cls === "capped" ? 0 : null);
+  }
+});
+
+test("real Claude panels reduce to percent and conservative date-only reset; other text is not room", () => {
+  expect(parseClaudePanel(hit, T)).toEqual({ used_pct: 100, resets_at: Date.UTC(2026, 11, 2, 4, 59, 59) / 1000 });
+  expect(parseClaudePanel(under, T)).toMatchObject({ used_pct: 11 });
+  expect(parseClaudePanel(hit.replace(/.*\$15\.05.*\n/, ""), T)).toBeNull();
+  expect(parseClaudePanel("garbled", T)).toBeNull();
+  expect(panelReset("Feb 30 (America/Detroit)", T)).toBeNull();
+  expect(panelReset("Dec 1 (Bad/Zone)", T)).toBeNull();
+  expect(claudePanelScreen(trust)).toBe("trust");
+  expect(claudePanelScreen("Claude Code\n❯ \nshift+tab to cycle")).toBe("ready");
+  expect(claudePanelScreen("Choose a theme\n❯ Dark\nLight")).toBe("unknown");
+});
+
+function fakePanel(first = trust, panel = hit) {
+  let ticks = 0, stage = "shell";
+  const calls = [], cwd = scratch("claude-panel-empty");
+  return { calls, options: { cwd, quiet: HARNESSES.claude.quiet, nowSec: T, now: () => ticks, sleep: async (ms) => { ticks += ms; }, terminal: { start: () => {} },
+    run: async (all) => {
+      calls.push(all); const a = all[0] === "--session" ? all.slice(2) : all;
+      if (a[0] === "session") return { ok: true, data: { sessions: [] } };
+      if (a[1] === "list") return herdrOK({ workspaces: [] });
+      if (a[1] === "create") return herdrOK({ root_pane: { pane_id: "w:p" } });
+      if (a[1] === "process-info") return shellInfo([{ pid: 1, cwd }]);
+      if (a[1] === "read") return herdrOK({ text: stage === "shell" ? "chris % " : stage === "first" ? first : stage === "ready" ? ready : panel });
+      if (a[1] === "run") { expect(a[3]).toContain("disableAllHooks"); expect(a[3]).toContain("--strict-mcp-config"); stage = "first"; }
+      if (a[1] === "send-keys" && a[3] === "enter" && stage === "first") stage = "ready";
+      if (a[1] === "send-text") { expect(a[3]).toBe("/usage"); stage = "panel"; }
+      return herdrOK({});
+    } } };
+}
+test("private panel read answers only empty-folder trust, no other first-run screen, and always cleans up", async () => {
+  const f = fakePanel(); expect(await claudePanelUsage(f.options)).toMatchObject({ ok: true, used_pct: 100 });
+  expect(f.calls.filter((a) => a.includes("send-keys")).map((a) => a.at(-1))).toEqual(["down", "enter", "enter"]);
+  expect(f.calls.slice(-2).map((a) => a[1])).toEqual(["stop", "delete"]);
+  for (const first of ["Choose a theme", "Sign in to continue", "garbled"]) {
+    const f = fakePanel(first); expect(await claudePanelUsage(f.options)).toMatchObject({ ok: false, code: "claude_open_once" });
+    expect(f.calls.some((a) => a.includes("send-keys") || a.includes("send-text"))).toBe(false);
+    expect(f.calls.slice(-2).map((a) => a[1])).toEqual(["stop", "delete"]);
+  }
+  const missing = fakePanel(); missing.options.run = async () => ({ ok: false, missing: true, code: "herdr_unreachable", data: {} });
+  expect(await claudePanelUsage(missing.options)).toMatchObject({ ok: false, code: "herdr_missing" });
+  const noLimit = fakePanel(ready, hit.replace(/.*\$15\.05.*\n/, ""));
+  // Start already ready: no confirmation is needed; the panel has no readable limit.
+  expect(await claudePanelUsage(noLimit.options)).toMatchObject({ ok: true, used_pct: null });
+});
+
+test("Claude limit snapshots use the shared refresh, keep and 24-hour trust rule without inventing room", async () => {
+  const file = join(scratch("panel-snap"), "panel.json");
+  const read = (nowSec = T) => readClaudePanel({ file, nowSec, background: false });
+  expect(read()).toMatchObject({ class: "metered", headroom: null });
+  await refreshClaudePanel({ file, nowSec: T, read: async () => ({ ok: true, used_pct: 100, resets_at: T + 60 }) });
+  expect(read(T + 59)).toMatchObject({ class: "capped", headroom: 0 });
+  expect(read(T + 61)).toMatchObject({ class: "capped", headroom: 1 });
+  await refreshClaudePanel({ file, nowSec: T + 80, read: async () => ({ ok: false, code: "claude_open_once", error: "SECRET" }) });
+  expect(read(T + 100)).toMatchObject({ class: "capped", failure: { code: "claude_open_once" } });
+  expect(read(T + 86400)).toMatchObject({ class: "metered", headroom: null });
+  expect(readFileSync(file, "utf8")).not.toContain("SECRET");
+  await refreshClaudePanel({ file, nowSec: T, read: async () => ({ ok: true, used_pct: null }) });
+  expect(read()).toMatchObject({ class: "metered", headroom: null, windows: [] });
+});
+
+test("only answered no-window Enterprise print usage can start the detached panel refresh", async () => {
+  const file = join(scratch("panel-gate"), "none.json");
+  const print = await readClaude({ file, nowSec: T, exec: async () => fixture("claude-print-usage.json") });
+  expect(print.reason).toBe(NO_WINDOWS_AFTER_ANSWER);
+  for (const [u, b, starts] of [[print, { billing: "metered", when: "no_windows" }, 1], [print, { billing: "metered" }, 0],
+    [print, null, 0], [summarize({ pool: "claude", source: "test", windows: [{ name: "five_hour", usedPct: 11 }] }), { billing: "metered", when: "no_windows" }, 0],
+    [{ ...print, failure: { code: "no_response" } }, { billing: "metered", when: "no_windows" }, 0]]) {
+    let called = 0;
+    const [r] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: b }), sources: { claude: { read: async () => u, limit: (o) => { called++; expect(o.background).toBe(true); return readClaudePanel({ file, background: false, nowSec: T }); } } } });
+    expect(called).toBe(starts); if (starts) expect(r.class).toBe("metered");
+  }
+});
+
+test("public Claude usage reports its saved age without waiting for a terminal, even when named", async () => {
+  const { usageCommand } = await import("./contract.mjs");
+  const c = cfg({ subscriptions: { claude: cfg().subscriptions.claude } });
+  const sources = { claude: { backgroundOnly: true, check: async () => { throw new Error("public command waited for a panel"); } } };
+  const read = async () => [{ ...summarize({ pool: "claude", source: "claude /usage", ts: T - 60, nowSec: T, cls: "capped", windows: [{ name: "spend_limit", usedPct: 100, windowMin: null, resetsAt: T + 86400 }] }) }];
+  for (const words of [[], ["claude"]]) {
+    const out = await usageCommand(words, c, {}, { read, sources });
+    expect(out.ok).toBe(true); expect(out.subscriptions.ranked[0]).toMatchObject({ class: "capped", age_sec: 60, usable: 0 });
+    expect(out.subscriptions.candidates).toEqual({ normal: [], fallback: [] });
+  }
+});
+
+test("the panel refuses a nonempty work folder before any terminal call", async () => {
+  const f = fakePanel(); writeFileSync(join(f.options.cwd, "file"), "user content");
+  expect(await claudePanelUsage(f.options)).toMatchObject({ ok: false, code: "private_folder" });
+  expect(f.calls).toEqual([]);
+});

@@ -111,7 +111,12 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   (you passed it in), or `assumed`. `age_sec` is how old the reading is, and `note` says what the harness showed beside
   the number (Cursor: its Auto and API pools; Kiro: its plan and credits) or why a number is assumed. A snapshot too
   old to use stays `assumed` with its age in `age_sec`; age alone is not a read failure. A metered account with
-  unknown capacity is a valid reading. Under `windows` it shows each usage window as the harness reports it: percent
+  unknown capacity is a valid reading. A Claude Enterprise seat whose print `/usage` answered with no
+  windows also reads its interactive panel in a detached private herdr session. A readable admin limit is `capped`;
+  no readable limit stays `metered`, and a failed read explains why in `unavailable` (without herdr the limit cannot
+  be seen). Commands report the saved reading and age, never wait for that screen. The snapshot is trusted under
+  24 hours. A date-only cap reset means the end of that day in its zone, and its unknown period holds full reserve.
+  “Metered budget is unknown” is said only when a metered account is ranked. Under `windows` it shows each usage window as the harness reports it: percent
   used and hours until it resets. The user's reserve shrinks as a window nears its reset, because unused capacity
   expires then. `your_default` is the user's everyday model on that subscription. `excluded` lists subscriptions the
   user does not give work this hard, any the user turned off, and any whose harness is not signed in (its `why`

@@ -5,6 +5,8 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- Read vendor admin spend caps on Codex and Claude Enterprise seats so existing reserves stop offering exhausted seats (#NNN).
+
 ## v0.9.6 — 2026-11-02
 
 [Full notes](docs/releases/v0.9.6.md)
