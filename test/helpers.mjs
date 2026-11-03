@@ -1,6 +1,7 @@
 // Shared by several test files: fixtures, fakes, and the scratch folder the preload (setup.mjs) made.
 import { chmodSync, copyFileSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { expect } from "bun:test";
 import { DEFAULTS } from "../src/lib/config.mjs";
 // Made by test/setup.mjs, which bunfig.toml preloads for every test file.
 export const SCRATCH = process.env.ROUTR_TEST_SCRATCH;
@@ -78,4 +79,11 @@ export function fakeExecutable(bin, name, code, { platform = process.platform } 
     if (!existsSync(node)) copyFileSync(process.execPath, node);
     writeFileSync(`${file}.cmd`, npmShim(`${name}.mjs`));
   } else { writeFileSync(file, `#!${process.execPath}\n${code}`); chmodSync(file, 0o755); }
+}
+
+// Scan complete public outputs, including nested fields, stderr and worker command envelopes.
+export function noPanelText(value) {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  for (const privateText of ["Usage credits", "Plugin skill-listing footprint", "$15.05", "$15.00", "$23.96", "$11.28", "$100.00"])
+    expect(text).not.toContain(privateText);
 }

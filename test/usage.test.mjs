@@ -80,7 +80,7 @@ const OCT5 = Date.UTC(2026, 9, 5, 17, 35) / 1000; // 1:35pm in Detroit, when it 
 const utc = (...a) => Date.UTC(...a) / 1000;
 // A displayed reset is the END of the minute it shows: the last second of it.
 const endOf = (...a) => utc(...a) + 59;
-const claudeAnswer = (result, over = {}) => JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 0, total_cost_usd: 0, result, ...over });
+const claudeAnswer = (result, over = {}) => JSON.stringify({ type: "result", subtype: "success", is_error: false, num_turns: 0, local_command: "usage", total_cost_usd: 0, result, ...over });
 
 test("Claude's /usage text: the session and all-models week are the statusline's windows; a model's own week is counted, never named", () => {
   const p = parseClaudeUsage(CLAUDE_USAGE, OCT5);
@@ -118,7 +118,7 @@ test("Claude's reset times read in their own zone, across DST, midnight and noon
   const full = parseClaudeUsage("Current session: 100% used · resets Nov 1 at 1:30am (America/Detroit)", utc(2026, 10, 1, 6));
   expect(summarize({ pool: "claude", source: "t", ts: utc(2026, 10, 1, 6), windows: full.windows, nowSec: utc(2026, 10, 1, 6) }).headroom).toBe(0);
   // No year is shown: the nearest of last, this and next year's. December's "Jan 1" is next year's; just after New
-  // Year, last night's reset is last year's; yesterday's stays yesterday (and its window rolls over), never next year.
+  // Year, last night's reset is last year's; yesterday's stays yesterday (a fresh full reading still stays full), never next year.
   expect(parseClaudeReset("Jan 1 at 12am (America/Detroit)", utc(2026, 11, 31, 20))).toBe(endOf(2027, 0, 1, 5));
   expect(parseClaudeReset("Dec 31 at 11pm (America/Detroit)", utc(2027, 0, 1, 6))).toBe(endOf(2027, 0, 1, 4));
   expect(parseClaudeReset("Oct 4 at 12pm (America/Detroit)", utc(2026, 9, 5, 17))).toBe(endOf(2026, 9, 4, 16));
@@ -351,7 +351,7 @@ function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = 
         if (stage === "usage") return herdrOK({ text: delayPanel && !extraEnter ? CURSOR_UI : CURSOR_USAGE_PANEL });
         return herdrOK({ text: CURSOR_UI });
       }
-      if (a[1] === "process-info") return stage === "starting" && cursorRuns ? shellInfo([{ pid: 1 }, { pid: 2 }]) : shellInfo();
+      if (a[1] === "process-info") return stage !== "shell" && cursorRuns ? shellInfo([{ pid: 1 }, { pid: 2 }]) : shellInfo();
       if (a[1] === "send-keys") {
         if (stage === "shell") throw new Error("routr typed into the shell: it answers no shell question");
         if (a[3] === "enter" && stage === "starting") stage = "usage";
@@ -461,7 +461,7 @@ test("a cmd shell is never typed a temporary folder that holds % or !: the read 
       : all[3] === "create" ? herdrOK({ root_pane: { pane_id: "w1:p1" } }) : f.deps.run(all);
     const r = await cursorUsage({ ...f.deps, tmp, run });
     expect(r).toEqual({ ok: false, ...usageFailure("cmd_path"), read_yourself: CURSOR_BY_HAND });
-    expect(r.why).toBe("The usage read's shell is cmd, which expands % and ! even inside quotes, and the temporary folder's path holds one. Set TEMP to a folder whose path has neither, or make PowerShell the shell herdr opens.");
+    expect(r.why).toBe("The pane shell is cmd, which expands % and ! in typed arguments even inside quotes. Use a path without those characters, or a PowerShell pane.");
     expect(f.calls.some((a) => ["run", "send-text", "send-keys"].includes(a[3]))).toBe(false);
     expect(readdirSync(tmp)).toEqual([]); // the private folder goes with the read
     expect(f.sessionCalls().slice(-2)).toEqual([`stop ${f.started[0]}`, `delete ${f.started[0]}`]);
@@ -814,14 +814,14 @@ test("the billing reading is kept with the sign-in answer, the same lifetime, an
   const o = (out, nowSec, extra = {}) => ({ file, nowSec, ask: async () => (out == null ? null : { out, code: 0 }), ...extra });
   expect(await signInState(name, HARNESSES.claude, o(AUTH_API_KEY, T))).toBe("yes");
   expect(billingFromSignIn(name)).toMatchObject({ billing: "metered" });
-  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: T, state: "yes", billing: { billing: "metered", why: billingFromSignIn(name).why } });
+  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: T, state: "yes", billing: { billing: "metered", why: billingFromSignIn(name).why }, limitStatus: "not_applicable" });
   expect(await signInState(name, HARNESSES.claude, o(null, T + 5 * 3600))).toBe("yes"); // kept: not asked, still metered
   expect(billingFromSignIn(name)).toMatchObject({ billing: "metered" });
   // A subscription login: no reading, and none of what the status printed about the account is kept.
   expect(await signInState(name, HARNESSES.claude, o(AUTH_MAX, T + 7 * 3600))).toBe("yes");
   expect(billingFromSignIn(name)).toBeNull();
   const kept = readFileSync(file, "utf8");
-  expect(JSON.parse(kept)[name]).toEqual({ ts: T + 7 * 3600, state: "yes" });
+  expect(JSON.parse(kept)[name]).toEqual({ ts: T + 7 * 3600, state: "yes", limitStatus: "not_applicable" });
   for (const leak of ["someone@example.com", "Example Org", "00000000-0000", "max", "orgId", "email"]) expect(kept).not.toContain(leak);
   // A reader that throws is no reading, never a failed sign-in check.
   expect(await signInState(name, { ...HARNESSES.claude, auth: { ...HARNESSES.claude.auth, billing: () => { throw new Error("x"); } } }, o(AUTH_API_KEY, T, { fresh: true }))).toBe("yes");
@@ -933,7 +933,7 @@ test("a login switched within the sign-in cache's 6 hours: a reading without win
   // And back: an hour later a subscription again, its windows not read this time: no longer metered.
   const [toSub] = await read(noWindows, AUTH_MAX, T + 7200);
   expect(toSub).toMatchObject({ class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER });
-  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: T + 7200, state: "yes" });
+  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: T + 7200, state: "yes", limitStatus: "not_applicable" });
   // Windows arrived: they decide, and the status is not asked again.
   asked.length = 0;
   const [w] = await read(withWindows, AUTH_API_KEY, T + 7300);
@@ -1027,7 +1027,7 @@ test("smoke:usage reads each subscription live, asks sign-in fresh, takes a mete
     agy: async () => { throw new Error("turned off: never read"); },
   };
   const ready = async (name, o) => { asked.push([name, o?.fresh]); return null; };
-  const billing = async (name) => ({ billing: name === "claude" ? { billing: "metered", why: "an API key" } : null, not: null });
+  const billing = async (name) => ({ billing: name === "claude" ? { billing: "metered", why: "an API key" } : null, limitStatus: name === "claude" ? "not_applicable" : null, not: null });
   const failed = await smokeUsage({ config, live, ready, billing, log: (l) => lines.push(l.replace(/ \([^)]*, [\d.]+ s\)$/, "")) });
   expect(asked).toEqual([["claude", true], ["codex", true], ["cursor", true], ["kiro", true]]);
   expect(lines).toEqual(["claude: ok: metered", "claude limit: NOT EXERCISED (this sign-in does not need a limit reader)", "codex: ok: 90% left", "cursor: FAILED (read_failed)", "kiro: FAILED (cleanup: Kiro kept an empty usage session; inspect its saved sessions to remove it.)", "agy: turned off, not read"]);
@@ -1035,9 +1035,9 @@ test("smoke:usage reads each subscription live, asks sign-in fresh, takes a mete
   // A read that failed is a failure on a metered seat too, whether its sign-in or the user's billing says metered.
   const metered = [];
   const failedCount = await smokeUsage({ config: { subscriptions: { claude: { billing: "metered" }, codex: {}, agy: {} } }, ready, log: (l) => metered.push(l.replace(/ \([^)]*, [\d.]+ s\)$/, "")),
-    billing: async () => ({ billing: { billing: "metered", why: "an API key" }, not: null }),
+    billing: async () => ({ billing: { billing: "metered", why: "an API key" }, limitStatus: "not_applicable", not: null }),
     live: { claude: async () => summarize({ pool: "claude", source: "claude /usage", nowSec: NOW, failure: usageFailure("no_response") }), codex: async () => summarize({ pool: "codex", source: "app-server", nowSec: NOW, failure: usageFailure("read_failed") }), agy: async () => null } });
-  expect([metered, failedCount]).toEqual([["claude: FAILED (no_response)", "claude limit: NOT EXERCISED (primary usage read failed)", "codex: FAILED (read_failed)", "agy: FAILED (no reading)"], 3]);
+  expect([metered, failedCount]).toEqual([["claude: FAILED (no_response)", "claude limit: NOT EXERCISED (this sign-in does not need a limit reader)", "codex: FAILED (read_failed)", "agy: FAILED (no reading)"], 3]);
   // Signed out now (whatever was kept): not read at all.
   const out = [];
   await smokeUsage({ config: { subscriptions: { kiro: {} } }, live: { kiro: async () => { throw new Error("read while signed out"); } }, ready: async () => "not signed in: run `kiro-cli login`", log: (l) => out.push(l) });
@@ -1047,7 +1047,7 @@ test("smoke:usage reads each subscription live, asks sign-in fresh, takes a mete
 test("every harness `routr usage <name>` reads now declares, in its registry entry, what the answer keeps and says", () => {
   for (const [name, h] of Object.entries(HARNESSES).filter(([, h]) => h.usage?.check)) {
     expect(typeof h.label).toBe("string");
-    expect(h.usage.fields).toContain("headroom");
+    if (h.usage.backgroundOnly) expect(h.usage.fields).toEqual(["used_pct", "resets_at"]); else expect(h.usage.fields).toContain("headroom");
     expect(typeof h.usage.used({})).toBe("string");
     if (h.usage.left) { expect(h.usage.left.warning()).toBeString(); expect(h.usage.left.next).toBeString(); }
     expect(name).toBeOneOf(["claude", "cursor", "kiro"]); // every fresh reader also needs its reading named in docs/contracts.md

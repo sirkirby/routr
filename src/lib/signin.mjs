@@ -22,7 +22,9 @@ const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8"))
 const billingOf = (b) => (b?.billing === "metered" && typeof b.why === "string" ? { billing: "metered", why: b.why.slice(0, 200), ...(b.when === "no_windows" ? { when: "no_windows" } : {}) } : null);
 // The billing reading of each harness this process last asked (or found kept), for readUsage beside the sign-in gate:
 // in memory too, so a cache that cannot be written still carries it through this call.
-const billingSeen = new Map();
+const billingSeen = new Map(), limitSeen = new Map();
+const limitOf = (s) => ["applicable", "not_applicable"].includes(s) ? s : null;
+export const limitFromSignIn = (name) => limitSeen.get(name) ?? null;
 export const billingFromSignIn = (name) => billingSeen.get(name) ?? null;
 
 // `harness` is the registry entry. The state is "yes", "no", or "no answer" (not installed, or it hung): only "yes" gets
@@ -30,6 +32,7 @@ export const billingFromSignIn = (name) => billingSeen.get(name) ?? null;
 export async function signInState(name, harness, { fresh = false, nowSec = Date.now() / 1000, file = SIGNED_IN_FILE(), ask = probe } = {}) {
   const kept = readJson(file)[name];
   if (!fresh && kept?.state && nowSec - kept.ts < KEEP_SEC[kept.state === "yes"]) {
+    limitSeen.set(name, kept.state === "yes" ? limitOf(kept.limitStatus) : null);
     billingSeen.set(name, kept.state === "yes" ? billingOf(kept.billing) : null);
     return kept.state;
   }
@@ -37,8 +40,11 @@ export async function signInState(name, harness, { fresh = false, nowSec = Date.
   const state = !r ? "no answer" : harness.auth.signedIn(r.out, r.code) ? "yes" : "no";
   let billing = null;
   if (state === "yes") try { billing = billingOf(harness.auth.billing?.(r.out, r.code)); } catch {}
+  let limitStatus = null;
+  if (state === "yes") try { limitStatus = limitOf(harness.auth.limitStatus?.(r.out, r.code)); } catch {}
+  limitSeen.set(name, limitStatus);
   billingSeen.set(name, billing);
-  try { writeJsonAtomic(file, { ...readJson(file), [name]: { ts: nowSec, state, ...(billing ? { billing } : {}) } }); } catch {}
+  try { writeJsonAtomic(file, { ...readJson(file), [name]: { ts: nowSec, state, ...(billing ? { billing } : {}), ...(limitStatus ? { limitStatus } : {}) } }); } catch {}
   return state;
 }
 export const signedIn = async (name, harness, o) => (await signInState(name, harness, o)) === "yes";

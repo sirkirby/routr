@@ -240,6 +240,12 @@ export async function shellAlone(pane) {
   return info != null && (info.foreground_processes ?? []).every((p) => p.pid === info.shell_pid);
 }
 
+// Positive proof that a harness is still running. Unknown process state must never authorise typing.
+export async function foregroundRunning(pane) {
+  const info = await processesWhileWaiting(pane);
+  return info == null ? null : (info.foreground_processes ?? []).some((p) => p.pid !== info.shell_pid);
+}
+
 // A time budget for a sequence of herdr calls: `remaining(minimum)` is what is left, and throws `message` when less
 // than minimum (default 1 ms) remains. A wait can stop before giving herdr a timeout too short to answer.
 export function deadline(timeout, now, message) {
@@ -307,4 +313,7 @@ export async function waitForShell(pane, { sleep, now, remaining, cwd, refuseBus
 export const runHerdr = (args, timeout, options) => callHerdr((a, ms) => transport(a, ms, options), args, timeout);
 
 // A command typed into the pane's own shell; each argument stays one literal word.
-export const shellCommand = (shell, exe, args) => `${shell === "powershell" ? "& " : ""}${[exe, ...args].map(shell === "powershell" ? psq : shell === "cmd" ? cmdq : quote).join(" ")}`;
+export const shellCommand = (shell, exe, args) => {
+  if (shell === "cmd" && !cmdTypable(exe, ...args)) throw Object.assign(new Error(CMD_PATH), { usageCode: "cmd_path" });
+  return `${shell === "powershell" ? "& " : ""}${[exe, ...args].map(shell === "powershell" ? psq : shell === "cmd" ? cmdq : quote).join(" ")}`;
+};

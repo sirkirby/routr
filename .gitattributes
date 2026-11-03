@@ -1,0 +1,3 @@
+# Captured usage text is byte-exact on every checkout; tests also exercise CRLF input explicitly.
+test/fixtures/admin-limits/*.txt text eol=lf
+test/fixtures/admin-limits/*.json text eol=lf

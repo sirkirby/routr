@@ -1,5 +1,6 @@
 // Every existing command scenario also checks the public envelope and absence of retired fields.
 import { expect } from "bun:test";
+import { noPanelText } from "./helpers.mjs";
 import { USAGE_BY_HAND } from "../src/lib/usage-failure.mjs";
 import * as commands from "../src/lib/commands.mjs";
 import { launch as launchCommand } from "../src/lib/launch.mjs";
@@ -33,6 +34,9 @@ export function noMovedInstructions(out) {
   walk(out);
 }
 export function contract(r) {
+  // Every command scenario scans its WHOLE output, including nested diagnostics and next steps. Captured panel
+  // headings and dollar amounts belong only to the reader, never command output.
+  noPanelText(r);
   expect(Object.keys(r).slice(0, 5)).toEqual(["ok", "headline", "unavailable", "warnings", "next"]);
   expect(typeof r.ok).toBe("boolean"); expect(r.headline).toStartWith("routr: ");
   for (const key of ["unavailable", "warnings", "next"]) expect(Array.isArray(r[key])).toBe(true);

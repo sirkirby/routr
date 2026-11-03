@@ -69,16 +69,16 @@ test("a failed refresh of even a fresh kept cap is unavailable; it still ranks t
 test("metered seats with no applicable limit reader, or a successful last limit read, do not warn", async () => {
   let limitReads = 0;
   const primary = { pool: "claude", class: "metered", headroom: null, windows: [], ageSec: 90000, failure: { code: "read_failed" } };
-  const [row] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: { billing: "metered" } }), sources: { claude: {
-    read: async () => primary, limit: { applies: HARNESSES.claude.usage.limit.applies, read: async () => { limitReads++; throw new Error(); } },
+  const [row] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: { billing: "metered" }, limitStatus: "not_applicable" }), sources: { claude: {
+    read: async () => primary, limit: { applies: HARNESSES.claude.usage.limit.applies, excludes: HARNESSES.claude.usage.limit.excludes, read: async () => { limitReads++; throw new Error(); } },
   } } });
   expect(limitReads).toBe(0); expect(row.limitReader).toBeUndefined(); expect(staleReaders([row])).toEqual([]);
   expect(usageUnavailable([{ ...row, failure: undefined }])).toEqual([]);
   expect(staleReaders([{ ...row, limitReader: true, failure: undefined, failureAgeSec: 90000 }])).toEqual([]);
   expect(staleReaders([{ ...row, limitReader: true, signedIn: false, failureAgeSec: 90000 }])).toEqual([]);
   const [quota] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: { when: "no_windows", billing: "metered" } }), sources: { claude: {
-    read: async () => ({ ...primary, class: "included", failure: undefined, headroom: 0.5, windows: [{ usedPct: 50 }] }),
-    limit: { applies: HARNESSES.claude.usage.limit.applies, read: async () => { limitReads++; throw new Error(); } },
+    read: async () => ({ ...primary, class: "included", source: "claude /usage", failure: undefined, headroom: 0.5, windows: [{ usedPct: 50 }] }),
+    limit: { applies: HARNESSES.claude.usage.limit.applies, excludes: HARNESSES.claude.usage.limit.excludes, read: async () => { limitReads++; throw new Error(); } },
   } } });
   expect(limitReads).toBe(0); expect(usageUnavailable([quota])).toEqual([]); expect(staleReaders([quota])).toEqual([]);
 
@@ -88,7 +88,7 @@ test("smoke reports conditional limit reads independently, through arbitrary reg
   const lines = [], config = { subscriptions: { fixture: {} } }, ready = async () => null;
   let exercised = 0;
   const sources = { fixture: { source: "fixture usage", live: async () => ({ pool: "fixture", class: "metered", headroom: null, windows: [] }), limit: {
-    applies: (u) => !u.windows.length, live: async () => { exercised++; return { ok: true, used_pct: null }; }, describe: () => "no spend limit showing (metered)",
+    applies: (u) => !u.windows.length, excludes: (u) => Boolean(u.windows.length), live: async () => { exercised++; return { ok: true, used_pct: null }; }, describe: () => "no spend limit showing (metered)",
   } } };
   const check = () => smokeUsage({ config, sources, ready, billing: async () => ({}), log: (s) => lines.push(s.replace(/ \([\d.]+ s\)$/, "").replace(/ \(fixture usage, [\d.]+ s\)$/, "")) });
   expect(await check()).toBe(0);
@@ -105,7 +105,7 @@ test("an unexpected limit-reader exception remains a visible metered limit failu
   const { NO_WINDOWS_AFTER_ANSWER } = await import("../src/lib/usage.mjs");
   const [row] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: { when: "no_windows", billing: "metered" } }), sources: { claude: {
     read: async () => ({ pool: "claude", source: "claude /usage", reason: NO_WINDOWS_AFTER_ANSWER, headroom: null, windows: [] }),
-    limit: { applies: HARNESSES.claude.usage.limit.applies, read: async () => { throw new Error("PRIVATE SCREEN"); } },
+    limit: { applies: HARNESSES.claude.usage.limit.applies, excludes: HARNESSES.claude.usage.limit.excludes, read: async () => { throw new Error("PRIVATE SCREEN"); } },
   } } });
   expect(row).toMatchObject({ class: "metered", limitReader: true, failure: { code: "read_failed" } });
   expect(usageUnavailable([row])).toMatchObject([{ code: "read_failed" }]);

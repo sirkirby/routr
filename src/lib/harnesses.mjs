@@ -28,6 +28,8 @@
 //     brought no windows, never one that did, nor the user's own `billing` (readUsage below, pick.mjs). Only Claude
 //     has one: Codex's metered seat already shows in its usage shape (usage.mjs), and the other status answers say
 //     nothing about billing (measured 2026-09-26).
+//     `limitStatus(out)` optionally classifies applicability as applicable/not_applicable, else unknown. Only
+//     recognised fresh status can disprove a held cap; no outside text is kept.
 //   quiet: the harness's own arguments that keep the user's lifecycle hooks (and MCP servers) out of routr's own read
 //     of it. Only Claude Code has them. None found for agy or kiro; Codex's `-c features.hooks=false` is unverified, so
 //     it is left out. Where there is none the user's hooks run as configured, which is intended: a tool that records
@@ -38,9 +40,9 @@
 import { warning } from "./warnings.mjs";
 import { dirname } from "node:path";
 import { run } from "./runtime.mjs";
-import { billingFromSignIn, signInHint, signInState } from "./signin.mjs";
+import { billingFromSignIn, limitFromSignIn, signInHint, signInState } from "./signin.mjs";
 import { usageFailure } from "./usage-failure.mjs";
-import { NO_WINDOWS_AFTER_ANSWER, readAgy, readClaude, readCodexLive, summarize, failedUsage, usageReadingTime, withUsageReadingTime } from "./usage.mjs";
+import { NO_WINDOWS_AFTER_ANSWER, claudeUsageShadows, readAgy, readClaude, readCodexLive, summarize, failedUsage, usageReadingTime, withUsageReadingTime } from "./usage.mjs";
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // JSON's string escapes are TOML basic-string escapes too, except JSON permits a literal DEL and TOML does not.
 const tomlString = (s) => JSON.stringify(s).replaceAll("\x7f", "\\u007f");
@@ -91,11 +93,15 @@ const CLAUDE_CLOUD = new Set(["bedrock", "vertex", "foundry", "anthropicAws", "a
 const CLAUDE_CLOUD_WHY = "Claude Code runs through a cloud provider's account, billed per token by that provider (from its docs, not measured)";
 const CLAUDE_ENTERPRISE_WHY = "signed in to a Claude Enterprise seat whose /usage shows no usage windows, billed by usage";
 const CLAUDE_KEY_WHY = { api_key: "signed in with an API key, billed per token", api_key_helper: "signed in with an API key from apiKeyHelper, billed per token (not measured)" };
-export function claudeBilling(out) {
+function claudeStatus(out) {
   const text = String(out ?? "");
   let o = null;
   try { o = JSON.parse(text); } catch { try { o = JSON.parse(text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)); } catch {} }
-  if (!o || typeof o !== "object" || Array.isArray(o) || o.loggedIn !== true) return null;
+  return o && typeof o === "object" && !Array.isArray(o) && o.loggedIn === true ? o : null;
+}
+export function claudeBilling(out) {
+  const o = claudeStatus(out);
+  if (!o) return null;
   const auth = o.authMethod;
   if (typeof auth !== "string" || !CLAUDE_AUTH.has(auth)) return null;
   const provider = Object.hasOwn(o, "apiProvider") ? o.apiProvider : "firstParty";
@@ -107,6 +113,17 @@ export function claudeBilling(out) {
   return { billing: "metered", why: CLAUDE_KEY_WHY[auth] };
 }
 
+// A signed-in answer may be unreadable for limits without being signed out. Only recognised non-Enterprise
+// shapes prove that an old Enterprise cap can be bypassed; a renamed/missing plan field is unknown.
+export function claudeLimitStatus(out) {
+  const o = claudeStatus(out);
+  if (!o) return null;
+  const billing = claudeBilling(out);
+  if (billing) return billing.when === "no_windows" ? "applicable" : "not_applicable";
+  const provider = Object.hasOwn(o, "apiProvider") ? o.apiProvider : "firstParty";
+  return o.authMethod === "claude.ai" && provider === "firstParty" && ["pro", "max", "team"].includes(o.subscriptionType) ? "not_applicable" : null;
+}
+
 export const HARNESSES = {
   claude: { label: "Claude Code", executable: "claude", installAs: "Claude Code", skills: ".claude/skills",
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
@@ -114,7 +131,7 @@ export const HARNESSES = {
     subagents: ({ model, effort }) => ({ env: { ...(model ? { CLAUDE_CODE_SUBAGENT_MODEL: model } : {}), ...(effort ? { CLAUDE_CODE_SUBAGENT_EFFORT: effort } : {}) },
       warnings: effort ? [warning("subagent_effort_version", "Anthropic's 2.1.316 changelog says CLAUDE_CODE_SUBAGENT_EFFORT was added there; earlier versions were not tested.")] : [] }),
     // `"loggedIn": false` and exit 1 when signed out.
-    auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`", billing: (out) => claudeBilling(out) },
+    auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`", billing: (out) => claudeBilling(out), limitStatus: claudeLimitStatus },
     // Its help names the latest aliases (fable, opus, sonnet on 2.1.283); its help says `--model` also takes a model's full name.
     models: async () => modelsInHelp(await readClaudeHelp()), openList: true,
     efforts: async () => effortsInHelp(await readClaudeHelp()),
@@ -129,18 +146,19 @@ export const HARNESSES = {
     // drops the user's settings. `--strict-mcp-config` with no --mcp-config starts none of their MCP servers, which
     // took the read from 7.1-8.8 s to 4.4-5.2 s wall. `--bare` is no use: it skips the keychain and shows no numbers.
     quiet: ["--settings", '{"disableAllHooks":true}', "--strict-mcp-config"],
-    usage: { source: "claude /usage", read: (o) => readClaude({ ...o, quiet: HARNESSES.claude.quiet }),
+    usage: { source: "claude /usage", shadows: claudeUsageShadows, read: (o) => readClaude({ ...o, quiet: HARNESSES.claude.quiet }),
       live: () => readClaude({ quiet: HARNESSES.claude.quiet, file: null }),
       backgroundOnly: true,
       limit: {
         applies: (u, b) => u?.reason === NO_WINDOWS_AFTER_ANSWER && !u.failure && b?.when === "no_windows",
+        excludes: (u, b) => Boolean(!u?.failure && u?.source === "claude /usage" && u?.windows?.length) || b?.limitStatus === "not_applicable",
         read: async (o) => (await import("./claude-panel.mjs")).readClaudePanel(o),
         live: async (o) => (await import("./claude-panel.mjs")).claudePanelUsage(o),
         refresh: async (o) => (await import("./claude-panel.mjs")).refreshClaudePanel(o),
         describe: (r) => r.used_pct == null ? "no spend limit showing (metered)" : `spend limit ${r.used_pct}% used`,
       },
       check: (o) => refreshLimit("claude", o),
-      fields: ["used_pct", "resets_at", "headroom", "windows"], used: (r) => Number.isFinite(r.used_pct) ? `spend limit ${r.used_pct}% used` : r.headroom != null ? `${Math.round(r.headroom * 100)}% left` : "no spend limit read" } },
+      fields: ["used_pct", "resets_at"], used: (r) => Number.isFinite(r.used_pct) ? `spend limit ${r.used_pct}% used` : r.headroom != null ? `${Math.round(r.headroom * 100)}% left` : "no spend limit read" } },
   codex: { label: "Codex", executable: "codex", installAs: "Codex",
     // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
     // "Update available" just after herdr reported it ready, and the Enter that submitted the task chose "Update now".
@@ -266,15 +284,16 @@ export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir
 
 // Usage recipes: read returns the current routing row; live bypasses caches/fallbacks for smoke checks.
 // check refreshes a snapshot; backgroundOnly restricts that action to detached jobs. A conditional limit recipe
-// declares applies(primary, billing), read (snapshot), live (no cache), refresh (publish), and describe (fixed fields).
+// declares applies(primary, billing), excludes(primary, status) as proof a held limit no longer applies,
+// read (snapshot), live (no cache), refresh (publish), and describe (fixed fields). shadows() lists name-only
+// preflight paths for commands that could replace a local read. Skipped preflights publish no observation.
 // Shared commands never select a harness's limit path by name.
 export async function refreshLimit(name, options = {}) {
   const src = HARNESSES[name].usage;
   return src.limit.refresh({ ...options, ready: ready(name), read: async () => {
     const u = await src.live(), b = await billingFor(name, { fresh: true });
-    if (b.not) return { ok: false, excluded: true, why: b.not };
-    if (u.failure) return { ok: false, code: u.failure.code };
-    return src.limit.applies(u, b.billing) ? src.limit.live() : { ok: true, headroom: u.headroom, windows: u.windows };
+    if (b.not || u.failure) return { ok: false, skipped: true };
+    return src.limit.applies(u, b.billing) ? src.limit.live() : { ok: false, skipped: true };
   } });
 }
 
@@ -302,15 +321,25 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
       else try { u = await src.read({ background: background.includes(name) }); } catch { u = failedUsage(name, source); }
       // The billing reading settles only a reading without windows, and then it must be today's: a sign-in kept for 6
       // hours can predate a switch between a subscription and an API key (a switch an hour in still ranked the
-      // old way). So in exactly that case the status check runs again now. With windows there is no call. That
+      // old way). So in exactly that case the status check runs again now. A conditional limit source also asks
+      // afresh unless primary windows prove the held cap no longer applies. That
       // check is a sign-in check too: unless it answers signed in, this call leaves the harness out, as any
       // signed-out one (a fresh "loggedIn": false still left it a candidate on assumed headroom).
-      const b = await billing(name, { fresh: u?.headroom == null });
+      const b = await billing(name, { fresh: u?.headroom == null || Boolean(src?.limit && !src.limit.excludes?.(u, {})) });
       if (b?.not) return signedOut(name, b.not);
-      if (src?.limit?.applies(u, b?.billing)) {
+      if (src?.limit && !src.limit.excludes?.(u, b)) {
+        const applies = src.limit.applies(u, b?.billing);
         let limit;
-        try { limit = await src.limit.read({ background: background.includes(name) }); }
+        try { limit = await src.limit.read({ background: applies && background.includes(name) }); }
         catch { limit = { ...withBilling(name, u, b?.billing), failure: usageFailure("read_failed") }; }
+        if (!applies) {
+          // A failed primary read or unreadable status cannot erase a trusted cap. Do not start a panel when its
+          // prerequisites are unproved; show the failure and retain whatever the limit snapshot can still trust.
+          const held = limit?.headroom != null || limit?.ageSec != null || limit?.failure ? limit : withBilling(name, u, b?.billing);
+          const failure = u?.failure ?? usageFailure("limit_unverified");
+          limit = withUsageReadingTime({ ...held, failure, note: failure.why ?? usageFailure(failure.code).why,
+            ...(held?.headroom != null ? { kept: { source: held.kept?.source ?? held.source ?? src.source ?? source, ageSec: held.kept?.ageSec ?? held.ageSec } } : {}) }, usageReadingTime(held));
+        }
         return withUsageReadingTime({ ...limit, limitReader: true, label: HARNESSES[name]?.label }, usageReadingTime(limit));
       }
       return withBilling(name, u, b?.billing);
@@ -327,7 +356,7 @@ export async function billingFor(name, { fresh = false, harness = HARNESSES[name
     const state = await signInState(name, harness, { ...o, fresh: true });
     if (state !== "yes") return { billing: null, not: signInHint(harness, state) };
   }
-  return { billing: billingFromSignIn(name), not: null };
+  return { billing: billingFromSignIn(name), ...(harness?.auth?.limitStatus ? { limitStatus: limitFromSignIn(name) } : {}), not: null };
 }
 
 // A reading, settled by what the harness's own status said about billing (`auth.billing`). With no windows it is that

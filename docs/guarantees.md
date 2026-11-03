@@ -95,7 +95,7 @@ routr never has to own a harness feature (a statusline slot, a hook) to get its 
   without waiting. A shown admin cap is a `spend_limit` window; a spent-only credits line is a successful
   no-limit reading and stays metered. Missing or changed credits text is a failed read, never evidence of no limit. A failed read
   says why through fixed usage failure codes, including herdr missing and first-run screens that need the user.
-  Only folder trust is answered, in routr's stable empty state folder. No model prompt or sign-in is sent.
+  Only folder trust is answered, after confirming No, exit is highlighted, in routr's stable empty state folder. No model prompt or sign-in is sent.
   Claude updates its own config, history and caches: two reads in the separate Enterprise sandbox
   added one trusted project entry on the first read and none on the second, with one new backup then none. Its own
   files are left alone; panel text never reaches output, ledger or telemetry.
@@ -109,7 +109,12 @@ Interactive usage readers share one driver: startup and readiness, declared safe
 command, bounded parser polling, optional retry keys, fixed failure codes, and cleanup. Cursor and Claude each
 supply a recipe; Cursor retains its private config copy, extra Enter and shell-exit check. Registry entries decide
 when a conditional limit reader applies. Missing herdr is `herdr_missing`; unfinished first-run screens are
-`open_once`. Sentences are fixed routr text, labelled from the harness registry, never from a screen.
+`open_once`. Sentences are fixed routr text, labelled from the harness registry, never from a screen. The driver proves a
+foreground harness still runs before typing or pressing Enter. Claude checks documented user command names
+without reading their contents, before both print and panel reads. Its menu must highlight the built-in
+“Show session cost, plan usage, and activity stats”; otherwise Escape is sent without Enter and
+`command_shadowed` reports why the command could spend. The lead measured that a shadow really makes a model
+call on 2.1.317, 2026-11-03; routr does not try a shadowed command.
 
 Failed usage reads have fixed codes and sentences at the reader boundary and in the snapshot cache; harness
 output and exception text are never copied into their diagnostics. A failed refresh keeps the last good reading
@@ -128,8 +133,20 @@ that the limit cannot be seen, so routr will not stop at it. A trusted kept cap 
 Metered seats whose limit read succeeded, or which needed no limit reader, get no such warning. Metered accounts without known capacity are valid readings. Accounts
 left out by settings or sign-in status stay in `excluded`, outside the failed readings.
 
+A failed print read or unreadable signed-in status cannot bypass a trusted panel cap. Only a successful print
+answer with windows, or a fresh recognised non-Enterprise status, proves it no longer applies. A preflight that
+does not read the panel publishes no new limit observation. Unknown applicability remains visible in output and
+in the usage smoke.
+
+A complete panel section is required, with exactly one percent/ratio row or the spent-only line alone. Extra
+rows, duplicate limits, malformed percentages and incomplete draws fail. A spent-only reading must hold for
+750 ms before acceptance; that settle is a judgment, not a measurement. The private Claude pane uses 120 columns
+and 200 rows via routr's own settings file. A panel beyond that bound must fail for lack of a complete section;
+A missing section is a failed read.
+
 A panel cap is trusted only under the same 24-hour snapshot limit. Its date-only reset is the end of that day
-in its zone; a kept window rolls over afterward. Unknown period means full reserve. A Codex spend-control-only
+in its zone; only a kept observation from before that reset rolls over afterward. A fresh full observation
+after the reset stays full, for every harness. Unknown period means full reserve. A Codex spend-control-only
 stop with no cap/reset is trusted for five minutes, including from session logs: older readings become unknown
 capacity rather than blocking a seat forever.
 
@@ -197,7 +214,8 @@ One exception: `uninstall` removes the `statusLine` entry an earlier routr's `se
 after a backup, and only when it runs `routr statusline`. It writes the file whole, where a link to it points.
 
 `uninstall` removes the binary, routr's own skills (above), `~/.cache/routr` and `~/.local/state/routr` (sockets
-and locks, and the launch share's records). It reports a running OpenTelemetry sender. A request already in flight can finish within its 10 s
+and locks, launch-share records, usage settings and the empty panel working folder). Claude's own trusted-project
+entry for that folder stays in its config; uninstall does not edit it. It reports a running OpenTelemetry sender. A request already in flight can finish within its 10 s
 timeout, under the consent in force when it started. The sender checks the uninstall lock before each request and
 state write and cannot recreate removed queue folders. A removal race can report FAILED with ENOTEMPTY: a second
 uninstall finishes it. On Windows the binary stays for removal after that sender exits, about a minute.

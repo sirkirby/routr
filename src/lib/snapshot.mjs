@@ -1,5 +1,5 @@
 // A usage reading that takes seconds, kept as a snapshot every call reads in milliseconds and refreshed in the
-// background. Cursor's (cursor-usage.mjs) and Kiro's (kiro-usage.mjs) are read this way.
+// background. Interactive usage recipes and slow command readers share this lifecycle.
 import { readFileSync } from "node:fs";
 import { adoptLock, lockToken, olderThan, releaseFileLock, spawnSelf, takeLock, whileLockOwned, writeJsonAtomic } from "./runtime.mjs";
 import { summarize, usageReadingTime, withUsageReadingTime } from "./usage.mjs";
@@ -54,6 +54,7 @@ export async function refreshSnapshot({ read, keep, file, lock = `${file}.lock`,
       r = why ? { ok: false, excluded: true, why } : await read();
     }
     catch { r = { ok: false, ...usageFailure("read_failed") }; }
+    if (r?.skipped) return { ok: false, skipped: true }; // no observation: never publish a synthetic no-limit reading
     // A reader returns a code, never prose for the cache. This also classifies unexpected failures from a reader.
     if (r?.ok !== true && !r?.excluded) r = { ok: false, ...usageFailure(r?.code), ...(r?.note ? { note: r.note } : {}) };
     const last = readJson(file).snapshot;

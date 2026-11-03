@@ -30,8 +30,11 @@ export async function smokeUsage({ config = loadConfig().config, sources = SOURC
     log(`${name}: ${line} (${src?.source ?? HARNESSES[name]?.usage.source}, ${((performance.now() - t) / 1000).toFixed(1)} s)`);
     if (!src?.limit) continue;
     if (!src.limit.applies(r, b.billing)) {
-      const reason = r?.windows?.length ? "this seat shows windows" : !r || r.ok === false || r.failure ? "primary usage read failed" : "this sign-in does not need a limit reader";
-      log(`${name} limit: NOT EXERCISED (${reason})`); continue;
+      if (src.limit.excludes?.(r, b)) {
+        const reason = r?.windows?.length ? "this seat shows windows" : "this sign-in does not need a limit reader";
+        log(`${name} limit: NOT EXERCISED (${reason})`);
+      } else { log(`${name} limit: FAILED (limit_unverified)`); failed++; }
+      continue;
     }
     const limitAt = performance.now();
     let limit; try { limit = await src.limit.live(); } catch { limit = { ok: false, code: "read_failed" }; }

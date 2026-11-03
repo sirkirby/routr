@@ -1,6 +1,7 @@
 // Headless workers outside herdr: launch, wait, send, workers, stop, cleanup --worker, the holder and its channel. A fake
 // `claude` stands in for Claude Code's stream-json mode, with the behaviours measured in prototypes p34 and p36.
 import { afterAll, expect, test } from "bun:test";
+import { noPanelText } from "./helpers.mjs";
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
@@ -310,6 +311,7 @@ function world(over = {}) {
   const run = (args, extra = {}) => {
     const r = Bun.spawnSync([process.execPath, entry, ...args], { cwd: work, env: { ...env, ...extra }, stdin: "ignore" });
     const text = r.stdout.toString(); outputs.push(text, r.stderr.toString());
+    noPanelText(text); noPanelText(r.stderr.toString());
     try { return JSON.parse(text); } catch { return { raw: text }; }
   };
   const task = (text, name = "task.md") => { const f = join(inputs, name); writeFileSync(f, text); return f; };

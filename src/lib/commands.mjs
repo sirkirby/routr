@@ -23,7 +23,7 @@ import { recentLaunches } from "./shares.mjs";
 import { enabledSubscriptions } from "./config.mjs";
 import { HARNESSES, readUsage, SOURCES } from "./harnesses.mjs";
 import { failedUsage } from "./usage.mjs";
-import { staleReaders, USAGE_BY_HAND, usageFailure, usageUnavailable } from "./usage-failure.mjs";
+import { staleReaders, USAGE_BY_HAND, usageFailure, usageRetryText, usageUnavailable } from "./usage-failure.mjs";
 
 const short = (e, n = 160) => e instanceof DecisionError ? e.message : String(e?.message ?? e).slice(0, n);
 
@@ -73,7 +73,7 @@ async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] 
     try {
       out.subscriptions = rankSubscriptions(advice.level, usage, config, recentLaunches());
       out.unavailable.push(...usageUnavailable(usage).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
-      for (const s of staleReaders(usage, config)) { out.warnings.push(s.warning); out.next.push(runNext(`Try reading ${s.pool}'s usage again.`, ["routr", "usage", s.pool])); }
+      for (const s of staleReaders(usage, config)) { out.warnings.push(s.warning); out.next.push(SOURCES[s.pool]?.backgroundOnly ? doNext(usageRetryText(s.pool, true)) : runNext(usageRetryText(s.pool), ["routr", "usage", s.pool])); }
     } catch {
       const failure = usageFailure("internal_error");
       out.unavailable.push({ part: "usage", subscription: null, source: "routr", ...failure });
@@ -249,7 +249,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
     // A fresh read that just worked clears its own warning; one that failed again keeps it (the retry is this call).
     for (const s of staleReaders(rows, viewConfig).filter((x) => !(fresh && reading?.ok && x.pool === name))) {
       out.warnings.push(s.warning);
-      if (!(fresh && s.pool === name)) out.next.push(runNext(`Try reading ${s.pool}'s usage again.`, ["routr", "usage", s.pool]));
+      if (!(fresh && s.pool === name)) out.next.push(sources[s.pool]?.backgroundOnly ? doNext(usageRetryText(s.pool, true)) : runNext(usageRetryText(s.pool), ["routr", "usage", s.pool]));
     }
     if (fresh && !reading?.ok && !reading?.excluded && !out.unavailable.some((u) => u.subscription === name)) {
       const kept = rows.find((r) => r.pool === name && r.headroom != null);

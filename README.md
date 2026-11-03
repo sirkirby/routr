@@ -85,7 +85,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 |---|---|
 | `subagent "<brief>"` | A worker, or an agent outside herdr, is about to spawn a subagent: facts, level, worth-a-worker. The brief can also come from `--task-file <path>`. An orchestrator, in herdr or not, uses `dispatch`. |
 | `dispatch "<brief>"` | An orchestrator is about to launch a worker: the same, plus normal/fallback candidates and a capacity ranking. Give it the exact task the worker will get (`routr dispatch --task-file task.md`, saving stdout as `advice.json`); `launch --advice advice.json` requires a match. `--headroom <name>=0.9` (or `90%`) overrides a reading. |
-| `usage [cursor\|kiro]` | Each subscription's usage, candidates and capacity ranking, with no brief. `usage cursor` or `usage kiro` reads that one now. |
+| `usage [<name>]` | Each subscription's usage, candidates and capacity ranking, with no brief. `usage cursor` or `usage kiro` reads that one now; `usage claude` reports its saved panel reading and requests a refresh only when due. |
 | `launch` | Start one worker in its own git worktree (`--base` starts it from another branch or commit), with the harness's flags and model syntax: in herdr, a pane nested under the repo, handling shell prompts and reporting startup questions (never answered), then readiness and the prompt; outside herdr, headless, where no one answers a worker: it puts a question in its report. A task requires matching `--advice`; `--dry-run` shows the plan and returns `ok: false` with `error` when a real launch would refuse. `next` holds recovery, the record template and cleanup. |
 | `wait`, `send`, `workers`, `stop` | Outside herdr, `launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless: `wait` returns when one finishes a turn, with its report's path; `send` corrects it (Codex: steered into the running turn; Claude Code: written to its input, joining the running turn or starting the next as Claude decides, not yet measured through routr; Cursor, Antigravity and Kiro: as the next turn) or resumes its session with a follow-up; `workers` shows each one's state; `stop` ends one. |
 | `cleanup` | Finish a worker: remove its worktree and workspace (or close its pane), never while anything it can see runs there (outside herdr it cannot see what runs in a worktree's folder) or anything in it is uncommitted. `--worker <name>` removes a headless worker's worktree, with the same checks, then its run folder and reports. Keeps the branch unless `--delete-branch` and it is merged. With no worker named, lists the repo's worktrees. `--dry-run` says what it would do. |
@@ -173,7 +173,7 @@ for a later reinstall unless you choose otherwise (`--purge`). Finish any headle
 For pane workers you also need [herdr](https://herdr.dev) and its agent skill
 (`npx skills add herdrdev/herdr --skill herdr -g`); setup offers to install both, and `routr doctor` tells you when
 either is missing. Without herdr, `routr launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless, followed with
-`routr wait`; Cursor's usage is still read through herdr, so it needs herdr installed. Sizing subagents works without it.
+`routr wait`; interactive usage readers (Cursor and the conditional Claude Enterprise limit panel) need herdr installed. Sizing subagents works without it.
 
 To start an orchestration, open your lead agent (in herdr for pane workers) and type your plan after the `routr-orchestrate` skill, which
 routr installs beside the routr skill:
@@ -208,7 +208,7 @@ goes stale when models change.
 
 Usage is read live for Claude Code (from its own `/usage`, with your hooks and MCP servers off for that read; it
 costs no tokens), Codex, and Antigravity. routr does not need Claude's statusline; if you run `routr statusline` there
-anyway, a snapshot under 5 minutes old is used instead of starting Claude. Cursor's and Kiro's are read in the background about once per working session, and at once after an update when the last try got no reading, since they take seconds. A seat with no quota reports no windows: measured on a
+anyway, a snapshot under 5 minutes old is used instead of starting Claude. Cursor and Kiro refresh in the background after four hours. Claude's Enterprise limit panel refreshes after one hour, only when the print answer has no windows and fresh sign-in confirms Enterprise. Commands never wait for that panel; both interactive readers need herdr. A seat with no quota reports no windows: measured on a
 ChatGPT Enterprise seat, which routr detects and calls `metered`; on Claude signed in with an API key, which
 routr reads from `claude auth status` and calls `metered` too; and on a usage-based Claude Enterprise seat, whose
 `claude auth status` names the Enterprise plan, called `metered` only when its `/usage` answered with no windows (an
@@ -218,7 +218,14 @@ is your `billing` setting, because Claude shows nothing to tell a seat with no q
 no headroom number and is a normal or fallback candidate by your setting. With two or more normal metered seats,
 a launch share (asked in `routr setup`, or `routr setup --share claude=3 --share codex=1`) tells the agent how you
 want launches split between them. A cap the vendor enforces is read as one
-more window (Codex: from its protocol, not yet observed on a seat).
+more window: owner-set caps were read under and at the limit on Codex 0.166.0 and Claude Code 2.1.317
+(2026-11-03). Claude's panel also showed a spent-only line with no limit set. Trusted cap readings remain in
+charge through print/auth failures unless a fresh answer proves the reader no longer applies. An unreadable
+limit is stated, not read as no limit; without a trusted cap routr cannot stop at an unseen limit.
+
+Claude reads refuse documented user commands named `usage`, and the interactive reader confirms the highlighted
+built-in before Enter. It uses a private empty folder, hooks and MCP servers off, and a settings file in routr's
+state; screen text and dollar figures are never output. Uninstall leaves Claude's own trusted-project entry.
 
 ## Evidence
 

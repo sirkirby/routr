@@ -540,3 +540,28 @@ Enterprise sandbox `CLAUDE_CONFIG_DIR`, one read in a new stable empty folder ad
 (project count 4 to 5), and the second kept five. Both updated `.claude.json`, history, policy/settings caches and
 plugin state; the first added one backup, the second none. Claude stores project metrics and a session id even
 without a model turn. Its own files are left alone. No model prompt was sent.
+
+### Command shadowing and complete panels (2026-11-03, Claude Code 2.1.317)
+
+The lead measured a project skill named `usage` replacing the built-in in both print and interactive mode,
+causing a real model turn. Disabling slash commands removed the built-in too, and a zero turn limit did not
+prevent spending. routr does not run a shadowed command to test it. Before either read it checks only the names
+`skills/usage/` and `commands/usage.md` under `CLAUDE_CONFIG_DIR` or `~/.claude`. Before Enter it also requires the
+highlighted built-in description “Show session cost, plan usage, and activity stats”; otherwise it sends Escape
+and reports `command_shadowed`. Plugin skills are documented as `plugin:skill`; that namespacing was not measured.
+The same shadow risk on Cursor, Kiro and Antigravity has not been measured; their command behavior is unchanged.
+
+The panel must contain a complete Usage credits section ending at Esc to cancel on the panel screen. Exactly one
+percent/ratio row, or a spent-only line alone, is accepted. A spent-only draw settles unchanged for 750 ms (a
+judgment). Extra rows, duplicate limits, comma-grouped percentages and incomplete draws fail. A fresh reading
+whose reset is already past is evidence of a full window that did not roll; only older pre-reset observations roll.
+
+Interactive Claude starts with a hooks-off settings file in routr's own state, outside the empty working folder,
+on every shell. No JSON quotes are typed into PowerShell 5.1. Other typed usage starts were checked: Cursor's
+arguments carry no JSON; print reads use direct argv. Windows remains untested live. The private Claude terminal
+uses a generated herdr config with 120 columns and 200 rows; beyond that bound a missing complete section fails.
+A source read on the maintainer's default login, with its plugins unchanged (2026-11-03), showed a 49-row panel,
+with Usage credits at row 46 and its footer visible. The credits body was neither measured supported shape, so
+the reader returned invalid_response rather than no limit. The built-in menu guard passed. An early trust answer
+was ignored; a 750 ms settle before answering the same recognised trust screen worked (a judgment).
+Claude's own trusted-project entry remains after uninstall removes routr's empty folder and settings.

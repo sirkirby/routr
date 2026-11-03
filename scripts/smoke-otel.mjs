@@ -114,7 +114,8 @@ export function checkSmokeSignals(batches, { spans = [], markers = [] } = {}) {
 export const fixtureHarness = `
 const fs = require("node:fs");
 const a = process.argv.slice(2), sid = "12345678-1234-4123-8123-123456789abc";
-if (a[0] === "auth") { console.log('{"loggedIn":true,"authMethod":"claude.ai"}'); process.exit(0); }
+// Recognised non-Enterprise status: this fixture tests quota observations, not unknown limit applicability.
+if (a[0] === "auth") { console.log('{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}'); process.exit(0); }
 if (!a.includes("--input-format")) { console.log("PRIVATE_SCREEN_MARKER"); process.exit(0); }
 if (process.env.ROUTR_SMOKE_ENV_FILE) fs.appendFileSync(process.env.ROUTR_SMOKE_ENV_FILE, JSON.stringify({ TRACEPARENT: process.env.TRACEPARENT, TRACESTATE: process.env.TRACESTATE, BAGGAGE: process.env.BAGGAGE }) + "\\n");
 const out = (v) => console.log(JSON.stringify(v)); let buf = "";

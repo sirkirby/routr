@@ -69,8 +69,8 @@ export function uninstallPlan({ home = userHome(), purge = false, binary = null 
     { path: DATA_DIR(home), what: left.worktrees.length ? "your ledger, and worktrees a headless launch made (yours to finish)" : "your ledger" }];
   (purge ? remove : keep).push(...data);
   // Last: it holds the uninstall lock, which keeps a launch from starting until everything else is gone. With no worker
-  // left (blockedBy), what remains here is routr's own bookkeeping: sockets and locks.
-  remove.push({ path: STATE_DIR(home), what: "state: headless workers' sockets and locks", state: true });
+  // left (blockedBy), what remains here is routr's own bookkeeping, usage settings and empty panel folder.
+  remove.push({ path: STATE_DIR(home), what: "state: worker bookkeeping, usage settings and empty panel folder; the harness keeps its own trusted-project entry", state: true });
   const present = (l) => l.filter((x) => { try { lstatSync(x.path); return true; } catch { return false; } });
   let statusline = false;
   try { statusline = isOurStatusline(JSON.parse(readFileSync(join(home, ".claude/settings.json"), "utf8")).statusLine?.command); } catch {}

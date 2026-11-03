@@ -460,6 +460,10 @@ test("routr uninstall keeps the user's data unless purged, removes only routr's 
   const checkout = join(home, "checkout"); mkdirSync(checkout); writeFileSync(join(checkout, "SKILL.md"), "mine");
   for (const d of [".config/routr", ".local/share/routr", ".cache/routr", ".claude", ".kiro"]) mkdirSync(join(home, d), { recursive: true });
   installSkill({ home });
+  for (const d of [".local/state/routr/usage-settings", ".local/state/routr/claude-usage-empty"]) mkdirSync(join(home, d), { recursive: true });
+  writeFileSync(join(home, ".local/state/routr/usage-settings/claude-hooks-off-v1.json"), '{"disableAllHooks":true}');
+  const ownTrust = JSON.stringify({ projects: { [join(home, ".local/state/routr/claude-usage-empty")]: { hasTrustDialogAccepted: true } } });
+  writeFileSync(join(home, ".claude.json"), ownTrust);
   writeFileSync(join(home, ".config/routr/config.json"), "{}");
   const linked = process.platform !== "win32";
   // Claude's settings kept in a dotfiles folder and linked: the link is the person's, and stays one.
@@ -478,7 +482,8 @@ test("routr uninstall keeps the user's data unless purged, removes only routr's 
   expect(existsSync(join(home, ".agents/skills/routr"))).toBe(false);
   expect(existsSync(join(home, ".kiro/skills/routr"))).toBe(false);
   expect(existsSync(join(home, ".cache/routr"))).toBe(false);
-  expect(existsSync(join(home, ".local/state/routr"))).toBe(false); // made for the uninstall lock, and removed with it
+  expect(existsSync(join(home, ".local/state/routr"))).toBe(false); // usage settings, empty cwd and uninstall lock removed
+  expect(readFileSync(join(home, ".claude.json"), "utf8")).toBe(ownTrust); // harness-owned trust stays
   expect(existsSync(join(home, ".config/routr/config.json"))).toBe(true);
   expect(existsSync(join(home, ".kiro/skills/routr-orchestrate")) || existsSync(join(home, ".agents/skills/routr-orchestrate"))).toBe(false);
   if (linked) expect(readFileSync(join(home, ".claude/skills/routr/SKILL.md"), "utf8")).toBe("mine"); // the developer's link and its target stay

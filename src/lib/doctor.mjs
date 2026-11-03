@@ -5,11 +5,11 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { delimiter, join, win32 } from "node:path";
 import { accountUse, CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
-import { billingFromSignIn, signInHint } from "./signin.mjs";
+import { billingFromSignIn, limitFromSignIn, signInHint } from "./signin.mjs";
 import { failureMessage, ping, secretsFor } from "./systemone.mjs";
 import { DecisionError, decisionTargets, DEFAULT_PROVIDER, ollamaHost, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
-import { staleReaders } from "./usage-failure.mjs";
+import { staleReaders, usageRetryText } from "./usage-failure.mjs";
 import { home, resolveCommand, standalone } from "./runtime.mjs";
 import { autoUpdateStatus } from "./update.mjs";
 import { dailyTelemetrySend, hoursAgo, lastTelemetrySend, pendingCount, telemetryState, telemetryStatus } from "./telemetry.mjs";
@@ -110,7 +110,7 @@ export function usageStatus(u, config, signed = true) {
       : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note} (${u.source})`,
     usage_source: u.source, usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}),
     ...(u.billing ? { usage_billing: u.billing } : {}),
-    ...(stale ? { usage_stale: `${stale.warning}. Try it again: routr usage ${u.pool}` } : {}),
+    ...(stale ? { usage_stale: `${stale.warning}. ${usageRetryText(u.pool, HARNESSES[u.pool]?.usage.backgroundOnly)}` } : {}),
   };
 }
 
@@ -149,9 +149,9 @@ export async function inspect({ configPath, quiet } = {}) {
   // No release lookup here: doctor is an advice command, and a command never makes the updater's network call. Whether a
   // newer release is waiting comes from what the daily job saw (autoUpdateStatus, below); `routr update --check` asks.
   const [usage, , states, ...models] = await Promise.all([
-    // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
+    // Every installed harness is shown, but only a configured one may start a background refresh.
     // Its sign-in answers were just asked afresh, so their billing readings are today's: no second status check.
-    step("usage", statesP.then((st) => readUsage(found, {}, { background: enabledSubscriptions(config), why: whyNot(st), billing: (n) => ({ billing: billingFromSignIn(n), not: null }) }))), // a turned-off one is never refreshed
+    step("usage", statesP.then((st) => readUsage(found, {}, { background: enabledSubscriptions(config), why: whyNot(st), billing: (n) => ({ billing: billingFromSignIn(n), limitStatus: limitFromSignIn(n), not: null }) }))), // a turned-off one is never refreshed
     step("the decision models", keyCheck()),
     statesP,
     ...found.map((n) => statesP.then((st) => (st[n] !== "yes" ? null : step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))))),
@@ -241,7 +241,7 @@ export function render(r) {
   const { notes, problems = [] } = r.config;
   const seen = r.update_seen_hours_ago == null ? "" : `, seen ${r.update_seen_hours_ago} h ago`;
   line(!r.update_available, `${r.runtime}${r.update_available ? ` · ${r.update_available} is available${seen}: run \`routr update\`` : ""}`);
-  line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: workers in herdr panes and Cursor's usage need it (https://herdr.dev). Without it, workers run headless"}`);
+  line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: workers in herdr panes and interactive usage readers need it (https://herdr.dev). Without it, workers run headless"}`);
   if (r.herdr.path) line(r.herdr.skill, `herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
   const base = baseVersion(ROUTR_VERSION);
   // One line per skill and version: the folders routr's copies are in, and whether they match this routr; then any copy

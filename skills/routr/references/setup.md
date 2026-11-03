@@ -2,7 +2,7 @@
 
 Walk the user through this. Ask before you write or install anything, and show what you are about to write.
 Requirements: the `routr` command (one standalone binary; `routr --version` shows it). Pane workers also
-need herdr with its agent skill (step 5), and reading Cursor's usage needs herdr installed (see step 4); without herdr, an
+need herdr with its agent skill (step 5), and interactive usage reads (Cursor and the conditional Enterprise Claude limit panel) need herdr installed (see step 4); without herdr, an
 orchestrator can launch headless Claude Code, Codex, Cursor, Antigravity and Kiro workers, and the worker and subagent
 parts work as they are. If `routr` is missing, install it first:
 
@@ -213,11 +213,12 @@ repository names, relative paths and ids; never briefs, reports or secrets. See
 
 Nothing to set up. routr reads Claude's usage from Claude's own `/usage` in each call (`claude -p /usage`: no tokens,
 about 4 to 5 s, run in the system temp folder with the user's hooks and MCP servers off for that read and their other
-settings kept). It never needs Claude's statusline, and setup does not touch `~/.claude/settings.json`.
+settings kept). Claude refuses documented user commands named `usage`; its panel verifies the built-in menu
+before Enter. It never needs Claude's statusline, and setup does not touch `~/.claude/settings.json`.
 `routr statusline` still works as a statusline command for a user who wants it (it prints the model and usage and
 saves a snapshot); routr uses that snapshot instead of starting Claude while it is under 5 minutes old. Do not
 suggest replacing a statusline the user already has. Codex and Antigravity are also read from the harness directly
-and need nothing; Cursor's usage is read from its `/usage` screen in a private herdr session, in the background: herdr must be installed.
+and need nothing; the conditional Enterprise Claude limit panel also needs herdr. Cursor's usage is read from its `/usage` screen in a private herdr session, in the background: herdr must be installed.
 Kiro's is read from its own `/usage` command in the background and needs nothing either; routr deletes the empty Kiro
 session each reading leaves. `routr skill install` links the skill into `~/.kiro/skills`, the only folder Kiro reads.
 

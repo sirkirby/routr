@@ -1,5 +1,5 @@
 // A throwaway terminal routr drives and always removes: for what a harness shows only in its own interactive screen
-// (Cursor's usage today). Node has no terminal of its own to give a program, and routr takes no dependency, so the
+// (interactive usage recipes). Node has no terminal of its own to give a program, and routr takes no dependency, so the
 // terminal is a private headless herdr session made for this one read, then stopped and deleted. It is the same inside
 // herdr and outside it: nothing opens on the user's screen, and stopping the session removes everything in it however
 // the read ended. (A split beside the caller was tried first: it squeezed the user's panes, and a read that died half
@@ -7,10 +7,13 @@
 // Measured 2026-09-25 on herdr 0.9.1: `herdr --session <name> server` answers within a second, its pane is 119x40 and
 // runs the login shell, `--session` wins over the calling pane's own herdr, and `session stop` + `session delete`
 // leave no process and no session folder behind.
+// Default Claude login, 2.1.317, 2026-11-03: its plugin-heavy panel took 49 rows, credits at row 46.
+// The recipe requests 120x200 through an own config; the original 40 rows could not show the whole panel.
 import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import { callHerdr, processError } from "./process-boundary.mjs";
 import { deadline, paneView, runHerdr, shellFamily, waitForShell } from "./herdr.mjs";
+import { usageStateFile } from "./usage-command.mjs";
 import { harnessEnv, start as startProcess } from "./runtime.mjs";
 
 // A session routr made carries the pid of the routr that made it, so a run that was killed half way is cleaned up by
@@ -23,13 +26,16 @@ const ageMs = (dir) => { try { return Date.now() - statSync(dir).mtimeMs; } catc
 // A spawn can fail after it returns (EACCES, EMFILE, herdr gone since the last call): report it, never let it throw.
 // Its shells start harnesses, so the server must drop the lead's session too. Measured 2026-10-24, herdr 0.9.5:
 // `--session` server and `pane list` work with the pane names removed. Herdr's settings stay; clients keep all their env.
-const startServer = (name, failed) => { const c = startProcess("herdr", ["--session", name, "server"], { env: harnessEnv(), detached: true, stdio: "ignore" }); c.on("error", failed); c.unref(); };
+const startServer = (name, failed, { rows } = {}) => {
+  const settings = rows ? { HERDR_CONFIG_PATH: usageStateFile(`terminal-${rows}-v1.toml`, `[server]\nheadless_cols = 120\nheadless_rows = ${rows}\n`) } : {};
+  const c = startProcess("herdr", ["--session", name, "server"], { env: { ...harnessEnv(), ...settings }, detached: true, stdio: "ignore" }); c.on("error", failed); c.unref();
+};
 
 // `call(args)` runs one herdr command in the private session and throws on failure; `pane` is where to type; `read`,
 // `info` and `keys` are that pane as herdr.mjs's paneView gives it.
 // `close()` removes the session and never throws; if herdr is too slow to stop it, the next run removes it (its pid is
 // gone by then). open() cleans up after itself when it fails half way.
-export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAlive, age = ageMs, start = startServer, pid = process.pid } = {}) {
+export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAlive, age = ageMs, start = startServer, pid = process.pid, rows } = {}) {
   const name = `routr-scratch-${pid}-${randomBytes(3).toString("hex")}`;
   const bare = async (args) => {
     const r = await callHerdr(run, args, remaining());
@@ -56,7 +62,7 @@ export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAliv
     });
     await Promise.all(stale.map((s) => remove(s.name)));
     let spawnError = null;
-    start(name, (e) => { spawnError = e; }); started = true;
+    start(name, (e) => { spawnError = e; }, { rows }); started = true;
     for (;;) { // the server answers within a second; `remaining()` ends the wait
       if (spawnError) throw new Error("herdr could not start a private session (herdr_unreachable)");
       const r = await callHerdr(run, on(["workspace", "list"]), remaining());
@@ -72,11 +78,11 @@ export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAliv
 
 // Shared deadline, shell-readiness gate and cleanup for interactive usage readers. Screen text never leaves read().
 export async function withUsageTerminal(read, { run = runHerdr, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-  now = () => performance.now(), cwd, verifyCwd = false, timeout = 90000, terminal = {} } = {}) {
+  now = () => performance.now(), cwd, verifyCwd = false, rows, timeout = 90000, terminal = {} } = {}) {
   let t;
   try {
     const remaining = deadline(timeout, now, "Usage read timed out");
-    t = await openTerminal({ run, cwd, remaining, sleep, ...terminal });
+    t = await openTerminal({ run, cwd, remaining, sleep, rows, ...terminal });
     const ready = await waitForShell(t, { sleep, now, remaining, ...(verifyCwd ? { cwd } : {}) });
     if (!ready.ok) throw new Error();
     return await read({ t, shell: shellFamily(ready.name), remaining, pause: () => sleep(Math.min(250, remaining())), now });

@@ -8,6 +8,7 @@ import { CLAUDE_SNAPSHOT, home, run } from "./runtime.mjs";
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { usageCommandShadowed } from "./usage-command.mjs";
 import { usageFailure } from "./usage-failure.mjs";
 
 export { CLAUDE_SNAPSHOT };
@@ -29,9 +30,11 @@ export function summarize({ pool, source, ts = null, windows = [], note, cls, no
   const ageSec = ts ? Math.round(nowSec - ts) : null;
   const missing = failure ? { failure: usageFailure(failure.code), ...(kept ? { kept } : {}) } : {};
   if (!windows.length) return withUsageReadingTime({ pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? missing.failure?.why ?? "no usage data", ...(reason ? { reason } : {}), ...missing }, Math.round(ts * 1000));
-  // A window whose reset time has passed since the snapshot has rolled over: treat as empty.
+  // PR #141 review probes, 2026-11-03: live Claude/Codex can report a full window with a past reset.
+  // Only a reset AFTER the observation can justify rollover. A fresh full reading after that reset is evidence
+  // it did not roll; unknown observation time cannot invent headroom either. Kept pre-reset readings still roll.
   const live = windows.map((w) => {
-    if (!Number.isFinite(w.resetsAt) || w.resetsAt <= 0 || w.resetsAt >= nowSec) return w;
+    if (!Number.isFinite(ts) || ts <= 0 || !Number.isFinite(w.resetsAt) || w.resetsAt <= ts || w.resetsAt >= nowSec) return w;
     const reset = { ...w, usedPct: 0 };
     // The inferred empty window starts at its reset, never back at the source snapshot's time.
     windowTimes.set(reset, Math.round(w.resetsAt * 1000)); return reset;
@@ -167,8 +170,8 @@ function wallTimes(y, mo, d, h, mi, zone) {
   return [...new Set([...offsets].map((o) => asUtc - o))].filter((t) => wallAt(t, zone) === asUtc).sort((a, b) => a - b);
 }
 // "Oct 5 at 3:59pm (America/Detroit)" → epoch seconds, or null when it does not read exactly so. It names no year: of
-// last year's, this year's and next year's, the occurrence nearest now; a reset just past stays past, and summarize
-// rolls its window over, as for the statusline. One further from now than `maxSec` (the window's length and a day) is
+// last year's, this year's and next year's, the occurrence nearest now; a reset just past stays past. Only an observation from before that reset can roll over;
+// a fresh full observation afterward stays full. One further from now than `maxSec` (the window's length and a day) is
 // not a reading of this window: null. A wall time the clock skips is null; one it shows twice takes the LATER instant,
 // so a window is never rolled over before its reset (no headroom invented), and the instant is the end of the minute
 // shown (below). Never guessed: null, and the note says so.
@@ -254,7 +257,9 @@ function removeProjectFolder(folder) {
 // each read's private folder, `projects` Claude's projects folder. It is only called once readUsage's sign-in gate says Claude is signed in. That
 // answer is kept up to 6 hours (signin.mjs, as for every harness), so one read may follow a sign-out; Claude's `-p`
 // does not open a browser sign-in.
-export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT(), nowSec = now(), exec = run, tmp = tmpdir(), projects = claudeProjectsDir() } = {}) {
+export const claudeUsageShadows = () => ["skills/usage", "commands/usage.md"].map((p) => join(process.env.CLAUDE_CONFIG_DIR || join(home(), ".claude"), p));
+export async function readClaude({ shadows = claudeUsageShadows(), quiet = [], file = CLAUDE_SNAPSHOT(), nowSec = now(), exec = run, tmp = tmpdir(), projects = claudeProjectsDir() } = {}) {
+  if (usageCommandShadowed(shadows)) return failedUsage("claude", "claude /usage", "command_shadowed");
   const snap = readJson(file);
   const fromSnap = snap ? claudeSnapshot(snap, nowSec) : null;
   // A snapshot from the future (a clock set back) is not fresh: its age says nothing.
@@ -288,7 +293,7 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT(), nowSec 
     // "No windows" is an answer only when Claude said it succeeded and printed something with no usage line routr
     // could not read: an empty result, or a "Current session" line cut short, is unreadable, not a seat with no quota
     // (which a sign-in status naming Enterprise or an API key would then rank as metered).
-    if (!p || o.is_error || o.subtype !== "success" || !o.result.trim() || (!p.windows.length && p.unparsed)) { code = "invalid_response"; why = usageFailure(code).why; }
+    if (!p || o.num_turns !== 0 || o.local_command !== "usage" || o.is_error || o.subtype !== "success" || !o.result.trim() || (!p.windows.length && p.unparsed)) { code = "invalid_response"; why = usageFailure(code).why; }
     else {
       if (p.windows.length) return summarize({ pool: "claude", source: "claude /usage", ts: nowSec, windows: p.windows, note: p.note, nowSec });
       answered = true; why = "Claude's /usage shows no usage windows for this seat";

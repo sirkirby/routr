@@ -97,8 +97,10 @@ row's `note` says why. Run `routr usage cursor` to read it now and see any error
 `routr dispatch` and `routr usage` warn this when a subscription's usage reader worked before, has not produced a
 reading for a day or more, and failed its last try; `routr doctor` lists it too. Routing then runs on the assumed
 headroom. The usual cause is an update of that harness or of herdr that changed what routr reads (herdr 0.9.5 did, for
-Cursor). Run the command in `next`, `routr usage <name>`: it reads now and its `unavailable` entry says why a reading
-fails. Until it reads again, pass `--headroom <name>=<share left>` yourself (0.9 or 90%).
+Cursor). Cursor and Kiro's named commands read now. A background-only limit reader's `routr usage <name>` reports
+the saved reading and requests a detached refresh only when due; repeating it within the interval does not force
+a retry. Fix the stated cause and wait for the next eligible refresh. The failure remains in `unavailable`;
+without a trusted cap the limit cannot be seen, so routr will not stop at it. Until it reads again, pass `--headroom <name>=<share left>` yourself (0.9 or 90%).
 
 ## Kiro's usage is "assumed"
 
@@ -108,3 +110,13 @@ the system temp folder, and keeps the reading in `~/.cache/routr/kiro-usage.json
 session in Kiro, which routr deletes with `kiro-cli chat --delete-session`; if that fails, `routr usage kiro` warns
 that Kiro kept an empty usage session: remove it from Kiro's saved sessions. Until the first reading lands, or when reading fails, Kiro is `assumed` and the row's `note` says why.
 Run `routr usage kiro` to read it now; if it cannot be read, pass `--headroom kiro=<share left>` yourself (0.9 or 90%).
+
+## A user command replaces usage
+
+`command_shadowed` means routr refused a local usage command because a user command could replace it, or the
+interactive menu did not confirm the built-in. Claude checks the names `skills/usage/` and `commands/usage.md`
+under its config folder (`CLAUDE_CONFIG_DIR`, otherwise `~/.claude`) without reading their contents. Rename or
+remove your conflicting command yourself if you want routr to read usage. The reader never runs it to find out.
+The interactive built-in must be highlighted with its measured description; a changed description or absent
+menu is a stated failure and Escape is sent without Enter. Plugin namespacing and the same risk on other
+harnesses have not been measured.

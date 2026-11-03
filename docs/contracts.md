@@ -48,15 +48,16 @@ Names that mean one thing everywhere:
 | `part` | extra fields | from |
 |---|---|---|
 | `decision model` | `provider`, `model` (attempted), `status` (a provider error's HTTP status) | `subagent`, `dispatch`, `check`; `launch` copies the saved advice's entries |
-| `usage` | `subscription` (null for routr's own ranking failure), `source`, `reading` (`assumed` or `kept`), `reading_source` and `age_sec` for a kept reading | `dispatch`, `usage` |
+| `usage` | `subscription` (null for routr's own ranking failure), `source`, `reading` (`assumed`, `kept`, `metered` or `unknown`), `reading_source` and `age_sec` for a kept reading | `dispatch`, `usage` |
 | `brief`, `report` | none | `check` |
 | `model list` | `subscription` | `launch` (a harness whose model list routr checks could not be read) |
 | `pane`, `worktree` | `pane` or `path` | `cleanup` (what runs in a pane, or a worktree's git state, could not be read) |
 
 Codes are the fixed lists routr already has (the decision-model failure codes, the usage failure codes) plus
 `unreadable` for a file, a model list, a pane or a worktree. Cursor's usage read adds `cmd_path`: the private
-session's shell is cmd and the temporary folder's path holds `%` or `!`, so nothing is typed; its `why` says to set
-TEMP to a folder without them, or make PowerShell the shell herdr opens.
+session's shell is cmd and an argument that would be typed holds `%` or `!`, so nothing is typed. Its fixed
+`why` names the quoting limitation and asks for a safe path or PowerShell. A folder passed only as process cwd
+is not refused for that reason.
 
 ## Ordered decision models
 
@@ -301,15 +302,15 @@ moves to `subscriptions.note`, the same place as in `dispatch`.
 
 **A reader that stopped working.** When a subscription's last reading is over a day old and its last try failed,
 `dispatch` and `usage` add a `warnings` line saying so (its age and the failure's code, and that routing assumes its
-headroom: a harness or herdr update may have changed what routr reads) and a `next` step to try `routr usage <name>`
-again; in `doctor --json` each signed-in harness so affected carries `usage_stale` (that warning and the command
+headroom: a harness or herdr update may have changed what routr reads) and a `next` step for the source
+(a named immediate read, or the saved-view/background-refresh behavior for a background-only reader); in `doctor --json` each signed-in harness so affected carries `usage_stale` (that warning and the command
 to try again), and one that is configured and on adds it to `next_steps`. How to read it by hand stays in `next` too. A metered seat whose applicable limit reader failed is also reported: every failure is in `unavailable`, even
 with a fresh kept reading, and a day of consecutive failures adds the warning and doctor's `usage_stale`. This
 includes a limit reader that never succeeded. Retries retain the first-failure time; success clears it. The sentence
 says the limit cannot be seen, so routr will not stop at it; a trusted kept cap still ranks. Metered seats with no
 applicable limit reader, or whose last limit read succeeded, remain exempt. Ordinary readers that never succeeded
-remain `assumed` in `unavailable`, without the stale warning. A fresh `usage <name>` read that works clears it; one that fails again
-keeps it.
+remain `assumed` in `unavailable`, without the stale warning. A successful refresh clears it; a failed refresh keeps it. A public background-only named usage command
+returns the cache and cannot force an immediate retry within its interval.
 
 **The named readers' `read_yourself`.** Moved into `next`, as a `do` step whose template is the `--headroom` flag to
 pass (`--headroom cursor=<share left>`), and whose `why` says how to read the harness's screen by hand. It is an
@@ -901,7 +902,7 @@ for plain usage, `--level` and a named subscription alike:
 - a reading failed, live or cached (a `usage` entry in `unavailable`), for a harness with a by-hand way: read it by hand
   and pass `--headroom <name>=<share left>` (named `cursor` and `kiro` too);
 - the ranking failed (routr's `internal_error` entry): read capacity yourself before choosing an account;
-- a reader that stopped working: try it again with `routr usage <name>` (run);
+- a reader that stopped working: retry a named immediate reader, or explain the due-only refresh and use a by-hand capacity reading for a background-only reader;
 - named `kiro`, when Kiro kept an empty usage session: remove it from Kiro's saved sessions;
 - with `--level`, when there are candidates: choose from `subscriptions.candidates`, normal before fallback, and keep the
   original dispatch advice for launch and record.
@@ -1295,3 +1296,17 @@ safe answers and optional retry behavior; the driver owns polling, deadlines, er
 finish first-run screens. The registry label accompanies these generic fixed sentences. No screen text is output.
 Limit read failures always appear in `unavailable`; a missing current limit with no trusted cap explicitly says
 routr will not stop at it. These diagnostics do not change candidate arithmetic or invent headroom.
+
+A conditional limit recipe also declares `excludes(primary, status)`: positive proof that a held cap no longer
+applies. Failed primary reads and unknown signed-in status do not supply that proof. Such calls keep the trusted
+cap, report `limit_unverified` (or the primary failure), and start no panel until prerequisites are confirmed.
+The smoke treats unknown applicability as a failure, not a clean unexercised reader. A skipped refresh publishes
+no observation and returns only its internal `skipped` result; it never manufactures a no-limit reading.
+
+A fresh observation reporting a past reset stays as observed. Rollover requires the reset to be after the
+observation and before now; an observation with no trustworthy time cannot roll. This applies to every harness.
+
+Recipes can declare command-shadow paths and a menu predicate checked before Enter. `command_shadowed` is a
+fixed refusal to run a possibly substituted command; file contents and menu text are never output. A no-limit
+panel needs a complete, unambiguous section and a 750 ms unchanged reading (a judgment), whereas a cap is returned
+as soon as the complete section parses. Only one ratio/percent row or one spent-only line is accepted.

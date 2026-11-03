@@ -5,14 +5,17 @@ import { claudePanelScreen, claudePanelUsage, panelReset, parseClaudePanel, read
 import { codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, readClaude, readCodex, readCodexLive, summarize } from "../src/lib/usage.mjs";
 import { HARNESSES, readUsage } from "../src/lib/harnesses.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
-import { cfg, herdrOK, scratch, shellInfo } from "./helpers.mjs";
-const fixture = (name) => readFileSync(new URL(`./fixtures/admin-limits/${name}`, import.meta.url), "utf8");
+import { cfg, scratch } from "./helpers.mjs";
+import { fakePanel } from "./fixtures/panel-reader.mjs";
+const fixture = (name) => readFileSync(new URL(`./fixtures/admin-limits/${name}`, import.meta.url), "utf8").replaceAll("\r\n", "\n");
 const T = Date.UTC(2026, 10, 3, 15) / 1000;
 const hit = fixture("claude-panel.txt"), noLimitPanel = fixture("claude-panel-no-limit.txt");
 // p46 addendum, 2026-11-03: verbatim section from the earlier under-limit panel.
-const under = `Usage credits
+const under = `Settings Status Config Usage Stats
+Usage credits
 █████▋                                             11% used
-$11.28 / $100.00 spent · Resets Dec 1 (America/Detroit)`;
+$11.28 / $100.00 spent · Resets Dec 1 (America/Detroit)
+Esc to cancel`;
 const trust = "Quick safety check: Is this a project you created or one you trust?\n❯ No, exit\n  Yes, I trust this folder";
 const ready = "❯ \n? for shortcuts";
 
@@ -61,26 +64,9 @@ test("real Claude panels reduce to percent and conservative date-only reset; oth
   expect(claudePanelScreen("Choose a theme\n❯ Dark\nLight")).toBe("unknown");
 });
 
-function fakePanel(first = trust, panel = hit) {
-  let ticks = 0, stage = "shell";
-  const calls = [], cwd = scratch("claude-panel-empty");
-  return { calls, elapsed: () => ticks, options: { cwd, quiet: HARNESSES.claude.quiet, nowSec: T, now: () => ticks, sleep: async (ms) => { ticks += ms; }, terminal: { start: () => {} },
-    run: async (all) => {
-      calls.push(all); const a = all[0] === "--session" ? all.slice(2) : all;
-      if (a[0] === "session") return { ok: true, data: { sessions: [] } };
-      if (a[1] === "list") return herdrOK({ workspaces: [] });
-      if (a[1] === "create") return herdrOK({ root_pane: { pane_id: "w:p" } });
-      if (a[1] === "process-info") return shellInfo([{ pid: 1, cwd }]);
-      if (a[1] === "read") return herdrOK({ text: stage === "shell" ? "chris % " : stage === "first" ? first : stage === "ready" ? ready : panel });
-      if (a[1] === "run") { expect(a[3]).toContain("disableAllHooks"); expect(a[3]).toContain("--strict-mcp-config"); stage = "first"; }
-      if (a[1] === "send-keys" && a[3] === "enter" && stage === "first") stage = "ready";
-      if (a[1] === "send-text") { expect(a[3]).toBe("/usage"); stage = "panel"; }
-      return herdrOK({});
-    } } };
-}
 test("private panel read answers only empty-folder trust, no other first-run screen, and always cleans up", async () => {
   const f = fakePanel(); expect(await claudePanelUsage(f.options)).toMatchObject({ ok: true, used_pct: 100 });
-  expect(f.calls.filter((a) => a.includes("send-keys")).map((a) => a.at(-1))).toEqual(["down", "enter", "enter"]);
+  expect(f.calls.filter((a) => a.includes("send-keys")).flatMap((a) => a.slice(a.indexOf("send-keys") + 2))).toEqual(["down", "enter", "enter"]);
   expect(f.calls.slice(-2).map((a) => a[1])).toEqual(["stop", "delete"]);
   for (const first of ["Choose a theme", "Sign in to continue", "garbled"]) {
     const f = fakePanel(first); expect(await claudePanelUsage(f.options)).toMatchObject({ ok: false, code: "open_once" });
@@ -91,7 +77,7 @@ test("private panel read answers only empty-folder trust, no other first-run scr
   expect(await claudePanelUsage(missing.options)).toMatchObject({ ok: false, code: "herdr_missing" });
   const noLimit = fakePanel(ready, noLimitPanel);
   expect(await claudePanelUsage(noLimit.options)).toMatchObject({ ok: true, used_pct: null, resets_at: null });
-  expect(noLimit.elapsed()).toBeLessThan(12000); // the measured spent-only line returns immediately
+  expect(noLimit.elapsed()).toBeGreaterThanOrEqual(750); // no-limit draws must settle before they can remove a cap
   for (const panel of [hit.replace(/.*\$15\.05.*\n/, ""), hit.replace(/Usage credits[^]*/, "Esc to cancel"),
     noLimitPanel.replace("$23.96 spent", "unrecognised credits format"), "garbled"]) {
     const unread = fakePanel(ready, panel);
@@ -129,7 +115,7 @@ test("only answered no-window Enterprise print usage can start the detached pane
     [print, null, 0], [summarize({ pool: "claude", source: "test", windows: [{ name: "five_hour", usedPct: 11 }] }), { billing: "metered", when: "no_windows" }, 0],
     [{ ...print, failure: { code: "no_response" } }, { billing: "metered", when: "no_windows" }, 0]]) {
     let called = 0;
-    const [r] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: b }), sources: { claude: { read: async () => u, limit: { applies: HARNESSES.claude.usage.limit.applies, read: (o) => { called++; expect(o.background).toBe(true); return readClaudePanel({ file, background: false, nowSec: T }); } } } } });
+    const [r] = await readUsage(["claude"], {}, { why: async () => null, billing: async () => ({ billing: b, limitStatus: b && !b.when ? "not_applicable" : null }), sources: { claude: { read: async () => u, limit: { applies: HARNESSES.claude.usage.limit.applies, excludes: HARNESSES.claude.usage.limit.excludes, read: (o) => { if (o.background) called++; return readClaudePanel({ file, background: false, nowSec: T }); } } } } });
     expect(called).toBe(starts); if (starts) expect(r.class).toBe("metered");
   }
 });
