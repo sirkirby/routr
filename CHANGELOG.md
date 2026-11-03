@@ -6,6 +6,7 @@ A short history of what changed in each routr release, one line per change. Each
 ## Unreleased
 
 - The orchestrator guide gives a rule of thumb for when work goes back to the same worker and when it goes to a fresh one (#139).
+
 ## v0.9.5 — 2026-11-02
 
 [Full notes](docs/releases/v0.9.5.md)
