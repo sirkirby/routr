@@ -114,7 +114,7 @@ Codex spend-control stops without a member limit or reset block capacity for fiv
 session logs; older stops leave capacity unknown. Caps roll over only when the reset follows the reading's time;
 plan windows still roll over as before. A past reset holds the full reserve (a synthetic case, not seen live).
 Normal metered seats with a limit join the launch ratio while they have usable room; at their limit or reserve they leave it.
-`most_room` still names the largest positive usable number. Claude Enterprise budgets are not visible to routr.
+`most_room` prefers the largest positive usable number on normal accounts, otherwise on fallback. Claude Enterprise budgets are not visible to routr.
 
 An unset `use` means normal, independent of readings. Without a usable reading, `usable` stays null and the account
 stays offered, including an included plan. The payment classes are `included`, `metered` and `unknown`; a limit is

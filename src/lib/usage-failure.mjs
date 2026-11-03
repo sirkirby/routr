@@ -22,7 +22,7 @@ export const usageUnavailable = (rows) => rows.filter((r) => r.failure && r.sign
 
 // A reader that has not produced a reading for over a day and failed its last try: said in `warnings`, not only in a
 // row's note. From the herdr 0.9.5 change of 2026-10-22: Cursor's reader failed on every try, ranking ran on the
-// unknown capacity, and the only trace was a note inside a ranked row for 89 hours.
+// assumed headroom, and the only trace was a note inside a ranked row for 89 hours.
 export const STALE_SEC = 24 * 3600;
 // One that never read anything is already `unknown` in `unavailable`; this is for one that worked and stopped. A
 // metered seat (said by its harness, or the user's `billing`) is ranked as unknown capacity, never given a made-up number: it is not

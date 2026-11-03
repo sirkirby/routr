@@ -113,8 +113,8 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   };
   // Offer weights for normal metered pairs; ranking excludes caps with no usable room.
   // Inspection gives the class, not usable room: a weight can be configured before room returns.
-  // As the ranking reads it (pick.mjs): windows that arrived decide, whatever `billing` says; otherwise `billing`, then
-  // what the harness reported.
+  // Setup keeps an included reading; otherwise billing, then the observed class. A billing correction can hide
+  // a metered budget here; ranking still counts its window.
   const reads = (n) => { const seen = r.harnesses[n]?.usage_class; return seen === "included" ? seen : draft[n].billing ?? seen; };
   const sharer = (x) => draft[x].enabled && reads(x) === "metered" && useOf(x) === "normal";
   const shares = (n) => sharer(n) && candidates.filter(sharer).length >= 2;

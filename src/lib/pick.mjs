@@ -47,9 +47,10 @@ export function rankSubscriptions(level, usage, c, launches = null) {
   // Pools with room, most first; then pools without a number; then pools at their reserve.
   const key = (r) => (r.usable == null ? -0.5 : r.usable > 0 ? r.usable : -1);
   ranked.sort((x, y) => key(y) - key(x));
-  // Capture capacity order before the ratio moves sharers: most_room still means the largest usable number,
+  // Capture capacity order before the ratio moves sharers: most_room prefers a normal account with a number,
   // even when a metered account takes a numeric account's earlier slot. Included rows keep their slots.
   const open = ranked.filter((r) => r.usable > 0), unknown = ranked.filter((r) => r.usable == null);
+  const most = open.find((r) => r.use === "normal") ?? open[0];
   // The user's launch ratio orders eligible normal metered accounts among themselves, the account furthest below its
   // target first. It is never a headroom: a share of launches and a share of a usage window are different units.
   const view = shareView(ranked, launches, c.subscriptions), share = view?.unreadable ? null : view;
@@ -64,8 +65,8 @@ export function rankSubscriptions(level, usage, c, launches = null) {
   const note = !ranked.length ? !Object.keys(c.subscriptions).length ? "no subscriptions are configured: routr setup has not been run"
     : `no eligible subscriptions for ${level} work${excluded.length ? `; ${excluded.map((e) => `${e.subscription}: ${e.why}`).join("; ")}` : ""}`
     : !open.length && !unknown.length ? `every subscription that takes ${level} work is at its reserve`
-    : `${open.length ? `${open[0].subscription} has the most usable headroom among accounts with a number` : "remaining capacity is unknown"}.${unknown.length && open.length ? " Remaining capacity is unknown for other accounts." : ""}${share ? ` ${shareNote(share)}` : view?.unreadable ? " Your share is not shown: routr's launch history could not be read." : ""}`;
-  return { most_room: open[0]?.subscription ?? null, ...(share ? { share_due: share.due } : {}), candidates, ranked, excluded, note };
+    : `${open.length ? `${most.subscription} has the most usable headroom among accounts with a number (normal first)` : "remaining capacity is unknown"}.${unknown.length && open.length ? " Remaining capacity is unknown for other accounts." : ""}${share ? ` ${shareNote(share)}` : view?.unreadable ? " Your share is not shown: routr's launch history could not be read." : ""}`;
+  return { most_room: most?.subscription ?? null, ...(share ? { share_due: share.due } : {}), candidates, ranked, excluded, note };
 }
 
 // What the ratio says, in a line: who is due and why, or that the launches already match it. The launches counted are

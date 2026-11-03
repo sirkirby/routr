@@ -242,7 +242,7 @@ plain, with `--level`, or named):
 | advice note "routr could not tell from the brief: …. You can: you know the codebase." | "routr could not tell from the brief: …" | "Settle these from the codebase: …" |
 | advice note on a user preference | "The user prefers strong for debugging work; routr reads this piece as standard." | "Go with strong unless the work is plainly rote" |
 | advice note on high risk | "A mistake here could be costly (85% likely high risk)." | "Do not go below standard, and review the result" |
-| `subscriptions.note`, normal | "codex has the most usable headroom among accounts with a number. Metered budget is unknown." | "Choose a suitable model and effort from normal candidates first; use fallback when none suitably takes the work" (part of dispatch's choose step) |
+| `subscriptions.note`, normal | "codex has the most usable headroom among accounts with a number (normal first). Remaining capacity is unknown for other accounts." | "Choose a suitable model and effort from normal candidates first; use fallback when none suitably takes the work" (part of dispatch's choose step) |
 | `subscriptions.note`, everything at its reserve | "every subscription that takes strong work is at its reserve" | "Hold the work or ask the user: every subscription that takes strong work is at its reserve", first in `next`, in place of the launch step |
 | `subscriptions.note`, nothing takes the level | "no eligible subscriptions for strong work", followed by each exclusion’s reason | "Hold the work, or choose a lower level and refresh with routr usage --level, or ask the user" when the level excluded an account; otherwise use an eligible subscription or ask the user. Never offer a level below basic |
 | `subscriptions.note`, nothing configured | "no subscriptions are configured: routr setup has not been run" | "Tell the user routr is not set up (routr setup), and ask which subscription to use meanwhile" |
@@ -381,7 +381,7 @@ Inputs:
 |---|---|
 | a reading made | true |
 | no decision model answers: the advice is the user's fallback level | true. The answer is still advice the lead acts on and launch accepts. `unavailable` holds each failed `decision model` entry, `headline` starts `routr: no reading`, and `next` says to judge the level yourself. |
-| some usage readings failed (`dispatch`) | true; each is a `usage` entry in `unavailable`, and its ranked row says `unknown` or `kept` |
+| some usage readings failed (`dispatch`) | true; each is a `usage` entry in `unavailable` (`reading: unknown` or `kept`); ranked `usage` is `live`/`given` with a number, `metered` or `unknown` without one |
 | the brief refused | false, with `error`; no reading fields |
 
 `headline`: today's (the worker suggestion, level, kind of work, facts that bear on difficulty, `HIGH RISK`, `FIX THE
@@ -411,7 +411,7 @@ Own fields:
   `used_pct` the percent of those launches it took, and `left` how far it is below its target (0 at or above it).
   `share_due` is the account with the most `left`, ties to the larger weight and then the name; null when none is
   below its target. Those rows are ordered by `left` within their existing slots; window numbers stay as read,
-  unknown room stays null, `most_room` remains the largest positive usable number, and
+  unknown room stays null, `most_room` prefers the largest positive usable number on normal accounts, otherwise on fallback, and
   `candidates` stay in name order. `note` gives the reading in a line. Without such rows neither field appears; with
   them, when the history cannot be read (its folder, a record in it, or the folder is a link), neither appears and
   `note` says the share is not shown. `usage <subscription>` shows one row, so never a share.
@@ -873,7 +873,7 @@ Inputs:
 
 | case | `ok` |
 |---|---|
-| no name, or `--level`: the view made | true, also when some readings failed (each is a `usage` entry in `unavailable`, its row `unknown` or `kept`) or a subscription is excluded |
+| no name, or `--level`: the view made | true, also when some readings failed (each has a `usage` entry in `unavailable`; ranked `usage` is `live`/`given` with a number, `metered` or `unknown` without one) or a subscription is excluded |
 | the ranking itself failed | false, no `error`; `unavailable` holds routr's `internal_error` entry |
 | named `claude`, `codex` or `agy` | as no name, for that one subscription: these are read on every call, and naming one narrows the view. A failed read is `ok: true` with its entry; a signed-out one is `ok: true` with it in `excluded`. |
 | named `cursor` or `kiro`: a fresh reading taken and kept | true |
@@ -881,7 +881,7 @@ Inputs:
 | named `cursor` or `kiro`: not signed in | false, no `error`; it is in `subscriptions.excluded` with its `why` (the sign-in command), and nothing is read |
 | refused input | false, with `error` |
 
-`headline`: `routr: <name> has the most usable headroom for <level> work; normal: …, fallback: …`, or `routr: every
+`headline`: `routr: <name> has the most usable headroom for <level> work (normal first); normal: …, fallback: …`, or `routr: every
 subscription that takes <level> work is at its reserve`, adding `; N readings unavailable`. Named `cursor` or `kiro`:
 `routr: Cursor, Included 40% used, read now` or `routr: no fresh Cursor reading (<code>)`. An unranked view names
 each actual exclusion (turned off, not configured, or not signed in) and its remedy; a fresh reading can succeed while

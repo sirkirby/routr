@@ -340,7 +340,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     }
   }
   for (const [n, sub] of Object.entries(config.subscriptions ?? {})) for (const key of ["metered_rank", "assumed_headroom"]) if (sub?.[key] !== undefined) {
-    delete sub[key]; changed.push(`${n}.${key} removed (no longer used)`);
+    delete sub[key]; changed.push(`${n}.${key} removed (no longer used)${key === "metered_rank" ? `; this seat now takes everyday work unless --use ${n}=fallback is set` : ""}`);
   }
   if (changed.length) did.push(`changed ${changed.join(", ")}`);
   if (!r.config.exists || args.includes("--force") || fresh.length || changed.length) {

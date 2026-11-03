@@ -1094,6 +1094,9 @@ test("synthetic past-reset caps keep their counters and full reserve; plan windo
     expect(rank.windows[0].reserve_now).toBe(0.2);
   }
   expect(summarize({ pool: "codex", source: "test", cls: "metered", ts: t - 2, windows, nowSec: t }).headroom).toBe(1);
+  const spend = windows.map((w) => ({ ...w, name: "spend_limit" }));
+  expect(summarize({ pool: "claude", source: "test", cls: "metered", ts: t, windows: spend, nowSec: t }).headroom).toBe(0.5);
+  expect(summarize({ pool: "claude", source: "test", cls: "metered", ts: t - 2, windows: spend, nowSec: t }).headroom).toBe(1);
   for (const resetsAt of [0, -1]) expect(summarize({ pool: "codex", source: "test", ts: t - 2, windows: [{ ...windows[0], resetsAt }], nowSec: t }).headroom).toBe(0.5);
   expect(rankSubscriptions("strong", [live("codex", 0.5)], { ...cfg(), subscriptions: { codex: cfg().subscriptions.codex } }).note).not.toContain("Remaining capacity is unknown");
 });

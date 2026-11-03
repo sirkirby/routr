@@ -45,7 +45,7 @@ A setup change removes them, or you can delete them by hand.
   Setting a budget does not change the kind. `billing` corrects the kind when no usable window arrived; a window
   the harness reports always counts, and `--headroom` remains a number the caller supplies.
 - **Windows: how much is left.** A plan's windows, or an admin budget the harness reports, which is simply one
-  more window. Today only Codex reports an admin budget in a form routr reads. routr does not see a Claude
+  more window. Among replies observed so far, only Codex reports an admin budget in a form routr reads. routr does not see a Claude
   Enterprise budget.
 - **Sign-in.** From the harness itself.
 
@@ -69,7 +69,8 @@ whose usage cannot be read and a metered seat with no window. Both stay offered.
 5. **Nothing left:** the lead holds the work or asks you. routr never spends a reserve.
 
 The capacity diagnostic puts positive usable numbers first, then unknown room, then accounts at their reserve.
-`most_room` names only an account with a positive number. The candidate lists are alphabetical permissions,
+`most_room` names the normal account with the largest positive number, or the largest positive fallback number
+when no normal account has one. The candidate lists are alphabetical permissions,
 not recommendations about model quality.
 
 ## Your launch ratio
@@ -86,7 +87,7 @@ The ratio counts routr's own launches over seven days, whatever kind the account
 weight counts as 1; `--share name=off` removes a weight. `share_due` names the account furthest below its target,
 with ties to the larger weight and then the name; it is null when none is due. Each row's `share` shows the weight,
 target fraction, percent of launches used, fraction below target, and launch counts. This is a ratio of launches,
-separate from capacity: `most_room` still names the largest positive usable number. Whether leads following the
+separate from capacity: `most_room` still prefers the largest positive usable number on normal accounts, otherwise on fallback. Whether leads following the
 ratio reach it is not measured.
 
 routr only advises. Vendors enforce their own limits; when a budget is gone, the seat stops and the lead moves a

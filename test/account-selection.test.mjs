@@ -6,8 +6,8 @@ import { claudeBilling, withBilling } from "../src/lib/harnesses.mjs";
 import { readCursor, parseCursorUsage } from "../src/lib/cursor-usage.mjs";
 import { countLaunch } from "../src/lib/shares.mjs";
 import { DEFAULTS } from "../src/lib/config.mjs";
-import { usageCommand } from "./contract.mjs";
-import { scratch } from "./helpers.mjs";
+import { adviseCommand, usageCommand } from "./contract.mjs";
+import { ans, scratch } from "./helpers.mjs";
 
 const T = Date.UTC(2026, 10, 3) / 1000;
 const recorded = (file) => JSON.parse(readFileSync(new URL(`./fixtures/admin-limits/${file}.json`, import.meta.url))).rateLimits;
@@ -35,7 +35,7 @@ async function ratio(reply, config = work(), other = claude()) {
       counts[due]++; expect(countLaunch(due)).toBe(true);
     }
     return counts;
-  } finally { Object.assign(process.env, previous); }
+  } finally { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
 }
 
 test("Personal: included Claude Code and Codex, strong work; Cursor and Antigravity, standard work; reserve 0", async () => {
@@ -92,13 +92,16 @@ test("A metered seat set to fallback", async () => {
   expect((await view(config, [full, codex()])).subscriptions.candidates).toEqual({ normal: [], fallback: ["codex"] });
 });
 test("An included plan whose usage cannot be read", async () => {
-  const config = work(); config.subscriptions.claude.billing = "included";
-  const out = await view(config, [failedUsage("claude", "claude /usage"), codex()]);
-  expect(row(out, "claude")).toMatchObject({ class: "included", usable: null, headroom: null, usage: "unknown", note: expect.stringContaining("could not read") });
-  expect(out.subscriptions.candidates.normal).toContain("claude");
-  expect(out.unavailable).toMatchObject([{ subscription: "claude", reading: "unknown" }]);
-  expect(out.subscriptions.most_room).toBe("codex");
+  for (const billing of [undefined, "included"]) {
+    const config = work(); config.subscriptions.claude.billing = billing;
+    const out = await view(config, [failedUsage("claude", "claude /usage"), codex()]);
+    expect(row(out, "claude")).toMatchObject({ class: billing ?? "unknown", usable: null, headroom: null, usage: "unknown", note: expect.stringContaining("could not read") });
+    expect(out.subscriptions.candidates.normal).toContain("claude");
+    expect(out.unavailable).toMatchObject([{ subscription: "claude", reading: "unknown" }]);
+    expect(out.subscriptions.most_room).toBe("codex");
+  }
 });
+
 test("An unset use on a metered seat is normal", async () => {
   const config = work(); delete config.subscriptions.codex.use;
   for (const reply of [noBudget(), recorded("codex-before-saved")]) expect(row(await view(config, [claude(), codex(reply)]), "codex").use).toBe("normal");
@@ -111,4 +114,29 @@ test("A reading never changes use", async () => {
       expect(config.subscriptions.codex.use).toBe(use);
     }
   }
+});
+
+test("most_room and the usage headline prefer a normal account's number before fallback", async () => {
+  const config = work(); config.subscriptions.codex.use = "fallback";
+  const normal = claudeSnapshot({ ts: T, rate_limits: { five_hour: { used_percentage: 50 } } }, T);
+  const out = await view(config, [normal, codex()]);
+  expect(out.subscriptions.ranked.map((r) => r.subscription)).toEqual(["codex", "claude"]);
+  expect(out.subscriptions.most_room).toBe("claude");
+  expect(out.subscriptions.note).toContain("claude has the most usable headroom");
+  expect(out.headline).toContain("claude has the most usable headroom");
+  expect((await view(config, [failedUsage("claude", "claude /usage"), codex()])).subscriptions.most_room).toBe("codex");
+});
+
+test("dispatch includes share_due from recorded launches with a stubbed decision model", async () => {
+  const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = process.env.USERPROFILE = scratch("account-dispatch");
+  try {
+    expect(countLaunch("claude")).toBe(true);
+    const out = await adviseCommand("dispatch", "Fix the parser", { config: work(), notes: [] }, {}, {
+      askFn: async () => ({ provider: "typesafe", model: "jev-test", latencyMs: 1, answers: ans(2, 0.9) }),
+      read: async () => [claude(), codex()],
+    });
+    expect(out.subscriptions.share_due).toBe("codex");
+    expect(row(out, "claude").share).toMatchObject({ launches: 1, of: 1 });
+  } finally { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
 });

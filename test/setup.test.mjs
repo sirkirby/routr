@@ -143,6 +143,11 @@ test("setup reads old account settings without writing, then drops them when sav
     expect(readFileSync(file, "utf8")).toBe(original);
     expect(existsSync(`${file}.bak`)).toBe(false);
     const saved = run("--yes", ...extra); expect(saved.exitCode).toBe(0);
+    const changes = JSON.parse(saved.stdout.toString()).did.join(" ");
+    if (!extra.includes("--force")) {
+      expect(changes).toContain("codex.metered_rank removed (no longer used); this seat now takes everyday work unless --use codex=fallback is set");
+      expect(changes).not.toContain("cursor.assumed_headroom removed (no longer used); this seat");
+    }
     const config = JSON.parse(readFileSync(file, "utf8"));
     for (const sub of Object.values(config.subscriptions)) {
       expect(sub).not.toHaveProperty("metered_rank"); expect(sub).not.toHaveProperty("assumed_headroom");

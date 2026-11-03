@@ -120,12 +120,13 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   or `unknown`. A limit is one more window; a metered seat with a window has a usable number after reserve.
   Without a usable reading, room is unknown (`usable: null`) and the account stays offered. `use` is the user's normal/fallback preference,
   independent of billing, and defaults to normal. A normal metered account is considered alongside normal included accounts. If a launch
-  `share` is set and at least two normal accounts are metered with usable room, each carries `share`
+  `share` is set and at least two normal accounts are metered with unknown room or a positive usable number, each carries `share`
   (`weight`, `target`, `used_pct`, `left`, `launches` and `of`, read like a window: its weight and that weight's fraction, the percent of
   routr's launches on these accounts it took in the last 7 days, how far it is below its target, and the counts) and `share_due` names the one furthest below. It is a ratio
   of launches the user asked for, not a budget or a headroom. A metered seat at its limit or reserve leaves the
   ratio; launches are shared among those left. Ratio order applies among these accounts, while `most_room` still
-  names the largest positive usable number. Included accounts keep their positions.
+  names the largest positive usable number on normal accounts, or on fallback when no normal account has a number.
+  Included accounts keep their positions.
 
 ## Deciding
 
