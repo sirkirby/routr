@@ -436,6 +436,10 @@ test("a headless Claude worker: launch, a message mid-turn, wait, a follow-up th
   // A wait after that reports nothing twice; an idle worker is not running, and stop says so.
   await w.settled("w1");
   expect(w.run(["wait", "--name", "w1", "--timeout", "2000"])).toMatchObject({ ok: true, state: "idle", headline: "routr: nothing running: w1 idle" });
+  // A watcher in the background may wait as long as the work: four hours is not refused. It returns at once here, with nothing running.
+  expect(w.run(["wait", "--name", "w1", "--timeout", "14400000"])).toMatchObject({ ok: true, state: "idle" });
+  for (const bad of ["1.5", "soon"]) expect(w.run(["wait", "--name", "w1", "--timeout", bad])).toMatchObject({ ok: false, error: "--timeout must be a whole number of milliseconds" });
+  expect(w.run(["wait", "--name", "w1", "--timeout", "-1"])).toMatchObject({ ok: false, error: "--timeout requires a value" });
   expect(w.run(["stop", "--name", "w1"])).toMatchObject({ ok: true, state: "absent" });
   // Idle: a follow-up starts the next holder, which resumes the same session.
   const again = w.run(["send", "--name", "w1", "--task-file", w.task(SENT, "more.md")]);

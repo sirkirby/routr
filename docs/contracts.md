@@ -755,7 +755,7 @@ Waits for headless workers. Changes nothing of yours; it writes, in each worker'
 reported and the last state it gave notice of, so a later wait reports only what is newer.
 
 Inputs: used when given: `--name <name>` (repeatable; default: every worker still running or with a turn not yet
-reported), `--timeout <ms>` (default 90000, at most 600000; keep it under the command limit of your own shell tool,
+reported), `--timeout <ms>` (default 90000; in a foreground call, keep it under the command limit of your own shell tool,
 2 minutes by default in Claude Code). A name with no worker is refused (`error`).
 
 `state`: `finished` (a watched worker has a turn not reported before, or has newly `failed`, `stopped`, `lost`,
