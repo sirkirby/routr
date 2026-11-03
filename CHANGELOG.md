@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.10.0 — 2026-11-03
+
+[Full notes](docs/releases/v0.10.0.md)
+
 - Metered accounts with no `use` set now get everyday work; keep one for fallback with `routr setup --use <name>=fallback`. Removed `metered_rank`, `--metered` and `assumed_headroom`; setup refuses old flags and clears old settings when saving. Unreadable usage stays unknown, and reported budgets count as usage windows (#144).
 - Respect Codex member limits and keep metered accounts with limits in your launch ratio while they have room (#143).
 - Skip Claude usage reads shadowed by a user command that would spend (#143).
