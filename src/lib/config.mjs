@@ -78,7 +78,7 @@ export function loadConfig(path = CONFIG_PATH()) {
     else if (!validReserve) notes.push(warning("config_reserve", `${RESERVE.invalid(name, s.reserve)}. ${RESERVE.choose(name)}`));
     const oneOf = (k, allowed, fallback) => { const v = s?.[k]; if (v === undefined || v === null) return fallback; if (allowed.includes(v)) return v; notes.push(warning("config_choice", `subscriptions.${name}.${k}: ${JSON.stringify(v)} is not one of ${allowed.join(", ")}, using ${fallback ?? (k === "use" ? "normal use" : "the harness's own reading")}`)); return fallback; };
     if (s?.enabled !== undefined && typeof s.enabled !== "boolean") notes.push(warning("config_enabled", `subscriptions.${name}.enabled: ${JSON.stringify(s.enabled)} is not true or false, so it stays on`));
-    if (s?.metered_rank !== undefined || s?.assumed_headroom !== undefined) notes.push(warning("config_choice", `subscriptions.${name}: metered_rank and assumed_headroom no longer do anything; routr setup --use ${name}=fallback keeps this seat out of everyday work`));
+    if (s?.metered_rank !== undefined || s?.assumed_headroom !== undefined) notes.push(warning("config_choice", `subscriptions.${name}: metered_rank and assumed_headroom no longer do anything; the next routr setup change removes them, or delete them by hand. routr setup --use ${name}=fallback keeps this seat out of everyday work`));
     config.subscriptions[name] = {
       enabled: s?.enabled !== false,
       hardest_work: isLevel(s?.hardest_work) ? s.hardest_work : SUB_DEFAULTS.hardest_work,

@@ -99,7 +99,8 @@ terminal.
 It writes `~/.config/routr/config.json` for the harnesses found, and nothing of Claude Code's (step 4). A subscription with no `--model` gets no default, and the orchestrator picks from the
 live list; one with no `--hardest` or `--reserve` gets the suggestion. An existing config is kept: setup adds
 harnesses found since, fills a missing `hardest_work` or `reserve`, and applies any flag given, leaving everything
-else alone. Every write keeps the old file as `config.json.bak`. `--force` rebuilds it from the suggestions, keeping
+else alone. Unknown flags are refused before any changes. Saving removes `metered_rank` and `assumed_headroom`
+from every account; those old keys do nothing. Reading settings leaves the file alone. Every write keeps the old file as `config.json.bak`. `--force` rebuilds it from the suggestions, keeping
 telemetry, updates and channel, the decision models, which subscriptions are off, and account use, billing and launch share. **To change a setting later**, run
 setup with just that flag, for example `routr setup --yes --hardest cursor=strong`. Unset `use` means normal, whatever the reading. Every value is
 the user's preference, and none describes a model. `routr doctor` flags a setting that is missing or invalid, with

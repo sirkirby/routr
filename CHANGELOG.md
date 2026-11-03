@@ -5,8 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
-- Metered seats with no `use` set now get everyday work; use `routr setup --use <name>=fallback` to keep one on fallback. Removed `metered_rank`, `--metered` and `assumed_headroom`; missing room stays unknown, and budgets are ordinary windows (#NNN).
-
+- Accounts billed per use now get everyday work by default; keep one for fallback with `routr setup --use <name>=fallback`. Removed `metered_rank`, `--metered` and `assumed_headroom`; setup refuses old flags and clears old settings when saving. Unreadable usage stays unknown, and reported budgets count as usage windows (#NNN).
 - Respect Codex member limits and keep metered accounts with limits in your launch ratio while they have room (#143).
 - Skip Claude usage reads shadowed by a user command that would spend (#143).
 - `routr wait --timeout` no longer refuses a wait over 10 minutes, so a watcher in the background can wait as long as the work (#142).

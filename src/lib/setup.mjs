@@ -4,6 +4,7 @@
 // still accepted, and does nothing, for scripts written for an older routr.
 // A person gets questions; an agent passes `--yes` and the choices it settled with the user as flags. Same code, same file.
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { COMMANDS } from "./help.mjs";
 import { ACCOUNT_USE, CONFIG_PATH, isShare, loadConfig, SHARE_MAX, SUB_DEFAULTS, UPDATE_CHANNELS } from "./config.mjs";
 import { LEVELS } from "./questions.mjs";
 import { settingSummary } from "./wording.mjs";
@@ -111,6 +112,12 @@ export function channelNote(channel, running = ROUTR_VERSION, isStandalone = sta
 // writes outside the config (the skill, the telemetry state, the key), and whether a provider's key is saved (`hasKey`).
 export async function setup(args, { inspect: look = inspect, question, interactive: tty = Boolean(process.stdin.isTTY), env = process.env,
   install = installSkill, share: shareOn = setTelemetry, key = setKey, hasKey = (provider) => { try { secretsFor(provider, { env }); return true; } catch { return false; } }, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI, isStandalone = standalone, otelStart = startOtelSender, otelHome, writeConfig = writeJsonAtomic } = {}) {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--fix") continue; // doctor --fix forwards its arguments here
+    const option = COMMANDS.setup.flags.find((f) => f.name === args[i]);
+    if (!option) return { ok: false, error: `Unknown setup flag or argument: ${args[i]}. See routr setup --help; account use is --use <name>=fallback or --use <name>=normal` };
+    if (option.arg) i++;
+  }
   const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   const path = flag("--config") ?? CONFIG_PATH();
   const interactive = tty && !args.includes("--yes");
@@ -331,6 +338,9 @@ export async function setup(args, { inspect: look = inspect, question, interacti
         if (!ui && P.local) { const not = await P.ready(model, env); if (not) skipped.push(`${P.label}: ${not} (a download of more than 10 GB: ask the user first)`); }
       }
     }
+  }
+  for (const [n, sub] of Object.entries(config.subscriptions ?? {})) for (const key of ["metered_rank", "assumed_headroom"]) if (sub?.[key] !== undefined) {
+    delete sub[key]; changed.push(`${n}.${key} removed (no longer used)`);
   }
   if (changed.length) did.push(`changed ${changed.join(", ")}`);
   if (!r.config.exists || args.includes("--force") || fresh.length || changed.length) {

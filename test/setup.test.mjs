@@ -109,6 +109,55 @@ test("routr setup --yes writes the config once, keeps it afterwards, and starts 
   expect(Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--use", "codex=normal"], { env }).exitCode).toBe(1); // codex is not found on an empty PATH
 });
 
+test("setup refuses removed and unknown flags before changing anything", () => {
+  const home = scratch("setup-unknown"), env = cliEnv(home, { PATH: home }), file = join(home, "config.json");
+  const original = JSON.stringify({ telemetry: false, subscriptions: { codex: { hardest_work: "strong", reserve: 0.2, billing: "metered", metered_rank: "after" } } });
+  writeFileSync(file, original);
+  for (const extra of [["--metered", "codex=after"], ["--metered", "codex=with"], ["--typo"], ["--reserve", "codex=10%", "--typo"], ["--show", "--typo"]]) {
+    const r = Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--config", file, "--json", ...extra], { env });
+    expect(r.exitCode).toBe(1);
+    const out = JSON.parse(r.stdout.toString());
+    expect(out.ok).toBe(false); expect(out.error).toContain("Unknown setup");
+    expect(out.error).toContain("--use <name>=fallback"); expect(out.error).toContain("--use <name>=normal");
+    expect(readFileSync(file, "utf8")).toBe(original);
+    expect(existsSync(`${file}.bak`)).toBe(false);
+    expect(existsSync(join(home, ".agents/skills"))).toBe(false);
+  }
+});
+
+test("setup reads old account settings without writing, then drops them when saving any account", () => {
+  for (const extra of [["--reserve", "codex=10%"], ["--use", "codex=fallback"], ["--force"], []]) {
+    const home = scratch("setup-old-keys"), env = cliEnv(home, { PATH: home }), file = join(home, "config.json");
+    const original = JSON.stringify({ telemetry: false, subscriptions: {
+      codex: { hardest_work: "strong", reserve: 0.2, billing: "metered", metered_rank: "after" },
+      cursor: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5, use: "fallback" },
+    } });
+    writeFileSync(file, original);
+    const run = (...args) => Bun.spawnSync([process.execPath, SCRIPT, "setup", "--config", file, "--json", ...args], { env });
+    const before = run("--show"); expect(before.exitCode).toBe(0);
+    const warning = JSON.parse(before.stdout.toString()).notes.find((n) => n.startsWith("subscriptions.codex:"));
+    expect(warning).toContain("no longer do anything");
+    expect(warning).toContain("next routr setup change removes them");
+    expect(warning).toContain("delete them by hand");
+    expect(warning).toContain("routr setup --use codex=fallback");
+    expect(readFileSync(file, "utf8")).toBe(original);
+    expect(existsSync(`${file}.bak`)).toBe(false);
+    const saved = run("--yes", ...extra); expect(saved.exitCode).toBe(0);
+    const config = JSON.parse(readFileSync(file, "utf8"));
+    for (const sub of Object.values(config.subscriptions)) {
+      expect(sub).not.toHaveProperty("metered_rank"); expect(sub).not.toHaveProperty("assumed_headroom");
+    }
+    if (!extra.includes("--force")) {
+      expect(config.subscriptions.codex.billing).toBe("metered");
+      expect(config.subscriptions.codex.use).toBe(extra.includes("--use") ? "fallback" : undefined);
+      expect(config.subscriptions.cursor.use).toBe("fallback");
+    }
+    expect(readFileSync(`${file}.bak`, "utf8")).toBe(original);
+    const after = run("--show"); expect(after.exitCode).toBe(0);
+    expect((JSON.parse(after.stdout.toString()).notes ?? []).join(" ")).not.toContain("no longer do anything");
+  }
+});
+
 test("hardest_work and reserve are read from flags, and a bad value is refused", async () => {
   const { parseLevel, parseShare, parseHardest, parseReserve } = await import("../src/lib/setup.mjs");
   expect([parseLevel("Strong"), parseLevel("1"), parseLevel("3"), parseLevel("s"), parseLevel("")]).toEqual(["strong", "basic", "strong", null, null]);

@@ -152,7 +152,7 @@ export const COMMANDS = {
   },
   setup: {
     name: "setup",
-    description: "do what doctor says is missing: write your settings for the harnesses found, and choose a first decision model and optional backup, and ask for their keys. It leaves Claude Code's settings alone. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting",
+    description: "do what doctor says is missing: write your settings for the harnesses found, and choose a first decision model and optional backup, and ask for their keys. It leaves Claude Code's settings alone. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting. Unknown flags are refused before any changes; saving removes obsolete account settings",
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
       { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list (Claude Code also takes a model's full name, which it does not list); repeatable. Also changes it on an existing config", required: false, repeatable: true },

@@ -37,6 +37,7 @@ For reserve, 0% holds nothing back.
 Use is only ever your choice. routr never changes it because of what it reads. A metered seat with no `use` set
 gets everyday work. To prefer included plans, set the metered seat to `fallback`. Reading config never rewrites it.
 The removed settings `metered_rank` and `assumed_headroom` do nothing; an old config containing either gets a warning.
+A setup change removes them, or you can delete them by hand.
 
 ## What routr reads
 
