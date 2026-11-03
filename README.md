@@ -215,7 +215,7 @@ routr reads from `claude auth status` and calls `metered` too; and on a usage-ba
 Enterprise seat with a quota shows windows and is ranked on them). For any other Claude seat without windows the class
 is your `billing` setting, because Claude shows nothing to tell a seat with no quota from a plan routr has not seen
 (your setting also wins over what routr detected). A metered seat gets
-no headroom number and is a normal or fallback candidate by your setting. With two or more normal metered seats,
+no headroom number and is a normal or fallback candidate by your setting. With two or more normal seats that read metered or capped with usable room,
 a launch share (asked in `routr setup`, or `routr setup --share claude=3 --share codex=1`) tells the agent how you
 want launches split between them. A cap the vendor enforces is read as one
 more window: owner-set caps were read under and at the limit on Codex 0.166.0 and Claude Code 2.1.317

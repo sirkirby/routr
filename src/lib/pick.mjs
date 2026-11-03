@@ -49,7 +49,10 @@ export function rankSubscriptions(level, usage, c, launches = null) {
   // Pools with room, most first; then metered pools without a number; then pools at their reserve.
   const key = (r) => (r.usable == null ? -0.5 : r.usable > 0 ? r.usable : -1);
   ranked.sort((x, y) => key(y) - key(x));
-  // The user's launch ratio orders the normal metered accounts among themselves, the account furthest below its
+  // Capture capacity order before the ratio moves sharers: most_room still means the largest usable number,
+  // even when a metered account takes a capped account's earlier slot. Included rows keep their slots.
+  const open = ranked.filter((r) => r.usable > 0), metered = ranked.filter((r) => r.usable == null);
+  // The user's launch ratio orders eligible normal metered/capped accounts among themselves, the account furthest below its
   // target first. It is never a headroom: a share of launches and a share of a usage window are different units.
   const view = shareView(ranked, launches, c.subscriptions), share = view?.unreadable ? null : view;
   if (share) {
@@ -57,7 +60,6 @@ export function rankSubscriptions(level, usage, c, launches = null) {
     const slots = ranked.map((r, i) => (r.share ? i : -1)).filter((i) => i >= 0), byShare = share.order.map((n) => ranked.find((r) => r.subscription === n));
     slots.forEach((slot, i) => { ranked[slot] = byShare[i]; });
   }
-  const open = ranked.filter((r) => r.usable > 0), metered = ranked.filter((r) => r.usable == null);
   // Candidate lists express permission, not suitability or a ranking. The lead chooses model/effort fit first.
   const candidates = Object.fromEntries(["normal", "fallback"].map((use) => [use,
     [...open, ...metered].filter((r) => r.use === use).map((r) => r.subscription).sort()]));
@@ -73,7 +75,7 @@ export function rankSubscriptions(level, usage, c, launches = null) {
 function shareNote({ due, view }) {
   const v = Object.values(view)[0], of = v.of, days = `the last ${SHARE_WINDOW_DAYS} days`;
   const weights = Object.entries(view).map(([n, x]) => `${n} ${x.weight}`).join(", ");
-  if (!due) return `By your share (${weights}), the ${of} routr launches on these metered accounts in ${days} match it: none is due.`;
+  if (!due) return `By your share (${weights}), the ${of} routr launches on these accounts in ${days} match it: none is due.`;
   const d = view[due];
-  return `By your share (${weights}), ${due} is due: ${of ? `${d.launches} of the ${of} routr launches on these metered accounts in ${days}` : `no routr launches on these metered accounts in ${days}`}, target ${Math.round(d.target * 100)}%.`;
+  return `By your share (${weights}), ${due} is due: ${of ? `${d.launches} of the ${of} routr launches on these accounts in ${days}` : `no routr launches on these accounts in ${days}`}, target ${Math.round(d.target * 100)}%.`;
 }

@@ -133,11 +133,13 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   the user. `class` says what kind of pool each one is: `included` (a subscription whose windows expire), `capped`
   (a spend cap the vendor enforces, shown as one more window), `metered` (a seat with no quota, billed per token:
   no headroom number or known remaining budget), or `unknown`. `use` is the user's normal/fallback preference,
-  independent of billing. A normal metered account is considered alongside normal included accounts. When the user
-  set a launch `share` and two or more normal metered accounts are ranked, each carries `share` (`weight`, `target`,
-  `used_pct`, `left`, `launches` and `of`, read like a window: its weight and that weight's fraction, the percent of
+  independent of billing. A normal metered account is considered alongside normal included accounts. If a launch
+  `share` is set and at least two normal accounts are metered or capped with usable room, each carries `share`
+  (`weight`, `target`, `used_pct`, `left`, `launches` and `of`, read like a window: its weight and that weight's fraction, the percent of
   routr's launches on these accounts it took in the last 7 days, how far it is below its target, and the counts) and `share_due` names the one furthest below. It is a ratio
-  of launches the user asked for, not a budget or a headroom.
+  of launches the user asked for, not a budget or a headroom. A capped seat at its limit or reserve leaves the
+  ratio; launches are shared among those left. Ratio order applies among these accounts, while `most_room` still
+  names the largest positive usable number. Included accounts keep their positions.
 
 ## Deciding
 
@@ -157,7 +159,7 @@ failures can justify stronger initial execution; a larger model needs a reason t
    accounts, sign-in requirements, `hardest_work` and reserves. Configured normal/fallback use already supplies
    permission in those circumstances. Weigh unknown capacity or budget alongside explicit spending limits; an
    assumed reading is the user's assumption, not a measurement. Headroom does not estimate whether a task fits.
-   Among suitable metered options, prefer `share_due` unless the work has a reason to go elsewhere, and say why in
+   Among suitable accounts in the launch ratio, prefer `share_due` unless the work has a reason to go elsewhere, and say why in
    the launch line when you don't. Whether leads following it reach the user's ratio is not measured.
 
 You own the final choice within those boundaries. Before launch, state the advised and chosen level, model, effort

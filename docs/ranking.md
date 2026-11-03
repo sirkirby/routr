@@ -25,9 +25,10 @@ old), and otherwise a number you set (`assumed_headroom`), and says which.
 
 ## Your settings
 
-You decide where work may go, with three settings per subscription, and a fourth for metered accounts (`share`,
-below), which `routr setup` asks for when two or more metered accounts are in normal use. `routr setup` asks you for the three, for every
-subscription you let routr use, with each level's meaning beside it and the suggestion already chosen. It saves them
+You decide where work may go, with three settings per subscription and a fourth for normal metered or capped
+accounts (`share`, below). Guided setup asks for it when two or more accounts read metered and are in normal use;
+the flag also sets it for capped accounts. `routr setup` asks you for the three for every subscription you let
+routr use, with each level's meaning beside it and the suggestion already chosen. It saves them
 in `~/.config/routr/config.json` when you pick Save and exit.
 
 To change them later, run `routr setup` again: it shows your settings and a menu to change one thing. Or change one
@@ -61,11 +62,11 @@ invalid, with the command that fixes it.
   means use it when no normal account can suitably take the work. This is independent of billing: either an included
   subscription or a metered account can be normal or fallback. It does not set or enforce a spending budget.
 - **`share`**: a whole number from 1 to 99, this account's weight in your ratio of launches between normal metered
-  accounts. Metered accounts have no headroom number, so two of them tie; `claude` 3 and `codex` 1 says you want about
-  three workers on Claude for every one on Codex. It counts only while the account reads `metered`, and only when at
-  least two normal metered accounts take the work (one without a `share` counts as 1). Included accounts are
-  balanced by headroom instead, because what is left of a window expires at its reset. `routr setup` asks for it
-  as Launch share (no share, 1 to 5, or another weight up to 99; no share removes it), or set it with `routr setup --share claude=3 --share codex=1`; `--share claude=off` removes it.
+  accounts and capped accounts with usable room after reserve. `claude` 3 and `codex` 1 says you want about three
+  workers on Claude for every one on Codex. An admin cap keeps the seat in this ratio while it has room; at its
+  limit or reserve it leaves, and launches are shared among those left. At least two eligible accounts are needed
+  (one without a `share` counts as 1). Included accounts are balanced by headroom instead, because what is left of
+  a window expires at its reset. `routr setup` offers it as Launch share (no share, 1 to 5, or another weight up to 99; no share removes it), or set it with `routr setup --share claude=3 --share codex=1`; `--share claude=off` removes it.
 
 `assumed_headroom` is the share routr assumes when it cannot read an included or unknown account's usage. It is
 labelled assumed. Metered accounts always have unknown remaining budget.
@@ -138,19 +139,21 @@ use fallback when none suitably takes the work, including when the remaining nor
 Those settings authorize use in those circumstances. An unknown metered budget is uncertainty to weigh with the
 user's explicit spending limits; it does not by itself revoke that permission.
 
-`subscriptions.ranked` remains a capacity diagnostic: accounts with a number come first, most usable at the top, then metered
-accounts, then accounts at their reserve. `subscriptions.most_room` names only an account with a positive number; it is null when
-only metered candidates remain. Numbers may be labelled assumed. Neither field is a recommendation to choose that
-account. If there are no candidates, hold the work or ask the user. Routr never offers a reserve.
+`subscriptions.ranked` starts in capacity order: accounts with a number, most usable first, then metered accounts,
+then accounts at their reserve. The launch ratio reorders its eligible accounts within their slots; included
+accounts keep their positions. `subscriptions.most_room` still names the largest positive usable number,
+independent of that ratio order; it is null when only metered candidates remain. Numbers may be labelled
+assumed. Neither field is a recommendation to choose that account. If there are no candidates, hold the work or ask the user. Routr never offers a reserve.
 
-With a `share` set, the normal metered rows are ordered among themselves by how far each is below its target, and
-`subscriptions.share_due` names the first. routr counts its own launches: one record per worker that took its task or was left ready,
+With a `share` set, normal metered rows and capped rows with usable room are ordered among themselves by how far
+each is below its target, and `subscriptions.share_due` names the first. routr counts its own launches: one record per worker that took its task or was left ready,
 kept 7 days, holding only the subscription and the time. A launch made while an account read `included` still
 counts for it. Each row's `share` reads like a window: `weight`, `target` (its weight's fraction), `used_pct` (the percent of
 these launches it took), `left` (how far below its target; 0 at or above), `launches` (its own) and `of` (all of
 them). With weights 3 and 1 and 9 of the last
 20 launches on the first, its target is 0.75, it used 45%, and 0.3 is left, so it is due. This is a ratio of
-launches, never a headroom: `headroom` and `usable` stay null, and it is not compared with a window. The lead still
+launches, never a headroom: metered rows keep null `headroom` and `usable`, capped rows keep their measured
+windows and numbers, and the ratio is not compared with a window. The lead still
 chooses model and effort fit first. Whether leads following `share_due` reach your ratio is not measured.
 
 ## An example

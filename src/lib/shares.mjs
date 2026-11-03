@@ -1,7 +1,6 @@
-// `share`: the user's ratio of launches between metered accounts. A metered account has no headroom number, so two
-// normal metered accounts tie and habit picks; the user's weights say how they want the work split instead
-// (3 and 1: about three workers on one for every one on the other). Advice only: the lead still chooses model and
-// effort fit first, and nothing here enforces the ratio.
+// `share`: the user's ratio of launches between normal metered accounts and capped accounts with usable room.
+// A cap with no room after reserve leaves the ratio; the weights split launches among those still eligible.
+// Advice only: the lead still chooses model and effort fit first, and nothing here enforces the ratio.
 // routr counts its own launches: one file per worker that took its task (or was left ready with no task), under its
 // own folder, holding only the subscription and the time. Counting is best effort: a write that fails never fails the
 // launch, and history that cannot be read leaves the advice as it is without a share.
@@ -80,13 +79,14 @@ export function countLaunch(subscription, { home = userHome(), now = Date.now() 
 }
 
 // The share view, pure. `ranked` is rankSubscriptions' list; `launches` is recentLaunches' answer. Active only among
-// normal metered accounts, when at least two are ranked and at least one has a `share`; one without counts as 1.
+// normal metered accounts or capped accounts with usable > 0, when at least two qualify and at least one
+// has a `share`; one without counts as 1. A cap at its limit or reserve is out.
 // Each sharer gets the same shape as a usage window: what share of these launches it took (used_pct) and how far it
 // is below its target (left). The account furthest below its target is `due` (ties: the larger weight, then the
 // name); none is due when every one is at or above its target. `{ unreadable: true }` when a share would apply but
 // the history cannot be read.
 export function shareView(ranked, launches, subscriptions) {
-  const sharers = ranked.filter((r) => r.class === "metered" && r.use === "normal");
+  const sharers = ranked.filter((r) => r.use === "normal" && (r.class === "metered" || r.class === "capped" && r.usable > 0));
   if (sharers.length < 2 || !sharers.some((r) => subscriptions[r.subscription]?.share != null) || !launches) return null;
   // A share would apply, but the history cannot be read: a count routr cannot see is not zero, so it shows none.
   if (launches.unreadable) return { unreadable: true };

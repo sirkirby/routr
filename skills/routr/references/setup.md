@@ -146,11 +146,13 @@ the command that fixes it.
     options before comparing headroom. Fallback is considered when none suitably takes the task. This preference
     does not infer or enforce a shared prepaid balance or personal allowance. Set it with `--use name=normal|fallback`.
   - `share`: a whole number from 1 to 99, the account's weight in the user's ratio of launches between normal metered
-    accounts: `claude` 3 and `codex` 1 is about three workers on Claude for every one on Codex. It counts only while
-    the account reads `metered` and at least two normal metered accounts take the work (one without `share` counts as
-    1); headroom balances included accounts. routr counts its own launches over the last 7 days and the advice names
+    accounts and capped accounts with usable room after reserve: `claude` 3 and `codex` 1 is about three workers on
+    Claude for every one on Codex. A cap keeps its seat in the ratio while there is room; at its limit or reserve
+    it leaves, and launches are shared among those left. At least two eligible accounts are needed (one without
+    `share` counts as 1); headroom balances included accounts. routr counts its own launches over the last 7 days and the advice names
     the account below its target (`share_due`); the lead still chooses model and effort fit first. Guided setup asks
-    for it (Launch share) when two or more enabled accounts read metered and are in normal use. Set it with `--share name=<1-99>`, remove it with `--share name=off`.
+    for it (Launch share) when two or more enabled accounts read metered and are in normal use. For capped seats,
+    set or change the weight with the flag. Set it with `--share name=<1-99>`, remove it with `--share name=off`.
   - `metered_rank`: legacy preference, applied only when `use` is absent. Metered `after` (default) means fallback;
     `with` means normal. Nonmetered accounts default to normal. The legacy `--metered` flag also sets `use`; explicit
     `--use` wins if both flags are given. Actual observed caps remain windows, including with a billing override.
@@ -188,7 +190,7 @@ can be combined with the others in one run.
 | add a harness installed since | `routr setup --yes` (it adds every harness that is installed and signed in) |
 | use a funded account for everyday work | `routr setup --yes --use codex=normal` |
 | keep an account for fallback | `routr setup --yes --use codex=fallback` |
-| split launches between normal metered accounts, or stop | `routr setup --yes --share claude=3 --share codex=1` / `routr setup --yes --share claude=off` |
+| split launches between normal metered or capped accounts with room, or stop | `routr setup --yes --share claude=3 --share codex=1` / `routr setup --yes --share claude=off` |
 | get early builds (beta and release candidates), or stop | `routr setup --yes --channel beta` / `routr setup --yes --channel stable` |
 | set the ordered decision models | `routr setup --yes --decision typesafe,cloudflare:clef-flash` (a single choice also works); then the user stores its key with `routr key set <provider>` in their own terminal. Ollama needs none, but its model must be pulled: setup's note says when it is not, and the pull is the user's to agree to |
 | share anonymous outcomes, or stop | `routr telemetry on` / `routr telemetry off`: only when the user says so |

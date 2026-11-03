@@ -72,6 +72,11 @@ a failure.
 - `usage kiro` runs Kiro's own `/usage` in the system temp folder, deletes the empty session that leaves with Kiro's
   own `--delete-session`, and keeps the reading in `~/.cache/routr`.
 
+Normal metered accounts and capped accounts with usable room after reserve participate in the user's launch
+ratio. A capped account at its limit or reserve leaves it; the remaining eligible accounts share the launches.
+At least two are needed. Ratio order changes only sharers' slots; included accounts keep their positions and
+`most_room` still reports the largest positive usable number. The ratio remains advice for the lead.
+
 ## Updates
 
 Updates are automatic but never in the way: at most once a day a command may start a detached updater and carry on.

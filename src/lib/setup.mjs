@@ -63,7 +63,7 @@ function parsePairs(args, flag, parse, what) {
 }
 export const parseHardest = (args) => parsePairs(args, "--hardest", parseLevel, "basic|standard|strong");
 export const parseUse = (args) => parsePairs(args, "--use", (v) => ACCOUNT_USE.includes(v) ? v : null, "normal|fallback");
-// `--share claude=3`: this account's weight in the launch ratio between metered accounts (shares.mjs); `off` removes it.
+// `--share claude=3`: this account's weight in the launch ratio between eligible normal metered/capped accounts (shares.mjs); `off` removes it.
 export const parseLaunchShare = (args) => parsePairs(args, "--share", (v) => v === "off" ? "off" : /^\d+$/.test(v ?? "") && isShare(Number(v)) ? Number(v) : null, `<1-${SHARE_MAX}>|off`);
 // `--effort codex=high`: the everyday effort there, checked against the harness's own levels once it is found.
 export const parseEffort = (args) => parsePairs(args, "--effort", (v) => (/^[a-z]+$/i.test(v ?? "") ? v.toLowerCase() : null), "<level>");

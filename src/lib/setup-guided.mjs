@@ -111,8 +111,8 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
     if (typeof v === "string") draft[n].use = v;
     return v;
   };
-  // The launch share balances metered accounts, which have no headroom number (shares.mjs): asked only for an account
-  // that reads metered and is in normal use, and only when another one is too. Headroom balances the rest.
+  // This guided prompt is offered for normal metered pairs. Configured weights also apply to capped accounts
+  // with usable room (shares.mjs); --share can set them while capped. The inspection has no usable-room number.
   // As the ranking reads it (pick.mjs): windows that arrived decide, whatever `billing` says; otherwise `billing`, then
   // what the harness reported.
   const reads = (n) => { const seen = r.harnesses[n]?.usage_class; return seen === "included" || seen === "capped" ? seen : draft[n].billing ?? seen; };
@@ -121,8 +121,8 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   ask.share = async (n) => {
     const now = draft[n].share ?? NO_SHARE;
     const options = [...new Set([1, 2, 3, 4, 5, ...(now === NO_SHARE ? [] : [now])])].sort((a, b) => a - b).map((x) => ({ value: x, label: String(x) }));
-    let v = await ui.select({ message: `${HARNESSES[n].label}: launch share ${ui.style.dim("(its weight in how you split launches between metered accounts: 3 here and 1 on another is about three for every one)")}`,
-      initial: now, options: [{ value: NO_SHARE, label: "no share", hint: "counts as 1 when another metered account has one" }, ...options, { value: "other", label: "another weight…" }] });
+    let v = await ui.select({ message: `${HARNESSES[n].label}: launch share ${ui.style.dim("(its weight in how you split launches between these accounts: 3 here and 1 on another is about three for every one)")}`,
+      initial: now, options: [{ value: NO_SHARE, label: "no share", hint: "counts as 1 when another account in the ratio has one" }, ...options, { value: "other", label: "another weight…" }] });
     if (v === "other") v = await ui.text({ message: `${HARNESSES[n].label}: launch share, 1 to ${SHARE_MAX}`, initial: now === NO_SHARE ? "" : String(now),
       parse: (t) => { const x = Number(String(t).trim()); if (!/^\d+$/.test(String(t).trim()) || !isShare(x)) throw new Error(`a whole number from 1 to ${SHARE_MAX}`); return x; } });
     if (v === NO_SHARE) draft[n].share = null;
