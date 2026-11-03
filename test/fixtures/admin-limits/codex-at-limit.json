@@ -1,0 +1,42 @@
+{
+ "ordinaryUsageAllowed": null,
+ "rateLimits": {
+  "limitId": "codex",
+  "limitName": null,
+  "normalModelSlug": null,
+  "primary": null,
+  "secondary": null,
+  "credits": {
+   "hasCredits": true,
+   "unlimited": false,
+   "balance": "0"
+  },
+  "individualLimit": {
+   "limit": "140",
+   "used": "143.52683997154236",
+   "remainingPercent": 0,
+   "resetsAt": 1796083200
+  },
+  "spendControlReached": true,
+  "planType": "business",
+  "rateLimitReachedType": "workspace_owner_usage_limit_reached"
+ },
+ "rateLimitResetCredits": {
+  "availableCount": 0,
+  "credits": []
+ },
+ "rateLimitUpsell": {
+  "banner_type": "workspace_owner_usage_limit_reached",
+  "title": "Usage limit reached",
+  "description": "You've reached your usage limit. Your limit will reset {time}, or you can increase your limits",
+  "ctas": [
+   {
+    "action": "increase_spend_cap",
+    "label": "Increase Usage Limit"
+   }
+  ],
+  "reset_at": 1796083200,
+  "referral": null,
+  "request_url": null
+ }
+}

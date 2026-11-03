@@ -199,7 +199,8 @@ export function capacityNext(r, unavailable, level, config, subscription = null)
   else if (!hasCandidates(r)) steps.push(doNext(`Hold the work or ask the user: every subscription that takes ${level} work is at its reserve`));
   for (const u of unavailable.filter((u) => u.part === "usage")) {
     const byHand = USAGE_BY_HAND[u.subscription];
-    if (byHand) steps.push(doNext(`Read ${u.subscription}'s usage by hand: ${byHand}`, `--headroom ${u.subscription}=<share left>`));
+    if (u.code === "command_shadowed") steps.push(doNext("Rename or remove your own usage skill or command, or pass --headroom from a number you already have", `--headroom ${u.subscription}=<share left>`));
+    else if (byHand) steps.push(doNext(`Read ${u.subscription}'s usage by hand: ${byHand}`, `--headroom ${u.subscription}=<share left>`));
   }
   return steps;
 }

@@ -416,12 +416,12 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 ### Span error codes
 
 <!-- span-errors -->
-`no_key`, `secrets_unreadable`, `key_refused`, `model_missing`, `model_unsupported`, `timeout`, `unreachable`, `provider_error`, `invalid_response`, `daily_allowance`, `internal_error`, `attempt_unknown`, `read_failed`, `no_response`, `private_folder`, `source_missing`, `cmd_path`, `unreadable`, `refused`, `failed`, `not_started`, `no_finish`, `stopped`, `_OTHER`
+`no_key`, `secrets_unreadable`, `key_refused`, `model_missing`, `model_unsupported`, `timeout`, `unreachable`, `provider_error`, `invalid_response`, `daily_allowance`, `internal_error`, `attempt_unknown`, `read_failed`, `no_response`, `command_shadowed`, `private_folder`, `source_missing`, `cmd_path`, `unreadable`, `refused`, `failed`, `not_started`, `no_finish`, `stopped`, `_OTHER`
 <!-- /span-errors -->
 
 Decision codes describe missing/refused keys, unreadable secrets, missing/unsupported models, allowance, timeout,
 reachability, provider status, invalid response and internal errors. Usage codes describe missing/unreadable
-sources, no response, private-folder and cmd-path failures. `unreadable` covers required files, `refused` a refused
+sources, no response, a user command shadowing usage, private-folder and cmd-path failures. `unreadable` covers required files, `refused` a refused
 operation, `failed` a classified command or turn failure, `not_started` a harness that did not start,
 `no_finish` a harness that ended without a turn result, `stopped` a stopped turn, and `_OTHER` any unclassified error. Codes contain no error text.
 

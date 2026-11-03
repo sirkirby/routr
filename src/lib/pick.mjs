@@ -35,9 +35,9 @@ export function rankSubscriptions(level, usage, c, launches = null) {
     // No local usage source (or no snapshot yet): use the user's assumption and say so, never "full".
     const headroom = live ? u.headroom : s.assumed_headroom;
     // One line per window, so the numbers can be checked against the harness's own usage screen. A window whose length
-    // is unknown (a cap with an odd reset) holds the full reserve instead of tapering it.
+    // is unknown, or whose reset is past, holds the full reserve (past caps: synthetic probes, not seen live).
     const windows = (live ? u.windows ?? [] : []).filter((w) => Number.isFinite(w.usedPct)).map((w) => {
-      const ahead = w.resetsAt && w.windowMin ? Math.min(1, Math.max(0, (w.resetsAt - nowSec) / (w.windowMin * 60))) : 1;
+      const ahead = w.resetsAt > nowSec && w.windowMin ? Math.min(1, Math.max(0, (w.resetsAt - nowSec) / (w.windowMin * 60))) : 1;
       const left = Math.max(0, 1 - w.usedPct / 100);
       return { window: w.name, used_pct: Math.round(w.usedPct), resets_in_h: w.resetsAt ? Math.round(Math.max(0, w.resetsAt - nowSec) / 360) / 10 : null, left: r2(left), reserve_now: r2(s.reserve * ahead), usable: r2(Math.max(0, left - s.reserve * ahead)) };
     });
@@ -49,7 +49,10 @@ export function rankSubscriptions(level, usage, c, launches = null) {
   // Pools with room, most first; then metered pools without a number; then pools at their reserve.
   const key = (r) => (r.usable == null ? -0.5 : r.usable > 0 ? r.usable : -1);
   ranked.sort((x, y) => key(y) - key(x));
-  // The user's launch ratio orders the normal metered accounts among themselves, the account furthest below its
+  // Capture capacity order before the ratio moves sharers: most_room still means the largest usable number,
+  // even when a metered account takes a capped account's earlier slot. Included rows keep their slots.
+  const open = ranked.filter((r) => r.usable > 0), metered = ranked.filter((r) => r.usable == null);
+  // The user's launch ratio orders eligible normal metered/capped accounts among themselves, the account furthest below its
   // target first. It is never a headroom: a share of launches and a share of a usage window are different units.
   const view = shareView(ranked, launches, c.subscriptions), share = view?.unreadable ? null : view;
   if (share) {
@@ -57,14 +60,13 @@ export function rankSubscriptions(level, usage, c, launches = null) {
     const slots = ranked.map((r, i) => (r.share ? i : -1)).filter((i) => i >= 0), byShare = share.order.map((n) => ranked.find((r) => r.subscription === n));
     slots.forEach((slot, i) => { ranked[slot] = byShare[i]; });
   }
-  const open = ranked.filter((r) => r.usable > 0), metered = ranked.filter((r) => r.usable == null);
   // Candidate lists express permission, not suitability or a ranking. The lead chooses model/effort fit first.
   const candidates = Object.fromEntries(["normal", "fallback"].map((use) => [use,
     [...open, ...metered].filter((r) => r.use === use).map((r) => r.subscription).sort()]));
   const note = !ranked.length ? !Object.keys(c.subscriptions).length ? "no subscriptions are configured: routr setup has not been run"
     : `no eligible subscriptions for ${level} work${excluded.length ? `; ${excluded.map((e) => `${e.subscription}: ${e.why}`).join("; ")}` : ""}`
     : !open.length && !metered.length ? `every subscription that takes ${level} work is at its reserve`
-    : `${open.length ? `${open[0].subscription} has the most usable headroom among accounts with a number` : "remaining capacity is unknown"}. Metered budget is unknown.${share ? ` ${shareNote(share)}` : view?.unreadable ? " Your share is not shown: routr's launch history could not be read." : ""}`;
+    : `${open.length ? `${open[0].subscription} has the most usable headroom among accounts with a number` : "remaining capacity is unknown"}.${metered.length ? " Metered budget is unknown." : ""}${share ? ` ${shareNote(share)}` : view?.unreadable ? " Your share is not shown: routr's launch history could not be read." : ""}`;
   return { most_room: open[0]?.subscription ?? null, ...(share ? { share_due: share.due } : {}), candidates, ranked, excluded, note };
 }
 
@@ -73,7 +75,7 @@ export function rankSubscriptions(level, usage, c, launches = null) {
 function shareNote({ due, view }) {
   const v = Object.values(view)[0], of = v.of, days = `the last ${SHARE_WINDOW_DAYS} days`;
   const weights = Object.entries(view).map(([n, x]) => `${n} ${x.weight}`).join(", ");
-  if (!due) return `By your share (${weights}), the ${of} routr launches on these metered accounts in ${days} match it: none is due.`;
+  if (!due) return `By your share (${weights}), the ${of} routr launches on these accounts in ${days} match it: none is due.`;
   const d = view[due];
-  return `By your share (${weights}), ${due} is due: ${of ? `${d.launches} of the ${of} routr launches on these metered accounts in ${days}` : `no routr launches on these metered accounts in ${days}`}, target ${Math.round(d.target * 100)}%.`;
+  return `By your share (${weights}), ${due} is due: ${of ? `${d.launches} of the ${of} routr launches on these accounts in ${days}` : `no routr launches on these accounts in ${days}`}, target ${Math.round(d.target * 100)}%.`;
 }

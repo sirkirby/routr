@@ -88,7 +88,10 @@ reads that one; `subagent` reads none.
 routr never has to own a harness feature (a statusline slot, a hook) to get its usage: it asks the harness's own CLI.
 
 - Claude's is read in the call from its own `/usage`, hooks and MCP servers off; a statusline snapshot under 5 minutes
-  old is used instead when one exists.
+  old is used instead when one exists. Before print, names `skills/usage` and `commands/usage.md` in the Claude
+  config folder are checked without reading contents; either blocks the read with `command_shadowed`.
+  A reply with positive `num_turns` is refused as a reading, though that turn is already spent and later calls
+  would repeat it. Only those named locations are checked; plugin and managed skills are not measured.
 - Claude, Codex and Antigravity are read in the call (1 to 9 s, beside the decision model).
 - Cursor's own screen takes seconds more and starts Cursor, and Kiro's `/usage` takes about 10 s plus its cleanup, so
   their readings are snapshots: when the last try is over 4 hours old, or an older routr made it and got no reading
@@ -106,6 +109,12 @@ headroom, and age alone is not a failure. A source whose last reading is a day o
 failed is also said in `warnings` of `dispatch` and `usage`, with a step to read it again, and `doctor` lists it; a
 metered seat, which has no reading to make, is not. Metered accounts without known capacity are valid readings. Accounts
 left out by settings or sign-in status stay in `excluded`, outside the failed readings.
+
+Codex spend-control stops without a member limit or reset block capacity for five minutes only, including from
+session logs; older stops leave capacity unknown. Caps roll over only when the reset follows the reading's time;
+plan windows still roll over as before. A past reset holds the full reserve (a synthetic case, not seen live).
+Normal capped seats join the launch ratio while they have usable room; at their limit or reserve they leave it.
+`most_room` still names the largest positive usable number. Claude Enterprise budgets are not visible to routr.
 
 How usage is ranked: [ranking.md](ranking.md). A reserve is never offered.
 

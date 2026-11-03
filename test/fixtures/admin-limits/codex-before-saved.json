@@ -1,0 +1,29 @@
+{
+ "ordinaryUsageAllowed": null,
+ "rateLimits": {
+  "limitId": "codex",
+  "limitName": null,
+  "normalModelSlug": null,
+  "primary": null,
+  "secondary": null,
+  "credits": {
+   "hasCredits": true,
+   "unlimited": false,
+   "balance": null
+  },
+  "individualLimit": {
+   "limit": "500",
+   "used": "143.52683997154236",
+   "remainingPercent": 71,
+   "resetsAt": 1796083200
+  },
+  "spendControlReached": false,
+  "planType": "business",
+  "rateLimitReachedType": null
+ },
+ "rateLimitResetCredits": {
+  "availableCount": 0,
+  "credits": []
+ },
+ "rateLimitUpsell": null
+}

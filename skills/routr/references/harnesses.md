@@ -224,7 +224,7 @@ routr classes each pool from the shape of what the harness reports, never from a
 |---|---|---|
 | Codex on a subscription (Pro login, 2026-09-22, CLI 0.155.1) | `primary` weekly window with `usedPercent`, `secondary` null, `credits.hasCredits: false` | `included` |
 | Codex on a ChatGPT Enterprise seat with flexible pricing (2026-09-22, CLI 0.155.1) | `primary` and `secondary` **null**, `credits: { hasCredits: true, unlimited: true }`, `individualLimit: null`, `planType: "business"` on an Enterprise contract | `metered` |
-| Codex with a member credit limit set by the workspace owner (claimed: the protocol's `individualLimit { limit, used, remainingPercent, resetsAt }`, not yet read from a seat) | the cap as one more window, its period from `resetsAt` | `capped` |
+| Codex with a member credit limit (2026-11-03, CLI 0.166.0) | `individualLimit { limit, used, remainingPercent, resetsAt }`: remaining 71 under the limit, 0 at it; at the limit `spendControlReached: true`, `rateLimitReachedType: "workspace_owner_usage_limit_reached"`, and `credits.hasCredits: true` | `capped`; resets on the month boundary or one second after it |
 | Claude Code on a seat with quota windows: Pro, Max, Team (measured: the plan does not change what `/usage` prints) | `/usage`: "Current session" and "Current week (all models)" (read as `five_hour` and `seven_day`); statusline `rate_limits.five_hour` and `seven_day` | `included` |
 | Claude Code on an API key (measured 2026-10-07) | `/usage`: a session cost summary, no windows; `claude auth status`: `"authMethod": "api_key"` | `metered`, from the auth status (above) |
 | Claude Code on usage-based Enterprise (measured 2026-10-27, Claude Code 2.1.311) | `/usage`: no windows, only usage credits spent; `claude auth status`: `"subscriptionType": "enterprise"` | `metered`, from the auth status beside a `/usage` that answered with no windows (above). An Enterprise seat that shows windows is ranked on them |
@@ -240,6 +240,14 @@ update of the harness, or of herdr for Cursor, can change what a reader sees wit
 before has no reading a day old or newer, its last try failed, and routing is left with the assumed headroom (no
 kept reading to use; a metered seat never), `dispatch`, `usage` and `doctor` warn and give the command to read it
 again.
+
+Claude Code 2.1.317, measured 2026-11-03: print `/usage` shows no spend limit, under it or at it.
+The interactive panel showed `$X / $Y spent`, or `$X spent` with no limit. routr does not read that panel,
+so it cannot see a Claude Enterprise budget; the vendor enforces it. A project `.claude/skills/usage/` replaced
+`/usage` and the print read spent one model turn; a different folder with `name: usage` did not.
+Before print, routr checks only the names `skills/usage` and `commands/usage.md` under `CLAUDE_CONFIG_DIR`
+or `~/.claude`, after considering a fresh statusline snapshot. A reply with `num_turns > 0` is refused too.
+Plugin skills and other harnesses' `/usage` are not measured.
 
 - **Claude Code:** a `routr statusline` snapshot under 5 minutes old when there is one, otherwise its own `/usage`,
   through `claude -p` (next section), in each call; an older snapshot is kept when that read fails.
