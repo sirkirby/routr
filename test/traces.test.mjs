@@ -454,16 +454,18 @@ test("every command's queue, launch index and worker metadata exclude content an
   const names = x.spans().map((s) => s.name);
   for (const command of ["dispatch", "subagent", "check", "usage", "record", "launch", "send", "wait", "workers", "stop", "cleanup"]) expect(names).toContain(`routr ${command}`);
   const index = new LaunchIndex({ home: x.home }); expect(index.entries()).toHaveLength(1);
-  // worker.json intentionally holds native cwd and checked carriers; its remaining metadata must hold no content.
+  // worker.json holds native cwd, checked carriers and explicit subagent fallbacks; only those values may be kept.
   const prior = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }, fits = spyOn(channel, "socketPathFits").mockReturnValue(true); let saved;
   try {
     // Windows CI, PR #115: runtime.home() reads USERPROFILE; HOME alone reserved metadata in the wrong home.
     process.env.HOME = process.env.USERPROFILE = x.home;
-    const r = await checked(() => launch(["--kind", "claude", "--name", "metadata", "--model", "fixture", "--cwd", x.home, "--task-file", brief, "--advice", advice], { ...opts, ready: async () => null, spawn: () => {
+    const r = await checked(() => launch(["--kind", "claude", "--name", "metadata", "--model", "fixture", "--cwd", x.home, "--subagent-model", "PRIVATE_SUBAGENT_MODEL", "--subagent-effort", "PRIVATE_SUBAGENT_EFFORT", "--task-file", brief, "--advice", advice], { ...opts, ready: async () => null, spawn: () => {
       saved = JSON.parse(readFileSync(join(x.home, ".local/state/routr/workers/metadata/worker.json"), "utf8")); return false;
     } }));
     expect(r.ok).toBe(false); expect(saved).toBeDefined();
-    const { cwd, carriers, ...metadata } = saved;
+    expect(Object.keys(saved).sort()).toEqual(["format", "id", "name", "kind", "model", "effort", "cwd", "created_at", "carriers", "launch", "subagent_model", "subagent_effort"].sort());
+    const { cwd, carriers, subagent_model, subagent_effort, ...metadata } = saved;
+    expect([subagent_model, subagent_effort]).toEqual(["PRIVATE_SUBAGENT_MODEL", "PRIVATE_SUBAGENT_EFFORT"]);
     expect(cwd).toBe(x.home); expect(carriers.BAGGAGE).toBe(markers[3]); expect(carriers.TRACESTATE).toBe(x.env.TRACESTATE);
     expect(carriers.TRACEPARENT).toBe(`00-${metadata.launch.traceId}-${metadata.launch.spanId}-01`);
     for (const marker of [...markers, x.home]) expect(JSON.stringify(metadata)).not.toContain(marker);
@@ -472,7 +474,7 @@ test("every command's queue, launch index and worker metadata exclude content an
 
   for (const dir of [join(x.home, ".cache/routr/otel"), index.dir])
     for (const file of readdirSync(dir, { recursive: true }).map(String).filter((n) => n.endsWith(".json")))
-      for (const marker of [...markers, x.home]) expect(readFileSync(join(dir, file), "utf8")).not.toContain(marker);
+      for (const marker of [...markers, x.home, "PRIVATE_SUBAGENT_MODEL", "PRIVATE_SUBAGENT_EFFORT"]) expect(readFileSync(join(dir, file), "utf8")).not.toContain(marker);
 
 });
 

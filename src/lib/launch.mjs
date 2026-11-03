@@ -55,7 +55,10 @@ export function logCommand(log, text) {
 export function parseLaunchArgs(args) {
   const lead = takeLeadSession(args); args = lead.args;
   const o = { timeout: 120000, dryRun: false, ...(lead.lead ? { "lead-session": lead.lead } : {}), ...(lead.warnings.length ? { leadWarnings: lead.warnings } : {}) };
-  const values = ["kind", "name", "cwd", "model", "effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "timeout", "advice"];
+  const values = ["kind", "name", "cwd", "model", "effort", "subagent-model", "subagent-effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "timeout", "advice"];
+  // PowerShell's IsSingleQuote/IsDoubleQuote (CharTraits.cs): ASCII quotes and U+2018–U+201E, but not U+201F.
+  // Herdr encodes the command for the pane's shell; refuse these on all paths so the same launch stays portable.
+  const choices = ["model", "effort", "subagent-model", "subagent-effort"];
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
@@ -69,6 +72,7 @@ export function parseLaunchArgs(args) {
     if (key === "dry-run") { o.dryRun = true; continue; }
     if (!args[i + 1]?.trim() || /^-\S/.test(args[i + 1])) throw new Error(`--${key} requires a value`);
     if (args[i + 1].includes("\0")) throw new Error(`--${key} must not contain NUL`);
+    if (choices.includes(key) && /['"\u2018-\u201e]/.test(args[i + 1])) throw new Error(`--${key} must not contain quote characters recognized by PowerShell (ASCII quotes or U+2018–U+201E)`);
     o[key] = args[++i];
   }
   if (!Object.hasOwn(HARNESSES, o.kind)) throw kindError();
@@ -139,7 +143,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     // A harness that names its folder in its command (Antigravity's --add-dir) is planned for the worktree: a
     // placeholder until herdr has made it, then planned again for its path (issue #22: it was given the main checkout,
     // where a worker launched into its own worktree would have written).
-    const planFor = (cwd) => plan({ ...o, cwd, cursorConfigDir: privateDir });
+    const planFor = (cwd) => plan({ ...o, cwd, cursorConfigDir: privateDir, subagentModel: o["subagent-model"], subagentEffort: o["subagent-effort"] });
     let p = planFor(o.worktree ? "<worktree-path>" : out.cwd);
     Object.assign(out, { start: { executable: p.executable, argv: p.argv, env: p.env }, warnings: [...out.warnings, ...p.warnings.filter((w) => !w.startsWith("Plan only:"))] });
     if (!o.model) out.next.push(doNext("Choose --model before launching"));
@@ -174,6 +178,16 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     }
     // Known once the pane's shell has been seen; until then, this platform's usual shell.
     let shell = process.platform === "win32" ? "powershell" : "posix";
+    const configEnv = HARNESSES[o.kind].env?.(privateDir) ?? {};
+    const fallbackEnv = Object.fromEntries(Object.entries(p.env).filter(([k]) => !Object.hasOwn(configEnv, k)));
+    // Like carriers, fallback environment enters only a pane we create, never an assignment in an existing shell;
+    // a --pane retry keeps the environment that its original split supplied and applies nothing again.
+    const paneFallbacks = () => {
+      if (!o.pane) return fallbackEnv;
+      for (const k of Object.keys(fallbackEnv)) delete out.start.env[k];
+      if (Object.keys(fallbackEnv).length) out.warnings.push(warning("subagent_fallback_not_passed", "This launch passed no subagent environment fallback to the existing pane; its shell or agent keeps the environment it started with, including any fallback from the original split on a retry."));
+      return {};
+    };
     // The carriers this launch hands on: a pane it splits (beside the caller, or in a worktree) gets the ones within
     // routr's limits, with a warning for each withheld; an existing pane gets none, said once. Only names and FORWARDED
     // reach the output.
@@ -196,10 +210,10 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     const promptArgs = (pane, timeout) => ["agent", "prompt", pane, prompt, "--wait", "--until", "working",
       "--until", "idle", "--until", "done", "--until", "blocked", "--timeout", String(timeout)];
     if (o.dryRun) {
-      const pane = o.pane ?? "<new-pane>", carried = paneCarriers();
+      const pane = o.pane ?? "<new-pane>", carried = paneCarriers(), extraEnv = paneFallbacks();
       out.would_run = [
-        ...(o.worktree ? [command(worktreeArgs(out.cwd, o.worktree, o.base)), command(splitArgs("right", "<worktree-path>", carried, { pane: "<root-pane>", shown: true })), command(["pane", "close", "<root-pane>"])] : []),
-        ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true }))] : []),
+        ...(o.worktree ? [command(worktreeArgs(out.cwd, o.worktree, o.base)), command(splitArgs("right", "<worktree-path>", carried, { pane: "<root-pane>", shown: true, env: extraEnv })), command(["pane", "close", "<root-pane>"])] : []),
+        ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true, env: extraEnv }))] : []),
         command(["pane", "read", pane, "--source", "visible"]),
         command(["pane", "process-info", "--pane", pane]),
         ...(o.pane ? [command(["pane", "run", pane, SHELLS[shell].cd(out.cwd)]),
@@ -243,7 +257,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       }
       return out;
     }
-    const carried = paneCarriers();
+    const carried = paneCarriers(), extraEnv = paneFallbacks();
     // The user turned this subscription off: it gets no work, launched by hand or not.
     const loaded = settings(), config = configOf(loaded);
     out.warnings.push(...(loaded.notes ?? []));
@@ -327,7 +341,12 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         if (!["idle", "done"].includes(status)) return await notWaiting(status);
         // Pane-run agents such as Cursor have unknown (null/absent) readiness; only explicit false vetoes idle/done.
         if (occupant.interactive_ready === false && occupant.agent_status !== "blocked") return await notWaiting(`${status} but not ready for input`);
-        adopted = true; step("adopt", true, `${o.kind} is already running in ${out.pane}, ${status}, in ${out.cwd}: launch sends it the task (its model and effort are the ones it runs; not changed)`);
+        adopted = true;
+        if (o["subagent-model"] || o["subagent-effort"]) {
+          if (!Object.keys(fallbackEnv).length) out.warnings.push(warning("subagent_fallback_not_passed", "This launch passed no subagent fallback to the already running agent; it keeps the settings it started with."));
+          out.start = { executable: null, argv: [], env: {} };
+        }
+        step("adopt", true, `${o.kind} is already running in ${out.pane}, ${status}, in ${out.cwd}: launch sends it the task (its model and effort are the ones it runs; not changed)`);
       }
     }
     if (!adopted) await checkListed();
@@ -369,7 +388,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       // The worker gets a pane of launch's own, with its carriers, never the root pane herdr opened (worktreePane);
       // cleanup --worktree finds the workspace whichever pane is left in it.
       let opened;
-      try { opened = await worktreePane(herdrCall, root, out.cwd, carried); }
+      try { opened = await worktreePane(herdrCall, root, out.cwd, carried, { env: extraEnv }); }
       catch (e) { throw new Error(`launch created the worktree ${out.cwd} but could not open the worker's pane in it (${e?.message ?? e}); remove the worktree with ${displayCommand(cleanupArgs)}`); }
       out.pane = opened.pane;
       step("split", true, `Created ${out.pane}, right of ${root}, in the worktree`);
@@ -387,7 +406,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         if (!rect) throw new Error("Caller pane geometry is unavailable");
         direction = rect.width > rect.height ? "right" : "down";
       }
-      out.pane = await splitPane(herdrCall, direction, out.cwd, carried);
+      out.pane = await splitPane(herdrCall, direction, out.cwd, carried, { env: extraEnv });
       createdPane = true;
       step("split", true, `Created ${out.pane}, ${direction}`);
     }

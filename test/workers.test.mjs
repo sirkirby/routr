@@ -247,7 +247,7 @@ function world(over = {}) {
   for (const d of [bin, work, inputs]) mkdirSync(d, { recursive: true });
   // The child's own entries, by the names it has them under: on Windows process.env[k] finds a variable under any case,
   // so looking each name up would record one variable under both its spellings.
-  const recordEnv = `if (process.env.FAKE_ENV) { const names = new Set(${JSON.stringify([...Object.keys(LEAD_ENV), ...Object.keys(LEAD_ENV).map((k) => k.toLowerCase()), ...Object.keys(CONFIG_ENV), ...CARRIERS, ...CARRIERS.map((k) => k.toLowerCase())])}); require("node:fs").appendFileSync(process.env.FAKE_ENV, JSON.stringify({ argv: process.argv.slice(2), env: Object.fromEntries(Object.entries(process.env).filter(([k]) => names.has(k))) }) + "\\n"); }\n`;
+  const recordEnv = `if (process.env.FAKE_ENV) { const names = new Set(${JSON.stringify([...Object.keys(LEAD_ENV), ...Object.keys(LEAD_ENV).map((k) => k.toLowerCase()), ...Object.keys(CONFIG_ENV), ...CARRIERS, ...CARRIERS.map((k) => k.toLowerCase()), ...(over.FAKE_SUBAGENT_ENV ? ["CLAUDE_CODE_SUBAGENT_MODEL", "CLAUDE_CODE_SUBAGENT_EFFORT"] : [])])}); require("node:fs").appendFileSync(process.env.FAKE_ENV, JSON.stringify({ argv: process.argv.slice(2), env: Object.fromEntries(Object.entries(process.env).filter(([k]) => names.has(k))) }) + "\\n"); }\n`;
   fakeExecutable(bin, "claude", recordEnv + FAKE_CLAUDE);
   fakeExecutable(bin, "codex", recordEnv + FAKE_CODEX);
   fakeExecutable(bin, "agy", recordEnv + FAKE_AGY);
@@ -324,6 +324,43 @@ function world(over = {}) {
   return { home, work, gate, linger, inputs, env, run, helperPids, killHelper, outputs, task, advise, launch: launchW, runDir, state, settled, release: () => writeFileSync(gate, "") };
 }
 const filesUnder = (dir) => readdirSync(dir, { recursive: true }).map(String).filter((f) => { try { return statSync(join(dir, f)).isFile(); } catch { return false; } });
+
+test("headless subagent defaults reach fixture harnesses unchanged, independently and after resume; absent flags add nothing on all five", async () => {
+  const child = `child ; & | < > ^ $() \`literal\` % !`;
+  for (const kind of Object.keys(ADAPTERS)) {
+    const cases = [[], ...(["claude", "codex"].includes(kind) ? [["--subagent-model", child], ["--subagent-effort", child], ["--subagent-model", child, "--subagent-effort", child]] : [])];
+    for (const flags of cases) {
+      const w = world({ FAKE_SUBAGENT_ENV: "1" }), log = join(w.home, "defaults.jsonl"); w.env.FAKE_ENV = log;
+      // Keep this test independent of defaults the developer's own parent may have supplied.
+      delete w.env.CLAUDE_CODE_SUBAGENT_MODEL; delete w.env.CLAUDE_CODE_SUBAGENT_EFFORT;
+      if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor", "cli-config.json"), "{}"); }
+      try {
+        const l = w.launch("defaults", w.task(BRIEF), flags, undefined, kind);
+        expect([kind, flags, l.state, l.error]).toEqual([kind, flags, "prompted", undefined]);
+        const hasModel = flags.includes("--subagent-model"), hasEffort = flags.includes("--subagent-effort");
+        const expected = kind === "claude" ? { ...(hasModel ? { CLAUDE_CODE_SUBAGENT_MODEL: child } : {}), ...(hasEffort ? { CLAUDE_CODE_SUBAGENT_EFFORT: child } : {}) } : {};
+        expect(l.start.env).toEqual(expected);
+        const record = JSON.parse(readFileSync(join(w.runDir("defaults"), "worker.json"), "utf8"));
+        expect(record.subagent_model).toBe(hasModel ? child : undefined); expect(record.subagent_effort).toBe(hasEffort ? child : undefined);
+        expect(w.run(["wait", "--name", "defaults", "--timeout", "20000"]).state).toBe("finished");
+        expect(await w.settled("defaults")).toBe(true);
+        expect(w.run(["send", "--name", "defaults", "--task-file", w.task(SENT, "more.md")]).state).toBe("resumed");
+        expect(w.run(["wait", "--name", "defaults", "--timeout", "20000"]).state).toBe("finished");
+        expect(await w.settled("defaults")).toBe(true);
+        const rows = turnsOf(kind, readFileSync(log, "utf8").trim().split("\n").map((l) => JSON.parse(l)));
+        expect(rows).toHaveLength(2);
+        for (const row of rows) {
+          const defaultsEnv = Object.fromEntries(Object.entries(row.env).filter(([k]) => k.startsWith("CLAUDE_CODE_SUBAGENT_")));
+          expect(defaultsEnv).toEqual(expected);
+          const extra = row.argv.filter((a) => a.startsWith("agents.default_subagent_"));
+          expect(extra).toEqual(kind === "codex" ? [...(hasModel ? [`agents.default_subagent_model=${JSON.stringify(child)}`] : []), ...(hasEffort ? [`agents.default_subagent_reasoning_effort=${JSON.stringify(child)}`] : [])] : []);
+          if (kind === "codex") expect(l.start.argv.filter((a) => a.startsWith("agents.default_subagent_"))).toEqual(extra);
+        }
+        expect(w.run(["cleanup", "--worker", "defaults"]).ok).toBe(true);
+      } finally { w.release(); w.run(["stop", "--name", "defaults"]); w.run(["cleanup", "--worker", "defaults"]); w.killHelper(); }
+    }
+  }
+}, 90000);
 
 // A worker's state that is there and cannot be read is never taken for one not written yet: no command answers "no
 // session" or "nothing runs" from it, and no holder starts over it (one that did would write over its session).

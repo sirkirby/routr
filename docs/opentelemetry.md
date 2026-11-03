@@ -480,6 +480,8 @@ producer, including config and input notes forwarded into `warnings`.
 <!-- warning-codes -->
 | Code | Meaning |
 |---|---|
+| `subagent_effort_version` | Anthropic's changelog dates subagent effort to 2.1.316; earlier versions were not tested. |
+| `subagent_fallback_not_passed` | An existing pane or agent keeps its original settings; launch applied no subagent fallback. |
 | `config_missing` | No config; defaults used. |
 | `config_unreadable` | Config unreadable; defaults used. |
 | `config_share` | Invalid share; default used. |

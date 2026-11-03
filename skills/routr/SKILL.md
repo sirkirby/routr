@@ -1,6 +1,6 @@
 ---
 name: routr
-description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity, Kiro) from one orchestrating agent, with workers in herdr panes or headless outside herdr, and size subagents to the work. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before a routr worker, or an agent outside herdr, spawns a subagent; or when asked to set up, configure, or check routr.
+description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity, Kiro) from one orchestrating agent, with workers in herdr panes or headless outside herdr; workers size their own subagents. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before a routr worker, or an agent outside herdr, spawns a subagent; or when asked to set up, configure, or check routr.
 metadata:
   version: "0.0.0-dev"
 ---
@@ -41,6 +41,8 @@ and judge that part yourself.
 ## Which part applies to you
 
 - Your launch prompt says you are a **routr worker** → read `references/worker.md`; it covers sizing your subagents.
+  You judge each spawn; the lead judges your worker assignment and your reported `SUBAGENTS` decisions. No test shows
+  that smaller subagents keep quality.
 - You are **outside herdr**, with no routr worker launch prompt, and about to spawn a subagent for a piece of your
   own work → read only "Before you spawn a subagent" in `references/worker.md`: the rest is for routr workers. Handing
   work out, outside herdr too, is the orchestrator's job (next).
