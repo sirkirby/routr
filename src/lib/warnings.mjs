@@ -9,7 +9,7 @@ export const WARNING_CODES = Object.freeze({
   report_short: "Report is very short", advice_unchecked: "Advice not checked against a task", usage_stale: "Usage reader has stopped working",
   kiro_session_left: "Kiro kept an empty usage session", subscription_unconfigured: "Subscription is not configured",
   model_required: "Plan needs a model", cursor_private_config: "Cursor uses a private config", kiro_effort_default: "Kiro remembers effort",
-  subagent_effort_version: "Older Claude Code ignores subagent effort",
+  subagent_effort_version: "Vendor dates subagent effort to Claude Code 2.1.316",
   subagent_fallback_not_passed: "Existing pane or agent keeps its subagent fallback",
   carrier_withheld: "Carrier exceeds forwarding limits", launch_parent_replaced: "Inherited parent replaced by launch span",
   carriers_not_passed: "Launch passed no carriers to an existing or adopted pane", sandbox: "Sandbox may limit harness access",

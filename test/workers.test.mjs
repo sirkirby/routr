@@ -326,7 +326,7 @@ function world(over = {}) {
 const filesUnder = (dir) => readdirSync(dir, { recursive: true }).map(String).filter((f) => { try { return statSync(join(dir, f)).isFile(); } catch { return false; } });
 
 test("headless subagent defaults reach fixture harnesses unchanged, independently and after resume; absent flags add nothing on all five", async () => {
-  const child = `child '" ; & | < > ^ $() \`literal\` % !`;
+  const child = `child ; & | < > ^ $() \`literal\` % !`;
   for (const kind of Object.keys(ADAPTERS)) {
     const cases = [[], ...(["claude", "codex"].includes(kind) ? [["--subagent-model", child], ["--subagent-effort", child], ["--subagent-model", child, "--subagent-effort", child]] : [])];
     for (const flags of cases) {

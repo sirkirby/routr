@@ -109,9 +109,9 @@ export function claudeBilling(out) {
 export const HARNESSES = {
   claude: { label: "Claude Code", executable: "claude", installAs: "Claude Code", skills: ".claude/skills",
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
-    // Measured 2.1.316, 2026-11-02: plain Agent and /code-review; a spawn's own setting wins (harnesses.md).
+    // Measured 2.1.316, 2026-11-02: plain Agent and /code-review; both explicit spawn settings beat a differing pair.
     subagents: ({ model, effort }) => ({ env: { ...(model ? { CLAUDE_CODE_SUBAGENT_MODEL: model } : {}), ...(effort ? { CLAUDE_CODE_SUBAGENT_EFFORT: effort } : {}) },
-      warnings: effort ? [warning("subagent_effort_version", "CLAUDE_CODE_SUBAGENT_EFFORT needs Claude Code 2.1.316 or newer; older Claude Code ignores it.")] : [] }),
+      warnings: effort ? [warning("subagent_effort_version", "Anthropic's 2.1.316 changelog says CLAUDE_CODE_SUBAGENT_EFFORT was added there; earlier versions were not tested.")] : [] }),
     // `"loggedIn": false` and exit 1 when signed out.
     auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`", billing: (out) => claudeBilling(out) },
     // Its help names the latest aliases (fable, opus, sonnet on 2.1.283); its help says `--model` also takes a model's full name.

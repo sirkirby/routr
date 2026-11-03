@@ -142,16 +142,19 @@ object describing what it did.
   the user's default for that model, and a model without effort ignores it. Kiro also runs its default on a model id
   it does not know, without a word: launch checks the id against Kiro's own list (`kiro-cli chat --list-models`)
   before it opens a pane or starts a headless worker, and names it in `unavailable` when it could not read the list.
+  `--model`, `--effort` and the two fallback flags refuse ASCII quotes and U+2018–U+201E on every path, including dry
+  runs: PowerShell treats these as quotes. This is a quoting check, not a model allow-list.
 - `--subagent-model` and `--subagent-effort` are opt-in fallbacks for subagents whose spawn names no model or effort,
   such as those a skill starts. The worker judges each spawn using `routr subagent` and its knowledge of the code;
   the lead judges the worker's model, effort and account, then whether its `SUBAGENTS` lines were sound. Leave these
   flags off unless you have a reason for this worker. No test shows that smaller subagents keep quality.
-  The flags are independent; omitting either supplies no setting for it. A spawn's own setting wins on Claude Code
-  and Codex. Claude Code takes environment variables: a new pane gets them through its split, a headless process
+  The flags are independent; omitting either supplies no setting for it. Setting both on the spawn beat a differing
+  fallback on Claude Code and Codex, measured once each; one setting alone was not measured. Claude Code takes
+  environment variables: a new pane gets them through its split, a headless process
   through its environment. An existing `--pane` gets none, with a warning; on a retry it keeps what the original
   split supplied. Codex takes TOML string config overrides on a new process, including in an existing shell. An
-  already running agent keeps its original settings, with a warning; no fallback is applied to it. Claude Code before
-  2.1.316 ignores the effort variable; launch warns whenever that flag is given. Cursor, Antigravity and Kiro have no
+  already running agent keeps its original settings, with a warning; no fallback is applied to it. Anthropic's
+  changelog dates the effort variable to 2.1.316; earlier versions were not tested, and launch warns when that flag is given. Cursor, Antigravity and Kiro have no
   setting for all subagents: either flag is refused with `error` before any harness, pane or worktree call. `start`
   and a dry run show what launch passes. See the measured subagent table in `references/harnesses.md`.
 - `--task-file` holds your task alone (parts 2 and 3). With neither task form the pane is left ready and unprompted;

@@ -461,16 +461,21 @@ including those a skill starts. The worker judges each spawn using `routr subage
 the lead judges the worker's model, effort and account and its reported `SUBAGENTS` decisions. Leave the flags off
 unless there is a reason for this worker. No test shows that smaller subagents keep quality.
 Omitting either supplies no setting for it; omitting both preserves existing behavior. Values follow `--model` and
-`--effort`: nonempty, not flag-like, no NUL; no model or effort allow-list. Claude Code receives
+`--effort`: nonempty, not flag-like, no NUL; no model or effort allow-list. All four flags refuse ASCII single and
+double quotes and U+2018–U+201E (the full quote set recognized by [PowerShell's tokenizer](https://github.com/PowerShell/PowerShell/blob/master/src/System.Management.Automation/engine/parser/CharTraits.cs); U+201F is not in it), with
+`error` before any harness, pane or worktree call, on every shell and on dry runs. This is a shared quoting check,
+not a model allow-list. Claude Code receives
 `CLAUDE_CODE_SUBAGENT_MODEL` / `CLAUDE_CODE_SUBAGENT_EFFORT` in its environment, shown in `start.env` and, for a new
 pane, as `--env NAME=VALUE` on its split in `ran` / `would_run`. These values never pass through the pane's shell:
-quotes, metacharacters, `%`, `!` and line breaks require no shell escaping or cmd refusal. An existing `--pane` gets
-none, and `start.env` lists none: a warning says it keeps its original environment. No assignment is left in a shell
-the user keeps. A `needs_input` retry repeats the same flags with `--pane`; it applies no environment setting again,
-and the pane keeps any fallback its original split supplied. Giving the effort flag adds a warning: it needs Claude Code
-2.1.316 or newer, and older versions ignore it. Codex receives `-c` overrides for `agents.default_subagent_model`
+metacharacters, `%`, `!` and line breaks require no shell escaping or cmd refusal. An existing `--pane` gets
+none, and `start.env` lists none: a warning says it keeps its original environment. The variables remain in a pane
+routr created after the worker exits, until `routr cleanup` closes it; never reuse that pane. A `needs_input` retry
+repeats the same flags with `--pane`; it applies no environment setting again, and the pane keeps any fallback its
+original split supplied. Giving the effort flag adds a warning: Anthropic's changelog says it was added in 2.1.316;
+earlier versions were not tested. Codex receives `-c` overrides for `agents.default_subagent_model`
 and `agents.default_subagent_reasoning_effort`, each value encoded as a TOML string, shown in `start.argv` and
-`ran` / `would_run`. A spawn's own setting wins. Cursor, Antigravity and Kiro have no setting for all subagents:
+`ran` / `would_run`. Setting both on the spawn beat a differing fallback on Claude Code and Codex, measured once each;
+one setting alone was not measured. Cursor, Antigravity and Kiro have no setting for all subagents:
 either flag is refused with `error` before any harness, pane or worktree call, including on dry runs. Codex's argv
 fallback applies to a new process even in an existing shell; it leaves no shell assignment behind. An agent already
 running in `--pane` keeps its original settings: a warning says launch applied no fallback, and `start` is

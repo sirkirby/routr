@@ -56,6 +56,9 @@ export function parseLaunchArgs(args) {
   const lead = takeLeadSession(args); args = lead.args;
   const o = { timeout: 120000, dryRun: false, ...(lead.lead ? { "lead-session": lead.lead } : {}), ...(lead.warnings.length ? { leadWarnings: lead.warnings } : {}) };
   const values = ["kind", "name", "cwd", "model", "effort", "subagent-model", "subagent-effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "timeout", "advice"];
+  // PowerShell's IsSingleQuote/IsDoubleQuote (CharTraits.cs): ASCII quotes and U+2018–U+201E, but not U+201F.
+  // Herdr encodes the command for the pane's shell; refuse these on all paths so the same launch stays portable.
+  const choices = ["model", "effort", "subagent-model", "subagent-effort"];
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
@@ -69,6 +72,7 @@ export function parseLaunchArgs(args) {
     if (key === "dry-run") { o.dryRun = true; continue; }
     if (!args[i + 1]?.trim() || /^-\S/.test(args[i + 1])) throw new Error(`--${key} requires a value`);
     if (args[i + 1].includes("\0")) throw new Error(`--${key} must not contain NUL`);
+    if (choices.includes(key) && /['"\u2018-\u201e]/.test(args[i + 1])) throw new Error(`--${key} must not contain quote characters recognized by PowerShell (ASCII quotes or U+2018–U+201E)`);
     o[key] = args[++i];
   }
   if (!Object.hasOwn(HARNESSES, o.kind)) throw kindError();
@@ -176,7 +180,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     let shell = process.platform === "win32" ? "powershell" : "posix";
     const configEnv = HARNESSES[o.kind].env?.(privateDir) ?? {};
     const fallbackEnv = Object.fromEntries(Object.entries(p.env).filter(([k]) => !Object.hasOwn(configEnv, k)));
-    // Never leave an assignment in a shell the user keeps. Like carriers, a fallback enters only a pane we create;
+    // Like carriers, fallback environment enters only a pane we create, never an assignment in an existing shell;
     // a --pane retry keeps the environment that its original split supplied and applies nothing again.
     const paneFallbacks = () => {
       if (!o.pane) return fallbackEnv;

@@ -238,7 +238,8 @@ stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one proces
   the harness's process group or detached itself (on Windows, anything once the harness has ended), and removes the
   worktree anyway: it says so in `warnings`.
 - **Where it lives.** Each worker has a run folder, `~/.local/state/routr/workers/<name>`: the worker's settings
-  (kind, model, effort, folder; never the brief, and of the environment only the trace-context carriers launch passed,
+  (kind, model, effort, folder, optional subagent model and effort fallbacks; never the brief, and of the environment
+  only those explicit fallbacks and the trace-context carriers launch passed,
   within routr's limits: "Trace context", below), the holder's state (turns, their outcomes, the
   last tool's fixed name, the session id), a random secret, one file per holder generation, which turns `wait` has
   reported, and each turn's report. On macOS and Linux the folder is made 0700, and the secret, the settings and the

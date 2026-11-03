@@ -146,13 +146,27 @@ test("launch options are validated before any pane operation", () => {
 });
 
 test("subagent flags use the same argument validation as model and effort, with no allow-list", () => {
-  const value = `odd '" model ; & | < > ^ $() \`x\` % !`;
+  const value = `odd model ; & | < > ^ $() \`x\` % ! \u201f`;
   for (const flag of ["--model", "--effort", "--subagent-model", "--subagent-effort"]) {
     const base = ["--kind", "claude", "--name", "worker"];
     for (const v of ["", " ", "--other", "-x", "a\0b"]) expect(() => parseLaunchArgs([...base, flag, v])).toThrow();
     expect(() => parseLaunchArgs([...base, flag])).toThrow("requires a value");
     expect(() => parseLaunchArgs([...base, flag, "a", flag, "b"])).toThrow("Repeated");
     expect(parseLaunchArgs([...base, flag, value])[flag.slice(2)]).toBe(value);
+  }
+});
+
+test("all four launch choices refuse PowerShell's complete quote set before any harness, pane or worktree call", async () => {
+  // PowerShell CharTraits.cs IsSingleQuote/IsDoubleQuote: U+201F is deliberately absent.
+  const quotes = ["'", '\"', ...Array.from({ length: 7 }, (_, i) => String.fromCodePoint(0x2018 + i))];
+  for (const kind of ["claude", "codex", "cursor", "agy", "kiro"]) for (const flag of ["--model", "--effort", "--subagent-model", "--subagent-effort"]) for (const q of quotes) for (const dry of [[], ["--dry-run"]]) {
+    const calls = [], no = async () => { calls.push("called"); throw new Error("must not call"); };
+    const args = ["--kind", kind, "--name", "quote", "--worktree", "unused", ...(flag === "--model" ? [] : ["--model", "worker"]), flag, `child${q}s-model`, ...dry];
+    for (const env of [{}, { HERDR_ENV: "1", SHELL: "zsh" }, { HERDR_ENV: "1", SHELL: "powershell.exe" }, { HERDR_ENV: "1", SHELL: "cmd.exe" }]) {
+      const r = await launch(args, { env, run: no, ready: no, models: no, spawn: no });
+      expect(r.ok).toBe(false); expect(r.error).toBe(`${flag} must not contain quote characters recognized by PowerShell (ASCII quotes or U+2018–U+201E)`);
+      expect(r.ran).toEqual([]); expect(calls).toEqual([]);
+    }
   }
 });
 
@@ -172,7 +186,7 @@ test("registry subagent defaults are optional and independent, identical on pane
       if (kind === "claude") {
         expect(p.argv).toEqual(absent.argv); expect(h).toEqual(absentHeadless);
         expect(p.env).toEqual({ ...(defaults.subagentModel ? { CLAUDE_CODE_SUBAGENT_MODEL: defaults.subagentModel } : {}), ...(defaults.subagentEffort ? { CLAUDE_CODE_SUBAGENT_EFFORT: defaults.subagentEffort } : {}) });
-        expect(p.warnings.join(" ").includes("older Claude Code ignores it")).toBe(Boolean(defaults.subagentEffort));
+        expect(p.warnings.join(" ").includes("earlier versions were not tested")).toBe(Boolean(defaults.subagentEffort));
       } else {
         const extra = [...(defaults.subagentModel ? ["-c", 'agents.default_subagent_model="child-model"'] : []), ...(defaults.subagentEffort ? ["-c", 'agents.default_subagent_reasoning_effort="child-effort"'] : [])];
         expect(p.argv).toEqual([...absent.argv, ...extra]); expect(h).toEqual([...absentHeadless, ...extra]);
@@ -267,8 +281,8 @@ test("pane launches apply the registry defaults and dry runs show them", async (
   }
 });
 
-test("subagent environment values cross the split boundary literally on every shell, including quotes and expansion characters", async () => {
-  const full = `child '\" \u2019 ; & | < > ^ $() \`literal\` % ! line\nnext\r`;
+test("subagent environment values cross the split boundary literally on every shell, including expansion characters", async () => {
+  const full = `child ; & | < > ^ $() \`literal\` % ! line\nnext\r`;
   for (const name of ["zsh", "pwsh", "cmd.exe"]) {
     const f = fakeHerdr({ reply: (a) => a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name, cwd: process.cwd() }] } }) : undefined });
     const r = await launch([...launchArgs, "--subagent-model", full, "--subagent-effort", full], f.deps);
@@ -345,17 +359,17 @@ test("needs_input retries preserve the original fallback without typing into a r
 
 test("worktree fallbacks enter the worker split, with carriers still redacted, and never its shell", async () => {
   const path = scratch("fallback-worktree"), f = worktreeHerdr(path, { kind: "claude" });
-  const args = [...launchArgs, "--worktree", "fallback", "--subagent-model", "child % ! ' \"\n", "--subagent-effort", "low"];
+  const args = [...launchArgs, "--worktree", "fallback", "--subagent-model", "child % ! \n", "--subagent-effort", "low"];
   const deps = { ...f.deps, env: { HERDR_ENV: "1", ...CARRIED } };
   const dry = await launch([...args, "--dry-run"], deps);
   expect(f.calls).toEqual([]);
   const r = await launch(args, deps);
   expect([r.state, r.error]).toEqual(["ready", undefined]);
   const split = f.calls.find((a) => a[1] === "split");
-  expect(split[2]).toBe("w5:p1"); expect(split).toContain("CLAUDE_CODE_SUBAGENT_MODEL=child % ! ' \"\n");
+  expect(split[2]).toBe("w5:p1"); expect(split).toContain("CLAUDE_CODE_SUBAGENT_MODEL=child % ! \n");
   expect(split).toContain("CLAUDE_CODE_SUBAGENT_EFFORT=low");
   for (const out of [r, dry]) {
-    expect(out.start.env).toEqual({ CLAUDE_CODE_SUBAGENT_MODEL: "child % ! ' \"\n", CLAUDE_CODE_SUBAGENT_EFFORT: "low", TRACEPARENT: "<forwarded>", TRACESTATE: "<forwarded>", BAGGAGE: "<forwarded>" });
+    expect(out.start.env).toEqual({ CLAUDE_CODE_SUBAGENT_MODEL: "child % ! \n", CLAUDE_CODE_SUBAGENT_EFFORT: "low", TRACEPARENT: "<forwarded>", TRACESTATE: "<forwarded>", BAGGAGE: "<forwarded>" });
     noCarrierValue(out);
   }
   expect(dry.would_run.find((a) => a.includes("pane split"))).toContain("CLAUDE_CODE_SUBAGENT_EFFORT=low");
