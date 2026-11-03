@@ -53,6 +53,9 @@ Names that mean one thing everywhere:
 | `model list` | `subscription` | `launch` (a harness whose model list routr checks could not be read) |
 | `pane`, `worktree` | `pane` or `path` | `cleanup` (what runs in a pane, or a worktree's git state, could not be read) |
 
+`command_shadowed` means a user command named usage replaces the harness's own, so routr will not run it
+because that would spend. A print reply with positive `num_turns` is also refused with this code.
+
 Codes are the fixed lists routr already has (the decision-model failure codes, the usage failure codes) plus
 `unreadable` for a file, a model list, a pane or a worktree. Cursor's usage read adds `cmd_path`: the private
 session's shell is cmd and the temporary folder's path holds `%` or `!`, so nothing is typed; its `why` says to set
@@ -402,13 +405,14 @@ Own fields:
   row: `subscription`, `class`, `use`, `reserve`, `hardest_work`, `your_default`?, `usable`, `headroom`, `windows`? (each
   `{ window, used_pct, resets_in_h, left, reserve_now, usable }`), `usage` (`live`, `given`, `assumed`, `metered`),
   `age_sec`, `note`?, `share`?. An excluded row: `{ subscription, why }`.
-- The launch share: when at least two ranked rows are `class: "metered"` with `use: "normal"`, and at least one has a
+- The launch share: normal rows qualify when metered, or capped with `usable > 0`. When at least two qualify and one has a
   `share` setting (one without counts as 1), each of them gets `share` `{ weight, target, used_pct, left, launches, of }`
   and `subscriptions` gets `share_due`. Over the last 7 days of routr's own launches on those accounts (`of` in all,
   `launches` on this one, whatever class they read when launched), `target` is the weight's fraction of their weights,
   `used_pct` the percent of those launches it took, and `left` how far it is below its target (0 at or above it).
   `share_due` is the account with the most `left`, ties to the larger weight and then the name; null when none is
-  below its target. Those rows are ordered by `left` among themselves; `headroom` and `usable` stay null and
+  below its target. Those rows are ordered by `left` within their existing slots; capped numbers stay as read,
+  metered numbers stay null, `most_room` remains the largest positive usable number, and
   `candidates` stay in name order. `note` gives the reading in a line. Without such rows neither field appears; with
   them, when the history cannot be read (its folder, a record in it, or the folder is a link), neither appears and
   `note` says the share is not shown. `usage <subscription>` shows one row, so never a share.

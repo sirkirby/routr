@@ -29,9 +29,9 @@ export function summarize({ pool, source, ts = null, windows = [], note, cls, no
   const ageSec = ts ? Math.round(nowSec - ts) : null;
   const missing = failure ? { failure: usageFailure(failure.code), ...(kept ? { kept } : {}) } : {};
   if (!windows.length) return withUsageReadingTime({ pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? missing.failure?.why ?? "no usage data", ...(reason ? { reason } : {}), ...missing }, Math.round(ts * 1000));
-  // A window whose reset time has passed since the snapshot has rolled over: treat as empty.
+  // Synthetic probes, 2026-11-03, not seen live: caps roll only after the observation; plan windows roll as before.
   const live = windows.map((w) => {
-    if (!Number.isFinite(w.resetsAt) || w.resetsAt <= 0 || w.resetsAt >= nowSec) return w;
+    if (!Number.isFinite(w.resetsAt) || w.resetsAt <= 0 || w.resetsAt >= nowSec || cls === "capped" && (!Number.isFinite(ts) || ts <= 0 || w.resetsAt <= ts)) return w;
     const reset = { ...w, usedPct: 0 };
     // The inferred empty window starts at its reset, never back at the source snapshot's time.
     windowTimes.set(reset, Math.round(w.resetsAt * 1000)); return reset;
@@ -47,7 +47,9 @@ export const failedUsage = (pool, source, code = "read_failed") => summarize({ p
 export function monthMinutes(resetsAt) {
   if (!resetsAt) return null;
   const d = new Date(resetsAt * 1000);
-  if (d.getUTCDate() !== 1 || d.getUTCHours() || d.getUTCMinutes() || d.getUTCSeconds()) return null;
+  if (d.getUTCDate() !== 1 || d.getUTCHours() || d.getUTCMinutes() || d.getUTCSeconds() > 1) return null;
+  // Codex 0.166.0, 2026-11-03: boundary and boundary +1 s observed; period length uses the boundary.
+  d.setUTCSeconds(0, 0);
   return Math.round((d.getTime() - Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)) / 60000);
 }
 
@@ -62,6 +64,13 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
   const notes = [];
   // A member credit limit (the owner's monthly cap) is one more window: the tightest wins, as with any other.
   if (cap) { const resetsAt = g(cap, "resetsAt", "resets_at"); ws.push({ name: "monthly_cap", usedPct: 100 - g(cap, "remainingPercent", "remaining_percent"), windowMin: monthMinutes(resetsAt), resetsAt }); }
+  const stopped = g(rl, "spendControlReached", "spend_control_reached") === true;
+  // Resetless stops (unobserved) expire after 5 min, including logs: an old stop cannot block a seat forever.
+  if (stopped && !cap) {
+    if (!(Number.isFinite(ts) && nowSec - ts >= 0 && nowSec - ts < LOCAL_FRESH_SEC))
+      return summarize({ pool: "codex", source, ts, nowSec, note: "spend control reading is too old to use: its reset is unknown" });
+    ws.push({ name: "spend_limit", usedPct: 100, windowMin: null, resetsAt: null });
+  }
   const reached = g(rl, "rateLimitReachedType", "rate_limit_reached_type");
   if (reached) notes.push("a rate limit was reached");
   if (g(rl, "spendControlReached", "spend_control_reached") === true) notes.push("spend control reached: the cap is used up");
@@ -74,8 +83,8 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
     : typeof credits?.balance === "string" && /^\d+(?:\.\d+)?$/.test(credits.balance) ? Number(credits.balance) : null;
   if (metered) notes.push(credits.unlimited ? "metered: unlimited credits, usage is billed, no quota reported"
     : `metered: workspace credits${Number.isFinite(balance) ? ` (balance ${balance})` : ""}, usage is billed, no window reported`);
-  else if (ws.length && (credits?.unlimited || hasCredits)) notes.push("workspace credits are on: the harness keeps working past 100% on billed usage");
-  return summarize({ pool: "codex", source, ts, windows: ws, note: notes.join("; ") || undefined, cls: cap ? "capped" : metered ? "metered" : undefined, nowSec });
+  else if (!cap && !stopped && ws.length && (credits?.unlimited || hasCredits)) notes.push("workspace credits are on: the harness keeps working past 100% on billed usage");
+  return summarize({ pool: "codex", source, ts, windows: ws, note: notes.join("; ") || undefined, cls: cap || stopped ? "capped" : metered ? "metered" : undefined, nowSec });
 }
 
 // The Claude snapshot `routr statusline` writes. Windows come from `rate_limits`; `spend_limit` (behind a Claude apps
@@ -109,8 +118,8 @@ function newestFile(dir) {
   return files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs)[0] ?? null;
 }
 
-export function readCodex() {
-  const f = newestFile(CODEX_SESSIONS());
+export function readCodex({ sessions = CODEX_SESSIONS(), nowSec = now() } = {}) {
+  const f = newestFile(sessions);
   if (!f) return summarize({ pool: "codex", source: "session log" });
   const lines = readFileSync(f, "utf8").split("\n");
   for (let i = lines.length - 1; i >= 0; i--) {
@@ -118,8 +127,8 @@ export function readCodex() {
     try {
       const o = JSON.parse(lines[i]);
       const rl = o.payload?.rate_limits ?? o.payload?.info?.rate_limits ?? o.rate_limits;
-      if (!rl?.primary && !rl?.credits) continue;
-      return codexSnapshot(rl, "session log", Date.parse(o.timestamp) / 1000);
+      if (!rl?.primary && !rl?.credits && !rl?.individualLimit && !rl?.individual_limit && !rl?.spendControlReached && !rl?.spend_control_reached) continue;
+      return codexSnapshot(rl, "session log", Date.parse(o.timestamp) / 1000, nowSec);
     } catch {}
   }
   return summarize({ pool: "codex", source: "session log" });
@@ -242,7 +251,7 @@ function removeProjectFolder(folder) {
 // each read's private folder, `projects` Claude's projects folder. It is only called once readUsage's sign-in gate says Claude is signed in. That
 // answer is kept up to 6 hours (signin.mjs, as for every harness), so one read may follow a sign-out; Claude's `-p`
 // does not open a browser sign-in.
-export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT(), nowSec = now(), exec = run, tmp = tmpdir(), projects = claudeProjectsDir() } = {}) {
+export async function readClaude({ configDir = process.env.CLAUDE_CONFIG_DIR || join(home(), ".claude"), quiet = [], file = CLAUDE_SNAPSHOT(), nowSec = now(), exec = run, tmp = tmpdir(), projects = claudeProjectsDir() } = {}) {
   const snap = readJson(file);
   const fromSnap = snap ? claudeSnapshot(snap, nowSec) : null;
   // A snapshot from the future (a clock set back) is not fresh: its age says nothing.
@@ -261,7 +270,11 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT(), nowSec 
   let why, code, answered = false, out = null;
   if (!priv) { code = "private_folder"; why = usageFailure(code).why; }
   else {
-    try { out = await exec("claude", claudeUsageArgs(quiet), { cwd: priv.cwd, timeoutMs: CLAUDE_TIMEOUT_MS, exitZero: true }); }
+    try {
+      // Claude Code 2.1.317, 2026-11-03: a usage folder replaces /usage and spends. Check names only.
+      if (["skills/usage", "commands/usage.md"].some((p) => existsSync(join(configDir, p)))) code = "command_shadowed";
+      else out = await exec("claude", claudeUsageArgs(quiet), { cwd: priv.cwd, timeoutMs: CLAUDE_TIMEOUT_MS, exitZero: true });
+    }
     catch { code = "read_failed"; }
     finally {
       // run() answers null on a timeout (it kills Claude and does not wait), an error, or no output: the project
@@ -276,7 +289,8 @@ export async function readClaude({ quiet = [], file = CLAUDE_SNAPSHOT(), nowSec 
     // "No windows" is an answer only when Claude said it succeeded and printed something with no usage line routr
     // could not read: an empty result, or a "Current session" line cut short, is unreadable, not a seat with no quota
     // (which a sign-in status naming Enterprise or an API key would then rank as metered).
-    if (!p || o.is_error || o.subtype !== "success" || !o.result.trim() || (!p.windows.length && p.unparsed)) { code = "invalid_response"; why = usageFailure(code).why; }
+    if (o?.num_turns > 0) { code = "command_shadowed"; why = usageFailure(code).why; }
+    else if (!p || o.is_error || o.subtype !== "success" || !o.result.trim() || (!p.windows.length && p.unparsed)) { code = "invalid_response"; why = usageFailure(code).why; }
     else {
       if (p.windows.length) return summarize({ pool: "claude", source: "claude /usage", ts: nowSec, windows: p.windows, note: p.note, nowSec });
       answered = true; why = "Claude's /usage shows no usage windows for this seat";

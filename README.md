@@ -96,7 +96,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `feedback "<text>"` | Send the maintainers a note in your own words. |
 | `key set [typesafe\|cloudflare]` | Store your decision model's key (TypeSafe's API key, or a Cloudflare API token and account ID): typed without echo, saved readable only by you, then tested. Ollama needs none. |
 | `update` | Update to the newest release on your update channel now (routr also does this by itself in the background, at most once a day). |
-| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use, and a launch share for metered accounts in normal use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--share`, `--enable`, `--disable`, `--channel`, `--decision`) and reads them first with `--show`. |
+| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use, and a launch share for metered or capped accounts in normal use; run again, a menu to change one thing. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--share`, `--enable`, `--disable`, `--channel`, `--decision`) and reads them first with `--show`. |
 | `uninstall` | Remove routr: the binary, its two skills, the cache and its own state, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, keys, and ledger; `--purge` removes those too. It removes nothing while a headless worker is still there (`cleanup --worker` finishes it), nor with `--purge` while a worktree a headless launch made is. |
 | `doctor` | Check the setup: harnesses found, live usage, every decision-list entry in order, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
@@ -207,7 +207,8 @@ goes stale when models change.
 - `prefer`: your standing preference per kind of work, for example `"review": "strong"`.
 
 Usage is read live for Claude Code (from its own `/usage`, with your hooks and MCP servers off for that read; it
-costs no tokens), Codex, and Antigravity. routr does not need Claude's statusline; if you run `routr statusline` there
+costs no tokens for the built-in command), Codex, and Antigravity. A user command named `usage`
+blocks the Claude print read because running it would spend. routr does not need Claude's statusline; if you run `routr statusline` there
 anyway, a snapshot under 5 minutes old is used instead of starting Claude. Cursor's and Kiro's are read in the background about once per working session, and at once after an update when the last try got no reading, since they take seconds. A seat with no quota reports no windows: measured on a
 ChatGPT Enterprise seat, which routr detects and calls `metered`; on Claude signed in with an API key, which
 routr reads from `claude auth status` and calls `metered` too; and on a usage-based Claude Enterprise seat, whose
@@ -215,10 +216,11 @@ routr reads from `claude auth status` and calls `metered` too; and on a usage-ba
 Enterprise seat with a quota shows windows and is ranked on them). For any other Claude seat without windows the class
 is your `billing` setting, because Claude shows nothing to tell a seat with no quota from a plan routr has not seen
 (your setting also wins over what routr detected). A metered seat gets
-no headroom number and is a normal or fallback candidate by your setting. With two or more normal metered seats,
+no headroom number and is a normal or fallback candidate by your setting. With two or more normal metered seats or capped seats with usable room,
 a launch share (asked in `routr setup`, or `routr setup --share claude=3 --share codex=1`) tells the agent how you
 want launches split between them. A cap the vendor enforces is read as one
-more window (Codex: from its protocol, not yet observed on a seat).
+more window (Codex member limits observed under and at the limit, 2026-11-03).
+Claude Enterprise budgets are not visible to routr; the vendor enforces them.
 
 ## Evidence
 

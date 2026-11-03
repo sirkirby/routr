@@ -791,6 +791,8 @@ test("guided setup asks for a launch share only for a normal metered account bes
   expect(x.asked.some((a) => a.startsWith("Claude Code: launch share"))).toBe(true);
   expect(x.saved.subscriptions.claude.share).toBe(3);
   expect(x.r.did.join(" ")).toContain("claude.share set to 3");
+  const cappedPair = await runSetup({ config, found: ["claude", "codex"], usage: { claude: "metered", codex: "capped" }, answers: ["", "", "6", "4", "b", "b", "7"] });
+  expect(cappedPair.saved.subscriptions.claude.share).toBe(3);
   // "no share" removes it again.
   const off = await runSetup({ config: x.saved, found: ["claude", "codex"], usage: { claude: "metered", codex: "metered" }, answers: ["", "", "6", "1", "b", "b", "7"] });
   expect(off.saved.subscriptions.claude).not.toHaveProperty("share");

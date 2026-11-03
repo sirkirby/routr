@@ -6,6 +6,7 @@ export const USAGE_FAILURES = Object.freeze({
   read_failed: "routr could not read this usage source.",
   no_response: "The usage source did not answer.",
   invalid_response: "The usage source returned a reply routr cannot read.",
+  command_shadowed: "A user command named usage replaces the harness's own, so routr will not run it because that would spend.",
   private_folder: "routr could not make a private folder for the usage read.",
   source_missing: "No usage reader is available for this subscription.",
   // Launch says the same of a work folder (herdr's CMD_PATH); here the folder is the read's own, under TEMP.

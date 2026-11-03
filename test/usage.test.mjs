@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSy
 import { usageFailure } from "../src/lib/usage-failure.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { tmpdir } from "node:os";
-import { claudeProjectFolders, claudeSnapshot, codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, parseClaudeReset, parseClaudeUsage, readClaude, summarize } from "../src/lib/usage.mjs";
+import { claudeProjectFolders, claudeSnapshot, codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, parseClaudeReset, parseClaudeUsage, readClaude, readCodex, summarize } from "../src/lib/usage.mjs";
 import { KIRO_BY_HAND, kiroUsage, parseKiroUsage, readKiro, refreshKiro } from "../src/lib/kiro-usage.mjs";
 import { HARNESSES, readUsage } from "../src/lib/harnesses.mjs";
 import { olderThan, takeLock } from "../src/lib/runtime.mjs";
@@ -14,8 +14,7 @@ import { snapshotFrom } from "../src/lib/statusline.mjs";
 import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage, readCursor, refreshCursor } from "../src/lib/cursor-usage.mjs";
 import { cfg, cliEnv, herdrError, herdrOK, live, metered, none, NOW, scratch, SCRIPT, shellInfo, win } from "./helpers.mjs";
 // Recorded 2026-09-22 from `codex app-server` (`account/rateLimits/read`, CLI 0.155.1), identifiers removed: a ChatGPT
-// Enterprise seat on flexible pricing, and a Pro login. The capped shape follows the protocol's `SpendControlLimitSnapshot`
-// (openai/codex, codex-rs/protocol/src/protocol.rs); it is claimed until a cap is set on a seat and read.
+// Enterprise seat on flexible pricing, and a Pro login. Member-limit replies were recorded on 2026-11-03 (0.166.0).
 const ENTERPRISE_SEAT = { limitId: "codex", limitName: null, normalModelSlug: null, primary: null, secondary: null, credits: { hasCredits: true, unlimited: true, balance: null }, individualLimit: null, spendControlReached: false, planType: "business", rateLimitReachedType: null };
 
 const PRO_LOGIN = { ...ENTERPRISE_SEAT, primary: { usedPercent: 60, windowDurationMins: 10080, resetsAt: NOW / 1000 + 3 * 86400 }, credits: { hasCredits: false, unlimited: false, balance: "0" }, planType: "pro" };
@@ -1052,4 +1051,69 @@ test("every harness `routr usage <name>` reads now declares, in its registry ent
     if (h.usage.left) { expect(h.usage.left.warning()).toBeString(); expect(h.usage.left.next).toBeString(); }
     expect(name).toBeOneOf(["cursor", "kiro"]); // a third one also needs its reading named in docs/contracts.md
   }
+});
+
+test("recorded Codex member limits retain credits at the cap without promising continued usage", () => {
+  const t = Date.UTC(2026, 10, 3) / 1000;
+  for (const [file, room] of [["codex-before-saved", 0.71], ["codex-at-limit", 0]]) {
+    const { rateLimits } = JSON.parse(readFileSync(new URL(`./fixtures/admin-limits/${file}.json`, import.meta.url), "utf8"));
+    expect(rateLimits.credits.hasCredits).toBe(true);
+    const row = codexSnapshot(rateLimits, "app-server", t, t);
+    expect(row).toMatchObject({ class: "capped", headroom: room });
+    expect(row.note ?? "").not.toContain("keeps working past 100%");
+  }
+  expect(monthMinutes(1796083200)).toBe(30 * 1440);
+  expect(monthMinutes(1796083201)).toBe(30 * 1440);
+  expect(monthMinutes(1796083202)).toBeNull();
+});
+
+test("spend-control-only Codex readings expire after five minutes, including session logs", () => {
+  const t = Date.UTC(2026, 10, 3) / 1000, sessions = scratch("codex-stop"), day = join(sessions, "2026/11/03");
+  mkdirSync(day, { recursive: true });
+  const file = join(day, "session.jsonl");
+  for (const rl of [{ spend_control_reached: true }, { individual_limit: { remaining_percent: 0, resets_at: t + 86400 } }]) {
+    writeFileSync(file, JSON.stringify({ timestamp: new Date(t * 1000).toISOString(), payload: { rate_limits: rl } }));
+    expect(readCodex({ sessions, nowSec: t + 299 })).toMatchObject({ class: "capped", headroom: 0 });
+  }
+  writeFileSync(file, JSON.stringify({ timestamp: new Date(t * 1000).toISOString(), payload: { rate_limits: { spend_control_reached: true } } }));
+  expect(readCodex({ sessions, nowSec: t + 300 })).toMatchObject({ class: "unknown", headroom: null });
+  for (const age of [-1, 0, 299, 300, 86400]) {
+    const r = codexSnapshot({ spendControlReached: true, credits: { hasCredits: true } }, "app-server", t, t + age);
+    expect(r).toMatchObject(age >= 0 && age < 300 ? { class: "capped", headroom: 0 } : { class: "unknown", headroom: null });
+    expect(r.note ?? "").not.toContain("keeps working past 100%");
+  }
+});
+
+test("synthetic past-reset caps keep their counters and full reserve; plan windows still roll", () => {
+  const t = NOW / 1000, windows = [{ name: "cap", usedPct: 50, windowMin: 43200, resetsAt: t - 1 }];
+  for (const cls of ["included", "capped"]) {
+    const row = summarize({ pool: "codex", source: "test", ts: t, cls, windows, nowSec: t });
+    expect(row.headroom).toBe(cls === "capped" ? 0.5 : 1);
+    const config = cfg(); config.subscriptions.codex.reserve = 0.2;
+    const rank = rankSubscriptions("strong", [row], config).ranked.find((r) => r.subscription === "codex");
+    expect(rank.windows[0].reserve_now).toBe(0.2);
+  }
+  expect(summarize({ pool: "codex", source: "test", cls: "capped", ts: t - 2, windows, nowSec: t }).headroom).toBe(1);
+  for (const resetsAt of [0, -1]) expect(summarize({ pool: "codex", source: "test", ts: t - 2, windows: [{ ...windows[0], resetsAt }], nowSec: t }).headroom).toBe(0.5);
+  expect(rankSubscriptions("strong", [live("codex", 0.5)], { ...cfg(), subscriptions: { codex: cfg().subscriptions.codex } }).note).not.toContain("Metered budget is unknown");
+});
+
+test("Claude usage shadows are checked by path name after fresh snapshots, without reading contents or executing", async () => {
+  const configDir = scratch("claude-shadow"), file = join(configDir, "snapshot.json"), tmp = scratch("shadow-tmp");
+  let calls = 0;
+  const read = (over = {}) => readClaude({ configDir, file, tmp, nowSec: OCT5, exec: async () => { calls++; return claudeAnswer(CLAUDE_USAGE); }, ...over });
+  for (const path of ["skills/usage", "commands/usage.md"]) {
+    const shadow = join(configDir, path); mkdirSync(dirname(shadow), { recursive: true });
+    if (path.endsWith(".md")) writeFileSync(shadow, "private contents"); else mkdirSync(shadow);
+    expect(await read()).toMatchObject({ headroom: null, failure: { code: "command_shadowed" } });
+    expect(calls).toBe(0); expect(readdirSync(tmp)).toEqual([]);
+    writeFileSync(file, JSON.stringify({ ts: OCT5 - 1, rate_limits: { five_hour: { used_percentage: 30, resets_at: OCT5 + 60 } } }));
+    expect(await read()).toMatchObject({ source: "statusline", headroom: 0.7 }); expect(calls).toBe(0);
+    rmSync(file); rmSync(shadow, { recursive: true });
+  }
+  mkdirSync(join(configDir, "skills/other"), { recursive: true });
+  writeFileSync(join(configDir, "skills/other/SKILL.md"), "---\nname: usage\n---");
+  expect((await read()).headroom).not.toBeNull(); expect(calls).toBe(1);
+  expect(await read({ exec: async () => claudeAnswer(CLAUDE_USAGE, { num_turns: 1 }) })).toMatchObject({ headroom: null, failure: { code: "command_shadowed" } });
+  expect(await read({ exec: async () => claudeAnswer("Total cost: $0.00") })).toMatchObject({ reason: NO_WINDOWS_AFTER_ANSWER }); // no local_command field
 });
