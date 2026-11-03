@@ -52,10 +52,10 @@ test("high risk is called out", () => {
   expect(a.high_risk).toBe(true); expect(a.notes.join(" ")).toContain("costly");
 });
 
-test("ranks by usable headroom after reserves; assumed usage is labelled", () => {
+test("ranks by usable headroom after reserves; unknown room stays null", () => {
   const r = rankSubscriptions("basic", [live("claude", 0.6), live("codex", 0.5), none("cursor")], cfg());
-  expect(r.ranked.map((x) => x.subscription)).toEqual(["cursor", "claude", "codex"]); // 0.40, 0.35, 0.30
-  expect(r.ranked[0].usage).toBe("assumed"); expect(r.most_room).toBe("cursor");
+  expect(r.ranked.map((x) => x.subscription)).toEqual(["claude", "codex", "cursor"]); // numeric room before unknown
+  expect(r.ranked[2]).toMatchObject({ usage: "unknown", usable: null }); expect(r.most_room).toBe("claude");
 });
 
 test("a subscription is never offered work harder than the user allows", () => {

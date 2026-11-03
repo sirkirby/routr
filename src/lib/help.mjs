@@ -32,7 +32,7 @@ export const COMMANDS = {
   },
   usage: {
     name: "usage",
-    description: "what routr sees of each subscription's usage and how dispatch ranks it; changes nothing of yours. Claude Code's is read from its own /usage (hooks and MCP servers off), or from `routr statusline`'s snapshot when one is under 5 minutes old. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session, and `routr usage kiro` runs Kiro's /usage now and deletes the empty session it leaves (routr otherwise does both in the background about once per working session, and at once after an update when the last try got no reading)",
+    description: "what routr sees of each subscription's usage and how dispatch ranks it; most_room prefers a normal account with a positive number, otherwise the largest positive number; changes nothing of yours. Claude Code's is read from its own /usage (hooks and MCP servers off), or from `routr statusline`'s snapshot when one is under 5 minutes old. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session, and `routr usage kiro` runs Kiro's /usage now and deletes the empty session it leaves (routr otherwise does both in the background about once per working session, and at once after an update when the last try got no reading)",
     args: [{ name: "[<subscription>]", description: "only this one; for cursor or kiro, read its /usage now (cursor needs herdr installed)", required: false }],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
@@ -152,13 +152,12 @@ export const COMMANDS = {
   },
   setup: {
     name: "setup",
-    description: "do what doctor says is missing: write your settings for the harnesses found, and choose a first decision model and optional backup, and ask for their keys. It leaves Claude Code's settings alone. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting",
+    description: "do what doctor says is missing: write your settings for the harnesses found, and choose a first decision model and optional backup, and ask for their keys. It leaves Claude Code's settings alone. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting. Unknown flags are refused before any changes; saving removes obsolete account settings",
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
       { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list (Claude Code also takes a model's full name, which it does not list); repeatable. Also changes it on an existing config", required: false, repeatable: true },
       { name: "--use", arg: "<subscription>=normal|fallback", description: "normal: consider for everyday work; fallback: when normal accounts cannot suitably take it. Independent of billing; repeatable", required: false, repeatable: true },
-      { name: "--share", arg: "<subscription>=<1-99>|off", description: "this account's weight in your ratio of launches between normal metered accounts and capped accounts with usable room (claude=3 and codex=1: about three workers on claude for every one on codex); advice, never enforced; off removes it; repeatable", required: false, repeatable: true },
-      { name: "--metered", arg: "<subscription>=after|with", description: "legacy metered setting: after sets fallback use, with sets normal use; --use wins when both are given. Remaining budget stays unknown", required: false, repeatable: true },
+      { name: "--share", arg: "<subscription>=<1-99>|off", description: "this account's weight in your ratio of launches between normal metered accounts with room (claude=3 and codex=1: about three workers on claude for every one on codex); advice, never enforced; off removes it; repeatable", required: false, repeatable: true },
       { name: "--hardest", arg: "<subscription>=basic|standard|strong", description: `${HARDEST.flag}: basic, standard, or strong; repeatable. Also changes it on an existing config`, required: false, repeatable: true },
       { name: "--reserve", arg: "<subscription>=<share>", description: `${RESERVE.flag}; repeatable. Also changes it on an existing config`, required: false, repeatable: true },
       { name: "--effort", arg: "<subscription>=<level>", description: "your everyday effort there, one of the levels the harness takes for that model (Kiro: auto leaves it to the model); repeatable", required: false, repeatable: true },

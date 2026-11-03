@@ -81,17 +81,7 @@ test("doctor's next steps name the command for each thing missing, most importan
   // Kiro starts on its own router with effort left to the model; a model the user picks replaces auto.
   expect(starterConfig(["kiro"]).subscriptions.kiro).toEqual({ hardest_work: "standard", reserve: 0.1, default_model: "auto", default_effort: "auto" });
   expect(starterConfig(["kiro"], { kiro: "glm-5" }).subscriptions.kiro.default_model).toBe("glm-5");
-  expect(starterConfig(["codex"], {}, { codex: "with" }).subscriptions.codex).toMatchObject({ metered_rank: "with" });
-  const { parseMetered, meteredRanks } = await import("../src/lib/setup.mjs");
-  expect(parseMetered(["--metered", "codex=with", "--metered", "agy=after"])).toEqual({ codex: "with", agy: "after" });
-  for (const bad of [["--metered", "codex=first"], ["--metered", "nope=after"], ["--metered"]]) expect(() => parseMetered(bad)).toThrow("--metered takes");
-  // The rank question: only for a fresh pool that reads as metered and has no flag; Enter or anything but "w…" is after; --yes (no ask) is after.
-  const hs = { codex: { usage_class: "metered", usage_note: "n" }, claude: { usage_class: "included" } };
-  const asked = [];
-  expect(await meteredRanks(["codex", "claude"], hs, {}, async (n) => { asked.push(n); return " With "; })).toEqual({ codex: "with" }); expect(asked).toEqual(["codex"]);
-  expect(await meteredRanks(["codex"], hs, {}, async () => "")).toEqual({ codex: "after" });
-  expect(await meteredRanks(["codex"], hs, { codex: "with" }, async () => { throw new Error("must not ask"); })).toEqual({ codex: "with" });
-  expect(await meteredRanks(["codex"], hs, {}, null)).toEqual({ codex: "after" });
+
 });
 
 test("--model takes repeatable subscription=id pairs", async () => {
@@ -116,7 +106,61 @@ test("routr setup --yes writes the config once, keeps it afterwards, and starts 
   expect(JSON.parse(readFileSync(file, "utf8")).sure_at).toBe(0.9);
   const bad = Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--model", "codex=m"], { env });
   expect(bad.exitCode).toBe(1);
-  expect(Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--metered", "codex=with"], { env }).exitCode).toBe(1); // codex is not found on an empty PATH
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--use", "codex=normal"], { env }).exitCode).toBe(1); // codex is not found on an empty PATH
+});
+
+test("setup refuses removed and unknown flags before changing anything", () => {
+  const home = scratch("setup-unknown"), env = cliEnv(home, { PATH: home }), file = join(home, "config.json");
+  const original = JSON.stringify({ telemetry: false, subscriptions: { codex: { hardest_work: "strong", reserve: 0.2, billing: "metered", metered_rank: "after" } } });
+  writeFileSync(file, original);
+  for (const extra of [["--metered", "codex=after"], ["--metered", "codex=with"], ["--typo"], ["--reserve", "codex=10%", "--typo"], ["--show", "--typo"]]) {
+    const r = Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--config", file, "--json", ...extra], { env });
+    expect(r.exitCode).toBe(1);
+    const out = JSON.parse(r.stdout.toString());
+    expect(out.ok).toBe(false); expect(out.error).toContain("Unknown setup");
+    expect(out.error).toContain("--use <name>=fallback"); expect(out.error).toContain("--use <name>=normal");
+    expect(readFileSync(file, "utf8")).toBe(original);
+    expect(existsSync(`${file}.bak`)).toBe(false);
+    expect(existsSync(join(home, ".agents/skills"))).toBe(false);
+  }
+});
+
+test("setup reads old account settings without writing, then drops them when saving any account", () => {
+  for (const extra of [["--reserve", "codex=10%"], ["--use", "codex=fallback"], ["--force"], []]) {
+    const home = scratch("setup-old-keys"), env = cliEnv(home, { PATH: home }), file = join(home, "config.json");
+    const original = JSON.stringify({ telemetry: false, subscriptions: {
+      codex: { hardest_work: "strong", reserve: 0.2, billing: "metered", metered_rank: "after" },
+      cursor: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5, use: "fallback" },
+    } });
+    writeFileSync(file, original);
+    const run = (...args) => Bun.spawnSync([process.execPath, SCRIPT, "setup", "--config", file, "--json", ...args], { env });
+    const before = run("--show"); expect(before.exitCode).toBe(0);
+    const warning = JSON.parse(before.stdout.toString()).notes.find((n) => n.startsWith("subscriptions.codex:"));
+    expect(warning).toContain("no longer do anything");
+    expect(warning).toContain("next routr setup change removes them");
+    expect(warning).toContain("delete them by hand");
+    expect(warning).toContain("routr setup --use codex=fallback");
+    expect(readFileSync(file, "utf8")).toBe(original);
+    expect(existsSync(`${file}.bak`)).toBe(false);
+    const saved = run("--yes", ...extra); expect(saved.exitCode).toBe(0);
+    const changes = JSON.parse(saved.stdout.toString()).did.join(" ");
+    if (!extra.includes("--force")) {
+      expect(changes).toContain("codex.metered_rank removed (no longer used); this seat now takes everyday work unless --use codex=fallback is set");
+      expect(changes).not.toContain("cursor.assumed_headroom removed (no longer used); this seat");
+    }
+    const config = JSON.parse(readFileSync(file, "utf8"));
+    for (const sub of Object.values(config.subscriptions)) {
+      expect(sub).not.toHaveProperty("metered_rank"); expect(sub).not.toHaveProperty("assumed_headroom");
+    }
+    if (!extra.includes("--force")) {
+      expect(config.subscriptions.codex.billing).toBe("metered");
+      expect(config.subscriptions.codex.use).toBe(extra.includes("--use") ? "fallback" : undefined);
+      expect(config.subscriptions.cursor.use).toBe("fallback");
+    }
+    expect(readFileSync(`${file}.bak`, "utf8")).toBe(original);
+    const after = run("--show"); expect(after.exitCode).toBe(0);
+    expect((JSON.parse(after.stdout.toString()).notes ?? []).join(" ")).not.toContain("no longer do anything");
+  }
 });
 
 test("hardest_work and reserve are read from flags, and a bad value is refused", async () => {
@@ -710,7 +754,7 @@ test("each finding stays fixed", async () => {
   expect(plain.saved.subscriptions.codex.default_effort).toBeUndefined();
 });
 
-test("setup, guided: a metered seat can be normal use without an assumed budget", async () => {
+test("setup, guided: a metered seat can be normal use with unknown budget", async () => {
   const x = await runSetup({ found: ["codex"], usage: { codex: "metered" }, answers: ["", "", "", "", "1", "n", ""] });
   expect(x.asked.some((a) => a.startsWith("Codex: how may routr use this account?"))).toBe(true);
   expect(x.saved.subscriptions.codex.use).toBe("normal");
@@ -721,25 +765,19 @@ test("account-use flags handle unknown billing and legacy settings without chang
   const { parseUse } = await import("../src/lib/setup.mjs");
   expect(parseUse(["--use", "claude=normal", "--use", "codex=fallback"])).toEqual({ claude: "normal", codex: "fallback" });
   for (const value of ["claude=normal=extra", "claude=free", "nope=normal", "claude"]) expect(() => parseUse(["--use", value])).toThrow("--use takes");
-  const config = { telemetry: false, subscriptions: { claude: { hardest_work: "strong", reserve: 0.2, billing: "metered", metered_rank: "after" }, codex: { hardest_work: "strong", reserve: 0.1, use: "fallback" } } };
+  const config = { telemetry: false, subscriptions: { claude: { hardest_work: "strong", reserve: 0.2, billing: "metered" }, codex: { hardest_work: "strong", reserve: 0.1, use: "fallback" } } };
   const x = await runSetup({ config, found: ["claude", "codex"], usage: { claude: "unknown", codex: "metered" }, args: ["--yes", "--use", "claude=normal"] });
   expect(x.asked).toEqual([]);
   expect(x.saved.subscriptions.claude).toEqual({ ...config.subscriptions.claude, use: "normal" });
   expect(x.saved.subscriptions.codex).toEqual(config.subscriptions.codex);
-  const legacy = await runSetup({ config, found: ["claude", "codex"], usage: { codex: "metered" }, args: ["--yes", "--metered", "codex=with"] });
-  expect(legacy.saved.subscriptions.codex).toMatchObject({ use: "normal", metered_rank: "with" });
-  const both = await runSetup({ config, found: ["claude", "codex"], usage: { codex: "metered" }, args: ["--yes", "--metered", "codex=with", "--use", "codex=fallback"] });
-  expect(both.saved.subscriptions.codex.use).toBe("fallback");
   const show = await runSetup({ config, args: ["--show", "--use", "claude=normal"] });
   expect(show.r.ok).toBe(false); expect(show.saved).toEqual(config);
   const signedOut = await runSetup({ config, found: ["codex"], signedOut: ["claude"], args: ["--yes", "--use", "claude=normal"] });
   expect(signedOut.saved.subscriptions.claude.use).toBe("normal");
   const forced = await runSetup({ config: x.saved, found: ["claude", "codex"], usage: { claude: "unknown", codex: "metered" }, args: ["--yes", "--force"] });
-  expect(forced.saved.subscriptions.claude).toMatchObject({ billing: "metered", use: "normal", metered_rank: "after" });
+  expect(forced.saved.subscriptions.claude).toMatchObject({ billing: "metered", use: "normal" });
   expect(forced.saved.subscriptions.codex.use).toBe("fallback");
-  const oldWith = { telemetry: false, subscriptions: { codex: { hardest_work: "strong", reserve: 0, metered_rank: "with" } } };
-  const rebuilt = await runSetup({ config: oldWith, found: ["codex"], usage: { codex: "metered" }, args: ["--yes", "--force"] });
-  expect(rebuilt.saved.subscriptions.codex.metered_rank).toBe("with");
+
 });
 
 test("--share sets a launch weight, off removes it, --force keeps it, and --show refuses it", async () => {
@@ -771,13 +809,12 @@ test("guided setup offers normal use for unknown billing and fallback for an inc
 });
 
 test("guided account-use selection pins the inferred default on existing accounts", async () => {
-  const { accountUse } = await import("../src/lib/config.mjs");
   const config = { telemetry: false, subscriptions: { claude: { hardest_work: "strong", reserve: 0.2 } } };
   for (const [usage, answer, use] of [["unknown", "1", "normal"], ["metered", "2", "fallback"]]) {
     // Change one -> Claude -> Account use (fifth field) -> explicit selection -> back twice -> Save.
     const x = await runSetup({ config, found: ["claude"], usage: { claude: usage }, answers: ["", "", "5", answer, "b", "b", "7"] });
     expect(x.saved.subscriptions.claude.use).toBe(use);
-    for (const cls of ["included", "unknown", "metered"]) expect(accountUse(x.saved.subscriptions.claude, cls)).toBe(use);
+    expect(x.saved.subscriptions.claude.use ?? "normal").toBe(use);
     expect(x.r.did.join(" ")).toContain("claude.use set to");
   }
   const untouched = await runSetup({ config, found: ["claude"], answers: ["7"] });
@@ -791,12 +828,12 @@ test("guided setup asks for a launch share only for a normal metered account bes
   expect(x.asked.some((a) => a.startsWith("Claude Code: launch share"))).toBe(true);
   expect(x.saved.subscriptions.claude.share).toBe(3);
   expect(x.r.did.join(" ")).toContain("claude.share set to 3");
-  const cappedPair = await runSetup({ config, found: ["claude", "codex"], usage: { claude: "metered", codex: "capped" }, answers: ["", "", "6", "4", "b", "b", "7"] });
-  expect(cappedPair.saved.subscriptions.claude.share).toBe(3);
+  const limitedPair = await runSetup({ config, found: ["claude", "codex"], usage: { claude: "metered", codex: "metered" }, answers: ["", "", "6", "4", "b", "b", "7"] });
+  expect(limitedPair.saved.subscriptions.claude.share).toBe(3);
   // "no share" removes it again.
   const off = await runSetup({ config: x.saved, found: ["claude", "codex"], usage: { claude: "metered", codex: "metered" }, answers: ["", "", "6", "1", "b", "b", "7"] });
   expect(off.saved.subscriptions.claude).not.toHaveProperty("share");
-  // First run: both metered accounts start as fallback and become normal in the walk; the share is asked after it.
+  // First run: both metered accounts start normal and confirm it in the walk; the share is asked after it.
   const first = await runSetup({ found: ["claude", "codex"], usage: { claude: "metered", codex: "metered" }, answers: ["", "", "", "", "1", "", "", "", "1", "4", "", "n", ""] });
   expect(first.asked.filter((a) => a.includes(": launch share")).length).toBe(2);
   expect(first.saved.subscriptions.claude).toMatchObject({ use: "normal", share: 3 });

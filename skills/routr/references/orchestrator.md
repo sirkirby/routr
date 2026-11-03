@@ -56,8 +56,9 @@ questions.
 Follow "Deciding" in `SKILL.md`: settle the work level, identify suitable model/effort options, then compare accounts.
 Use `facts`, `notes`, `subscriptions.candidates`, `subscriptions.ranked` and relevant repository or verified outcome
 evidence. Consult the harness's models when needed (see `harnesses.md`); an everyday default does not establish fit.
-Among normal metered accounts and capped accounts with usable room, `subscriptions.share_due` is the user's launch ratio speaking: take it among
-suitable options, or say in the launch line why this work goes elsewhere.
+Among normal metered accounts with room, `subscriptions.share_due` is the user's launch ratio speaking: take it among
+suitable options, or say in the launch line why this work goes elsewhere. Unset `use` is normal, whatever the reading.
+An account with no usable reading stays offered with room unknown; weigh that uncertainty.
 
 Dispatch's candidates were filtered for the advised level. If you choose a different level, refresh eligibility:
 

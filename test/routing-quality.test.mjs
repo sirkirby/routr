@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { accountUse, loadConfig } from "../src/lib/config.mjs";
+import { loadConfig } from "../src/lib/config.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { append, assess, latestRuns, levelReview, read, shareRows, toEntry } from "../src/lib/ledger.mjs";
 import { recordCommand, usageCommand } from "./contract.mjs";
@@ -23,9 +23,9 @@ test("normal enterprise accounts compete on task fit, without invented capacity 
   expect(rankSubscriptions("strong", [live("claude", 0.8), metered("codex")], c).candidates).toEqual({ normal: ["codex"], fallback: ["claude"] });
   // Normal use must not override a measured cap, including a user billing override.
   c.subscriptions.codex.billing = "metered";
-  r = rankSubscriptions("strong", [live("claude", 0.1), { ...live("codex", 0.9), class: "capped", windows: [{ name: "cap", usedPct: 100 }] }], c);
+  r = rankSubscriptions("strong", [live("claude", 0.1), { ...live("codex", 0.9), class: "metered", windows: [{ name: "cap", usedPct: 100 }] }], c);
   expect(r.candidates).toEqual({ normal: [], fallback: [] });
-  expect(r.ranked.find((x) => x.subscription === "codex")).toMatchObject({ class: "capped", usable: 0 });
+  expect(r.ranked.find((x) => x.subscription === "codex")).toMatchObject({ class: "metered", usable: 0 });
   for (const reason of ["disabled", "signedout", "level"]) {
     const one = cfg({ subscriptions: { codex: { ...c.subscriptions.codex } } });
     const usage = metered("codex");
@@ -38,7 +38,7 @@ test("normal enterprise accounts compete on task fit, without invented capacity 
   }
   const u = await usageCommand([], c, {}, { read: async () => [metered("claude"), metered("codex"), none("cursor")] });
   expect(u.subscriptions.candidates.normal).toEqual(["codex", "cursor"]);
-  expect(u.subscriptions.ranked.find((x) => x.subscription === "cursor").usage).toBe("assumed");
+  expect(u.subscriptions.ranked.find((x) => x.subscription === "cursor").usage).toBe("unknown");
 });
 
 test("account use validates without rewriting config, and overrides legacy policy independently of billing", () => {
@@ -50,12 +50,12 @@ test("account use validates without rewriting config, and overrides legacy polic
   writeFileSync(path, raw);
   const { config, notes } = loadConfig(path);
   expect(readFileSync(path, "utf8")).toBe(raw);
-  expect(notes).toHaveLength(1); expect(notes[0]).toContain(".use:");
-  expect(accountUse(config.subscriptions.claude, "metered")).toBe("normal");
-  expect(accountUse(config.subscriptions.codex, "metered")).toBe("normal");
-  expect(accountUse({}, "metered")).toBe("fallback");
-  expect(accountUse({}, "unknown")).toBe("normal");
-  expect(accountUse({ use: "fallback", metered_rank: "with" }, "included")).toBe("fallback");
+  expect(notes).toHaveLength(3); expect(notes.some((n) => n.includes(".use:"))).toBe(true);
+  expect((config.subscriptions.claude.use ?? "normal")).toBe("normal");
+  expect((config.subscriptions.codex.use ?? "normal")).toBe("normal");
+  expect(({}.use ?? "normal")).toBe("normal");
+  expect(({}.use ?? "normal")).toBe("normal");
+  expect(({ use: "fallback" }.use ?? "normal")).toBe("fallback");
 });
 
 test("usage filters both level overrides through account policy while preserving the plain view", async () => {

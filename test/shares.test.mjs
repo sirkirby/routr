@@ -12,7 +12,7 @@ const DAY = 86400000, NOW = 1_800_000_000_000;
 const subs = (over = {}) => cfg({ subscriptions: {
   claude: { hardest_work: "strong", reserve: 0, use: "normal", share: 3, ...over.claude },
   codex: { hardest_work: "strong", reserve: 0, use: "normal", share: 1, ...over.codex },
-  cursor: { hardest_work: "strong", reserve: 0.1, assumed_headroom: 0.5, ...over.cursor },
+  cursor: { hardest_work: "strong", reserve: 0.1, ...over.cursor },
 } });
 const rank = (c, counts, usage = [metered("claude"), metered("codex"), live("cursor", 0.6)], level = "strong") => rankSubscriptions(level, usage, c, counts && { counts });
 
@@ -190,13 +190,13 @@ test("config: share is a whole number from 1 to 99; anything else is reported an
   expect(notes.find((n) => n.startsWith("subscriptions.codex.share"))).toContain("is not a whole number from 1 to 99, so it is left out");
 });
 
-const capped = (name, headroom) => ({ ...live(name, headroom), class: "capped", windows: [{ name: "spend_limit", usedPct: (1 - headroom) * 100, windowMin: null, resetsAt: null }] });
+const limited = (name, headroom) => ({ ...live(name, headroom), class: "metered", windows: [{ name: "spend_limit", usedPct: (1 - headroom) * 100, windowMin: null, resetsAt: null }] });
 const twoToOne = () => subs({ claude: { share: 2, reserve: 0.1 }, codex: { reserve: 0.1 } });
 const shareCases = [
   ["both metered", metered("claude"), metered("codex"), "cursor"],
-  ["first capped", capped("claude", 0.9), metered("codex"), "claude"],
-  ["second capped", metered("claude"), capped("codex", 0.9), "codex"],
-  ["both capped", capped("claude", 0.9), capped("codex", 0.3), "claude"],
+  ["first limited", limited("claude", 0.9), metered("codex"), "claude"],
+  ["second limited", metered("claude"), limited("codex", 0.9), "codex"],
+  ["both limited", limited("claude", 0.9), limited("codex", 0.3), "claude"],
 ];
 for (const [shape, first, second, mostRoom] of shareCases) test(`2:1 launch ratio with ${shape}: share order and capacity stay independent`, () => {
   const config = twoToOne(), usage = [first, second, live("cursor", 0.6)];
@@ -217,22 +217,22 @@ for (const [shape, first, second, mostRoom] of shareCases) test(`2:1 launch rati
 
 test("a cap at its limit or reserve leaves the ratio; one remaining sharer stays a candidate without a share", () => {
   for (const room of [0, 0.1]) {
-    const r = rank(twoToOne(), { claude: 8, codex: 1 }, [capped("claude", room), metered("codex"), live("cursor", 0.6)]);
+    const r = rank(twoToOne(), { claude: 8, codex: 1 }, [limited("claude", room), metered("codex"), live("cursor", 0.6)]);
     expect(r.share_due).toBeUndefined(); expect(r.ranked.some((x) => x.share)).toBe(false);
     expect(r.candidates.normal).toEqual(["codex", "cursor"]);
     expect(r.note).not.toContain("By your share");
   }
   const config = twoToOne(); config.subscriptions.kiro = { hardest_work: "strong", reserve: 0, use: "normal", share: 1 };
-  const r = rank(config, { claude: 8, codex: 1, kiro: 3 }, [capped("claude", 0), metered("codex"), metered("kiro")]);
+  const r = rank(config, { claude: 8, codex: 1, kiro: 3 }, [limited("claude", 0), metered("codex"), metered("kiro")]);
   expect(r.share_due).toBe("codex");
   expect(r.ranked.find((x) => x.subscription === "codex").share).toEqual({ weight: 1, target: 0.5, used_pct: 25, left: 0.25, launches: 1, of: 4 });
   expect(r.ranked.find((x) => x.subscription === "claude").share).toBeUndefined();
 });
 
-test("routr usage keeps the ratio through metered/capped readings and recorded launch history", async () => {
+test("routr usage keeps the ratio through metered/limited readings and recorded launch history", async () => {
   const { usageCommand } = await import("./contract.mjs");
   const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
-  process.env.HOME = process.env.USERPROFILE = scratch("capped-share-usage");
+  process.env.HOME = process.env.USERPROFILE = scratch("limited-share-usage");
   try {
     for (let i = 0; i < 4; i++) expect(countLaunch("claude")).toBe(true);
     for (const [, first, second, mostRoom] of shareCases) {
@@ -242,12 +242,12 @@ test("routr usage keeps the ratio through metered/capped readings and recorded l
       expect(out.headline).toContain(`${mostRoom} has the most usable headroom`);
       const firstRow = out.subscriptions.ranked.find((x) => x.subscription === "claude");
       expect(firstRow.headroom).toBe(first.headroom);
-      if (first.class === "capped") expect(firstRow.windows[0]).toMatchObject({ window: "spend_limit", usable: 0.8 });
+      if (first.windows?.length) expect(firstRow.windows[0]).toMatchObject({ window: "spend_limit", usable: 0.8 });
       expect(out.subscriptions.ranked.filter((x) => x.share).map((x) => x.subscription)).toEqual(["codex", "claude"]);
       expect(out.subscriptions.ranked.find((x) => x.subscription === "claude").share).toEqual({ weight: 2, target: 0.67, used_pct: 100, left: 0, launches: 4, of: 4 });
       expect(out.subscriptions.candidates.normal).toEqual(["claude", "codex", "cursor"]);
     }
-    const out = await usageCommand([], twoToOne(), {}, { read: async () => [capped("claude", 0), metered("codex"), live("cursor", 0.6)] });
+    const out = await usageCommand([], twoToOne(), {}, { read: async () => [limited("claude", 0), metered("codex"), live("cursor", 0.6)] });
     expect(out.subscriptions.share_due).toBeUndefined(); expect(out.subscriptions.ranked.some((x) => x.share)).toBe(false);
     expect(out.subscriptions.candidates.normal).toEqual(["codex", "cursor"]);
   } finally { Object.assign(process.env, previous); }

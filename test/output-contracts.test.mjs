@@ -253,7 +253,7 @@ test("every launch record template can be followed, with explicit, default and a
 });
 
 test("instructions live in next for every capacity view and advice situation", async () => {
-  const c = cfg({ subscriptions: { cursor: { hardest_work: "strong", reserve: 0.2, assumed_headroom: 0.5 } } });
+  const c = cfg({ subscriptions: { cursor: { hardest_work: "strong", reserve: 0.2 } } });
   for (const situation of ["reserve", "level", "unconfigured", "failed", "internal", "ordinary"]) {
     const config = structuredClone(c);
     if (situation === "level") config.subscriptions.cursor.hardest_work = "basic";
@@ -286,7 +286,7 @@ test("source CLI outputs match the field maps in a throwaway home with fake herd
   writeFileSync(join(worker, ".git"), `gitdir: ${join(repo, ".git/worktrees/worker")}\n`);
   writeFileSync(join(f.dir, ".cursor/cli-config.json"), "{}");
   const config = join(f.dir, ".config/routr/config.json");
-  writeFileSync(config, JSON.stringify({ ...cfg({ subscriptions: Object.fromEntries(["claude", "codex", "agy", "cursor", "kiro"].map((n) => [n, { hardest_work: "strong", reserve: 0, assumed_headroom: 0.5 }])) }), auto_update: false }));
+  writeFileSync(config, JSON.stringify({ ...cfg({ subscriptions: Object.fromEntries(["claude", "codex", "agy", "cursor", "kiro"].map((n) => [n, { hardest_work: "strong", reserve: 0 }])) }), auto_update: false }));
   const executable = (name, code) => fakeExecutable(bin, name, code);
   executable("herdr", `import { existsSync, writeFileSync } from 'node:fs';
 const a = process.argv.slice(2), mode = process.env.FAKE_MODE, mark = ${JSON.stringify(MARK)};

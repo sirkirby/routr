@@ -3,7 +3,7 @@
 // `routr setup` (lib/setup.mjs) does, from the same inspection.
 import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { delimiter, join, win32 } from "node:path";
-import { accountUse, CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
+import { CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
 import { billingFromSignIn, signInHint } from "./signin.mjs";
 import { failureMessage, ping, secretsFor } from "./systemone.mjs";
@@ -42,11 +42,10 @@ const MODELS_SHOWN = 12;
 
 
 // The config `routr setup` writes: the user's defaults for the harnesses found. A model is set only when the user chose one.
-// `ranks` holds `metered_rank` per pool that reads as metered at setup, written out so the key is there to change.
-export function starterConfig(found, models = {}, ranks = {}) {
+export function starterConfig(found, models = {}) {
   // No sure_at: it follows the decision model (providers.mjs) unless the person sets one.
   return { fallback_level: DEFAULTS.fallback_level, risk_above: DEFAULTS.risk_above, prefer: { ...DEFAULTS.prefer },
-    subscriptions: Object.fromEntries(found.map((n) => [n, { ...(TAKES_EFFORT.includes(n) ? { default_effort: "medium" } : {}), ...HARNESSES[n].suggested, ...(models[n] ? { default_model: models[n] } : {}), ...(ranks[n] ? { metered_rank: ranks[n] } : {}) }])) };
+    subscriptions: Object.fromEntries(found.map((n) => [n, { ...(TAKES_EFFORT.includes(n) ? { default_effort: "medium" } : {}), ...HARNESSES[n].suggested, ...(models[n] ? { default_model: models[n] } : {}) }])) };
 }
 
 // routr's own copies of its skills (an entry without a name is the routr skill; one not marked `ours: false` is routr's).
@@ -145,7 +144,7 @@ export async function inspect({ configPath, quiet } = {}) {
     ...found.map((n) => statesP.then((st) => (st[n] !== "yes" ? null : step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))))),
   ]);
   // How a reading reads in one line: a number, a billed seat's note, or why there is none.
-  const said = (u) => (u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left${u.class === "capped" ? " of the cap" : ""} (${u.source}, ${u.ageSec}s old)`
+  const said = (u) => (u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left (${u.source}, ${u.ageSec}s old)`
     : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note} (${u.source})`);
   for (const n of KINDS) {
     const command = HARNESSES[n].executable;
@@ -189,8 +188,8 @@ export async function inspect({ configPath, quiet } = {}) {
     const h = r.harnesses[n];
     if (!h?.installed) continue;
     if (sub.billing) h.usage = h.usage_class === "unknown" ? `${sub.billing} by your setting (billing: ${sub.billing})` : `${h.usage} · billing: ${sub.billing} by your setting`;
-    h.account_use = accountUse(sub, sub.billing ?? h.usage_class);
-    h.usage += ` · ${h.account_use} use${sub.use ? "" : " (legacy default; set with --use)"}`;
+    h.account_use = sub.use ?? "normal";
+    h.usage += ` · ${h.account_use} use`;
   }
   // The one moment a default needs the user's attention: the harness no longer offers it.
   for (const [n, sub] of Object.entries(config.subscriptions)) {

@@ -75,7 +75,7 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
 - `unavailable`: what routr could not read, as a list (`[]` when nothing was missing). A `decision model` entry names
   `provider`, the attempted `model`, a fixed failure `code` and its recovery action in `why` (`status` also records a provider error's HTTP status). A `usage` entry names `subscription`, `source`,
   `code` and `why`. Fresh usable readings stay available even after a failed refresh. Otherwise `reading` says
-  `assumed` or `kept`; a kept older reading adds `reading_source` and `age_sec`. An internal usage-ranking error
+  `unknown` or `kept`; a kept older reading adds `reading_source` and `age_sec`. An internal usage-ranking error
   names `source: "routr"` with no subscription. Read these before deciding, tell the user in the launch line when advice was a fallback, and
   judge the missing part yourself. `check` uses the same field, adding `brief` or `report` for unreadable files.
   A later model's answer is ordinary advice: its headline names that model, and earlier failures in `unavailable`
@@ -108,24 +108,25 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
 - `subscriptions` (`dispatch` and `usage`). `candidates.normal` lists accounts for everyday work; `candidates.fallback` lists
   accounts for when no normal candidate can suitably take it. Choose model/effort fit first, then compare capacity
   among suitable options. `most_room` is only a capacity observation. `ranked` lists usable headroom, marked `live`, `given`
-  (you passed it in), or `assumed`. `age_sec` is how old the reading is, and `note` says what the harness showed beside
-  the number (Cursor: its Auto and API pools; Kiro: its plan and credits) or why a number is assumed. A snapshot too
-  old to use stays `assumed` with its age in `age_sec`; age alone is not a read failure. A metered account with
+  (you passed it in), `metered` (no window), or `unknown`. `age_sec` is how old the reading is, and `note` says what the harness showed beside
+  the number (Cursor: its Auto and API pools; Kiro: its plan and credits) or why room is unknown. A snapshot too
+  old to use has unknown room with its age in `age_sec`; age alone is not a read failure. A metered account with
   unknown capacity is a valid reading. Under `windows` it shows each usage window as the harness reports it: percent
   used and hours until it resets. The user's reserve shrinks as a window nears its reset, because unused capacity
   expires then. `your_default` is the user's everyday model on that subscription. `excluded` lists subscriptions the
   user does not give work this hard, any the user turned off, and any whose harness is not signed in (its `why`
   says what to run). Never spend a reserve: when everything is at its reserve, hold the work or ask
-  the user. `class` says what kind of pool each one is: `included` (a subscription whose windows expire), `capped`
-  (a spend cap the vendor enforces, shown as one more window), `metered` (a seat with no quota, billed per token:
-  no headroom number or known remaining budget), or `unknown`. `use` is the user's normal/fallback preference,
-  independent of billing. A normal metered account is considered alongside normal included accounts. If a launch
-  `share` is set and at least two normal accounts are metered or capped with usable room, each carries `share`
+  the user. `class` says how the account is paid for: `included` (a plan), `metered` (pay per use),
+  or `unknown`. A limit is one more window; a metered seat with a window has a usable number after reserve.
+  Without a usable reading, room is unknown (`usable: null`) and the account stays offered. `use` is the user's normal/fallback preference,
+  independent of billing, and defaults to normal. A normal metered account is considered alongside normal included accounts. If a launch
+  `share` is set and at least two normal accounts are metered with unknown room or a positive usable number, each carries `share`
   (`weight`, `target`, `used_pct`, `left`, `launches` and `of`, read like a window: its weight and that weight's fraction, the percent of
   routr's launches on these accounts it took in the last 7 days, how far it is below its target, and the counts) and `share_due` names the one furthest below. It is a ratio
-  of launches the user asked for, not a budget or a headroom. A capped seat at its limit or reserve leaves the
+  of launches the user asked for, not a budget or a headroom. A metered seat at its limit or reserve leaves the
   ratio; launches are shared among those left. Ratio order applies among these accounts, while `most_room` still
-  names the largest positive usable number. Included accounts keep their positions.
+  names the largest positive usable number on normal accounts, or on fallback when no normal account has a number.
+  Included accounts keep their positions.
 
 ## Deciding
 
@@ -143,8 +144,7 @@ failures can justify stronger initial execution; a larger model needs a reason t
 3. **Account:** among suitable options, weigh usable capacity and its age, user preferences, and known time or
    spending constraints. Use fallback accounts when normal options lack suitability or capacity. Respect disabled
    accounts, sign-in requirements, `hardest_work` and reserves. Configured normal/fallback use already supplies
-   permission in those circumstances. Weigh unknown capacity or budget alongside explicit spending limits; an
-   assumed reading is the user's assumption, not a measurement. Headroom does not estimate whether a task fits.
+   permission in those circumstances. Weigh unknown capacity or budget alongside explicit spending limits; unknown room is uncertainty, not a measurement. Headroom does not estimate whether a task fits.
    Among suitable accounts in the launch ratio, prefer `share_due` unless the work has a reason to go elsewhere, and say why in
    the launch line when you don't. Whether leads following it reach the user's ratio is not measured.
 

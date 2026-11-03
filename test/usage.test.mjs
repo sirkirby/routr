@@ -19,7 +19,7 @@ const ENTERPRISE_SEAT = { limitId: "codex", limitName: null, normalModelSlug: nu
 
 const PRO_LOGIN = { ...ENTERPRISE_SEAT, primary: { usedPercent: 60, windowDurationMins: 10080, resetsAt: NOW / 1000 + 3 * 86400 }, credits: { hasCredits: false, unlimited: false, balance: "0" }, planType: "pro" };
 
-const capped = (resetsAt, remainingPercent, over = {}) => ({ ...ENTERPRISE_SEAT, credits: { hasCredits: true, unlimited: false, balance: "1000" }, individualLimit: { limit: "5000", used: String(5000 - 50 * remainingPercent), remainingPercent, resetsAt }, ...over });
+const limited = (resetsAt, remainingPercent, over = {}) => ({ ...ENTERPRISE_SEAT, credits: { hasCredits: true, unlimited: false, balance: "1000" }, individualLimit: { limit: "5000", used: String(5000 - 50 * remainingPercent), remainingPercent, resetsAt }, ...over });
 
 test("Codex pool classes come from the shape, not the plan name: an Enterprise seat reports `business` and no windows", () => {
   const ent = codexSnapshot(ENTERPRISE_SEAT, "app-server", NOW / 1000, NOW / 1000);
@@ -32,14 +32,14 @@ test("Codex pool classes come from the shape, not the plan name: an Enterprise s
 
 test("a member credit cap is one more window with its own period, and the tightest window still wins", () => {
   const feb1 = Date.UTC(2027, 1, 1) / 1000;
-  const c = codexSnapshot(capped(feb1, 10), "app-server", NOW / 1000, NOW / 1000);
-  expect(c.class).toBe("capped"); expect(c.headroom).toBeCloseTo(0.1);
+  const c = codexSnapshot(limited(feb1, 10), "app-server", NOW / 1000, NOW / 1000);
+  expect(c.class).toBe("metered"); expect(c.headroom).toBeCloseTo(0.1);
   expect(c.windows).toEqual([{ name: "monthly_cap", usedPct: 90, windowMin: 31 * 1440, resetsAt: feb1 }]); // January
   expect(monthMinutes(Date.UTC(2027, 0, 1) / 1000)).toBe(31 * 1440);                                       // December
   expect(monthMinutes(Date.UTC(2027, 0, 15) / 1000)).toBeNull();                                            // not a month boundary: length unknown
-  const both = codexSnapshot(capped(feb1, 10, { primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: NOW / 1000 + 60 } }), "app-server", NOW / 1000, NOW / 1000);
+  const both = codexSnapshot(limited(feb1, 10, { primary: { usedPercent: 20, windowDurationMins: 300, resetsAt: NOW / 1000 + 60 } }), "app-server", NOW / 1000, NOW / 1000);
   expect(both.headroom).toBeCloseTo(0.1); expect(both.windows.map((w) => w.name)).toEqual(["primary", "monthly_cap"]);
-  const at = codexSnapshot(capped(feb1, 0, { spendControlReached: true, rateLimitReachedType: "workspace_member_credits_depleted" }), "app-server", NOW / 1000, NOW / 1000);
+  const at = codexSnapshot(limited(feb1, 0, { spendControlReached: true, rateLimitReachedType: "workspace_member_credits_depleted" }), "app-server", NOW / 1000, NOW / 1000);
   expect(at.headroom).toBe(0); expect(at.note).toContain("a rate limit was reached"); expect(at.note).toContain("spend control reached");
   // credits beside windows leave the windows in charge (claimed shape); a finite balance with no windows is metered
   expect(codexSnapshot({ ...PRO_LOGIN, credits: { hasCredits: true, unlimited: true, balance: null } }, "app-server", NOW / 1000, NOW / 1000)).toMatchObject({ class: "included", headroom: 0.4 });
@@ -62,7 +62,7 @@ test("the statusline writes every render and keeps the last windows seen; absenc
   expect(noWs.answered).toBe(true); expect(at(noWs)).toMatchObject({ class: "unknown", headroom: null }); expect(at(noWs).note).toContain("billing");
   expect(at({ ts: t, model: "m", rate_limits: rl })).toMatchObject({ class: "included" });      // a snapshot from an older routr
   const gw = snapshotFrom({ rate_limits: { spend_limit: { used_percentage: 130, resets_at: t + 86400 } } }, null, t);
-  expect(at(gw)).toMatchObject({ class: "capped", headroom: 0 }); expect(at(gw).windows[0]).toMatchObject({ name: "spend_limit", usedPct: 100, windowMin: null });
+  expect(at(gw)).toMatchObject({ class: "metered", headroom: 0 }); expect(at(gw).windows[0]).toMatchObject({ name: "spend_limit", usedPct: 100, windowMin: null });
 });
 
 // `claude -p /usage --output-format json` on a Max plan, Claude Code 2.1.289, 2026-10-05 (the `result` text, verbatim
@@ -219,14 +219,14 @@ test("no private folder, no read: Claude is not started in the shared temp folde
   const read = (f) => readClaude({ file: f, nowSec: OCT5, tmp, exec: async () => { started = true; return claudeAnswer(CLAUDE_USAGE); } });
   const none = await read(join(dir, "none.json"));
   expect(started).toBe(false);
-  expect(none).toMatchObject({ headroom: null, class: "unknown" }); expect(none.note).toContain("could not make a private folder"); expect(none.note).toContain("assumed headroom");
+  expect(none).toMatchObject({ headroom: null, class: "unknown" }); expect(none.note).toContain("could not make a private folder"); expect(none.note).toContain("capacity is unknown");
   writeFileSync(file, JSON.stringify({ ts: OCT5 - 3600, rate_limits: { seven_day: { used_percentage: 40, resets_at: OCT5 + 86400 } }, answered: true }));
   const old = await read(file);
   expect(started).toBe(false);
   expect(old).toMatchObject({ source: "claude /usage", headroom: 0.6 }); expect(old.note).toContain("This is the statusline's last reading");
 });
 
-test("Claude's live read fails open: the old snapshot however old, else the assumed headroom, and the note says why", async () => {
+test("Claude's live read fails open: the old snapshot however old, else the unknown capacity, and the note says why", async () => {
   const dir = scratch("claude-fallback"), file = join(dir, "claude-usage.json"), missing = join(dir, "none.json");
   const rl = { seven_day: { used_percentage: 40, resets_at: OCT5 + 86400 } };
   writeFileSync(file, JSON.stringify({ ts: OCT5 - 3 * 3600, rate_limits: rl, answered: true }));
@@ -238,7 +238,7 @@ test("Claude's live read fails open: the old snapshot however old, else the assu
   expect((await read(claudeAnswer("x", { is_error: true }))).note).toContain("returned a reply routr cannot read");
   const nothing = await read(null, missing);
   expect(nothing).toMatchObject({ source: "claude /usage", headroom: null, class: "unknown" });
-  expect(nothing.note).toBe("The usage source did not answer. Using the assumed headroom");
+  expect(nothing.note).toBe("The usage source did not answer. Remaining capacity is unknown");
   // It answered, and showed no windows: the seat may have no quota; doctor's step keys on the reason.
   const bare = await read(claudeAnswer("You are using an API key"), missing);
   expect(bare).toMatchObject({ headroom: null, class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER }); expect(bare.note).toContain('billing: "metered"');
@@ -263,13 +263,13 @@ test("no model name from Claude's /usage reaches routr usage's output", async ()
   expect(JSON.stringify(out)).not.toContain("Fable");
 });
 
-test("metered capacity stays unknown while legacy settings determine normal or fallback use", () => {
+test("metered capacity stays unknown while use defaults to normal", () => {
   const r = rankSubscriptions("strong", [live("claude", 0.6), metered("codex")], cfg());
   expect(r.ranked.map((x) => [x.subscription, x.usable])).toEqual([["claude", 0.35], ["codex", null]]);
   expect(r.ranked[1]).toMatchObject({ class: "metered", usage: "metered", headroom: null }); expect(r.ranked[1].note).toContain("billed"); expect(r.most_room).toBe("claude");
   const spill = rankSubscriptions("strong", [live("claude", 0.2), metered("codex")], cfg());
-  expect(spill.ranked.map((x) => x.subscription)).toEqual(["codex", "claude"]); expect(spill.most_room).toBeNull(); expect(spill.candidates).toEqual({ normal: [], fallback: ["codex"] });
-  const c = cfg(); c.subscriptions.codex.metered_rank = "with";
+  expect(spill.ranked.map((x) => x.subscription)).toEqual(["codex", "claude"]); expect(spill.most_room).toBeNull(); expect(spill.candidates).toEqual({ normal: ["codex"], fallback: [] });
+  const c = cfg(); c.subscriptions.codex.use = "normal";
   const w = rankSubscriptions("strong", [live("claude", 0.6), metered("codex")], c);
   expect(w.ranked.map((x) => [x.subscription, x.usable, x.usage])).toEqual([["claude", 0.35, "live"], ["codex", null, "metered"]]);
   expect(w.candidates).toEqual({ normal: ["claude", "codex"], fallback: [] });
@@ -278,7 +278,7 @@ test("metered capacity stays unknown while legacy settings determine normal or f
   expect(rankSubscriptions("basic", [{ pool: "cursor", source: "given by caller", given: true, ageSec: 0, windows: [], headroom: 0.9 }], g).ranked[0]).toMatchObject({ class: "included", usable: 0.8, usage: "given" });
   const b = cfg(); b.subscriptions.claude.billing = "metered";                                   // the reader sees nothing; the user knows
   expect(rankSubscriptions("strong", [none("claude"), live("codex", 0.5)], b).ranked.map((x) => [x.subscription, x.class])).toEqual([["codex", "included"], ["claude", "metered"]]);
-  expect(rankSubscriptions("strong", [live("claude", 0.6), { ...metered("codex"), windows: [win(40, 100, null)], headroom: 0.6, class: "capped" }], cfg()).ranked[0]).toMatchObject({ subscription: "codex", class: "capped", usable: 0.4 }); // a cap is a number: ranked by it; unknown length holds the full reserve
+  expect(rankSubscriptions("strong", [live("claude", 0.6), { ...metered("codex"), windows: [win(40, 100, null)], headroom: 0.6, class: "metered" }], cfg()).ranked[0]).toMatchObject({ subscription: "codex", class: "metered", usable: 0.4 }); // a cap is a number: ranked by it; unknown length holds the full reserve
 });
 
 const CURSOR_USAGE_PANEL = ` Usage • Pro
@@ -598,7 +598,7 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
   const dir = scratch("cursor"), file = join(dir, "cursor-usage.json"), T = 1_800_000_000;
   const started = [];
   const read = (nowSec) => readCursor({ file, nowSec, refresh: () => started.push(nowSec), off: false });
-  // A new install: nothing yet. The call answers at once, assumed, and starts one background reading.
+  // A new install: nothing yet. The call answers at once, room unknown, and starts one background reading.
   const first = read(T);
   expect(first).toMatchObject({ pool: "cursor", headroom: null });
   expect(first.note).toContain("being taken in the background");
@@ -637,7 +637,7 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
   expect(handed).toEqual([JSON.parse(readFileSync(held, "utf8")).token]);
   await refreshCursor({ file: byHand, nowSec: T, read: async () => screen, background: true, token: handed[0] });
   expect([existsSync(held), JSON.parse(readFileSync(byHand, "utf8")).reading.included_used_pct]).toEqual([false, 66]);
-  // Never read, and the try failed: assumed, with how to read it by hand.
+  // Never read, and the try failed: room unknown, with how to read it by hand.
   const never = join(dir, "never.json");
   await refreshCursor({ file: never, nowSec: T, read: async () => ({ ok: false, ...usageFailure("read_failed"), read_yourself: CURSOR_BY_HAND }) });
   expect(readCursor({ file: never, nowSec: T + 1, refresh: () => {}, off: false }).note).not.toContain(CURSOR_BY_HAND);
@@ -645,7 +645,7 @@ test("Cursor is a snapshot every call reads at once, refreshed in the background
   const quiet = join(dir, "quiet.json");
   expect(readCursor({ file: quiet, nowSec: T, refresh: () => started.push("quiet") }).headroom).toBeNull();
   expect(existsSync(quiet)).toBe(false);
-  // A day without a good reading: too old to use (the plan may have reset), so assumed, and it says so.
+  // A day without a good reading: too old to use (the plan may have reset), so room unknown, and it says so.
   const stale = readCursor({ file, nowSec: T + 5 + 25 * 3600, refresh: () => true, off: false });
   expect(stale.headroom).toBeNull();
   expect(stale.note).toContain("25 h old, too old to use");
@@ -839,9 +839,9 @@ test("an API-key Claude with no windows ranks as metered, with no doctor step as
   expect(u.reason).toBeUndefined(); expect(u.note).toContain("API key"); expect(u.note).not.toContain("set `billing");
   const c = cfg({ subscriptions: { claude: cfg().subscriptions.claude } });
   expect(rankSubscriptions("standard", [u], c).ranked[0]).toMatchObject({ subscription: "claude", class: "metered", usage: "metered", usable: null });
-  // The user's `billing: "included"` wins over the auth reading: the assumed headroom, as for any seat without windows.
+  // The user's `billing: "included"` wins over the auth reading: the unknown capacity, as for any seat without windows.
   const mine = rankSubscriptions("standard", [u], cfg({ subscriptions: { claude: { ...cfg().subscriptions.claude, billing: "included" } } })).ranked[0];
-  expect(mine).toMatchObject({ class: "included", usage: "assumed", use: "normal" });
+  expect(mine).toMatchObject({ class: "included", usage: "unknown", use: "normal" });
   // doctor: the usage line names the billing and where it was read, and no step asks for `billing`.
   const { nextSteps } = await import("../src/lib/doctor.mjs");
   const { ROUTR_VERSION } = await import("../src/lib/version.mjs");
@@ -879,7 +879,7 @@ test("an Enterprise login is metered only when its /usage answered with no windo
   expect(u).toMatchObject({ class: "metered", headroom: null, source: "claude auth status", billing: { billing: "metered", source: "claude auth status" } });
   expect(u.reason).toBeUndefined(); expect(u.note).toContain("Enterprise");
   expect(rankSubscriptions("standard", [u], cfg()).ranked.find((x) => x.subscription === "claude")).toMatchObject({ class: "metered", usage: "metered", usable: null });
-  // A read that failed is not a seat without a quota: it stays a failure on the assumed headroom.
+  // A read that failed is not a seat without a quota: it stays a failure on the unknown capacity.
   const [failed] = await read(async () => null);
   expect(failed.class).not.toBe("metered"); expect(failed.billing).toBeUndefined(); expect(failed.failure).toBeDefined();
   // Claude's /usage is read with its exit status: an answer printed before a non-zero exit is no answer (run's exitZero).
@@ -901,7 +901,7 @@ test("an Enterprise login is metered only when its /usage answered with no windo
   const [quota] = await readUsage(["claude"], {}, { sources: { claude: { read: async () => live("claude", 0.6) } }, why: async () => null, billing: () => ent });
   expect(quota).toMatchObject({ headroom: 0.6 }); expect(quota.class).not.toBe("metered"); expect(String(quota.note ?? "")).not.toContain("yet usage windows arrived");
   // The user's `billing: "included"` still wins.
-  expect(rankSubscriptions("standard", [u], cfg({ subscriptions: { claude: { ...cfg().subscriptions.claude, billing: "included" } } })).ranked.find((x) => x.subscription === "claude")).toMatchObject({ class: "included", usage: "assumed" });
+  expect(rankSubscriptions("standard", [u], cfg({ subscriptions: { claude: { ...cfg().subscriptions.claude, billing: "included" } } })).ranked.find((x) => x.subscription === "claude")).toMatchObject({ class: "included", usage: "unknown" });
 });
 test("the Enterprise reading is kept with its condition, and nothing the status printed about the account", async () => {
   const { billingFromSignIn, signInState } = await import("../src/lib/signin.mjs");
@@ -978,7 +978,7 @@ test("a background reading of a harness that is not signed in never starts it, k
 
 test("routr usage leaves a turned-off subscription out, says how to turn it on, and never reads it", async () => {
   const read = [];
-  const config = cfg({ subscriptions: { codex: { enabled: true, hardest_work: "strong", reserve: 0.2, assumed_headroom: 0.5 }, cursor: { enabled: false, hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 } } });
+  const config = cfg({ subscriptions: { codex: { enabled: true, hardest_work: "strong", reserve: 0.2 }, cursor: { enabled: false, hardest_work: "standard", reserve: 0.1 } } });
   const r = await usageCommand([], config, {}, { read: async (names) => { read.push(...names); return names.map((n) => live(n, 0.9)); } });
   expect(read).toEqual(["codex"]);
   expect(r.subscriptions.ranked.map((x) => x.subscription)).toEqual(["codex"]);
@@ -986,12 +986,12 @@ test("routr usage leaves a turned-off subscription out, says how to turn it on, 
 });
 
 // From the herdr 0.9.5 change of 2026-10-22: Cursor's reader failed on every try for 89 h, and ranking quietly ran on the
-// assumed headroom. A reader that worked once and has failed for over a day is now said in `warnings`.
+// unknown capacity. A reader that worked once and has failed for over a day is now said in `warnings`.
 test("a reader whose last reading is over a day old and whose last try failed is a warning; a fresh, never-read or signed-out one is not", async () => {
   const { staleReaders, STALE_SEC } = await import("../src/lib/usage-failure.mjs");
   const row = (pool, ageH, over = {}) => ({ ...summarize({ pool, source: `${pool} /usage`, ts: ageH == null ? null : NOW - ageH * 3600, nowSec: NOW, failure: usageFailure("read_failed") }), ...over });
   const warned = staleReaders([row("cursor", 89), row("kiro", 2), row("claude", null), row("agy", 30, { signedIn: false }), row("codex", 30, { failure: undefined })]);
-  expect(warned).toEqual([{ pool: "cursor", warning: "cursor's usage has not been read for 89 h, and its last try failed (read_failed), so routing assumes its headroom: an update of cursor or herdr may have changed what routr reads" }]);
+  expect(warned).toEqual([{ pool: "cursor", warning: "cursor's usage has not been read for 89 h, and its last try failed (read_failed), so remaining capacity is unknown: an update of cursor or herdr may have changed what routr reads" }]);
   expect(STALE_SEC).toBe(86400);
   // In a command's output; how to read it by hand stays in `next`.
   const config = cfg({ subscriptions: { cursor: {}, kiro: {} } });
@@ -1059,7 +1059,7 @@ test("recorded Codex member limits retain credits at the cap without promising c
     const { rateLimits } = JSON.parse(readFileSync(new URL(`./fixtures/admin-limits/${file}.json`, import.meta.url), "utf8"));
     expect(rateLimits.credits.hasCredits).toBe(true);
     const row = codexSnapshot(rateLimits, "app-server", t, t);
-    expect(row).toMatchObject({ class: "capped", headroom: room });
+    expect(row).toMatchObject({ class: "metered", headroom: room });
     expect(row.note ?? "").not.toContain("keeps working past 100%");
   }
   expect(monthMinutes(1796083200)).toBe(30 * 1440);
@@ -1073,29 +1073,32 @@ test("spend-control-only Codex readings expire after five minutes, including ses
   const file = join(day, "session.jsonl");
   for (const rl of [{ spend_control_reached: true }, { individual_limit: { remaining_percent: 0, resets_at: t + 86400 } }]) {
     writeFileSync(file, JSON.stringify({ timestamp: new Date(t * 1000).toISOString(), payload: { rate_limits: rl } }));
-    expect(readCodex({ sessions, nowSec: t + 299 })).toMatchObject({ class: "capped", headroom: 0 });
+    expect(readCodex({ sessions, nowSec: t + 299 })).toMatchObject({ class: "metered", headroom: 0 });
   }
   writeFileSync(file, JSON.stringify({ timestamp: new Date(t * 1000).toISOString(), payload: { rate_limits: { spend_control_reached: true } } }));
   expect(readCodex({ sessions, nowSec: t + 300 })).toMatchObject({ class: "unknown", headroom: null });
   for (const age of [-1, 0, 299, 300, 86400]) {
     const r = codexSnapshot({ spendControlReached: true, credits: { hasCredits: true } }, "app-server", t, t + age);
-    expect(r).toMatchObject(age >= 0 && age < 300 ? { class: "capped", headroom: 0 } : { class: "unknown", headroom: null });
+    expect(r).toMatchObject(age >= 0 && age < 300 ? { class: "metered", headroom: 0 } : { class: "unknown", headroom: null });
     expect(r.note ?? "").not.toContain("keeps working past 100%");
   }
 });
 
 test("synthetic past-reset caps keep their counters and full reserve; plan windows still roll", () => {
-  const t = NOW / 1000, windows = [{ name: "cap", usedPct: 50, windowMin: 43200, resetsAt: t - 1 }];
-  for (const cls of ["included", "capped"]) {
-    const row = summarize({ pool: "codex", source: "test", ts: t, cls, windows, nowSec: t });
-    expect(row.headroom).toBe(cls === "capped" ? 0.5 : 1);
+  const t = NOW / 1000, windows = [{ name: "monthly_cap", usedPct: 50, windowMin: 43200, resetsAt: t - 1 }];
+  for (const cls of ["included", "metered"]) {
+    const row = summarize({ pool: "codex", source: "test", ts: t, cls, windows: windows.map((w) => ({ ...w, name: cls === "metered" ? "monthly_cap" : "primary" })), nowSec: t });
+    expect(row.headroom).toBe(cls === "metered" ? 0.5 : 1);
     const config = cfg(); config.subscriptions.codex.reserve = 0.2;
     const rank = rankSubscriptions("strong", [row], config).ranked.find((r) => r.subscription === "codex");
     expect(rank.windows[0].reserve_now).toBe(0.2);
   }
-  expect(summarize({ pool: "codex", source: "test", cls: "capped", ts: t - 2, windows, nowSec: t }).headroom).toBe(1);
+  expect(summarize({ pool: "codex", source: "test", cls: "metered", ts: t - 2, windows, nowSec: t }).headroom).toBe(1);
+  const spend = windows.map((w) => ({ ...w, name: "spend_limit" }));
+  expect(summarize({ pool: "claude", source: "test", cls: "metered", ts: t, windows: spend, nowSec: t }).headroom).toBe(0.5);
+  expect(summarize({ pool: "claude", source: "test", cls: "metered", ts: t - 2, windows: spend, nowSec: t }).headroom).toBe(1);
   for (const resetsAt of [0, -1]) expect(summarize({ pool: "codex", source: "test", ts: t - 2, windows: [{ ...windows[0], resetsAt }], nowSec: t }).headroom).toBe(0.5);
-  expect(rankSubscriptions("strong", [live("codex", 0.5)], { ...cfg(), subscriptions: { codex: cfg().subscriptions.codex } }).note).not.toContain("Metered budget is unknown");
+  expect(rankSubscriptions("strong", [live("codex", 0.5)], { ...cfg(), subscriptions: { codex: cfg().subscriptions.codex } }).note).not.toContain("Remaining capacity is unknown");
 });
 
 test("Claude usage shadows are checked by path name after fresh snapshots, without reading contents or executing", async () => {
@@ -1121,8 +1124,8 @@ test("Claude usage shadows are checked by path name after fresh snapshots, witho
 
 test("a synthetic Codex spend-control stop overrides cap room while retaining its reset", () => {
   const t = Date.UTC(2026, 10, 3) / 1000, resetsAt = t + 86400;
-  const row = codexSnapshot(capped(resetsAt, 71, { spendControlReached: true }), "app-server", t, t);
-  expect(row).toMatchObject({ class: "capped", headroom: 0 });
+  const row = codexSnapshot(limited(resetsAt, 71, { spendControlReached: true }), "app-server", t, t);
+  expect(row).toMatchObject({ class: "metered", headroom: 0 });
   expect(row.windows).toEqual([{ name: "monthly_cap", usedPct: 100, windowMin: null, resetsAt }]);
-  expect(codexSnapshot(capped(resetsAt, 71, { spendControlReached: true }), "session log", t, resetsAt + 1).headroom).toBe(1);
+  expect(codexSnapshot(limited(resetsAt, 71, { spendControlReached: true }), "session log", t, resetsAt + 1).headroom).toBe(1);
 });

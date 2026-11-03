@@ -25,7 +25,7 @@ const now = () => Date.now() / 1000;
 // retry back).
 const REFRESH_SEC = 4 * 3600;
 // A reading that has not been refreshed for a day is not used: refreshes are failing, and the plan may have reset
-// since (Cursor's screen shows no reset time). Past it, the subscription is assumed and the note says so.
+// since (Cursor's screen shows no reset time). Past it, remaining capacity is unknown and the note says so.
 const TRUST_SEC = 24 * 3600;
 const LOCK_SEC = 120; // one background reading at a time; a lock older than any reading (90 s at most) is abandoned
 const readJson = (file) => {
@@ -92,5 +92,5 @@ export function readSnapshot({ name, source, windows, describe, keep, byHand, fi
   if (r && !invalid && age >= 0 && age < TRUST_SEC) return summarize({ pool: name, source, ts: snap.ts, windows: ws, note: `${describe(r)}${after ? `; ${after}` : ""}`, nowSec, failure, ...(failure && age >= REFRESH_SEC ? { kept: { source: `${name} snapshot`, ageSec: Math.round(age) } } : {}) });
   const why = invalid ? "the saved reading cannot be read" : r ? age < 0 ? "the last reading is from the future, so it is not used"
     : `the last reading is ${Math.round(age / 3600)} h old, too old to use` : "no reading yet";
-  return summarize({ pool: name, source, ts: snap?.ts, note: `${why}${after ? `; ${after}` : ""}; using the assumed headroom.`, nowSec, failure });
+  return summarize({ pool: name, source, ts: snap?.ts, note: `${why}${after ? `; ${after}` : ""}; remaining capacity is unknown.`, nowSec, failure });
 }

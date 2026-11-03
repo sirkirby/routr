@@ -304,7 +304,7 @@ async function runSmoke({ env: original, log }) {
     const senderPid = () => { try { const v = JSON.parse(readFileSync(join(home, ".cache/routr/otel/sender.lock"), "utf8")); return Number.isSafeInteger(v.pid) && v.pid > 1 && v.pid !== process.pid ? v.pid : null; } catch { return null; } };
     const queueIdle = () => !senderPid() && !["traces", "logs", "metrics"].some((signal) => readdirSync(join(home, ".cache/routr/otel", signal)).some((n) => /\.(json|sending)$/.test(n)));
     const holderReleased = () => { const gen = generations(workerDir).at(-1); return gen && existsSync(genFile(workerDir, gen, "released")); };
-    const config = { ...DEFAULTS, subscriptions: { claude: { enabled: true, hardest_work: "strong", assumed_headroom: 0.5, reserve: 0 } }, telemetry: false,
+    const config = { ...DEFAULTS, subscriptions: { claude: { enabled: true, hardest_work: "strong", reserve: 0 } }, telemetry: false,
       otel: { endpoint: `http://127.0.0.1:${server.address().port}`, consent: newOtelConsent() } };
     mkdirSync(join(home, ".config/routr"), { recursive: true }); writeFileSync(configPath, JSON.stringify(config));
     check(prepareOtel({ home }), "prepare isolated exporter");

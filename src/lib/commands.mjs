@@ -254,7 +254,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
     }
     if (fresh && !reading?.ok && !reading?.excluded && !out.unavailable.some((u) => u.subscription === name)) {
       const kept = rows.find((r) => r.pool === name && r.headroom != null);
-      out.unavailable.push({ part: "usage", subscription: name, source: sources[name].source ?? name, ...usageFailure(reading?.code), reading: kept ? "kept" : "assumed", ...(kept ? { reading_source: kept.source, age_sec: kept.ageSec } : {}) });
+      out.unavailable.push({ part: "usage", subscription: name, source: sources[name].source ?? name, ...usageFailure(reading?.code), reading: kept ? "kept" : "unknown", ...(kept ? { reading_source: kept.source, age_sec: kept.ageSec } : {}) });
     }
     if (reading?.excluded && !out.subscriptions.excluded.some((r) => r.subscription === name)) out.subscriptions.excluded.push({ subscription: name, why: reading.why });
     if (name && !configured.includes(name)) {
@@ -266,7 +266,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
     out.next = [...capacityNext(out.subscriptions, out.unavailable, level, config, name), ...out.next];
     if (explicit && hasCandidates(out.subscriptions)) out.next.push(doNext("Choose from subscriptions.candidates, normal before fallback, and keep the original dispatch advice for launch and record"));
     out.headline = fresh ? reading?.ok ? `routr: ${reader.label}, ${reader.used(reading)}, read now${!out.subscriptions.ranked.length ? `; ${out.subscriptions.note}` : ""}` : `routr: no fresh ${reader.label} reading (${reading?.excluded ? "not signed in" : usageFailure(reading?.code).code})`
-      : `routr: ${out.subscriptions.most_room ? `${out.subscriptions.most_room} has the most usable headroom for ${level} work; normal: ${out.subscriptions.candidates.normal.join(", ") || "none"}, fallback: ${out.subscriptions.candidates.fallback.join(", ") || "none"}` : out.subscriptions.note}${out.unavailable.length ? `; ${count(out.unavailable.length, "reading")} unavailable` : ""}`;
+      : `routr: ${out.subscriptions.most_room ? `${out.subscriptions.most_room} has the most usable headroom for ${level} work (normal first); normal: ${out.subscriptions.candidates.normal.join(", ") || "none"}, fallback: ${out.subscriptions.candidates.fallback.join(", ") || "none"}` : out.subscriptions.note}${out.unavailable.length ? `; ${count(out.unavailable.length, "reading")} unavailable` : ""}`;
   } catch {
     out.ok = false;
     const failure = { part: "usage", subscription: null, source: "routr", ...usageFailure("internal_error") };

@@ -64,7 +64,7 @@ it (0.40.0 fails this way on Windows). A brief that times
 out every time may be running on the CPU (`ollama ps` says): it took 36-41 s on a fast laptop CPU, and routr waits
 30 s.
 
-## Claude's usage shows as "assumed"
+## Claude's usage shows as "unknown"
 
 routr reads Claude's usage by running `claude -p /usage` (no tokens for the built-in command, about 4 to 5 s) in
 its private temp folder. A user skill or command named `usage` replaces the built-in command and spends a model
@@ -78,7 +78,7 @@ run the same command yourself to see what Claude says; with such a skill, this c
     claude -p /usage --output-format json --no-session-persistence --settings '{"disableAllHooks":true}' --strict-mcp-config
 
 When it fails, routr uses the last `routr statusline` snapshot if there is one, however old (its age is shown), and
-the assumed headroom otherwise. You do not need `routr statusline`; setup no longer sets it.
+unknown capacity otherwise. You do not need `routr statusline`; setup no longer sets it.
 
 ## A subscription is left out: "not signed in"
 
@@ -87,28 +87,28 @@ dispatch lists it under `excluded` with the command to run, doctor says the same
 in with that command; routr sees it within 10 minutes, or at once with `routr doctor`. routr never opens a sign-in
 itself. "Did not answer its sign-in check" means the command is missing from PATH or hung.
 
-## Cursor's usage is "assumed"
+## Cursor's usage is "unknown"
 
 Cursor shows usage only in its own `/usage` screen. routr reads it in a private herdr session in the background (nothing
 opens on your screen; herdr has to be installed), about once per working session, and at once after an update when
 the last try got no reading, and keeps the reading in
-`~/.cache/routr/cursor-usage.json`. Until the first reading lands, or when reading fails, Cursor is `assumed` and the
+`~/.cache/routr/cursor-usage.json`. Until the first reading lands, or when reading fails, Cursor is `unknown` and the
 row's `note` says why. Run `routr usage cursor` to read it now and see any error; if it cannot be read at all, pass
 `--headroom cursor=<share left>` yourself (0.9 or 90%) (the by-hand step in `next` says how to read the screen).
 
 ## "<name>'s usage has not been read for N h"
 
 `routr dispatch` and `routr usage` warn this when a subscription's usage reader worked before, has not produced a
-reading for a day or more, and failed its last try; `routr doctor` lists it too. Routing then runs on the assumed
-headroom. The usual cause is an update of that harness or of herdr that changed what routr reads (herdr 0.9.5 did, for
+reading for a day or more, and failed its last try; `routr doctor` lists it too. Routing then has unknown
+capacity. The usual cause is an update of that harness or of herdr that changed what routr reads (herdr 0.9.5 did, for
 Cursor). Run the command in `next`, `routr usage <name>`: it reads now and its `unavailable` entry says why a reading
 fails. Until it reads again, pass `--headroom <name>=<share left>` yourself (0.9 or 90%).
 
-## Kiro's usage is "assumed"
+## Kiro's usage is "unknown"
 
 Kiro's `/usage` command takes about 10 seconds, so routr runs it in the background about once per working session (and at once
 after an update when the last try got no reading), in
 the system temp folder, and keeps the reading in `~/.cache/routr/kiro-usage.json`. Each run leaves an empty saved
 session in Kiro, which routr deletes with `kiro-cli chat --delete-session`; if that fails, `routr usage kiro` warns
-that Kiro kept an empty usage session: remove it from Kiro's saved sessions. Until the first reading lands, or when reading fails, Kiro is `assumed` and the row's `note` says why.
+that Kiro kept an empty usage session: remove it from Kiro's saved sessions. Until the first reading lands, or when reading fails, Kiro is `unknown` and the row's `note` says why.
 Run `routr usage kiro` to read it now; if it cannot be read, pass `--headroom kiro=<share left>` yourself (0.9 or 90%).

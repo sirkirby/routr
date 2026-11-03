@@ -1,13 +1,17 @@
 // config.mjs: settings are validated and a broken config still answers
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { DEFAULTS, loadConfig } from "../src/lib/config.mjs";
 import { SCRATCH, scratch } from "./helpers.mjs";
-test("billing and metered_rank are validated like the shares", () => {
-  const odd = join(SCRATCH, "odd2.json"); writeFileSync(odd, JSON.stringify({ subscriptions: { x: { hardest_work: "strong", reserve: 0.1, billing: "free", metered_rank: "first" }, y: { hardest_work: "strong", reserve: 0.1, billing: "metered", metered_rank: "with" } } }));
+test("billing is validated and removed settings warn without rewriting config", () => {
+  const odd = join(SCRATCH, "odd2.json"), raw = JSON.stringify({ subscriptions: { x: { hardest_work: "strong", reserve: 0.1, billing: "free", metered_rank: "first", assumed_headroom: 0.9 }, y: { hardest_work: "strong", reserve: 0.1, billing: "metered" } } });
+  writeFileSync(odd, raw);
   const r = loadConfig(odd);
-  expect(r.config.subscriptions.x).toMatchObject({ billing: null, metered_rank: "after" }); expect(r.config.subscriptions.y).toMatchObject({ billing: "metered", metered_rank: "with" }); expect(r.notes.length).toBe(2);
+  expect(r.config.subscriptions.x.billing).toBeNull(); expect(r.config.subscriptions.y.billing).toBe("metered");
+  expect(r.config.subscriptions.x).not.toHaveProperty("metered_rank"); expect(r.config.subscriptions.x).not.toHaveProperty("assumed_headroom");
+  expect(r.notes).toHaveLength(2); expect(r.notes.join(" ")).toContain("routr setup --use x=fallback");
+  expect(readFileSync(odd, "utf8")).toBe(raw);
 });
 
 test("broken or missing config falls back to defaults with a note", () => {
@@ -24,7 +28,7 @@ test("a config share outside 0..1 is reported and replaced: a negative reserve m
   const { config, notes } = loadConfig(f);
   expect(config.sure_at).toBe(DEFAULTS.sure_at);
   expect(config.subscriptions.claude.reserve).toBe(0);
-  expect(config.subscriptions.claude.assumed_headroom).toBe(0.5);
+  expect(config.subscriptions.claude).not.toHaveProperty("assumed_headroom");
   expect(config.subscriptions.codex.reserve).toBe(0.2);
   expect(notes.length).toBe(3);
 });

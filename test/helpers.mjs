@@ -35,9 +35,9 @@ export const cliEnv = (home, over = {}) => {
 };
 
 export const cfg = (over = {}) => ({ ...DEFAULTS, subscriptions: {
-  claude: { hardest_work: "strong", reserve: 0.25, assumed_headroom: 0.5 },
-  codex: { hardest_work: "strong", reserve: 0.2, assumed_headroom: 0.5 },
-  cursor: { hardest_work: "standard", reserve: 0.1, assumed_headroom: 0.5 },
+  claude: { hardest_work: "strong", reserve: 0.25 },
+  codex: { hardest_work: "strong", reserve: 0.2 },
+  cursor: { hardest_work: "standard", reserve: 0.1 },
 }, ...over });
 
 export const ans = (score, confidence, kind = "implement", blast = 0.1, kinds = { [kind]: 1 }) =>

@@ -4,6 +4,7 @@
 // still accepted, and does nothing, for scripts written for an older routr.
 // A person gets questions; an agent passes `--yes` and the choices it settled with the user as flags. Same code, same file.
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
+import { COMMANDS } from "./help.mjs";
 import { ACCOUNT_USE, CONFIG_PATH, isShare, loadConfig, SHARE_MAX, SUB_DEFAULTS, UPDATE_CHANNELS } from "./config.mjs";
 import { LEVELS } from "./questions.mjs";
 import { settingSummary } from "./wording.mjs";
@@ -33,18 +34,6 @@ export function parseModels(args) {
   return models;
 }
 
-// `--metered codex=after|with`: where a seat that reads as metered (billed usage, no quota) goes in the ranking.
-export function parseMetered(args) {
-  const ranks = {};
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] !== "--metered") continue;
-    const [name, rank] = (args[i + 1] ?? "").split("=");
-    if (!HARNESSES[name] || !["after", "with"].includes(rank)) throw new Error(`--metered takes <subscription>=after|with, with one of: ${Object.keys(HARNESSES).join(", ")}`);
-    ranks[name] = rank;
-  }
-  return ranks;
-}
-
 // `--hardest cursor=strong`: the most demanding work the user sends to a subscription.
 // `--reserve claude=0.25` (or 25%): the share routr holds back from workers (wording.mjs has the words people see).
 // Both decide the ranking, so both are the user's to set: asked at a terminal, or passed as flags, at setup or any time.
@@ -63,7 +52,7 @@ function parsePairs(args, flag, parse, what) {
 }
 export const parseHardest = (args) => parsePairs(args, "--hardest", parseLevel, "basic|standard|strong");
 export const parseUse = (args) => parsePairs(args, "--use", (v) => ACCOUNT_USE.includes(v) ? v : null, "normal|fallback");
-// `--share claude=3`: this account's weight in the launch ratio between eligible normal metered/capped accounts (shares.mjs); `off` removes it.
+// `--share claude=3`: this account's weight in the launch ratio between eligible normal metered accounts (shares.mjs); `off` removes it.
 export const parseLaunchShare = (args) => parsePairs(args, "--share", (v) => v === "off" ? "off" : /^\d+$/.test(v ?? "") && isShare(Number(v)) ? Number(v) : null, `<1-${SHARE_MAX}>|off`);
 // `--effort codex=high`: the everyday effort there, checked against the harness's own levels once it is found.
 export const parseEffort = (args) => parsePairs(args, "--effort", (v) => (/^[a-z]+$/i.test(v ?? "") ? v.toLowerCase() : null), "<level>");
@@ -117,22 +106,18 @@ export function channelNote(channel, running = ROUTR_VERSION, isStandalone = sta
   return `update channel: stable. ${pre ? `You stay on ${running} until a stable release is newer; \`routr update --force\` installs the newest stable now${auto ? "" : later}` : `\`routr update\` installs the newest stable release now${later}`}`;
 }
 
-// Where each newly written pool that reads as metered goes in the ranking. `ask(name, note)` is the terminal question
-// (absent under --yes, where the default stands); an answer starting with "w" means with, anything else after.
-export async function meteredRanks(fresh, harnesses, ranks, ask) {
-  for (const n of fresh) {
-    if (harnesses[n]?.usage_class !== "metered" || ranks[n]) continue;
-    ranks[n] = ask ? (/^w/i.test((await ask(n, harnesses[n].usage_note)).trim()) ? "with" : "after") : "after";
-  }
-  return ranks;
-}
-
 // `deps` are seams so a test can drive a whole run, questions and all, without a terminal, the machine's harnesses, the
 // network, or the user's own files: what is installed (`inspect`), the person's answers (`question`, read line by line
 // in the tui's accessible mode, or `ui`, a ready-made tui), each harness's effort levels (`efforts`), and each step that
 // writes outside the config (the skill, the telemetry state, the key), and whether a provider's key is saved (`hasKey`).
 export async function setup(args, { inspect: look = inspect, question, interactive: tty = Boolean(process.stdin.isTTY), env = process.env,
   install = installSkill, share: shareOn = setTelemetry, key = setKey, hasKey = (provider) => { try { secretsFor(provider, { env }); return true; } catch { return false; } }, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI, isStandalone = standalone, otelStart = startOtelSender, otelHome, writeConfig = writeJsonAtomic } = {}) {
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--fix") continue; // doctor --fix forwards its arguments here
+    const option = COMMANDS.setup.flags.find((f) => f.name === args[i]);
+    if (!option) return { ok: false, error: `Unknown setup flag or argument: ${args[i]}. See routr setup --help; account use is --use <name>=fallback or --use <name>=normal` };
+    if (option.arg) i++;
+  }
   const flag = (n) => { const i = args.indexOf(n); return i >= 0 ? args[i + 1] : undefined; };
   const path = flag("--config") ?? CONFIG_PATH();
   const interactive = tty && !args.includes("--yes");
@@ -148,12 +133,10 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const otelOff = args.includes("--otel-off"), otelSet = args.includes("--otel-endpoint");
   if (otelOff && otelSet) return { ok: false, error: "choose --otel-endpoint or --otel-off, not both" };
   if (otelSet) try { otelEndpointValue = otelEndpoint(flag("--otel-endpoint")); } catch (e) { return { ok: false, error: e.message }; }
-  let models, ranks, hardest, reserves, efforts, switches, uses, launchShares, channel, decision;
-  try { models = parseModels(args); ranks = parseMetered(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); launchShares = parseLaunchShare(args); channel = parseChannel(args); decision = parseDecision(args, skipped); } catch (e) { return { ok: false, error: e.message }; }
-  // The legacy flag remains a setter; explicit --use wins when both flags name the same account.
-  uses = { ...Object.fromEntries(Object.entries(ranks).map(([n, rank]) => [n, rank === "with" ? "normal" : "fallback"])), ...uses };
+  let models, hardest, reserves, efforts, switches, uses, launchShares, channel, decision;
+  try { models = parseModels(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); launchShares = parseLaunchShare(args); channel = parseChannel(args); decision = parseDecision(args, skipped); } catch (e) { return { ok: false, error: e.message }; }
   // Whether any setting flag was given, read once here, before a guided run adds its choices to the same maps.
-  const flagged = Object.keys({ ...models, ...ranks, ...hardest, ...reserves, ...efforts, ...switches, ...uses, ...launchShares }).length > 0 || channel !== undefined || decision !== undefined || otelSet || otelOff;
+  const flagged = Object.keys({ ...models, ...hardest, ...reserves, ...efforts, ...switches, ...uses, ...launchShares }).length > 0 || channel !== undefined || decision !== undefined || otelSet || otelOff;
   // --show only reads: with a change flag beside it, an agent could take the settings printed for the change made.
   if (args.includes("--show")) return flagged || args.includes("--force")
     ? { ok: false, error: "--show only reads your settings: run the change without it, then --show again to see it" } : showSettings(path, { home: otelHome, env });
@@ -179,10 +162,6 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const kept = args.includes("--force") ? [] : r.config.subscriptions;
   const leftOut = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && !r.harnesses[n].signed_in && !kept.includes(n))
     .map((n) => `${HARNESSES[n]?.label ?? n} left out: ${r.harnesses[n].sign_in}, then routr setup again`);
-  for (const n of Object.keys(ranks)) {
-    if (!found.includes(n)) return { ok: false, error: `--metered ${n}=…: ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
-    if (r.harnesses[n].usage_class !== "metered") return { ok: false, error: `--metered ${n}=…: ${n} does not report as metered (${r.harnesses[n].usage_note ?? r.harnesses[n].usage}). For a seat routr cannot read, set "billing": "metered" in the config instead` };
-  }
   for (const [n, id] of Object.entries(models)) {
     if (!found.includes(n)) return { ok: false, error: `--model ${n}=…: ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
     const list = r.harnesses[n].models;
@@ -268,7 +247,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
       return { ok: true, did, skipped: [...skipped, ...leftOut, "nothing changed"], config: path, next_steps: r.next_steps, ...failure() };
     }
     Object.assign(models, choices.models); Object.assign(efforts, choices.efforts); Object.assign(hardest, choices.hardest);
-    Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches); Object.assign(ranks, choices.ranks);
+    Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches);
     Object.assign(uses, choices.uses);
     Object.assign(launchShares, choices.shares);
     if (choices.channel) channel = choices.channel;
@@ -288,13 +267,11 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // A choice or a flag always wins, for a new subscription or one already configured.
   for (const [n, v] of Object.entries(hardest)) settings[n] = { ...settings[n], hardest_work: v };
   for (const [n, v] of Object.entries(reserves)) settings[n] = { ...settings[n], reserve: v };
-  // Fresh metered accounts keep the legacy fallback default until the person chooses normal use.
   let old = null; try { old = JSON.parse(readFileSync(path, "utf8")); } catch {}
-  await meteredRanks(fresh.filter((n) => !old?.subscriptions?.[n]?.metered_rank), r.harnesses, ranks, null);
   // --force rewrites the file from the suggestions, but keeps the person's own choices: telemetry, automatic updates
   // and their channel, the decision model, and which subscriptions are turned off.
   if (!config) {
-    config = { ...starterConfig(found, models, ranks), ...(typeof old?.telemetry === "boolean" ? { telemetry: old.telemetry } : {}), ...(typeof old?.auto_update === "boolean" ? { auto_update: old.auto_update } : {}),
+    config = { ...starterConfig(found, models), ...(typeof old?.telemetry === "boolean" ? { telemetry: old.telemetry } : {}), ...(typeof old?.auto_update === "boolean" ? { auto_update: old.auto_update } : {}),
       ...(UPDATE_CHANNELS.includes(old?.update_channel) ? { update_channel: old.update_channel } : {}), ...(old?.decision ? { decision: old.decision } : {}), ...(old?.otel ? { otel: old.otel } : {}),
       // A sure_at the person set is theirs; 0.8 was Jev's, written by an older setup, and now follows the model.
       ...(typeof old?.sure_at === "number" && old.sure_at !== 0.8 ? { sure_at: old.sure_at } : {}) };
@@ -302,10 +279,10 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     for (const [n, s] of Object.entries(old?.subscriptions ?? {})) if (config.subscriptions[n]) {
       if (s?.enabled === false) config.subscriptions[n].enabled = false;
       // A rebuild must not silently change where the person permits routine spending.
-      for (const k of ["use", "metered_rank", "billing", "share"]) if (s?.[k] !== undefined) config.subscriptions[n][k] = s[k];
+      for (const k of ["use", "billing", "share"]) if (s?.[k] !== undefined) config.subscriptions[n][k] = s[k];
     }
   }
-  else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models, ranks).subscriptions[n] };
+  else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models).subscriptions[n] };
   // Then every choice onto its subscription, new or old; what changed on an old one is said.
   const changed = [];
   const otelChanged = otelOff || otelEndpointValue !== undefined;
@@ -334,7 +311,6 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     sub.default_effort = to;
   }
   for (const [n, on] of Object.entries(switches)) put(n, "enabled", on);
-  for (const [n, rank] of Object.entries(ranks)) put(n, "metered_rank", rank);
   for (const [n, use] of Object.entries(uses)) put(n, "use", use);
   for (const [n, w] of Object.entries(launchShares)) if (w !== "off" || config.subscriptions[n]?.share !== undefined) put(n, "share", w === "off" ? null : w);
   // The update channel is one setting for the whole file. An invalid value reads as stable, so it is replaced either way.
@@ -362,6 +338,9 @@ export async function setup(args, { inspect: look = inspect, question, interacti
         if (!ui && P.local) { const not = await P.ready(model, env); if (not) skipped.push(`${P.label}: ${not} (a download of more than 10 GB: ask the user first)`); }
       }
     }
+  }
+  for (const [n, sub] of Object.entries(config.subscriptions ?? {})) for (const key of ["metered_rank", "assumed_headroom"]) if (sub?.[key] !== undefined) {
+    delete sub[key]; changed.push(`${n}.${key} removed (no longer used)${key === "metered_rank" ? `; this seat now takes everyday work unless --use ${n}=fallback is set` : ""}`);
   }
   if (changed.length) did.push(`changed ${changed.join(", ")}`);
   if (!r.config.exists || args.includes("--force") || fresh.length || changed.length) {

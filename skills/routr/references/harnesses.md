@@ -48,7 +48,7 @@ JSON, and how the login is billed is in it:
 | An API key (`ANTHROPIC_API_KEY`, empty `CLAUDE_CONFIG_DIR`) | `"loggedIn": true, "authMethod": "api_key", "apiProvider": "firstParty", "apiKeySource": "ANTHROPIC_API_KEY"`, no `subscriptionType` | `metered`: billed per token |
 | An API key from `apiKeyHelper` (read from Claude Code 2.1.293's code, not measured) | `"authMethod": "api_key_helper"` | `metered` |
 | Through a cloud provider (read from its code; billed per token by the provider per its docs, not measured) | `"apiProvider"`: `bedrock`, `vertex`, `foundry`, `anthropicAws`, `anthropicGoogleCloud`, `mantle` | `metered` |
-| Through a Claude apps gateway (read from its code) | `"apiProvider": "gateway"` | nothing: its spend limit arrives as a window (`capped`) |
+| Through a Claude apps gateway (read from its code) | `"apiProvider": "gateway"` | nothing: its spend limit arrives as a window (`metered`) |
 | Usage-based Enterprise (measured 2026-10-27, Claude Code 2.1.311) | `"loggedIn": true, "authMethod": "claude.ai", "apiProvider": "firstParty", "subscriptionType": "enterprise"`, plus the email and organisation | `metered`, but only when `/usage` answered with no windows: an Enterprise seat with a quota keeps this `subscriptionType`, and its windows decide. A read that failed stays a failure |
 | Any other provider or auth method, a cloud provider beside any authMethod but `third_party` (its code always sets that one with a provider), an explicit `null`, or a value that is not a string | | nothing: only the values above count |
 
@@ -224,11 +224,11 @@ routr classes each pool from the shape of what the harness reports, never from a
 |---|---|---|
 | Codex on a subscription (Pro login, 2026-09-22, CLI 0.155.1) | `primary` weekly window with `usedPercent`, `secondary` null, `credits.hasCredits: false` | `included` |
 | Codex on a ChatGPT Enterprise seat with flexible pricing (2026-09-22, CLI 0.155.1) | `primary` and `secondary` **null**, `credits: { hasCredits: true, unlimited: true }`, `individualLimit: null`, `planType: "business"` on an Enterprise contract | `metered` |
-| Codex with a member credit limit (2026-11-03, CLI 0.166.0) | `individualLimit { limit, used, remainingPercent, resetsAt }`: remaining 71 under the limit, 0 at it; at the limit `spendControlReached: true`, `rateLimitReachedType: "workspace_owner_usage_limit_reached"`, and `credits.hasCredits: true` | `capped`; resets on the month boundary or one second after it |
+| Codex with a member credit limit (2026-11-03, CLI 0.166.0) | `individualLimit { limit, used, remainingPercent, resetsAt }`: remaining 71 under the limit, 0 at it; at the limit `spendControlReached: true`, `rateLimitReachedType: "workspace_owner_usage_limit_reached"`, and `credits.hasCredits: true` | `metered`; resets on the month boundary or one second after it |
 | Claude Code on a seat with quota windows: Pro, Max, Team (measured: the plan does not change what `/usage` prints) | `/usage`: "Current session" and "Current week (all models)" (read as `five_hour` and `seven_day`); statusline `rate_limits.five_hour` and `seven_day` | `included` |
 | Claude Code on an API key (measured 2026-10-07) | `/usage`: a session cost summary, no windows; `claude auth status`: `"authMethod": "api_key"` | `metered`, from the auth status (above) |
 | Claude Code on usage-based Enterprise (measured 2026-10-27, Claude Code 2.1.311) | `/usage`: no windows, only usage credits spent; `claude auth status`: `"subscriptionType": "enterprise"` | `metered`, from the auth status beside a `/usage` that answered with no windows (above). An Enterprise seat that shows windows is ranked on them |
-| Claude Code behind a Claude apps gateway with spend limits (claimed: docs) | `rate_limits.spend_limit`, `used_percentage` may pass 100 | `capped` |
+| Claude Code behind a Claude apps gateway with spend limits (claimed: docs) | `rate_limits.spend_limit`, `used_percentage` may pass 100 | `metered` |
 | Kiro on a Free plan (measured 2026-09-26, Kiro CLI 2.24.1) | `/usage`: "Estimated Usage \| resets on 2026-10-01 \| KIRO FREE", "Credits (0.00 of 50 covered in plan), 0.0%": one monthly pool that every model draws on at its own rate. Takes ~10 s and 0 credits, and leaves an empty saved session. The figure is an estimate that lagged a 0.10-credit turn | `included` |
 | Kiro on a paid plan with overage on (not observed) | unknown: any line beyond the credits line is counted in the reading's note ("N additional lines not read"), never copied or parsed | `included` until measured |
 
@@ -237,7 +237,7 @@ routr classes each pool from the shape of what the harness reports, never from a
 Each reader goes through the harness's own command or screen, and only once its sign-in check passes; the two
 fallbacks below read what the harness or routr itself wrote (Codex's session log, `routr statusline`'s snapshot). An
 update of the harness, or of herdr for Cursor, can change what a reader sees without a word: when a reader that worked
-before has no reading a day old or newer, its last try failed, and routing is left with the assumed headroom (no
+before has no reading a day old or newer, its last try failed, and routing is left with unknown capacity (no
 kept reading to use; a metered seat never), `dispatch`, `usage` and `doctor` warn and give the command to read it
 again.
 
