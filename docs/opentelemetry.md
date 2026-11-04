@@ -513,6 +513,7 @@ producer, including config and input notes forwarded into `warnings`.
 | `branch_changed` | Launch branch has changed. |
 | `copy_missing` | Requested copy source is missing. |
 | `messages_dropped` | Stopped worker had queued messages. |
+| `worker_not_shown` | No terminal shows the worker. |
 | `process_unseen` | Saved process id cannot prove the harness state. |
 | `cleanup_unseen` | Cleanup sees git state only. |
 | `other_worktrees` | Repository has other worktrees. |

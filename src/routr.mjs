@@ -88,6 +88,8 @@ const ACT = {
   },
   send: async (args) => { const r = await (await import("./lib/workers.mjs")).sendCommand(args, settings); print(r); return r.ok ? 0 : 1; },
   stop: async (args) => { const r = await (await import("./lib/workers.mjs")).stopCommand(args, settings); print(r); return r.ok ? 0 : 1; },
+  // Text for a person, not an answer for an agent: it runs until the worker is cleaned up.
+  watch: async (args) => { try { return await (await import("./lib/watch.mjs")).watchCommand(args); } catch (e) { console.error(`routr: ${e?.message ?? e}`); return 1; } },
   skill: async (args) => { const r = (await import("./lib/skill-install.mjs")).installSkill({ dryRun: args.includes("--dry-run") }); print(r, 1); return r.ok ? 0 : 1; },
 };
 // Which of those a command line reaches (launch and update are dispatched first, below): `key set` and `skill install`

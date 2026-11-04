@@ -2,6 +2,7 @@
 // the decision model (its provider's key, or a local Ollama), and the config, and ends with the commands that fix what is missing. It writes nothing:
 // `routr setup` (lib/setup.mjs) does, from the same inspection.
 import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { inCore } from "./core.mjs";
 import { delimiter, join, win32 } from "node:path";
 import { CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
@@ -103,7 +104,7 @@ export function nextSteps(r) {
 
 // Everything doctor reports, as data. `routr setup` starts from the same inspection.
 export async function inspect({ configPath, quiet } = {}) {
-  const r = { from_source: !standalone(), runtime: `routr ${ROUTR_VERSION} (${standalone() ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, herdr: { path: which("herdr") ?? offPath("herdr"), inside_session: process.env.HERDR_ENV === "1",
+  const r = { from_source: !standalone(), runtime: `routr ${ROUTR_VERSION} (${standalone() ? "standalone binary" : `from source under ${globalThis.Bun ? "bun " + Bun.version : "node " + process.version}`})`, core: { path: which("hc"), inside_terminal: inCore(process.env) }, herdr: { path: which("herdr") ?? offPath("herdr"), inside_session: process.env.HERDR_ENV === "1",
     // The orchestrator guide leans on herdr's own skill for pane and agent commands; routr does not bundle it.
     skill: [".agents/skills/herdr", ".claude/skills/herdr"].some((d) => existsSync(join(home(), d, "SKILL.md"))) }, harnesses: {}, decision: [], config: {}, starter_config: null };
   // Every check that waits on something else (each harness, the key's test call) runs at once:
@@ -235,6 +236,7 @@ export function render(r) {
   const { notes, problems = [] } = r.config;
   const seen = r.update_seen_hours_ago == null ? "" : `, seen ${r.update_seen_hours_ago} h ago`;
   line(!r.update_available, `${r.runtime}${r.update_available ? ` · ${r.update_available} is available${seen}: run \`routr update\`` : ""}`);
+  if (r.core?.inside_terminal) line(Boolean(r.core.path), r.core.path ? "herdr-core (inside its terminal): workers run headless, each with its progress in a tab of its own" : "herdr-core terminal, but `hc` is not on PATH: workers run headless with nothing to show them; `routr watch` still follows one");
   line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: workers in herdr panes and Cursor's usage need it (https://herdr.dev). Without it, workers run headless"}`);
   if (r.herdr.path) line(r.herdr.skill, `herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
   const base = baseVersion(ROUTR_VERSION);

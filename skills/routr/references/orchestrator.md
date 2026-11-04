@@ -7,7 +7,8 @@ this file covers only what herdr does not know.
 
 Check first: `test "${HERDR_ENV:-}" = 1`. Outside herdr there are no panes: `routr launch` starts Claude Code,
 Codex, Cursor, Antigravity and Kiro workers headless instead, and you follow them with `routr wait`. Read "Outside herdr: headless workers" (after
-step 6) for what changes; everything else here applies as written.
+step 6) for what changes; everything else here applies as written. That includes the Herdr app: its terminals are
+herdr-core's, not panes, and each worker's progress appears in a tab of its own.
 
 ## 1. Decide whether to launch at all
 
@@ -369,6 +370,12 @@ harness's own headless mode (Claude Code's `-p`, Codex's app-server, Cursor's `-
 `--cwd` without one), held by a routr process of its own. Dispatch, the task file, `--advice`, the
 model and effort choice, `check` and `record` are as in herdr. What differs:
 
+- **In the Herdr app, or any herdr-core terminal** (`HC_TERMINAL_ID` is set), the worker is still headless, and launch
+  also opens a terminal running `routr watch` beside it: in the app, a tab named for the worker in your space, with the
+  worker's status in the app's Agents list. `worker.terminal` in launch's answer is its address. It shows state, tools
+  and report paths, never the worker's text, and closing it stops nothing. It goes when `routr cleanup --worker` runs.
+  If it cannot start, launch still succeeds, with a `worker_not_shown` warning. Tell the user a worker can be followed
+  this way anywhere: `routr watch --name <name>` in a terminal of their own.
 - **Every harness, worktrees as in herdr.** A headless Kiro worker has run only against a
   fake and a direct probe of its protocol, not yet end to end through routr: watch its first turn closely. A headless Cursor worker has run end to end through
   routr once, on macOS only. `--pane` and `--direction` are refused outside

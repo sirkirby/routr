@@ -141,6 +141,7 @@ const ALLOWED = [
   ["lib/runtime.mjs", "platform adapters", "via(...prepare(cmd, args, opts, platform))", 2],
   ["lib/runtime.mjs", "Windows taskkill", '(via ?? spawn)(exe, ["/PID", String(child.pid), "/T", "/F"], startOptions({ stdio: "ignore" }))', 1],
   ["lib/herdr.mjs", "herdr clients", 'via("herdr", args, { stdio: ["ignore", "pipe", "pipe"] })', 1],
+  ["lib/core.mjs", "hc and herdr-app clients", 'start(cmd, args, { stdio: ["ignore", "pipe", "ignore"] })', 1],
   ["lib/update.mjs", "updater version inspection and confirmation", 'spawn(self, ["--version"], { encoding: "utf8", timeout: ASK_BINARY_MS, killSignal: "SIGKILL" })', 2],
   ["lib/update.mjs", "updater skill install", 'spawn(self, ["skill", "install"], { encoding: "utf8", timeout: SKILL_INSTALL_MS, killSignal: "SIGKILL" })', 1],
   ["lib/update.mjs", "detached updater", 'spawn(["update", "--background"])', 1],

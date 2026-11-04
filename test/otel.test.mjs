@@ -511,7 +511,7 @@ test("saved header values stay out of every command's whole output, queued batch
   writeFileSync(advice, JSON.stringify({ id: "safe-advice", brief_sha: briefSha("safe task"), mode: "dispatch", level: "standard", facts: {} }));
   const cases = [
     ["dispatch", "safe task"], ["subagent", "safe task"], ["check", "--brief", advice, "--report", advice], ["doctor", "--json"], ["doctor"], ["setup", "--show"],
-    ["key", "set", "otel-headers"], ["launch", "--dry-run"], ["cleanup", "--dry-run"], ["workers"], ["wait", "--timeout", "1"], ["send"], ["stop"], ["usage"],
+    ["key", "set", "otel-headers"], ["launch", "--dry-run"], ["cleanup", "--dry-run"], ["workers"], ["wait", "--timeout", "1"], ["send"], ["stop"], ["watch"], ["usage"],
     ["record", "--advice", advice, "--ledger", ledger, "--subscription", "codex", "--model", "fixture", "--effort", "low", "--verdict", "done", "--check", "pass"],
     ["assess", "--ledger", ledger], ["share", "--ledger", ledger, "--out", join(f.home, "share.jsonl")], ["telemetry", "status"], ["feedback"], ["skill", "install", "--dry-run"], ["uninstall", "--dry-run", "--json"], ["update", "--help"], ["statusline"]
   ];

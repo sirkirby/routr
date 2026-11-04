@@ -105,6 +105,11 @@ export const COMMANDS = {
     description: "outside herdr: stop a headless worker through its own process (macOS and Linux: SIGTERM to the harness's process group, then SIGKILL if the harness has not gone; Windows: taskkill /T); never by a saved process id",
     flags: [{ name: "--name", arg: "<name>", description: "the worker", required: true }],
   },
+  watch: {
+    name: "watch",
+    description: "a person's view of one headless worker: its state, tools and report paths as they change, never its text, until it is cleaned up; changes nothing, and closing it stops nothing. In the Herdr app, launch opens this in a tab of its own",
+    flags: [{ name: "--name", arg: "<name>", description: "the worker", required: true }],
+  },
   share: {
     name: "share",
     description: "write exactly what telemetry sends (no briefs or any text, nothing identifying) to a file you can read; sends nothing",

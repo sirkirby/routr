@@ -601,6 +601,9 @@ plans the pane launch as before: it does not check the environment.
 - `headline`: `routr: <name> (<kind>) took its task, running headless`, or the failure as for a pane launch.
 - Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "headless", run, session }` (`run`:
   the run folder; `session`: the harness's session id (Codex: its thread id; Antigravity: its conversation id; Kiro: its ACP session id), or null).
+  In a herdr-core terminal (`HC_TERMINAL_ID` set, `HERDR_ENV` not) `worker` also has `terminal`, the address of the
+  terminal running `routr watch` for it, and `steps` end with `terminal`. If none could start, the launch still
+  succeeds, without `terminal`, with a `worker_not_shown` warning and `routr watch --name <name>` (run) in `next`.
   `start.argv` is the harness's headless command line (Codex: `app-server` with its update check at startup off; its
   model and effort go in the protocol, subagent defaults in TOML string config overrides; Antigravity: with the worker's folder in `--add-dir`; Kiro: `acp` with the pane's flags; Cursor: `-p --output-format stream-json` with the pane's flags, and `--resume <session>` on each later turn); it is set once the worker's folder is known: a launch
   refused before that shows the pane command planned first, not the headless one. `ran` displays it. `start.env`
@@ -852,6 +855,15 @@ to do if it stays so), `failed` (refused). `ok`: true for `stopped` and `absent`
 `unknown`, `next` adds `routr workers --name <name>` to look again in a moment. Inside a sandbox it can see,
 `warnings` says so, as for `wait`. Own fields: `state`, `name`. Messages the holder still keeps (`queued`, Kiro's held ones included) are dropped by a stop, and `warnings` says
 how many. `next`: `routr cleanup --worker <name>` (run).
+
+## watch
+
+`routr watch --name <name>` (required, once): a person's view of one headless worker, as text and not JSON. It prints
+the worker's harness, model and folder, then a line whenever its state, turn, tool or background commands change and
+when a turn ends, with that turn's report path; never the worker's text. It only reads, and ends with exit 0 once the
+worker is cleaned up or another is launched under its name. A record it cannot read just now does not end it. With
+`HC_TERMINAL_ID` set it also sets the terminal's title to the worker's name and reports status over OSC 7501: the
+state, the harness's name and the worker's name. No such worker: a line on stderr, exit 1.
 
 ## usage
 
