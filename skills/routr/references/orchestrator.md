@@ -377,8 +377,8 @@ the result is.
 In the Herdr app, or any herdr-core terminal (`HC_TERMINAL_ID` is set and `HERDR_ENV` is not), `routr launch` runs the
 harness itself, interactively, in a terminal of its own: a tab in your space, named for the worker, so the user sees the
 real harness at work. Use `hc` for these workers as you use herdr's skill for panes (`hc --skill` is core's own guide).
-`routr launch` and `routr cleanup --worker` are routr's; `routr wait`, `send`, `stop` and `watch` say to use `hc` and do
-nothing else. Dispatch, the task file, `--advice`, the model and effort choice, `check` and `record` are as in herdr. What
+`routr launch` and `routr cleanup --worker` are routr's; `routr workers` says where each one's terminal is (asking `hc`);
+`routr wait`, `send`, `stop` and `watch` say to use `hc` and do nothing else. Dispatch, the task file, `--advice`, the model and effort choice, `check` and `record` are as in herdr. What
 differs:
 
 - **It starts with its task.** Launch needs `--task-file` (or `--task`) and `--advice`, and refuses `--pane` and
@@ -408,6 +408,10 @@ differs:
   the worker is `working` or `blocked`. Otherwise it ends the terminal (`hc kill`, then `hc rm`), then removes the worktree
   with the checks of step 6, and keeps it and the run folder when one fails. To give up on a working worker, run
   `hc kill <t>` first. Cursor reports no status, so cleanup cannot see it working and ends it: be sure it has reported first.
+- **A tab that has gone is still finished with `cleanup --worker`.** When its tab was closed, its harness exited, or a
+  core restart lost it, `routr workers` says `finished` or `gone` and gives that step: cleanup then removes the worktree
+  through its checks and the worker's record. Never remove such a worker's worktree yourself: its record stays, and
+  routr keeps listing it. `unknown` means hc could not say: read its `why` before doing anything.
 
 ## Outside herdr: headless workers
 
