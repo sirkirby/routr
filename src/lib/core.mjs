@@ -28,8 +28,8 @@ const callHc = async (args, run) => {
 };
 
 // hc's names are unique among live terminals, at most 32 of the characters a worker's name uses, and the app's pop-ups
-// say them, so a worker's own name comes first. Only one hc refuses, taken by another terminal (a name used again before
-// the last worker's has gone), gets the worker's id.
+// say them, so a worker's own name comes first. One hc refuses gets one more try with the worker's id: a name used again
+// before the last worker's terminal has gone needs that, and a refusal for any other reason refuses again.
 const withId = (name, id) => `${name.slice(0, 23)}-${id.slice(0, 8)}`;
 
 // A terminal for this worker, in its own tab of the lead's space when the lead is in the app. Off the app (no space
