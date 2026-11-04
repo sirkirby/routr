@@ -131,10 +131,14 @@ test("doctor sends an app user to neither the older herdr nor its skill, and say
   // Terminal herdr without its skill still needs it for panes; with the app it does not.
   expect(told(r(none, { path: "/bin/herdr", skill: false }))[0]).toContain("skills add herdrdev/herdr");
   expect(told(r(app, { path: "/bin/herdr", skill: false }))).toEqual([]);
+  // A lead in herdr uses panes and needs the skill, whatever else is installed.
+  const inHerdr = r(installed, { path: "/bin/herdr", skill: false, inside_session: true });
+  expect(told(inHerdr)[0]).toContain("skills add herdrdev/herdr");
+  expect(render(inHerdr)).toContain("herdr skill not found");
   // With the app and no herdr, only Cursor's usage is left to ask for it.
   expect(told(r(app, { path: null, skill: false }))).toEqual([expect.stringContaining("Cursor's usage")]);
   const inApp = render(r(app, { path: null, skill: false }));
-  expect(inApp).toContain("each with its progress in a tab of its own");
+  expect(inApp).toContain("a tab of its own in the Herdr app");
   expect(inApp).toContain("The Herdr app does not need it otherwise");
   expect(inApp).not.toContain("herdr skill");
   expect(render(r(installed, { path: "/bin/herdr", skill: false }))).toContain("a lead in the Herdr app shows each worker");
