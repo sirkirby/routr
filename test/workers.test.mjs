@@ -243,6 +243,8 @@ setInterval(() => {}, 1000);
 const BRIEF = "PRIVATE-BRIEF-7f3a: rename foo to bar in x.js. Check: grep bar x.js.";
 const SENT = "PRIVATE-SEND-91c2: also rename baz.";
 
+// A fixture's answer file once a whole line is in it: it may be read mid-write (macOS CI, 2026-11-04: half a line).
+const written = (file) => { try { return readFileSync(file, "utf8").endsWith("\n"); } catch { return false; } };
 function world(over = {}) {
   const home = shortHome(), bin = join(home, "bin"), work = join(home, "work"), inputs = join(home, "inputs");
   for (const d of [bin, work, inputs]) mkdirSync(d, { recursive: true });
@@ -512,7 +514,7 @@ test("Codex: a question it asks is declined and the turn goes on; a model it lac
   expect(await until(() => w.state("c2").last_tool === "mcp")).toBe(true);
   // Its question was answered with an error: declined, and the turn went on.
   const answers = join(w.home, "answers.jsonl");
-  expect(await until(() => existsSync(answers))).toBe(true);
+  expect(await until(() => written(answers))).toBe(true);
   expect(readFileSync(answers, "utf8").trim().split("\n").map((x) => JSON.parse(x))).toEqual([{ jsonrpc: "2.0", id: 900, error: { code: -32601, message: "routr does not answer this for a headless worker" } }]);
   w.release();
   w.run(["wait", "--name", "c2", "--timeout", "20000"]);
@@ -639,7 +641,7 @@ test("a headless Kiro worker: its ACP mode, a message held for its next turn, a 
   expect(l.steps.find((s) => s.step === "model")).toMatchObject({ ok: true });
   expect(await until(() => w.state("k1").last_tool === "execute")).toBe(true);
   // Its permission request was declined, and the turn went on.
-  expect(await until(() => existsSync(join(w.home, "answers.jsonl")))).toBe(true);
+  expect(await until(() => written(join(w.home, "answers.jsonl")))).toBe(true);
   // Mid-turn, Kiro takes no prompt: the holder keeps the message, and it runs as turn 2, in the same process.
   const s = w.run(["send", "--name", "k1", "--task", SENT]);
   expect([s.ok, s.state, s.message, s.headline]).toEqual([true, "queued", { code: "queued", why: "next_turn" }, "routr: k1: queued: it runs as the worker's next turn, once the running one ends"]);
