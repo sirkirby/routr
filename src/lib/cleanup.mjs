@@ -17,7 +17,7 @@ import { warning } from "./warnings.mjs";
 import { commandTrace, cleanupLink } from "./traces.mjs";
 import { configOf, oneReading } from "./config.mjs";
 import { lstatSync, readFileSync, readlinkSync, rmdirSync, rmSync } from "node:fs";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { BRANCH, herdrWorktreeFolder, runHerdr } from "./herdr.mjs";
 import { count } from "./wording.mjs";
@@ -183,7 +183,8 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
       if (!got.ok && got.code === "not_found") continue;
       if (d?.state === "finished") continue;
       if (ownWorker && d?.labels?.[WORKER_LABEL] === ownWorker) continue;
-      const unknown = !got.ok ? got.code : d?.state !== "live" || typeof d.foreground?.cwd !== "string" ? "no_folder" : null;
+      // A folder is a whole path: an empty or relative one says nothing about where the program is.
+      const at = d?.foreground?.cwd, unknown = !got.ok ? got.code : d?.state !== "live" || typeof at !== "string" || !at || !isAbsolute(at) ? "no_folder" : null;
       if (unknown && !inside(t.cwd)) { missing("terminal", path); return { why: `hc ${got.ok ? "did not say where terminal " + t.address + "'s program is" : `could not read terminal ${t.address} (${unknown})`}, so whether it runs in ${path} is not known`, next: inspect("Look at that terminal.", ["hc", "get", t.address]) }; }
       if (![t.cwd, d?.cwd, d?.foreground?.cwd].some(inside)) continue;
       if (t.address === env.HC_TERMINAL_ID) return { why: `your own terminal ${t.address} is in ${path}`, next: doNext("Run cleanup from outside the worktree you are removing") };

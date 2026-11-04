@@ -590,7 +590,8 @@ test("in herdr-core, cleanup refuses a worktree a live terminal is in, names cle
   // program is (core's schema: `foreground` is null only once it has finished), nor one that is not a terminal.
   const r3 = await run(fakeHc({ over: { ls: null } }));
   expect([r3.state, existsSync(wt)]).toEqual(["refused", true]);
-  for (const said of [{}, { address: "t5", state: "live", cwd: "/elsewhere", foreground: null }]) {
+  const there = (cwd) => ({ address: "t5", state: "live", cwd: "/elsewhere", foreground: { pid: 5, name: "zsh", argv: [], cwd } });
+  for (const said of [{}, { address: "t5", state: "live", cwd: "/elsewhere", foreground: null }, there(""), there("side")]) {
     const r = await run(coreHc([LEAD, { address: "t5", state: "live", cwd: "/elsewhere" }], { t5: said }));
     expect([r.state, existsSync(wt), r.unavailable.map((u) => u.part)]).toEqual(["refused", true, ["terminal"]]);
     expect(r.headline).toContain("did not say where terminal t5's program is");
