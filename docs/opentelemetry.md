@@ -314,7 +314,7 @@ terminal ids, trace/span ids, creation time and eventually a cleanup time. Nativ
 there. Headless `worker.json` also stores that launch context, revalidated before linking.
 
 Dry runs, failed and refused launches create no index entry. Cleanup queries exclude finished entries; record
-queries retain them. Later commands link only on exactly one match: record by its eight-character advice id; cleanup
+queries retain them. Later commands link only on exactly one match: record by the `launch_id` its row names (`record --launch`), else by its eight-character advice id; cleanup
 by project hash plus branch, native real path hash, or pane id **and current terminal id**. A pane's terminal id proves terminal
 continuity only, never the same process, agent or conversation; restore assigns a new terminal id. Zero matches,
 ambiguous advice, reused panes or a wrong repository give no link. Headless commands use their worker's saved
@@ -353,7 +353,7 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `routr.worktree` | `string` | Worktree relative to project root when inside it; otherwise its folder name; no absolute path. |
 | `routr.kind` | `string` | Worker harness: `claude`, `codex`, `cursor`, `agy`, `kiro`; unknown becomes `other`. |
 | `routr.backend` | `string` | `pane`, `headless` or `terminal`. |
-| `routr.launch.id` | `string` | UUIDv4 identifying a sampled launch; recovery reruns reuse the original id. |
+| `routr.launch.id` | `string` | UUIDv4 identifying a sampled launch: the launch's `launch_id`, as its answer, its launch-history record and its `record --launch` carry it; recovery reruns reuse the original id. |
 | `gen_ai.agent.name` | `string` | Worker name matching `[a-z][a-z0-9_-]{0,31}`; invalid names omitted. |
 | `gen_ai.conversation.id` | `string` | On commands, herdr agent_session of kind `id`, validated as UUIDv4, UUIDv7 or 16–64 lowercase hex characters; on turns, the harness UUID the adapter already reads; omitted when unavailable. |
 | `routr.model` | `string` | Worker model, 1–48 characters matching `[A-Za-z0-9][A-Za-z0-9.:[\]-]*`, without 17 consecutive alphanumerics; invalid becomes `other`. |
@@ -519,6 +519,8 @@ producer, including config and input notes forwarded into `warnings`.
 | `worker_not_shown` | No terminal shows the worker. |
 | `process_unseen` | Saved process id cannot prove the harness state. |
 | `cleanup_unseen` | Cleanup sees git state only. |
+| `launch_history_unreadable` | Launch history could not be read. |
+| `launch_not_found` | Launch is not in the launch history. |
 | `cleanup_terminals_only` | Cleanup sees git state and core terminals. |
 | `other_worktrees` | Repository has other worktrees. |
 | `branch_unmerged` | Unmerged branch was kept. |

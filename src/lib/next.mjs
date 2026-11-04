@@ -18,9 +18,9 @@ export const displayCommand = (argv) => argv.map((w) => safeWord(w) ? word(w) : 
 export const templateCommand = (argv) => argv.map((w, i) => /^<[A-Za-z0-9_| -]+>$/.test(w) ? w : safeWord(w) ? word(w)
   : `<${/^--[a-z][\w-]*$/.test(argv[i - 1] ?? "") ? argv[i - 1].slice(2) : `argument-${i + 1}`}>`).join(" ");
 
-export function recordNext(o, { adopted = false, undelivered = false } = {}) {
+export function recordNext(o, { adopted = false, undelivered = false, launchId = null } = {}) {
   const unknown = adopted || (o.dryRun && o.pane) || !o.model;
-  const argv = ["routr", "record", "--advice", o.advice,
+  const argv = ["routr", "record", "--advice", o.advice, ...(launchId ? ["--launch", launchId] : []),
     ...(o["task-file"] ? ["--task-file", o["task-file"]] : []), "--subscription", o.kind,
     "--model", unknown ? "<model>" : o.model,
     "--effort", unknown ? "<effort>" : o.effort ?? "default",
@@ -32,12 +32,12 @@ export function recordRevisionNext(o, entry, ledger) {
   const argv = ["routr", "record", "--advice", o.advice != null ? resolve(o.advice) : "<advice-file>",
     ...(o.task_file != null ? ["--task-file", resolve(o.task_file)] : []), "--subscription", entry.chose.subscription,
     "--model", entry.chose.model, "--effort", entry.chose.effort, "--level", entry.chose.level,
-    "--project", entry.project, "--ledger", resolve(ledger), "--run-id", entry.run_id,
+    "--project", entry.project, ...(entry.launch_id ? ["--launch", entry.launch_id] : []), "--ledger", resolve(ledger), "--run-id", entry.run_id,
     "--verdict", "<done|partial|blocked>", "--check", "<pass|fail|none>", "--note", "<note>"];
   return doNext("To revise this worker's outcome, fill this template with the updated verdict, check and note; use the original advice file.", templateCommand(argv));
 }
 
-export function launchNext(next, { record, cleanup, adopted, attempted, planned, submitted, failed }) {
-  return [...next, ...(record && (planned || attempted) ? [recordNext(record, { adopted, undelivered: failed && attempted && !submitted && !planned })] : []),
+export function launchNext(next, { record, cleanup, adopted, attempted, planned, submitted, failed, launchId = null }) {
+  return [...next, ...(record && (planned || attempted) ? [recordNext(record, { adopted, launchId, undelivered: failed && attempted && !submitted && !planned })] : []),
     ...(cleanup ? [runNext("After verification, finish this worker.", cleanup)] : [])];
 }

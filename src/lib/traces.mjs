@@ -54,7 +54,9 @@ export function recordSpan(entry) {
     put(c.span, { "routr.verdict": pick(o.verdict, VERDICTS), "routr.check": pick(o.check, CHECK_RESULTS), "routr.level": pick(choice.level, LEVELS),
       "routr.attempts": o.attempts, "routr.seconds": o.seconds, "routr.causes": o.causes?.map((v) => pick(v, OUTCOME_CAUSES)), "routr.subscription": pick(choice.subscription, subscriptions),
       "routr.effort": pick(choice.effort, EFFORTS), "routr.effort_from": pick(choice.effort_from, ["given", "model id", "config default"]), "routr.advice.id": /^[a-f0-9]{8}$/.test(entry.id) ? entry.id : null });
-    if (/^[a-f0-9]{8}$/.test(entry.id)) link(c.index.match({ advice_id: entry.id }));
+    // By the launch the row names, exactly; a row without one by its advice, which only one launch may have used.
+    if (typeof entry.launch_id === "string" && entry.launch_id) link(c.index.match({ launch_id: entry.launch_id }));
+    else if (/^[a-f0-9]{8}$/.test(entry.id)) link(c.index.match({ advice_id: entry.id }));
   } catch {} // A trace projection cannot undo a written ledger row.
 }
 function link(entry) {
@@ -91,6 +93,9 @@ export async function cleanupLink(o, run) {
     }
   } catch {} // Index or pane observation failure never changes cleanup.
 }
+// The launch's identity after completeLaunch: its own, or the original's when a `--pane` recovery rerun finishes a sampled
+// launch (docs/opentelemetry.md). Null when no trace was started; launch then keeps the id it made.
+export function launchIdentity() { const c = context.getStore(); return c?.command === "launch" && c.launchId ? c.launchId : null; }
 export async function completeLaunch(r, run, { rerun = false, backend } = {}) {
   const c = context.getStore(); if (!c?.span || c.command !== "launch") return;
   const identity = traceIdentity(r.cwd), facts = r.pane && r.state !== "planned" ? await paneFacts(r.pane, run) : null;
@@ -257,7 +262,7 @@ export function commandTrace(command, setup = {}, run) {
   if (context.getStore()) return run(); // Internal cleanup of an unstarted launch belongs to that launch.
   let session, span, batch;
   try {
-    const { config, env = process.env, otel = {}, lead, explicitLevel, cwd } = typeof setup === "function" ? setup() : setup;
+    const { config, env = process.env, otel = {}, lead, explicitLevel, cwd, launchId } = typeof setup === "function" ? setup() : setup;
     session = otelSession(config, env, otel);
     const inherited = parseTraceparent(carriersFrom(env).carriers.TRACEPARENT);
     if (session.on) batch = { observations: [], observed: new Set(), env, command };
@@ -266,7 +271,7 @@ export function commandTrace(command, setup = {}, run) {
         ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, attributes: {} });
       const id = leadSession(env, lead); if (id && ["dispatch", "subagent", "launch"].includes(command)) put(span, { "routr.lead.session_id": id });
       const identity = traceIdentity(cwd); put(span, identity.attributes);
-      batch = { ...batch, span, spans: [span], logs: [], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: randomUUID(), matched: new Set(), observed: new Set() };
+      batch = { ...batch, span, spans: [span], logs: [], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: launchId ?? randomUUID(), matched: new Set(), observed: new Set() };
     }
   } catch {} // Setup is optional too: a bad config or identity lookup cannot refuse a command.
   if (!batch) return run();

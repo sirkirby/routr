@@ -576,7 +576,11 @@ Own fields: `state`, `kind`, `name`, `pane`, `cwd`, `model`, `effort`, `start` `
 (each `{ step, ok, detail }`), `ran`, `would_run` (dry run only), `prompt_chars`, `advice` `{ file, matches }` (when a
 task was given), `worktree` `{ branch, base?, path, workspace }` (when one was made), `needs_input` `{ why, herdr?,
 note? }` (only in `needs_input`; `herdr` is `{ state, rule?, explained?, rules? }`), `screen` (when launch stopped at
-a pane: needs input, or failed after reading the pane).
+a pane: needs input, or failed after reading the pane), `launch_id` (on every backend: the launch's id, a UUID, when
+its worker took its task or was left ready for one, and when a terminal worker stopped at a question; null otherwise,
+a dry run included). It is the id of the launch's record in routr's launch history, of its OpenTelemetry span when one
+is exported (`routr.launch.id`; a `--pane` recovery rerun of a sampled launch keeps the original's), and the
+`--launch` its record template passes.
 
 ### launch outside herdr (headless)
 
@@ -691,7 +695,15 @@ Inputs:
   unreadable, or not matching `--task-file`.
 - Used when given: `--task-file` (compared with the advice before anything is read or written), `--level` (default:
   the advised level; the guides ask for it always), `--report`, `--subagent` (repeatable: `<subtask> → <level> → <model> → <effort>`, the effort optional and kept in the local ledger only), `--seconds`, `--attempts`,
-  `--cause` (repeatable), `--run-id`, `--project`, `--note`, `--ledger`.
+  `--cause` (repeatable), `--run-id`, `--launch`, `--project`, `--note`, `--ledger`.
+- `--launch <launch_id>`: the launch's `launch_id` (launch's record template carries it). The row stores it as
+  `launch_id` (null without one), and it is the run's link to its launch. Refused (with `error`) when it is not a
+  launch id's shape, or names a launch in routr's launch history made with other advice. A revision keeps its run's
+  launch: given as another, refused.
+- The row's `project`: `--project` when given; on a revision, the run's own; else the project of the launch `--launch`
+  names, from routr's launch history; else the git repository's folder name of the folder record runs in. A launch
+  the history no longer has (it keeps 7 days) or history it cannot read only warns (`launch_not_found`,
+  `launch_history_unreadable`) and falls back to the folder.
 
 Usable advice. Today `record` without `--task-file` appends a row from any JSON, a saved refusal envelope
 (`{ ok: false, error, … }`) included, with no advice id. One check, at the advice-file boundary that `launch` and
@@ -721,8 +733,8 @@ and input warnings, and that the advice was not checked against a task. `next`:
   is finished. Every other outcome: send the work back or escalate, then verify and revise the row; no cleanup yet.
   This applies to a new row and a `--run-id` revision alike.
 - A `kind: "do"` revision template on every successful record: the original `--advice`, `--task-file` when given,
-  recorded `--subscription`, `--model`, resolved `--effort`, chosen `--level`, `--project`, `--ledger`, and this
-  `--run-id`, with `--verdict`, `--check` and `--note` placeholders. Resolving effort and retaining project and ledger
+  recorded `--subscription`, `--model`, resolved `--effort`, chosen `--level`, `--project`, `--launch` when the run has
+  one, `--ledger`, and this `--run-id`, with `--verdict`, `--check` and `--note` placeholders. Resolving effort and retaining project and ledger
   keep the original choice and row identity when the template is followed. Advice, task and ledger paths in the
   template are absolute, resolved from record's working directory, so it can be followed from another folder.
   Stdin advice uses an `<advice-file>`

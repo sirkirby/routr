@@ -319,7 +319,7 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
     subagent: 'id ts mode question_set brief_sha brief_chars provider decision_model unmeasured ms answers level sure between work_type high_risk worker facts notes meaning',
     dispatch: 'id ts mode question_set brief_sha brief_chars provider decision_model unmeasured ms answers level sure between work_type high_risk worker facts notes meaning subscriptions',
     check: 'mode question_set provider decision_model unmeasured ms claimed flags unclear checks',
-    launch: 'state kind name pane cwd model effort start steps ran would_run prompt_chars advice worktree needs_input screen',
+    launch: 'state kind name pane cwd model effort start steps ran would_run prompt_chars advice worktree needs_input screen launch_id',
     record: 'id run_id ledger', cleanup: 'state steps ran cwd pane worktrees worktree branch', usage: 'level subscriptions subscription reading',
   };
   const split = join(f.dir, "split.json");

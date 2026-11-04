@@ -2,7 +2,11 @@
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { countLaunch, LAUNCH_COUNTS_DIR, recentLaunches, shareView } from "../src/lib/shares.mjs";
+import { randomUUID } from "node:crypto";
+import { recentLaunches, shareView } from "../src/lib/shares.mjs";
+import { LAUNCH_HISTORY_DIR as LAUNCH_COUNTS_DIR, recordLaunch } from "../src/lib/launch-history.mjs";
+// One launch of `subscription`, as launch records it (launch-history.test.mjs covers the decision fields).
+const countLaunch = (subscription, opts) => recordLaunch(randomUUID(), { subscription }, opts);
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { UNINSTALL_LOCK } from "../src/lib/runtime.mjs";
@@ -98,7 +102,7 @@ test("the pure view needs a ranked list and never reads a file", () => {
   expect(shareView(ranked, { counts: {} }, { a: { share: 1 }, b: { share: 3 } })).toMatchObject({ due: "b", order: ["b", "a"] });
 });
 
-test("countLaunch keeps one file per launch with only the subscription and the time; recentLaunches counts the last 7 days", () => {
+test("each launch keeps one file; recentLaunches counts the last 7 days", () => {
   const home = scratch("share-home");
   mkdirSync(join(home, ".local/state/routr"), { recursive: true });
   expect(recentLaunches({ home, now: NOW })).toEqual({ counts: {} });
@@ -109,10 +113,10 @@ test("countLaunch keeps one file per launch with only the subscription and the t
   expect(countLaunch("codex", { home, now: NOW - 1000 })).toBe(true);
   expect(countLaunch("codex", { home, now: NOW })).toBe(true);
   expect(recentLaunches({ home, now: NOW })).toEqual({ counts: { claude: 1, codex: 2 } });
-  // The write swept the launch older than the window; the others stay. Each file holds two fields.
+  // The write swept the launch older than the window; the others stay. A launch given only its account has no decision.
   const files = readdirSync(LAUNCH_COUNTS_DIR(home));
   expect(files.length).toBe(3);
-  for (const f of files) expect(Object.keys(JSON.parse(readFileSync(join(LAUNCH_COUNTS_DIR(home), f), "utf8"))).sort()).toEqual(["at", "subscription"]);
+  for (const f of files) expect(Object.entries(JSON.parse(readFileSync(join(LAUNCH_COUNTS_DIR(home), f), "utf8"))).filter(([, v]) => v !== null).map(([k]) => k).sort()).toEqual(["at", "subscription"]);
   // Files that are not ours, half written, or from the future do not count, and are not removed.
   const dir = LAUNCH_COUNTS_DIR(home);
   writeFileSync(join(dir, "notes.json"), JSON.stringify({ subscription: "claude", at: new Date(NOW).toISOString() }));
@@ -125,7 +129,7 @@ test("countLaunch keeps one file per launch with only the subscription and the t
   expect(readdirSync(dir)).toContain("22222222-2222-4222-8222-222222222222.json");
 });
 
-test("countLaunch writes nothing while routr is being uninstalled, and never throws", () => {
+test("a launch writes nothing while routr is being uninstalled, and never throws", () => {
   const home = scratch("share-uninstall");
   mkdirSync(join(home, ".local/state/routr"), { recursive: true });
   writeFileSync(UNINSTALL_LOCK(home), "");

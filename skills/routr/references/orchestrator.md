@@ -290,8 +290,11 @@ ledger.
     routr record --advice <file> --task-file <this worker’s task file> --subscription <s> --model <m> --effort <e> \
         --level <the level you settled on> --verdict <done|partial|blocked> \
         --check <pass|fail|none> [--report <file>] [--subagent "<subtask> → <level> → <model> → <effort>"] \
-        [--attempts <n>] [--seconds <n>] [--cause <cause>] [--run-id <id>] \
+        [--attempts <n>] [--seconds <n>] [--cause <cause>] [--run-id <id>] [--launch <launch_id>] \
         [--note "<reasons for the model, effort and account; what happened>"]
+
+Launch's record template fills `--launch` with its `launch_id`: keep it. The row then takes that launch's project,
+the repository the worker was in, wherever you record from.
 
 Pass `--level` explicitly, even when unchanged, and use `--note` for separate model, effort and account reasons,
 any level override, and the observed result. Keep the original advice intact: selecting a larger model alone does

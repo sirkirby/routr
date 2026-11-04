@@ -1,6 +1,6 @@
 // launch.mjs, herdr.mjs, harnesses.mjs: starting a worker in a herdr pane
 import { expect, test } from "bun:test";
-import { isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { plan } from "../src/lib/harnesses.mjs";
 import { headlessArgv } from "../src/lib/headless.mjs";
@@ -405,6 +405,43 @@ test("a worker that took its task counts once toward the launch share; a dry run
   const failed = await launch([...launchArgs, "--task", "Fix the parser. Verify with bun test."], { run: () => { throw new Error("herdr is gone"); }, home });
   expect(failed.state).toBe("failed");
   expect(recentLaunches({ home }).counts).toEqual({ claude: 1 });
+});
+
+test("a launch that took its task gets one id: its answer, its history record and its record template all carry it", async () => {
+  const { readHistory } = await import("../src/lib/launch-history.mjs");
+  const home = scratch("launch-history"); mkdirSync(join(home, ".local/state/routr"), { recursive: true });
+  const repo = scratch("history-repo"); mkdirSync(join(repo, ".git")); mkdirSync(join(repo, "sub"));
+  const brief = "Rename the parser's private helper. Verify with bun test. 7f3a-distinctive-brief";
+  const dir = scratch("history-advice"), advice = join(dir, "advice.json");
+  writeFileSync(advice, JSON.stringify({ mode: "dispatch", id: "ab12cd34", brief_sha: briefSha(brief), level: "standard", sure: false, between: ["basic", "standard"], work_type: "refactor", high_risk: false, decision_model: "jev-1.14.0" }));
+  // The pane's shell opens in the worker's folder, a subfolder of the repository.
+  const inRepo = fakeHerdr({ reply: (a) => (a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, cwd: join(repo, "sub") }] } }) : undefined) });
+  const r = await launch([...launchArgs, "--cwd", join(repo, "sub"), "--task", brief, "--advice", advice], { ...inRepo.deps, home });
+  expect(r.state).toBe("prompted");
+  expect(r.launch_id).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  const { records } = readHistory({ home });
+  expect(records).toEqual([{ launch_id: r.launch_id, at: expect.any(Number), subscription: "claude", model: "sonnet", effort: null, advice_id: "ab12cd34",
+    advised: { level: "standard", sure: false, between: ["basic", "standard"], work_type: "refactor", high_risk: false, fallback: false },
+    project: basename(repo), backend: "pane", name: "worker" }]);
+  // The task never reaches the history: every file in it, read whole.
+  const folder = join(home, ".local/state/routr/launch-counts");
+  for (const f of readdirSync(folder)) expect(readFileSync(join(folder, f), "utf8")).not.toContain("7f3a-distinctive-brief");
+  const template = r.next.find((n) => n.template?.startsWith("routr record"))?.template;
+  expect(template).toContain(`--launch ${r.launch_id}`);
+  // A dry run and a failed start have no launch, so no id and no record.
+  const planned = await launch([...launchArgs, "--task", brief, "--advice", advice, "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); }, home });
+  const failed = await launch([...launchArgs, "--task", brief, "--advice", advice], { run: () => { throw new Error("herdr is gone"); }, home });
+  expect([planned.launch_id, failed.launch_id, readHistory({ home }).records.length]).toEqual([null, null, 1]);
+  expect(planned.next.find((n) => n.template?.startsWith("routr record"))?.template).not.toContain("--launch");
+});
+
+test("an adopted pane's agent kept its own model and effort: its history record says neither", async () => {
+  const { readHistory } = await import("../src/lib/launch-history.mjs");
+  const home = scratch("history-adopt"), here = process.cwd(); mkdirSync(join(home, ".local/state/routr"), { recursive: true });
+  const f = fakeHerdr({ reply: (a) => (a[1] === "prompt" ? herdrOK({}) : a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "claude", agent_status: "idle", interactive_ready: true, cwd: here } }) : undefined) });
+  const r = await launch([...launchArgs, "--effort", "high", "--pane", "w1:p9", "--cwd", here, "--task", "Task"], { ...f.deps, home });
+  expect(r.steps.map((st) => st.step)).toContain("adopt");
+  expect(readHistory({ home }).records.map((x) => [x.launch_id, x.model, x.effort])).toEqual([[r.launch_id, null, null]]);
 });
 
 test("startup next uses the guide's trust rule and leaves an unauthorized question waiting", async () => {

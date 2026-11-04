@@ -1,81 +1,20 @@
 // `share`: the user's ratio of launches between normal metered accounts with room.
 // A cap with no room after reserve leaves the ratio; the weights split launches among those still eligible.
 // Advice only: the lead still chooses model and effort fit first, and nothing here enforces the ratio.
-// routr counts its own launches: one file per worker that took its task (or was left ready with no task), under its
-// own folder, holding only the subscription and the time. Counting is best effort: a write that fails never fails the
-// launch, and history that cannot be read leaves the advice as it is without a share.
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
-import { randomUUID } from "node:crypto";
-import { join } from "node:path";
-import { home as userHome, STATE_DIR, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
+// The launches it counts are routr's launch history (launch-history.mjs): every launch that took its task, or was left
+// ready with no task. History that cannot be read leaves the advice as it is, without a share.
+import { readHistory, HISTORY_DAYS } from "./launch-history.mjs";
 
-export const SHARE_WINDOW_DAYS = 7;
-const WINDOW_MS = SHARE_WINDOW_DAYS * 86400000;
-// A clock a little ahead on another process is not a launch from the future; anything further ahead is not ours.
-const SKEW_MS = 60000;
-export const LAUNCH_COUNTS_DIR = (h = userHome()) => join(STATE_DIR(h), "launch-counts");
-const OWN = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.json$/;
-const SUBSCRIPTION = /^[a-z][a-z0-9_-]{0,31}$/;
+export const SHARE_WINDOW_DAYS = HISTORY_DAYS;
 
-// One record; null when the file is not one of ours (a stray file, damaged JSON, a future time) or is gone (swept
-// by a launch meanwhile); UNREADABLE when it is there and cannot be read, since skipping it would skew the counts.
-const UNREADABLE = Symbol("unreadable");
-function readRecord(dir, name, now) {
-  if (!OWN.test(name)) return null;
-  let text;
-  try {
-    const file = join(dir, name);
-    if (!lstatSync(file).isFile()) return null;
-    text = readFileSync(file, "utf8");
-  } catch (e) { return e?.code === "ENOENT" ? null : UNREADABLE; }
-  try {
-    const v = JSON.parse(text), at = Date.parse(v?.at);
-    if (!v || typeof v.subscription !== "string" || !SUBSCRIPTION.test(v.subscription) || !Number.isFinite(at) || at > now + SKEW_MS) return null;
-    return { name, subscription: v.subscription, at };
-  } catch { return null; }
-}
-
-// A folder of routr's own: there and a real folder ("yes"), not there yet ("absent"), or a link or something else
-// ("no"). Neither the state folder nor the history folder is ever used through a link: writes and the sweep would act
-// outside routr's folders.
-const folder = (path) => { try { return lstatSync(path).isDirectory() ? "yes" : "no"; } catch (e) { return e?.code === "ENOENT" ? "absent" : "no"; } };
-
-// Launches per subscription over the window. `unreadable` when the folder or one of its records is there but cannot
-// be read (or the folder is a link, which countLaunch would not write through): the caller
-// shows no share then, since a count it cannot see is not a count of zero. Reads never write or sweep.
-export function recentLaunches({ home = userHome(), now = Date.now() } = {}) {
-  const dir = LAUNCH_COUNTS_DIR(home), state = folder(STATE_DIR(home)), own = state === "yes" ? folder(dir) : state;
-  if (own === "absent") return { counts: {} };
-  let names;
-  try { names = own === "yes" ? readdirSync(dir) : null; } catch { names = null; }
-  if (!names) return { counts: {}, unreadable: true };
+// Launches per subscription over the window. `unreadable` when the history is there but cannot be read: the caller
+// shows no share then, since a count it cannot see is not a count of zero.
+export function recentLaunches(opts) {
+  const h = readHistory(opts);
+  if (h.unreadable) return { counts: {}, unreadable: true };
   const counts = {};
-  for (const n of names) {
-    const r = readRecord(dir, n, now);
-    if (r === UNREADABLE) return { counts: {}, unreadable: true };
-    if (r && r.at >= now - WINDOW_MS) counts[r.subscription] = (counts[r.subscription] ?? 0) + 1;
-  }
+  for (const r of h.records) counts[r.subscription] = (counts[r.subscription] ?? 0) + 1;
   return { counts };
-}
-
-// Count one launch. Never throws, and writes nothing while routr is being uninstalled. Each launch gets its own id, so
-// the same task launched again later counts again; records older than the window are removed here, never on a read.
-export function countLaunch(subscription, { home = userHome(), now = Date.now() } = {}) {
-  try {
-    if (!SUBSCRIPTION.test(subscription ?? "") || existsSync(UNINSTALL_LOCK(home))) return false;
-    const dir = LAUNCH_COUNTS_DIR(home);
-    // Each folder is checked before anything is made in it, and again once made.
-    for (const f of [STATE_DIR(home), dir]) {
-      if (folder(f) === "absent") mkdirSync(f, { recursive: true, mode: 0o700 });
-      if (folder(f) !== "yes" || existsSync(UNINSTALL_LOCK(home))) return false;
-    }
-    writeJsonAtomic(join(dir, `${randomUUID()}.json`), { subscription, at: new Date(now).toISOString() }, { mkdir: false, mode: 0o600 });
-    for (const n of readdirSync(dir)) {
-      const r = readRecord(dir, n, now);
-      if (r && r !== UNREADABLE && r.at < now - WINDOW_MS) try { unlinkSync(join(dir, n)); } catch {}
-    }
-    return true;
-  } catch { return false; }
 }
 
 // The share view, pure. `ranked` is rankSubscriptions' list; `launches` is recentLaunches' answer. Active only among
