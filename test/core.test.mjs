@@ -1,6 +1,6 @@
 // Workers in herdr-core: which path a lead takes, what routr asks of `hc`, and `routr watch`. No hc and no harness run.
 import { expect, test } from "bun:test";
-import { inCore, showWorker } from "../src/lib/core.mjs";
+import { inCore, showWorker } from "../src/lib/presenter-watch.mjs";
 import { changes, statusReport } from "../src/lib/watch.mjs";
 import { KINDS, HARNESSES } from "../src/lib/harnesses.mjs";
 import { harnessEnv } from "../src/lib/runtime.mjs";

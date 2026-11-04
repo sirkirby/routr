@@ -222,7 +222,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
     const o = parseCleanupArgs(args);
     await cleanupLink(o, run);
     target = o.worktree ?? o.path;
-    if (o.worker != null) return await (await import("./workers.mjs")).cleanupWorker(o.worker, o, out);
+    if (o.worker != null) return await (await import("./backend-headless.mjs")).cleanupWorker(o.worker, o, out);
     if (o.pane != null) {
       out.pane = o.pane;
       const panes = await paneList([]);

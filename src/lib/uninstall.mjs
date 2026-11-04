@@ -10,7 +10,7 @@ import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { notOursWhy, owner, removeOwned, skillPlaces } from "./skill-install.mjs";
 import { CACHE_DIR, CONFIG_DIR, DATA_DIR, folderId, lockIsStale, home as userHome, releaseFileLock, standalone, start, STATE_DIR, takeLock, UNINSTALL_LOCK, WORKER_NAME, writeJsonAtomic, WORKTREES_DIR } from "./runtime.mjs";
-import { FORMAT } from "./headless.mjs";
+import { FORMAT } from "./worker-record.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { otelSenderRunning } from "./otel.mjs";
 
@@ -111,7 +111,7 @@ export async function uninstall(args, { home = userHome(), platform = process.pl
   }
 
   // Again now, under the uninstall lock: the person may have been asked for minutes, and a launch that reserves a run
-  // folder from here on sees the lock and backs out (headless.mjs reserve). The lock goes with the state folder.
+  // folder from here on sees the lock and backs out (worker-record.mjs reserve). The lock goes with the state folder.
   const lock = UNINSTALL_LOCK(home);
   try { mkdirSync(STATE_DIR(home), { recursive: true, mode: 0o700 }); } catch {}
   // Never taken over, even from a process that is gone: two uninstalls could both decide it is stale.

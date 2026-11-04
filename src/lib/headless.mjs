@@ -37,36 +37,19 @@
 // continues it in a new process with its context. It runs on a private copy of its config, as in a pane.
 // Worker text reaches one place, the report file of each turn (owner-only, removed by cleanup); only its path leaves
 // routr. Nothing else of the harness's output is kept: its stderr is not read, and a tool is shown by a fixed name.
-import { linkWorker, workerTracing } from "./traces.mjs";
+import { workerTracing } from "./traces.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { claim, endpointFor, markReady, markReleased, privateDir, probe, removeEndpoint, serve } from "./channel.mjs";
+import { claim, endpointFor, markReady, markReleased, probe, removeEndpoint, serve } from "./channel.mjs";
+import { FORMAT, readWorker, runDir } from "./worker-record.mjs";
 import { HARNESSES, plan, subagentDefaults } from "./harnesses.mjs";
-import { CARRIERS, installedAt, lockIsStale, probe as collect, readJsonFile, savedCarriers, start, STATE_DIR, stop, UNINSTALL_LOCK, workerEnv, writeJsonAtomic } from "./runtime.mjs";
+import { CARRIERS, installedAt, probe as collect, readJsonFile, savedCarriers, start, stop, workerEnv, writeJsonAtomic } from "./runtime.mjs";
 import { besidesHelper, groupMembers } from "./process-boundary.mjs";
 
-export const FORMAT = 1;
-export const WORKERS_DIR = () => join(STATE_DIR(), "workers");
-export const runDir = (name) => join(WORKERS_DIR(), name);
-// What launch wrote: { format, id, name, kind, model, effort, cwd, created_at, carriers }. Never the brief, and of the
-// environment only the trace-context carriers within routr's limits, which every load checks again (savedCarriers).
-// As readJsonFile reads it: { worker } for one routr's launch wrote, { absent: true }, { foreign: true } (another
-// shape: not routr's), or { unreadable } (there, and not read: what it is is not known, so nothing acts on it).
-export const workerOf = (name) => {
-  const r = readJsonFile(join(runDir(name), "worker.json"));
-  if (r.absent || r.unreadable) return r;
-  const w = r.value;
-  if (w?.format !== FORMAT || w.name !== name) return { foreign: true };
-  linkWorker(w); return { worker: w };
-};
-export const readWorker = (name) => workerOf(name).worker ?? null;
-// What the holder wrote last (headless.mjs is its only writer), as readJsonFile reads it: { value }, { absent: true }
+// What the holder wrote last (this module is its only writer and reader), as readJsonFile reads it: { value }, { absent: true }
 // before a holder has written one, or { unreadable }.
 export const stateOf = (name) => readJsonFile(join(runDir(name), "state.json"));
-// A worker file that is there and cannot be read, said to a person: the file, the code, and that it may pass.
-export const unreadableWhy = (name, file, code) => `${name}'s ${file} could not be read just now (${code}), so what it is doing is not known: try again in a moment`;
 export const reportPath = (name, turn) => join(runDir(name), "reports", `turn-${turn}.md`);
 const STREAM = ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"];
 const message = (text) => JSON.stringify({ type: "user", message: { role: "user", content: text } }) + "\n";
@@ -738,35 +721,4 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
   markReady(dir, n, { endpoint, pid: process.pid, at: Date.now() });
   // Started for a task that never came (the launch or send that started it failed first): say so and go.
   setTimeout(() => { if (!started && !stopping) settle(); }, noTaskMs).unref?.();
-}
-
-// The run folder of a new worker, reserved by its name: made whole, owner-only, or refused when one exists.
-// Made first, then the uninstall lock looked at: uninstall takes its lock first, then looks for run folders, so
-// one of the two always sees the other. Each reservation writes its own random token into its folder,
-// exclusively, before anything else, and only the launch whose token is there removes that folder (its rollback
-// in workers.mjs). An uninstall releases its lock only once everything else in its state folder is gone, so
-// when this call finds no lock, any earlier uninstall has finished removing: the token still being there then
-// means the folder is this call's for good (a later uninstall takes its lock first and sees it). Found held, it
-// backs out by removing nothing: the uninstall running removes the folder, or, if it came after that
-// uninstall's sweep, keeps its own state folder and says so. (an identity by device, inode and birth time, and
-// a token checked and then acted on by path, each left a moment where another launch's folder could be taken
-// for this one's.)
-export const OWNER = ".reserved-by";
-export const ownedBy = (dir, token) => { try { return readFileSync(join(dir, OWNER), "utf8") === token; } catch { return false; } };
-export function reserve(name, { beforeOwn = () => {}, afterOwn = () => {}, beforeBackout = () => {} } = {}) {
-  privateDir(WORKERS_DIR());
-  const dir = runDir(name), token = randomUUID().replace(/-/g, "");
-  mkdirSync(dir, { mode: 0o700 }); // not recursive: EEXIST when that name is taken
-  beforeOwn(); // a test acts here: as if this call paused while uninstall and another launch ran
-  try { writeFileSync(join(dir, OWNER), token, { flag: "wx", mode: 0o600 }); } // EEXIST: another reservation's folder
-  catch (e) { if (e?.code === "ENOENT") throw new Error(`${name}'s run folder was removed while launch was making it; run launch again`); throw e; }
-  afterOwn(); // and here
-  let held = false;
-  try { held = existsSync(UNINSTALL_LOCK()) && !lockIsStale(UNINSTALL_LOCK()); } catch { held = existsSync(UNINSTALL_LOCK()); }
-  if (held) {
-    beforeBackout(); // and here
-    throw new Error("routr is being uninstalled on this machine: no worker can start now");
-  }
-  if (!ownedBy(dir, token)) throw Object.assign(new Error(`a worker named ${name} exists`), { code: "EEXIST" });
-  return { dir, token };
 }
