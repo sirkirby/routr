@@ -301,7 +301,8 @@ instead (next section). What a headless worker means on your machine:
   leaves it too (seen once): it ended on its own about five minutes after its last turn once, and within two hours
   another time (Cursor documents no idle exit), and it outlived its folder's removal. A `stop` during the turn that
   started it signals it with that turn's group (what it does then: not measured).
-- **Kiro's permissions.** Kiro runs with `--trust-tools=*`, as in a pane, and routr tells it at `initialize` that it
+- **Kiro's permissions.** Kiro runs with `--trust-tools=*` (in a pane or a core terminal, `--trust-all-tools`: its V3 screen
+  ignores `--trust-tools`), and routr tells it at `initialize` that it
   reads and writes no files and runs no terminal for it. A request Kiro makes of routr (a permission, for one) is
   declined with a JSON-RPC error. None came in the one measured protocol run, so what Kiro does after a decline is not
   measured.
@@ -352,9 +353,9 @@ is not measured. What that means on your machine:
 
 - **What it asks of `hc` and `herdr-app`.** `hc get` of your terminal, for its address and its app space; `hc run --bg
   --json` with `--name`, `--cwd`, `--outlive-parent` and `--no-notify`, and, when your terminal has a `herdr.space` label,
-  that label and a `herdr.tab` label; `herdr-app do tab.rename` to name the tab for the worker; `hc get` and `hc read`
-  while it starts; and at cleanup `hc get`, `hc kill` and `hc rm`. Their answers are checked against core's schema, and
-  never reach output as text except a screen (below). If `hc` refuses your terminal, nothing is written; if it refuses the
+  that label and a `herdr.tab` label, and always a `routr.worker` label holding the id of the worker's record;
+  `herdr-app do tab.rename` to name the tab for the worker; `hc get` while it starts; and at cleanup `hc get`, `hc kill`
+  and `hc rm`. Their answers are checked against core's schema, and never reach output as text. If `hc` refuses your terminal, nothing is written; if it refuses the
   new terminal, launch removes what it made. If it does not answer then, a terminal may be there, so launch keeps what it
   made, and `cleanup --worker` finishes it.
 - **Its run folder and worktree.** As a headless worker's ("Headless workers", above), under the same names, and with
@@ -363,14 +364,15 @@ is not measured. What that means on your machine:
 - **The prompt file.** The whole prompt (launch's opening, your task and rules, the closing line) is written to
   `prompt.md` in the run folder, 0600 on macOS and Linux in a 0700 folder (on Windows it takes the access your home folder
   gives), for the worker to read. It is never in a process's arguments: the first message says only where the file is.
-  `hc` keeps a terminal's arguments, and those it keeps are `routr workers --run <name>`. `cleanup --worker` removes the
+  `hc` keeps a terminal's arguments, and those it keeps are `routr workers --run <run folder> --id <id>`. `cleanup --worker` removes the
   file with the run folder, and a stopped launch that removes its folder removes it. It stays there while the worker's
   record does. A harness keeps its own session history as it always does, which holds what the worker read. `prompt_chars`
   counts it; no command prints it.
-- **A screen.** A harness at a question before it has started comes back with the last 40 lines of what its terminal shows,
-  in `screen`: carrier values replaced, and withheld whole when it holds a run of 47 or more characters of the prompt, spaces and line breaks aside. A
-  shorter quote, or a run a screen drew with something inside it, is not recognised. routr answers no question.
-- **The runner.** The program in the terminal is routr's own, `routr workers --run <name>`: it reads the record, starts
+- **No screen.** The harness has the pointer to its task from the moment it starts, so as in a pane once a task is sent,
+  launch reads no screen and returns none: `screen` is a fixed sentence saying it is withheld, whether the worker stopped
+  at a question or ended. The lead reads the terminal with `hc read`. routr answers no question.
+- **The runner.** The program in the terminal is routr's own, `routr workers --run <run folder> --id <id>`: launch passes the folder
+  by its path, as the terminal's `HOME` is the core's and may not be your lead's. It checks the record's id there, starts
   the harness directly on that terminal, stays until it exits, passes on the hangup and terminate `hc kill` sends, writes
   `run.json` beside the record (its own pid, the harness's, the times, the exit code or signal, nothing of its text),
   and exits with its code. It starts one harness per worker, and refuses a second start. Status goes from the harness to
@@ -383,12 +385,14 @@ is not measured. What that means on your machine:
   sign-in a harness uses; each is checked again on load, and shown as `<forwarded>`, never its path); and the adapter's
   variables, which win: Cursor's private config folder, subagent defaults. Nothing else of your lead's reaches it, and no
   key or token is saved. Keys and tokens a worker uses come from the core's environment, as a pane's do from herdr's
-  server. A config location the core has and your lead does not set stays the core's.
+  server. A config location the core has and your lead does not set stays the core's, and so does `HOME`: a harness finds
+  its sign-in under the core's `HOME` unless a config location says otherwise.
 - **Cursor.** As headless, Cursor runs on a private copy of its config in the run folder. It reports no status, so launch
   counts it as started once its process runs, and its prompt ends by telling it to send its report to your terminal with
   `hc send`. Whether it does on any given task is the worker's; measured 3 of 3 on a small one.
 - **`cleanup --worker`.** It refuses while `hc` says the worker is `working` or `blocked`, when `hc` does not answer, and
-  when the terminal at that address has another name now: it ends only its own. Otherwise it ends the terminal with `hc
+  when the terminal at that address does not carry the record's id in its `routr.worker` label: an address and a name can
+  be another terminal's on another core, so it ends only its own, and keeps everything. Otherwise it ends the terminal with `hc
   kill` (hangup, then terminate, then kill: core's), and removes it with `hc rm`; one that stays is a warning. Then the
   worktree goes through the checks of `cleanup --worktree`, and when one fails, the worktree and run folder stay, though
   the terminal has gone. A harness that reports no status cannot be seen working, so it is ended all the same, and said.

@@ -37,6 +37,7 @@
 //   interactive: the words before its permissive flags when it runs with a screen (a pane, a core terminal), and only then:
 //     Kiro's `--v3 chat`, where its headless start is `acp` (measured Kiro 3.0, 2026-11-03: `chat` alone stops at a choice
 //     between V3 and V2 on a machine with saved V2 sessions; `--v3 chat` skips it and saves no default).
+//   headlessPermissions: its permissive flags in its headless start, where they differ from those with a screen.
 //   coreFlags: what it needs in a herdr-core terminal and nowhere else: Codex's `--no-daemon`, or its commands run outside
 //     hc (core's manual). promptFlag: the flag before a first message given as an argument, where it is not a plain
 //     positional (Antigravity's `-i`; measured 2026-11-03 for all five).
@@ -195,20 +196,25 @@ export const HARNESSES = {
     models: () => lines("agy", ["models"], /^([a-z0-9][\w.-]+)\t/i),
     suggested: { hardest_work: "standard", reserve: 0.1 },
     usage: { source: "agy /usage", read: readAgy } },
-  // Kiro CLI 2.24.1: `--trust-all-tools` asks "Kiro is running in trust all tools mode" at every start, with "No, exit"
-  // selected, and herdr reads that screen as idle (2026-09-26/28). `--trust-tools=*` allows every built-in tool (its
-  // /tools list: all 14 "allowed") and asks nothing (measured 2026-09-28; MCP tools not measured).
+  // With a screen, `--trust-all-tools`. Measured kiro-cli 3.0.0, 2026-11-04: its V3 screen ignores `--trust-tools` (its docs:
+  // honored only with --no-interactive), so a worker asked approval to read its own prompt file and would for every tool.
+  // `--trust-all-tools` reads freely, after a warning at start with "No, exit" selected, which core reports as blocked.
+  // "Yes, and don't ask again" saves `chat.disableTrustAllConfirmation` in ~/.kiro/settings/cli.json, and the next start in
+  // a trusted folder asked nothing. routr answers neither that nor folder trust, and never passes --trust-workspace: both
+  // are the person's. Kiro 2.24.1 showed this warning as idle to herdr (2026-09-26/28); how herdr reads 3.0's is not measured.
+  // Headless, `--trust-tools=*` allows every built-in tool (its /tools list: all 14 "allowed"), and asks nothing (measured
+  // 2026-09-28 on chat, 2026-10-22 on acp; MCP tools not measured).
   // `--effort` is per model (kiro.dev/docs/models/effort: the newer Claude and GPT models); a model without it, `auto`
   // included, shows effort "n/a" and ignores the flag silently (measured). Kiro remembers an explicit level as the
   // user's default for that model (its docs), so `auto`, the default, passes none and the model decides.
   kiro: { label: "Kiro", executable: "kiro-cli", app: "kiro-cli", installAs: "Kiro (kiro-cli)", skills: ".kiro/skills", // Kiro reads only ~/.kiro/skills (measured)
-    interactive: ["--v3", "chat"], permissions: ["--trust-tools=*"], model: "--model", effort: "--effort", autoEffort: "auto", list: "kiro-cli chat --list-models",
+    interactive: ["--v3", "chat"], permissions: ["--trust-all-tools"], headlessPermissions: ["--trust-tools=*"], model: "--model", effort: "--effort", autoEffort: "auto", list: "kiro-cli chat --list-models",
     // 2026-09-26: an unknown id ran its default model without a word (its footer then showed no model). Checked
     // against `kiro-cli chat --list-models` before launch, not read from its screen; drop once Kiro refuses one.
     unknownModelRunsDefault: true,
-    // Measured Kiro 3.0, 2026-11-03: under V3 it asks to trust the workspace despite --trust-tools=*, with no status
-    // reported while it asks, so a launch reads this as not started until its timeout. "Trust, continue" is selected.
-    startup: "Kiro V3 asks to trust a workspace even with --trust-tools=*, and reports no status while it asks; its selected answer is Trust, continue.",
+    // Measured Kiro 3.0, 2026-11-03/04: folder trust is asked with no status reported, so a launch reads it as not
+    // started until its timeout; the trust-all-tools warning is reported as blocked.
+    startup: "Kiro V3 asks two questions, each for the person to answer: whether to trust this folder (it reports no status while it asks; Trust, continue is selected), and whether to run in trust-all-tools mode (No, exit is selected; Yes, and don't ask again saves the answer). Later starts in a trusted folder ask neither; whether a new worktree of a trusted repository is asked is not measured.",
     // Its docs: "start with --effort, and Kiro remembers it for future sessions". Not measured: no model on the
     // measured account took effort.
     notes: (model, effort) => [...(effort ? [warning("kiro_effort_default", `Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently.`)] : [])],
@@ -250,7 +256,7 @@ export function subagentDefaults({ kind, subagentModel, subagentEffort }) {
   if ((subagentModel || subagentEffort) && !h.subagents) throw new Error(`${h.label} (${kind}) has no setting for all subagents; --subagent-model and --subagent-effort are unsupported`);
   return { argv: [], env: {}, warnings: [], ...(h.subagents?.({ model: subagentModel, effort: subagentEffort }) ?? {}) };
 }
-// `interactive: false`: the flags alone, for a headless start, which has words of its own in place of `interactive`.
+// `interactive: false`: the flags for a headless start, which has words of its own in place of `interactive`.
 export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir, subagentModel, subagentEffort, interactive = true }) {
   const h = Object.hasOwn(HARNESSES, kind) && HARNESSES[kind];
   if (!h) throw kindError();
@@ -259,7 +265,7 @@ export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir
   if (effort && !h.effort) throw new Error(h.noEffort);
   if (h.dirFlag && !cwd) throw new Error(`${kind} requires a directory for ${h.dirFlag}`);
   if (effort === h.autoEffort) effort = undefined;
-  const argv = [...(interactive ? h.interactive ?? [] : []), ...h.permissions, ...(h.dirFlag ? [h.dirFlag, cwd] : []), ...(model ? [h.model, model] : []),
+  const argv = [...(interactive ? [...(h.interactive ?? []), ...h.permissions] : h.headlessPermissions ?? h.permissions), ...(h.dirFlag ? [h.dirFlag, cwd] : []), ...(model ? [h.model, model] : []),
     ...(effort ? [h.effort, h.effortValue?.(effort) ?? effort] : []), ...subagents.argv];
   return {
     executable: h.executable, argv, env: { ...h.env?.(cursorConfigDir), ...subagents.env },

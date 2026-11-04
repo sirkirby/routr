@@ -1860,7 +1860,9 @@ const FAKE_HC = `
 const fs = require("node:fs"), a = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_HC_LOG, JSON.stringify(a) + "\\n");
 if (process.env.FAKE_HC_REFUSE) process.exit(3);
-console.log(JSON.stringify(a[0] === "get" && a[1] === "t3" ? { address: "t3", labels: { "herdr.space": "sp1" } } : a[0] === "get" ? { address: "t9", name: "c1", state: "live", status: { state: process.env.FAKE_HC_STATUS ?? "working" }, turn: 0 } : { address: "t9" }));
+const asked = fs.readFileSync(process.env.FAKE_HC_LOG, "utf8").trim().split("\\n").map((l) => JSON.parse(l)).filter((c) => c[0] === "run").at(-1) ?? [];
+const labels = { "routr.worker": asked.find((v) => v.startsWith("routr.worker="))?.slice("routr.worker=".length) };
+console.log(JSON.stringify(a[0] === "get" && a[1] === "t3" ? { address: "t3", labels: { "herdr.space": "sp1" } } : a[0] === "get" ? { address: "t9", name: "c1", state: "live", labels, status: { state: process.env.FAKE_HC_STATUS ?? "working" }, turn: 0 } : { address: "t9" }));
 `;
 test("in a core terminal the command line starts the worker through hc, with the brief nowhere near it, and cleanup --worker ends it", () => {
   const w = world({ HC_TERMINAL_ID: "t3", HC_TERMINAL_SOCKET: "/s", HC_SCOPE: "x" }), log = join(w.home, "hc.jsonl");
@@ -1871,7 +1873,7 @@ test("in a core terminal the command line starts the worker through hc, with the
   const asked = readFileSync(log, "utf8");
   expect(JSON.parse(asked.split("\n")[1]).slice(0, 2)).toEqual(["run", "--bg"]);
   expect(asked).toContain("herdr.space=sp1");
-  expect(asked).toContain('"--run","c1"');
+  expect(asked).toContain(`"--run",${JSON.stringify(w.runDir("c1"))},"--id"`);
   expect(asked).not.toContain("only the worker may see");
   expect(JSON.stringify(l)).not.toContain("only the worker may see");
   expect(w.run(["workers"]).workers).toEqual([expect.objectContaining({ name: "c1", backend: "terminal", terminal: "t9" })]);

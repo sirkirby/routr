@@ -192,8 +192,10 @@ test("a terminal launch reports its backend, keeps its index entry, and cleanup 
   const x = exporting({ HC_TERMINAL_ID: "t3" }), advice = join(x.home, "advice.json"), task = "BRIEF_MARKER";
   writeFileSync(advice, JSON.stringify({ id: "abc12345", brief_sha: briefSha(task), mode: "dispatch", level: "standard" }));
   const answer = (o) => ({ code: 0, out: JSON.stringify(o) });
-  const hc = async (cmd, a) => (cmd === "herdr-app" ? answer({}) : a[0] === "get" && a[1] === "t3" ? answer({ address: "t3", labels: {} })
-    : a[0] === "get" ? answer({ address: "t9", name: "traced", state: "live", status: { state: "done" }, turn: 1 }) : a[0] === "run" ? answer({ address: "t9" }) : answer({}));
+  let label = null;
+  const hc = async (cmd, a) => { if (a[0] === "run") label = a.find((v) => v.startsWith("routr.worker="))?.slice("routr.worker=".length);
+    return cmd === "herdr-app" ? answer({}) : a[0] === "get" && a[1] === "t3" ? answer({ address: "t3", labels: {} })
+      : a[0] === "get" ? answer({ address: "t9", name: "traced", state: "live", labels: { "routr.worker": label }, status: { state: "done" }, turn: 1 }) : a[0] === "run" ? answer({ address: "t9" }) : answer({}); };
   const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), hc, self: (a) => ["/bin/routr", ...a], models: async () => null, ready: async () => null, sleep: async () => {} };
   const r = await launch(["--kind", "claude", "--name", "traced", "--model", "sonnet", "--task", task, "--advice", advice], opts);
   expect([r.state, r.worker.backend]).toEqual(["prompted", "terminal"]);

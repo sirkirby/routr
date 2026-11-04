@@ -1,24 +1,30 @@
 // Workers in a herdr-core terminal: what launch asks of hc, what it answers, the runner and its environment, and what
 // cleanup and the worker commands do with such a worker. Fakes only: no hc, no herdr-app and no harness runs here.
-import { afterEach, expect, test } from "bun:test";
+import { afterAll, beforeEach, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { launch } from "../src/lib/launch.mjs";
 import { cleanup } from "../src/lib/cleanup.mjs";
 import { sendCommand, stopCommand, waitCommand, workersCommand } from "../src/lib/workers.mjs";
 import { watchCommand } from "../src/lib/watch.mjs";
 import { hold } from "../src/lib/headless.mjs";
-import { firstMessage, reportToLead, runRecord, runWorker } from "../src/lib/backend-terminal.mjs";
+import { firstMessage, reportToLead, runRecord, runWorker as runner } from "../src/lib/backend-terminal.mjs";
 import { ADAPTERS } from "../src/lib/headless.mjs";
 import { HARNESSES, KINDS, plan, terminalPlan } from "../src/lib/harnesses.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
 import { LaunchIndex } from "../src/lib/launch-index.mjs";
-import { runDir, workerNames } from "../src/lib/worker-record.mjs";
+import { runDir } from "../src/lib/worker-record.mjs";
 import { configLocations, savedConfigLocations, start as runtimeStart, startOptions, terminalEnv } from "../src/lib/runtime.mjs";
-import { cfg, scratch } from "./helpers.mjs";
+import { cfg, cliEnv, fakeExecutable, scratch, SCRIPT } from "./helpers.mjs";
 
-afterEach(() => { for (const n of workerNames()) rmSync(runDir(n), { recursive: true, force: true }); });
+// bun test runs every file in one process, in an order that differs by platform, so a test here has a home of its own:
+// what it writes (a run folder, Cursor's config) reaches no other file, and what another left does not reach it.
+const HOME_BEFORE = process.env.HOME;
+beforeEach(() => { process.env.HOME = process.env.USERPROFILE = scratch("terminal-home"); });
+afterAll(() => { process.env.HOME = process.env.USERPROFILE = HOME_BEFORE; });
+const recordOf = (name = "w1") => JSON.parse(readFileSync(join(runDir(name), "worker.json"), "utf8"));
+const runWorker = (name, deps) => runner(runDir(name), recordOf(name).id, deps);
 
 const SECRET = "a brief only the worker may see, long enough to be recognised anywhere it is quoted";
 const LEAD = { address: "t3", name: "lead", labels: { "herdr.space": "sp1" } };
@@ -32,7 +38,8 @@ const fakeHc = ({ sees = [{ status: { app: "x", state: "working" }, turn: 0 }], 
     if (a !== undefined) { const v = typeof a === "function" ? a(args, calls) : a; if (v !== undefined) return v; }
     if (cmd === "herdr-app") return { code: 0, out: "" };
     if (args[0] === "get" && args[1] === "t3") return { code: 0, out: JSON.stringify(LEAD) };
-    if (args[0] === "get") { const t = sees[Math.min(seen++, sees.length - 1)]; return { code: 0, out: JSON.stringify({ address: "t9", name, state: "live", ...t }) }; }
+    // The label launch set, as hc keeps it, read from the record; `sees` may say otherwise.
+    if (args[0] === "get") { const t = sees[Math.min(seen++, sees.length - 1)]; return { code: 0, out: JSON.stringify({ address: "t9", name, state: "live", labels: existsSync(join(runDir("w1"), "worker.json")) ? { "routr.worker": recordOf().id } : {}, ...t }) }; }
     if (args[0] === "run") return { code: 0, out: JSON.stringify({ address: "t9", name }) };
     if (args[0] === "read") return { code: 0, out: "the screen\n" };
     return { code: 0, out: "{}" };
@@ -58,11 +65,14 @@ test("each harness's differences in a core terminal are data: its flags, and how
   expect(argv("codex")).toEqual(["--no-daemon", "--yolo", "--dangerously-bypass-hook-trust", "-c", "check_for_update_on_startup=false", "-m", "m", "the pointer"]);
   expect(argv("cursor")).toEqual(["--yolo", "--trust", "--model", "m", "the pointer"]);
   expect(argv("agy")).toEqual(["--dangerously-skip-permissions", "--add-dir", "/w", "--model", "m", "-i", "the pointer"]);
-  expect(argv("kiro")).toEqual(["--v3", "chat", "--trust-tools=*", "--model", "m", "the pointer"]);
+  expect(argv("kiro")).toEqual(["--v3", "chat", "--trust-all-tools", "--model", "m", "the pointer"]);
   expect(KINDS.filter((k) => HARNESSES[k].noStatus)).toEqual(["cursor"]);
   // Only Codex's flag is the core terminal's alone: a pane starts Codex without it, and Kiro with --v3 too.
   expect(plan({ kind: "codex", model: "m" }).argv).not.toContain("--no-daemon");
-  expect(plan({ kind: "kiro", model: "m" }).argv.slice(0, 2)).toEqual(["--v3", "chat"]);
+  expect(plan({ kind: "kiro", model: "m" }).argv.slice(0, 3)).toEqual(["--v3", "chat", "--trust-all-tools"]);
+  // Its V3 screen ignores --trust-tools (kiro-cli 3.0.0), and the person's own trust decision is never answered for them.
+  for (const kind of [undefined, false]) expect(plan({ kind: "kiro", model: "m", ...(kind === false ? { interactive: false } : {}) }).argv).not.toContain("--trust-workspace");
+  expect(plan({ kind: "kiro", model: "m" }).argv).not.toContain("--trust-tools=*");
 });
 
 test("Kiro's headless start stays its ACP mode, with neither --v3 nor chat, and a model named chat survives it", () => {
@@ -78,7 +88,10 @@ test("in the app a worker gets a tab of its own, running routr's runner, with it
   expect(run.slice(0, run.indexOf("--label"))).toEqual(["run", "--bg", "--json", "--name", "w1", "--cwd", r.cwd, "--outlive-parent", "--no-notify"]);
   expect(run).toContain("herdr.space=sp1");
   expect(tab).toMatch(/^herdr\.tab=routr-[a-f0-9]{32}$/);
-  expect(run.slice(run.indexOf("--"))).toEqual(["--", "/bin/routr", "workers", "--run", "w1"]);
+  const id = recordOf().id;
+  expect(run).toContain(`routr.worker=${id}`);
+  // The folder by its path, and the record's id to check there: the terminal's HOME may not be this one.
+  expect(run.slice(run.indexOf("--"))).toEqual(["--", "/bin/routr", "workers", "--run", runDir("w1"), "--id", id]);
   expect(run).not.toContain("--rm"); // what it finished with stays to read until cleanup
   expect(f.hc.calls.find((c) => c.cmd === "herdr-app").args).toEqual(["do", "tab.rename", "--id", tab.slice("herdr.tab=".length), "--name", "w1"]);
   // What launch answers, and its record.
@@ -105,11 +118,13 @@ test("in the app a worker gets a tab of its own, running routr's runner, with it
   expect(r.steps.map((s) => s.step)).toEqual(["reserve", "terminal", "prompt"]);
 });
 
-test("off the app there are no labels to give and no tab to name, and a terminal is still started", async () => {
+test("off the app there are no app labels to give and no tab to name; it still carries the worker's id, and a terminal is started", async () => {
   const f = fixture("claude", { hc: fakeHc({ over: { get: (a) => (a[1] === "t3" ? { code: 0, out: JSON.stringify({ address: "t3", labels: {} }) } : undefined) } }) });
   const r = await f.go();
   expect(r.state).toBe("prompted");
-  expect(f.hc.calls.find((c) => c.args[0] === "run").args).not.toContain("--label");
+  const run = f.hc.calls.find((c) => c.args[0] === "run").args;
+  expect(run.filter((a) => a === "--label").length).toBe(1);
+  expect(run).toContain(`routr.worker=${recordOf().id}`);
   expect(f.hc.calls.filter((c) => c.cmd === "herdr-app")).toEqual([]);
 });
 
@@ -156,20 +171,18 @@ test("a harness that reports no status counts once its process runs, and is told
   expect(readFileSync(join(runDir("w1"), "prompt.md"), "utf8")).not.toContain("hc send");
 });
 
-test("a blocked start comes back as needs_input with hc's screen, redacted, and routr answers nothing", async () => {
-  const parent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
-  const f = fixture("agy", { env: { TRACEPARENT: parent }, hc: fakeHc({ sees: [{ status: { state: "blocked", kind: "question" }, turn: 0 }], over: { read: { code: 0, out: `Do you trust this folder?\n> Yes\n${parent}\n` } } }) });
+test("a blocked start comes back as needs_input, with the screen withheld as the worker has its task, and routr answers nothing", async () => {
+  const f = fixture("agy", { hc: fakeHc({ sees: [{ status: { state: "blocked", kind: "question" }, turn: 0 }] }) });
   const r = await f.go();
   expect([r.ok, r.state, r.error]).toEqual([false, "needs_input", undefined]);
   expect(r.needs_input.why).toBe("Antigravity is waiting at a question before it can start.");
   expect(r.needs_input.hc).toEqual({ state: "blocked", kind: "question" });
   expect(r.needs_input.note).toContain("Antigravity asks whether to trust");
-  expect(r.screen).toContain("Do you trust this folder?");
-  expect(r.screen).toContain("<carrier>");
-  expect(r.screen).not.toContain(parent);
+  expect(r.screen).toStartWith("withheld:");
   expect(r.headline).toBe("routr: w1 needs input in terminal t9: Antigravity is waiting at a question before it can start.");
   expect(f.hc.words()).not.toContain("keys");
   expect(f.hc.words()).not.toContain("send");
+  expect(r.next[0].argv).toEqual(["hc", "read", "t9", "--lines", "200"]);
   expect(noted(r)).toContain("hc keys t9 <keys>");
   expect(noted(r)).toContain("default answer can be");
   expect(noted(r)).toContain("do not launch it again");
@@ -177,20 +190,36 @@ test("a blocked start comes back as needs_input with hc's screen, redacted, and 
   expect(r.next.find((n) => n.argv?.[1] === "cleanup").argv).toEqual(["routr", "cleanup", "--worker", "w1"]);
 });
 
-test("a screen that quotes the task is withheld, however the terminal wrapped it", async () => {
-  const wrapped = SECRET.replace(/(.{20})/g, "$1\n");
-  const r = await fixture("claude", { hc: fakeHc({ sees: [{ status: { state: "blocked" }, turn: 0 }], over: { read: { code: 0, out: `Allow?\n${wrapped}\n` } } }) }).go();
+test("Kiro's trust-all-tools warning, reported blocked, is needs_input and is never answered", async () => {
+  const f = fixture("kiro", { hc: fakeHc({ sees: [{ status: { state: "blocked" }, turn: 0 }] }) }), r = await f.go();
   expect(r.state).toBe("needs_input");
-  expect(r.screen).toContain("withheld");
-  expect(r.screen).not.toContain("only the worker");
+  expect(r.start.argv.slice(0, 3)).toEqual(["--v3", "chat", "--trust-all-tools"]);
+  expect(r.start.argv).not.toContain("--trust-workspace");
+  expect(r.needs_input.note).toContain("Yes, and don't ask again");
+  expect(r.needs_input.note).toContain("for the person to answer");
+  expect(f.hc.words()).not.toContain("keys");
+});
+
+test("no text from the terminal reaches launch's answer: a short brief a startup screen echoes stays out, at every way it stops", async () => {
+  const brief = "customer-pin=7391", read = { code: 0, out: `${brief}\n` };
+  const stops = [["needs_input", [{ status: { state: "blocked" }, turn: 0 }], {}], ["needs_input", [{ status: null, turn: 0 }], { timeout: 1000 }],
+    ["failed", [{ state: "finished", status: null, exit_code: 3 }], {}], ["failed", [{ status: { state: "error" }, turn: 0 }], {}]];
+  for (const [state, sees, over] of stops) {
+    const f = fixture("claude", { task: brief, hc: fakeHc({ sees, over: { read } }), ...over }), r = await f.go();
+    expect(r.state).toBe(state);
+    expect(JSON.stringify(r)).not.toContain(brief);
+    expect(r.screen).toStartWith("withheld:");
+    expect(f.hc.words()).not.toContain("read");
+    rmSync(runDir("w1"), { recursive: true, force: true });
+  }
 });
 
 test("a harness that says nothing within --timeout is needs_input, not started and not failed: Kiro at its trust question", async () => {
-  const f = fixture("kiro", { timeout: 1000, hc: fakeHc({ sees: [{ status: null, turn: 0 }], over: { read: { code: 0, out: "Trust, continue\n" } } }) }), r = await f.go();
+  const f = fixture("kiro", { timeout: 1000, hc: fakeHc({ sees: [{ status: null, turn: 0 }] }) }), r = await f.go();
   expect([r.state, r.needs_input.hc]).toEqual(["needs_input", { state: null }]);
   expect(r.needs_input.why).toContain("has not reported working within the timeout");
-  expect(r.needs_input.note).toContain("Kiro V3 asks to trust");
-  expect(r.screen).toBe("Trust, continue");
+  expect(r.needs_input.note).toContain("whether to trust this folder");
+  expect(r.screen).toStartWith("withheld:");
   expect(r.start.argv.slice(0, 2)).toEqual(["--v3", "chat"]);
   expect(f.hc.words()).not.toContain("keys");
 });
@@ -226,12 +255,13 @@ test("a refused hc run takes back the run folder, the worktree and its branch; n
 });
 
 test("a harness that ends before it starts fails the launch, with what its terminal showed and the worker kept for cleanup", async () => {
-  const r = await fixture("claude", { hc: fakeHc({ sees: [{ state: "finished", status: null, exit_code: 3 }], over: { read: { code: 0, out: "bad model\n" } } }) }).go();
+  const r = await fixture("claude", { hc: fakeHc({ sees: [{ state: "finished", status: null, exit_code: 3 }] }) }).go();
   expect(r.state).toBe("failed");
   expect(r.error).toContain("Claude Code ended before it started the task (exit code 3)");
-  expect(r.screen).toBe("bad model");
+  expect(r.screen).toStartWith("withheld:");
+  expect(r.next.map((n) => n.argv)).toContainEqual(["hc", "read", "t9", "--lines", "200"]);
   expect(existsSync(runDir("w1"))).toBe(true);
-  const gone = await fixture("claude", { name: "w2", hc: fakeHc({ name: "w2", over: { get: (a) => (a[1] === "t9" ? { code: 1, out: "", err: "no terminal t9" } : undefined), read: null } }) }).go();
+  const gone = await fixture("claude", { name: "w2", hc: fakeHc({ name: "w2", over: { get: (a) => (a[1] === "t9" ? { code: 1, out: "", err: "no terminal t9" } : undefined) } }) }).go();
   expect(gone.error).toContain("its terminal is gone");
 });
 
@@ -322,8 +352,13 @@ test("the runner stays until the harness has gone, passes on hc kill's signals, 
   child.emit("exit", null, "SIGTERM");
   expect(await running).toBe(128 + 15);
   expect(runRecord("w1").value.signal).toBe("SIGTERM");
-  expect(await runWorker("nobody", { say: (s) => said.push(s) })).toBe(2);
-  expect(said.at(-1)).toBe("routr: nobody is not a terminal worker");
+  expect(await runner(runDir("nobody"), "x", { say: (s) => said.push(s) })).toBe(2);
+  expect(said.at(-1)).toBe(`routr: ${runDir("nobody")} does not hold the terminal worker launch started; nothing was started`);
+});
+
+test("a test here runs in a home of its own, so nothing of it reaches another file sharing this process", () => {
+  expect(process.env.HOME).not.toBe(HOME_BEFORE);
+  expect(runDir("w1").startsWith(process.env.HOME)).toBe(true);
 });
 
 test("tests never reach the real hc: the preload clears a core terminal's names and stubs both commands", async () => {
@@ -333,6 +368,20 @@ test("tests never reach the real hc: the preload clears a core terminal's names 
     expect(Bun.which("herdr-app", { PATH: process.env.PATH })).toContain(join("fixtures", "no-herdr"));
   }
 });
+
+test("the runner finds its worker by the folder launch passed, under another HOME, and starts nothing for another worker's id", async () => {
+  const dir = scratch("other-home"), bin = join(dir, "bin"), out = join(dir, "ran.txt");
+  mkdirSync(bin);
+  await fixture("claude").go();
+  const { id } = recordOf(), folder = runDir("w1");
+  fakeExecutable(bin, "claude", `require("node:fs").writeFileSync(${JSON.stringify(out)}, process.argv.slice(2).join(" ")); process.exit(4);`);
+  const go = (asked) => Bun.spawnSync([process.execPath, SCRIPT, "workers", "--run", folder, "--id", asked], { env: cliEnv(join(dir, "core-home"), { PATH: `${bin}${delimiter}${dirname(process.execPath)}` }), stdout: "ignore", stderr: "ignore" });
+  expect(go("not-its-id").exitCode).toBe(2);
+  expect(existsSync(out)).toBe(false);
+  expect(go(id).exitCode).toBe(4);
+  expect(readFileSync(out, "utf8")).toContain(firstMessage(join(folder, "prompt.md")));
+  expect(JSON.parse(readFileSync(join(folder, "run.json"), "utf8")).exit_code).toBe(4);
+}, 20000);
 
 test("a harness that cannot start is said in fixed words, recorded for launch, and exits 127", async () => {
   await fixture("claude").go();
@@ -401,10 +450,18 @@ test("cleanup refuses a worker still working or at a question, and ends nothing"
 
 test("a terminal that is someone else's now is never ended, and hc not answering stops cleanup", async () => {
   await launched();
-  const other = fakeHc({ name: "someone-else", sees: [{ status: { state: "done" }, turn: 1 }] }), r = await cleanup(["--worker", "w1"], { hc: other.run, settings: () => cfg() });
-  expect(r.state).toBe("refused");
-  expect(r.headline).toContain("not w1's now");
-  expect(other.words()).toEqual(["get"]);
+  // Same address and same name, as another core can have: only the id launch labelled it with says whose it is.
+  for (const labels of [{ "herdr.tab": "someone-elses-tab" }, { "routr.worker": "f".repeat(32) }, {}]) {
+    const other = fakeHc({ sees: [{ status: { state: "done" }, turn: 1, labels }] }), r = await cleanup(["--worker", "w1"], { hc: other.run, settings: () => cfg() });
+    expect(r.state).toBe("refused");
+    expect(r.headline).toContain("does not carry w1's id");
+    expect(r.headline).toContain("ended nothing and kept everything");
+    expect(other.words()).toEqual(["get"]);
+    expect(existsSync(join(runDir("w1"), "worker.json"))).toBe(true);
+  }
+  const finished = fakeHc({ sees: [{ state: "finished", status: null, labels: {} }] });
+  expect((await cleanup(["--worker", "w1"], { hc: finished.run, settings: () => cfg() })).state).toBe("refused");
+  expect(finished.words()).toEqual(["get"]);
   for (const answer of [null, { code: 0, out: "not json" }]) {
     const hc = fakeHc({ over: { get: answer } }), u = await cleanup(["--worker", "w1"], { hc: hc.run, settings: () => cfg() });
     expect(u.state).toBe("refused");

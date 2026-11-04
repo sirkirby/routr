@@ -18,12 +18,12 @@ export async function leadTerminal(env, run = client) {
 }
 
 // Off the app (no space label) it is still a terminal, listed by `hc ls`. It outlives the lead and types nothing into the
-// lead. `rm`: it goes when its program exits. `trying(name)`: told each name before it is asked for.
+// lead. `rm`: it goes when its program exits. `labels`: its own, beside the app's. `trying(name)`: told each name before it is asked for.
 // Answers `{ terminal, name, tab }`, or `{ code, name }` with one of callHc's codes and what it last asked for.
-export async function openTerminal({ name, id, cwd, lead, argv, rm = false, trying = () => {}, run = client, pause = sleep }) {
+export async function openTerminal({ name, id, cwd, lead, argv, rm = false, labels = [], trying = () => {}, run = client, pause = sleep }) {
   const tab = lead.space ? `routr-${id}` : null;
   const open = (terminal) => { trying(terminal); return callHc(["run", "--bg", "--json", "--name", terminal, "--cwd", cwd, "--outlive-parent", "--no-notify", ...(rm ? ["--rm"] : []),
-    ...(tab ? ["--label", `herdr.space=${lead.space}`, "--label", `herdr.tab=${tab}`] : []), "--", ...argv], run); };
+    ...(tab ? ["--label", `herdr.space=${lead.space}`, "--label", `herdr.tab=${tab}`] : []), ...labels.flatMap((l) => ["--label", l]), "--", ...argv], run); };
   let terminal = name, r = await open(terminal);
   if (r.code === "refused") r = await open(terminal = withId(name, id));
   if (!r.ok) return { code: r.code, name: terminal };

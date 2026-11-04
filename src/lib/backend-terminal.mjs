@@ -9,18 +9,20 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:os";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FORMAT, readWorker, runDir } from "./worker-record.mjs";
+import { FORMAT, readWorkerAt, runDir } from "./worker-record.mjs";
 import { planWorktree } from "./worktree.mjs";
 import { cursorConfigOf, privateCursorConfig, refuseInputs, refuseSandbox, refuseSettings, refuseTaken, takeRun, worktreeRecord } from "./worker-start.mjs";
 import { HARNESSES, subagentDefaults, terminalPlan } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { launchFailed, STARTUP_INPUT } from "./launch-answer.mjs";
-import { actHc, client, getTerminal, isFinished, readTerminal, statusKind, statusWord, turnOf } from "./hc.mjs";
+import { actHc, client, getTerminal, isAddress, isFinished, statusKind, statusWord, turnOf } from "./hc.mjs";
 import { leadTerminal, openTerminal } from "./core-tab.mjs";
-import { clean } from "./herdr.mjs";
-import { carrierValues, configLocations, FORWARDED, processAlive, readJsonFile, redactCarriers, start, terminalEnv, writeJsonAtomic } from "./runtime.mjs";
+import { configLocations, FORWARDED, processAlive, readJsonFile, start, terminalEnv, writeJsonAtomic } from "./runtime.mjs";
 
 const PROMPT_FILE = "prompt.md", RUN_FILE = "run.json";
+// Set at hc run with the record's id, and read back before routr ends a terminal: an address lasts on one core only, and
+// another core can have the same address under the same name. An id made for this worker cannot be another's.
+const WORKER_LABEL = "routr.worker";
 const pausing = (ms) => new Promise((r) => setTimeout(r, ms));
 const POLL_MS = 250;
 const WHERE = { where: "in a herdr-core terminal", runs: "runs in a terminal of its own" };
@@ -43,19 +45,9 @@ export const followSteps = (w) => (HARNESSES[w.kind]?.noStatus
 // A terminal worker in `workers`: what its record says. hc knows the rest.
 export const terminalRow = (w) => ({ name: w.name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, backend: "terminal", terminal: w.terminal ?? null, state: "in_terminal" });
 
-// A screen launch may return: before the worker has its task's text, and never with it. A harness that read its prompt
-// file and stopped before routr saw it working could show it, so a screen holding a run of the prompt is withheld.
-const WITHHELD = "withheld: it shows part of the task. Read the terminal yourself.";
-const quotes = (screen, prompt) => {
-  const flat = (s) => s.replace(/\s+/g, ""), shown = flat(screen), text = flat(prompt);
-  for (let i = 0; i + 32 <= text.length; i += 16) if (shown.includes(text.slice(i, i + 32))) return true;
-  return false;
-};
-const screenOf = (text, prompt, hidden) => {
-  if (text == null) return null;
-  const tail = clean(text).split("\n").filter((l) => l.trim()).slice(-40).map((l) => (l.length > 200 ? `${l.slice(0, 200)}…` : l)).join("\n");
-  return quotes(tail, prompt) ? WITHHELD : redactCarriers(tail, hidden);
-};
+// The harness has the pointer to its task from the moment it starts, so as in a pane once a task is sent, launch reads no
+// screen and returns none: it may show the brief. The lead reads the terminal itself.
+const WITHHELD = "withheld: the worker has its task from the start, so its terminal may show it. Read the terminal yourself.";
 
 // ---- launch --------------------------------------------------------------------------------------------------------
 // Fills `out`, launch's answer, in place; its failures end here. Answers what launch needs to say next.
@@ -77,7 +69,8 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
   const until = now() + o.timeout;
   const lead = await leadTerminal(env, hc);
   if (lead.code) throw new Error(`${HC_WHY[lead.code]} when asked about this terminal, so no worker was started (${lead.code})`);
-  const program = self(["workers", "--run", o.name]);
+  // The run folder by its path, and the record's id to check there: the terminal's HOME is the core's, which may not be this one.
+  const id = randomUUID().replace(/-/g, ""), program = self(["workers", "--run", runDir(o.name), "--id", id]);
   if (!program) throw new Error("routr cannot find its own program to run in the worker's terminal");
   const { dir, wt, unreserve } = await takeRun(o, out, plannedTree);
   let w;
@@ -95,7 +88,7 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
     out.prompt_chars = text.length;
     writeFileSync(file, text, { flag: "wx", mode: 0o600 });
     if (o.kind === "cursor") privateCursorConfig(dir);
-    w = { format: FORMAT, id: randomUUID().replace(/-/g, ""), name: o.name, backend: "terminal", kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(), carriers: found.carriers,
+    w = { format: FORMAT, id, name: o.name, backend: "terminal", kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(), carriers: found.carriers,
       terminal_name: o.name, config: locations,
       ...(o["subagent-model"] ? { subagent_model: o["subagent-model"] } : {}), ...(o["subagent-effort"] ? { subagent_effort: o["subagent-effort"] } : {}),
       ...(launchTrace ? { launch: launchTrace } : {}), ...worktreeRecord(wt) };
@@ -104,8 +97,8 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
   out.worker = { name: o.name, backend: "terminal", run: dir, terminal: null };
   step("reserve", true, `Made ${dir} for ${o.name}`);
   // The space label is core's and the program routr's own: the log says what they are.
-  out.ran.push(displayCommand(["hc", "run", "--bg", "--json", "--name", o.name, "--cwd", out.cwd, "--outlive-parent", "--no-notify", ...(lead.space ? ["--label", "herdr.space=<lead's space>", "--label", `herdr.tab=routr-${w.id}`] : []), "--", "routr", "workers", "--run", o.name]));
-  const opened = await openTerminal({ name: o.name, id: w.id, cwd: out.cwd, lead, argv: program, trying: (name) => save({ terminal_name: name }), run: hc, pause: sleep });
+  out.ran.push(displayCommand(["hc", "run", "--bg", "--json", "--name", o.name, "--cwd", out.cwd, "--outlive-parent", "--no-notify", ...(lead.space ? ["--label", "herdr.space=<lead's space>", "--label", `herdr.tab=routr-${id}`] : []), "--label", `${WORKER_LABEL}=${id}`, "--", "routr", "workers", "--run", dir, "--id", id]));
+  const opened = await openTerminal({ name: o.name, id, cwd: out.cwd, lead, argv: program, labels: [`${WORKER_LABEL}=${id}`], trying: (name) => save({ terminal_name: name }), run: hc, pause: sleep });
   if (opened.code === "refused" || opened.code === "not_found") { await unreserve(); throw new Error(`hc refused to start the worker's terminal (${opened.code}); nothing was started, and what launch made is gone`); }
   // No answer, or one it cannot read: a terminal may be there, so what launch made stays for cleanup to finish.
   if (opened.code) { out.next.push(runNext("Look for its terminal before launching it again.", ["hc", "ls"])); throw new Error(`${HC_WHY[opened.code]} when asked to start the worker's terminal, so whether it runs is not known (${opened.code})`); }
@@ -115,19 +108,17 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
   step("terminal", true, opened.tab ? `${o.name} runs in a tab of its own (${opened.terminal})` : `${o.name} runs in terminal ${opened.terminal}`);
 
   // Ready means its status says working, or its turn has gone by. A harness that reports none counts once its process runs.
-  const hidden = [...carrierValues(env), ...Object.values(found.carriers)];
-  const screen = async () => screenOf(await readTerminal(opened.terminal, hc), text, hidden);
   const follow = followSteps(w);
   const needsInput = async (code, why, more = {}) => {
     inputNeeded(code);
     out.ok = false; out.state = "needs_input";
     out.needs_input = { why, ...more, ...(h.startup ? { note: h.startup } : {}) };
-    out.screen = await screen();
-    out.next.push(doNext(`${STARTUP_INPUT} Once it is answered the worker goes on by itself: do not launch it again.`, templateCommand(["hc", "keys", opened.terminal, "<keys>"])), ...follow);
+    out.screen = WITHHELD;
+    out.next.push(readStep(w), doNext(`${STARTUP_INPUT} Once it is answered the worker goes on by itself: do not launch it again.`, templateCommand(["hc", "keys", opened.terminal, "<keys>"])), ...follow);
     step("needs_input", false, why);
   };
   const started = (detail) => { out.ok = true; out.state = "prompted"; step("prompt", true, detail); out.next.push(...follow); };
-  const ended = async (detail) => { out.screen = await screen(); throw new Error(`${h.label} ended before it started the task (${detail})`); };
+  const ended = (detail) => { out.screen = WITHHELD; out.next.push(readStep(w)); throw new Error(`${h.label} ended before it started the task (${detail})`); };
   for (;;) {
     const left = until - now(), got = await getTerminal(opened.terminal, hc, Math.max(1000, Math.min(10000, left)));
     const ran = runRecord(o.name).value;
@@ -150,18 +141,19 @@ const planOf = (w, dir) => ({ kind: w.kind, model: w.model, effort: w.effort ?? 
 // What the runner wrote: when it started the harness, and how that ended. Launch and cleanup read it.
 const runFile = (name) => join(runDir(name), RUN_FILE);
 export const runRecord = (name) => readJsonFile(runFile(name));
-// Reads the record, builds the environment, starts the harness on this terminal, waits, records its exit, exits with its
+// `dir`: the run folder launch made, by its path, and `id`: the id launch gave its record, checked there. The terminal's
+// HOME is the core's, so this process cannot find that folder from a name. Reads the record, builds the environment, starts the harness on this terminal, waits, records its exit, exits with its
 // code. Says only fixed lines of its own, on stderr: the screen is the person's. `begin` starts the process (runtime's
 // start); a test passes a fake.
-export async function runWorker(name, { env = process.env, begin = start, say = (s) => process.stderr.write(`${s}\n`), on = (sig, fn) => process.on(sig, fn), now = () => new Date().toISOString() } = {}) {
-  const w = readWorker(name);
-  if (w?.backend !== "terminal") { say(`routr: ${name} is not a terminal worker`); return 2; }
-  const began = { pid: process.pid, started_at: now() };
+export async function runWorker(dir, id, { env = process.env, begin = start, say = (s) => process.stderr.write(`${s}\n`), on = (sig, fn) => process.on(sig, fn), now = () => new Date().toISOString() } = {}) {
+  const w = readWorkerAt(dir);
+  if (w?.backend !== "terminal" || w.id !== id) { say(`routr: ${dir} does not hold the terminal worker launch started; nothing was started`); return 2; }
+  const name = w.name, file = join(dir, RUN_FILE), began = { pid: process.pid, started_at: now() };
   // One runner per worker: a second start of it would be a second harness on the same work.
-  try { writeFileSync(runFile(name), JSON.stringify(began) + "\n", { flag: "wx", mode: 0o600 }); }
+  try { writeFileSync(file, JSON.stringify(began) + "\n", { flag: "wx", mode: 0o600 }); }
   catch (e) { say(e?.code === "EEXIST" ? `routr: ${name} was started before; nothing was started now` : `routr: ${name}'s run folder could not be written (${typeof e?.code === "string" ? e.code : "write_failed"}); nothing was started`); return 2; }
-  const record = (patch) => { try { writeJsonAtomic(runFile(name), { ...began, ...patch }, { mkdir: false, mode: 0o600 }); } catch {} };
-  const dir = runDir(name), notStarted = (code) => { record({ ended_at: now(), not_started: code }); say(`routr: ${HARNESSES[w.kind]?.label ?? w.kind} did not start (${code})`); return 127; };
+  const record = (patch) => { try { writeJsonAtomic(file, { ...began, ...patch }, { mkdir: false, mode: 0o600 }); } catch {} };
+  const notStarted = (code) => { record({ ended_at: now(), not_started: code }); say(`routr: ${HARNESSES[w.kind]?.label ?? w.kind} did not start (${code})`); return 127; };
   let child;
   try {
     const p = terminalPlan(planOf(w, dir), firstMessage(join(dir, PROMPT_FILE)));
@@ -202,26 +194,28 @@ export async function endTerminal(w, { dryRun = false, out, assertOwned = () => 
     return null;
   }
   const t = got.data;
-  // Addresses last on one core only, so an address on another may be anyone's: never ended on the address alone.
-  if (t.name !== w.terminal_name) return { why: `terminal ${ref} is not ${w.name}'s now (another name): routr ends only its own`, next: doNext(`Look at ${ref} with hc; remove ${runDir(w.name)} and its worktree yourself if nothing of them is needed.`) };
+  // Addresses last on one core only, and a name can be used again: the id launch labelled it with is what makes it this worker's.
+  if (t.labels?.[WORKER_LABEL] !== w.id) return { why: `terminal ${ref} does not carry ${w.name}'s id, so it is not this worker's, or not on this core: routr ended nothing and kept everything`, next: doNext(`Look at ${ref} with hc. Run cleanup from the core that started ${w.name}; if that core has gone, make sure nothing of it runs, then remove ${runDir(w.name)} and its worktree yourself.`) };
+  // What was checked is what is acted on: its address, not a name that could resolve again.
+  const target = isAddress(t.address) ? t.address : ref;
   if (!isFinished(t)) {
     const word = statusWord(t);
     if (["working", "blocked"].includes(word)) return { why: `${w.name} is ${word === "blocked" ? "waiting at a question" : "working"} in terminal ${ref}`, next: [runNext("Wait for it to finish.", [...hcFor("wait", w), "--timeout", "90", "--json"]), doNext(`Answer it or let it finish before cleanup; to give up on its work, end it first with hc kill ${ref}.`)] };
     if (word == null && HARNESSES[w.kind]?.noStatus) out.warnings.push(warning("terminal_status_unknown", `${HARNESSES[w.kind].label} reports no status, so routr cannot see whether it is still working in ${ref}: it ${dryRun ? "would end" : "ended"} it all the same`));
-    if (dryRun) { step("plan", true, `Would end terminal ${ref}`); return null; }
+    if (dryRun) { step("plan", true, `Would end terminal ${target}`); return null; }
     assertOwned();
-    out.ran.push(displayCommand(["hc", "kill", ref]));
-    const killed = await actHc(["kill", ref], hc, 15000);
-    if (!killed.ok && killed.code !== "not_found") return { why: `${HC_WHY[killed.code]} when asked to end terminal ${ref} (${killed.code}), so it may still be running`, next: look };
-    step("terminal", true, `Ended terminal ${ref}`);
-  } else if (dryRun) { step("plan", true, `Would remove finished terminal ${ref}`); return null; }
+    out.ran.push(displayCommand(["hc", "kill", target]));
+    const killed = await actHc(["kill", target], hc, 15000);
+    if (!killed.ok && killed.code !== "not_found") return { why: `${HC_WHY[killed.code]} when asked to end terminal ${target} (${killed.code}), so it may still be running`, next: look };
+    step("terminal", true, `Ended terminal ${target}`);
+  } else if (dryRun) { step("plan", true, `Would remove finished terminal ${target}`); return null; }
   // `rm` takes a finished terminal only: it refuses one still finishing for a moment. One that stays costs only a line in hc ls.
   assertOwned();
-  out.ran.push(displayCommand(["hc", "rm", ref]));
+  out.ran.push(displayCommand(["hc", "rm", target]));
   for (let i = 0; ; i++) {
-    const rm = await actHc(["rm", ref], hc);
-    if (rm.ok || rm.code === "not_found") { step("terminal_removed", true, `Removed terminal ${ref}`); return null; }
-    if (i >= 8) { out.warnings.push(warning("terminal_left", `Terminal ${ref} has ended, but hc did not remove it (${rm.code}): hc rm ${ref} removes it`)); return null; }
+    const rm = await actHc(["rm", target], hc);
+    if (rm.ok || rm.code === "not_found") { step("terminal_removed", true, `Removed terminal ${target}`); return null; }
+    if (i >= 8) { out.warnings.push(warning("terminal_left", `Terminal ${target} has ended, but hc did not remove it (${rm.code}): hc rm ${target} removes it`)); return null; }
     await pause(250);
   }
 }

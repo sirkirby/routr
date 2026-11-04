@@ -169,9 +169,9 @@ object describing what it did.
   with a matching `brief_sha`: otherwise launch refuses before any harness, pane or worktree call. Dry runs make the same checks, return `ok: false` with `error` on a refusal, and still plan.
   With no task (no `--task-file` or `--task`) there is nothing to compare, and no `advice` field.
 - routr answers no question: not the user's shell (its plugins and startup files ask their own), not a harness at
-  startup. It passes each harness's own flags so none is asked (Cursor `--trust`, Kiro `--trust-tools=*`, Codex
+  startup. It passes each harness's own flags so none is asked (Cursor `--trust`, Codex
   `--dangerously-bypass-hook-trust` for its hooks review; Codex and Claude Code still ask to trust a folder outside a
-  trusted one), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
+  trusted one; Kiro V3 asks twice until the person has answered, `references/harnesses.md`), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
 - A cmd shell expands `%` and `!` in a folder path even inside quotes, so launch refuses (`failed`) to type such a
   folder into one: use a folder without them, or a pane running PowerShell.
 - `--dry-run` requires `--model` and prints `would_run` without executing worker actions. It may queue a planned
@@ -379,11 +379,12 @@ differs:
   where. Launch also refuses from inside a sandbox it can see, as for a headless worker.
 - **`prompted` means it started.** Launch waits for the harness to report `working`, or, for one that reports no status
   (Cursor), for its process to run. `worker.terminal` in its answer is the address you use with `hc`; call it `<t>` below.
-- **`needs_input` is yours to decide, as in step 3.** A harness at a question before it can start (`blocked`, as
-  Antigravity at its folder trust) comes back with what its terminal shows in `screen`; Kiro V3 asks to trust a workspace
-  and reports nothing while it asks, so it comes back that way only at `--timeout`, as one that has not started.
-  routr answers nothing. Answer within the rule in step 3 with `hc keys <t> <keys>`. The worker has its task and goes on
-  by itself once answered: do not launch it again.
+- **`needs_input` is yours to decide, as in step 3.** A harness at a question before it can start comes back `blocked`, as
+  Antigravity at its folder trust and Kiro at its trust-all-tools warning. Kiro V3 asks to trust a folder and reports nothing
+  while it asks, so that comes back only at `--timeout`, as one that has not started. `screen` is withheld, as the worker
+  has its task from the start: read it yourself with `hc read <t>`. routr answers nothing. Answer within the rule in step 3
+  with `hc keys <t> <keys>`, and ask the user for Kiro's two: `needs_input.note` says what they are. The worker has its
+  task and goes on by itself once answered: do not launch it again.
 - **Wait with `hc wait <t> --timeout <seconds>`,** then look at `turn`, not at the word: `turn` above 0 means a turn has
   ended. `hc wait` right after the start returns at once with `idle` and turn 0, which only means it has not started yet.
   A later `blocked` is a question for you, as in a pane: read it with `hc read <t>` and answer with `hc keys`. A

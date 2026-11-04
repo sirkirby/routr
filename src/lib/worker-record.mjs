@@ -3,7 +3,7 @@
 import { linkWorker } from "./traces.mjs";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { privateDir } from "./channel.mjs";
 import { lockIsStale, readJsonFile, STATE_DIR, UNINSTALL_LOCK, WORKER_NAME } from "./runtime.mjs";
 
@@ -27,6 +27,8 @@ export const workerOf = (name) => {
   linkWorker(w); return { worker: { ...w, backend: w.backend ?? "headless" } };
 };
 export const readWorker = (name) => workerOf(name).worker ?? null;
+// The same, from a run folder named by its path, for a process whose HOME may not be the one launch ran under.
+export const readWorkerAt = (dir) => { const w = readJsonFile(join(dir, "worker.json")).value; return w?.format === FORMAT && w.name === basename(dir) ? { ...w, backend: w.backend ?? "headless" } : null; };
 // A worker file that is there and cannot be read, said to a person: the file, the code, and that it may pass.
 export const unreadableWhy = (name, file, code) => `${name}'s ${file} could not be read just now (${code}), so what it is doing is not known: try again in a moment`;
 

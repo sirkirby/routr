@@ -34,8 +34,9 @@ Names that mean one thing everywhere:
   harness's startup question. A note is not a warning: nothing is wrong with the call.
 - `notes`: in `subagent` and `dispatch` only, the advice's own reasoning (the user's preferences, a risk warning, how a
   torn level was settled, a brief to fix). Part of the advice, not about the call.
-- `screen`: what a pane or a herdr-core terminal showed when routr stopped, or the fixed sentence saying it is withheld
-  because the task was sent, or (a terminal) because it quotes the task. The only place that text reaches output.
+- `screen`: what a pane showed when routr stopped, or the fixed sentence saying it is withheld because the task was
+  sent, as it always is for a worker in a herdr-core terminal, which has its task from the start. The only place a pane's
+  text reaches output.
 - `subscription`: a subscription's name, wherever one is named (`unavailable` entries, ranked and excluded rows, a
   named usage reading).
 - `ran` and `would_run`: display lines of the herdr and git commands a command ran, and the harness command a headless
@@ -171,7 +172,7 @@ that binary in `would_keep`, using the same rule. Delivery and the resource are 
 ## Text from outside routr
 
 AGENTS.md lets outside text reach output only where a command's contract names it. This contract names one place for
-free text: `screen`, what a pane or a herdr-core terminal showed, and only before the task was sent (after that it may show the brief, and
+free text: `screen`, what a pane showed, and only before the task was sent (after that it may show the brief, and
 `screen` is the fixed withheld sentence, as today). Everything else a herdr or git call returns is classified where
 routr starts the process: what leaves that point is routr's own words, and the structured herdr values below, each
 checked against a fixed shape.
@@ -605,7 +606,7 @@ plans the pane launch as before: it does not check the environment.
 - Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "headless", run, session }` (`run`:
   the run folder; `session`: the harness's session id (Codex: its thread id; Antigravity: its conversation id; Kiro: its ACP session id), or null).
   `start.argv` is the harness's headless command line (Codex: `app-server` with its update check at startup off; its
-  model and effort go in the protocol, subagent defaults in TOML string config overrides; Antigravity: with the worker's folder in `--add-dir`; Kiro: `acp` with the pane's flags; Cursor: `-p --output-format stream-json` with the pane's flags, and `--resume <session>` on each later turn); it is set once the worker's folder is known: a launch
+  model and effort go in the protocol, subagent defaults in TOML string config overrides; Antigravity: with the worker's folder in `--add-dir`; Kiro: `acp` with `--trust-tools=*`, its model and effort; Cursor: `-p --output-format stream-json` with the pane's flags, and `--resume <session>` on each later turn); it is set once the worker's folder is known: a launch
   refused before that shows the pane command planned first, not the headless one. `ran` displays it. `start.env`
   lists each trace-context carrier passed, as `"<forwarded>"`, plus any Claude Code subagent defaults given: a headless Cursor runs with
   `CURSOR_CONFIG_DIR` set to its run folder's private config copy, which is not shown there. The carriers within
@@ -638,18 +639,19 @@ launch as before.
   where the task file is (after Antigravity's `-i`; first, Codex's `--no-daemon`; Kiro's `--v3 chat`). `start.env` lists
   each trace-context carrier and config location passed, as `"<forwarded>"`, plus any Claude Code subagent defaults. A
   Cursor worker's `CURSOR_CONFIG_DIR` is its run folder's private copy, which is not shown there. `ran` displays that
-  command and the `hc run`, with the lead's space as `<lead's space>` and routr's own program as `routr`.
+  command and the `hc run`, with the lead's space as `<lead's space>` and routr's own program as `routr`. `hc run` also carries the label
+  `routr.worker=<record id>`, and its program is told the run folder's path and that id.
 - `state`: `prompted`, `needs_input` or `failed`.
   - `prompted`: `hc get` says status `working` or `done`, or a turn above 0; for a harness that reports no status (Cursor),
     `run.json` says its process runs. Whether Cursor has read its task is then not known.
   - `needs_input` (`ok: false`, no `error`): status `blocked` before any of that, with `needs_input` `{ why, hc: { state:
     "blocked", kind? }, note? }`; or `--timeout` reached first, with `hc.state` the last status word or null. `screen` is
-    what its terminal shows (last 40 lines, carrier values replaced), or a fixed sentence when it quotes the task, or
-    null when it could not be read. routr answers nothing. `next` gives the guide's startup instruction with `hc keys <t>
+    the fixed withheld sentence: the harness has the pointer to its task from its start, so launch reads no terminal.
+    routr answers nothing. `next` starts with `hc read <t> --lines 200`, gives the guide's startup instruction with `hc keys <t>
     <keys>`, says not to launch it again, and adds the steps below: the worker has its task, and goes on once answered.
     `steps` end with `needs_input`, and the launch counts toward the launch share at once.
-  - `failed`: the harness ended first, or reported `error`, with `screen`; `worker` is kept, and `next` has `routr cleanup
-    --worker`. `hc` refusing the new terminal (after one more try under `<name>-<id>`, as a name may be taken): the run
+  - `failed`: the harness ended first, or reported `error`, with the same `screen`; `worker` is kept, and `next` has `hc read
+    <t> --lines 200` and `routr cleanup --worker`. `hc` refusing the new terminal (after one more try under `<name>-<id>`, as a name may be taken): the run
     folder and worktree are removed and `worker` is null. `hc` not answering it, or an answer routr cannot read: they are
     kept, `worker.terminal` is null, and `next` adds `hc ls`.
 - `headline`: `routr: <name> (<kind>) took its task in terminal <t>`; `routr: <name> needs input in terminal <t>: <why>`;
@@ -753,7 +755,7 @@ Inputs:
   worker's changes in its folder are the lead's to check. Own field: `name`.
 - `--worker` on a terminal worker has no holder to check. Instead it refuses while `hc get` says status `working` or
   `blocked` (`next`: `hc wait`, and that `hc kill` gives up its work), when `hc` does not answer or answers what routr cannot
-  read, when the terminal at that address has another name now, when `hc kill` fails, and when `hc` does not find the
+  read, when the terminal at that address does not carry the record's id in its `routr.worker` label (launch sets it; it keeps everything then, as an address and a name can be another terminal's on another core), when `hc kill` fails, and when `hc` does not find the
   terminal while `run.json` records no end and its process id is alive, or `run.json` cannot be read. Otherwise it ends the terminal with `hc kill`,
   then removes it with `hc rm` (tried again for about two seconds; one that stays is a `terminal_left` warning, with the
   command), `steps` adding `terminal` and `terminal_removed`, and goes on as above. A `--dry-run` ends and removes nothing. A harness that
