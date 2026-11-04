@@ -3,7 +3,7 @@
 import { linkWorker } from "./traces.mjs";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { privateDir } from "./channel.mjs";
 import { lockIsStale, readJsonFile, STATE_DIR, UNINSTALL_LOCK, WORKER_NAME } from "./runtime.mjs";
 
@@ -14,7 +14,9 @@ export const runDir = (name) => join(WORKERS_DIR(), name);
 export const workerNames = () => { try { return readdirSync(WORKERS_DIR()).filter((n) => WORKER_NAME.test(n)).sort(); } catch { return []; } };
 // What launch wrote: { format, id, name, kind, model, effort, cwd, created_at, carriers }. Never the brief, and of the
 // environment only the trace-context carriers within routr's limits, which every load checks again (savedCarriers).
-// `backend` is where it runs: a record that names none is headless, as every record written so far is.
+// `backend` is where it runs: a record that names none is headless, as every record written before terminal workers is.
+// A terminal worker's also has `terminal` (its address), `terminal_name` and `config` (where-is-my-config paths, checked
+// again by savedConfigLocations); its prompt is a file beside the record, never in it.
 // As readJsonFile reads it: { worker } for one routr's launch wrote, { absent: true }, { foreign: true } (another
 // shape: not routr's), or { unreadable } (there, and not read: what it is is not known, so nothing acts on it).
 export const workerOf = (name) => {
@@ -25,6 +27,8 @@ export const workerOf = (name) => {
   linkWorker(w); return { worker: { ...w, backend: w.backend ?? "headless" } };
 };
 export const readWorker = (name) => workerOf(name).worker ?? null;
+// The same, from a run folder named by its path, for a process whose HOME may not be the one launch ran under.
+export const readWorkerAt = (dir) => { const w = readJsonFile(join(dir, "worker.json")).value; return w?.format === FORMAT && w.name === basename(dir) ? { ...w, backend: w.backend ?? "headless" } : null; };
 // A worker file that is there and cannot be read, said to a person: the file, the code, and that it may pass.
 export const unreadableWhy = (name, file, code) => `${name}'s ${file} could not be read just now (${code}), so what it is doing is not known: try again in a moment`;
 

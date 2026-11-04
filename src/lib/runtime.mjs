@@ -139,7 +139,7 @@ export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnErr
 const locksHere = new Map();
 export const lockToken = (file) => locksHere.get(realOr(file));
 const lockRecord = (file) => { const value = JSON.parse(readFileSync(file, "utf8")); return typeof value === "number" ? { pid: value } : value; };
-const isAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } };
+export const processAlive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e?.code === "EPERM"; } };
 const createLock = (path, id, write = writeFileSync) => {
   const fd = openSync(path, "wx", 0o600);
   try { try { write(fd, JSON.stringify({ pid: process.pid, token: id })); } finally { closeSync(fd); } }
@@ -177,7 +177,7 @@ const publishLock = (path, token, { link = linkSync, write = writeFileSync } = {
 // creates the claim named for that guard's bytes and file: the dead owner cannot touch it, so the move takes exactly
 // the guard that was checked. A claim whose own holder died passes to the next number.
 // Returns the held guard, "busy", or null when the folder cannot be written.
-function holdGuard(file, { alive = isAlive, rename = renameSync } = {}) {
+function holdGuard(file, { alive = processAlive, rename = renameSync } = {}) {
   const guard = `${file}.takeover`, token = randomUUID(), gone = (f) => lockIsStale(f, { alive });
   const held = { held: () => lockOwned(guard, token), release: () => dropOwn(guard, token) };
   try { publishLock(guard, token); return held; } catch (e) { if (e?.code !== "EEXIST") return null; }
@@ -251,7 +251,7 @@ export function takeLock(file, stale, { token = randomUUID(), rename = renameSyn
 }
 // The updater's lock is only taken over when its owner is gone: age alone would let a slow download be overlapped by a
 // second swap. A lock with no readable pid (written by an older routr) falls back to age.
-export function lockIsStale(file, { alive = isAlive } = {}) {
+export function lockIsStale(file, { alive = processAlive } = {}) {
   let pid; try { pid = lockRecord(file)?.pid; } catch {}
   if (Number.isInteger(pid) && pid > 0) return !alive(pid);
   return Date.now() - statSync(file).mtimeMs >= 10 * 60 * 1000;
@@ -263,7 +263,9 @@ export const olderThan = (ms, nowMs = Date.now()) => (file) => nowMs - statSync(
 // no console of its own (a detached background job: the Cursor or Kiro refresh, the updater) gets a NEW console, which
 // Windows 11 opens as a Windows Terminal window: QA saw 20 to 70 windows flash per Cursor refresh, one per herdr poll,
 // before every start came through here. Off Windows the option does nothing. It is forced, never left to the caller.
-export const startOptions = (opts = {}) => ({ ...opts, windowsHide: true });
+// The one exception asks for it by `visible: true`: a harness run for a person in a terminal of its own (a terminal
+// worker's runner) keeps that terminal's console, which a hidden start would take from it. Not measured on Windows.
+export const startOptions = ({ visible = false, ...opts } = {}) => ({ ...opts, windowsHide: !visible });
 // Start a process with those defaults: `start` as node's spawn, `startSync` as spawnSync, the command resolved on
 // Windows as below. `via` and `platform` are test seams.
 const prepare = (cmd, args = [], opts = {}, platform = process.platform) => {
@@ -513,6 +515,36 @@ export const harnessEnv = (env = process.env) => Object.fromEntries(Object.entri
 // A worker's environment: the harness environment, the carriers it was given (checked again here, so nothing unchecked
 // is ever spread into it), then the adapter's own variables, which win for their keys.
 export const workerEnv = (carriers, extra = {}, env = process.env) => ({ ...harnessEnv(env), ...savedCarriers(carriers).carriers, ...extra });
+
+// Where a harness finds its sign-in and settings. A worker in a herdr-core terminal starts from the core's environment,
+// not its lead's (measured 2026-11-03, hc 0.1.17: variables set on the `hc run` client did not arrive), so a lead on a
+// sandboxed account would get workers on the core's account without these. Exactly these names, only when the caller
+// set them, saved with the worker and checked again on every load. Paths: no key or token is among them.
+export const CONFIG_LOCATIONS = Object.freeze(["CLAUDE_CONFIG_DIR", "CODEX_HOME", "CURSOR_CONFIG_DIR", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]);
+const LOCATION = /^[^\0-\x1f\x7f]{1,4096}$/;
+const locations = (get) => Object.fromEntries(CONFIG_LOCATIONS.map((n) => [n, get(n)]).filter(([, v]) => typeof v === "string" && LOCATION.test(v)));
+export const configLocations = (env = process.env, { platform = process.platform } = {}) => locations((n) => carrierIn(env, n, platform));
+export const savedConfigLocations = (saved) => locations((n) => (own(saved, n) ? saved[n] : undefined));
+// A later layer wins its name; on Windows names differ only by case, so the name it replaces goes too.
+const layered = (platform, ...layers) => {
+  const out = {}, names = new Map();
+  for (const layer of layers) for (const [k, v] of Object.entries(layer)) {
+    const key = platform === "win32" ? k.toUpperCase() : k;
+    if (names.has(key)) delete out[names.get(key)];
+    names.set(key, k); out[k] = v;
+  }
+  return out;
+};
+// A terminal worker's environment, as its runner builds it inside the terminal. The terminal's own, through harnessEnv,
+// so a lead's identity a core picked up from the shell it started in is gone. Then the runner's own terminal names put
+// back: they are this terminal's, not the lead's, and the harness's `hc send` names it by them. Then only what launch saved: the
+// checked carriers, the config locations, and the adapter's variables (`adapter`), which win for their keys, so Cursor's
+// private config folder beats a caller's CURSOR_CONFIG_DIR. Nothing else of the caller's reaches it.
+const TERMINAL_OWN = ["HC_TERMINAL_ID", "HC_TERMINAL_SOCKET", "HC_SCOPE"];
+export const terminalEnv = ({ carriers, config, adapter = {} }, env = process.env, { platform = process.platform } = {}) => {
+  const mine = Object.fromEntries(TERMINAL_OWN.map((n) => [n, carrierIn(env, n, platform)]).filter(([, v]) => typeof v === "string" && v !== ""));
+  return layered(platform, harnessEnv(env), mine, savedCarriers(carriers).carriers, savedConfigLocations(config), adapter);
+};
 
 // Start routr again, detached, with `args`, and carry on without waiting: the binary itself, or `bun <script>` from a
 // source checkout, located beside this module rather than the importing script. A spawn that fails later (EACCES,

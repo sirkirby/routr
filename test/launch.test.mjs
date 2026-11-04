@@ -33,15 +33,15 @@ test("launch plans use each harness's measured permissions and model syntax", ()
     .toMatchObject({ executable: "cursor-agent", argv: ["--yolo", "--trust", "--model", "composer-2.5"], env: { CURSOR_CONFIG_DIR: "/private/config" } });
   expect(plan({ kind: "agy", model: "gemini-3.8-flash-low", cwd: "/work" }).argv)
     .toEqual(["--dangerously-skip-permissions", "--add-dir", "/work", "--model", "gemini-3.8-flash-low"]);
-  expect(plan({ kind: "kiro", model: "claude-haiku-4.5" })).toMatchObject({ executable: "kiro-cli", argv: ["chat", "--trust-tools=*", "--model", "claude-haiku-4.5"], env: {} });
+  expect(plan({ kind: "kiro", model: "claude-haiku-4.5" })).toMatchObject({ executable: "kiro-cli", argv: ["--v2", "chat", "--trust-tools=*", "--model", "claude-haiku-4.5"], env: {} });
 });
 
 test("Kiro's effort: auto passes no flag (the model decides, nothing remembered); a level is passed and its side effect said", () => {
   const auto = plan({ kind: "kiro", model: "auto", effort: "auto" });
-  expect(auto.argv).toEqual(["chat", "--trust-tools=*", "--model", "auto"]);
+  expect(auto.argv).toEqual(["--v2", "chat", "--trust-tools=*", "--model", "auto"]);
   expect(auto.warnings.join(" ")).not.toContain("remembers");
   const high = plan({ kind: "kiro", model: "claude-opus-4.8", effort: "high" });
-  expect(high.argv).toEqual(["chat", "--trust-tools=*", "--model", "claude-opus-4.8", "--effort", "high"]);
+  expect(high.argv).toEqual(["--v2", "chat", "--trust-tools=*", "--model", "claude-opus-4.8", "--effort", "high"]);
   expect(high.warnings.join(" ")).toContain("remembers --effort as the user's default for claude-opus-4.8");
   expect(plan({ kind: "claude", model: "sonnet", effort: "auto" }).argv).toContain("auto"); // only Kiro reads auto as "no flag"
 });
@@ -888,7 +888,7 @@ test("a settled shell in the wrong directory is reported rather than started", a
   expect(f.calls.some((a) => a[1] === "start")).toBe(false);
 });
 
-// Kiro CLI 2.24.1 started with --trust-tools=* goes straight to its prompt (2026-09-28): no confirmation to answer.
+// Kiro at its prompt, once the person has answered its questions at startup (references/harnesses.md).
 const kiroReady = (model) => `────────\nkiro_default · ${model ? `${model} · ` : ""}◔ 1%        /private/tmp/work\n›  ask a question or describe a task ↵`;
 
 function fakeKiro({ model = "glm-5", shown = model } = {}) {
@@ -897,6 +897,14 @@ function fakeKiro({ model = "glm-5", shown = model } = {}) {
   } });
   return f;
 }
+
+test("Kiro in a pane starts on V2, whose questions herdr's rules read: V3 read as ready, and launch's Enter answered its folder trust", async () => {
+  const f = fakeKiro(), r = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...f.deps, models: async () => ["glm-5"] });
+  const start = f.calls.find((c) => c[1] === "start"), argv = start.slice(start.indexOf("--") + 1);
+  expect(argv).toEqual(["--v2", "chat", "--trust-tools=*", "--model", "glm-5"]);
+  expect(r.start.argv).toEqual(argv);
+  for (const flag of ["--v3", "--trust-all-tools", "--trust-workspace"]) expect(argv).not.toContain(flag);
+});
 
 test("Kiro: a model id it does not list is refused before any pane, from its own list, not its screen", async () => {
   const f = fakeKiro();

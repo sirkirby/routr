@@ -115,7 +115,7 @@ export function parseWorktreeHeads(text) {
 
 // `run` is one herdr command, `git(dir, args)` one git command ({ out, err, code }, or null), and `linked` the
 // linked-worktree test: seams for tests.
-async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.env, linked = linkedWorktree, assertOwned = () => {} } = {}) {
+async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.env, linked = linkedWorktree, assertOwned = () => {}, hc } = {}) {
   // Outside herdr, worktrees are listed and removed through git alone (headless workers make theirs that way), and
   // what runs in a folder is not seen: the warning says so.
   const viaGit = env.HERDR_ENV !== "1";
@@ -222,7 +222,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
     const o = parseCleanupArgs(args);
     await cleanupLink(o, run);
     target = o.worktree ?? o.path;
-    if (o.worker != null) return await (await import("./backend-headless.mjs")).cleanupWorker(o.worker, o, out);
+    if (o.worker != null) return await (await import("./backend-headless.mjs")).cleanupWorker(o.worker, o, out, { hc });
     if (o.pane != null) {
       out.pane = o.pane;
       const panes = await paneList([]);

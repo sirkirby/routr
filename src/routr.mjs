@@ -79,11 +79,13 @@ const ACT = {
   },
   // The text is an argument, never read from stdin: a pipe left open would hang.
   feedback: async (args) => { const r = await (await import("./lib/telemetry.mjs")).sendFeedback(args.join(" ")); print(r); return r.ok ? 0 : 1; },
-  // Headless workers (outside herdr). wait and workers read; send and stop act. `workers --hold` is the holder
-  // itself, which launch and send start detached; it prints nothing.
+  // Workers routr holds. wait and workers read; send and stop act. `workers --hold` is the holder itself, which launch
+  // and send start detached; it prints nothing. `workers --run <run folder> --id <id>` is a terminal worker's own program,
+  // the one hc runs in its terminal: the harness has that terminal to itself, and its exit code is this one's.
   wait: async (args) => { print(await (await import("./lib/workers.mjs")).waitCommand(args, settings)); return 0; },
   workers: async (args) => {
     if (args[0] === "--hold" && args[1]) { await (await import("./lib/headless.mjs")).hold(args[1]); return null; }
+    if (args[0] === "--run" && args[1] && args[2] === "--id" && args[3]) return await (await import("./lib/backend-terminal.mjs")).runWorker(args[1], args[3]);
     print(await (await import("./lib/workers.mjs")).workersCommand(args, settings)); return 0;
   },
   send: async (args) => { const r = await (await import("./lib/workers.mjs")).sendCommand(args, settings); print(r); return r.ok ? 0 : 1; },
@@ -195,7 +197,7 @@ const words = [...argv];
 for (const flag of ["--config", "--headroom"]) while (words.includes(flag)) words.splice(words.indexOf(flag), 2);
 const command = emitting.includes(words[0]) && (words[0] === "launch" || !argv.includes("--version")) ? words[0] : null;
 let invoke = main;
-if (command && !(argv[0] === "workers" && argv[1] === "--hold" && argv[2]) && !(command === "usage" && argv.includes("--background"))) {
+if (command && !(argv[0] === "workers" && ["--hold", "--run"].includes(argv[1]) && argv[2]) && !(command === "usage" && argv.includes("--background"))) {
   try {
     const tracing = await import("./lib/traces.mjs"), configPath = value("--config"), { takeLeadSession } = await import("./lib/trace-context.mjs"); traceOutput = tracing.traceOutput;
     invoke = () => tracing.commandTrace(command, () => ({ config: configAt(configPath).config, otel: { configPath },

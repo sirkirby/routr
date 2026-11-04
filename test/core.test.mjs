@@ -1,6 +1,6 @@
 // Workers in herdr-core: which path a lead takes, what routr asks of `hc`, and `routr watch`. No hc and no harness run.
 import { expect, test } from "bun:test";
-import { inCore, showWorker } from "../src/lib/presenter-watch.mjs";
+import { inCore, presentWorker, showWorker } from "../src/lib/presenter-watch.mjs";
 import { changes, statusReport } from "../src/lib/watch.mjs";
 import { KINDS, HARNESSES } from "../src/lib/harnesses.mjs";
 import { harnessEnv } from "../src/lib/runtime.mjs";
@@ -86,6 +86,19 @@ test("hc missing, refusing or unreadable is a code, and nothing further is asked
   }
   const f = fake();
   expect(await show(f, { self: () => null })).toEqual({ code: "not_available" });
+});
+
+test("a watch terminal beside a headless worker says what it did, and failing to start costs only the terminal", async () => {
+  const shown = { worker: {}, steps: [], warnings: [], next: [] };
+  await presentWorker({ name: "w1", id: "abc", cwd: "/work", env: { HC_TERMINAL_ID: "t3" }, out: shown, run: fake().run, self: (a) => ["/bin/routr", ...a], pause: async () => {} });
+  expect(shown.worker.terminal).toBe("t9");
+  expect(shown.steps.map((s) => s.step)).toEqual(["terminal"]);
+  expect(shown.warnings).toEqual([]);
+  const left = { worker: {}, steps: [], warnings: [], next: [] };
+  await presentWorker({ name: "w1", id: "abc", cwd: "/work", env: { HC_TERMINAL_ID: "t3" }, out: left, run: fake({ run: { code: 1, out: "" } }).run, self: (a) => ["/bin/routr", ...a], pause: async () => {} });
+  expect(left.worker.terminal).toBeUndefined();
+  expect(left.warnings.join(" ")).toContain("did not start a terminal");
+  expect(left.next.map((n) => n.argv)).toEqual([["routr", "watch", "--name", "w1"]]);
 });
 
 const decoded = (s) => Object.fromEntries(s.slice("\x1b]7501;".length, -2).split(":").map((f) => f.split("=", 2)));

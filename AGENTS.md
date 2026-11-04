@@ -1,8 +1,8 @@
 # routr — project rules
 
 routr is a skill plus one standalone CLI that helps a lead coding agent hand work to workers on the user's own AI
-subscriptions (Claude Code, Codex, Cursor, Antigravity, Kiro), in herdr panes or headless outside them (in the Herdr
-app, with a tab showing each one's progress). A System One
+subscriptions (Claude Code, Codex, Cursor, Antigravity, Kiro), in herdr panes, in terminals of herdr-core (tabs in the
+Herdr app), or headless anywhere else. A System One
 model answers fixed, measured questions about a brief or a worker report; code adds live usage; the lead agent
 decides. Plain JavaScript (`.mjs`), developed with Bun, shipped as compiled binaries.
 
@@ -44,7 +44,7 @@ page and its tests in the same PR.
   a pane, it types commands for that pane's own shell.
 - routr writes only in its own folders and what a command was asked to write.
 - A brief goes only to the decision model and the worker it is for, and a key only to its provider. Neither is ever printed, logged, or put
-  in the ledger or telemetry. A headless worker's report files, its own text, may quote its brief; where they are kept and for how long is
+  in the ledger or telemetry. A terminal worker's prompt is a file of its run folder, for that worker to read. A headless worker's report files, its own text, may quote its brief; where they are kept and for how long is
   `docs/guarantees.md`.
 - Telemetry and OpenTelemetry export are OFF unless the person turns each on; an agent never turns either on
   unasked. A new sent field changes `docs/telemetry.md` for telemetry or `docs/opentelemetry.md` for OpenTelemetry

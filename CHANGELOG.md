@@ -5,6 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- In the Herdr app each worker now runs its real harness in a tab of its own, and the lead follows it with `hc`; `routr cleanup --worker` ends its terminal. Kiro runs on its V3 engine there, with `--trust-all-tools`; in a herdr pane it stays on V2, now named with `--v2`.
 - On macOS and Linux, Cursor's usage no longer needs herdr: routr reads it in a terminal of its own. (#149)
 - Setup, doctor and the guides treat the Herdr app as a way to see workers, and doctor no longer tells an app user to install the older herdr's skill. (#148)
 

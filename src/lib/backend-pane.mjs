@@ -11,12 +11,8 @@ import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { OFF } from "./wording.mjs";
 import { clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, promptReadArgs, SHELLS, shellFamily, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
-import { launchFailed } from "./launch-answer.mjs";
+import { launchFailed, STARTUP_INPUT } from "./launch-answer.mjs";
 import { CARRIERS, carrierValues, FORWARDED, realPath, redactCarriers } from "./runtime.mjs";
-import orchestratorGuide from "../../skills/routr/references/orchestrator.md" with { type: "text" };
-
-// The guide is the source of this instruction, embedded at build time just like the installed skills.
-const STARTUP_INPUT = orchestratorGuide.match(/<!-- startup-input -->\s*([\s\S]*?)\s*<!-- \/startup-input -->/)[1].replace(/\s*\n\s*/g, " ");
 
 export const command = (args) => displayCommand(["herdr", ...args]);
 // Trace-context carriers reach only a pane launch splits (herdr's `pane split --env`), beside the caller or in a new

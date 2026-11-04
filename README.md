@@ -6,8 +6,8 @@ routr lets one coding agent run a team of others across the AI subscriptions you
 Codex, Cursor, Antigravity, and Kiro.
 
 **It uses what is already on your machine.** The workers are the harness CLIs you have installed and logged in to,
-started in [herdr](https://github.com/herdrdev/herdr) panes (routr is named after it), or, without herdr, Claude Code,
-Codex, Cursor, Antigravity and Kiro running headless, with a tab for each in the Herdr app. There are no provider API
+started in [herdr](https://github.com/herdrdev/herdr) panes (routr is named after it), in tabs of the Herdr app, or,
+without either, Claude Code, Codex, Cursor, Antigravity and Kiro running headless. There are no provider API
 keys to hand over, no proxy, and no new accounts: your subscriptions, your logins, your settings. Keys routr
 needs are for its own chosen decision providers, and those are optional: it can run on your own machine.
 
@@ -35,7 +35,7 @@ model. routr spreads the work across what you have, and starts each piece at the
 2. **Build.** The lead chooses suitable model and effort options on normal accounts, then compares their capacity.
    Fallback accounts are available when none suitably takes the task. `routr launch` starts the worker in its own
    git worktree with that harness's flags: in a herdr pane, handling shell prompts on the way and reporting any
-   question a harness asks at startup, or, outside herdr, headless, followed with `routr wait` (in the Herdr app, with a tab showing each one's progress).
+   question a harness asks at startup, in the Herdr app, in a tab of its own, followed with `hc`; or anywhere else, headless, followed with `routr wait`.
 3. **Judge.** When the worker reports, `routr check` takes a first read of the report against the brief. The lead
    then runs its own check, which is what decides.
 4. **Fix.** Work that falls short goes back to the same worker. If it falls short again, the lead relaunches it one
@@ -88,7 +88,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `usage [cursor\|kiro]` | Each subscription's usage, candidates and capacity ranking, with no brief. `usage cursor` or `usage kiro` reads that one now. |
 | `launch` | Start one worker in its own git worktree (`--base` starts it from another branch or commit), with the harness's flags and model syntax: in herdr, a pane nested under the repo, handling shell prompts and reporting startup questions (never answered), then readiness and the prompt; outside herdr, headless, where no one answers a worker: it puts a question in its report. A task requires matching `--advice`; `--dry-run` shows the plan and returns `ok: false` with `error` when a real launch would refuse. `next` holds recovery, the record template and cleanup. |
 | `wait`, `send`, `workers`, `stop` | Outside herdr, `launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless: `wait` returns when one finishes a turn, with its report's path; `send` corrects it (Codex: steered into the running turn; Claude Code: written to its input, joining the running turn or starting the next as Claude decides, not yet measured through routr; Cursor, Antigravity and Kiro: as the next turn) or resumes its session with a follow-up; `workers` shows each one's state; `stop` ends one. |
-| `watch` | A person's view of one headless worker: state, tools and report paths as they change, never its text, until it is cleaned up. In the Herdr app, `launch` opens it in a tab of its own, and the worker shows in the app's Agents list. |
+| `watch` | A person's view of one headless worker: state, tools and report paths as they change, never its text, until it is cleaned up. |
 | `cleanup` | Finish a worker: remove its worktree and workspace (or close its pane), never while anything it can see runs there (outside herdr it cannot see what runs in a worktree's folder) or anything in it is uncommitted. `--worker <name>` removes a headless worker's worktree, with the same checks, then its run folder and reports. Keeps the branch unless `--delete-branch` and it is merged. With no worker named, lists the repo's worktrees. `--dry-run` says what it would do. |
 | `check --brief <f> --report <f>` | A first read of a worker's report: no verification named, part of the brief skipped, gaps admitted, a symptom patch, out of scope. |
 | `record`, `assess` | Write one ledger line (`record --task-file <path>` checks advice against this worker’s task); read the ledger back as advice about your own settings. |
@@ -173,8 +173,8 @@ for a later reinstall unless you choose otherwise (`--purge`). Finish any headle
 
 Where the lead runs decides how you see its workers:
 
-- In the [Herdr app](https://herdr.dev/download/), each worker gets a tab showing its progress and appears in the
-  Agents list. Nothing else is needed. See `routr watch`.
+- In the [Herdr app](https://herdr.dev/download/), each worker runs its real harness in a tab of its own, which the
+  lead follows with `hc`. Nothing else is needed.
 - In [herdr](https://herdr.dev) in a terminal, each worker runs in a pane on the harness's own screen. This needs herdr
   and its agent skill (`npx skills add herdrdev/herdr --skill herdr -g`); `routr doctor` tells you when either is missing.
 - Anywhere else, `routr launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless, followed with

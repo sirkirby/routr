@@ -352,7 +352,7 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `routr.cwd` | `string` | Real cwd relative to git checkout root, using `/`; `.` for root; omitted outside a repository. |
 | `routr.worktree` | `string` | Worktree relative to project root when inside it; otherwise its folder name; no absolute path. |
 | `routr.kind` | `string` | Worker harness: `claude`, `codex`, `cursor`, `agy`, `kiro`; unknown becomes `other`. |
-| `routr.backend` | `string` | `pane` or `headless`. |
+| `routr.backend` | `string` | `pane`, `headless` or `terminal`. |
 | `routr.launch.id` | `string` | UUIDv4 identifying a sampled launch; recovery reruns reuse the original id. |
 | `gen_ai.agent.name` | `string` | Worker name matching `[a-z][a-z0-9_-]{0,31}`; invalid names omitted. |
 | `gen_ai.conversation.id` | `string` | On commands, herdr agent_session of kind `id`, validated as UUIDv4, UUIDv7 or 16–64 lowercase hex characters; on turns, the harness UUID the adapter already reads; omitted when unavailable. |
@@ -513,6 +513,9 @@ producer, including config and input notes forwarded into `warnings`.
 | `branch_changed` | Launch branch has changed. |
 | `copy_missing` | Requested copy source is missing. |
 | `messages_dropped` | Stopped worker had queued messages. |
+| `terminal_followed` | A terminal worker is followed with hc. |
+| `terminal_left` | A finished worker terminal could not be removed. |
+| `terminal_status_unknown` | The harness reports no status to herdr-core. |
 | `worker_not_shown` | No terminal shows the worker. |
 | `process_unseen` | Saved process id cannot prove the harness state. |
 | `cleanup_unseen` | Cleanup sees git state only. |

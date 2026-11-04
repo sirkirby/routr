@@ -1,10 +1,12 @@
 // The commands for workers: `wait`, `send`, `workers` and `stop`, their parsing and what they answer. What each does to a
-// worker is its backend's (backend-headless.mjs). Answers carry report paths, never worker text.
+// worker is its backend's, from its record (backend-headless.mjs); a terminal worker is the lead's to follow with hc, and
+// these commands say so (backend-terminal.mjs). Answers carry report paths, never worker text.
 import { warning, carrierWithheld } from "./warnings.mjs";
 import { commandTrace } from "./traces.mjs";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { deliver, damagedNext, markerWhy, RUNNING, sandboxOf, size, stopWorker, TOO_BIG, view, worthWatching } from "./backend-headless.mjs";
+import { terminalRow, followSteps, messageStep, stopStep, TERMINAL_FOLLOWED } from "./backend-terminal.mjs";
 import { runDir, unreadableWhy, workerNames, workerOf } from "./worker-record.mjs";
 import { MESSAGE_MAX } from "./channel.mjs";
 import { HARNESSES, notReady } from "./harnesses.mjs";
@@ -56,9 +58,12 @@ async function waitCommandBody(args, { now = () => Date.now(), pause = sleep, en
     if (!Number.isSafeInteger(timeout) || timeout < 0) throw new Error("--timeout must be a whole number of milliseconds");
     // Unnamed: every worker still running, or with a turn this wait has not reported yet.
     // One whose state cannot be read just now is watched: it may be running.
-    const watched = o.names.length ? o.names : workerNames().filter((n) => worthWatching(n, seenOf(n).turn));
-    for (const n of watched) { const r = workerOf(n); if (!r.worker && !r.unreadable) throw new Error(`no headless worker named ${n}; routr workers lists them`); }
-    if (!watched.length) { out.ok = true; out.state = "none"; out.headline = "routr: no headless worker to wait on"; return answer(out); }
+    const asked = o.names.length ? o.names : workerNames().filter((n) => worthWatching(n, seenOf(n).turn));
+    for (const n of asked) { const r = workerOf(n); if (!r.worker && !r.unreadable) throw new Error(`no headless worker named ${n}; routr workers lists them`); }
+    // A terminal worker named here is the lead's to wait on with hc: said, and the rest are waited on as usual.
+    const elsewhere = asked.map((n) => workerOf(n).worker).filter((w) => w?.backend === "terminal"), watched = asked.filter((n) => !elsewhere.some((w) => w.name === n));
+    for (const w of elsewhere) { out.warnings.push(warning("terminal_followed", TERMINAL_FOLLOWED(w))); out.next.push(...followSteps(w)); }
+    if (!watched.length) { out.ok = true; out.state = "none"; out.headline = elsewhere.length ? `routr: ${TERMINAL_FOLLOWED(elsewhere[0])}${elsewhere.length > 1 ? `, and ${elsewhere.length - 1} more` : ""}` : "routr: no headless worker to wait on"; return answer(out); }
     const deadline = now() + timeout;
     let views = [], lastCheck = -Infinity;
     for (;;) {
@@ -111,6 +116,7 @@ async function sendCommandBody(args, { env = process.env, settings = () => loadC
     const name = out.name = o.names[0], rec = workerOf(name), w = rec.worker;
     if (rec.unreadable) { out.next.push(...damagedNext(name)); throw new Error(unreadableWhy(name, "worker.json", rec.unreadable)); }
     if (!w) throw new Error(`no headless worker named ${name}; routr workers lists them`);
+    if (w.backend === "terminal") { out.state = "refused"; out.headline = `routr: ${TERMINAL_FOLLOWED(w)}; nothing was sent`; out.next.push(messageStep(w)); return answer(out); }
     // A holder this send starts gives its harness the carriers saved with the worker, checked again: any withheld is said.
     out.warnings.push(...savedCarriers(w.carriers).withheld.map(carrierWithheld));
     const text = o["task-file"] != null ? readTask(resolve(o["task-file"])) : o.task;
@@ -141,6 +147,8 @@ async function workersCommandBody(args, { env = process.env } = {}) {
   try {
     const o = parseNamed(args, "workers", ["name"]);
     for (const n of o.names.length ? o.names : workerNames()) {
+      const rec = workerOf(n);
+      if (rec.worker?.backend === "terminal") { out.workers.push(terminalRow(rec.worker)); out.next.push(...followSteps(rec.worker)); continue; }
       const v = await view(n);
       if (v) { const row = { ...v }; delete row.turns; delete row.gen; out.workers.push(row); } else if (o.names.length) throw new Error(`no headless worker named ${n}`);
     }
@@ -159,6 +167,7 @@ async function stopCommandBody(args, { env = process.env } = {}) {
     const name = out.name = o.names[0];
     const rec = workerOf(name), w = rec.worker;
     if (!w && !rec.unreadable) throw new Error(`no headless worker named ${name}; routr workers lists them`);
+    if (w?.backend === "terminal") { out.state = "refused"; out.headline = `routr: ${TERMINAL_FOLLOWED(w)}; nothing was stopped`; out.next.push(stopStep(w), runNext("Then finish it.", ["routr", "cleanup", "--worker", name])); return answer(out); }
     const { channel: p, read, pgid, left, reply: r } = await stopWorker(name, rec);
     const pg = () => pgid;
     if (read.unreadable) {

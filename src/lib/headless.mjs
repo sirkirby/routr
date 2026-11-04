@@ -312,8 +312,8 @@ export const ADAPTERS = {
     },
   },
   kiro: {
-    // As in a pane: --trust-tools=*, the model, the effort; `acp` in place of `chat`.
-    argv: ({ model, effort }) => ["acp", ...plan({ kind: "kiro", model, effort }).argv.filter((a) => a !== "chat")],
+    // --trust-tools=*, the model, the effort; `acp` in place of `chat`.
+    argv: ({ model, effort }) => ["acp", ...plan({ kind: "kiro", model, effort, interactive: false }).argv],
     connect: (c, { cwd, session, emit, turnCarriers = () => ({}), processCarriers = {} }) => {
       const { rpc, outcome, open, take } = rpcPipe(c), r = kiroReader();
       // ACP reserves these keys; Kiro 2.34.0 reads none (2026-10-24 research). Consumption is unmeasured.
@@ -425,7 +425,7 @@ export const listGroup = async (pgid, timeoutMs, { ps = PS } = {}) => {
 // `run` starts the harness (runtime's start); a test passes a fake.
 export async function hold(name, { run = start, noTaskMs = 30000, startMs = 30000, otel = {} } = {}) {
   const dir = runDir(name), w = readWorker(name);
-  if (!w) return;
+  if (w?.backend !== "headless") return; // a terminal worker's own program runs it (backend-terminal.mjs)
   const p = await probe(dir);
   if (["alive", "starting", "unreachable"].includes(p.state)) return; // another holder has it, or may
   // A state it cannot read is never started over: a new one would drop the session and turns it holds.
