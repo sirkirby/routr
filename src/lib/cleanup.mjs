@@ -16,14 +16,16 @@
 import { warning } from "./warnings.mjs";
 import { commandTrace, cleanupLink } from "./traces.mjs";
 import { configOf, oneReading } from "./config.mjs";
-import { lstatSync, readFileSync, readlinkSync, rmSync } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { lstatSync, readFileSync, readlinkSync, rmdirSync, rmSync } from "node:fs";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { BRANCH, herdrWorktreeFolder, runHerdr } from "./herdr.mjs";
 import { count } from "./wording.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, callGit, processError, processSteps } from "./process-boundary.mjs";
-import { probe, realOr, realPath, WORKER_NAME, worktreeFolder } from "./runtime.mjs";
+import { probe, realOr, realPath, WORKER_NAME, WORKTREES_DIR, worktreeFolder } from "./runtime.mjs";
+import { callHc, client, getTerminal, isAddress } from "./hc.mjs";
+import { readWorker, WORKER_LABEL, workerNames } from "./worker-record.mjs";
 
 const herdrLine = (args) => displayCommand(["herdr", ...args]);
 const gitIn = (dir, args) => probe("git", ["-C", dir, ...args], { timeoutMs: 15000, separate: true });
@@ -116,9 +118,10 @@ export function parseWorktreeHeads(text) {
 // `run` is one herdr command, `git(dir, args)` one git command ({ out, err, code }, or null), and `linked` the
 // linked-worktree test: seams for tests.
 async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.env, linked = linkedWorktree, assertOwned = () => {}, hc } = {}) {
-  // Outside herdr, worktrees are listed and removed through git alone (headless workers make theirs that way), and
-  // what runs in a folder is not seen: the warning says so.
-  const viaGit = env.HERDR_ENV !== "1";
+  // Outside herdr, worktrees are listed and removed through git alone (headless and terminal workers make theirs that
+  // way). In herdr-core (the Herdr app) core's terminals show what runs in one, as herdr's panes do; anywhere else what
+  // runs in a folder is not seen. The warning says which.
+  const viaGit = env.HERDR_ENV !== "1", inCore = viaGit && Boolean(env.HC_TERMINAL_ID), hcRun = hc ?? client;
   let target = null;
   const out = { ok: false, state: "failed", ran: [], next: [], steps: [], warnings: [], unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
@@ -163,6 +166,27 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
     return panes;
   };
   const busyIn = async (workspace) => busy(await paneList(["--workspace", workspace]));
+  // In herdr-core: a live terminal of this machine that started in the folder, or whose program is in it now. hc's list
+  // gives where each started; `get` gives where its program is and its labels. Not knowing is not knowing it is safe.
+  const terminalIn = async (path) => {
+    const ls = await callHc(["ls", "--json"], hcRun);
+    if (!ls.ok || !Array.isArray(ls.data?.terminals)) { missing("terminal", path); return { why: `hc could not list its terminals (${ls.code ?? "unreadable"}), so whether one runs in ${path} is not known`, next: inspect("Look at the core's terminals.", ["hc", "ls"]) }; }
+    // Each side as given and resolved: a folder that is gone (or not made yet) keeps its link in the path (macOS /var).
+    const roots = [...new Set([path, real(path)])];
+    const inside = (p) => typeof p === "string" && p !== "" && [p, real(p)].some((x) => roots.some((r) => x === r || x.startsWith(r.endsWith(sep) ? r : r + sep)));
+    for (const t of ls.data.terminals) {
+      if (!isAddress(t?.address) || t.address.includes("/") || t.state === "finished") continue;
+      const got = await getTerminal(t.address, hcRun, 5000), d = got.ok ? (got.data?.terminal ?? got.data) : null;
+      if (got.ok && d?.state === "finished") continue;
+      if (![t.cwd, d?.cwd, d?.foreground?.cwd].some(inside)) { if (got.ok || got.code === "not_found") continue; missing("terminal", path); return { why: `hc could not read terminal ${t.address} (${got.code}), so whether it runs in ${path} is not known`, next: inspect("Look at that terminal.", ["hc", "get", t.address]) }; }
+      if (t.address === env.HC_TERMINAL_ID) return { why: `your own terminal ${t.address} is in ${path}`, next: doNext("Run cleanup from outside the worktree you are removing") };
+      const id = d?.labels?.[WORKER_LABEL], name = id ? workerNames().find((n) => readWorker(n)?.id === id) : null;
+      const label = `terminal ${t.address}${typeof d?.name === "string" && WORKER_NAME.test(d.name) ? ` (${d.name})` : ""}`;
+      if (id) return { why: `${label}, a routr worker's, runs in ${path}`, next: name ? runNext("Finish that worker with cleanup --worker, which ends its terminal first and then removes its worktree.", ["routr", "cleanup", "--worker", name]) : doNext(`Finish that worker with routr cleanup --worker <name> from the core that started it (routr workers lists its workers), or look at it with hc read ${t.address}.`) };
+      return { why: `${label} runs in ${path}`, next: [runNext("Read the terminal before deciding whether to let it finish or end it.", ["hc", "read", t.address, "--lines", "200"]), doNext("Let it finish, or decide whether it is within scope to end it with hc kill, then run cleanup again.")] };
+    }
+    return null;
+  };
   const headOf = async (dir) => { const r = await gitRun(dir, ["rev-parse", "--verify", "HEAD"]); if (r?.code !== 0) missing("worktree", dir); return r?.code === 0 ? r.out.trim() : null; };
   // Whether a branch, remote branch or tag holds `rev`. Always asked, of the commit the worktree is on now: one
   // on a branch when herdr listed it can have been detached since.
@@ -185,6 +209,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
     const rootReal = w.is_prunable ? null : real(w.path);
     if (rootReal && !linked(rootReal, source)) return { why: `${w.path} is not a linked worktree of ${source}`, next: inspect("Check the repository’s actual worktrees.", ["git", "-C", source, "worktree", "list"]) };
     if (w.open_workspace_id) { const b = await busyIn(w.open_workspace_id); if (b) return b; }
+    if (inCore) { const b = await terminalIn(w.path); if (b) return b; }
     if (w.is_prunable) {
       // Its folder is gone. git still records the commit it was on, and removing the record loses that commit unless
       // a branch or tag holds it.
@@ -249,7 +274,8 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
       const r = await gitRun(out.cwd, ["worktree", "list", "--porcelain"]);
       if (!r?.ok) throw new Error(`git found no repository at ${out.cwd} it could list the worktrees of (${r?.code ?? "git_unreachable"})`);
       list = worktreesFromGit(r.out);
-      out.warnings.push(warning("cleanup_unseen", "Outside herdr, cleanup cannot see whether anything runs in a worktree's folder: it checks git's state only"));
+      out.warnings.push(inCore ? warning("cleanup_terminals_only", "In herdr-core, cleanup sees the core's terminals in a worktree's folder, not other processes there: it checks git's state and hc's terminals")
+        : warning("cleanup_unseen", "Outside herdr and herdr-core, cleanup cannot see whether anything runs in a worktree's folder: it checks git's state only"));
     } else list = (await herdr(["worktree", "list", "--cwd", out.cwd])).data?.result ?? {};
     const source = list.source?.source_checkout_path ?? list.source?.repo_root;
     if (!source) throw new Error(`herdr found no git repository at ${out.cwd}`);
@@ -308,6 +334,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
     // The last looks before the removal: the commit it is on, then what runs there, read last of all.
     if (c.head && (await headOf(w.path)) !== c.head) return refuse(`${w.path} moved to another commit since cleanup checked it`, runNext("Recheck the worktree at its current commit.", ["routr", "cleanup", ...args]));
     if (w.open_workspace_id) { const b = await busyIn(w.open_workspace_id); if (b) return refuse(b.why, b.next); }
+    if (inCore) { const b = await terminalIn(w.path); if (b) return refuse(b.why, b.next); }
     // Never --force: if anything changed since the check, herdr and git refuse and the worktree stays.
     assertOwned();
     if (w.open_workspace_id) {
@@ -318,6 +345,10 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
       const r = await gitRun(source, ["worktree", "remove", w.path]);
       if (r?.code !== 0) return refuse(`git refused worktree remove for ${w.path} (${r.code})`, inspect("Read the worktree after removal was refused.", ["git", "-C", w.path, "status"]));
       step("remove", true, `Removed ${w.path} (no workspace was open for it)`);
+      // The repository's folder in routr's own worktrees folder, once its last worktree is gone: rmdir takes only an empty
+      // one, and git makes it again for the next launch's worktree.
+      const repo = dirname(w.path);
+      if (real(dirname(repo)) === real(WORKTREES_DIR())) { try { rmdirSync(repo); step("folder", true, `Removed ${repo}, now empty`); } catch {} }
     }
     out.ok = true; out.state = "removed";
     if (w.branch) {

@@ -1079,7 +1079,7 @@ test("outside herdr, cleanup lists and removes worktrees through git, and says w
   const wt = join(w.home, "wt one"); g("worktree", "add", "-q", "-b", "side", wt);
   const list = w.run(["cleanup", "--cwd", w.work]);
   expect([list.ok, list.state, list.worktrees.map((x) => [x.branch, x.removable])]).toEqual([true, "listed", [["side", true]]]);
-  expect(list.warnings).toContain("Outside herdr, cleanup cannot see whether anything runs in a worktree's folder: it checks git's state only");
+  expect(list.warnings).toContain("Outside herdr and herdr-core, cleanup cannot see whether anything runs in a worktree's folder: it checks git's state only");
   expect(w.run(["cleanup", "--cwd", w.work, "--path", wt, "--delete-branch"])).toMatchObject({ ok: true, state: "removed", branch: { name: "side", deleted: true } });
   expect(existsSync(wt)).toBe(false);
 });

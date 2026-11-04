@@ -730,7 +730,12 @@ Inputs:
   only with `--worktree`, `--path` or `--worker`; `--pane` and `--worker` take no `--cwd`. Refused (with `error`)
   otherwise.
 - Outside herdr (`HERDR_ENV` is not `1`), the list and `--worktree`/`--path` modes read and remove worktrees through
-  git, with the same checks, and `warnings` says cleanup cannot see whether anything runs in a worktree's folder.
+  git, with the same checks. In herdr-core (`HC_TERMINAL_ID` set) a worktree is also refused (`refused`) while a live
+  terminal of this machine's core started in its folder or has its program there now, or when hc's terminals cannot
+  be read; for a terminal labelled as a routr worker's, `next` is `cleanup --worker <name>` when this machine has its
+  record. `warnings` says what cleanup sees: core's terminals there (`cleanup_terminals_only`), or nothing that runs
+  there (`cleanup_unseen`). After git removes a worktree in routr's own worktrees folder, an empty repository folder
+  left there is removed too (a `folder` step).
 - `--worktree <branch>` with no worktree on that branch refuses (`refused`) instead of answering `absent` when one or
   more of the repository's detached linked worktrees are in a folder with the name herdr or a headless launch gives
   that branch: a worker that checked out a commit left it there. `worktree` names it when there is just one, and

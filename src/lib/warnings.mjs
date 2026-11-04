@@ -16,7 +16,7 @@ export const WARNING_CODES = Object.freeze({
   branch_unowned: "Branch ownership cannot be proved", worktree_left: "Launch worktree was left", branch_changed: "Launch branch has changed",
   copy_missing: "Requested copy source is missing", messages_dropped: "Stopped worker had queued messages",
   terminal_followed: "A terminal worker is followed with hc", terminal_left: "A finished worker terminal could not be removed", terminal_status_unknown: "The harness reports no status to herdr-core",
-  worker_not_shown: "No terminal shows the worker", process_unseen: "Saved process id cannot prove the harness state", cleanup_unseen: "Cleanup sees git state only",
+  worker_not_shown: "No terminal shows the worker", process_unseen: "Saved process id cannot prove the harness state", cleanup_unseen: "Cleanup sees git state only", cleanup_terminals_only: "Cleanup sees git state and core terminals",
   other_worktrees: "Repository has other worktrees", branch_unmerged: "Unmerged branch was kept", detached_unseen: "Detached commands cannot be seen",
   cursor_helper_left: "Cursor owns its worker server", work_kept: "Worker changes remain in the working folder",
   rename_failed: "Adopted agent could not be renamed", cursor_config_left: "Unused Cursor config could not be removed",
