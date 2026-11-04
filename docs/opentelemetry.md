@@ -419,7 +419,7 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 ### Span error codes
 
 <!-- span-errors -->
-`no_key`, `secrets_unreadable`, `key_refused`, `model_missing`, `model_unsupported`, `timeout`, `unreachable`, `provider_error`, `invalid_response`, `daily_allowance`, `internal_error`, `attempt_unknown`, `read_failed`, `no_response`, `command_shadowed`, `private_folder`, `source_missing`, `cmd_path`, `unreadable`, `refused`, `failed`, `not_started`, `no_finish`, `stopped`, `_OTHER`
+`no_key`, `secrets_unreadable`, `key_refused`, `model_missing`, `model_unsupported`, `timeout`, `unreachable`, `provider_error`, `invalid_response`, `daily_allowance`, `internal_error`, `attempt_unknown`, `read_failed`, `no_response`, `command_shadowed`, `private_folder`, `source_missing`, `not_read_yet`, `cmd_path`, `unreadable`, `refused`, `failed`, `not_started`, `no_finish`, `stopped`, `_OTHER`
 <!-- /span-errors -->
 
 Decision codes describe missing/refused keys, unreadable secrets, missing/unsupported models, allowance, timeout,
@@ -524,6 +524,7 @@ producer, including config and input notes forwarded into `warnings`.
 | `cleanup_unseen` | Cleanup sees git state only. |
 | `launch_history_unreadable` | Launch history could not be read. |
 | `launch_not_found` | Launch is not in the launch history. |
+| `headroom_unused` | Given headroom was not used. |
 | `cleanup_terminals_only` | Cleanup sees git state and core terminals. |
 | `other_worktrees` | Repository has other worktrees. |
 | `branch_unmerged` | Unmerged branch was kept. |

@@ -153,6 +153,9 @@ const ADVISE = {
     print((await commands()).recordCommand(o, takeAll("--subagent"), loaded().config, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } })); // never blocks the agent; the config resolves a "default" effort
   },
   usage: async () => print(await (await commands()).usageCommand(rest, loaded().config, given, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } }), 1), // never blocks an agent
+  // Kept readings only, no harness called: the Herdr app's routr panel asks it often. Given --headroom is not used, and said.
+  board: async () => print(await (await import("./lib/board.mjs")).boardCommand(rest, loaded().config, { warnings: [...loaded().notes, ...inputNotes,
+    ...(Object.keys(given).length ? [(await import("./lib/warnings.mjs")).warning("headroom_unused", "board ranks routr's kept readings; --headroom is for dispatch and usage")] : [])] }), 1),
   doctor: async () => (await import("./lib/doctor.mjs")).doctor({ json: rest.includes("--json"), configPath }),
 };
 if (ADVISE[mode]) { await ADVISE[mode](); return 0; }

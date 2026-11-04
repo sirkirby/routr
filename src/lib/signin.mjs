@@ -42,6 +42,8 @@ export async function signInState(name, harness, { fresh = false, nowSec = Date.
   return state;
 }
 export const signedIn = async (name, harness, o) => (await signInState(name, harness, o)) === "yes";
+// The kept answer alone, however old, or null: for a read that must not run a harness (usage-cache.mjs).
+export const keptSignIn = (name, { file = SIGNED_IN_FILE() } = {}) => { const s = readJson(file)[name]?.state; return ["yes", "no", "no answer"].includes(s) ? s : null; };
 // What to tell the user about a harness that is not ready.
 export const signInHint = (harness, state) => (state === "no answer"
   ? `\`${harness.executable}\` did not answer its sign-in check (not installed, or it hung)`

@@ -1036,6 +1036,38 @@ named only: `subscription`; named `cursor` or `kiro` with a fresh reading: `read
 person to check against its screen (Cursor `{ plan, included_used_pct, auto_used_pct, api_used_pct, headroom }`; Kiro
 `{ plan, credits_used, credits_limit, used_pct, resets_at, unrecognized_lines?, headroom }`).
 
+## board
+
+What only routr knows, for one project, in one answer: the Herdr app's routr panel draws it, and any agent can read
+it. A reading command: it changes nothing of the user's, calls no harness, and answers within milliseconds.
+
+- Used when given: `--cwd <folder>`: the project, by the git repository that folder is in (a worktree counts as its
+  repository; routr's rule for a ledger row's project); omitted, every project on this machine. `--config`. Refused
+  (`ok: false`, `error`): `--cwd` with no value, given twice, or not a folder; any other flag or argument. A given
+  `--headroom` is not used, and a `headroom_unused` warning says so.
+- `project`: that name, or null. `level`: `basic`, the work the room is ranked for, so no account is left out for its
+  `hardest_work`.
+- `subscriptions`: exactly `usage`'s ranking, from each subscription's last good reading kept by any live read
+  (`dispatch`, `usage`, `doctor`, `setup`), aged to now: `age_sec` says how old, and a window that has reset since
+  counts as reset. A kept "not signed in" answer leaves a harness out, as in `usage`; no status check is run. A
+  subscription with no kept reading has a `usage` entry in `unavailable` with code `not_read_yet`. When the newest
+  kept reading is over 10 minutes old, or one is missing, board starts one detached `routr usage` (at most once per
+  10 minutes) and does not wait. Null, with an `internal_error` usage entry, when routr could not rank.
+- `decisions`: newest first, at most 50: each launch in routr's launch history (7 days) and each recorded run in
+  scope, one entry per launch: `launch_id`, `run_id` (null until recorded), `id` (the advice's), `name` and `backend`
+  (the launch's, null for a run with no launch kept), `project`, `launched_at`, `recorded_at` (either null),
+  `advised` (the ledger's shape), `chose` (the ledger's `{ subscription, model, effort, effort_from, level }`; before a
+  record, from the launch, with `effort_from` and `level` null), and `outcome` `{ verdict, check, attempts, causes,
+  seconds }` (null until recorded; never the row's note). A run joins its launch by `launch_id`; a run recorded before
+  launch ids, by its advice `id`, only when exactly one launch in the history used that advice. A revision counts as
+  its run's latest row.
+- `outcomes` over 7 days: `launches` (in the launch history), `recorded` (runs first recorded in the window, each once),
+  `done_first_time` (the ledger's rule: done, check pass, attempts 1, no causes), `level_changed` (the chosen level
+  is not the advised one), `check_failed`. Counted before the 50-entry limit.
+- `unavailable`: `usage` entries as `usage` gives them; `{ part: "launch history" | "ledger", code: "unreadable", why }`
+  when either cannot be read, and then its counts are null, never zero. `next`: `usage`'s capacity steps.
+- `headline`: `routr: <n> decisions in <project or all projects>; <account> has the most room`.
+
 ## The ledger and telemetry
 
 Neither schema changes. `record` writes the same row from these advice fields, whose names do not change: `id`, `ts`,

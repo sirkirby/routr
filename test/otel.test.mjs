@@ -513,7 +513,7 @@ test("saved header values stay out of every command's whole output, queued batch
     ["dispatch", "safe task"], ["subagent", "safe task"], ["check", "--brief", advice, "--report", advice], ["doctor", "--json"], ["doctor"], ["setup", "--show"],
     ["key", "set", "otel-headers"], ["launch", "--dry-run"], ["cleanup", "--dry-run"], ["workers"], ["wait", "--timeout", "1"], ["send"], ["stop"], ["watch"], ["usage"],
     ["record", "--advice", advice, "--ledger", ledger, "--subscription", "codex", "--model", "fixture", "--effort", "low", "--verdict", "done", "--check", "pass"],
-    ["assess", "--ledger", ledger], ["share", "--ledger", ledger, "--out", join(f.home, "share.jsonl")], ["telemetry", "status"], ["feedback"], ["skill", "install", "--dry-run"], ["uninstall", "--dry-run", "--json"], ["update", "--help"], ["statusline"]
+    ["assess", "--ledger", ledger], ["board"], ["share", "--ledger", ledger, "--out", join(f.home, "share.jsonl")], ["telemetry", "status"], ["feedback"], ["skill", "install", "--dry-run"], ["uninstall", "--dry-run", "--json"], ["update", "--help"], ["statusline"]
   ];
   expect(new Set(cases.map((a) => a[0])).size).toBe(Object.keys(COMMANDS).length);
   for (const args of cases) {

@@ -157,7 +157,7 @@ export function read(path = LEDGER_PATH()) {
 
 const MIN = 5; // below this many runs a rate is an anecdote, and the report says so
 const good = (e) => e.outcome.verdict === "done" && e.outcome.check === "pass";
-const firstTime = (e) => good(e) && e.outcome.attempts === 1 && Array.isArray(e.outcome.causes) && !e.outcome.causes.length;
+export const firstTime = (e) => good(e) && e.outcome.attempts === 1 && Array.isArray(e.outcome.causes) && !e.outcome.causes.length;
 const idx = (l) => LEVELS.indexOf(l);
 const few = (n) => (n < MIN ? "   (too few to read)" : "");
 

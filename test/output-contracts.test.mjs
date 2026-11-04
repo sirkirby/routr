@@ -320,7 +320,7 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
     dispatch: 'id ts mode question_set brief_sha brief_chars provider decision_model unmeasured ms answers level sure between work_type high_risk worker facts notes meaning subscriptions',
     check: 'mode question_set provider decision_model unmeasured ms claimed flags unclear checks',
     launch: 'state kind name pane cwd model effort start steps ran would_run prompt_chars advice worktree needs_input screen launch_id',
-    record: 'id run_id ledger', cleanup: 'state steps ran cwd pane worktrees worktree branch', usage: 'level subscriptions subscription reading',
+    record: 'id run_id ledger', board: 'project level subscriptions decisions outcomes', cleanup: 'state steps ran cwd pane worktrees worktree branch', usage: 'level subscriptions subscription reading',
   };
   const split = join(f.dir, "split.json");
   const env = cliEnv(f.dir, { PATH: bin + delimiter + dirname(process.execPath), HERDR_ENV: "1", FAKE_CWD: f.dir, FAKE_SENT: sent, FAKE_REPO: repo, FAKE_WORKER: worker, FAKE_SPLIT: split, ...CARRIED });
@@ -346,6 +346,11 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
     if (args[0] === "cursor") { expect(r.ok).toBe(false); expect(r.unavailable.some((u) => u.subscription === "cursor")).toBe(true); }
     if (args[0] === "kiro") expect(r.reading).toMatchObject({ credits_used: 20, credits_limit: 50, used_pct: 40 });
   }
+  // board: a run recorded to the default ledger with the private marker as its note; the note never reaches board.
+  invoke("record", ["--advice", f.advice, "--subscription", "claude", "--model", "model", "--effort", "default", "--task-file", f.task, "--verdict", "done", "--check", "pass", "--note", MARK]);
+  const board = invoke("board").r; // every project: the row is labelled with the folder record ran in
+  expect([board.ok, board.decisions.length, board.decisions[0].outcome]).toEqual([true, 1, { verdict: "done", check: "pass", attempts: null, causes: null, seconds: null }]);
+  expect(invoke("board", ["--cwd", join(f.dir, "no-such-folder")]).r).toMatchObject({ ok: false, error: expect.stringContaining("is not a folder") });
   const recordArgs = ["--advice", f.advice, "--ledger", f.ledger, "--subscription", "claude", "--model", "model", "--effort", "default", "--task-file", f.task];
   const recorded = invoke("record", [...recordArgs, "--verdict", "done", "--check", "pass"]).r;
   expect(recorded.id).toBe(f.body.id);
