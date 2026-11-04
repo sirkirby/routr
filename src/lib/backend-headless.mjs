@@ -260,7 +260,7 @@ async function holderLeft(name, w) {
 // its work, in its folder, is the lead's to integrate: cleanup touches no repository.
 // A terminal worker has no holder: its terminal is ended instead (backend-terminal.mjs), and the worktree and run folder
 // then go through the same checks.
-export async function cleanupWorker(name, { dryRun = false, deleteBranch = false } = {}, out, { hc } = {}) {
+export async function cleanupWorker(name, { dryRun = false, deleteBranch = false } = {}, out, { hc, env = {} } = {}) {
   const step = (s, ok, detail) => out.steps.push({ step: s, ok, detail });
   const refuse = (why, next) => { out.ok = false; out.state = "refused"; out.headline = `routr: kept ${name}: ${why}`; out.next.push(...[].concat(next)); step("refused", false, why); return out; };
   out.name = name;
@@ -287,7 +287,9 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
       if (there?.is_detached && folderId(w.worktree.path) === w.worktree.folder) return refuse(`the worktree at ${w.worktree.path} is detached, no longer on ${w.worktree.branch}: what it holds is not checked`, finish);
       if (there && there.branch !== w.worktree.branch) return refuse(`the worktree at ${w.worktree.path} is ${there.branch ? `on branch ${there.branch}` : "detached"}, not on ${w.worktree.branch}: it is not the one launch made`, finish);
       if (there && folderId(w.worktree.path) !== w.worktree.folder) return refuse(`the worktree at ${w.worktree.path} was made again since launch: it is not the one launch made`, finish);
-      const r = await cleanup(["--cwd", w.worktree.source, "--path", w.worktree.path, ...(deleteBranch ? ["--delete-branch"] : []), ...(dryRun ? ["--dry-run"] : [])], { env: {}, assertOwned });
+      // Through git, as launch made it; in herdr-core with core's terminals checked too, but for this worker's own.
+      const core = env.HERDR_ENV !== "1" && env.HC_TERMINAL_ID ? { HC_TERMINAL_ID: env.HC_TERMINAL_ID } : {};
+      const r = await cleanup(["--cwd", w.worktree.source, "--path", w.worktree.path, ...(deleteBranch ? ["--delete-branch"] : []), ...(dryRun ? ["--dry-run"] : [])], { env: core, assertOwned, ...(hc ? { hc } : {}), ownWorker: w.id });
       out.ran.push(...r.ran); out.unavailable.push(...r.unavailable);
       // The worker's own process and its harness's process group were checked above; what that cannot see is said here.
       const label = HARNESSES[w.kind]?.label ?? "the harness";

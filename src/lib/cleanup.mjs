@@ -117,7 +117,7 @@ export function parseWorktreeHeads(text) {
 
 // `run` is one herdr command, `git(dir, args)` one git command ({ out, err, code }, or null), and `linked` the
 // linked-worktree test: seams for tests.
-async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.env, linked = linkedWorktree, assertOwned = () => {}, hc } = {}) {
+async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.env, linked = linkedWorktree, assertOwned = () => {}, hc, ownWorker } = {}) {
   // Outside herdr, worktrees are listed and removed through git alone (headless and terminal workers make theirs that
   // way). In herdr-core (the Herdr app) core's terminals show what runs in one, as herdr's panes do; anywhere else what
   // runs in a folder is not seen. The warning says which.
@@ -167,7 +167,10 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
   };
   const busyIn = async (workspace) => busy(await paneList(["--workspace", workspace]));
   // In herdr-core: a live terminal of this machine that started in the folder, or whose program is in it now. hc's list
-  // gives where each started; `get` gives where its program is and its labels. Not knowing is not knowing it is safe.
+  // gives where each started; `get` gives where its program is and its labels. Not knowing is not knowing it is safe:
+  // a `get` that fails, or that does not say where a live terminal's program is (core's schema: `foreground` is null only
+  // once it has finished), keeps the worktree. `ownWorker`: the id of the worker `cleanup --worker` is finishing, whose
+  // terminal it has ended (or, in a dry run, would end) itself.
   const terminalIn = async (path) => {
     const ls = await callHc(["ls", "--json"], hcRun);
     if (!ls.ok || !Array.isArray(ls.data?.terminals)) { missing("terminal", path); return { why: `hc could not list its terminals (${ls.code ?? "unreadable"}), so whether one runs in ${path} is not known`, next: inspect("Look at the core's terminals.", ["hc", "ls"]) }; }
@@ -177,8 +180,12 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
     for (const t of ls.data.terminals) {
       if (!isAddress(t?.address) || t.address.includes("/") || t.state === "finished") continue;
       const got = await getTerminal(t.address, hcRun, 5000), d = got.ok ? (got.data?.terminal ?? got.data) : null;
-      if (got.ok && d?.state === "finished") continue;
-      if (![t.cwd, d?.cwd, d?.foreground?.cwd].some(inside)) { if (got.ok || got.code === "not_found") continue; missing("terminal", path); return { why: `hc could not read terminal ${t.address} (${got.code}), so whether it runs in ${path} is not known`, next: inspect("Look at that terminal.", ["hc", "get", t.address]) }; }
+      if (!got.ok && got.code === "not_found") continue;
+      if (d?.state === "finished") continue;
+      if (ownWorker && d?.labels?.[WORKER_LABEL] === ownWorker) continue;
+      const unknown = !got.ok ? got.code : d?.state !== "live" || typeof d.foreground?.cwd !== "string" ? "no_folder" : null;
+      if (unknown && !inside(t.cwd)) { missing("terminal", path); return { why: `hc ${got.ok ? "did not say where terminal " + t.address + "'s program is" : `could not read terminal ${t.address} (${unknown})`}, so whether it runs in ${path} is not known`, next: inspect("Look at that terminal.", ["hc", "get", t.address]) }; }
+      if (![t.cwd, d?.cwd, d?.foreground?.cwd].some(inside)) continue;
       if (t.address === env.HC_TERMINAL_ID) return { why: `your own terminal ${t.address} is in ${path}`, next: doNext("Run cleanup from outside the worktree you are removing") };
       const id = d?.labels?.[WORKER_LABEL], name = id ? workerNames().find((n) => readWorker(n)?.id === id) : null;
       const label = `terminal ${t.address}${typeof d?.name === "string" && WORKER_NAME.test(d.name) ? ` (${d.name})` : ""}`;
@@ -247,7 +254,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
     const o = parseCleanupArgs(args);
     await cleanupLink(o, run);
     target = o.worktree ?? o.path;
-    if (o.worker != null) return await (await import("./backend-headless.mjs")).cleanupWorker(o.worker, o, out, { hc });
+    if (o.worker != null) return await (await import("./backend-headless.mjs")).cleanupWorker(o.worker, o, out, { hc, env });
     if (o.pane != null) {
       out.pane = o.pane;
       const panes = await paneList([]);
