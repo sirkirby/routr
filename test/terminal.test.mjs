@@ -62,19 +62,26 @@ const noted = (r) => r.next.map((n) => `${n.why} ${n.template ?? (n.argv ?? []).
 test("each harness's differences in a core terminal are data: its flags, and how it takes a first message", () => {
   const argv = (kind) => terminalPlan({ kind, model: "m", cwd: "/w" }, "the pointer").argv;
   expect(argv("claude")).toEqual(["--dangerously-skip-permissions", "--model", "m", "the pointer"]);
-  expect(argv("codex")).toEqual(["--no-daemon", "--yolo", "--dangerously-bypass-hook-trust", "-c", "check_for_update_on_startup=false", "-m", "m", "the pointer"]);
+  expect(argv("codex")).toEqual(["--no-daemon", "--yolo", "--dangerously-bypass-hook-trust", "-c", "check_for_update_on_startup=false", "-c", "projects={'/w'={trust_level=\"trusted\"}}", "-m", "m", "the pointer"]);
   expect(argv("cursor")).toEqual(["--yolo", "--trust", "--model", "m", "the pointer"]);
   expect(argv("agy")).toEqual(["--dangerously-skip-permissions", "--add-dir", "/w", "--model", "m", "-i", "the pointer"]);
-  expect(argv("kiro")).toEqual(["--v3", "chat", "--trust-all-tools", "--model", "m", "the pointer"]);
+  expect(argv("kiro")).toEqual(["--v3", "chat", "--trust-all-tools", "--trust-workspace", "--model", "m", "the pointer"]);
   expect(KINDS.filter((k) => HARNESSES[k].noStatus)).toEqual(["cursor"]);
   // What differs in a core terminal is data: a pane starts Codex without its flag, and Kiro on V2, and only Kiro's headless
   // start is neither (below). Every other harness starts the same in both.
   expect(plan({ kind: "codex", model: "m" }).argv).not.toContain("--no-daemon");
   expect(plan({ kind: "kiro", model: "m" }).argv).toEqual(["--v2", "chat", "--trust-tools=*", "--model", "m"]);
   for (const kind of ["claude", "cursor"]) expect(argv(kind).slice(0, -1)).toEqual(plan({ kind, model: "m" }).argv);
-  // Its V3 screen ignores --trust-tools (kiro-cli 3.0.0), and the person's own trust decision is never answered for them.
+  // Its V3 screen ignores --trust-tools (kiro-cli 3.0.0). Folder trust for this run only goes to a start with a screen
+  // where the harness has a flag for it, never to a headless start, and names the worker's own folder.
   expect(argv("kiro")).not.toContain("--trust-tools=*");
-  for (const start of [argv("kiro"), plan({ kind: "kiro", model: "m" }).argv, plan({ kind: "kiro", model: "m", interactive: false }).argv]) expect(start).not.toContain("--trust-workspace");
+  for (const start of [plan({ kind: "kiro", model: "m" }).argv, plan({ kind: "kiro", model: "m", interactive: false }).argv]) expect(start).not.toContain("--trust-workspace");
+  // A TOML literal string, so no backslash is doubled for a shell to collapse (fish); a basic string only for a ' in the path.
+  expect(plan({ kind: "codex", model: "m", cwd: "/repo/wt" }).argv).toContain(`projects={'/repo/wt'={trust_level="trusted"}}`);
+  expect(plan({ kind: "codex", model: "m", cwd: 'C:\\w "q"' }).argv).toContain(`projects={'C:\\w "q"'={trust_level="trusted"}}`);
+  expect(plan({ kind: "codex", model: "m", cwd: "/it's\\x" }).argv).toContain(`projects={"/it's\\\\x"={trust_level="trusted"}}`);
+  expect(plan({ kind: "codex", model: "m", cwd: "/w", interactive: false }).argv.join(" ")).not.toContain("projects=");
+  expect(KINDS.filter((k) => (HARNESSES[k].core?.trust ?? HARNESSES[k].trust))).toEqual(["codex", "kiro"]);
 });
 
 test("Kiro's headless start stays its ACP mode, with no engine flag and no chat, and a model named chat survives it", () => {
@@ -195,10 +202,9 @@ test("a blocked start comes back as needs_input, with the screen withheld as the
 test("Kiro's trust-all-tools warning, reported blocked, is needs_input and is never answered", async () => {
   const f = fixture("kiro", { hc: fakeHc({ sees: [{ status: { state: "blocked" }, turn: 0 }] }) }), r = await f.go();
   expect(r.state).toBe("needs_input");
-  expect(r.start.argv.slice(0, 3)).toEqual(["--v3", "chat", "--trust-all-tools"]);
-  expect(r.start.argv).not.toContain("--trust-workspace");
+  expect(r.start.argv.slice(0, 4)).toEqual(["--v3", "chat", "--trust-all-tools", "--trust-workspace"]);
   expect(r.needs_input.note).toContain("Yes, and don't ask again");
-  expect(r.needs_input.note).toContain("for the person to answer");
+  expect(r.needs_input.note).toContain("for the user to answer");
   expect(f.hc.words()).not.toContain("keys");
 });
 
@@ -220,10 +226,27 @@ test("a harness that says nothing within --timeout is needs_input, not started a
   const f = fixture("kiro", { timeout: 1000, hc: fakeHc({ sees: [{ status: null, turn: 0 }] }) }), r = await f.go();
   expect([r.state, r.needs_input.hc]).toEqual(["needs_input", { state: null }]);
   expect(r.needs_input.why).toContain("has not reported working within the timeout");
-  expect(r.needs_input.note).toContain("whether to trust this folder");
+  expect(r.needs_input.note).toContain("asks no folder-trust question");
   expect(r.screen).toStartWith("withheld:");
   expect(r.start.argv.slice(0, 2)).toEqual(["--v3", "chat"]);
   expect(f.hc.words()).not.toContain("keys");
+});
+
+test("a harness that runs and has reported nothing for 20 seconds is needs_input then, not at --timeout; one that reported is waited on", async () => {
+  // The runner's record says the harness runs, as the runner writes it once the harness has started.
+  const running = (args) => { if (existsSync(runDir("w1")) && !existsSync(join(runDir("w1"), "run.json"))) writeFileSync(join(runDir("w1"), "run.json"), JSON.stringify({ pid: 1, harness_pid: 2, started_at: "x" })); return undefined; };
+  const quiet = fixture("codex", { hc: fakeHc({ sees: [{ status: null, turn: 0, reported: false }], over: { get: running } }) }), q = await quiet.go();
+  expect([q.state, q.needs_input.code ?? null, q.needs_input.hc]).toEqual(["needs_input", null, { state: null, reported: false }]);
+  expect(q.needs_input.why).toBe("Codex has run for 20 seconds without reporting any status: it is most likely waiting at a question it reports no status for.");
+  expect(q.next.map((n) => n.argv?.join(" ") ?? "")).toContain("hc read t9 --lines 200");
+  rmSync(runDir("w1"), { recursive: true, force: true });
+  // Reported (idle, at its input box) but not yet working: waited on until --timeout, as before.
+  const idle = fixture("codex", { timeout: 60000, hc: fakeHc({ sees: [{ status: { state: "idle" }, turn: 0, reported: true }], over: { get: running } }) }), i = await idle.go();
+  expect([i.state, i.needs_input.why]).toEqual(["needs_input", "Codex has not reported working within the timeout: it may be waiting at a question it reports no status for, or still starting."]);
+  rmSync(runDir("w1"), { recursive: true, force: true });
+  // A core that does not say `reported`, or a harness not yet running: no early answer.
+  const old = fixture("codex", { timeout: 60000, hc: fakeHc({ sees: [{ status: null, turn: 0 }], over: { get: running } }) }), o = await old.go();
+  expect(o.needs_input.why).toContain("within the timeout");
 });
 
 test("a refusal from hc about the lead's own terminal stops the launch before anything is written", async () => {

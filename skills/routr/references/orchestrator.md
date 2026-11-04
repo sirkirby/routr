@@ -169,11 +169,16 @@ object describing what it did.
   with a matching `brief_sha`: otherwise launch refuses before any harness, pane or worktree call. Dry runs make the same checks, return `ok: false` with `error` on a refusal, and still plan.
   With no task (no `--task-file` or `--task`) there is nothing to compare, and no `advice` field.
 - routr answers no question: not the user's shell (its plugins and startup files ask their own), not a harness at
-  startup. It passes each harness's own flags so none is asked (Cursor `--trust`, Kiro `--trust-tools=*` in a pane, Codex
-  `--dangerously-bypass-hook-trust` for its hooks review; Codex and Claude Code still ask to trust a folder outside a
-  trusted one; in a core terminal Kiro V3 asks twice until the person has answered, `references/harnesses.md`), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
+  startup. It passes each harness's own flags so none is asked (Kiro `--trust-tools=*` in a pane, Codex
+  `--dangerously-bypass-hook-trust` for its hooks review), and, where the harness has one, a flag that trusts the
+  worker's folder for that run only and saves nothing (Cursor `--trust`, Codex `-c projects=…`, Kiro V3 `--trust-workspace`
+  in a core terminal). Claude Code and Antigravity have none, and still ask to trust a folder outside a trusted one; in a
+  core terminal Kiro V3 asks about its trust-all-tools mode until the person has answered once (`references/harnesses.md`).
+  Anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
 - A cmd shell expands `%` and `!` in a folder path even inside quotes, so launch refuses (`failed`) to type such a
-  folder into one: use a folder without them, or a pane running PowerShell.
+  folder into one: use a folder without them, or a pane running PowerShell. In a PowerShell or cmd pane it also refuses
+  a folder path with a typographic quote (‘ ’) in the harness's command, which herdr would type broken; in a fish pane,
+  one with a backslash before another backslash or a quote, or ending in one, which fish would read changed.
 - `--dry-run` requires `--model` and prints `would_run` without executing worker actions. It may queue a planned
   span when OpenTelemetry export is on, but creates no launch index entry. It returns `ok: false` and `error` when
   a real launch would refuse its arguments, folder, task or advice; otherwise `ok: true`. It does not check the
@@ -380,10 +385,11 @@ differs:
 - **`prompted` means it started.** Launch waits for the harness to report `working`, or, for one that reports no status
   (Cursor), for its process to run. `worker.terminal` in its answer is the address you use with `hc`; call it `<t>` below.
 - **`needs_input` is yours to decide, as in step 3.** A harness at a question before it can start comes back `blocked`, as
-  Antigravity at its folder trust and Kiro at its trust-all-tools warning. Kiro V3 asks to trust a folder and reports nothing
-  while it asks, so that comes back only at `--timeout`, as one that has not started. `screen` is withheld, as the worker
-  has its task from the start: read it yourself with `hc read <t>`. routr answers nothing. Answer within the rule in step 3
-  with `hc keys <t> <keys>`, and ask the user for Kiro's two: `needs_input.note` says what they are. The worker has its
+  Antigravity at its folder trust and Kiro at its trust-all-tools warning. A harness that has run 20 seconds without
+  reporting any status comes back then, as one most likely at a question it reports nothing for. `screen` is withheld, as
+  the worker has its task from the start: read it yourself with `hc read <t>`. routr answers nothing. Answer within the
+  rule in step 3 with `hc keys <t> <keys>`, and ask the user for Kiro's trust-all-tools question: `needs_input.note`
+  says what it is. The worker has its
   task and goes on by itself once answered: do not launch it again.
 - **Wait with `hc wait <t> --timeout <seconds>`,** then look at `turn`, not at the word: `turn` above 0 means a turn has
   ended. `hc wait` right after the start returns at once with `idle` and turn 0, which only means it has not started yet.

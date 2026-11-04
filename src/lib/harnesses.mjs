@@ -13,6 +13,11 @@
 //     notes(model, effort): what launch tells the orchestrator about this start.
 //   subagents({ model, effort }): optional defaults for unnamed subagent choices, as argv/env/warnings. Absent means
 //     no setting for all subagents was found; launch refuses either default rather than silently ignoring it.
+//   trust(dir): its own flags that trust the worker's folder for this run only and save nothing, where it has them:
+//     added to a start with a screen (its headless start asks no folder question), so a worker's tab or pane does not
+//     stop at the folder-trust question a headless worker never gets. A harness without them may still ask: its
+//     `startup` says how the user avoids that. Measured 2026-11-04, routr-lab p53: without it Codex and Kiro V3 waited
+//     at that question reporting no status to herdr-core, so a launch in the Herdr app waited out its timeout.
 //   startup: what to tell the orchestrator when the harness stops at a question before it can start (routr answers
 //     none; herdr reports it blocked). unknownModelRunsDefault: it runs its default model on an id it does not know,
 //     without a word, so launch checks the id against its own list (models()) first.
@@ -55,6 +60,9 @@ import { NO_WINDOWS_AFTER_ANSWER, readAgy, readClaude, readCodexLive, summarize,
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // JSON's string escapes are TOML basic-string escapes too, except JSON permits a literal DEL and TOML does not.
 const tomlString = (s) => JSON.stringify(s).replaceAll("\x7f", "\\u007f");
+// A TOML literal string where the text allows one ('…': no escapes, so no backslash for a shell to collapse: fish reads
+// \\ inside single quotes as one), else a basic string. Literal strings hold no ' and no control character.
+const tomlText = (s) => (/['\x00-\x08\x0a-\x1f\x7f]/.test(s) ? tomlString(s) : `'${s}'`);
 
 // The levels a help text lists after its --effort flag: "(low, medium, high, xhigh, max)", as Claude Code and Kiro print them.
 export const effortsInHelp = (help) => { const m = String(help ?? "").match(/--effort\b[^(]*\((?:e\.g\.\s*)?([a-z]+(?:,\s*[a-z]+)+)\)/i); return m ? m[1].split(/,\s*/) : null; };
@@ -151,7 +159,12 @@ export const HARNESSES = {
     // npm release checked, 0.135.0 to 0.161.0; older ones not checked.
     // Measured 0.160.0, 2026-10-08: even with --yolo it asks to trust a folder not under a trusted one (herdr: blocked,
     // trust_directory), and the trust given in one worktree applied to its repository: later worktrees were not asked.
-    startup: "Codex asks to trust a folder not under one already trusted; trust given in a worktree applies to its repository's root. Once the user has trusted the repository in Codex (run `codex` in it and choose Trust and continue), no worker in its worktrees is asked.",
+    // It has no trust flag. `trust`: its `projects` setting given whole for this run (`-c`, its own override; TOML inline
+    // table), naming only the worker's folder. Measured 0.166.0, 2026-11-04: a new repository, and a worktree of one,
+    // started at its input box, and ~/.codex/config.toml was unchanged; the dotted form (`projects."<dir>".trust_level`)
+    // still asked. For that run its other `projects` entries (other folders' trust) are not read.
+    trust: (dir) => ["-c", `projects={${tomlText(dir)}={trust_level="trusted"}}`],
+    startup: "routr starts Codex trusting the worker's folder for this run only, saving nothing, so it asks no folder-trust question; a question it asks at start is another one, for you or the user to answer.",
     permissions: ["--yolo", "--dangerously-bypass-hook-trust", "-c", "check_for_update_on_startup=false"], model: "-m", effort: "-c", effortValue: (level) => `model_reasoning_effort=${level}`, list: "codex debug models",
     // Measured 0.166.0, 2026-11-02: these must be TOML strings, including for ids with punctuation (harnesses.md).
     subagents: ({ model, effort }) => ({ argv: [...(model ? ["-c", `agents.default_subagent_model=${tomlString(model)}`] : []),
@@ -207,7 +220,10 @@ export const HARNESSES = {
   // 2026-11-04: a worker asked approval to read its own prompt file), so it takes `--trust-all-tools`, which reads freely
   // after a warning at start with "No, exit" selected, reported as blocked. "Yes, and don't ask again" saves
   // `chat.disableTrustAllConfirmation` in ~/.kiro/settings/cli.json, and the next start in a trusted folder asked nothing.
-  // routr answers neither question, and never passes --trust-workspace: both are the person's.
+  // Its folder trust is `--trust-workspace` there (`trust`): "for this launch only (V3 only)... the decision is not
+  // saved" (its help). Measured 2026-11-04 in a core terminal: with it Kiro reported idle within 2 s; without it, at the
+  // folder question, it reported nothing for 46 s, and an unanswered question wrote nothing under ~/.kiro. routr answers
+  // no question: the trust-all-tools warning stays the person's.
   // `--effort` is per model (kiro.dev/docs/models/effort: the newer Claude and GPT models); a model without it, `auto`
   // included, shows effort "n/a" and ignores the flag silently (measured). Kiro remembers an explicit level as the
   // user's default for that model (its docs), so `auto`, the default, passes none and the model decides.
@@ -216,10 +232,9 @@ export const HARNESSES = {
     // 2026-09-26: an unknown id ran its default model without a word (its footer then showed no model). Checked
     // against `kiro-cli chat --list-models` before launch, not read from its screen; drop once Kiro refuses one.
     unknownModelRunsDefault: true,
-    // Folder trust is asked with no status reported, so a launch in a core terminal reads it as not started until its
-    // timeout; the trust-all-tools warning is reported as blocked (Kiro 3.0, measured 2026-11-03/04).
-    core: { interactive: ["--v3", "chat"], permissions: ["--trust-all-tools"],
-      startup: "Kiro V3 asks two questions, each for the person to answer: whether to trust this folder (it reports no status while it asks; Trust, continue is selected), and whether to run in trust-all-tools mode (No, exit is selected; Yes, and don't ask again saves the answer). Later starts in a trusted folder ask neither; whether a new worktree of a trusted repository is asked is not measured." },
+    // The trust-all-tools warning is reported as blocked (Kiro 3.0, measured 2026-11-03/04).
+    core: { interactive: ["--v3", "chat"], permissions: ["--trust-all-tools"], trust: () => ["--trust-workspace"],
+      startup: "routr starts Kiro V3 trusting the worker's folder for this launch only (--trust-workspace, not saved), so it asks no folder-trust question. It may ask whether to run in trust-all-tools mode, for the user to answer: No, exit is selected; Yes, and don't ask again saves the answer, and later starts ask nothing." },
     // Its docs: "start with --effort, and Kiro remembers it for future sessions". Not measured: no model on the
     // measured account took effort.
     notes: (model, effort) => [...(effort ? [warning("kiro_effort_default", `Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently.`)] : [])],
@@ -272,7 +287,7 @@ export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir
   if (h.dirFlag && !cwd) throw new Error(`${kind} requires a directory for ${h.dirFlag}`);
   if (effort === h.autoEffort) effort = undefined;
   const start = core ? { ...h, ...h.core } : h;
-  const argv = [...(interactive ? start.interactive ?? [] : []), ...start.permissions, ...(h.dirFlag ? [h.dirFlag, cwd] : []), ...(model ? [h.model, model] : []),
+  const argv = [...(interactive ? start.interactive ?? [] : []), ...start.permissions, ...(interactive && start.trust && cwd ? start.trust(cwd) : []), ...(h.dirFlag ? [h.dirFlag, cwd] : []), ...(model ? [h.model, model] : []),
     ...(effort ? [h.effort, h.effortValue?.(effort) ?? effort] : []), ...subagents.argv];
   return {
     executable: h.executable, argv, env: { ...h.env?.(cursorConfigDir), ...subagents.env },

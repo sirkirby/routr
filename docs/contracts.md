@@ -510,6 +510,15 @@ In a pane whose shell is cmd, a folder launch would type there (the `--cwd` of a
 folder) that holds `%` or `!` is refused before anything is typed: `ok: false`, `state: "failed"`, and the fixed
 `error` "A cmd shell expands % and ! in a folder path even inside quotes, so routr will not type this one into it. Use
 a folder whose path has neither, or a pane running PowerShell." A pane launch split is closed; a `--pane` is kept.
+In a PowerShell or cmd pane, a harness command (as herdr's `agent start` types it) holding a typographic quote (‘ ’ ‚ ‛),
+in a folder path such as Codex's trusted folder or Antigravity's `--add-dir`, is refused the same way, with the fixed
+`error` "herdr types this worker's command into a PowerShell or cmd pane in a way that breaks at a typographic quote
+(‘ ’ ‚ ‛), and it would hold one in a folder path. Use a folder whose path has none, or a pane running a POSIX shell."
+In a fish pane, a folder launch would type or a word of the harness command holding a backslash before another
+backslash or a quote, or ending in a backslash, is refused the same way (fish reads those as escapes even inside
+quotes), with the fixed `error` "fish reads a backslash before another backslash or a quote as an escape even inside
+quotes, so a folder path holding one, or ending in a backslash, would reach it changed. Use a folder whose path has
+none, or a pane running another shell."
 
 A `--worktree` launch opens the worker's pane itself. `ran` shows, in order: `herdr worktree create`, then (after any
 `--copy`) `herdr pane split <root pane> --direction right --cwd <worktree path> --no-focus --env …`, a split of the
@@ -636,7 +645,10 @@ launch as before.
 - `--worktree <branch>` (with `--base`, `--copy`): as a headless launch.
 - `--timeout` (default 120000) bounds the wait for it to start.
 - `start` is the harness's command as the runner will run it: `start.argv` ends with its first message, which says only
-  where the task file is (after Antigravity's `-i`; first, Codex's `--no-daemon`; Kiro's `--v3 chat --trust-all-tools`, where a pane has `--v2 chat --trust-tools=*`). `start.env` lists
+  where the task file is (after Antigravity's `-i`; first, Codex's `--no-daemon`; Kiro's `--v3 chat --trust-all-tools`, where a pane has `--v2 chat --trust-tools=*`).
+  A harness with a flag that trusts a folder for one run, saving nothing, gets it for the worker's folder, in a pane too:
+  Codex `-c "projects={'<folder>'={trust_level=\"trusted\"}}"` (a TOML literal string; a basic string when the path has a `'`), Kiro V3 `--trust-workspace` (Cursor's `--trust` as before);
+  a headless start never had the question. `start.env` lists
   each trace-context carrier and config location passed, as `"<forwarded>"`, plus any Claude Code subagent defaults. A
   Cursor worker's `CURSOR_CONFIG_DIR` is its run folder's private copy, which is not shown there. `ran` displays that
   command and the `hc run`, with the lead's space as `<lead's space>` and routr's own program as `routr`. `hc run` also carries the label
@@ -645,7 +657,9 @@ launch as before.
   - `prompted`: `hc get` says status `working` or `done`, or a turn above 0; for a harness that reports no status (Cursor),
     `run.json` says its process runs. Whether Cursor has read its task is then not known.
   - `needs_input` (`ok: false`, no `error`): status `blocked` before any of that, with `needs_input` `{ why, hc: { state:
-    "blocked", kind? }, note? }`; or `--timeout` reached first, with `hc.state` the last status word or null. `screen` is
+    "blocked", kind? }, note? }`; or, for a harness that reports status, its process running for 20 seconds while core
+    says it has reported nothing (`hc: { state: null, reported: false }`); or `--timeout` reached first, with `hc.state`
+    the last status word or null. `screen` is
     the fixed withheld sentence: the harness has the pointer to its task from its start, so launch reads no terminal.
     routr answers nothing. `next` starts with `hc read <t> --lines 200`, gives the guide's startup instruction with `hc keys <t>
     <keys>`, says not to launch it again, and adds the steps below: the worker has its task, and goes on once answered.

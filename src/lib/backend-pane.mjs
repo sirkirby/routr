@@ -9,7 +9,7 @@ import { configOf } from "./config.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { OFF } from "./wording.mjs";
-import { clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, promptReadArgs, SHELLS, shellFamily, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
+import { clean, CMD_PATH, cmdTypable, FISH_PATH, fishTypable, HERDR_PS_QUOTE, herdrTypable, deadline, paneText, paneView, promptReadArgs, SHELLS, shellFamily, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
 import { launchFailed, STARTUP_INPUT } from "./launch-answer.mjs";
 import { CARRIERS, carrierValues, FORWARDED, realPath, redactCarriers } from "./runtime.mjs";
@@ -108,7 +108,7 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
     step("needs_input", false, why); return out;
   };
   const lifecycle = async () => {
-    let shell = usualShell();
+    let shell = usualShell(), fish = false;
     const found = launchCarriers(env), fallbackEnv = fallbackEnvOf(o, p, privateDir);
     const startArgs = (pane, timeout) => paneStartArgs(o, shell, p, privateDir, pane, timeout);
     const promptArgs = (pane, timeout) => panePromptArgs(prompt, pane, timeout);
@@ -137,7 +137,7 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
     let shellCwd = null;
     const shellReady = async (expectedCwd) => {
       const r = await waitForShell({ ...pane(), read: readPane, unwrapped: readLines }, { sleep, now, remaining, cwd: expectedCwd, refuseBusy: Boolean(o.pane && !expectedCwd),
-        onShell: (name) => { shell = shellFamily(name); } });
+        onShell: (name) => { shell = shellFamily(name); fish = /^fish(\.exe)?$/i.test(String(name ?? "")); } });
       if (!r.ok) return needsInput("shell_not_ready", r.why, r.text);
       shellCwd = r.cwd;
       step("shell_ready", true, `Interactive ${shell} shell in ${r.cwd}`); return null;
@@ -269,7 +269,12 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
     cleanupArgs ??= ["routr", "cleanup", "--pane", out.pane];
     // Every folder this launch will type into a cmd shell is checked as soon as the shell is known, so a refusal comes
     // before anything is typed, not between a `cd` and the variable.
-    const typable = () => { if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(o.kind === "cursor" ? [privateDir] : []))) throw new Error(CMD_PATH); };
+    const typable = () => {
+      if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(o.kind === "cursor" ? [privateDir] : []))) throw new Error(CMD_PATH);
+      // What herdr types for us: the harness's command, as planned for this worker's folder (`agent start`).
+      if (!(o.kind === "cursor" && SHELLS[shell].cursor) && !herdrTypable(shell, p.argv)) throw new Error(HERDR_PS_QUOTE);
+      if (fish && !fishTypable(...(o.pane ? [out.cwd] : []), ...(o.kind === "cursor" ? [privateDir] : []), ...p.argv)) throw new Error(FISH_PATH);
+    };
     // A pane we split already opened in --cwd; one adopted from the caller must be checked before we type `cd`.
     if (o.pane && !adopted) {
       stop = await shellReady(); if (stop) return stop;

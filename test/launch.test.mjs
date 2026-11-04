@@ -755,7 +755,7 @@ test("the `next` of a startup question adopts the agent at once when herdr's liv
   const first = fakeHerdr({ kind: "codex", trust: codexTrust, notReady: true, reply: (a) => (a[1] === "explain" ? explained("blocked", "trust_directory") : undefined) });
   const stopped = await launch(codex, first.deps);
   expect(stopped).toMatchObject({ state: "needs_input", needs_input: { herdr: { state: "blocked", rule: "trust_directory" } } });
-  expect(stopped.needs_input.note).toContain("trusted the repository in Codex"); // Codex's own way to be asked no more
+  expect(stopped.needs_input.note).toContain("trusting the worker's folder for this run only"); // the question it asks is not that one
   // 2. The orchestrator answers it (herdr pane send-keys w1:p2 enter) and follows `next` at once: herdr's state still says
   // blocked, its explain (the live reading) says idle. The block is stale: the agent is adopted as idle.
   // The follow-up carries exact argv, independent of path quoting on each platform.
@@ -1333,6 +1333,35 @@ test("launch refuses a cmd pane before typing anything when a folder it would ty
     expect(p.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt", "close"].includes(a[1]))).toBe(false);
     expect(readdirSync(temp)).toEqual(["source.json"]); // the unused private config is removed
   }
+});
+
+test("launch refuses a PowerShell or cmd pane before typing anything when herdr would type a typographic quote in the worker's command", async () => {
+  const { HERDR_PS_QUOTE, herdrTypable } = await import("../src/lib/herdr.mjs");
+  expect([herdrTypable("posix", ["C:\\Chris’s"]), herdrTypable("powershell", ["C:\\Chris's"]), herdrTypable("powershell", ["C:\\Chris’s"]), herdrTypable("cmd", ["‘x‛"])]).toEqual([true, true, false, false]);
+  // Codex's trust names its folder, and Antigravity's --add-dir does: either breaks herdr's line in that pane.
+  for (const [kind, model, shellName] of [["codex", "gpt-6.1-sol", "pwsh.exe"], ["agy", "gemini-3.8-flash-low", "cmd.exe"]]) {
+    const work = scratch("Chris’s"), reply = (a) => a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: shellName, cwd: work }] } }) : undefined;
+    const f = fakeHerdr({ kind, reply }), r = await launch(["--kind", kind, "--name", "worker", "--model", model, "--pane", "w1:p1", "--cwd", work, "--task", "Task"], f.deps);
+    expect(r).toMatchObject({ ok: false, state: "failed", error: HERDR_PS_QUOTE });
+    expect(f.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
+  }
+});
+
+test("launch refuses a fish pane before typing anything when a word would reach fish changed: \\\\, \\' or a trailing \\", async () => {
+  const { FISH_PATH, fishTypable } = await import("../src/lib/herdr.mjs");
+  expect(["/tmp/a\\b", "C:\\Users\\x", "/tmp/it's"].map((w) => fishTypable(w))).toEqual([true, true, true]);
+  expect(["/tmp/a\\\\b", "/tmp/x\\", "/tmp/a\\'b", '"/it\'s\\\\q"'].map((w) => fishTypable(w))).toEqual([false, false, false, false]);
+  if (process.platform === "win32") return; // a backslash is a separator there, not a folder name's
+  const reply = (cwd) => (a) => a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "fish", cwd }] } }) : undefined;
+  // Codex's trusted folder with a ' and a backslash goes as a basic string, its backslash doubled: refused in fish.
+  const bad = scratch("it's\\q"), f = fakeHerdr({ kind: "codex", reply: reply(bad) });
+  const r = await launch(["--kind", "codex", "--name", "worker", "--model", "gpt-6.1-sol", "--pane", "w1:p1", "--cwd", bad, "--task", "Task"], f.deps);
+  expect(r).toMatchObject({ ok: false, state: "failed", error: FISH_PATH });
+  expect(f.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
+  // One backslash alone goes as a literal string, unchanged by fish: not refused.
+  const fine = scratch("a\\b"), g = fakeHerdr({ kind: "codex", reply: reply(fine) });
+  const ok = await launch(["--kind", "codex", "--name", "worker", "--model", "gpt-6.1-sol", "--pane", "w1:p1", "--cwd", fine, "--task", "Task"], g.deps);
+  expect(ok.error ?? null).not.toBe(FISH_PATH);
 });
 
 test("waitForShell: ready at a settled prompt; stops at any question, a busy adopted pane, or the wrong folder", async () => {
