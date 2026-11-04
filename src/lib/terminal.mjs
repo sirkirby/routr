@@ -83,8 +83,13 @@ export function ownTerminal(command, args, { cwd, extraEnv = {}, cols = 119, row
   return { read: async () => text, type: async (s) => { child.terminal.write(s); }, enter: async () => { child.terminal.write("\r"); }, gone: async () => gone(),
     // Typed too soon, a harness's screen can lose it: seen with a full-screen app still drawing.
     settleMs: 1000,
+    // A terminal's program leads its own process group, with what it started, so the whole group is asked to go, then
+    // made to: a helper can ignore the first signal and outlive the program. One that left the group is not seen.
     close: async () => {
-      try { child.kill(); await Promise.race([child.exited, new Promise((r) => setTimeout(r, 2000))]); if (!gone()) { child.kill(9); await Promise.race([child.exited, new Promise((r) => setTimeout(r, 1000))]); } } catch {}
+      const group = (signal) => { try { process.kill(-child.pid, signal); return true; } catch { return false; } };
+      const left = async (ms) => { for (let t = 0; t < ms; t += 50) { if (!group(0)) return false; await new Promise((r) => setTimeout(r, 50)); } return group(0); };
+      group("SIGTERM");
+      if (await left(2000)) { group("SIGKILL"); await left(1000); }
       try { child.terminal.close(); } catch {}
     } };
 }

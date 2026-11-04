@@ -1182,3 +1182,26 @@ test.skipIf(process.platform === "win32")("in routr's own terminal, a cursor-age
   expect(dirs()).toEqual([]);
 }, 30000);
 
+test.skipIf(process.platform === "win32")("a read that times out in routr's own terminal leaves nothing of Cursor's running, even a helper that ignores the signal", async () => {
+  const dir = scratch("own-terminal-helper"), config = join(dir, "cli-config.json"), pidFile = join(dir, "helper.pid");
+  writeFileSync(config, "{}");
+  // Draws, starts a helper that ignores SIGTERM and SIGHUP, and never shows a usage panel.
+  fakeExecutable(dir, "cursor-agent", `
+const { spawn } = require("node:child_process");
+spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); process.on('SIGHUP', () => {}); require('node:fs').writeFileSync(process.env.FAKE_HELPER, String(process.pid)); setInterval(() => {}, 1000);"], { stdio: "ignore" });
+process.stdout.write("Cursor Agent\\r\\n"); setInterval(() => {}, 1000);`);
+  const was = process.env.FAKE_HELPER; process.env.FAKE_HELPER = pidFile;
+  let helper = null;
+  const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  try {
+    const r = await cursorUsage({ tmp: dir, cursorConfig: config, platform: "darwin", timeout: 4000, open: (c, a, o) => ownTerminal(join(dir, c), a, o) });
+    expect(r).toMatchObject({ ok: false, code: "read_failed" });
+    helper = Number(readFileSync(pidFile, "utf8"));
+    expect(alive(helper)).toBe(false);
+    expect(readdirSync(dir).filter((f) => f.startsWith("routr-cursor-"))).toEqual([]);
+  } finally {
+    if (was === undefined) delete process.env.FAKE_HELPER; else process.env.FAKE_HELPER = was;
+    if (helper && alive(helper)) process.kill(helper, "SIGKILL");
+  }
+}, 20000);
+

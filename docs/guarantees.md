@@ -68,8 +68,8 @@ a failure.
   so in `warnings`. They do not close a herdr workspace open on that worktree: run cleanup for a pane worker from
   inside herdr.
 - `usage cursor` starts Cursor in a terminal of its own, on macOS and Linux with no herdr or hc, on Windows in a private
-  headless herdr session it makes and removes, never your own. It ends what it started and keeps the reading in
-  `~/.cache/routr`.
+  headless herdr session it makes and removes, never your own. It ends what it started, except on macOS and Linux a
+  process that left Cursor's process group, which it cannot see. It keeps the reading in `~/.cache/routr`.
 - `usage kiro` runs Kiro's own `/usage` in the system temp folder, deletes the empty session that leaves with Kiro's
   own `--delete-session`, and keeps the reading in `~/.cache/routr`.
 
