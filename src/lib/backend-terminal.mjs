@@ -43,8 +43,41 @@ const readStep = (w) => runNext("Read what its terminal shows.", [...hcFor("read
 export const followSteps = (w) => (HARNESSES[w.kind]?.noStatus
   ? [doNext(`${HARNESSES[w.kind].label} reports no status, so hc wait says nothing of it: it sends you its report with hc send when it is done or stuck, typed into your terminal.`), readStep(w), messageStep(w)]
   : [runNext("Wait until its status leaves working (at most 90 seconds, as your shell tool allows: run it again). A turn above 0 then means its turn is done.", [...hcFor("wait", w), "--timeout", "90", "--json"]), readStep(w), messageStep(w)]);
-// A terminal worker in `workers`: what its record says. hc knows the rest.
-export const terminalRow = (w) => ({ name: w.name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, backend: "terminal", terminal: w.terminal ?? null, state: "in_terminal" });
+// Where a terminal worker's terminal is, as hc and its runner say: the one reading `workers` shows and `cleanup --worker`
+// acts on. `in_terminal`: live, this worker's (its label carries the record's id), `terminal` its answer. `finished`:
+// its program ended and the terminal is still listed. `gone`: hc does not know it and its runner recorded an end or is
+// no longer running (a closed tab, a core that lost it). `unknown`, with `why` and `next`: hc did not answer or answered
+// what routr cannot read, the address now names another terminal or one on another core, or the runner is still there
+// though hc does not know its terminal. Looked at, never signalled.
+export async function observeTerminal(w, { hc = client } = {}) {
+  const ref = addressOf(w), look = doNext(`Look at it with hc from the terminal that launched it (hc ls --all), then run cleanup again.`);
+  const got = await getTerminal(ref, hc);
+  if (["not_available", "unreadable"].includes(got.code)) return { state: "unknown", why: `${HC_WHY[got.code]}, so whether ${w.name}'s terminal runs is not known`, next: look };
+  if (!got.ok) {
+    // Gone, or in a core this hc does not reach. Only the runner can tell those apart: it wrote how the harness ended,
+    // and while nothing says so and its process is there, the worker may be running.
+    const read = runRecord(w.name), ran = read.value;
+    if (read.unreadable) return { state: "unknown", why: `${w.name}'s ${RUN_FILE} could not be read just now (${read.unreadable}), so whether it runs is not known: try again in a moment`, next: look };
+    if (ran && !ran.ended_at && Number.isInteger(ran.pid) && processAlive(ran.pid)) return { state: "unknown", why: `hc does not find ${w.name}'s terminal, yet its process ${ran.pid} is there: it may be in another core`, next: look };
+    return { state: "gone" };
+  }
+  const t = got.data;
+  // Addresses last on one core only, and a name can be used again: the id launch labelled it with is what makes it this worker's.
+  if (t.labels?.[WORKER_LABEL] !== w.id) return { state: "unknown", foreign: true, why: `terminal ${ref} does not carry ${w.name}'s id, so it is not this worker's, or not on this core`, next: doNext(`Look at ${ref} with hc. Run cleanup from the core that started ${w.name}; if that core has gone, make sure nothing of it runs, then remove ${runDir(w.name)} and its worktree yourself.`) };
+  return { state: isFinished(t) ? "finished" : "in_terminal", terminal: t };
+}
+
+// A terminal worker in `workers`: its record, and where its terminal is (observeTerminal). A finished or gone one is
+// finished with cleanup --worker, never by removing its worktree: its record would stay, and so would its row here.
+export async function terminalRow(w, opts) {
+  const seen = await observeTerminal(w, opts), status = seen.terminal ? statusWord(seen.terminal) : null;
+  const row = { name: w.name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, backend: "terminal", terminal: w.terminal ?? null, state: seen.state,
+    ...(seen.state === "in_terminal" ? { status } : {}), ...(seen.why ? { why: seen.why } : {}) };
+  const next = seen.state === "in_terminal" ? followSteps(w)
+    : seen.state === "unknown" ? [seen.next]
+    : [runNext(`${w.name}'s terminal ${seen.state === "gone" ? "is gone" : "has finished"}: finish the worker, which removes its worktree through its checks and then its record.`, ["routr", "cleanup", "--worker", w.name])];
+  return { row, next };
+}
 
 // The harness has the pointer to its task from the moment it starts, so as in a pane once a task is sent, launch reads no
 // screen and returns none: it may show the brief. The lead reads the terminal itself.
@@ -190,20 +223,10 @@ export async function runWorker(dir, id, { env = process.env, begin = start, say
 export async function endTerminal(w, { dryRun = false, out, assertOwned = () => {}, hc = client, pause = pausing }) {
   const step = (s, ok, detail) => out.steps.push({ step: s, ok, detail }), ref = addressOf(w);
   const look = doNext(`Look at it with hc from the terminal that launched it (hc ls --all), then run cleanup again.`);
-  const got = await getTerminal(ref, hc);
-  if (["not_available", "unreadable"].includes(got.code)) return { why: `${HC_WHY[got.code]}, so whether ${w.name}'s terminal runs is not known`, next: look };
-  if (!got.ok) {
-    // Gone, or in a core this hc does not reach. Only the runner can tell those apart: it wrote how the harness ended,
-    // and while nothing says so and its process is there, the worker may be running. Looked at, never signalled.
-    const read = runRecord(w.name), ran = read.value;
-    if (read.unreadable) return { why: `${w.name}'s ${RUN_FILE} could not be read just now (${read.unreadable}), so whether it runs is not known: try again in a moment`, next: look };
-    if (ran && !ran.ended_at && Number.isInteger(ran.pid) && processAlive(ran.pid)) return { why: `hc does not find ${w.name}'s terminal, yet its process ${ran.pid} is there: it may be in another core`, next: look };
-    step("terminal", true, `${w.name}'s terminal is gone`);
-    return null;
-  }
-  const t = got.data;
-  // Addresses last on one core only, and a name can be used again: the id launch labelled it with is what makes it this worker's.
-  if (t.labels?.[WORKER_LABEL] !== w.id) return { why: `terminal ${ref} does not carry ${w.name}'s id, so it is not this worker's, or not on this core: routr ended nothing and kept everything`, next: doNext(`Look at ${ref} with hc. Run cleanup from the core that started ${w.name}; if that core has gone, make sure nothing of it runs, then remove ${runDir(w.name)} and its worktree yourself.`) };
+  const seen = await observeTerminal(w, { hc });
+  if (seen.state === "unknown") return { why: seen.foreign ? `${seen.why}: routr ended nothing and kept everything` : seen.why, next: seen.next };
+  if (seen.state === "gone") { step("terminal", true, `${w.name}'s terminal is gone`); return null; }
+  const t = seen.terminal;
   // What was checked is what is acted on: its address, not a name that could resolve again.
   const target = isAddress(t.address) ? t.address : ref;
   if (!isFinished(t)) {

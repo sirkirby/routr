@@ -548,10 +548,27 @@ test("rm is tried again while the terminal finishes; one that stays costs a warn
 }, 15000);
 
 // ---- the worker commands ------------------------------------------------------------------------------------------------
+test("workers asks hc where a terminal worker's terminal is: a finished or gone one is finished with cleanup --worker, never by hand", async () => {
+  await launched();
+  const row = async (hc) => workersCommand(["--name", "w1"], { settings: () => cfg(), env: {}, hc: hc.run });
+  const finished = await row(fakeHc({ sees: [{ state: "finished", status: null, exit_code: 0 }] }));
+  expect([finished.workers[0].state, finished.next[0].argv]).toEqual(["finished", ["routr", "cleanup", "--worker", "w1"]]);
+  // Its tab closed, or its core lost it: hc does not know it, and its runner is not running.
+  const gone = await row(fakeHc({ over: { get: { code: 1, out: "", err: "no terminal t9" } } }));
+  expect([gone.workers[0].state, gone.headline, gone.next[0].argv]).toEqual(["gone", "routr: w1 gone", ["routr", "cleanup", "--worker", "w1"]]);
+  expect(gone.next[0].why).toContain("removes its worktree through its checks and then its record");
+  // hc not answering, or an address now another terminal's: not known, and said, never "gone".
+  for (const hc of [fakeHc({ over: { get: null } }), fakeHc({ sees: [{ status: { state: "idle" }, turn: 0, labels: { "routr.worker": "f".repeat(32) } }] })]) {
+    const r = await row(hc);
+    expect([r.workers[0].state, typeof r.workers[0].why]).toEqual(["unknown", "string"]);
+    expect(r.next.some((n) => n.argv?.includes("cleanup"))).toBe(false);
+  }
+});
+
 test("workers, wait, send, stop and watch each say a terminal worker is followed with hc, and none fails on its record", async () => {
   await launched();
-  const shown = await workersCommand(["--name", "w1"], { settings: () => cfg(), env: {} });
-  expect([shown.ok, shown.workers]).toEqual([true, [{ name: "w1", kind: "claude", model: "m", effort: null, cwd: expect.any(String), backend: "terminal", terminal: "t9", state: "in_terminal" }]]);
+  const shown = await workersCommand(["--name", "w1"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "working" }, turn: 0 }] }).run });
+  expect([shown.ok, shown.workers]).toEqual([true, [{ name: "w1", kind: "claude", model: "m", effort: null, cwd: expect.any(String), backend: "terminal", terminal: "t9", state: "in_terminal", status: "working" }]]);
   expect(noted(shown)).toContain("hc wait t9");
   expect(shown.headline).toBe("routr: w1 in_terminal");
   const waited = await waitCommand(["--name", "w1"], { settings: () => cfg(), env: {} });

@@ -932,8 +932,20 @@ under it is a member, and so is every member when routr cannot read the group (`
 cannot read, no install found).
 Never worker text. Inside a sandbox it can see, `warnings` says so.
 
-A worker in a herdr-core terminal gets a row of what its record says, with no reading of `hc`: `name`, `kind`, `model`,
-`effort`, `cwd`, `backend: "terminal"`, `terminal`, and `state: "in_terminal"`, and `next` has its `hc` steps.
+A worker in a herdr-core terminal gets a row of its record and of where its terminal is, from `hc get` and its runner's
+`run.json` (the reading `cleanup --worker` acts on): `name`, `kind`, `model`, `effort`, `cwd`, `backend: "terminal"`,
+`terminal`, and `state`:
+
+- `in_terminal`: live and labelled with the record's id; `status` is its harness's status word, or null. `next` has its
+  `hc` steps.
+- `finished`: its program ended and the terminal is still listed. `gone`: hc does not know it, and its runner recorded
+  an end or is no longer running (a closed tab, a core that lost it). For both, `next` runs `routr cleanup --worker
+  <name>`.
+- `unknown`, with `why`: hc did not answer or gave what routr cannot read, the address now names a terminal without
+  the record's id (another one, or another core's), the runner's `run.json` cannot be read, or the runner still runs
+  though hc does not know its terminal. `next` says what to look at; there is no cleanup step.
+
+Reading `hc` never changes the terminal.
 
 ## stop
 

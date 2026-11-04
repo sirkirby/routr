@@ -142,13 +142,13 @@ async function sendCommandBody(args, { env = process.env, settings = () => loadC
 }
 
 // ---- workers ---------------------------------------------------------------------------------------------------------
-async function workersCommandBody(args, { env = process.env } = {}) {
+async function workersCommandBody(args, { env = process.env, hc } = {}) {
   const out = { ok: false, headline: "", unavailable: [], warnings: sandboxNote(env), next: [], workers: [] };
   try {
     const o = parseNamed(args, "workers", ["name"]);
     for (const n of o.names.length ? o.names : workerNames()) {
       const rec = workerOf(n);
-      if (rec.worker?.backend === "terminal") { out.workers.push(terminalRow(rec.worker)); out.next.push(...followSteps(rec.worker)); continue; }
+      if (rec.worker?.backend === "terminal") { const { row, next } = await terminalRow(rec.worker, { hc }); out.workers.push(row); out.next.push(...next); continue; }
       const v = await view(n);
       if (v) { const row = { ...v }; delete row.turns; delete row.gen; out.workers.push(row); } else if (o.names.length) throw new Error(`no headless worker named ${n}`);
     }
