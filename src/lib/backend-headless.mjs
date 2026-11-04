@@ -15,7 +15,7 @@ import { HARNESSES, subagentDefaults } from "./harnesses.mjs";
 import { configOf } from "./config.mjs";
 import { displayCommand, doNext, runNext } from "./next.mjs";
 import { OFF } from "./wording.mjs";
-import { launchFailed } from "./backends.mjs";
+import { launchFailed } from "./launch-answer.mjs";
 import { inCore, presentWorker } from "./presenter-watch.mjs";
 import { CARRIERS, FORWARDED, folderId, home, lockIsStale, lockOwned, lockToken, realOr, releaseFileLock, spawnSelf, takeLock, writeJsonAtomic } from "./runtime.mjs";
 

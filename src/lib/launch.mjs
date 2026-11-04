@@ -13,7 +13,8 @@ import { CLOSING } from "./wording.mjs";
 import { BRANCH, runHerdr, SHELLS, splitArgs, worktreeArgs } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { countLaunch } from "./shares.mjs";
-import { executionFor, launchFailed } from "./backends.mjs";
+import { executionFor } from "./backends.mjs";
+import { launchFailed } from "./launch-answer.mjs";
 import { command, fallbackEnvOf, launchPane, paneCarriers, paneFallbacks, panePromptArgs, paneStartArgs, promptForLog, usualShell } from "./backend-pane.mjs";
 import { home, NAME_RULE, WORKER_NAME, spawnSelf } from "./runtime.mjs";
 
