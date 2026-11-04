@@ -79,7 +79,8 @@ test("record refuses a launch made with other advice, and an id that is not a la
   const bare = recordCommand(r.o), added = recordCommand({ ...r.o, run_id: bare.run_id, launch: id });
   expect([added.ok, added.error]).toEqual([false, expect.stringContaining("recorded without --launch")]);
   // On the command line, --launch with no value or given twice is refused, never read as absent.
-  for (const extra of [["--launch"], ["--launch", id, "--launch", id]]) {
+  // Another flag cannot take it as its value either (`--note --launch <id>`).
+  for (const extra of [["--launch"], ["--launch", id, "--launch", id], ["--note", "--launch"], ["--launch", id, "--note", "--launch", randomUUID()]]) {
     const cli = Bun.spawnSync([process.execPath, SCRIPT, "record", "--advice", r.o.advice, "--subscription", "codex", "--model", "m", "--effort", "high", "--verdict", "done", "--check", "pass", "--ledger", r.ledger, ...extra], { env: cliEnv(scratch("history-cli")) });
     const out = JSON.parse(cli.stdout.toString());
     expect([out.ok, out.error]).toEqual([false, expect.stringMatching(/--launch (takes|was given more than once)/)]);

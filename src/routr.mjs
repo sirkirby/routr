@@ -138,14 +138,15 @@ const ADVISE = {
   share: async () => console.log((await commands()).shareCommand({ ledger: take("--ledger"), out: take("--out") }, loaded().config)),
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]
   record: async () => {
+    // `--launch` first, before any other flag can take it as its value (`--note --launch <id>`): with no value, or twice,
+    // record refuses it, never reads it as absent.
+    const launchFlags = argv.filter((a) => a === "--launch").length, launch = launchFlags ? take("--launch") ?? "" : undefined;
     const revising = argv.includes("--run-id"), comparing = argv.includes("--task-file");
     const taskFile = take("--task-file");
     const o = Object.fromEntries(["advice", "subscription", "model", "effort", "level", "verdict", "check", "seconds", "attempts", "note", "ledger", "report", "project"].map((f) => [f, take(`--${f}`)]));
     o.task_file = taskFile ?? (comparing ? "" : undefined);
     o.run_id = take("--run-id") ?? (revising ? "" : undefined); o.causes = takeAll("--cause");
-    // `--launch` with no value, or twice, is refused by record, never read as absent.
-    o.launch_repeated = argv.filter((a) => a === "--launch").length > 1;
-    o.launch = argv.includes("--launch") ? take("--launch") ?? "" : undefined;
+    o.launch = launch; o.launch_repeated = launchFlags > 1;
     print((await commands()).recordCommand(o, takeAll("--subagent"), loaded().config, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } })); // never blocks the agent; the config resolves a "default" effort
   },
   usage: async () => print(await (await commands()).usageCommand(rest, loaded().config, given, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } }), 1), // never blocks an agent

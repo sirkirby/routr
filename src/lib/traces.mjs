@@ -100,11 +100,11 @@ export async function completeLaunch(r, run, { rerun = false, backend } = {}) {
   const reused = rerun && c.adviceId && facts?.terminal_id ? c.index.recovery({ advice_id: c.adviceId, pane_id: r.pane, terminal_id: facts.terminal_id }) : null;
   // A recovery rerun is its own launch, with its own id (launch's, as its history record has it whether or not anything is
   // exported), linked to the launch it finishes.
-  if (reused) link(reused);
+  if (reused) { link(reused); c.replaces = reused.launch_id; }
   put(c.span, { "routr.kind": pick(r.kind, subscriptions), "routr.backend": backend, "routr.launch.id": c.launchId,
     "gen_ai.agent.name": WORKER_NAME.test(r.name) ? r.name : null, "routr.model": modelName(r.model), "routr.effort": pick(r.effort, EFFORTS),
     "routr.advice.matched": typeof r.advice?.matches === "boolean" ? r.advice.matches : null, "routr.carriers.forwarded": CARRIERS.filter((n) => r.start?.env?.[n] === "<forwarded>") });
-  if (!reused && (herdrId(r.pane) || r.worker) && ["ready", "prompted", "needs_input"].includes(r.state)) c.entry = { launch_id: c.launchId, advice_id: c.adviceId ?? null, backend, repository: identity.attributes["vcs.repository.url.full"] ?? null,
+  if ((herdrId(r.pane) || r.worker) && ["ready", "prompted", "needs_input"].includes(r.state)) c.entry = { launch_id: c.launchId, advice_id: c.adviceId ?? null, backend, repository: identity.attributes["vcs.repository.url.full"] ?? null,
     project_hash: identity.project_hash ?? null, path_hash: identity.path_hash ?? null, branch: identity.attributes["vcs.ref.head.name"] ?? null,
     pane_id: herdrId(r.pane) ? r.pane : null, terminal_id: typeof facts?.terminal_id === "string" ? facts.terminal_id : null,
     traceId: c.span.traceId, spanId: c.span.spanId, created_at: new Date().toISOString() };
@@ -285,7 +285,9 @@ export function commandTrace(command, setup = {}, run) {
         }
         const queued = session.queue("traces", encodeTraces(batch.spans, { schemaUrl: SCHEMA_URL, attributeTypes: TRACE_ATTRIBUTES }));
         if (batch.logs.length) session.queue("logs", encodeLogs(batch.logs, { schemaUrl: SCHEMA_URL, attributeTypes: OTEL_ATTRIBUTES }));
-        if (queued && batch.entry) { batch.index.sweep(); batch.index.add(batch.entry); }
+        // A recovery rerun takes over its pane from the launch it finishes: that entry ends, and the rerun's own is the
+        // one cleanup and its record find.
+        if (queued && batch.entry) { batch.index.sweep(); if (batch.replaces) batch.index.finish(batch.replaces); batch.index.add(batch.entry); }
         if (queued && command === "cleanup" && ["removed", "closed", "absent"].includes((batch.output ?? result)?.state)) for (const id of batch.matched) batch.index.finish(id);
       }
     } catch {} // A malformed record, full disk or revoked consent never changes a command result.

@@ -245,15 +245,19 @@ test("a pane launch records identity, session and immutable index; cleanup and l
   expect(rerun.launch_id).not.toBe(r.launch_id);
   const rs = x.spans().filter((sp) => sp.name === "routr launch").at(-1);
   expect([attrs(rs)["routr.launch.id"], rs.links]).toEqual([rerun.launch_id, [{ traceId: s.traceId, spanId: s.spanId, attributes: [] }]]);
-  expect(index.entries()).toHaveLength(1);
-  expect(index.match({ advice_id: "abc12345" }).spanId).toBe(s.spanId);
+  // The rerun takes over the pane: the original entry ends, and the rerun's own is the active one.
+  expect(index.entries().map((e) => [e.launch_id, Boolean(e.finished_at)])).toEqual(expect.arrayContaining([[r.launch_id, true], [rerun.launch_id, false]]));
+  expect(index.entries()).toHaveLength(2);
   expect((await cleanup(["--pane", "w1:p2"], opts)).state).toBe("closed");
   const c = x.spans().find((s) => s.name === "routr cleanup");
-  expect(c.links).toContainEqual({ traceId: s.traceId, spanId: s.spanId, attributes: [] });
+  expect(c.links).toContainEqual({ traceId: rs.traceId, spanId: rs.spanId, attributes: [] });
   expect(attrs(c)["gen_ai.conversation.id"]).toBe(session);
-  expect(index.match({ advice_id: "abc12345" }).finished_at).toBeDefined();
+  expect(index.entries().every((e) => e.finished_at)).toBe(true);
+  // Its record names the rerun's launch, and links to its span; by advice alone, two launches used it: no link.
+  recordCommand({ advice, ledger: join(x.home, "ledger.jsonl"), subscription: "claude", model: "sonnet", effort: "low", verdict: "done", check: "pass", launch: rerun.launch_id }, [], x.config, { env: {}, otel: x.otel });
+  expect(x.spans().filter((s) => s.name === "routr record").at(-1).links).toEqual([{ traceId: rs.traceId, spanId: rs.spanId, attributes: [] }]);
   recordCommand({ advice, ledger: join(x.home, "ledger.jsonl"), subscription: "claude", model: "sonnet", effort: "low", verdict: "done", check: "pass" }, [], x.config, { env: {}, otel: x.otel });
-  expect(x.spans().find((s) => s.name === "routr record").links).toEqual(c.links);
+  expect(x.spans().filter((s) => s.name === "routr record").at(-1).links ?? []).toEqual([]);
 });
 
 function traceRepository(x) {
