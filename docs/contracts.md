@@ -4,7 +4,7 @@ What each routr command an orchestrator reads takes, and what it prints. This pa
 The field maps document the migration from the previous output, and the reader inventory records the baseline
 that the implementation changed together. In those migration notes, "today" means the output before this change.
 
-Commands covered: `subagent`, `dispatch`, `check`, `launch` (dry run, in herdr, and headless), `record`, `cleanup` (each mode),
+Commands covered: `subagent`, `dispatch`, `check`, `launch` (dry run, in herdr, in a herdr-core terminal, and headless), `record`, `cleanup` (each mode),
 `wait`, `send`, `workers`, `stop`, and
 `usage` (no name, `--level`, and each named reader: `claude`, `codex`, `agy`, `cursor`, `kiro`). Setup, doctor and key output for decision models is covered below; other maintenance commands are not covered.
 
@@ -34,8 +34,8 @@ Names that mean one thing everywhere:
   harness's startup question. A note is not a warning: nothing is wrong with the call.
 - `notes`: in `subagent` and `dispatch` only, the advice's own reasoning (the user's preferences, a risk warning, how a
   torn level was settled, a brief to fix). Part of the advice, not about the call.
-- `screen`: what a pane showed when routr stopped, or the fixed sentence saying it is withheld because the task was
-  sent. The only place a pane's text reaches output.
+- `screen`: what a pane or a herdr-core terminal showed when routr stopped, or the fixed sentence saying it is withheld
+  because the task was sent, or (a terminal) because it quotes the task. The only place that text reaches output.
 - `subscription`: a subscription's name, wherever one is named (`unavailable` entries, ranked and excluded rows, a
   named usage reading).
 - `ran` and `would_run`: display lines of the herdr and git commands a command ran, and the harness command a headless
@@ -171,7 +171,7 @@ that binary in `would_keep`, using the same rule. Delivery and the resource are 
 ## Text from outside routr
 
 AGENTS.md lets outside text reach output only where a command's contract names it. This contract names one place for
-free text: `screen`, what a pane showed, and only before the task was sent (after that it may show the brief, and
+free text: `screen`, what a pane or a herdr-core terminal showed, and only before the task was sent (after that it may show the brief, and
 `screen` is the fixed withheld sentence, as today). Everything else a herdr or git call returns is classified where
 routr starts the process: what leaves that point is routr's own words, and the structured herdr values below, each
 checked against a fixed shape.
@@ -450,8 +450,8 @@ decision-model failure, `provider`.
 
 ## launch
 
-Starts a worker in a herdr pane (a new worktree, a split, or a given pane), or outside herdr a headless worker
-(below), and sends it its task.
+Starts a worker in a herdr pane (a new worktree, a split, or a given pane), in a herdr-core terminal, or anywhere else a
+headless worker (both below), and sends it its task.
 
 Inputs:
 
@@ -570,7 +570,7 @@ a pane: needs input, or failed after reading the pane).
 
 ### launch outside herdr (headless)
 
-Outside herdr (`HERDR_ENV` is not `1`), a real launch starts a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker instead of a pane. A dry run
+Outside herdr and herdr-core (`HERDR_ENV` is not `1`, and `HC_TERMINAL_ID` is not set), a real launch starts a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker instead of a pane. A dry run
 plans the pane launch as before: it does not check the environment.
 
 - Required, beyond launch's own: `--kind claude`, `codex`, `cursor`, `agy` or `kiro`, a task (`--task-file` or `--task`, at most 3 MB with launch's
@@ -604,9 +604,6 @@ plans the pane launch as before: it does not check the environment.
 - `headline`: `routr: <name> (<kind>) took its task, running headless`, or the failure as for a pane launch.
 - Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "headless", run, session }` (`run`:
   the run folder; `session`: the harness's session id (Codex: its thread id; Antigravity: its conversation id; Kiro: its ACP session id), or null).
-  In a herdr-core terminal (`HC_TERMINAL_ID` set, `HERDR_ENV` not) `worker` also has `terminal`, the address of the
-  terminal running `routr watch` for it, and `steps` end with `terminal`. If none could start, the launch still
-  succeeds, without `terminal`, with a `worker_not_shown` warning and `routr watch --name <name>` (run) in `next`.
   `start.argv` is the harness's headless command line (Codex: `app-server` with its update check at startup off; its
   model and effort go in the protocol, subagent defaults in TOML string config overrides; Antigravity: with the worker's folder in `--add-dir`; Kiro: `acp` with the pane's flags; Cursor: `-p --output-format stream-json` with the pane's flags, and `--resume <session>` on each later turn); it is set once the worker's folder is known: a launch
   refused before that shows the pane command planned first, not the headless one. `ran` displays it. `start.env`
@@ -623,6 +620,47 @@ plans the pane launch as before: it does not check the environment.
 Subagent defaults given at launch are saved as optional `subagent_model` / `subagent_effort` in the headless worker's
 private `worker.json`, so resumed processes receive the same settings. They are removed with the worker's run folder
 by cleanup; they are not ledger fields. `start` shows the same defaults as the pane plan.
+
+### launch in a herdr-core terminal
+
+In a herdr-core terminal (`HC_TERMINAL_ID` set, `HERDR_ENV` not `1`), for every harness, a real launch runs the harness
+interactively in a terminal of its own, a tab in the Herdr app, and the lead follows it with `hc`. A dry run plans the pane
+launch as before.
+
+- Required, beyond launch's own: a task (`--task-file` or `--task`) with its matching `--advice`. Refused (with `error`,
+  `state: "failed"`), before anything is written: `--pane` or `--direction`; no task; a lead's sandbox it can see; a name
+  whose run folder exists; with `--worktree`, what a headless launch refuses; the subscription turned off; the harness not
+  signed in; for Kiro, a `--model` its own list does not have; `hc` refusing, not answering, or answering what routr cannot
+  read about the lead's own terminal. For Cursor, no config to copy fails as for a headless launch.
+- `--worktree <branch>` (with `--base`, `--copy`): as a headless launch.
+- `--timeout` (default 120000) bounds the wait for it to start.
+- `start` is the harness's command as the runner will run it: `start.argv` ends with its first message, which says only
+  where the task file is (after Antigravity's `-i`; first, Codex's `--no-daemon`; Kiro's `--v3 chat`). `start.env` lists
+  each trace-context carrier and config location passed, as `"<forwarded>"`, plus any Claude Code subagent defaults. A
+  Cursor worker's `CURSOR_CONFIG_DIR` is its run folder's private copy, which is not shown there. `ran` displays that
+  command and the `hc run`, with the lead's space as `<lead's space>` and routr's own program as `routr`.
+- `state`: `prompted`, `needs_input` or `failed`.
+  - `prompted`: `hc get` says status `working` or `done`, or a turn above 0; for a harness that reports no status (Cursor),
+    `run.json` says its process runs. Whether Cursor has read its task is then not known.
+  - `needs_input` (`ok: false`, no `error`): status `blocked` before any of that, with `needs_input` `{ why, hc: { state:
+    "blocked", kind? }, note? }`; or `--timeout` reached first, with `hc.state` the last status word or null. `screen` is
+    what its terminal shows (last 40 lines, carrier values replaced), or a fixed sentence when it quotes the task, or
+    null when it could not be read. routr answers nothing. `next` gives the guide's startup instruction with `hc keys <t>
+    <keys>`, says not to launch it again, and adds the steps below: the worker has its task, and goes on once answered.
+    `steps` end with `needs_input`, and the launch counts toward the launch share at once.
+  - `failed`: the harness ended first, or reported `error`, with `screen`; `worker` is kept, and `next` has `routr cleanup
+    --worker`. `hc` refusing the new terminal (after one more try under `<name>-<id>`, as a name may be taken): the run
+    folder and worktree are removed and `worker` is null. `hc` not answering it, or an answer routr cannot read: they are
+    kept, `worker.terminal` is null, and `next` adds `hc ls`.
+- `headline`: `routr: <name> (<kind>) took its task in terminal <t>`; `routr: <name> needs input in terminal <t>: <why>`;
+  the failure as for a pane launch.
+- Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "terminal", run, terminal }` (`run`: the run
+  folder; `terminal`: its address). `steps`: `reserve`, `terminal`, `prompt` (Kiro: `model` first, when its list was read).
+- `next`: `hc wait <t> --timeout 90 --json` (run), saying a turn above 0 means it is done; `hc read <t> --lines 200` (run);
+  `hc send <t> <message>` (a template); the record template; `routr cleanup --worker <name>` (run). A harness that reports
+  no status gets, instead of the wait, a step saying it sends its report with `hc send`.
+- The prompt file holds launch's composed prompt, and for a harness that reports no status also, after the closing line,
+  the instruction to send its report to the lead's terminal with `hc send`. `prompt_chars` is its length.
 
 ## record
 
@@ -713,6 +751,14 @@ Inputs:
   worker (a dry run too), that Cursor's own worker-server for its folder may still be running, which routr leaves. For a worker launched
   without a worktree it removes only the run folder and its reports, inspects no repository, and warns that the
   worker's changes in its folder are the lead's to check. Own field: `name`.
+- `--worker` on a terminal worker has no holder to check. Instead it refuses while `hc get` says status `working` or
+  `blocked` (`next`: `hc wait`, and that `hc kill` gives up its work), when `hc` does not answer or answers what routr cannot
+  read, when the terminal at that address has another name now, when `hc kill` fails, and when `hc` does not find the
+  terminal while `run.json` records no end and its process id is alive, or `run.json` cannot be read. Otherwise it ends the terminal with `hc kill`,
+  then removes it with `hc rm` (tried again for about two seconds; one that stays is a `terminal_left` warning, with the
+  command), `steps` adding `terminal` and `terminal_removed`, and goes on as above. A `--dry-run` ends and removes nothing. A harness that
+  reports no status (Cursor) is ended all the same, with a `terminal_status_unknown` warning. So a refusal from the
+  worktree's checks leaves the worktree and run folder, with the terminal gone.
 - Used when given: `--cwd` (default `.`), `--delete-branch`, `--dry-run`.
 
 Modes and `state`:
@@ -722,7 +768,7 @@ Modes and `state`:
 | `--pane <id>` | `closed`, `absent`, `planned`, `refused`, `failed` |
 | `--cwd` with no worker named: list | `listed`, `failed` |
 | `--worktree` or `--path`: remove | `removed`, `absent`, `planned`, `refused`, `failed` |
-| `--worker <name>`: a headless worker's worktree, then its run folder | `removed`, `absent`, `planned`, `refused`, `failed` |
+| `--worker <name>`: a headless or terminal worker's worktree, then its run folder | `removed`, `absent`, `planned`, `refused`, `failed` |
 
 `ok`:
 
@@ -779,6 +825,10 @@ for a turn without one a `do` step to look at the worker's work yourself; a step
 process group left; a step saying background commands may start another turn; `routr wait` again (run) for the
 workers still running. Inside a sandbox it can see, `warnings` says the sandbox may hide a worker's channel.
 
+A worker named here that runs in a herdr-core terminal is not waited on: a `terminal_followed` warning says so, and `next`
+has its `hc` steps. With nothing else to wait on, `state` is `none`, and `headline` is `routr: <name> runs in terminal <t>: follow it
+with hc`. Unnamed, such a worker is not watched.
+
 ## send
 
 A correction or follow-up for a headless worker launched with advice; the original advice and rules carry over. The
@@ -815,6 +865,9 @@ a non-empty string (its run folder changed since launch), with launch's fixed wa
 withholds it. `next`:
 `routr wait --name <name>` (run); for `unknown`, `routr workers --name <name>` (run) to look before sending again.
 
+A worker in a herdr-core terminal is followed with `hc`: nothing is sent, `ok` is false with no `error`, `state` is
+`refused`, `headline` ends `; nothing was sent`, and `next` has the `hc send` template.
+
 ## workers
 
 Each headless worker as its holder last recorded it, checked against whether its channel answers. With export off,
@@ -844,6 +897,9 @@ under it is a member, and so is every member when routr cannot read the group (`
 cannot read, no install found).
 Never worker text. Inside a sandbox it can see, `warnings` says so.
 
+A worker in a herdr-core terminal gets a row of what its record says, with no reading of `hc`: `name`, `kind`, `model`,
+`effort`, `cwd`, `backend: "terminal"`, `terminal`, and `state: "in_terminal"`, and `next` has its `hc` steps.
+
 ## stop
 
 Stops a headless worker through its own process. Inputs: required: `--name`.
@@ -859,6 +915,9 @@ to do if it stays so), `failed` (refused). `ok`: true for `stopped` and `absent`
 `warnings` says so, as for `wait`. Own fields: `state`, `name`. Messages the holder still keeps (`queued`, Kiro's held ones included) are dropped by a stop, and `warnings` says
 how many. `next`: `routr cleanup --worker <name>` (run).
 
+A worker in a herdr-core terminal is ended with `hc`: nothing is stopped, `ok` is false with no `error`, `state` is
+`refused`, `headline` ends `; nothing was stopped`, and `next` has `hc kill <t>` and `routr cleanup --worker <name>` (run).
+
 ## watch
 
 `routr watch --name <name>` (required, once): a person's view of one headless worker, as text and not JSON. It prints
@@ -867,6 +926,8 @@ when a turn ends, with that turn's report path; never the worker's text. It only
 worker is cleaned up or another is launched under its name. A record it cannot read just now does not end it. With
 `HC_TERMINAL_ID` set it also sets the terminal's title to the worker's name and reports status over OSC 7501: the
 state, the harness's name and the worker's name. No such worker: a line on stderr, exit 1.
+
+A worker in a herdr-core terminal has its own tab: `watch` says so on stderr, and exits 1.
 
 ## usage
 

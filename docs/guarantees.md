@@ -31,7 +31,7 @@ filename was given. OpenTelemetry batch and sender-state writes never create fol
 undone by an in-flight write. An existing directory is accepted; a file in its place or a permission error remains
 a failure.
 
-- `launch` drives panes in your herdr session; outside herdr it starts a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker (below). A task requires readable JSON advice from `routr dispatch` on that exact task
+- `launch` drives panes in your herdr session; in a herdr-core terminal it starts the harness in a terminal of its own, and anywhere else a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker (both below). A task requires readable JSON advice from `routr dispatch` on that exact task
   (including `brief_sha`); missing, nonmatching or `routr subagent` advice is refused before any harness, pane or worktree call. Dry runs return
   `ok: false` with `error` on the same refusal and still plan. Matching fallback advice is accepted, including advice
   saved as UTF-8 or UTF-16LE, with or without a BOM. Launch copies all its decision-model `unavailable` entries,
@@ -62,7 +62,8 @@ a failure.
   or record it cannot read is not taken as one recording no group: cleanup keeps the worker and says to try again,
   and what to do if the file stays unreadable. A
   worker launched without a worktree worked in your folder: cleanup does not inspect or touch it. What it cannot see
-  is under "Headless workers" below.
+  is under "Headless workers" below. A worker in a herdr-core terminal has its terminal ended first: "Workers in a
+  herdr-core terminal", below.
 - Outside herdr, `cleanup --cwd`, `--worktree` and `--path` list and remove worktrees through git (`git worktree
   list`, `git worktree remove`, never `--force`), and cannot see whether anything runs in a worktree's folder: they say
   so in `warnings`. They do not close a herdr workspace open on that worktree: run cleanup for a pane worker from
@@ -152,8 +153,8 @@ The binary is self-contained: the files under `skills/` are embedded at build ti
 repository checkout at run time. It reads your harness state read-only (usage sources, settings, model lists) and
 writes only:
 
-- under `~/.config/routr` (`config.json` written whole, where a link to it points), `~/.cache/routr`, `~/.local/share/routr` (headless workers' worktrees in its `worktrees`)
-  and `~/.local/state/routr` (headless workers);
+- under `~/.config/routr` (`config.json` written whole, where a link to it points), `~/.cache/routr`, `~/.local/share/routr` (the worktrees routr makes for headless and terminal workers, in its `worktrees`)
+  and `~/.local/state/routr` (those workers' run folders);
 - OpenTelemetry's trace and log requests, four-field usage observations, drop markers, sender state (including per-stream gauge watermarks) and lock under `~/.cache/routr/otel`. Trace and log
   resources use a random UUIDv4 per process, held only in memory, and write no identity file. The gauge's
   identity uses a random per-install id under `~/.local/state/routr/service-instance-id`, exclusively published so
@@ -162,14 +163,15 @@ writes only:
   secrets stay in the secrets file;
 - one launch record per worker that took its task or was left ready (`prompted` or `ready`), under
   `~/.local/state/routr/launch-counts`: the subscription and the time, nothing else, for the launch share. A dry run,
-  a refusal or a failed start writes none; a `needs_input` launch writes one when its `--pane` rerun finishes it.
+  a refusal or a failed start writes none; a `needs_input` launch writes one when its `--pane` rerun finishes it, and at once in a herdr-core terminal, where it
+  goes on by itself once answered.
   Records older than 7 days are removed by the next launch's write, never by a read. Writing one never changes a
   launch's result, and none is written while routr is being uninstalled;
 - the sampled launch index under `~/.local/state/routr/launches`, only while exporting, after queueing its span, and
   only for a started worker (`ready`, `prompted` or `needs_input`); never for dry runs, failed or refused launches.
   It holds ids, canonical repository identity and native-path hashes, never absolute paths or content. Cleanup keeps
   tombstones for later record links; launch and the sender sweep routr's own UUID filenames after 30 days;
-- in your repository's git metadata, the worktree and branch a headless `launch --worktree` adds;
+- in your repository's git metadata, the worktree and branch a headless or terminal `launch --worktree` adds;
 - its own binary, when it updates itself;
 - the skill folders, on `skill install` (and the updater's reinstall);
 - a file at a path you name for that command (`share --out`, a `--ledger` or `--config` you give);
@@ -214,13 +216,14 @@ paths. The binary does not load a `.env` or `bunfig.toml` from the folder you ru
 project's `.env` itself or pass it to the harness commands it runs (sign-in status and usage reads). Variables already
 in its environment, exported in your shell, still reach them. A worker that `routr launch` starts in a herdr pane runs
 in that pane's own shell, which loads what that shell is set up to load. A headless worker is started directly, with
-routr's own environment (so no project `.env` either). All process starts use shared platform defaults, which hide
+routr's own environment (so no project `.env` either). A worker in a herdr-core terminal is started directly by routr's
+runner, with the environment "Workers in a herdr-core terminal" sets out. All process starts use shared platform defaults, which hide
 the console on Windows and resolve a command as the shell would, starting an npm `.cmd` shim's script directly.
 Harness reads, headless turns and the private herdr server each supply the shared environment filter, which removes
 herdr's pane variables, herdr-core's terminal variables, the harness lead session names in the
 [harness reference](../skills/routr/references/harnesses.md#rules-that-hold-for-every-harness) and the trace-context
 carriers, preserving sign-in, provider and configuration settings; a headless turn then gets back only the carriers
-saved at launch ("Trace context", below). A test inventories process starts: each supplies that filter or names an exact
+saved at launch ("Trace context", below). A terminal worker's runner supplies the same filter first. A test inventories process starts: each supplies that filter or names an exact
 exception for a non-harness process. Herdr clients and routr's `hc` and `herdr-app` calls keep their environment to find
 their session.
 In a pane, routr types commands for that pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. A folder
@@ -236,14 +239,14 @@ display only, with prompt lengths instead of prompt text.
 
 Outside herdr, `routr launch --kind claude`, `codex`, `cursor`, `agy` or `kiro` starts the worker headless: Claude Code's own `-p`
 stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one process a turn), Antigravity's `--print` stream-json mode, or Kiro's ACP mode, on your sign-in, held by one routr process of its own (its holder).
-`--pane` and `--direction` are refused outside herdr. What that means on your machine:
+`--pane` and `--direction` are refused outside herdr. In a herdr-core terminal launch runs the harness interactively
+instead (next section). What a headless worker means on your machine:
 
-- **In a herdr-core terminal.** In the Herdr app, or with `HC_TERMINAL_ID` set and no `HERDR_ENV`, launch also asks `hc`
-  to start a terminal running `routr watch`, labelled for your space so that the app shows it as a tab, and renames that
-  tab to the worker's name with `herdr-app`. Those are the only things it asks of either. It gets the worker's name and
-  folder, never its brief. It reads and changes nothing of the worker, stops nothing when closed, and exits when
-  `cleanup --worker` removes the worker. If it cannot start, the worker runs anyway and launch warns. `routr watch` also
-  reports the worker's status there with OSC 7501: its state and its harness's name, nothing of its text.
+- **Its watch terminal.** `routr watch` follows a worker from any terminal, and reads and changes nothing of it. In a
+  herdr-core terminal it also reports the worker's status with OSC 7501: its state and its harness's name, nothing of its
+  text. routr keeps the means to open it in a labelled tab beside a headless worker, naming only the worker and its
+  folder, and a failure there never fails the worker; launch does not use that today, as every harness runs
+  interactively in a core terminal.
 - **Its worktree.** With `--worktree <branch>`, launch makes the worktree with git (`git worktree add -b`), under
   `~/.local/share/routr/worktrees/<repository>-<hash>/<branch>` (`/` and `\` in the branch become `-`), on a branch
   that must not exist yet, from `--base` or the checkout's HEAD, and copies the `--copy` files and folders in from
@@ -340,6 +343,61 @@ stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one proces
   channel as usual. `wait`, `workers` and `stop` say when they run inside one, since it may hide a worker's channel.
 - **Sign-in.** launch and a send that starts a new holder check the harness's sign-in first, as every launch does.
 
+## Workers in a herdr-core terminal
+
+In the Herdr app, or with `HC_TERMINAL_ID` set and `HERDR_ENV` not `1`, `routr launch` runs the harness interactively in a
+terminal of herdr-core. The lead follows it with `hc`; routr only starts it and ends it. Through routr's runner this has
+not yet been run with a real harness; what it relies on was measured with a stand-in (`references/harnesses.md`). Windows
+is not measured. What that means on your machine:
+
+- **What it asks of `hc` and `herdr-app`.** `hc get` of your terminal, for its address and its app space; `hc run --bg
+  --json` with `--name`, `--cwd`, `--outlive-parent` and `--no-notify`, and, when your terminal has a `herdr.space` label,
+  that label and a `herdr.tab` label; `herdr-app do tab.rename` to name the tab for the worker; `hc get` and `hc read`
+  while it starts; and at cleanup `hc get`, `hc kill` and `hc rm`. Their answers are checked against core's schema, and
+  never reach output as text except a screen (below). If `hc` refuses your terminal, nothing is written; if it refuses the
+  new terminal, launch removes what it made. If it does not answer then, a terminal may be there, so launch keeps what it
+  made, and `cleanup --worker` finishes it.
+- **Its run folder and worktree.** As a headless worker's ("Headless workers", above), under the same names, and with
+  `--worktree` the same git worktree and `--copy`. The record also holds `backend: "terminal"`, the terminal's address and
+  name, and the config locations below.
+- **The prompt file.** The whole prompt (launch's opening, your task and rules, the closing line) is written to
+  `prompt.md` in the run folder, 0600 on macOS and Linux in a 0700 folder (on Windows it takes the access your home folder
+  gives), for the worker to read. It is never in a process's arguments: the first message says only where the file is.
+  `hc` keeps a terminal's arguments, and those it keeps are `routr workers --run <name>`. `cleanup --worker` removes the
+  file with the run folder, and a stopped launch that removes its folder removes it. It stays there while the worker's
+  record does. A harness keeps its own session history as it always does, which holds what the worker read. `prompt_chars`
+  counts it; no command prints it.
+- **A screen.** A harness at a question before it has started comes back with the last 40 lines of what its terminal shows,
+  in `screen`: carrier values replaced, and withheld whole when it holds a run of 47 or more characters of the prompt, spaces and line breaks aside. A
+  shorter quote, or a run a screen drew with something inside it, is not recognised. routr answers no question.
+- **The runner.** The program in the terminal is routr's own, `routr workers --run <name>`: it reads the record, starts
+  the harness directly on that terminal, stays until it exits, passes on the hangup and terminate `hc kill` sends, writes
+  `run.json` beside the record (its own pid, the harness's, the times, the exit code or signal, nothing of its text),
+  and exits with its code. It starts one harness per worker, and refuses a second start. Status goes from the harness to
+  core directly.
+- **Its environment.** The base is the terminal's own, which is the core server's, not your lead's, through the same
+  filter as every harness start, so a lead's identity a core picked up from the shell it started in is removed. Then the
+  terminal's own `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET` and `HC_SCOPE`, so the harness's `hc send` names it. Then only what
+  launch saved: the checked trace-context carriers; exactly `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `CURSOR_CONFIG_DIR`,
+  `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` when your lead has them set (they choose which
+  sign-in a harness uses; each is checked again on load, and shown as `<forwarded>`, never its path); and the adapter's
+  variables, which win: Cursor's private config folder, subagent defaults. Nothing else of your lead's reaches it, and no
+  key or token is saved. Keys and tokens a worker uses come from the core's environment, as a pane's do from herdr's
+  server. A config location the core has and your lead does not set stays the core's.
+- **Cursor.** As headless, Cursor runs on a private copy of its config in the run folder. It reports no status, so launch
+  counts it as started once its process runs, and its prompt ends by telling it to send its report to your terminal with
+  `hc send`. Whether it does on any given task is the worker's; measured 3 of 3 on a small one.
+- **`cleanup --worker`.** It refuses while `hc` says the worker is `working` or `blocked`, when `hc` does not answer, and
+  when the terminal at that address has another name now: it ends only its own. Otherwise it ends the terminal with `hc
+  kill` (hangup, then terminate, then kill: core's), and removes it with `hc rm`; one that stays is a warning. Then the
+  worktree goes through the checks of `cleanup --worktree`, and when one fails, the worktree and run folder stay, though
+  the terminal has gone. A harness that reports no status cannot be seen working, so it is ended all the same, and said.
+  When `hc` does not find the terminal and the runner has recorded no end while its process id is alive, it may be in a core
+  this `hc` does not reach, so cleanup refuses; it only looks at that id, and an unrelated process given the same id later
+  blocks that cleanup until it ends. What a worker started that left the terminal is not seen.
+- **`wait`, `send`, `stop`, `watch`.** They say the worker is followed with `hc`, and do nothing to it. `workers` lists it.
+- **Sandboxes and sign-in.** As headless: launch refuses from a lead's sandbox it can see, and checks the harness's sign-in first.
+
 ## Trace context
 
 routr hands on the OpenTelemetry context carriers it finds in its own environment, `TRACEPARENT`, `TRACESTATE` and
@@ -354,7 +412,7 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
   produces no traces, logs or launch index and keeps its carriers unchanged. With export on, commands still queue
   headroom observations regardless of trace sampling. Both process off switches preserve export-off forwarding.
   [OpenTelemetry schema](opentelemetry.md#signals) lists every sent field.
-- **Which workers get them.** A headless worker gets them on every turn, and a worker in a pane `routr launch` makes
+- **Which workers get them.** A headless worker gets them on every turn, a terminal worker from its runner, and a worker in a pane `routr launch` makes
   gets them as that pane's shell starts (herdr's `pane split --env`): a pane beside yours, or the pane in a new
   worktree. For a worktree, launch splits the pane herdr opened with the worktree and closes that first pane, because
   herdr's worktree create takes no environment. A worker in an existing pane (`--pane`), and an agent already running
@@ -407,8 +465,9 @@ so a tool that reads OpenTelemetry context can link a worker to the session that
 A brief goes only to the decision models in your chosen list (or the one-call override) until one answers, and to
 the worker it is for. A key goes only to its own provider. routr never prints or logs either, and never puts them in
 the ledger or in telemetry: the ledger stores a brief's hash and length. Keys are kept only in routr's secrets file,
-`~/.config/routr/env`, written by `routr key set`. The one worker text routr stores is a headless worker's reports,
-which can quote its brief ("Headless workers", above).
+`~/.config/routr/env`, written by `routr key set`. The worker text routr stores is a headless worker's reports,
+which can quote its brief ("Headless workers", above), and a terminal worker's prompt file, for that worker to read
+("Workers in a herdr-core terminal", above).
 
 The list keeps hosted choices in order and tries local Ollama choices last, because they may need to load. Hosted
 attempts have an 8-second cut inside one overall deadline: 10 seconds for hosted-only lists, 30 seconds with local.

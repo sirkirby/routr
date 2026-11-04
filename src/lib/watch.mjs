@@ -2,6 +2,7 @@
 // wrote and changes nothing, so closing it stops nothing. Fixed words only: tool names, states and report paths, never
 // the worker's text. In a herdr-core terminal it also reports status over OSC 7501, the only way core takes one.
 import { view } from "./backend-headless.mjs";
+import { TERMINAL_FOLLOWED } from "./backend-terminal.mjs";
 import { workerOf } from "./worker-record.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { parseNamed } from "./workers.mjs";
@@ -37,6 +38,7 @@ export async function watchCommand(args, { env = process.env, write = (s) => pro
   if (o.names.length !== 1) throw new Error("watch takes one --name");
   const name = o.names[0], rec = workerOf(name);
   if (!rec.worker) throw new Error(`no headless worker named ${name}; routr workers lists them`);
+  if (rec.worker.backend === "terminal") throw new Error(`${TERMINAL_FOLLOWED(rec.worker)}; its terminal shows it`);
   const w = rec.worker, status = Boolean(env.HC_TERMINAL_ID), seen = { turns: new Set(), state: null, turn: null, tool: null };
   write(`${status ? `\x1b]2;${name}\x07` : ""}routr worker ${name}: ${HARNESSES[w.kind]?.label ?? w.kind}, ${w.model}${w.effort ? ` at ${w.effort}` : ""}\nin ${w.cwd}\nClosing this does not stop the worker. Ends when the worker is cleaned up.\n\n`);
   let last = null;

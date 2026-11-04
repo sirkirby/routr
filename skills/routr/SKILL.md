@@ -1,6 +1,6 @@
 ---
 name: routr
-description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity, Kiro) from one orchestrating agent, with workers in herdr panes or headless outside herdr; workers size their own subagents. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before a routr worker, or an agent outside herdr, spawns a subagent; or when asked to set up, configure, or check routr.
+description: Spread coding work across several AI subscriptions and harnesses (Claude Code, Codex, Cursor, Antigravity, Kiro) from one orchestrating agent, with workers in herdr panes, in tabs of the Herdr app, or headless; workers size their own subagents. Use when the user asks to orchestrate, fan out, or delegate work across panes, harnesses, or subscriptions; when your launch prompt says you are a routr worker; before a routr worker, or an agent outside herdr, spawns a subagent; or when asked to set up, configure, or check routr.
 metadata:
   version: "0.0.0-dev"
 ---
@@ -48,12 +48,12 @@ and judge that part yourself.
   work out, outside herdr too, is the orchestrator's job (next).
 - You are the **orchestrator**: you plan the work, hand it out, judge what comes back, and send it back when it
   falls short → read `references/orchestrator.md`, then `references/harnesses.md` before you launch anything. A user
-  can start a session this way by typing `/routr-orchestrate <plan>` (`$routr-orchestrate` in Codex). Outside
-  herdr, `routr launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless, followed with `routr wait` (in the Herdr app, each also gets a tab showing its progress; the guide's "Outside herdr"
+  can start a session this way by typing `/routr-orchestrate <plan>` (`$routr-orchestrate` in Codex). In the
+  Herdr app, `routr launch` starts each worker's real harness in a tab of its own, followed with `hc` (the guide's "In the Herdr app" section). Anywhere else outside herdr, it starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless, followed with `routr wait` (the guide's "Outside herdr"
   section).
   Never spawn your harness’s own subagents and never run `routr subagent` (it is the workers' command), in herdr or
-  not. Every piece you hand out, research and reviews included, is a routr worker (a pane worker in herdr, a headless
-  one outside it). Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
+  not. Every piece you hand out, research and reviews included, is a routr worker (a pane worker in herdr, a terminal worker in the Herdr app, a headless
+  one elsewhere). Every worker starts with `routr launch` (`--worktree <branch>`, and `--base <ref>` to start from another
   branch or commit) and ends with `routr cleanup`, the command in its launch result’s `next`. Never close a worker's pane to
   finish it: that leaves its worktree behind.
 - The user wants routr **set up, configured, or checked**, or **a setting changed** (a model, an effort, a reserve,

@@ -1306,9 +1306,13 @@ test("every headless adapter removes every lead session name on its initial and 
     if (kind === "cursor") { mkdirSync(join(w.home, ".cursor")); writeFileSync(join(w.home, ".cursor", "cli-config.json"), "{}"); }
     Object.assign(w.env, LEAD_ENV, Object.fromEntries(Object.entries(LEAD_ENV).map(([k, v]) => [k.toLowerCase(), v])), CONFIG_ENV, { FAKE_ENV: log });
     delete w.env.CODEX_SANDBOX; delete w.env.codex_sandbox;
+    // In a core terminal launch goes to the terminal backend: headless begins outside one. The send below, which starts
+    // a new holder, comes from inside one, so that name is checked as the rest are.
+    delete w.env.HC_TERMINAL_ID; delete w.env.hc_terminal_id;
     try {
       const launched = w.launch("env", w.task(BRIEF), [], undefined, kind);
       expect([kind, launched.state, launched.error]).toEqual([kind, "prompted", undefined]);
+      w.env.HC_TERMINAL_ID = "lead-session";
       expect(w.run(["wait", "--name", "env", "--timeout", "20000"]).state).toBe("finished");
       expect(await w.settled("env")).toBe(true);
       expect(w.run(["send", "--name", "env", "--task-file", w.task(SENT, "more.md")]).state).toBe("resumed");
@@ -1856,31 +1860,31 @@ const FAKE_HC = `
 const fs = require("node:fs"), a = process.argv.slice(2);
 fs.appendFileSync(process.env.FAKE_HC_LOG, JSON.stringify(a) + "\\n");
 if (process.env.FAKE_HC_REFUSE) process.exit(3);
-console.log(JSON.stringify(a[0] === "get" ? { address: "t3", labels: { "herdr.space": "sp1" } } : { address: "t9" }));
+console.log(JSON.stringify(a[0] === "get" && a[1] === "t3" ? { address: "t3", labels: { "herdr.space": "sp1" } } : a[0] === "get" ? { address: "t9", name: "c1", state: "live", status: { state: process.env.FAKE_HC_STATUS ?? "working" }, turn: 0 } : { address: "t9" }));
 `;
-test("in a core terminal launch shows the worker in a tab, the brief goes nowhere near hc, and a failure there costs only the tab", () => {
+test("in a core terminal the command line starts the worker through hc, with the brief nowhere near it, and cleanup --worker ends it", () => {
   const w = world({ HC_TERMINAL_ID: "t3", HC_TERMINAL_SOCKET: "/s", HC_SCOPE: "x" }), log = join(w.home, "hc.jsonl");
   w.env.FAKE_HC_LOG = log;
   fakeExecutable(w.bin, "hc", FAKE_HC); fakeExecutable(w.bin, "herdr-app", FAKE_HC);
-  const secret = `${BRIEF} a brief only the worker may see`, l = w.launch("c1", w.task(secret));
-  expect(l.ok).toBe(true);
-  expect(l.worker.terminal).toBe("t9");
-  expect(l.steps.map((s) => s.step)).toContain("terminal");
+  const l = w.launch("c1", w.task(`${BRIEF} a brief only the worker may see`));
+  expect([l.ok, l.state, l.worker.backend, l.worker.terminal]).toEqual([true, "prompted", "terminal", "t9"]);
   const asked = readFileSync(log, "utf8");
   expect(JSON.parse(asked.split("\n")[1]).slice(0, 2)).toEqual(["run", "--bg"]);
   expect(asked).toContain("herdr.space=sp1");
-  expect(asked).toContain("watch");
+  expect(asked).toContain('"--run","c1"');
   expect(asked).not.toContain("only the worker may see");
-  expect(w.run(["wait", "--name", "c1"]).state).toBe("finished");
-  expect(w.run(["cleanup", "--worker", "c1"]).state).toBe("removed");
+  expect(JSON.stringify(l)).not.toContain("only the worker may see");
+  expect(w.run(["workers"]).workers).toEqual([expect.objectContaining({ name: "c1", backend: "terminal", terminal: "t9" })]);
+  expect(w.run(["cleanup", "--worker", "c1"]).state).toBe("refused"); // still working
+  w.env.FAKE_HC_STATUS = "done";
+  const done = w.run(["cleanup", "--worker", "c1"]);
+  expect([done.state, done.ok]).toEqual(["removed", true]);
+  const words = readFileSync(log, "utf8").trim().split("\n").map((x) => JSON.parse(x)[0]);
+  expect(words.indexOf("kill")).toBeLessThan(words.indexOf("rm"));
   w.env.FAKE_HC_REFUSE = "1";
-  const r = w.launch("c2", w.task(secret));
-  expect(r.ok).toBe(true);
-  expect(r.worker.terminal).toBeUndefined();
-  expect(r.warnings.join(" ")).toContain("did not start a terminal");
-  expect(r.next.map((n) => n.argv)).toContainEqual(["routr", "watch", "--name", "c2"]);
-  expect(w.run(["wait", "--name", "c2"]).state).toBe("finished");
-  expect(w.run(["cleanup", "--worker", "c2"]).state).toBe("removed");
+  const r = w.launch("c2", w.task(BRIEF));
+  expect([r.ok, r.state]).toEqual([false, "failed"]);
+  expect(existsSync(w.runDir("c2"))).toBe(false);
 }, 60000);
 
 test("watch follows a worker until it is cleaned up, with status only in a core terminal, and never its brief or its report's text", async () => {

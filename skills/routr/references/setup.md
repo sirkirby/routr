@@ -213,8 +213,7 @@ session each reading leaves. `routr skill install` links the skill into `~/.kiro
 Where the lead runs decides how its workers appear, and each of these is optional:
 
 - **The Herdr app** ([download](https://herdr.dev/download/), which also installs herdr-core): each worker gets a tab of
-  its own, showing its progress, and appears in the app's Agents list. Nothing else is needed. The tab shows routr's
-  progress, not the harness's own screen.
+  its own, on the harness's own screen, and you can type into it. Nothing else is needed. The lead follows it with `hc`.
 - **herdr in a terminal**: each worker runs in a pane, on the harness's own screen, and you can type into it.
 - **Neither**: workers run headless, and `routr watch --name <name>` follows one in any terminal.
 

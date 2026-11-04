@@ -19,7 +19,7 @@ export class LaunchIndex {
         try {
           const file = join(this.dir, n); if (!lstatSync(file).isFile()) return [];
           const v = JSON.parse(readFileSync(file, "utf8")), age = this.now() - Date.parse(v.created_at);
-          if (n !== `${v.launch_id}.json` || !launchContext(v) || !["pane", "headless"].includes(v.backend) || !Number.isFinite(age) || age < 0 || (!expired && age >= 30 * 86400000)) return [];
+          if (n !== `${v.launch_id}.json` || !launchContext(v) || !["pane", "headless", "terminal"].includes(v.backend) || !Number.isFinite(age) || age < 0 || (!expired && age >= 30 * 86400000)) return [];
           return [v];
         } catch { return []; }
       });

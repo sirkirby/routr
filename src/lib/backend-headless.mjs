@@ -4,29 +4,23 @@
 // id. Answers carry report paths, never worker text.
 import { warning } from "./warnings.mjs";
 import { launchCarriers, launchCarrierWarnings, currentLaunch } from "./traces.mjs";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { connect, generations, MESSAGE_MAX, probe, removeEndpoint, socketPathFits, writeSecret } from "./channel.mjs";
 import { groupAlive, HEADLESS_KINDS, headlessArgv, stateOf } from "./headless.mjs";
-import { FORMAT, ownedBy, readWorker, reserve, runDir, unreadableWhy, WORKERS_DIR, workerOf } from "./worker-record.mjs";
-import { copyInto, git, makeWorktree, newWorktree, planWorktree, unmakeWorktree } from "./worktree.mjs";
+import { FORMAT, readWorker, runDir, unreadableWhy, WORKERS_DIR, workerOf } from "./worker-record.mjs";
+import { git, planWorktree } from "./worktree.mjs";
+import { privateCursorConfig, refuseInputs, refuseSandbox, refuseSettings, refuseTaken, sandboxOf, takeRun, worktreeRecord } from "./worker-start.mjs";
 import { HARNESSES, subagentDefaults } from "./harnesses.mjs";
-import { configOf } from "./config.mjs";
 import { displayCommand, doNext, runNext } from "./next.mjs";
-import { OFF } from "./wording.mjs";
 import { launchFailed } from "./launch-answer.mjs";
 import { inCore, presentWorker } from "./presenter-watch.mjs";
-import { CARRIERS, FORWARDED, folderId, home, lockIsStale, lockOwned, lockToken, realOr, releaseFileLock, spawnSelf, takeLock, writeJsonAtomic } from "./runtime.mjs";
+import { CARRIERS, FORWARDED, folderId, lockIsStale, lockOwned, lockToken, realOr, releaseFileLock, spawnSelf, takeLock, writeJsonAtomic } from "./runtime.mjs";
 
 export const RUNNING = new Set(["working", "waiting", "starting"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// A lead's sandbox carries over to what it starts (prototype p36, 2026-10-22): inside Claude Code's Bash sandbox a
-// worker could not write routr's state folder or reach api.anthropic.com, and inside Codex's (workspace-write) it could
-// not write that folder and `claude` said "Not logged in", its Keychain hidden. Each says it is there.
-const SANDBOXES = [["SANDBOX_RUNTIME", "Claude Code's Bash sandbox"], ["CODEX_SANDBOX", "Codex's sandbox"]];
-export const sandboxOf = (env) => SANDBOXES.find(([k]) => env[k])?.[1] ?? null;
-const SANDBOXED = (which) => `this command runs inside ${which}, and a worker started from there cannot write routr's state or reach its provider; run it outside the sandbox (in Claude Code, as a command the sandbox does not wrap; in Codex, with sandbox_mode danger-full-access or an approved escalation)`;
+export { sandboxOf };
 export const TOO_BIG = `the message is over ${MESSAGE_MAX / 1024 / 1024} MB, more than a worker's channel takes; shorten it or point the worker at a file`;
 
 const ago = (iso) => { const t = Date.parse(iso ?? ""); return Number.isFinite(t) ? Math.max(0, Math.round((Date.now() - t) / 1000)) : null; };
@@ -131,52 +125,20 @@ async function startWorker(o, out, { prompt, env, settings, ready, spawn, checkL
   const defaults = { kind: o.kind, subagentModel: o["subagent-model"], subagentEffort: o["subagent-effort"] };
   const subagents = subagentDefaults(defaults);
   if (!HEADLESS_KINDS.includes(o.kind)) throw new Error(`outside herdr, routr launch starts ${andList(HEADLESS_KINDS.map((k) => HARNESSES[k].label))} workers only; run the lead inside herdr for a ${HARNESSES[o.kind].label} worker`);
-  for (const f of ["pane", "direction"]) if (o[f] != null) throw new Error(`--${f} needs herdr; outside herdr a worker runs headless, with no pane`);
-  if (prompt == null) throw new Error("outside herdr a worker starts with its task: pass --task-file (or --task) and --advice");
+  refuseInputs(o, prompt, { where: "outside herdr", runs: "runs headless" });
   if (size(prompt) > MESSAGE_MAX) throw new Error(TOO_BIG);
-  const sandbox = sandboxOf(env);
-  if (sandbox) throw new Error(SANDBOXED(sandbox));
-  if (existsSync(runDir(o.name))) throw new Error(`a worker named ${o.name} exists; finish it with routr cleanup --worker ${o.name}, or choose another --name`);
+  refuseSandbox(env);
+  refuseTaken(o.name);
   if (!socketPathFits()) throw new Error(PATH_TOO_LONG);
   const plannedTree = o.worktree ? await planWorktree(o, out.cwd) : null;
-  const loaded = settings(), config = configOf(loaded);
-  out.warnings.push(...(loaded.notes ?? []));
-  if (config.subscriptions[o.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[o.kind].label, o.kind));
-  const signedOut = await ready(o.kind);
-  if (signedOut) throw new Error(`${HARNESSES[o.kind].label} cannot take work: ${signedOut}`);
-  await checkListed();
+  const config = await refuseSettings(o, out, { settings, ready, checkListed });
   const until = Date.now() + o.timeout, left = () => Math.max(1000, until - Date.now());
   // Checked now, so a flag the harness would refuse is refused before anything is written; shown once the worker's
   // folder is known (Antigravity's --add-dir names it).
   headlessArgv({ ...defaults, model: o.model, effort: o.effort, cwd: plannedTree?.path ?? out.cwd });
-  let dir;
-  let token;
-  try { ({ dir, token } = reserve(o.name)); }
-  catch (e) {
-    if (e?.code === "EEXIST") throw new Error(`a worker named ${o.name} exists; finish it with routr cleanup --worker ${o.name}, or choose another --name`);
-    if (e?.code === "EPERM" || e?.code === "EACCES") throw new Error(SANDBOXED("a sandbox, or a folder routr cannot write"));
-    throw e;
-  }
-  // What this launch wrote, and nothing started: removed again if launch stops before a holder answers. Everything
-  // after the reservation is inside this, so a failure anywhere in it (git, a copy, a write) leaves nothing.
-  let wt = null;
-  // Only while it is still this reservation's (its token): never a folder another launch of that name made since.
-  const unreserve = async () => { if (wt) await unmakeWorktree(wt, out); try { if (ownedBy(dir, token)) rmSync(dir, { recursive: true, force: true }); } catch {} out.worker = null; };
+  // What this launch wrote, and nothing started: removed again if launch stops before a holder answers.
+  const { dir, wt, unreserve } = await takeRun(o, out, plannedTree);
   try {
-    if (plannedTree) {
-      wt = newWorktree(o, plannedTree, out.cwd);
-      await makeWorktree(wt, out);
-      // A worktree holds tracked files only: --copy brings named untracked files across, at the same relative path.
-      for (const rel of o.copy ?? []) {
-        const from = join(out.cwd, rel);
-        if (!existsSync(from)) { out.warnings.push(warning("copy_missing", `--copy ${rel}: not found in ${out.cwd}; skipped`)); continue; }
-        copyInto(from, wt.path, rel, wt);
-        step("copy", true, `Copied ${rel} into the worktree`);
-      }
-      out.cwd = wt.path;
-      out.worktree = { branch: o.worktree, ...(o.base ? { base: o.base } : {}), path: wt.path, workspace: null };
-      step("worktree", true, `Created ${wt.path} on branch ${o.worktree}${o.base ? ` from ${o.base}` : ""}`);
-    }
     const argv = headlessArgv({ ...defaults, model: o.model, effort: o.effort, cwd: out.cwd });
     // The trace-context carriers in launch's environment, within routr's limits, are saved with the worker: every turn
     // gets these, whoever starts its holder later (a `send` from another environment). Shown by name only;
@@ -188,17 +150,10 @@ async function startWorker(o, out, { prompt, env, settings, ready, spawn, checkL
     const w = { format: FORMAT, id: randomUUID().replace(/-/g, ""), name: o.name, kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(), carriers: found.carriers,
       ...(o["subagent-model"] ? { subagent_model: o["subagent-model"] } : {}), ...(o["subagent-effort"] ? { subagent_effort: o["subagent-effort"] } : {}),
       ...(launchTrace ? { launch: launchTrace } : {}),
-      ...(wt ? { worktree: { branch: wt.branch, base: wt.base, path: wt.path, source: wt.source, start: wt.start, folder: wt.folder } } : {}) };
+      ...worktreeRecord(wt) };
     writeJsonAtomic(join(dir, "worker.json"), w, { mkdir: false, mode: 0o600 }); // whole: a reader never sees it half written
     writeSecret(dir);
-    // Cursor rewrites its config as it runs (its default model, a project folder): it runs on a private copy in the
-    // run folder, made now from ~/.cursor/cli-config.json as a pane's is, and removed with the run folder.
-    if (o.kind === "cursor") {
-      const conf = join(dir, "cursor-config");
-      mkdirSync(conf, { mode: 0o700 });
-      try { copyFileSync(join(home(), ".cursor", "cli-config.json"), join(conf, "cli-config.json")); chmodSync(join(conf, "cli-config.json"), 0o600); }
-      catch { throw new Error(`Cursor has no config at ${join(home(), ".cursor", "cli-config.json")}: sign in with \`cursor-agent\` first`); }
-    }
+    if (o.kind === "cursor") privateCursorConfig(dir);
   } catch (e) { await unreserve(); throw e; }
   out.worker = { name: o.name, backend: "headless", run: dir, session: null };
   step("reserve", true, `Made ${dir} for ${o.name}`);
@@ -251,8 +206,7 @@ export async function deliver(name, w, message, { out, env, ready, spawn }) {
     if (read.unreadable) { out.next.push(...damagedNext(name, w)); throw new Error(unreadableWhy(name, "state.json", read.unreadable)); }
     const st = read.value ?? {};
     if (await groupAlive(st.harness_pgid, w.kind)) throw new Error(`${name}'s harness may still be running (process group ${st.harness_pgid}); stop what runs of it before sending`);
-    const sandbox = sandboxOf(env);
-    if (sandbox) throw new Error(SANDBOXED(sandbox));
+    refuseSandbox(env);
     if (!st.session_id) throw new Error(`${name} has no session to resume; launch the work again`);
     const signedOut = await ready(w.kind);
     if (signedOut) throw new Error(`${HARNESSES[w.kind].label} cannot take work: ${signedOut}`);
@@ -287,11 +241,26 @@ export async function stopWorker(name, rec) {
 }
 
 // ---- cleanup --worker ------------------------------------------------------------------------------------------------
+// Why a headless worker cannot be removed yet: its holder, its state or a process group it recorded. Null when nothing of it runs.
+async function holderLeft(name, w) {
+  const held = (why, next) => ({ why, next });
+  const p = await probe(runDir(name));
+  if (["alive", "starting"].includes(p.state)) return held(`${name} is still running`, [runNext("Wait for it to finish.", ["routr", "wait", "--name", name]), runNext("Or stop it first.", ["routr", "stop", "--name", name])]);
+  if (p.unreadable) return held(markerWhy(name, p), damagedNext(name, w));
+  if (p.state === "unreachable") return held(`${name}'s process does not answer, so whether it runs is not known`, runNext("Look at it.", ["routr", "workers", "--name", name]));
+  const read = stateOf(name);
+  if (read.unreadable) return held(unreadableWhy(name, "state.json", read.unreadable), damagedNext(name, w));
+  const pg = read.value?.harness_pgid;
+  if (await groupAlive(pg, w.kind)) return held(`${name}'s harness may still be running (process group ${pg})`, doNext(`Look at process group ${pg} and stop it if it is this worker's, then run cleanup again.`));
+  return null;
+}
 // Removes a headless worker's run folder (its reports with it) once nothing of it runs, under the lock a new holder is
 // started under. A worktree launch made for it goes first, through cleanup's own checks (nothing uncommitted, no file
 // the worker made, no commit no branch holds), and the run folder stays when cleanup keeps the worktree. Without one,
 // its work, in its folder, is the lead's to integrate: cleanup touches no repository.
-export async function cleanupWorker(name, { dryRun = false, deleteBranch = false } = {}, out) {
+// A terminal worker has no holder: its terminal is ended instead (backend-terminal.mjs), and the worktree and run folder
+// then go through the same checks.
+export async function cleanupWorker(name, { dryRun = false, deleteBranch = false } = {}, out, { hc } = {}) {
   const step = (s, ok, detail) => out.steps.push({ step: s, ok, detail });
   const refuse = (why, next) => { out.ok = false; out.state = "refused"; out.headline = `routr: kept ${name}: ${why}`; out.next.push(...[].concat(next)); step("refused", false, why); return out; };
   out.name = name;
@@ -305,14 +274,8 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
     // Read again under the lock: it may have changed while cleanup waited for it.
     const again = workerOf(name), w = again.worker;
     if (!w) return refuse(again.unreadable ? unreadableWhy(name, "worker.json", again.unreadable) : "its record changed while cleanup waited", damagedNext(name));
-    const p = await probe(runDir(name));
-    if (["alive", "starting"].includes(p.state)) return refuse(`${name} is still running`, [runNext("Wait for it to finish.", ["routr", "wait", "--name", name]), runNext("Or stop it first.", ["routr", "stop", "--name", name])]);
-    if (p.unreadable) return refuse(markerWhy(name, p), damagedNext(name, w));
-    if (p.state === "unreachable") return refuse(`${name}'s process does not answer, so whether it runs is not known`, runNext("Look at it.", ["routr", "workers", "--name", name]));
-    const read = stateOf(name);
-    if (read.unreadable) return refuse(unreadableWhy(name, "state.json", read.unreadable), damagedNext(name, w));
-    const pg = read.value?.harness_pgid;
-    if (await groupAlive(pg, w.kind)) return refuse(`${name}'s harness may still be running (process group ${pg})`, doNext(`Look at process group ${pg} and stop it if it is this worker's, then run cleanup again.`));
+    const held = w.backend === "terminal" ? await (await import("./backend-terminal.mjs")).endTerminal(w, { dryRun, out, assertOwned, ...(hc ? { hc } : {}) }) : await holderLeft(name, w);
+    if (held) return refuse(held.why, held.next);
     if (w.worktree) {
       const { cleanup, worktreesFromGit } = await import("./cleanup.mjs");
       // The worktree at that path must still be this worker's: on its branch. One put there since is someone else's.

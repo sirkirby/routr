@@ -33,15 +33,15 @@ test("launch plans use each harness's measured permissions and model syntax", ()
     .toMatchObject({ executable: "cursor-agent", argv: ["--yolo", "--trust", "--model", "composer-2.5"], env: { CURSOR_CONFIG_DIR: "/private/config" } });
   expect(plan({ kind: "agy", model: "gemini-3.8-flash-low", cwd: "/work" }).argv)
     .toEqual(["--dangerously-skip-permissions", "--add-dir", "/work", "--model", "gemini-3.8-flash-low"]);
-  expect(plan({ kind: "kiro", model: "claude-haiku-4.5" })).toMatchObject({ executable: "kiro-cli", argv: ["chat", "--trust-tools=*", "--model", "claude-haiku-4.5"], env: {} });
+  expect(plan({ kind: "kiro", model: "claude-haiku-4.5" })).toMatchObject({ executable: "kiro-cli", argv: ["--v3", "chat", "--trust-tools=*", "--model", "claude-haiku-4.5"], env: {} });
 });
 
 test("Kiro's effort: auto passes no flag (the model decides, nothing remembered); a level is passed and its side effect said", () => {
   const auto = plan({ kind: "kiro", model: "auto", effort: "auto" });
-  expect(auto.argv).toEqual(["chat", "--trust-tools=*", "--model", "auto"]);
+  expect(auto.argv).toEqual(["--v3", "chat", "--trust-tools=*", "--model", "auto"]);
   expect(auto.warnings.join(" ")).not.toContain("remembers");
   const high = plan({ kind: "kiro", model: "claude-opus-4.8", effort: "high" });
-  expect(high.argv).toEqual(["chat", "--trust-tools=*", "--model", "claude-opus-4.8", "--effort", "high"]);
+  expect(high.argv).toEqual(["--v3", "chat", "--trust-tools=*", "--model", "claude-opus-4.8", "--effort", "high"]);
   expect(high.warnings.join(" ")).toContain("remembers --effort as the user's default for claude-opus-4.8");
   expect(plan({ kind: "claude", model: "sonnet", effort: "auto" }).argv).toContain("auto"); // only Kiro reads auto as "no flag"
 });

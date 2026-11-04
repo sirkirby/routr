@@ -1,14 +1,15 @@
 # routr orchestrator
 
-You are the lead agent. In herdr, workers run in panes; outside herdr, Claude Code, Codex, Cursor, Antigravity and Kiro workers run headless. Your job is
+You are the lead agent. In herdr, workers run in panes; in the Herdr app, in tabs; anywhere else, Claude Code, Codex, Cursor, Antigravity and Kiro workers run headless. Your job is
 to get the user's work done across the subscriptions they pay for, without running any one of them hot, and to keep
 the user informed without making them watch panes. In herdr, use the herdr skill for every pane and agent command;
 this file covers only what herdr does not know.
 
-Check first: `test "${HERDR_ENV:-}" = 1`. Outside herdr there are no panes: `routr launch` starts Claude Code,
-Codex, Cursor, Antigravity and Kiro workers headless instead, and you follow them with `routr wait`. Read "Outside herdr: headless workers" (after
-step 6) for what changes; everything else here applies as written. That includes the Herdr app: its terminals are
-herdr-core's, not panes, and each worker's progress appears in a tab of its own.
+Check first: `test "${HERDR_ENV:-}" = 1`. Outside herdr there are no panes. In the Herdr app, or any herdr-core
+terminal (`HC_TERMINAL_ID` is set), `routr launch` starts each worker's real harness in a tab of its own, and you follow
+it with `hc`, as you follow a pane with herdr's skill: read "In the Herdr app: terminal workers" (after step 6).
+Anywhere else, `routr launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless, and you follow
+them with `routr wait`: read "Outside herdr: headless workers" (after step 6). Everything else here applies as written.
 
 ## 1. Decide whether to launch at all
 
@@ -363,19 +364,50 @@ pane, closing it closes the workspace, and the worktree is then left on disk whe
 Finish by telling the user, per piece of work: what was done, on which subscription and model, your check, and where
 the result is.
 
+## In the Herdr app: terminal workers
+
+In the Herdr app, or any herdr-core terminal (`HC_TERMINAL_ID` is set and `HERDR_ENV` is not), `routr launch` runs the
+harness itself, interactively, in a terminal of its own: a tab in your space, named for the worker, so the user sees the
+real harness at work. Use `hc` for these workers as you use herdr's skill for panes (`hc --skill` is core's own guide).
+`routr launch` and `routr cleanup --worker` are routr's; `routr wait`, `send`, `stop` and `watch` say to use `hc` and do
+nothing else. Dispatch, the task file, `--advice`, the model and effort choice, `check` and `record` are as in herdr. What
+differs:
+
+- **It starts with its task.** Launch needs `--task-file` (or `--task`) and `--advice`, and refuses `--pane` and
+  `--direction`. `--worktree`, `--base` and `--copy` work as in step 3: routr makes the git worktree, under
+  `~/.local/share/routr/worktrees`. Your task goes in a file only that worker reads, and its first message only says
+  where. Launch also refuses from inside a sandbox it can see, as for a headless worker.
+- **`prompted` means it started.** Launch waits for the harness to report `working`, or, for one that reports no status
+  (Cursor), for its process to run. `worker.terminal` in its answer is the address you use with `hc`; call it `<t>` below.
+- **`needs_input` is yours to decide, as in step 3.** A harness at a question before it can start (`blocked`, as
+  Antigravity at its folder trust) comes back with what its terminal shows in `screen`; Kiro V3 asks to trust a workspace
+  and reports nothing while it asks, so it comes back that way only at `--timeout`, as one that has not started.
+  routr answers nothing. Answer within the rule in step 3 with `hc keys <t> <keys>`. The worker has its task and goes on
+  by itself once answered: do not launch it again.
+- **Wait with `hc wait <t> --timeout <seconds>`,** then look at `turn`, not at the word: `turn` above 0 means a turn has
+  ended. `hc wait` right after the start returns at once with `idle` and turn 0, which only means it has not started yet.
+  A later `blocked` is a question for you, as in a pane: read it with `hc read <t>` and answer with `hc keys`. A
+  timeout is a check-in, not a failure. Keep a foreground wait under your own shell tool's command limit.
+- **Cursor reports no status.** `hc wait` says nothing of it. Its prompt tells it to send its report to your terminal with
+  `hc send`, which arrives typed in as a message to you and ends a `hc wait` you are in. If nothing has come after far
+  longer than the task should take, read its terminal.
+- **Read the report with `hc read <t> --lines <n>`,** save all of it, and run `routr check --brief <file> --report <file>`.
+- **Send back with `hc send <t> "<message>"`,** ending with the report reminder: it does not add one for you. A short
+  message is best: point at a file for anything long. hc refuses to paste into a program at a question.
+- **Finish with `routr cleanup --worker <name> [--delete-branch]`,** the step in launch's `next`. It refuses while hc says
+  the worker is `working` or `blocked`. Otherwise it ends the terminal (`hc kill`, then `hc rm`), then removes the worktree
+  with the checks of step 6, and keeps it and the run folder when one fails. To give up on a working worker, run
+  `hc kill <t>` first. Cursor reports no status, so cleanup cannot see it working and ends it: be sure it has reported first.
+
 ## Outside herdr: headless workers
 
-Outside herdr, `routr launch --kind claude`, `codex`, `cursor`, `agy` or `kiro` starts the worker without a pane: routr runs the
+Outside herdr and herdr-core, `routr launch --kind claude`, `codex`, `cursor`, `agy` or `kiro` starts the worker without a pane: routr runs the
 harness's own headless mode (Claude Code's `-p`, Codex's app-server, Cursor's `-p`, one process a turn, Antigravity's `--print`, Kiro's ACP mode) on the user's sign-in, in its worktree (or
 `--cwd` without one), held by a routr process of its own. Dispatch, the task file, `--advice`, the
 model and effort choice, `check` and `record` are as in herdr. What differs:
 
-- **In the Herdr app, or any herdr-core terminal** (`HC_TERMINAL_ID` is set), the worker is still headless, and launch
-  also opens a terminal running `routr watch` beside it: in the app, a tab named for the worker in your space, with the
-  worker's status in the app's Agents list. `worker.terminal` in launch's answer is its address. It shows state, tools
-  and report paths, never the worker's text, and closing it stops nothing. It goes when `routr cleanup --worker` runs.
-  If it cannot start, launch still succeeds, with a `worker_not_shown` warning. Tell the user a worker can be followed
-  this way anywhere: `routr watch --name <name>` in a terminal of their own.
+- **Follow it from any terminal.** Tell the user a worker can be followed with `routr watch --name <name>` in a terminal
+  of their own: it shows state, tools and report paths, never the worker's text, and closing it stops nothing.
 - **Every harness, worktrees as in herdr.** A headless Kiro worker has run only against a
   fake and a direct probe of its protocol, not yet end to end through routr: watch its first turn closely. A headless Cursor worker has run end to end through
   routr once, on macOS only. `--pane` and `--direction` are refused outside
@@ -466,7 +498,7 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
 
 ## Trace context
 
-routr gives headless workers, and workers in a pane it makes (a split or a new worktree), the OpenTelemetry context
+routr gives headless workers, terminal workers, and workers in a pane it makes (a split or a new worktree), the OpenTelemetry context
 carriers (`TRACEPARENT`, `TRACESTATE`, `BAGGAGE`) from its environment. With export off they pass unchanged. With
 export on, a sampled launch passes its launch span as the parent; an invalid inherited parent starts a new trace
 and drops inherited tracestate. Existing panes keep their own environment; launch says it passed none. Every pane

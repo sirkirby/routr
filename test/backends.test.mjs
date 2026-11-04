@@ -6,12 +6,14 @@ import { executionFor } from "../src/lib/backends.mjs";
 import { FORMAT, readWorker, runDir, workerOf } from "../src/lib/worker-record.mjs";
 import { KINDS } from "../src/lib/harnesses.mjs";
 
-test("a worker runs in a pane only inside herdr, whatever the harness; anywhere else, a core terminal included, it runs headless", () => {
+test("a worker runs in a pane inside herdr, in a terminal inside herdr-core, and headless anywhere else, whatever the harness", () => {
   for (const kind of [...KINDS, null]) {
     expect(executionFor({ HERDR_ENV: "1" }, kind)).toBe("pane");
     expect(executionFor({ HERDR_ENV: "1", HC_TERMINAL_ID: "t7" }, kind)).toBe("pane");
     expect(executionFor({}, kind)).toBe("headless");
-    expect(executionFor({ HC_TERMINAL_ID: "t7" }, kind)).toBe("headless");
+    expect(executionFor({ HC_TERMINAL_ID: "t7" }, kind)).toBe("terminal");
+    expect(executionFor({ HC_TERMINAL_ID: "t7", HERDR_ENV: "0" }, kind)).toBe("terminal");
+    expect(executionFor({ HC_TERMINAL_ID: "" }, kind)).toBe("headless");
     for (const other of ["", "0", "true"]) expect(executionFor({ HERDR_ENV: other }, kind)).toBe("headless");
   }
 });

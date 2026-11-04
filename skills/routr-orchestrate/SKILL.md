@@ -24,8 +24,8 @@ there is none, ask for it and stop.
    `references/orchestrator.md` and `references/harnesses.md`, and follow them for the rest of this session.
 2. Run `routr doctor`. If it reports something that blocks advice (no key, no config), tell the user and follow
    `references/setup.md` first.
-3. Check whether you are in herdr: `test "${HERDR_ENV:-}" = 1`. Outside herdr, workers run headless (Claude Code,
-   Codex, Cursor, Antigravity and Kiro): follow the orchestrator guide's "Outside herdr: headless workers" section where it differs from below. In the Herdr app, that section applies too, and each worker also gets a tab showing its progress.
+3. Check whether you are in herdr: `test "${HERDR_ENV:-}" = 1`. In the Herdr app (`HC_TERMINAL_ID` is set), each worker runs its real harness in a tab of its own: follow the orchestrator guide's "In the Herdr app: terminal workers" section where it differs from below. Anywhere else outside herdr, workers run headless (Claude Code,
+   Codex, Cursor, Antigravity and Kiro): follow its "Outside herdr: headless workers" section.
 
 ## For the rest of this session
 

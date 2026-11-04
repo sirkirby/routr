@@ -6,10 +6,13 @@ import { delimiter, join } from "node:path";
 // A stub herdr goes first on PATH, so a test that reaches past its fake is refused instead of driving the maintainer's
 // own herdr (a wrong argument once opened four real Cursor panes there, 2026-09-25). Windows looks a command up by
 // PATHEXT and skips the extensionless stub, so there the folders holding herdr leave PATH.
+// The same for herdr-core's hc and the app's herdr-app.
 const withoutHerdr = (path) => process.platform !== "win32" ? path
-  : path.split(delimiter).filter((d) => !["herdr.exe", "herdr.cmd", "herdr.bat"].some((f) => existsSync(join(d, f)))).join(delimiter);
+  : path.split(delimiter).filter((d) => !["herdr", "hc", "herdr-app"].flatMap((n) => [`${n}.exe`, `${n}.cmd`, `${n}.bat`]).some((f) => existsSync(join(d, f)))).join(delimiter);
 process.env.PATH = join(import.meta.dir, "fixtures", "no-herdr") + delimiter + withoutHerdr(process.env.PATH ?? "");
 delete process.env.HERDR_ENV;
+// Run from a terminal of the Herdr app, a launch would otherwise go to its terminal backend, and to the real hc.
+for (const k of ["HC_TERMINAL_ID", "HC_TERMINAL_SOCKET", "HC_SCOPE"]) delete process.env[k];
 process.env.ROUTR_NO_REFRESH = "1"; // no detached usage refresh, and nothing written to the real cache
 process.env.ROUTR_NO_UPDATE = "1";  // no release lookup, and no detached updater
 

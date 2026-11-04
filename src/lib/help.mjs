@@ -42,7 +42,7 @@ export const COMMANDS = {
   },
   launch: {
     name: "launch",
-    description: "start a worker with matching task advice: in a herdr pane, or outside herdr a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker that `routr wait` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
+    description: "start a worker with matching task advice: in a herdr pane; in a herdr-core terminal (the Herdr app), the harness itself in a tab of its own, which you follow with hc; or anywhere else a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker that `routr wait` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
     flags: [
       { name: "--lead-session", arg: "<id>", description: "your known session id when routr cannot read it from the harness environment; UUIDv4, UUIDv7 or 16–64 lowercase hex characters; malformed values are ignored with a fixed warning; never invent one", required: false },
       { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
@@ -55,32 +55,32 @@ export const COMMANDS = {
       { name: "--rules-file", arg: "<path>", description: "your process rules for the worker (what it may do, how to report, git steps): added after the task, and never read by routr, which judges only the task", required: false },
       { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch refuses unreadable, malformed, nonmatching or `routr subagent` advice; dry runs refuse with ok:false and still plan", required: "required with a task" },
       { name: "--pane", arg: "<id>", description: "existing herdr pane to run in: at a shell prompt, or with an idle agent of --kind already running in --cwd (it is adopted, keeps its model and effort, and is sent the task; one not idle yet is never waited on: run the launch again once it is)", required: false },
-      { name: "--worktree", arg: "<branch>", description: "give the worker its own git worktree on a new branch (the rule for workers): in herdr, opened as a workspace nested under the repo; outside herdr, made by routr under ~/.local/share/routr/worktrees", required: false },
+      { name: "--worktree", arg: "<branch>", description: "give the worker its own git worktree on a new branch (the rule for workers): in herdr, opened as a workspace nested under the repo; outside herdr, in the Herdr app too, made by routr under ~/.local/share/routr/worktrees", required: false },
       { name: "--base", arg: "<ref>", description: "the commit the worktree's new branch starts from: a branch, tag, or commit id (stacked work, a reviewer of one commit; with --worktree)", required: false, default: "the checkout's HEAD" },
       { name: "--copy", arg: "<path>", description: "copy an untracked file or folder from the repo into the worktree (repeatable; with --worktree)", required: false, repeatable: true },
       { name: "--direction", arg: "<right|down>", description: "split direction", required: false, default: "right if wide else down" },
       { name: "--task", arg: "<text>", description: "task prompt string (mutually exclusive with --task-file)", required: false },
-      { name: "--task-file", arg: "<path>", description: "file containing task prompt (mutually exclusive with --task; outside herdr a task is required)", required: false },
-      { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds (outside herdr: for the worker's process to start and the harness to take the task)", required: false, default: 120000 },
+      { name: "--task-file", arg: "<path>", description: "file containing task prompt (mutually exclusive with --task; outside herdr, in the Herdr app too, a task is required)", required: false },
+      { name: "--timeout", arg: "<ms>", description: "readiness timeout in milliseconds (outside herdr: for the worker's process to start and the harness to take the task; in a herdr-core terminal: for it to report working)", required: false, default: 120000 },
       { name: "--dry-run", arg: null, description: "plan worker actions without executing them; advice checks can refuse with ok:false; enabled OpenTelemetry export may queue the plan span (no launch index entry)", required: false, default: false },
     ],
   },
   cleanup: {
     name: "cleanup",
-    description: "finish a worker: remove the worktree `launch --worktree` made (closing its workspace), or close the pane launch split, or (`--worker`) a headless worker's worktree, through the same checks, and then its run folder and reports. The way to end every worker: closing a worktree's pane leaves the worktree behind. Refuses while anything it can see runs there (outside herdr it cannot see what runs in a worktree's folder), and never removes uncommitted changes, files the worker made, or a commit no branch or tag holds; files copied in with --copy and left unchanged go with it, and so do files git ignores. Keeps the branch unless --delete-branch. With no worker named, lists the repo's worktrees and what it would do with each",
+    description: "finish a worker: remove the worktree `launch --worktree` made (closing its workspace), or close the pane launch split, or (`--worker`) a headless or terminal worker's worktree, through the same checks, and then its run folder and reports; a terminal worker's terminal is ended first. The way to end every worker: closing a worktree's pane leaves the worktree behind. Refuses while anything it can see runs there (outside herdr it cannot see what runs in a worktree's folder), and never removes uncommitted changes, files the worker made, or a commit no branch or tag holds; files copied in with --copy and left unchanged go with it, and so do files git ignores. Keeps the branch unless --delete-branch. With no worker named, lists the repo's worktrees and what it would do with each",
     flags: [
       { name: "--cwd", arg: "<repo>", description: "the repository (the main checkout or any of its worktrees)", required: false, default: "." },
       { name: "--worktree", arg: "<branch>", description: "the worker's worktree, by the branch given to launch --worktree (name one worker: --worktree, --path, --pane, or --worker)", required: false },
       { name: "--path", arg: "<path>", description: "the worker's worktree, by its folder (one on no branch, or made by hand)", required: false },
       { name: "--pane", arg: "<id>", description: "a worker launched without --worktree: close its pane (a worktree's only pane is refused, with the command that removes the worktree). Takes no --cwd", required: false },
-      { name: "--worker", arg: "<name>", description: "a headless worker (launched outside herdr): remove its worktree (with the same checks) and then its run folder and reports, once its process and its harness's process group have ended (it cannot see a command that left them). Takes no --cwd", required: false },
+      { name: "--worker", arg: "<name>", description: "a worker launched outside herdr: remove its worktree (with the same checks) and then its run folder and reports, once a headless worker's process and its harness's process group have ended (it cannot see a command that left them), or once a terminal worker that is not working has had its terminal ended with hc. Takes no --cwd", required: false },
       { name: "--delete-branch", arg: null, description: "also delete the worktree's branch, once its work has landed: git deletes it only when it is merged (with --worktree, --path or --worker)", required: false, default: false },
       { name: "--dry-run", arg: null, description: "check and say what it would do; with export off, change nothing; when export is on, may queue records and start the detached sender", required: false, default: false },
     ],
   },
   wait: {
     name: "wait",
-    description: "outside herdr: wait for headless workers; returns when one finishes a turn (with its report's path), fails, stops or is lost, or at the timeout with the ones still running; changes nothing of yours",
+    description: "outside herdr: wait for headless workers; returns when one finishes a turn (with its report's path), fails, stops or is lost, or at the timeout with the ones still running; changes nothing of yours. A terminal worker is followed with hc, and it says so",
     flags: [
       { name: "--name", arg: "<name>", description: "a worker to wait on (repeatable)", required: false, default: "every worker still running or with a turn not yet reported", repeatable: true },
       { name: "--timeout", arg: "<ms>", description: "how long to wait; in a foreground call, keep it under your own shell tool's command limit (Claude Code's default is 2 minutes)", required: false, default: 90000 },
@@ -88,7 +88,7 @@ export const COMMANDS = {
   },
   send: {
     name: "send",
-    description: "outside herdr: a correction or follow-up for a headless worker, into its running turn where the harness takes it, or as the next turn of the same session; new work is a new launch with its own advice",
+    description: "outside herdr: a correction or follow-up for a headless worker, into its running turn where the harness takes it, or as the next turn of the same session; new work is a new launch with its own advice. A terminal worker is followed with hc, and it says so",
     flags: [
       { name: "--name", arg: "<name>", description: "the worker", required: true },
       { name: "--task", arg: "<text>", description: "the message (mutually exclusive with --task-file)", required: false },
@@ -97,17 +97,17 @@ export const COMMANDS = {
   },
   workers: {
     name: "workers",
-    description: "outside herdr: each headless worker's state, turn, seconds since its last event, last tool, session and the path of its latest report; never its text; with export off, changes nothing; when export is on, may queue records and start the detached sender",
+    description: "outside herdr: each headless worker's state, turn, seconds since its last event, last tool, session and the path of its latest report; never its text; a terminal worker's row says which terminal to follow it in with hc; with export off, changes nothing; when export is on, may queue records and start the detached sender",
     flags: [{ name: "--name", arg: "<name>", description: "only this worker (repeatable)", required: false, repeatable: true }],
   },
   stop: {
     name: "stop",
-    description: "outside herdr: stop a headless worker through its own process (macOS and Linux: SIGTERM to the harness's process group, then SIGKILL if the harness has not gone; Windows: taskkill /T); never by a saved process id",
+    description: "outside herdr: stop a headless worker through its own process (macOS and Linux: SIGTERM to the harness's process group, then SIGKILL if the harness has not gone; Windows: taskkill /T); never by a saved process id. A terminal worker is ended with hc, and it says so",
     flags: [{ name: "--name", arg: "<name>", description: "the worker", required: true }],
   },
   watch: {
     name: "watch",
-    description: "a person's view of one headless worker: its state, tools and report paths as they change, never its text, until it is cleaned up; changes nothing, and closing it stops nothing. In the Herdr app, launch opens this in a tab of its own",
+    description: "a person's view of one headless worker: its state, tools and report paths as they change, never its text, until it is cleaned up; changes nothing, and closing it stops nothing. A terminal worker's own tab shows it instead",
     flags: [{ name: "--name", arg: "<name>", description: "the worker", required: true }],
   },
   share: {

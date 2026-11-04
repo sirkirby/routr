@@ -16,7 +16,8 @@ import { countLaunch } from "./shares.mjs";
 import { executionFor } from "./backends.mjs";
 import { launchFailed } from "./launch-answer.mjs";
 import { command, fallbackEnvOf, launchPane, paneCarriers, paneFallbacks, panePromptArgs, paneStartArgs, promptForLog, usualShell } from "./backend-pane.mjs";
-import { home, NAME_RULE, WORKER_NAME, spawnSelf } from "./runtime.mjs";
+import { client } from "./hc.mjs";
+import { home, NAME_RULE, selfCommand, WORKER_NAME, spawnSelf } from "./runtime.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
 // around it, so it points at the installed skill (written by the installer or `routr skill install`).
@@ -74,7 +75,7 @@ export function parseLaunchArgs(args) {
 // Inject transport and time for tests; no test needs a live pane.
 // `ready(kind)`: null when the harness is signed in, or why not (harnesses.mjs). `settings()`: the user's config.
 async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(), env = process.env, ready = notReady, settings = () => loadConfig(),
-  cursorConfigSource = join(home(), ".cursor", "cli-config.json"), tempRoot = tmpdir(), models = (kind) => HARNESSES[kind].models?.(), spawn = spawnSelf } = {}) {
+  cursorConfigSource = join(home(), ".cursor", "cli-config.json"), tempRoot = tmpdir(), models = (kind) => HARNESSES[kind].models?.(), spawn = spawnSelf, hc = client, self = selfCommand } = {}) {
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
     ran: [], next: [], start: { executable: null, argv: [], env: {} }, steps: [], warnings: [], prompt_chars: null, unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
@@ -156,7 +157,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       let ids; try { ids = await models(o.kind); } catch { ids = null; }
       if (ids?.length && !ids.includes(o.model)) throw new Error(`${HARNESSES[o.kind].executable} does not list --model ${o.model}, and ${o.kind} runs its default model on an id it does not know. Its ids: \`${HARNESSES[o.kind].list}\``);
       if (ids?.length) step("model", true, `${o.model} is in ${o.kind}'s own list`);
-      else if (backend === "pane") { out.unavailable.push({ part: "model list", subscription: o.kind, code: "unreadable", why: `The ${o.kind} model list could not be read. Its model footer confirms which model started.` }); out.next.push(doNext("Look at the model footer in the pane before trusting the model choice")); }
+      else if (backend !== "headless") { out.unavailable.push({ part: "model list", subscription: o.kind, code: "unreadable", why: `The ${o.kind} model list could not be read. Its model footer confirms which model started.` }); out.next.push(doNext(`Look at the model footer in ${backend === "pane" ? "the pane" : "its terminal"} before trusting the model choice`)); }
       else { out.unavailable.push({ part: "model list", subscription: o.kind, code: "unreadable", why: `The ${o.kind} model list could not be read, so whether ${o.kind} runs this --model is not known: a headless worker shows no model footer.` }); out.next.push(doNext(`If the model choice matters, launch again once \`${HARNESSES[o.kind].list}\` answers, or use --model auto.`)); }
     };
     // Outside herdr the worker runs headless: its own process holds the harness, and the lead waits on it with routr wait
@@ -164,14 +165,17 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     // p40): checked once the subscription is on and signed in (asking a signed-out harness anything can open its sign-in),
     // before anything is written.
     if (backend === "headless") outcome = await (await import("./backend-headless.mjs")).launchHeadless(o, out, { prompt, env, settings, ready, spawn, checkListed });
+    // In a core terminal the harness runs for a person to see, in a tab of its own, and the lead follows it with hc.
+    else if (backend === "terminal") outcome = await (await import("./backend-terminal.mjs")).launchTerminal(o, out, { prompt, env, settings, ready, checkListed, hc, self, sleep, now });
     else outcome = await launchPane(args, o, out, { run, sleep, now, env, ready, settings, cursorConfigSource, prompt, p, planFor, privateDir, checkListed });
   } catch (e) {
     launchFailed(out, e, false);
   } finally {
+    const inTerminal = out.worker?.backend === "terminal" ? `in terminal ${out.worker.terminal}` : null;
     out.headline = out.state === "planned" ? `routr: planned ${out.kind} launch, nothing ran${out.error ? `; a real launch would refuse: ${out.error}` : ""}`
-      : out.state === "prompted" ? `routr: ${out.name} (${out.kind}) took its task${out.worker ? ", running headless" : ` in pane ${out.pane}`}`
+      : out.state === "prompted" ? `routr: ${out.name} (${out.kind}) took its task${inTerminal ? ` ${inTerminal}` : out.worker ? ", running headless" : ` in pane ${out.pane}`}`
       : out.state === "ready" ? `routr: ${out.name} is ready in pane ${out.pane}; no task sent`
-      : out.state === "needs_input" ? `routr: ${out.name} needs input in pane ${out.pane}: ${out.needs_input.why}`
+      : out.state === "needs_input" ? `routr: ${out.name} needs input ${inTerminal ?? `in pane ${out.pane}`}: ${out.needs_input.why}`
       : `routr: launch failed: ${out.error}`;
     // Return paths share this finally block: put the envelope first even for early refusals and planned launches.
     const ordered = answer(out); for (const key of Object.keys(out)) delete out[key]; Object.assign(out, ordered);
@@ -186,7 +190,8 @@ export function launch(args, opts = {}) {
   const settings = oneReading(opts.settings);
   return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead }), async () => { const { out: r, backend } = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings);
     // A worker that took its task, or was left ready for one, counts toward the user's launch share (shares.mjs). A dry
-    // run, a refusal and a failed start count nothing; a --pane rerun that finishes a failed launch counts once.
-    if (r.state === "prompted" || r.state === "ready") countLaunch(r.kind, { home: opts.home });
+    // run, a refusal and a failed start count nothing; a --pane rerun that finishes a failed launch counts once. A terminal
+    // worker stopped at a question has its task and goes on once answered: no rerun will count it later.
+    if (r.state === "prompted" || r.state === "ready" || (r.state === "needs_input" && r.worker?.backend === "terminal")) countLaunch(r.kind, { home: opts.home });
     try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane"), backend }); } catch {} return r; });
 }
