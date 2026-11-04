@@ -48,11 +48,13 @@ export const followSteps = (w) => (HARNESSES[w.kind]?.noStatus
 // its program ended and the terminal is still listed. `gone`: hc does not know it and its runner recorded an end or is
 // no longer running (a closed tab, a core that lost it). `unknown`, with `why` and `next`: hc did not answer or answered
 // what routr cannot read, the address now names another terminal or one on another core, or the runner is still there
-// though hc does not know its terminal. Looked at, never signalled.
-export async function observeTerminal(w, { hc = client } = {}) {
+// though hc does not know its terminal. Only hc's own "no such terminal" can make one gone: a refusal for any other
+// reason, or an answer that is not a terminal, is unknown. Looked at, never signalled. `ms` bounds the hc call.
+export async function observeTerminal(w, { hc = client, ms } = {}) {
   const ref = addressOf(w), look = doNext(`Look at it with hc from the terminal that launched it (hc ls --all), then run cleanup again.`);
-  const got = await getTerminal(ref, hc);
-  if (["not_available", "unreadable"].includes(got.code)) return { state: "unknown", why: `${HC_WHY[got.code]}, so whether ${w.name}'s terminal runs is not known`, next: look };
+  const got = await getTerminal(ref, hc, ms);
+  const code = got.ok && (!got.data || typeof got.data !== "object" || Array.isArray(got.data)) ? "unreadable" : got.code;
+  if (code && code !== "not_found") return { state: "unknown", why: `${HC_WHY[code]}, so whether ${w.name}'s terminal runs is not known`, next: look };
   if (!got.ok) {
     // Gone, or in a core this hc does not reach. Only the runner can tell those apart: it wrote how the harness ended,
     // and while nothing says so and its process is there, the worker may be running.

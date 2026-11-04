@@ -146,12 +146,16 @@ async function workersCommandBody(args, { env = process.env, hc } = {}) {
   const out = { ok: false, headline: "", unavailable: [], warnings: sandboxNote(env), next: [], workers: [] };
   try {
     const o = parseNamed(args, "workers", ["name"]);
-    for (const n of o.names.length ? o.names : workerNames()) {
+    // Every worker at once, in order: a terminal worker's hc question (each bounded) never holds up the others.
+    const rows = await Promise.all((o.names.length ? o.names : workerNames()).map(async (n) => {
       const rec = workerOf(n);
-      if (rec.worker?.backend === "terminal") { const { row, next } = await terminalRow(rec.worker, { hc }); out.workers.push(row); out.next.push(...next); continue; }
+      if (rec.worker?.backend === "terminal") return terminalRow(rec.worker, { hc, ms: 3000 });
       const v = await view(n);
-      if (v) { const row = { ...v }; delete row.turns; delete row.gen; out.workers.push(row); } else if (o.names.length) throw new Error(`no headless worker named ${n}`);
-    }
+      if (v) { const row = { ...v }; delete row.turns; delete row.gen; return { row, next: [] }; }
+      if (o.names.length) throw new Error(`no headless worker named ${n}`);
+      return null;
+    }));
+    for (const r of rows.filter(Boolean)) { out.workers.push(r.row); out.next.push(...r.next); }
     out.ok = true;
     out.headline = out.workers.length ? `routr: ${out.workers.map((v) => `${v.name} ${v.state}`).join(", ")}` : "routr: no headless workers";
   } catch (e) { out.error = String(e?.message ?? e); out.headline = `routr: workers failed: ${out.error}`; }

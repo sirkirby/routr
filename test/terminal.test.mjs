@@ -558,11 +558,20 @@ test("workers asks hc where a terminal worker's terminal is: a finished or gone 
   expect([gone.workers[0].state, gone.headline, gone.next[0].argv]).toEqual(["gone", "routr: w1 gone", ["routr", "cleanup", "--worker", "w1"]]);
   expect(gone.next[0].why).toContain("removes its worktree through its checks and then its record");
   // hc not answering, or an address now another terminal's: not known, and said, never "gone".
-  for (const hc of [fakeHc({ over: { get: null } }), fakeHc({ sees: [{ status: { state: "idle" }, turn: 0, labels: { "routr.worker": "f".repeat(32) } }] })]) {
+  // A refusal for another reason, or an answer that is not a terminal, is not "gone" either.
+  for (const hc of [fakeHc({ over: { get: null } }), fakeHc({ sees: [{ status: { state: "idle" }, turn: 0, labels: { "routr.worker": "f".repeat(32) } }] }),
+    fakeHc({ over: { get: { code: 1, out: "", err: "permission denied" } } }), fakeHc({ over: { get: { code: 0, out: "null" } } })]) {
     const r = await row(hc);
     expect([r.workers[0].state, typeof r.workers[0].why]).toEqual(["unknown", "string"]);
     expect(r.next.some((n) => n.argv?.includes("cleanup"))).toBe(false);
   }
+  // cleanup --worker reads the same: a refusal that is not "no such terminal" keeps everything.
+  const kept = await cleanup(["--worker", "w1"], { hc: fakeHc({ over: { get: { code: 1, out: "", err: "permission denied" } } }).run, settings: () => cfg() });
+  expect([kept.state, existsSync(runDir("w1"))]).toEqual(["refused", true]);
+  // Every terminal worker is asked at once, each call bounded, so one hc that does not answer holds up no other row.
+  const calls = fakeHc({ over: { get: null } });
+  await row(calls);
+  expect(calls.calls.filter((c) => c.args[0] === "get").map((c) => c.ms)).toEqual([3000]);
 });
 
 test("workers, wait, send, stop and watch each say a terminal worker is followed with hc, and none fails on its record", async () => {

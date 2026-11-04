@@ -787,8 +787,8 @@ Inputs:
   without a worktree it removes only the run folder and its reports, inspects no repository, and warns that the
   worker's changes in its folder are the lead's to check. Own field: `name`.
 - `--worker` on a terminal worker has no holder to check. Instead it refuses while `hc get` says status `working` or
-  `blocked` (`next`: `hc wait`, and that `hc kill` gives up its work), when `hc` does not answer or answers what routr cannot
-  read, when the terminal at that address does not carry the record's id in its `routr.worker` label (launch sets it; it keeps everything then, as an address and a name can be another terminal's on another core), when `hc kill` fails, and when `hc` does not find the
+  `blocked` (`next`: `hc wait`, and that `hc kill` gives up its work), when `hc` does not answer, refuses for any reason
+  but "no such terminal", or answers what routr cannot read, when the terminal at that address does not carry the record's id in its `routr.worker` label (launch sets it; it keeps everything then, as an address and a name can be another terminal's on another core), when `hc kill` fails, and when `hc` does not find the
   terminal while `run.json` records no end and its process id is alive, or `run.json` cannot be read. Otherwise it ends the terminal with `hc kill`,
   then removes it with `hc rm` (tried again for about two seconds; one that stays is a `terminal_left` warning, with the
   command), `steps` adding `terminal` and `terminal_removed`, and goes on as above. A `--dry-run` ends and removes nothing. A harness that
@@ -941,7 +941,8 @@ A worker in a herdr-core terminal gets a row of its record and of where its term
 - `finished`: its program ended and the terminal is still listed. `gone`: hc does not know it, and its runner recorded
   an end or is no longer running (a closed tab, a core that lost it). For both, `next` runs `routr cleanup --worker
   <name>`.
-- `unknown`, with `why`: hc did not answer or gave what routr cannot read, the address now names a terminal without
+- `unknown`, with `why`: hc did not answer (within 3 seconds here), refused for any reason but "no such terminal", or
+  gave an answer that is not a terminal, the address now names a terminal without
   the record's id (another one, or another core's), the runner's `run.json` cannot be read, or the runner still runs
   though hc does not know its terminal. `next` says what to look at; there is no cleanup step.
 
