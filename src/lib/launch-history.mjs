@@ -1,7 +1,8 @@
 // routr's launch history: one record per launch that took its task (or was left ready for one), on every backend, under
 // routr's own folder. It is the launch-share count's input (shares.mjs), the project a later `record` gives a row, and
 // what `board` shows of a decision while its work runs. Each record holds checked fields only, never text: the account,
-// model and effort chosen, the advice's id and level, the repository's folder name, where the worker runs and its name.
+// model and effort chosen, the advice's id and reading (as the ledger keeps it), the repository's folder name, where the
+// worker runs and its name. Field names are the ledger's: `id` is the advice's, as in advice and ledger rows.
 // No brief, no task, no path, no note. Kept 7 days (the share window). Best effort: a write that fails never fails the
 // launch, and history that cannot be read is said, never read as empty.
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
@@ -28,12 +29,18 @@ const PROJECT = /^[^\\/\x00-\x1f\x7f]{1,128}$/;
 const text = (v, re) => (typeof v === "string" && re.test(v) ? v : null);
 const bool = (v) => (typeof v === "boolean" ? v : null);
 const level = (v) => (LEVELS.includes(v) ? v : null);
-// The advice as the ledger keeps it, cut to what a decision is: its level and how sure, never its facts or anything
-// the lead wrote. `between` is two levels or null.
+// The advice's reading as the ledger keeps it (`advised`): its level, how sure, its work type and risk, and each fact's
+// probability; never anything the lead wrote. `between` is two levels or null; a fact is a short name and a number
+// from 0 to 1, at most 32 of them.
+const FACT = /^[a-z][a-z_]{0,31}$/;
+function factsOf(f) {
+  if (!f || typeof f !== "object" || Array.isArray(f)) return {};
+  return Object.fromEntries(Object.entries(f).filter(([k, p]) => FACT.test(k) && typeof p === "number" && p >= 0 && p <= 1).slice(0, 32));
+}
 function advisedOf(a) {
   if (!a || typeof a !== "object") return null;
   const between = Array.isArray(a.between) && a.between.length === 2 && a.between.every(level) ? [...a.between] : null;
-  return { level: level(a.level), sure: bool(a.sure), between, work_type: text(a.work_type, /^[a-z][a-z_]{0,31}$/), high_risk: bool(a.high_risk), fallback: bool(a.fallback) };
+  return { level: level(a.level), sure: bool(a.sure), between, work_type: text(a.work_type, /^[a-z][a-z_]{0,31}$/), high_risk: bool(a.high_risk), fallback: bool(a.fallback), facts: factsOf(a.facts) };
 }
 
 // What a record holds, checked field by field: a field that is not what it should be is null, never passed on.
@@ -42,7 +49,7 @@ export function launchRecord(fields) {
   const f = fields ?? {};
   return {
     subscription: text(f.subscription, SUBSCRIPTION), model: text(f.model, WORD), effort: text(f.effort, WORD),
-    advice_id: text(f.advice_id, ADVICE_ID), advised: advisedOf(f.advised), project: text(f.project, PROJECT),
+    id: text(f.id, ADVICE_ID), advised: advisedOf(f.advised), project: text(f.project, PROJECT),
     backend: BACKENDS.includes(f.backend) ? f.backend : null, name: text(f.name, WORKER_NAME),
   };
 }

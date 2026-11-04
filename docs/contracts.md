@@ -579,8 +579,8 @@ note? }` (only in `needs_input`; `herdr` is `{ state, rule?, explained?, rules? 
 a pane: needs input, or failed after reading the pane), `launch_id` (on every backend: the launch's id, a UUID, when
 its worker took its task or was left ready for one, and when a terminal worker stopped at a question; null otherwise,
 a dry run included). It is the id of the launch's record in routr's launch history, of its OpenTelemetry span when one
-is exported (`routr.launch.id`; a `--pane` recovery rerun of a sampled launch keeps the original's), and the
-`--launch` its record template passes.
+is exported (`routr.launch.id`; a `--pane` recovery rerun has its own, and its span links to the launch it
+finishes), and the `--launch` its record template passes. It never depends on whether anything is exported.
 
 ### launch outside herdr (headless)
 
@@ -697,9 +697,10 @@ Inputs:
   the advised level; the guides ask for it always), `--report`, `--subagent` (repeatable: `<subtask> → <level> → <model> → <effort>`, the effort optional and kept in the local ledger only), `--seconds`, `--attempts`,
   `--cause` (repeatable), `--run-id`, `--launch`, `--project`, `--note`, `--ledger`.
 - `--launch <launch_id>`: the launch's `launch_id` (launch's record template carries it). The row stores it as
-  `launch_id` (null without one), and it is the run's link to its launch. Refused (with `error`) when it is not a
-  launch id's shape, or names a launch in routr's launch history made with other advice. A revision keeps its run's
-  launch: given as another, refused.
+  `launch_id` (null without one), and it is the run's link to its launch. Refused (with `error`) when it has no value,
+  is given twice, is not a launch id's shape, or names a launch in routr's launch history made with other advice. A
+  revision keeps its run's launch, none included: `--launch` naming another, or given to a run recorded without one,
+  is refused.
 - The row's `project`: `--project` when given; on a revision, the run's own; else the project of the launch `--launch`
   names, from routr's launch history; else the git repository's folder name of the folder record runs in. A launch
   the history no longer has (it keeps 7 days) or history it cannot read only warns (`launch_not_found`,

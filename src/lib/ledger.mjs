@@ -138,7 +138,7 @@ export function append(entry, path = LEDGER_PATH(), { revision = false } = {}) {
     if (adviceChanged.length) throw new Error(`--run-id requires the original advice (different ${adviceChanged.join(", ")}); omit it for a new run`);
     if (prior.project !== entry.project) throw new Error("--run-id has a different project; use the original project or omit it for a new run");
     // A run's launch never changes: kept when not given, refused when given as another.
-    if (prior.launch_id && entry.launch_id && prior.launch_id !== entry.launch_id) throw new Error("--run-id has a different --launch; use the original launch or omit --launch");
+    if (entry.launch_id && (prior.launch_id ?? null) !== entry.launch_id) throw new Error(prior.launch_id ? "--run-id has a different --launch; use the original launch or omit --launch" : "--run-id names a run recorded without --launch: a revision keeps that; omit --launch");
     entry = { ...entry, launch_id: entry.launch_id ?? prior.launch_id ?? null };
     const changed = ["subscription", "model", "effort", "level"].filter((k) => prior.chose?.[k] !== entry.chose?.[k]);
     if (changed.length) throw new Error(`--run-id has a different ${changed.join(", ")}; use the original worker choice or omit it for a new run`);

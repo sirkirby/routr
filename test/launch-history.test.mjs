@@ -10,17 +10,17 @@ import { briefSha, projectName } from "../src/lib/ledger.mjs";
 import { recordCommand } from "./contract.mjs";
 import { telemetryRows } from "../src/lib/telemetry.mjs";
 import { LaunchIndex } from "../src/lib/launch-index.mjs";
-import { scratch } from "./helpers.mjs";
+import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 
-const decision = { subscription: "codex", model: "gpt-6.1-sol", effort: "high", advice_id: "ab12cd34",
-  advised: { level: "strong", sure: true, between: null, work_type: "review", high_risk: true, fallback: false }, project: "myco", backend: "terminal", name: "rev7" };
+const decision = { subscription: "codex", model: "gpt-6.1-sol", effort: "high", id: "ab12cd34",
+  advised: { level: "strong", sure: true, between: null, work_type: "review", high_risk: true, fallback: false, facts: { cross_cutting: 0.81, tiny: 0.04 } }, project: "myco", backend: "terminal", name: "rev7" };
 
 test("a record holds checked fields only: text that is not what a field is becomes null, and nothing else gets in", () => {
   expect(launchRecord(decision)).toEqual(decision);
-  const odd = launchRecord({ ...decision, model: "gpt 6; rm -rf /", effort: "x".repeat(200), advice_id: "../etc", project: "a/b", backend: "ssh", name: "Bad Name",
-    advised: { level: "huge", sure: "yes", between: ["basic"], work_type: "Review!", high_risk: 1, fallback: null, facts: { tiny: 0.9 } }, brief: "secret", task: "secret", note: "secret" });
-  expect(odd).toEqual({ subscription: "codex", model: null, effort: null, advice_id: null, project: null, backend: null, name: null,
-    advised: { level: null, sure: null, between: null, work_type: null, high_risk: null, fallback: null } });
+  const odd = launchRecord({ ...decision, model: "gpt 6; rm -rf /", effort: "x".repeat(200), id: "../etc", project: "a/b", backend: "ssh", name: "Bad Name",
+    advised: { level: "huge", sure: "yes", between: ["basic"], work_type: "Review!", high_risk: 1, fallback: null, facts: { tiny: 0.9, "Bad Key": 0.5, huge: 7, secret: "secret" } }, brief: "secret", task: "secret", note: "secret" });
+  expect(odd).toEqual({ subscription: "codex", model: null, effort: null, id: null, project: null, backend: null, name: null,
+    advised: { level: null, sure: null, between: null, work_type: null, high_risk: null, fallback: null, facts: { tiny: 0.9 } } });
   expect(JSON.stringify(odd)).not.toContain("secret");
   expect(launchRecord(null).advised).toBeNull();
 });
@@ -75,6 +75,15 @@ test("record refuses a launch made with other advice, and an id that is not a la
   expect(revised.next.find((n) => n.template?.includes("--run-id")).template).toContain(`--launch ${id}`);
   const moved = recordCommand({ ...r.o, run_id: first.run_id, launch: randomUUID() });
   expect([moved.ok, moved.error]).toEqual([false, expect.stringContaining("different --launch")]);
+  // A run recorded without a launch keeps none: a revision cannot give it one.
+  const bare = recordCommand(r.o), added = recordCommand({ ...r.o, run_id: bare.run_id, launch: id });
+  expect([added.ok, added.error]).toEqual([false, expect.stringContaining("recorded without --launch")]);
+  // On the command line, --launch with no value or given twice is refused, never read as absent.
+  for (const extra of [["--launch"], ["--launch", id, "--launch", id]]) {
+    const cli = Bun.spawnSync([process.execPath, SCRIPT, "record", "--advice", r.o.advice, "--subscription", "codex", "--model", "m", "--effort", "high", "--verdict", "done", "--check", "pass", "--ledger", r.ledger, ...extra], { env: cliEnv(scratch("history-cli")) });
+    const out = JSON.parse(cli.stdout.toString());
+    expect([out.ok, out.error]).toEqual([false, expect.stringMatching(/--launch (takes|was given more than once)/)]);
+  }
 });
 
 test("a row's launch id and project stay on this machine: telemetry rows carry neither", () => {

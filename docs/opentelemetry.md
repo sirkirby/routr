@@ -353,7 +353,7 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `routr.worktree` | `string` | Worktree relative to project root when inside it; otherwise its folder name; no absolute path. |
 | `routr.kind` | `string` | Worker harness: `claude`, `codex`, `cursor`, `agy`, `kiro`; unknown becomes `other`. |
 | `routr.backend` | `string` | `pane`, `headless` or `terminal`. |
-| `routr.launch.id` | `string` | UUIDv4 identifying a sampled launch: the launch's `launch_id`, as its answer, its launch-history record and its `record --launch` carry it; recovery reruns reuse the original id. |
+| `routr.launch.id` | `string` | UUIDv4 identifying a sampled launch: the launch's `launch_id`, as its answer, its launch-history record and its `record --launch` carry it. A recovery rerun has its own and links to the launch it finishes. |
 | `gen_ai.agent.name` | `string` | Worker name matching `[a-z][a-z0-9_-]{0,31}`; invalid names omitted. |
 | `gen_ai.conversation.id` | `string` | On commands, herdr agent_session of kind `id`, validated as UUIDv4, UUIDv7 or 16–64 lowercase hex characters; on turns, the harness UUID the adapter already reads; omitted when unavailable. |
 | `routr.model` | `string` | Worker model, 1–48 characters matching `[A-Za-z0-9][A-Za-z0-9.:[\]-]*`, without 17 consecutive alphanumerics; invalid becomes `other`. |

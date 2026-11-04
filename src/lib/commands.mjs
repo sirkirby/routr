@@ -135,12 +135,13 @@ export function assessCommand({ ledger = LEDGER_PATH() }, config) {
 // folder's: the repository the work was in, wherever the lead records from. A launch made for other advice is refused;
 // history routr cannot read, or a launch past its 7 days, only warns and falls back to the folder.
 function rowIdentity(o, advice, ledger, warnings) {
+  if (o.launch_repeated) throw new Error("--launch was given more than once; give the one launch this run was");
   const launch_id = o.launch ?? null;
   const prior = o.run_id ? read(ledger).findLast((e) => e.run_id === o.run_id) : null;
   let project = o.project ?? prior?.project;
   if (launch_id != null && LAUNCH_ID.test(launch_id)) {
     const found = findLaunch(launch_id);
-    if (found.record?.advice_id && found.record.advice_id !== advice.id) throw new Error(`--launch ${launch_id} was made with other advice (${found.record.advice_id}); give the launch this advice was used for`);
+    if (found.record?.id && found.record.id !== advice.id) throw new Error(`--launch ${launch_id} was made with other advice (${found.record.id}); give the launch this advice was used for`);
     if (project == null) {
       if (found.unreadable) warnings.push(warning("launch_history_unreadable", "routr's launch history could not be read, so this row's project is the folder record ran in"));
       else if (!found.record) warnings.push(warning("launch_not_found", `Launch ${launch_id} is not in routr's launch history, which keeps 7 days, so this row's project is the folder record ran in`));

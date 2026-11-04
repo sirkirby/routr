@@ -140,9 +140,12 @@ const ADVISE = {
   record: async () => {
     const revising = argv.includes("--run-id"), comparing = argv.includes("--task-file");
     const taskFile = take("--task-file");
-    const o = Object.fromEntries(["advice", "subscription", "model", "effort", "level", "verdict", "check", "seconds", "attempts", "note", "ledger", "report", "project", "launch"].map((f) => [f, take(`--${f}`)]));
+    const o = Object.fromEntries(["advice", "subscription", "model", "effort", "level", "verdict", "check", "seconds", "attempts", "note", "ledger", "report", "project"].map((f) => [f, take(`--${f}`)]));
     o.task_file = taskFile ?? (comparing ? "" : undefined);
     o.run_id = take("--run-id") ?? (revising ? "" : undefined); o.causes = takeAll("--cause");
+    // `--launch` with no value, or twice, is refused by record, never read as absent.
+    o.launch_repeated = argv.filter((a) => a === "--launch").length > 1;
+    o.launch = argv.includes("--launch") ? take("--launch") ?? "" : undefined;
     print((await commands()).recordCommand(o, takeAll("--subagent"), loaded().config, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } })); // never blocks the agent; the config resolves a "default" effort
   },
   usage: async () => print(await (await commands()).usageCommand(rest, loaded().config, given, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } }), 1), // never blocks an agent

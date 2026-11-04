@@ -420,8 +420,8 @@ test("a launch that took its task gets one id: its answer, its history record an
   expect(r.state).toBe("prompted");
   expect(r.launch_id).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
   const { records } = readHistory({ home });
-  expect(records).toEqual([{ launch_id: r.launch_id, at: expect.any(Number), subscription: "claude", model: "sonnet", effort: null, advice_id: "ab12cd34",
-    advised: { level: "standard", sure: false, between: ["basic", "standard"], work_type: "refactor", high_risk: false, fallback: false },
+  expect(records).toEqual([{ launch_id: r.launch_id, at: expect.any(Number), subscription: "claude", model: "sonnet", effort: null, id: "ab12cd34",
+    advised: { level: "standard", sure: false, between: ["basic", "standard"], work_type: "refactor", high_risk: false, fallback: false, facts: {} },
     project: basename(repo), backend: "pane", name: "worker" }]);
   // The task never reaches the history: every file in it, read whole.
   const folder = join(home, ".local/state/routr/launch-counts");

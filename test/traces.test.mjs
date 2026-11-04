@@ -240,6 +240,11 @@ test("a pane launch records identity, session and immutable index; cleanup and l
   expect(entry).toMatchObject({ traceId: s.traceId, spanId: s.spanId, pane_id: "w1:p2", terminal_id: "term-1", launch_id: a["routr.launch.id"] });
   const rerun = await launch(["--kind", "claude", "--name", "fixture", "--model", "sonnet", "--pane", "w1:p2", "--task", task, "--advice", advice], opts);
   expect(rerun.state).toBe("prompted");
+  // A recovery rerun is its own launch: its own id in its answer and span, whatever is exported, linked to the original.
+  expect([r.launch_id, rerun.launch_id]).toEqual([a["routr.launch.id"], expect.any(String)]);
+  expect(rerun.launch_id).not.toBe(r.launch_id);
+  const rs = x.spans().filter((sp) => sp.name === "routr launch").at(-1);
+  expect([attrs(rs)["routr.launch.id"], rs.links]).toEqual([rerun.launch_id, [{ traceId: s.traceId, spanId: s.spanId, attributes: [] }]]);
   expect(index.entries()).toHaveLength(1);
   expect(index.match({ advice_id: "abc12345" }).spanId).toBe(s.spanId);
   expect((await cleanup(["--pane", "w1:p2"], opts)).state).toBe("closed");

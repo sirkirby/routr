@@ -1,4 +1,4 @@
-import { adviceForLaunch, commandTrace, completeLaunch, launchCarriers, launchIdentity } from "./traces.mjs";
+import { adviceForLaunch, commandTrace, completeLaunch, launchCarriers } from "./traces.mjs";
 import { takeLeadSession } from "./trace-context.mjs";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -191,8 +191,9 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
   return done();
 }
 
-// One identity per launch: made here, carried by its trace (which keeps the original's for a `--pane` recovery rerun of
-// a sampled launch), and then by its history record, its answer's `launch_id` and its record template's `--launch`.
+// One identity per launch, made here, whether or not anything is exported: its trace's `routr.launch.id` (a `--pane`
+// recovery rerun links to the launch it finishes, with its own id), its history record, its answer's `launch_id` and its
+// record template's `--launch`.
 export function launch(args, opts = {}) {
   const lead = takeLeadSession(args); args = [...lead.args, ...(lead.lead ? ["--lead-session", lead.lead] : [])];
   const settings = oneReading(opts.settings), made = randomUUID();
@@ -206,9 +207,10 @@ export function launch(args, opts = {}) {
     // effort, which launch cannot know. The project is the repository the worker's folder is in (its worktree's).
     r.launch_id = null;
     if (took) {
-      r.launch_id = launchIdentity() ?? made;
+      r.launch_id = made;
       recordLaunch(r.launch_id, { subscription: r.kind, model: adopted ? null : r.model, effort: adopted ? null : r.effort,
-        advice_id: advised?.id, advised: advised && { level: advised.level, sure: advised.sure, between: advised.between, work_type: advised.work_type, high_risk: advised.high_risk, fallback: fallbackAdvice(advised) },
+        id: advised?.id, advised: advised && { level: advised.level, sure: advised.sure, between: advised.between, work_type: advised.work_type, high_risk: advised.high_risk, fallback: fallbackAdvice(advised),
+          facts: Object.fromEntries(Object.entries(advised.facts ?? {}).map(([k, f]) => [k, f?.p])) },
         project: projectName(r.worktree?.path ?? r.cwd), backend, name: r.name }, { home: opts.home });
     }
     finish(r.launch_id); return r; });
