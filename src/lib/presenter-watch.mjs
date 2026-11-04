@@ -1,31 +1,13 @@
-// herdr-core (`hc`), the terminal runtime under the Herdr app: everything routr asks of it. Its terminals set
-// HC_TERMINAL_ID and not HERDR_ENV; the app shows a terminal only with the labels herdr.space and herdr.tab (routr-lab
-// p50, hc 0.1.17, 2026-11-03). A worker there is a headless worker with a terminal beside it that runs `routr watch`:
-// the holder owns the worker, the terminal only shows it, so losing the terminal loses nothing.
-import { selfCommand, start, stop } from "./runtime.mjs";
+// A headless worker's progress shown in herdr-core: a terminal beside it that runs `routr watch`. This only presents: the
+// holder owns the worker, the terminal only shows it, so losing the terminal loses nothing, and failing to start one
+// never fails the worker.
+import { warning } from "./warnings.mjs";
+import { runNext } from "./next.mjs";
+import { callHc, client, renameTab } from "./hc.mjs";
+import { selfCommand } from "./runtime.mjs";
 
 // A pane wins: herdr's own session is what the lead is in when both are set (the TUI started from a core terminal).
 export const inCore = (env) => env.HERDR_ENV !== "1" && Boolean(env.HC_TERMINAL_ID);
-
-// routr's own calls keep the environment, as a herdr client's do: hc finds its core and its caller there. Resolves
-// `{ out, code }`, or null when it could not start or did not answer in time; never throws.
-const client = (cmd, args, ms) => new Promise((done) => {
-  let child, out = "", finished = false, exited = false;
-  const finish = (v) => { if (finished) return; finished = true; clearTimeout(timer); if (!exited && child) stop(child); done(v); };
-  const timer = setTimeout(() => finish(null), ms);
-  try { child = start(cmd, args, { stdio: ["ignore", "pipe", "ignore"] }); } catch { return finish(null); }
-  child.on("error", () => finish(null));
-  child.on("exit", () => { exited = true; });
-  child.stdout.on("data", (d) => { out += d; });
-  child.on("close", (code) => finish({ out, code }));
-});
-// hc answers JSON when piped.
-const callHc = async (args, run) => {
-  const r = await run("hc", args, 10000);
-  if (r == null) return { ok: false, code: "not_available" };
-  if (r.code !== 0) return { ok: false, code: "refused" };
-  try { return { ok: true, data: JSON.parse(r.out) }; } catch { return { ok: false, code: "unreadable" }; }
-};
 
 // hc's names are unique among live terminals, at most 32 of the characters a worker's name uses, and the app's pop-ups
 // say them, so a worker's own name comes first. One hc refuses gets one more try with the worker's id: a name used again
@@ -51,6 +33,17 @@ export async function showWorker({ name, id, cwd, env, run = client, self = self
   if (typeof r.data?.address !== "string") return { code: "unreadable" };
   // The app numbers a tab it did not make. It takes a moment to adopt the terminal; a name that never lands costs only
   // the name, and with no app running there is nothing to name.
-  if (tab) for (let i = 0; i < 6; i++) { if ((await run("herdr-app", ["do", "tab.rename", "--id", tab, "--name", name], 3000))?.code === 0) break; await pause(300); }
+  if (tab) for (let i = 0; i < 6; i++) { if (await renameTab(tab, name, run)) break; await pause(300); }
   return { terminal: r.data.address, tab };
+}
+
+// Shown beside the worker, never instead of it: the worker has started either way. Says what it did in `out`, launch's answer.
+export async function presentWorker({ name, id, cwd, env, out }) {
+  const step = (s, ok, detail) => out.steps.push({ step: s, ok, detail });
+  const shown = await showWorker({ name, id, cwd, env }).catch(() => ({ code: "not_available" }));
+  if (shown.terminal) { out.worker.terminal = shown.terminal; step("terminal", true, shown.tab ? `${name}'s progress is in a tab of its own (${shown.terminal})` : `${name}'s progress is in terminal ${shown.terminal}`); }
+  else {
+    out.warnings.push(warning("worker_not_shown", `The worker is running, but herdr-core did not start a terminal to show it (${shown.code})`));
+    out.next.push(runNext("To see its progress, run this in a terminal of your own.", ["routr", "watch", "--name", name]));
+  }
 }

@@ -91,16 +91,16 @@ export async function cleanupLink(o, run) {
     }
   } catch {} // Index or pane observation failure never changes cleanup.
 }
-export async function completeLaunch(r, run, { rerun = false } = {}) {
+export async function completeLaunch(r, run, { rerun = false, backend } = {}) {
   const c = context.getStore(); if (!c?.span || c.command !== "launch") return;
   const identity = traceIdentity(r.cwd), facts = r.pane && r.state !== "planned" ? await paneFacts(r.pane, run) : null;
   put(c.span, identity.attributes); conversation(facts);
   const reused = rerun && c.adviceId && facts?.terminal_id ? c.index.recovery({ advice_id: c.adviceId, pane_id: r.pane, terminal_id: facts.terminal_id }) : null;
   if (reused) { c.launchId = reused.launch_id; link(reused); }
-  put(c.span, { "routr.kind": pick(r.kind, subscriptions), "routr.backend": c.env.HERDR_ENV === "1" ? "pane" : "headless", "routr.launch.id": c.launchId,
+  put(c.span, { "routr.kind": pick(r.kind, subscriptions), "routr.backend": backend, "routr.launch.id": c.launchId,
     "gen_ai.agent.name": WORKER_NAME.test(r.name) ? r.name : null, "routr.model": modelName(r.model), "routr.effort": pick(r.effort, EFFORTS),
     "routr.advice.matched": typeof r.advice?.matches === "boolean" ? r.advice.matches : null, "routr.carriers.forwarded": CARRIERS.filter((n) => r.start?.env?.[n] === "<forwarded>") });
-  if (!reused && (herdrId(r.pane) || r.worker) && ["ready", "prompted", "needs_input"].includes(r.state)) c.entry = { launch_id: c.launchId, advice_id: c.adviceId ?? null, backend: c.env.HERDR_ENV === "1" ? "pane" : "headless", repository: identity.attributes["vcs.repository.url.full"] ?? null,
+  if (!reused && (herdrId(r.pane) || r.worker) && ["ready", "prompted", "needs_input"].includes(r.state)) c.entry = { launch_id: c.launchId, advice_id: c.adviceId ?? null, backend, repository: identity.attributes["vcs.repository.url.full"] ?? null,
     project_hash: identity.project_hash ?? null, path_hash: identity.path_hash ?? null, branch: identity.attributes["vcs.ref.head.name"] ?? null,
     pane_id: herdrId(r.pane) ? r.pane : null, terminal_id: typeof facts?.terminal_id === "string" ? facts.terminal_id : null,
     traceId: c.span.traceId, spanId: c.span.spanId, created_at: new Date().toISOString() };

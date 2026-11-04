@@ -36,7 +36,7 @@ export const worktreeFolder = (branch) => branch.replace(/[\\/]/g, "-");
 // reads the path itself, not what a link there points at.
 export const folderId = (path, { link = false } = {}) => { try { const st = (link ? lstatSync : statSync)(path, { bigint: true }); return st.isSymbolicLink() ? null : `${st.dev}:${st.ino}:${st.birthtimeNs}`; } catch { return null; } };
 // Held by `routr uninstall` from its last check through its removal (its pid inside); a headless launch that reserves
-// a run folder while it is held backs out (headless.mjs reserve), so neither misses the other.
+// a run folder while it is held backs out (worker-record.mjs reserve), so neither misses the other.
 export const UNINSTALL_LOCK = (h = home()) => join(STATE_DIR(h), "uninstalling");
 export const UPDATE_STAMP = () => join(CACHE_DIR(), "update-check");
 export const TELEMETRY_LOG = () => join(CACHE_DIR(), "telemetry.log");
@@ -452,7 +452,7 @@ export function stop(child, { platform = process.platform, via, after = later, g
 // (measured 2026-10-21: a child otherwise inherited the lead identity). Herdr 0.9.5 binary strings list the eight pane
 // names: config (HERDR_CONFIG_PATH, HERDR_HOME, HERDR_LOG) must stay so server and clients use the same settings.
 // herdr-core's three terminal names go the same way (seen in an app terminal, hc 0.1.17, 2026-11-03); HC_SESSION, which
-// chooses a core, stays. routr's own hc calls keep them (core.mjs).
+// chooses a core, stays. routr's own hc calls keep them (hc.mjs).
 // The other harness session names were checked in vendor source and installed binaries
 // 2026-10-24 (versions and sources in references/harnesses.md). Exact names, not harness prefixes: sign-in, provider
 // and config settings (CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_USE_BEDROCK, CODEX_HOME, CURSOR_CONFIG_DIR, …) stay.

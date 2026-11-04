@@ -9,7 +9,8 @@ import { claim, connect, endpointFor, generations, ownEndpoint, probe, serve, SO
 import { prepareOtel } from "../src/lib/otel.mjs";
 import { TRACE_ATTRIBUTES } from "../src/lib/traces.mjs";
 import { ADAPTERS, agyReader, codexReader, cursorReader, groupAlive, groupGone, kiroReader, listGroup, readEvent } from "../src/lib/headless.mjs";
-import { unmakeWorktree, view } from "../src/lib/workers.mjs";
+import { view } from "../src/lib/backend-headless.mjs";
+import { unmakeWorktree } from "../src/lib/worktree.mjs";
 import { EventEmitter } from "node:events";
 import { Writable } from "node:stream";
 import { worktreesFromGit } from "../src/lib/cleanup.mjs";
@@ -274,7 +275,8 @@ function world(over = {}) {
     import { fileURLToPath } from "node:url";
     if (process.argv.includes("--hold")) {
       process.env.FAKE_HOLDER_TRACE = "1";
-      const { hold, runDir, ADAPTERS } = await import(${JSON.stringify(new URL("../src/lib/headless.mjs", import.meta.url).href)});
+      const { hold, ADAPTERS } = await import(${JSON.stringify(new URL("../src/lib/headless.mjs", import.meta.url).href)});
+      const { runDir } = await import(${JSON.stringify(new URL("../src/lib/worker-record.mjs", import.meta.url).href)});
       if (process.env.FAKE_REJECT_HANDOVER) {
         const connect = ADAPTERS.agy.connect;
         ADAPTERS.agy.connect = (c, o) => {

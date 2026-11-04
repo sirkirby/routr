@@ -1,9 +1,10 @@
 // `routr watch`: one headless worker's progress, followed in a terminal until it is cleaned up. It reads what the holder
 // wrote and changes nothing, so closing it stops nothing. Fixed words only: tool names, states and report paths, never
 // the worker's text. In a herdr-core terminal it also reports status over OSC 7501, the only way core takes one.
-import { workerOf } from "./headless.mjs";
+import { view } from "./backend-headless.mjs";
+import { workerOf } from "./worker-record.mjs";
 import { HARNESSES } from "./harnesses.mjs";
-import { parseNamed, view } from "./workers.mjs";
+import { parseNamed } from "./workers.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const base64 = (s) => Buffer.from(s).toString("base64");
