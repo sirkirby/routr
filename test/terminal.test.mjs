@@ -579,13 +579,14 @@ test("in herdr-core, cleanup refuses a worktree a live terminal is in, names cle
   mkdirSync(join(wt, "src"));
   const shell = coreHc([LEAD, { address: "t5", state: "live", cwd: "/elsewhere" }], { t5: { address: "t5", name: "notes", state: "live", cwd: "/elsewhere", foreground: { pid: 1, name: "zsh", argv: ["zsh"], cwd: join(wt, "src") } } });
   const r1 = await run(shell);
-  expect([r1.state, r1.headline.replace(/\/private\/var\//g, "/var/")]).toEqual(["refused", `routr: kept ${wt}: terminal t5 (notes) runs in ${wt}`.replace(/\/private\/var\//g, "/var/")]);
+  // The path is git's own form of it (macOS /private/var, Windows forward slashes and long names): the reason is what is checked.
+  expect([r1.state, r1.headline.replace(/^routr: kept .*?: terminal/, "terminal").replace(/ runs in .*$/, " runs in")]).toEqual(["refused", "terminal t5 (notes) runs in"]);
   expect(r1.next.map((n) => n.argv?.join(" ") ?? n.why)).toContain("hc read t5 --lines 200");
   // A routr worker's terminal: finish it with cleanup --worker, by the name its record has.
   mkdirSync(runDir("w9"), { recursive: true }); writeFileSync(join(runDir("w9"), "worker.json"), JSON.stringify({ format: 1, id: "f".repeat(32), name: "w9", kind: "claude", model: "m", cwd: wt, backend: "terminal" }));
   const worker = coreHc([LEAD, { address: "t6", state: "live", cwd: wt }], { t6: { address: "t6", name: "w9", state: "live", cwd: wt, foreground: { pid: 2, name: "claude", argv: [], cwd: wt }, labels: { "routr.worker": "f".repeat(32) } } });
   const r2 = await run(worker);
-  expect([r2.state, r2.headline.replace(/\/private\/var\//g, "/var/"), r2.next[0].argv]).toEqual(["refused", `routr: kept ${wt}: terminal t6 (w9), a routr worker's, runs in ${wt}`.replace(/\/private\/var\//g, "/var/"), ["routr", "cleanup", "--worker", "w9"]]);
+  expect([r2.state, r2.headline.replace(/^routr: kept .*?: terminal/, "terminal").replace(/ runs in .*$/, " runs in"), r2.next[0].argv]).toEqual(["refused", "terminal t6 (w9), a routr worker's, runs in", ["routr", "cleanup", "--worker", "w9"]]);
   // hc not answering is not knowing: nothing is removed. Nor is an answer that does not say where a live terminal's
   // program is (core's schema: `foreground` is null only once it has finished), nor one that is not a terminal.
   const r3 = await run(fakeHc({ over: { ls: null } }));
