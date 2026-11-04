@@ -176,7 +176,8 @@ object describing what it did.
   core terminal Kiro V3 asks about its trust-all-tools mode until the person has answered once (`references/harnesses.md`).
   Anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
 - A cmd shell expands `%` and `!` in a folder path even inside quotes, so launch refuses (`failed`) to type such a
-  folder into one: use a folder without them, or a pane running PowerShell.
+  folder into one: use a folder without them, or a pane running PowerShell. In a PowerShell or cmd pane it also refuses
+  a folder path with a typographic quote (‘ ’) in the harness's command, which herdr would type broken.
 - `--dry-run` requires `--model` and prints `would_run` without executing worker actions. It may queue a planned
   span when OpenTelemetry export is on, but creates no launch index entry. It returns `ok: false` and `error` when
   a real launch would refuse its arguments, folder, task or advice; otherwise `ok: true`. It does not check the

@@ -44,7 +44,7 @@ a failure.
   reads the options before sending keys because the default can exit the worker.
 - **Folder trust for one run.** A harness with a flag that trusts a folder for one run and saves nothing gets it for the
   worker's folder (its worktree, or `--cwd`), in a pane and in a herdr-core terminal: Codex `-c
-  'projects={"<folder>"={trust_level="trusted"}}'`, Kiro V3 `--trust-workspace`, Cursor `--trust`. That folder's own
+  "projects={'<folder>'={trust_level=\"trusted\"}}"`, Kiro V3 `--trust-workspace`, Cursor `--trust`. That folder's own
   settings, hooks and MCP servers then load for that run without the question, as for a headless worker, which is never
   asked; nothing in your harness settings changes (measured for Codex and Kiro, 2026-11-04). For that run Codex reads no
   other folder's trust. Claude Code and Antigravity have no such flag: they ask, and the rule above applies.
@@ -239,7 +239,8 @@ their session.
 In a pane, routr types commands for that pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. A folder
 path typed into a shell reaches it exactly (in PowerShell, curly quotes as well as `'`), or is refused before anything
 is typed: cmd expands `%` and `!` even inside quotes, so a cmd shell is never given a path holding either, and routr
-says to use another folder or PowerShell. Follow-up commands have exact `argv` and a
+says to use another folder or PowerShell. herdr types a harness's own command into a PowerShell or cmd pane itself,
+escaping only the plain `'`, so a command that would hold a typographic quote in a folder path is refused there too. Follow-up commands have exact `argv` and a
 common-shell `command` only for the documented safe alphabet and an unquoted, non-assignment executable; otherwise
 `command` is null. Instructions and templates are marked `kind: "do"`, never runnable.
 Unsafe template values become placeholders for the lead to fill, never expanding shell text. Execution history stays

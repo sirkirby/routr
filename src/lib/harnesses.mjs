@@ -60,6 +60,9 @@ import { NO_WINDOWS_AFTER_ANSWER, readAgy, readClaude, readCodexLive, summarize,
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // JSON's string escapes are TOML basic-string escapes too, except JSON permits a literal DEL and TOML does not.
 const tomlString = (s) => JSON.stringify(s).replaceAll("\x7f", "\\u007f");
+// A TOML literal string where the text allows one ('…': no escapes, so no backslash for a shell to collapse: fish reads
+// \\ inside single quotes as one), else a basic string. Literal strings hold no ' and no control character.
+const tomlText = (s) => (/['\x00-\x08\x0a-\x1f\x7f]/.test(s) ? tomlString(s) : `'${s}'`);
 
 // The levels a help text lists after its --effort flag: "(low, medium, high, xhigh, max)", as Claude Code and Kiro print them.
 export const effortsInHelp = (help) => { const m = String(help ?? "").match(/--effort\b[^(]*\((?:e\.g\.\s*)?([a-z]+(?:,\s*[a-z]+)+)\)/i); return m ? m[1].split(/,\s*/) : null; };
@@ -160,7 +163,7 @@ export const HARNESSES = {
     // table), naming only the worker's folder. Measured 0.166.0, 2026-11-04: a new repository, and a worktree of one,
     // started at its input box, and ~/.codex/config.toml was unchanged; the dotted form (`projects."<dir>".trust_level`)
     // still asked. For that run its other `projects` entries (other folders' trust) are not read.
-    trust: (dir) => ["-c", `projects={${tomlString(dir)}={trust_level="trusted"}}`],
+    trust: (dir) => ["-c", `projects={${tomlText(dir)}={trust_level="trusted"}}`],
     startup: "routr starts Codex trusting the worker's folder for this run only, saving nothing, so it asks no folder-trust question; a question it asks at start is another one, for you or the user to answer.",
     permissions: ["--yolo", "--dangerously-bypass-hook-trust", "-c", "check_for_update_on_startup=false"], model: "-m", effort: "-c", effortValue: (level) => `model_reasoning_effort=${level}`, list: "codex debug models",
     // Measured 0.166.0, 2026-11-02: these must be TOML strings, including for ids with punctuation (harnesses.md).

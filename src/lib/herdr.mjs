@@ -64,6 +64,12 @@ const psq = (s) => `'${psEscape(s)}'`;
 // either literally: a path holding one is refused before anything is typed, never typed changed.
 export const CMD_PATH = "A cmd shell expands % and ! in a folder path even inside quotes, so routr will not type this one into it. Use a folder whose path has neither, or a pane running PowerShell.";
 export const cmdTypable = (...paths) => !paths.some((p) => /[%!]/.test(String(p)));
+// herdr itself types `agent start`'s arguments into a PowerShell or cmd pane (cmd through PowerShell), escaping only the
+// ASCII ' (herdr 0.9.5, src/platform/mod.rs): a typographic quote ends its quoted argument. An argument holding one, a
+// folder path in a harness's command, is refused before anything is typed (review of #153; PowerShell's parser refused
+// both forms). routr's own lines (psq) double them.
+export const HERDR_PS_QUOTE = "herdr types this worker's command into a PowerShell or cmd pane in a way that breaks at a typographic quote (‘ ’ ‚ ‛), and it would hold one in a folder path. Use a folder whose path has none, or a pane running a POSIX shell.";
+export const herdrTypable = (shell, argv) => !["powershell", "cmd"].includes(shell) || !argv.some((a) => /[\u2018-\u201B]/.test(String(a)));
 const cmdq = (s) => { if (!cmdTypable(s)) throw new Error(CMD_PATH); return `"${String(s).replaceAll('"', '""')}"`; };
 export const SHELLS = {
   posix: {

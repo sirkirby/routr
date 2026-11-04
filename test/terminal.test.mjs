@@ -62,7 +62,7 @@ const noted = (r) => r.next.map((n) => `${n.why} ${n.template ?? (n.argv ?? []).
 test("each harness's differences in a core terminal are data: its flags, and how it takes a first message", () => {
   const argv = (kind) => terminalPlan({ kind, model: "m", cwd: "/w" }, "the pointer").argv;
   expect(argv("claude")).toEqual(["--dangerously-skip-permissions", "--model", "m", "the pointer"]);
-  expect(argv("codex")).toEqual(["--no-daemon", "--yolo", "--dangerously-bypass-hook-trust", "-c", "check_for_update_on_startup=false", "-c", 'projects={"/w"={trust_level="trusted"}}', "-m", "m", "the pointer"]);
+  expect(argv("codex")).toEqual(["--no-daemon", "--yolo", "--dangerously-bypass-hook-trust", "-c", "check_for_update_on_startup=false", "-c", "projects={'/w'={trust_level=\"trusted\"}}", "-m", "m", "the pointer"]);
   expect(argv("cursor")).toEqual(["--yolo", "--trust", "--model", "m", "the pointer"]);
   expect(argv("agy")).toEqual(["--dangerously-skip-permissions", "--add-dir", "/w", "--model", "m", "-i", "the pointer"]);
   expect(argv("kiro")).toEqual(["--v3", "chat", "--trust-all-tools", "--trust-workspace", "--model", "m", "the pointer"]);
@@ -76,8 +76,10 @@ test("each harness's differences in a core terminal are data: its flags, and how
   // where the harness has a flag for it, never to a headless start, and names the worker's own folder.
   expect(argv("kiro")).not.toContain("--trust-tools=*");
   for (const start of [plan({ kind: "kiro", model: "m" }).argv, plan({ kind: "kiro", model: "m", interactive: false }).argv]) expect(start).not.toContain("--trust-workspace");
-  expect(plan({ kind: "codex", model: "m", cwd: "/repo/wt" }).argv).toContain('projects={"/repo/wt"={trust_level="trusted"}}');
-  expect(plan({ kind: "codex", model: "m", cwd: 'C:\\w "q"' }).argv).toContain('projects={"C:\\\\w \\"q\\""={trust_level="trusted"}}');
+  // A TOML literal string, so no backslash is doubled for a shell to collapse (fish); a basic string only for a ' in the path.
+  expect(plan({ kind: "codex", model: "m", cwd: "/repo/wt" }).argv).toContain(`projects={'/repo/wt'={trust_level="trusted"}}`);
+  expect(plan({ kind: "codex", model: "m", cwd: 'C:\\w "q"' }).argv).toContain(`projects={'C:\\w "q"'={trust_level="trusted"}}`);
+  expect(plan({ kind: "codex", model: "m", cwd: "/it's\\x" }).argv).toContain(`projects={"/it's\\\\x"={trust_level="trusted"}}`);
   expect(plan({ kind: "codex", model: "m", cwd: "/w", interactive: false }).argv.join(" ")).not.toContain("projects=");
   expect(KINDS.filter((k) => (HARNESSES[k].core?.trust ?? HARNESSES[k].trust))).toEqual(["codex", "kiro"]);
 });

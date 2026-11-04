@@ -1335,6 +1335,18 @@ test("launch refuses a cmd pane before typing anything when a folder it would ty
   }
 });
 
+test("launch refuses a PowerShell or cmd pane before typing anything when herdr would type a typographic quote in the worker's command", async () => {
+  const { HERDR_PS_QUOTE, herdrTypable } = await import("../src/lib/herdr.mjs");
+  expect([herdrTypable("posix", ["C:\\Chris’s"]), herdrTypable("powershell", ["C:\\Chris's"]), herdrTypable("powershell", ["C:\\Chris’s"]), herdrTypable("cmd", ["‘x‛"])]).toEqual([true, true, false, false]);
+  // Codex's trust names its folder, and Antigravity's --add-dir does: either breaks herdr's line in that pane.
+  for (const [kind, model, shellName] of [["codex", "gpt-6.1-sol", "pwsh.exe"], ["agy", "gemini-3.8-flash-low", "cmd.exe"]]) {
+    const work = scratch("Chris’s"), reply = (a) => a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: shellName, cwd: work }] } }) : undefined;
+    const f = fakeHerdr({ kind, reply }), r = await launch(["--kind", kind, "--name", "worker", "--model", model, "--pane", "w1:p1", "--cwd", work, "--task", "Task"], f.deps);
+    expect(r).toMatchObject({ ok: false, state: "failed", error: HERDR_PS_QUOTE });
+    expect(f.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
+  }
+});
+
 test("waitForShell: ready at a settled prompt; stops at any question, a busy adopted pane, or the wrong folder", async () => {
   const { waitForShell } = await import("../src/lib/herdr.mjs");
   const here = process.cwd();

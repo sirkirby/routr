@@ -510,6 +510,10 @@ In a pane whose shell is cmd, a folder launch would type there (the `--cwd` of a
 folder) that holds `%` or `!` is refused before anything is typed: `ok: false`, `state: "failed"`, and the fixed
 `error` "A cmd shell expands % and ! in a folder path even inside quotes, so routr will not type this one into it. Use
 a folder whose path has neither, or a pane running PowerShell." A pane launch split is closed; a `--pane` is kept.
+In a PowerShell or cmd pane, a harness command (as herdr's `agent start` types it) holding a typographic quote (‘ ’ ‚ ‛),
+in a folder path such as Codex's trusted folder or Antigravity's `--add-dir`, is refused the same way, with the fixed
+`error` "herdr types this worker's command into a PowerShell or cmd pane in a way that breaks at a typographic quote
+(‘ ’ ‚ ‛), and it would hold one in a folder path. Use a folder whose path has none, or a pane running a POSIX shell."
 
 A `--worktree` launch opens the worker's pane itself. `ran` shows, in order: `herdr worktree create`, then (after any
 `--copy`) `herdr pane split <root pane> --direction right --cwd <worktree path> --no-focus --env …`, a split of the
@@ -638,7 +642,7 @@ launch as before.
 - `start` is the harness's command as the runner will run it: `start.argv` ends with its first message, which says only
   where the task file is (after Antigravity's `-i`; first, Codex's `--no-daemon`; Kiro's `--v3 chat --trust-all-tools`, where a pane has `--v2 chat --trust-tools=*`).
   A harness with a flag that trusts a folder for one run, saving nothing, gets it for the worker's folder, in a pane too:
-  Codex `-c 'projects={"<folder>"={trust_level="trusted"}}'`, Kiro V3 `--trust-workspace` (Cursor's `--trust` as before);
+  Codex `-c "projects={'<folder>'={trust_level=\"trusted\"}}"` (a TOML literal string; a basic string when the path has a `'`), Kiro V3 `--trust-workspace` (Cursor's `--trust` as before);
   a headless start never had the question. `start.env` lists
   each trace-context carrier and config location passed, as `"<forwarded>"`, plus any Claude Code subagent defaults. A
   Cursor worker's `CURSOR_CONFIG_DIR` is its run folder's private copy, which is not shown there. `ran` displays that

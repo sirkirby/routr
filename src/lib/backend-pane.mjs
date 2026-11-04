@@ -9,7 +9,7 @@ import { configOf } from "./config.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { OFF } from "./wording.mjs";
-import { clean, CMD_PATH, cmdTypable, deadline, paneText, paneView, promptReadArgs, SHELLS, shellFamily, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
+import { clean, CMD_PATH, cmdTypable, HERDR_PS_QUOTE, herdrTypable, deadline, paneText, paneView, promptReadArgs, SHELLS, shellFamily, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
 import { launchFailed, STARTUP_INPUT } from "./launch-answer.mjs";
 import { CARRIERS, carrierValues, FORWARDED, realPath, redactCarriers } from "./runtime.mjs";
@@ -269,7 +269,11 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
     cleanupArgs ??= ["routr", "cleanup", "--pane", out.pane];
     // Every folder this launch will type into a cmd shell is checked as soon as the shell is known, so a refusal comes
     // before anything is typed, not between a `cd` and the variable.
-    const typable = () => { if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(o.kind === "cursor" ? [privateDir] : []))) throw new Error(CMD_PATH); };
+    const typable = () => {
+      if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(o.kind === "cursor" ? [privateDir] : []))) throw new Error(CMD_PATH);
+      // What herdr types for us: the harness's command, as planned for this worker's folder (`agent start`).
+      if (!(o.kind === "cursor" && SHELLS[shell].cursor) && !herdrTypable(shell, p.argv)) throw new Error(HERDR_PS_QUOTE);
+    };
     // A pane we split already opened in --cwd; one adopted from the caller must be checked before we type `cd`.
     if (o.pane && !adopted) {
       stop = await shellReady(); if (stop) return stop;
