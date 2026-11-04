@@ -105,6 +105,8 @@ test("watch says each change once, and only fixed words and paths", () => {
   expect(changes(v({ last_tool: "Bash" }), seen)).toEqual(["working, turn 1, Bash"]);
   expect(changes(v({ last_tool: "Bash" }), seen)).toEqual([]);
   expect(changes(v({ last_tool: "Read", tasks: 2 }), seen)).toEqual(["working, turn 1, Read, 2 background commands"]);
+  expect(changes(v({ last_tool: "Read", tasks: 1 }), seen)).toEqual(["working, turn 1, Read, 1 background command"]);
+  expect(changes(v({ last_tool: "Read", tasks: 0 }), seen)).toEqual(["working, turn 1, Read"]);
   const ended = v({ state: "idle", last_tool: "Read", turns: [{ turn: 1, outcome: "finished", report: "/r/turn-1.md" }] });
   expect(changes(ended, seen, "12:00:00")).toEqual(["12:00:00  turn 1 ended (finished): report at /r/turn-1.md", "12:00:00  idle, turn 1"]);
   expect(changes(ended, seen)).toEqual([]);

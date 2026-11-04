@@ -23,9 +23,9 @@ export function changes(v, seen, at = "") {
     say(`turn ${t.turn} ended (${t.outcome})${t.report ? `: report at ${t.report}` : ""}`);
   }
   const tool = v.last_tool && v.state === "working" ? v.last_tool : null;
-  if (v.state !== "unreadable" && (v.state !== seen.state || v.turn !== seen.turn || (tool && tool !== seen.tool))) {
+  if (v.state !== "unreadable" && (v.state !== seen.state || v.turn !== seen.turn || (tool && tool !== seen.tool) || (v.tasks ?? 0) !== (seen.tasks ?? 0))) {
     say(`${v.state}${v.turn ? `, turn ${v.turn}` : ""}${tool ? `, ${tool}` : ""}${v.tasks ? `, ${v.tasks} background command${v.tasks > 1 ? "s" : ""}` : ""}`);
-    seen.state = v.state; seen.turn = v.turn; seen.tool = tool;
+    seen.state = v.state; seen.turn = v.turn; seen.tool = tool; seen.tasks = v.tasks ?? 0;
   }
   return lines;
 }
