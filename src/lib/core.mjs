@@ -27,9 +27,10 @@ const callHc = async (args, run) => {
   try { return { ok: true, data: JSON.parse(r.out) }; } catch { return { ok: false, code: "unreadable" }; }
 };
 
-// hc's names are unique among live terminals, at most 32 of the characters a worker's name uses. With the worker's id, a
-// long name cut short, or a name used again before the last worker's terminal has gone, is still its own.
-const terminalName = (name, id) => `${name.slice(0, 23)}-${id.slice(0, 8)}`;
+// hc's names are unique among live terminals, at most 32 of the characters a worker's name uses, and the app's pop-ups
+// say them, so a worker's own name comes first. Only one hc refuses, taken by another terminal (a name used again before
+// the last worker's has gone), gets the worker's id.
+const withId = (name, id) => `${name.slice(0, 23)}-${id.slice(0, 8)}`;
 
 // A terminal for this worker, in its own tab of the lead's space when the lead is in the app. Off the app (no space
 // label) it is still a terminal, listed by `hc ls`. It outlives the lead, as the holder does, types nothing into the
@@ -42,8 +43,10 @@ export async function showWorker({ name, id, cwd, env, run = client, self = self
   const argv = self(["watch", "--name", name]);
   if (!argv) return { code: "not_available" };
   const tab = typeof space === "string" && space ? `routr-${id}` : null;
-  const r = await callHc(["run", "--bg", "--json", "--name", terminalName(name, id), "--cwd", cwd, "--outlive-parent", "--no-notify", "--rm",
+  const open = (terminal) => callHc(["run", "--bg", "--json", "--name", terminal, "--cwd", cwd, "--outlive-parent", "--no-notify", "--rm",
     ...(tab ? ["--label", `herdr.space=${space}`, "--label", `herdr.tab=${tab}`] : []), "--", ...argv], run);
+  let r = await open(name);
+  if (r.code === "refused") r = await open(withId(name, id));
   if (!r.ok) return { code: r.code };
   if (typeof r.data?.address !== "string") return { code: "unreadable" };
   // The app numbers a tab it did not make. It takes a moment to adopt the terminal; a name that never lands costs only
