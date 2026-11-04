@@ -12,7 +12,9 @@ import { doNext, launchNext, runNext } from "./next.mjs";
 import { CLOSING } from "./wording.mjs";
 import { BRANCH, runHerdr, SHELLS, splitArgs, worktreeArgs } from "./herdr.mjs";
 import { answer } from "./output.mjs";
-import { countLaunch } from "./shares.mjs";
+import { recordLaunch } from "./launch-history.mjs";
+import { projectName } from "./ledger.mjs";
+import { fallbackAdvice } from "./output.mjs";
 import { executionFor } from "./backends.mjs";
 import { launchFailed } from "./launch-answer.mjs";
 import { command, fallbackEnvOf, launchPane, paneCarriers, paneFallbacks, panePromptArgs, paneStartArgs, promptForLog, usualShell } from "./backend-pane.mjs";
@@ -80,7 +82,13 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     ran: [], next: [], start: { executable: null, argv: [], env: {} }, steps: [], warnings: [], prompt_chars: null, unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
   // Where this launch runs (backends.mjs): what the trace says, whatever becomes of the launch, a refusal of its arguments too.
-  let backend = executionFor(env, null), outcome = { attempted: false, submitted: false, adopted: false, cleanup: null }, recordOptions = null, planned = false;
+  let backend = executionFor(env, null), outcome = { attempted: false, submitted: false, adopted: false, cleanup: null }, recordOptions = null, planned = false, advised = null;
+  // `next` is built once the launch has its identity (launch, below): its record template carries it.
+  const finish = (launchId) => {
+    out.next = launchNext(out.next, { record: recordOptions, cleanup: outcome.cleanup, adopted: outcome.adopted, launchId,
+      attempted: outcome.attempted, planned, submitted: outcome.submitted, failed: out.state === "failed" });
+  };
+  const done = () => ({ out, backend, finish, adopted: outcome.adopted, advised });
   try {
     const o = parseLaunchArgs(args);
     backend = executionFor(env, o.kind);
@@ -112,7 +120,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         const advice = dispatchAdvice(readAdvice(resolve(o.advice)));
         out.advice = { file: o.advice, matches: false };
         matchAdvice(advice, task);
-        out.advice.matches = true; adviceForLaunch(advice.id);
+        out.advice.matches = true; adviceForLaunch(advice.id); advised = advice;
         out.unavailable.push(...savedDecisionFailures(advice));
         recordOptions = { ...o, advice: resolve(o.advice), ...(o["task-file"] ? { "task-file": resolve(o["task-file"]) } : {}) };
       } catch (e) { problem = e.message; }
@@ -148,7 +156,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       const problems = [!o.model && MODEL_REQUIRED, adviceProblem].filter(Boolean);
       planned = true; out.ok = !problems.length; out.state = "planned";
       if (problems.length) out.error = problems.join("; ");
-      return { out, backend };
+      return done();
     }
     // A harness that runs its default model on an id it does not know, without a word (Kiro), is checked against its
     // own list of ids before any pane or headless worker. Kept until the harness refuses an unknown id itself.
@@ -179,19 +187,31 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       : `routr: launch failed: ${out.error}`;
     // Return paths share this finally block: put the envelope first even for early refusals and planned launches.
     const ordered = answer(out); for (const key of Object.keys(out)) delete out[key]; Object.assign(out, ordered);
-    out.next = launchNext(out.next, { record: recordOptions, cleanup: outcome.cleanup, adopted: outcome.adopted,
-      attempted: outcome.attempted, planned, submitted: outcome.submitted, failed: out.state === "failed" });
   }
-  return { out, backend };
+  return done();
 }
 
+// One identity per launch, made here, whether or not anything is exported: its trace's `routr.launch.id` (a `--pane`
+// recovery rerun links to the launch it finishes, with its own id), its history record, its answer's `launch_id` and its
+// record template's `--launch`.
 export function launch(args, opts = {}) {
   const lead = takeLeadSession(args); args = [...lead.args, ...(lead.lead ? ["--lead-session", lead.lead] : [])];
-  const settings = oneReading(opts.settings);
-  return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead }), async () => { const { out: r, backend } = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings);
+  const settings = oneReading(opts.settings), made = randomUUID();
+  return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead, launchId: made }), async () => { const { out: r, backend, finish, adopted, advised } = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings);
     // A worker that took its task, or was left ready for one, counts toward the user's launch share (shares.mjs). A dry
     // run, a refusal and a failed start count nothing; a --pane rerun that finishes a failed launch counts once. A terminal
     // worker stopped at a question has its task and goes on once answered: no rerun will count it later.
-    if (r.state === "prompted" || r.state === "ready" || (r.state === "needs_input" && r.worker?.backend === "terminal")) countLaunch(r.kind, { home: opts.home });
-    try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane"), backend }); } catch {} return r; });
+    const took = r.state === "prompted" || r.state === "ready" || (r.state === "needs_input" && r.worker?.backend === "terminal");
+    try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane"), backend }); } catch {}
+    // Its history record: the decision as checked fields, never the task. An adopted pane's agent kept its own model and
+    // effort, which launch cannot know. The project is the repository the worker's folder is in (its worktree's).
+    r.launch_id = null;
+    if (took) {
+      r.launch_id = made;
+      recordLaunch(r.launch_id, { subscription: r.kind, model: adopted ? null : r.model, effort: adopted ? null : r.effort,
+        id: advised?.id, advised: advised && { level: advised.level, sure: advised.sure, between: advised.between, work_type: advised.work_type, high_risk: advised.high_risk, fallback: fallbackAdvice(advised),
+          facts: Object.fromEntries(Object.entries(advised.facts ?? {}).map(([k, f]) => [k, f?.p])) },
+        project: projectName(r.worktree?.path ?? r.cwd), backend, name: r.name }, { home: opts.home });
+    }
+    finish(r.launch_id); return r; });
 }

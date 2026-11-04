@@ -36,7 +36,7 @@ export class LaunchIndex {
     } catch { return false; }
   }
   match(query, { activeOnly = false } = {}) {
-    const allowed = ["advice_id", "project_hash", "branch", "path_hash", "pane_id", "terminal_id", "repository"];
+    const allowed = ["launch_id", "advice_id", "project_hash", "branch", "path_hash", "pane_id", "terminal_id", "repository"];
     if (!query || !Object.keys(query).length || Object.keys(query).some((k) => !allowed.includes(k) || !(k === "repository" && query[k] === null) && (typeof query[k] !== "string" || !query[k]))) return null;
     if (query.pane_id && !query.terminal_id || query.branch && !hash(query.project_hash) || query.path_hash && !hash(query.path_hash)) return null;
     const matches = this.entries().filter((v) => (!activeOnly || !v.finished_at) && Object.entries(query).every(([k, value]) => v[k] === value));

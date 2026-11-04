@@ -20,6 +20,7 @@ import { CHECK_VERSION, checkQuestions, LEVELS, MEANING, questions, VERSION } fr
 import { ADVICE_STEPS, count } from "./wording.mjs";
 import { rankSubscriptions, levelExcludedWhy } from "./pick.mjs";
 import { recentLaunches } from "./shares.mjs";
+import { findLaunch, LAUNCH_ID } from "./launch-history.mjs";
 import { enabledSubscriptions } from "./config.mjs";
 import { HARNESSES, readUsage, SOURCES } from "./harnesses.mjs";
 import { failedUsage } from "./usage.mjs";
@@ -129,6 +130,27 @@ export function assessCommand({ ledger = LEDGER_PATH() }, config) {
   return unreadable + assess(entries, config);
 }
 
+// A row's project and launch. A revision keeps its run's (given ones are checked against them when appended). A new run
+// takes `--project`, else the project of the launch it names (`--launch`, from launch's record template), else the
+// folder's: the repository the work was in, wherever the lead records from. A launch made for other advice is refused;
+// history routr cannot read, or a launch past its 7 days, only warns and falls back to the folder.
+function rowIdentity(o, advice, ledger, warnings) {
+  if (o.launch_repeated) throw new Error("--launch was given more than once; give the one launch this run was");
+  const launch_id = o.launch ?? null;
+  const prior = o.run_id ? read(ledger).findLast((e) => e.run_id === o.run_id) : null;
+  let project = o.project ?? prior?.project;
+  if (launch_id != null && LAUNCH_ID.test(launch_id)) {
+    const found = findLaunch(launch_id);
+    if (found.record?.id && found.record.id !== advice.id) throw new Error(`--launch ${launch_id} was made with other advice (${found.record.id}); give the launch this advice was used for`);
+    if (project == null) {
+      if (found.unreadable) warnings.push(warning("launch_history_unreadable", "routr's launch history could not be read, so this row's project is the folder record ran in"));
+      else if (!found.record) warnings.push(warning("launch_not_found", `Launch ${launch_id} is not in routr's launch history, which keeps 7 days, so this row's project is the folder record ran in`));
+      else project = found.record.project ?? undefined;
+    }
+  }
+  return { project, launch_id };
+}
+
 // `o` holds record's flags by name; the advice JSON comes from `--advice <file>` or stdin.
 function recordCommandBody(o, subagentFlags = [], config = null, { warnings = [] } = {}) {
   const ledger = o.ledger ?? LEDGER_PATH();
@@ -146,8 +168,8 @@ function recordCommandBody(o, subagentFlags = [], config = null, { warnings = []
     if (task != null) matchAdvice(advice, task);
     const subagents = o.report != null || subagentFlags.length
       ? [...(o.report != null ? parseReportSubagents(readFileSync(o.report, "utf8")) : []), ...subagentFlags] : undefined;
-    const entry = toEntry(advice, { ...o, subagents }, config);
-    append(entry, ledger, { revision: o.run_id != null });
+    const { project, launch_id } = rowIdentity(o, advice, ledger, warnings = [...warnings]);
+    const entry = append(toEntry(advice, { ...o, subagents, project, launch_id }, config), ledger, { revision: o.run_id != null });
     recordSpan(entry);
     return answer({ ok: true, headline: `routr: recorded run ${entry.run_id} (advice ${advice.id}) in ${ledger}`, id: advice.id, run_id: entry.run_id, ledger,
       warnings: [...warnings, ...(o.task_file == null ? [warning("advice_unchecked", "The advice was not checked against a task.")] : [])],

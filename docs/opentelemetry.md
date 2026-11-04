@@ -314,14 +314,17 @@ terminal ids, trace/span ids, creation time and eventually a cleanup time. Nativ
 there. Headless `worker.json` also stores that launch context, revalidated before linking.
 
 Dry runs, failed and refused launches create no index entry. Cleanup queries exclude finished entries; record
-queries retain them. Later commands link only on exactly one match: record by its eight-character advice id; cleanup
+queries retain them. Later commands link only on exactly one match: record by the `launch_id` its row names (`record --launch`), else by its eight-character advice id; cleanup
 by project hash plus branch, native real path hash, or pane id **and current terminal id**. A pane's terminal id proves terminal
 continuity only, never the same process, agent or conversation; restore assigns a new terminal id. Zero matches,
 ambiguous advice, reused panes or a wrong repository give no link. Headless commands use their worker's saved
 launch context. Links carry only trace/span ids. `record` can link after cleanup, including revisions.
 
-A `--pane` recovery rerun reuses an unfinished entry only for the same advice, pane and terminal. It emits a new
-command span linked to the original launch; it never replaces that entry's original context. A new terminal or
+A `--pane` recovery rerun finds an unfinished entry only for the same advice, pane and terminal. It is its own launch,
+with its own `routr.launch.id`, and its command span links to the original launch. Once it has delivered its task
+(`prompted` or `ready`) it takes the pane over: that entry is marked finished, and the rerun adds its own, which
+cleanup and its `record --launch` then find. A rerun turned away (`needs_input`) changes no entry. The original
+entry's context is never replaced. A new terminal or
 advice creates a new launch entry. Cleanup marks `finished_at` rather than deleting entries. Launch and the sender
 sweep entries 30 days after creation and only remove routr's UUID filenames. Export off and unsampled commands
 write no index. Missing folders, revoked consent, uninstall and write failures never change command results.
@@ -353,7 +356,7 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `routr.worktree` | `string` | Worktree relative to project root when inside it; otherwise its folder name; no absolute path. |
 | `routr.kind` | `string` | Worker harness: `claude`, `codex`, `cursor`, `agy`, `kiro`; unknown becomes `other`. |
 | `routr.backend` | `string` | `pane`, `headless` or `terminal`. |
-| `routr.launch.id` | `string` | UUIDv4 identifying a sampled launch; recovery reruns reuse the original id. |
+| `routr.launch.id` | `string` | UUIDv4 identifying a sampled launch: the launch's `launch_id`, as its answer, its launch-history record and its `record --launch` carry it. A recovery rerun has its own and links to the launch it finishes. |
 | `gen_ai.agent.name` | `string` | Worker name matching `[a-z][a-z0-9_-]{0,31}`; invalid names omitted. |
 | `gen_ai.conversation.id` | `string` | On commands, herdr agent_session of kind `id`, validated as UUIDv4, UUIDv7 or 16–64 lowercase hex characters; on turns, the harness UUID the adapter already reads; omitted when unavailable. |
 | `routr.model` | `string` | Worker model, 1–48 characters matching `[A-Za-z0-9][A-Za-z0-9.:[\]-]*`, without 17 consecutive alphanumerics; invalid becomes `other`. |
@@ -519,6 +522,8 @@ producer, including config and input notes forwarded into `warnings`.
 | `worker_not_shown` | No terminal shows the worker. |
 | `process_unseen` | Saved process id cannot prove the harness state. |
 | `cleanup_unseen` | Cleanup sees git state only. |
+| `launch_history_unreadable` | Launch history could not be read. |
+| `launch_not_found` | Launch is not in the launch history. |
 | `cleanup_terminals_only` | Cleanup sees git state and core terminals. |
 | `other_worktrees` | Repository has other worktrees. |
 | `branch_unmerged` | Unmerged branch was kept. |

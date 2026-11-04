@@ -5,6 +5,8 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- Each launch gets a `launch_id`, kept in routr's launch history with its decision, and `record --launch` (in launch's record template) labels the row with the launch's project, so work recorded from a scratch folder lands under its repository.
+
 ## v0.12.0 — 2026-11-04
 
 [Full notes](docs/releases/v0.12.0.md)

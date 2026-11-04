@@ -54,7 +54,9 @@ export function recordSpan(entry) {
     put(c.span, { "routr.verdict": pick(o.verdict, VERDICTS), "routr.check": pick(o.check, CHECK_RESULTS), "routr.level": pick(choice.level, LEVELS),
       "routr.attempts": o.attempts, "routr.seconds": o.seconds, "routr.causes": o.causes?.map((v) => pick(v, OUTCOME_CAUSES)), "routr.subscription": pick(choice.subscription, subscriptions),
       "routr.effort": pick(choice.effort, EFFORTS), "routr.effort_from": pick(choice.effort_from, ["given", "model id", "config default"]), "routr.advice.id": /^[a-f0-9]{8}$/.test(entry.id) ? entry.id : null });
-    if (/^[a-f0-9]{8}$/.test(entry.id)) link(c.index.match({ advice_id: entry.id }));
+    // By the launch the row names, exactly; a row without one by its advice, which only one launch may have used.
+    if (typeof entry.launch_id === "string" && entry.launch_id) link(c.index.match({ launch_id: entry.launch_id }));
+    else if (/^[a-f0-9]{8}$/.test(entry.id)) link(c.index.match({ advice_id: entry.id }));
   } catch {} // A trace projection cannot undo a written ledger row.
 }
 function link(entry) {
@@ -96,11 +98,16 @@ export async function completeLaunch(r, run, { rerun = false, backend } = {}) {
   const identity = traceIdentity(r.cwd), facts = r.pane && r.state !== "planned" ? await paneFacts(r.pane, run) : null;
   put(c.span, identity.attributes); conversation(facts);
   const reused = rerun && c.adviceId && facts?.terminal_id ? c.index.recovery({ advice_id: c.adviceId, pane_id: r.pane, terminal_id: facts.terminal_id }) : null;
-  if (reused) { c.launchId = reused.launch_id; link(reused); }
+  // A recovery rerun is its own launch, with its own id (launch's, as its history record has it whether or not anything is
+  // exported), linked to the launch it finishes.
+  // Only a rerun that delivered its task takes the pane over; one turned away (the worker busy) leaves the original as it was.
+  const tookOver = reused && ["ready", "prompted"].includes(r.state);
+  if (reused) link(reused);
+  if (tookOver) c.replaces = reused.launch_id;
   put(c.span, { "routr.kind": pick(r.kind, subscriptions), "routr.backend": backend, "routr.launch.id": c.launchId,
     "gen_ai.agent.name": WORKER_NAME.test(r.name) ? r.name : null, "routr.model": modelName(r.model), "routr.effort": pick(r.effort, EFFORTS),
     "routr.advice.matched": typeof r.advice?.matches === "boolean" ? r.advice.matches : null, "routr.carriers.forwarded": CARRIERS.filter((n) => r.start?.env?.[n] === "<forwarded>") });
-  if (!reused && (herdrId(r.pane) || r.worker) && ["ready", "prompted", "needs_input"].includes(r.state)) c.entry = { launch_id: c.launchId, advice_id: c.adviceId ?? null, backend, repository: identity.attributes["vcs.repository.url.full"] ?? null,
+  if ((!reused || tookOver) && (herdrId(r.pane) || r.worker) && ["ready", "prompted", "needs_input"].includes(r.state)) c.entry = { launch_id: c.launchId, advice_id: c.adviceId ?? null, backend, repository: identity.attributes["vcs.repository.url.full"] ?? null,
     project_hash: identity.project_hash ?? null, path_hash: identity.path_hash ?? null, branch: identity.attributes["vcs.ref.head.name"] ?? null,
     pane_id: herdrId(r.pane) ? r.pane : null, terminal_id: typeof facts?.terminal_id === "string" ? facts.terminal_id : null,
     traceId: c.span.traceId, spanId: c.span.spanId, created_at: new Date().toISOString() };
@@ -257,7 +264,7 @@ export function commandTrace(command, setup = {}, run) {
   if (context.getStore()) return run(); // Internal cleanup of an unstarted launch belongs to that launch.
   let session, span, batch;
   try {
-    const { config, env = process.env, otel = {}, lead, explicitLevel, cwd } = typeof setup === "function" ? setup() : setup;
+    const { config, env = process.env, otel = {}, lead, explicitLevel, cwd, launchId } = typeof setup === "function" ? setup() : setup;
     session = otelSession(config, env, otel);
     const inherited = parseTraceparent(carriersFrom(env).carriers.TRACEPARENT);
     if (session.on) batch = { observations: [], observed: new Set(), env, command };
@@ -266,7 +273,7 @@ export function commandTrace(command, setup = {}, run) {
         ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, attributes: {} });
       const id = leadSession(env, lead); if (id && ["dispatch", "subagent", "launch"].includes(command)) put(span, { "routr.lead.session_id": id });
       const identity = traceIdentity(cwd); put(span, identity.attributes);
-      batch = { ...batch, span, spans: [span], logs: [], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: randomUUID(), matched: new Set(), observed: new Set() };
+      batch = { ...batch, span, spans: [span], logs: [], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: launchId ?? randomUUID(), matched: new Set(), observed: new Set() };
     }
   } catch {} // Setup is optional too: a bad config or identity lookup cannot refuse a command.
   if (!batch) return run();
@@ -281,7 +288,9 @@ export function commandTrace(command, setup = {}, run) {
         }
         const queued = session.queue("traces", encodeTraces(batch.spans, { schemaUrl: SCHEMA_URL, attributeTypes: TRACE_ATTRIBUTES }));
         if (batch.logs.length) session.queue("logs", encodeLogs(batch.logs, { schemaUrl: SCHEMA_URL, attributeTypes: OTEL_ATTRIBUTES }));
-        if (queued && batch.entry) { batch.index.sweep(); batch.index.add(batch.entry); }
+        // A recovery rerun takes over its pane from the launch it finishes: that entry ends, and the rerun's own is the
+        // one cleanup and its record find.
+        if (queued && batch.entry) { batch.index.sweep(); if (batch.replaces) batch.index.finish(batch.replaces); batch.index.add(batch.entry); }
         if (queued && command === "cleanup" && ["removed", "closed", "absent"].includes((batch.output ?? result)?.state)) for (const id of batch.matched) batch.index.finish(id);
       }
     } catch {} // A malformed record, full disk or revoked consent never changes a command result.

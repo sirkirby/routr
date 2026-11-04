@@ -172,7 +172,16 @@ writes only:
   existing state folder and stop during uninstall. The sender alone removes queue files or changes delivery totals;
   secrets stay in the secrets file;
 - one launch record per worker that took its task or was left ready (`prompted` or `ready`), under
-  `~/.local/state/routr/launch-counts`: the subscription and the time, nothing else, for the launch share. A dry run,
+  `~/.local/state/routr/launch-counts`, named by the launch's `launch_id`: the time, the subscription, the model and
+  effort chosen (none for an agent a `--pane` launch adopted, whose own launch launch cannot see), the advice's `id` and
+  its reading as the ledger keeps it (`advised`: `level`, `sure`, `between`, `work_type`, `high_risk`, `fallback` and each
+  fact's probability), the project (the git repository's
+  folder name of the worker's folder), where the worker runs, and its name. Each field is checked for its shape
+  before it is written, and never holds the task, the brief, a path, a note or a key. It counts the launch share and
+  gives `record --launch` the row's project. The file stays on this machine: telemetry sends none of it, and
+  OpenTelemetry export, when you turn it on, sends only the launch span's documented attributes (its launch id, the
+  worker's name, backend, model as given and effort among them), never the file.
+  Records written before these fields hold the subscription and the time, and still count. A dry run,
   a refusal or a failed start writes none; a `needs_input` launch writes one when its `--pane` rerun finishes it, and at once in a herdr-core terminal, where it
   goes on by itself once answered.
   Records older than 7 days are removed by the next launch's write, never by a read. Writing one never changes a

@@ -9,6 +9,7 @@ import { HARNESSES } from "./harnesses.mjs";
 import { LEVELS } from "./questions.mjs";
 import { DATA_DIR, ensureParent } from "./runtime.mjs";
 import { EFFORTS } from "./shaped.mjs";
+import { LAUNCH_ID } from "./launch-history.mjs";
 
 // The ledger is one file per user, shared by every project on the machine. Each row is labelled with its project so
 // `assess` can tell them apart: the folder name of the git repository the work happened in. A worktree counts as its
@@ -107,13 +108,14 @@ export function resolveEffort({ subscription, model, effort }, config = null) {
 export const OUTCOME_CAUSES = ["execution", "brief", "scope", "review", "launch", "unknown"];
 const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export class RunIdError extends Error {}
-export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, causes, run_id, note, subagents, project }, config = null) {
+export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, causes, run_id, note, subagents, project, launch_id }, config = null) {
+  if (launch_id != null && !LAUNCH_ID.test(launch_id)) throw new Error("--launch takes the launch_id field from launch's answer (its record template carries it)");
   if (run_id != null && !RUN_ID.test(run_id)) throw new RunIdError("--run-id takes the run_id field from record's earlier output, not id; it must name an existing run in this ledger");
   if (attempts != null && (!/^[1-9]\d*$/.test(String(attempts)) || !Number.isSafeInteger(+attempts))) throw new Error("--attempts must be a positive whole number; omit it when unknown");
   if (seconds != null && (String(seconds).trim() === "" || !Number.isFinite(+seconds) || +seconds < 0)) throw new Error("--seconds must be a nonnegative duration; omit it when unknown");
   if (causes != null && (!Array.isArray(causes) || causes.some((c) => ![...OUTCOME_CAUSES, "none"].includes(c)) || (causes.includes("none") && causes.length !== 1))) throw new Error(`--cause takes ${OUTCOME_CAUSES.join("|")}|none; none must be used alone`);
   return {
-    ts: new Date().toISOString(), run_id: run_id ?? randomUUID(), project: project ?? projectName(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set,
+    ts: new Date().toISOString(), run_id: run_id ?? randomUUID(), launch_id: launch_id ?? null, project: project ?? projectName(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set,
     // The decision model that answered and its provider: a new model is compared on real work. A row written before
     // providers existed has `jev_model` instead, read as TypeSafe's (decisionOf).
     ...decisionOf(advice), // Advice saved by an older routr carries jev_model: read as TypeSafe's
@@ -135,6 +137,9 @@ export function append(entry, path = LEDGER_PATH(), { revision = false } = {}) {
     const adviceChanged = ["id", "brief_sha"].filter((k) => prior[k] !== entry[k]);
     if (adviceChanged.length) throw new Error(`--run-id requires the original advice (different ${adviceChanged.join(", ")}); omit it for a new run`);
     if (prior.project !== entry.project) throw new Error("--run-id has a different project; use the original project or omit it for a new run");
+    // A run's launch never changes: kept when not given, refused when given as another.
+    if (entry.launch_id && (prior.launch_id ?? null) !== entry.launch_id) throw new Error(prior.launch_id ? "--run-id has a different --launch; use the original launch or omit --launch" : "--run-id names a run recorded without --launch: a revision keeps that; omit --launch");
+    entry = { ...entry, launch_id: entry.launch_id ?? prior.launch_id ?? null };
     const changed = ["subscription", "model", "effort", "level"].filter((k) => prior.chose?.[k] !== entry.chose?.[k]);
     if (changed.length) throw new Error(`--run-id has a different ${changed.join(", ")}; use the original worker choice or omit it for a new run`);
     // Outcome revisions keep stable choice evidence unless the caller explicitly replaces it.
@@ -142,6 +147,7 @@ export function append(entry, path = LEDGER_PATH(), { revision = false } = {}) {
       outcome: { ...entry.outcome, note: entry.outcome.note === undefined ? prior.outcome.note ?? null : entry.outcome.note } };
   }
   ensureParent(path); appendFileSync(path, JSON.stringify(entry) + "\n");
+  return entry; // as written: a revision's kept note, subagents and launch included
 }
 
 export function read(path = LEDGER_PATH()) {

@@ -109,9 +109,11 @@ if (acting(argv)) {
 
 // The advice and file commands. `--config` and `--headroom` may stand anywhere on the line, as they always could.
 // `take` removes the first `name <value>` from `argv` and returns the value; `takeAll` every one.
-// Keep the raw level count: a missing global value can otherwise consume --level before usage sees it, even when
-// globals precede the command. Other commands retain their existing value/brief parsing.
-const levelFlags = argv.filter((word) => /^--level(?:=|$)/.test(word)).length;
+// Keep the raw counts of the flags a command must not lose: a missing global value can otherwise consume one before
+// its command sees it (`--headroom --launch <id>`), even when globals precede the command. Those commands refuse when
+// a count changed. Other commands retain their existing value/brief parsing.
+const counted = (words) => ({ level: words.filter((word) => /^--level(?:=|$)/.test(word)).length, launch: words.filter((word) => word === "--launch").length });
+const raw = counted(argv);
 const take = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv.splice(i, 2)[1] : undefined; };
 const takeAll = (name) => { const r = []; while (argv.includes(name)) r.push(take(name)); return r; };
 const configPath = take("--config");
@@ -123,7 +125,7 @@ const leadInput = ["dispatch", "subagent"].includes(argv[0]) ? (await import("./
 argv.splice(0, argv.length, ...leadInput.args); inputNotes.push(...leadInput.warnings);
 const leadSession = leadInput.lead;
 const [mode, ...rest] = argv;
-if (mode === "usage" && levelFlags !== rest.filter((word) => /^--level(?:=|$)/.test(word)).length) {
+if (mode === "usage" && raw.level !== counted(rest).level) {
   print({ ...(await import("./lib/output.mjs")).refusal("no usage view", "usage: --level cannot be a value for --config or --headroom; eligibility was not refreshed"), level: "basic" });
   return 0;
 }
@@ -138,11 +140,16 @@ const ADVISE = {
   share: async () => console.log((await commands()).shareCommand({ ledger: take("--ledger"), out: take("--out") }, loaded().config)),
   // usage: routr dispatch "<brief>" > advice.json ... then: routr record --advice advice.json --subscription codex --model <m> --effort low [--level basic] --verdict done --check pass [--seconds 24] [--note "..."]
   record: async () => {
+    // `--launch` first, before any other flag can take it as its value (`--note --launch <id>`): with no value, or twice,
+    // record refuses it, never reads it as absent.
+    if (raw.launch !== counted(argv).launch) { print((await import("./lib/output.mjs")).refusal("nothing recorded", "record: --launch cannot be a value for --config or --headroom; nothing was recorded")); return 0; }
+    const launchFlags = raw.launch, launch = launchFlags ? take("--launch") ?? "" : undefined;
     const revising = argv.includes("--run-id"), comparing = argv.includes("--task-file");
     const taskFile = take("--task-file");
     const o = Object.fromEntries(["advice", "subscription", "model", "effort", "level", "verdict", "check", "seconds", "attempts", "note", "ledger", "report", "project"].map((f) => [f, take(`--${f}`)]));
     o.task_file = taskFile ?? (comparing ? "" : undefined);
     o.run_id = take("--run-id") ?? (revising ? "" : undefined); o.causes = takeAll("--cause");
+    o.launch = launch; o.launch_repeated = launchFlags > 1;
     print((await commands()).recordCommand(o, takeAll("--subagent"), loaded().config, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } })); // never blocks the agent; the config resolves a "default" effort
   },
   usage: async () => print(await (await commands()).usageCommand(rest, loaded().config, given, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } }), 1), // never blocks an agent
