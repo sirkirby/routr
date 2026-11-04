@@ -5,6 +5,8 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- Setup, doctor and the guides treat the Herdr app as a way to see workers, and doctor no longer tells an app user to install the older herdr's skill. (#148)
+
 ## v0.11.0 — 2026-11-03
 
 [Full notes](docs/releases/v0.11.0.md)

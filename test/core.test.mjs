@@ -119,3 +119,24 @@ test("watch says each change once, and only fixed words and paths", () => {
   expect(changes(ended, seen)).toEqual([]);
   expect(changes(v({ state: "unreadable", turns: [] }), seen)).toEqual([]);
 });
+
+test("doctor sends an app user to neither the older herdr nor its skill, and says what the app gives", async () => {
+  const { nextSteps, render } = await import("../src/lib/doctor.mjs");
+  const r = (core, herdr) => ({ runtime: "routr 0.0.0-dev (from source)", from_source: true, core, herdr, skill: [], harnesses: {}, decision: [],
+    config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] }, auto_update: { on: false, why_off: "running from source" }, next_steps: [] });
+  const none = { path: null, inside_terminal: false }, app = { path: "/bin/hc", inside_terminal: true }, installed = { path: "/bin/hc", inside_terminal: false };
+  const told = (x) => nextSteps(x).filter((s) => /herdr/i.test(s));
+  // Neither: both ways to see workers are named.
+  expect(told(r(none, { path: null, skill: false }))[0]).toContain("https://herdr.dev/download/");
+  // Terminal herdr without its skill still needs it for panes; with the app it does not.
+  expect(told(r(none, { path: "/bin/herdr", skill: false }))[0]).toContain("skills add herdrdev/herdr");
+  expect(told(r(app, { path: "/bin/herdr", skill: false }))).toEqual([]);
+  // With the app and no herdr, only Cursor's usage is left to ask for it.
+  expect(told(r(app, { path: null, skill: false }))).toEqual([expect.stringContaining("Cursor's usage")]);
+  const inApp = render(r(app, { path: null, skill: false }));
+  expect(inApp).toContain("each with its progress in a tab of its own");
+  expect(inApp).toContain("The Herdr app does not need it otherwise");
+  expect(inApp).not.toContain("herdr skill");
+  expect(render(r(installed, { path: "/bin/herdr", skill: false }))).toContain("a lead in the Herdr app shows each worker");
+  expect(render(r(none, { path: null, skill: false }))).toContain("Without it, workers run headless");
+});
