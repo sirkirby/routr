@@ -57,7 +57,7 @@ Names that mean one thing everywhere:
 because that would spend. A print reply with positive `num_turns` is also refused with this code.
 
 Codes are the fixed lists routr already has (the decision-model failure codes, the usage failure codes) plus
-`unreadable` for a file, a model list, a pane or a worktree. Cursor's usage read adds `cmd_path`: the private
+`unreadable` for a file, a model list, a pane or a worktree. Cursor's usage read on Windows adds `cmd_path`: the private
 session's shell is cmd and the temporary folder's path holds `%` or `!`, so nothing is typed; its `why` says to set
 TEMP to a folder without them, or make PowerShell the shell herdr opens.
 
@@ -210,7 +210,7 @@ The rule, as #82 made it for the decision-model providers:
   `herdr_refused` (herdr answered with an error), `herdr_invalid_response` (an answer without what routr asked for),
   `git_unreachable`, `git_refused` (a nonzero exit), `git_invalid_response`. herdr's own error code may choose among
   routr's codes (as launch already treats `agent_not_running` and `timeout` apart) but is never printed.
-- While launch or Cursor's usage read waits for a shell prompt, an unreadable `pane process-info` answer is waited
+- While launch or Cursor's usage read on Windows waits for a shell prompt, an unreadable `pane process-info` answer is waited
   out within the command's deadline. The shell wait's deadline error names unreadable processes only when the last
   process look could not be read (Cursor still returns its fixed `read_failed` usage failure). Before either shell
   readiness read, less than 50 ms left ends the wait with its deadline error; a herdr timeout during those reads
@@ -1224,7 +1224,7 @@ The change that implements this page does all of this in one pull request:
     `would_run`.
   - A whole-output marker test for herdr and git text: a fake herdr that puts a marker in its error message, its
     error code and its JSON answer, and in a pane's process names, and a fake git that puts it in stderr and stdout,
-    driven through every failure path of `launch` and `cleanup` (and named `usage cursor`, which drives herdr). The
+    driven through every failure path of `launch` and `cleanup` (and named `usage cursor` as Windows runs it, driving herdr). The
     marker appears nowhere in the printed JSON except `screen` before a task was sent, and never after.
   - Structured herdr values: a fake herdr that answers with the marker as an agent state, a rule id, a rules version,
     an agent kind and a working folder, and with values just outside each shape (an uppercase rule, a relative

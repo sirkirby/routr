@@ -180,7 +180,7 @@ Where the lead runs decides how you see its workers:
 - Anywhere else, `routr launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless, followed with
   `routr wait`, and `routr watch` shows one in any terminal.
 
-Cursor's usage is still read through the terminal `herdr`, so it needs that installed. Sizing subagents needs none of these.
+On Windows, Cursor's usage is still read through the terminal `herdr`, so it needs that installed. Sizing subagents needs none of these.
 
 To start an orchestration, open your lead agent (in the Herdr app for tabs, in herdr for panes) and type your plan after the `routr-orchestrate` skill, which
 routr installs beside the routr skill:

@@ -1,6 +1,6 @@
 // A throwaway terminal routr drives and always removes: for what a harness shows only in its own interactive screen
-// (Cursor's usage today). Node has no terminal of its own to give a program, and routr takes no dependency, so the
-// terminal is a private headless herdr session made for this one read, then stopped and deleted. It is the same inside
+// (Cursor's usage today). On macOS and Linux that is ownTerminal, below. Bun's terminal is POSIX only, so on Windows,
+// where routr takes no dependency, it is a private headless herdr session made for this one read, then stopped and deleted. It is the same inside
 // herdr and outside it: nothing opens on the user's screen, and stopping the session removes everything in it however
 // the read ended. (A split beside the caller was tried first: it squeezed the user's panes, and a read that died half
 // way left its pane open, seen 2026-09-25.) Only herdr has to be installed; no herdr window needs to be open.
@@ -11,7 +11,7 @@ import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import { callHerdr, processError } from "./process-boundary.mjs";
 import { paneView } from "./herdr.mjs";
-import { harnessEnv, start as startProcess } from "./runtime.mjs";
+import { harnessEnv, start as startProcess, startInTerminal } from "./runtime.mjs";
 
 // A session routr made carries the pid of the routr that made it, so a run that was killed half way is cleaned up by
 // the next one without touching a session another routr is still using. A pid can be reused, so a session older than
@@ -68,4 +68,28 @@ export async function openTerminal({ run, cwd, remaining, sleep, alive = pidAliv
     if (typeof pane !== "string" || !pane) throw new Error("herdr returned no pane id");
     return { pane, call, close, ...paneView(call, pane) };
   } catch (e) { await close(); throw e; }
+}
+
+// macOS and Linux: a terminal of routr's own, from Bun, for one harness read, with no herdr, hc or shell. Bun documents
+// it as POSIX only. Measured 2026-11-03 on macOS, cursor-agent 2026.10.22 (routr-lab p51): /usage read in about 3 s, and
+// its helpers gone with it. Text is what the harness wrote, control codes and all, the last part only: callers strip it.
+const KEEP_CHARS = 200000;
+export function ownTerminal(command, args, { cwd, extraEnv = {}, cols = 119, rows = 40 } = {}) {
+  let text = "";
+  const decoder = new TextDecoder();
+  const child = startInTerminal([command, ...args], { cwd, extraEnv,
+    terminal: { cols, rows, data(_t, d) { text = (text + decoder.decode(d, { stream: true })).slice(-KEEP_CHARS); } } });
+  const gone = () => child.exitCode != null || child.signalCode != null;
+  return { read: async () => text, type: async (s) => { child.terminal.write(s); }, enter: async () => { child.terminal.write("\r"); }, gone: async () => gone(),
+    // Typed too soon, a harness's screen can lose it: seen with a full-screen app still drawing.
+    settleMs: 1000,
+    // A terminal's program leads its own process group, with what it started, so the whole group is asked to go, then
+    // made to: a helper can ignore the first signal and outlive the program. One that left the group is not seen.
+    close: async () => {
+      const group = (signal) => { try { process.kill(-child.pid, signal); return true; } catch { return false; } };
+      const left = async (ms) => { for (let t = 0; t < ms; t += 50) { if (!group(0)) return false; await new Promise((r) => setTimeout(r, 50)); } return group(0); };
+      group("SIGTERM");
+      if (await left(2000)) { group("SIGKILL"); await left(1000); }
+      try { child.terminal.close(); } catch {}
+    } };
 }

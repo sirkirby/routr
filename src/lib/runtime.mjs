@@ -525,6 +525,8 @@ export function spawnSelf(args) {
     c.on("error", () => {}); c.unref(); return true;
   } catch { return false; }
 }
+// A process in a terminal of its own, from Bun (POSIX only), for what a harness shows only on an interactive screen.
+export const startInTerminal = (argv, { cwd, extraEnv = {}, terminal }) => Bun.spawn(argv, { cwd, env: { ...harnessEnv(), TERM: "xterm-256color", ...extraEnv }, terminal });
 // The command line that runs routr again; null from a source checkout it cannot locate.
 export const selfCommand = (args) => (!standalone() && !ROUTR_ENTRY ? null : [process.execPath, ...(standalone() ? [] : [ROUTR_ENTRY]), ...args]);
 
