@@ -33,15 +33,15 @@ test("launch plans use each harness's measured permissions and model syntax", ()
     .toMatchObject({ executable: "cursor-agent", argv: ["--yolo", "--trust", "--model", "composer-2.5"], env: { CURSOR_CONFIG_DIR: "/private/config" } });
   expect(plan({ kind: "agy", model: "gemini-3.8-flash-low", cwd: "/work" }).argv)
     .toEqual(["--dangerously-skip-permissions", "--add-dir", "/work", "--model", "gemini-3.8-flash-low"]);
-  expect(plan({ kind: "kiro", model: "claude-haiku-4.5" })).toMatchObject({ executable: "kiro-cli", argv: ["--v3", "chat", "--trust-all-tools", "--model", "claude-haiku-4.5"], env: {} });
+  expect(plan({ kind: "kiro", model: "claude-haiku-4.5" })).toMatchObject({ executable: "kiro-cli", argv: ["--v2", "chat", "--trust-tools=*", "--model", "claude-haiku-4.5"], env: {} });
 });
 
 test("Kiro's effort: auto passes no flag (the model decides, nothing remembered); a level is passed and its side effect said", () => {
   const auto = plan({ kind: "kiro", model: "auto", effort: "auto" });
-  expect(auto.argv).toEqual(["--v3", "chat", "--trust-all-tools", "--model", "auto"]);
+  expect(auto.argv).toEqual(["--v2", "chat", "--trust-tools=*", "--model", "auto"]);
   expect(auto.warnings.join(" ")).not.toContain("remembers");
   const high = plan({ kind: "kiro", model: "claude-opus-4.8", effort: "high" });
-  expect(high.argv).toEqual(["--v3", "chat", "--trust-all-tools", "--model", "claude-opus-4.8", "--effort", "high"]);
+  expect(high.argv).toEqual(["--v2", "chat", "--trust-tools=*", "--model", "claude-opus-4.8", "--effort", "high"]);
   expect(high.warnings.join(" ")).toContain("remembers --effort as the user's default for claude-opus-4.8");
   expect(plan({ kind: "claude", model: "sonnet", effort: "auto" }).argv).toContain("auto"); // only Kiro reads auto as "no flag"
 });
@@ -898,20 +898,12 @@ function fakeKiro({ model = "glm-5", shown = model } = {}) {
   return f;
 }
 
-test("Kiro in a pane: its trust-all-tools warning, read as blocked, is needs_input with its screen, and no key or task goes in", async () => {
-  const warning = "In this mode, Kiro will execute all tool calls\n> No, exit\n  Yes, I accept\n  Yes, and don't ask again";
-  const f = fakeHerdr({ kind: "kiro", reply: (a) => {
-    if (a[1] === "read" && f.calls.some((c) => c[1] === "start")) return herdrOK({ text: warning });
-    if (a[0] === "agent" && a[1] === "get" && f.calls.some((c) => c[1] === "start")) return herdrOK({ agent: { agent: "kiro", agent_status: "blocked", cwd: process.cwd() } });
-    if (a[0] === "agent" && a[1] === "explain") return herdrOK({ state: "blocked" });
-  } });
-  const r = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...f.deps, models: async () => ["glm-5"] });
-  expect(r.state).toBe("needs_input");
-  expect(r.screen).toContain("Yes, and don't ask again");
-  expect(r.needs_input.note).toContain("for the person to answer");
-  const start = f.calls.find((c) => c[1] === "start");
-  expect(start.slice(start.indexOf("--") + 1, start.indexOf("--") + 4)).toEqual(["--v3", "chat", "--trust-all-tools"]);
-  expect(f.calls.some((c) => c[1] === "prompt" || c[1] === "send-keys" || c[1] === "send-text")).toBe(false);
+test("Kiro in a pane starts on V2, whose questions herdr's rules read: V3 read as ready, and launch's Enter answered its folder trust", async () => {
+  const f = fakeKiro(), r = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...f.deps, models: async () => ["glm-5"] });
+  const start = f.calls.find((c) => c[1] === "start"), argv = start.slice(start.indexOf("--") + 1);
+  expect(argv).toEqual(["--v2", "chat", "--trust-tools=*", "--model", "glm-5"]);
+  expect(r.start.argv).toEqual(argv);
+  for (const flag of ["--v3", "--trust-all-tools", "--trust-workspace"]) expect(argv).not.toContain(flag);
 });
 
 test("Kiro: a model id it does not list is refused before any pane, from its own list, not its screen", async () => {

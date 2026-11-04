@@ -112,7 +112,8 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
   const needsInput = async (code, why, more = {}) => {
     inputNeeded(code);
     out.ok = false; out.state = "needs_input";
-    out.needs_input = { why, ...more, ...(h.startup ? { note: h.startup } : {}) };
+    const startup = h.core?.startup ?? h.startup;
+    out.needs_input = { why, ...more, ...(startup ? { note: startup } : {}) };
     out.screen = WITHHELD;
     out.next.push(readStep(w), doNext(`${STARTUP_INPUT} Once it is answered the worker goes on by itself: do not launch it again.`, templateCommand(["hc", "keys", opened.terminal, "<keys>"])), ...follow);
     step("needs_input", false, why);

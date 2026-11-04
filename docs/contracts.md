@@ -636,7 +636,7 @@ launch as before.
 - `--worktree <branch>` (with `--base`, `--copy`): as a headless launch.
 - `--timeout` (default 120000) bounds the wait for it to start.
 - `start` is the harness's command as the runner will run it: `start.argv` ends with its first message, which says only
-  where the task file is (after Antigravity's `-i`; first, Codex's `--no-daemon`; Kiro's `--v3 chat`). `start.env` lists
+  where the task file is (after Antigravity's `-i`; first, Codex's `--no-daemon`; Kiro's `--v3 chat --trust-all-tools`, where a pane has `--v2 chat --trust-tools=*`). `start.env` lists
   each trace-context carrier and config location passed, as `"<forwarded>"`, plus any Claude Code subagent defaults. A
   Cursor worker's `CURSOR_CONFIG_DIR` is its run folder's private copy, which is not shown there. `ran` displays that
   command and the `hc run`, with the lead's space as `<lead's space>` and routr's own program as `routr`. `hc run` also carries the label

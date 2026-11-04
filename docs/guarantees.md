@@ -301,8 +301,8 @@ instead (next section). What a headless worker means on your machine:
   leaves it too (seen once): it ended on its own about five minutes after its last turn once, and within two hours
   another time (Cursor documents no idle exit), and it outlived its folder's removal. A `stop` during the turn that
   started it signals it with that turn's group (what it does then: not measured).
-- **Kiro's permissions.** Kiro runs with `--trust-tools=*` (in a pane or a core terminal, `--trust-all-tools`: its V3 screen
-  ignores `--trust-tools`), and routr tells it at `initialize` that it
+- **Kiro's permissions.** Kiro runs with `--trust-tools=*`, as in a pane (in a core terminal, on its V3 screen, which ignores
+  it, `--trust-all-tools`), and routr tells it at `initialize` that it
   reads and writes no files and runs no terminal for it. A request Kiro makes of routr (a permission, for one) is
   declined with a JSON-RPC error. None came in the one measured protocol run, so what Kiro does after a decline is not
   measured.

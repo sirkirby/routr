@@ -67,15 +67,17 @@ test("each harness's differences in a core terminal are data: its flags, and how
   expect(argv("agy")).toEqual(["--dangerously-skip-permissions", "--add-dir", "/w", "--model", "m", "-i", "the pointer"]);
   expect(argv("kiro")).toEqual(["--v3", "chat", "--trust-all-tools", "--model", "m", "the pointer"]);
   expect(KINDS.filter((k) => HARNESSES[k].noStatus)).toEqual(["cursor"]);
-  // Only Codex's flag is the core terminal's alone: a pane starts Codex without it, and Kiro with --v3 too.
+  // What differs in a core terminal is data: a pane starts Codex without its flag, and Kiro on V2, and only Kiro's headless
+  // start is neither (below). Every other harness starts the same in both.
   expect(plan({ kind: "codex", model: "m" }).argv).not.toContain("--no-daemon");
-  expect(plan({ kind: "kiro", model: "m" }).argv.slice(0, 3)).toEqual(["--v3", "chat", "--trust-all-tools"]);
+  expect(plan({ kind: "kiro", model: "m" }).argv).toEqual(["--v2", "chat", "--trust-tools=*", "--model", "m"]);
+  for (const kind of ["claude", "cursor"]) expect(argv(kind).slice(0, -1)).toEqual(plan({ kind, model: "m" }).argv);
   // Its V3 screen ignores --trust-tools (kiro-cli 3.0.0), and the person's own trust decision is never answered for them.
-  for (const kind of [undefined, false]) expect(plan({ kind: "kiro", model: "m", ...(kind === false ? { interactive: false } : {}) }).argv).not.toContain("--trust-workspace");
-  expect(plan({ kind: "kiro", model: "m" }).argv).not.toContain("--trust-tools=*");
+  expect(argv("kiro")).not.toContain("--trust-tools=*");
+  for (const start of [argv("kiro"), plan({ kind: "kiro", model: "m" }).argv, plan({ kind: "kiro", model: "m", interactive: false }).argv]) expect(start).not.toContain("--trust-workspace");
 });
 
-test("Kiro's headless start stays its ACP mode, with neither --v3 nor chat, and a model named chat survives it", () => {
+test("Kiro's headless start stays its ACP mode, with no engine flag and no chat, and a model named chat survives it", () => {
   expect(ADAPTERS.kiro.argv({ model: "m" })).toEqual(["acp", "--trust-tools=*", "--model", "m"]);
   expect(ADAPTERS.kiro.argv({ model: "chat" })).toEqual(["acp", "--trust-tools=*", "--model", "chat"]);
 });

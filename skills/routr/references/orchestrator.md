@@ -169,9 +169,9 @@ object describing what it did.
   with a matching `brief_sha`: otherwise launch refuses before any harness, pane or worktree call. Dry runs make the same checks, return `ok: false` with `error` on a refusal, and still plan.
   With no task (no `--task-file` or `--task`) there is nothing to compare, and no `advice` field.
 - routr answers no question: not the user's shell (its plugins and startup files ask their own), not a harness at
-  startup. It passes each harness's own flags so none is asked (Cursor `--trust`, Codex
+  startup. It passes each harness's own flags so none is asked (Cursor `--trust`, Kiro `--trust-tools=*` in a pane, Codex
   `--dangerously-bypass-hook-trust` for its hooks review; Codex and Claude Code still ask to trust a folder outside a
-  trusted one; Kiro V3 asks twice until the person has answered, `references/harnesses.md`), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
+  trusted one; in a core terminal Kiro V3 asks twice until the person has answered, `references/harnesses.md`), and anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
 - A cmd shell expands `%` and `!` in a folder path even inside quotes, so launch refuses (`failed`) to type such a
   folder into one: use a folder without them, or a pane running PowerShell.
 - `--dry-run` requires `--model` and prints `would_run` without executing worker actions. It may queue a planned

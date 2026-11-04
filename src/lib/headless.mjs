@@ -312,7 +312,7 @@ export const ADAPTERS = {
     },
   },
   kiro: {
-    // --trust-tools=*, the model, the effort; `acp` in place of `--v3 chat`.
+    // --trust-tools=*, the model, the effort; `acp` in place of `chat`.
     argv: ({ model, effort }) => ["acp", ...plan({ kind: "kiro", model, effort, interactive: false }).argv],
     connect: (c, { cwd, session, emit, turnCarriers = () => ({}), processCarriers = {} }) => {
       const { rpc, outcome, open, take } = rpcPipe(c), r = kiroReader();
