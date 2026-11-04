@@ -216,11 +216,12 @@ in that pane's own shell, which loads what that shell is set up to load. A headl
 routr's own environment (so no project `.env` either). All process starts use shared platform defaults, which hide
 the console on Windows and resolve a command as the shell would, starting an npm `.cmd` shim's script directly.
 Harness reads, headless turns and the private herdr server each supply the shared environment filter, which removes
-herdr's pane variables, the harness lead session names in the
+herdr's pane variables, herdr-core's terminal variables, the harness lead session names in the
 [harness reference](../skills/routr/references/harnesses.md#rules-that-hold-for-every-harness) and the trace-context
 carriers, preserving sign-in, provider and configuration settings; a headless turn then gets back only the carriers
 saved at launch ("Trace context", below). A test inventories process starts: each supplies that filter or names an exact
-exception for a non-harness process. Herdr clients keep their environment to find their session.
+exception for a non-harness process. Herdr clients and routr's `hc` and `herdr-app` calls keep their environment to find
+their session.
 In a pane, routr types commands for that pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. A folder
 path typed into a shell reaches it exactly (in PowerShell, curly quotes as well as `'`), or is refused before anything
 is typed: cmd expands `%` and `!` even inside quotes, so a cmd shell is never given a path holding either, and routr
@@ -236,6 +237,12 @@ Outside herdr, `routr launch --kind claude`, `codex`, `cursor`, `agy` or `kiro` 
 stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one process a turn), Antigravity's `--print` stream-json mode, or Kiro's ACP mode, on your sign-in, held by one routr process of its own (its holder).
 `--pane` and `--direction` are refused outside herdr. What that means on your machine:
 
+- **In a herdr-core terminal.** In the Herdr app, or with `HC_TERMINAL_ID` set and no `HERDR_ENV`, launch also asks `hc`
+  to start a terminal running `routr watch`, labelled for your space so that the app shows it as a tab, and renames that
+  tab to the worker's name with `herdr-app`. Those are the only things it asks of either. It gets the worker's name and
+  folder, never its brief. It reads and changes nothing of the worker, stops nothing when closed, and exits when
+  `cleanup --worker` removes the worker. If it cannot start, the worker runs anyway and launch warns. `routr watch` also
+  reports the worker's status there with OSC 7501: its state and its harness's name, nothing of its text.
 - **Its worktree.** With `--worktree <branch>`, launch makes the worktree with git (`git worktree add -b`), under
   `~/.local/share/routr/worktrees/<repository>-<hash>/<branch>` (`/` and `\` in the branch become `-`), on a branch
   that must not exist yet, from `--base` or the checkout's HEAD, and copies the `--copy` files and folders in from

@@ -7,7 +7,7 @@ import { chmodSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, read
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { connect, generations, MESSAGE_MAX, probe, removeEndpoint, socketPathFits, writeSecret } from "./channel.mjs";
-import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, ownedBy, reserve, runDir, stateOf, unreadableWhy, WORKERS_DIR, workerOf } from "./headless.mjs";
+import { FORMAT, groupAlive, HEADLESS_KINDS, headlessArgv, ownedBy, readWorker, reserve, runDir, stateOf, unreadableWhy, WORKERS_DIR, workerOf } from "./headless.mjs";
 import { HARNESSES, notReady, subagentDefaults } from "./harnesses.mjs";
 import { configOf, loadConfig, oneReading } from "./config.mjs";
 import { readTask } from "./advice-file.mjs";
@@ -16,6 +16,7 @@ import { answer } from "./output.mjs";
 import { CLOSING, count, OFF } from "./wording.mjs";
 import { callGit } from "./process-boundary.mjs";
 import { dropCopy } from "./cleanup.mjs";
+import { inCore, showWorker } from "./core.mjs";
 import { CARRIERS, ensureParent, NAME_RULE, WORKER_NAME, folderId, FORWARDED, home, lockIsStale, lockOwned, lockToken, releaseFileLock, probe as runProbe, readJsonFile, realOr, realPath, savedCarriers, spawnSelf, takeLock, writeJsonAtomic, WORKTREES_DIR, worktreeFolder } from "./runtime.mjs";
 
 const RUNNING = new Set(["working", "waiting", "starting"]);
@@ -280,6 +281,15 @@ export async function launchHeadless(o, out, { prompt, env, settings, ready, spa
     out.worker.session = r.session ?? null;
     step("prompt", true, r.session ? `${HARNESSES[o.kind].label} started the task's turn (session ${r.session})` : `The task was written to ${HARNESSES[o.kind].label}'s input; it has not named its session yet`);
     out.ok = true; out.state = "prompted";
+    // Shown beside the worker, never instead of it: the worker has started either way.
+    if (inCore(env)) {
+      const shown = await showWorker({ name: o.name, id: readWorker(o.name)?.id ?? randomUUID().replace(/-/g, ""), cwd: out.cwd, env }).catch(() => ({ code: "not_available" }));
+      if (shown.terminal) { out.worker.terminal = shown.terminal; step("terminal", true, shown.tab ? `${o.name}'s progress is in a tab of its own (${shown.terminal})` : `${o.name}'s progress is in terminal ${shown.terminal}`); }
+      else {
+        out.warnings.push(warning("worker_not_shown", `The worker is running, but herdr-core did not start a terminal to show it (${shown.code})`));
+        out.next.push(runNext("To see its progress, run this in a terminal of your own.", ["routr", "watch", "--name", o.name]));
+      }
+    }
     out.next.push(runNext("Wait for this worker's turn to end (it returns earlier when any worker you wait on finishes); then read its report.", ["routr", "wait", "--name", o.name]));
     return;
   }

@@ -93,6 +93,7 @@ none after; `CODEX_HOME` passed both times, and herdr set the private session's 
 | Cursor | `CURSOR_CONVERSATION_ID`, `CURSOR_REQUEST_ID`, `CURSOR_AGENT`, `CURSOR_ASKPASS_SOCKET`, `CURSOR_ASKPASS_SECRET`, `CURSOR_AGENT_STORE_FILES_DIR`, `CURSOR_AGENT_STORE_SHARED_PATHS`, `CURSOR_SANDBOX`, `AGENT_TRANSCRIPTS` | Installed bundle's command environment and shell snapshot filter, cursor-agent 2026.10.22; 2026-10-24 |
 | Antigravity | `ANTIGRAVITY_CONVERSATION_ID` | Installed binary, agy 1.4.7; 2026-10-24 |
 | Kiro | `KIRO_SESSION_ID` | Installed binary, kiro-cli 2.34.0; 2026-10-24 |
+| herdr-core terminals | `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET`, `HC_SCOPE`. `HC_SESSION`, which chooses a core, is kept | Seen in a Herdr app terminal, hc 0.1.17; 2026-11-03 |
 | herdr panes | `HERDR_ENV`, `HERDR_SOCKET_PATH`, `HERDR_CLIENT_SOCKET_PATH`, `HERDR_SESSION`, `HERDR_BIN_PATH`, `HERDR_WORKSPACE_ID`, `HERDR_TAB_ID`, `HERDR_PANE_ID` | Installed binary's pane environment name block, herdr 0.9.5; 2026-10-24 |
 
 **Not checked:** whether agy 1.4.7 assigns `ANTIGRAVITY_LS_ADDRESS` and `ANTIGRAVITY_CSRF_TOKEN` to tool commands.

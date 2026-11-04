@@ -451,10 +451,12 @@ export function stop(child, { platform = process.platform, via, after = later, g
 // routr starts take itself for a child of the lead's session, and CODEX_THREAD_ID ties a Codex to the lead's thread
 // (measured 2026-10-21: a child otherwise inherited the lead identity). Herdr 0.9.5 binary strings list the eight pane
 // names: config (HERDR_CONFIG_PATH, HERDR_HOME, HERDR_LOG) must stay so server and clients use the same settings.
+// herdr-core's three terminal names go the same way (seen in an app terminal, hc 0.1.17, 2026-11-03); HC_SESSION, which
+// chooses a core, stays. routr's own hc calls keep them (core.mjs).
 // The other harness session names were checked in vendor source and installed binaries
 // 2026-10-24 (versions and sources in references/harnesses.md). Exact names, not harness prefixes: sign-in, provider
 // and config settings (CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_USE_BEDROCK, CODEX_HOME, CURSOR_CONFIG_DIR, …) stay.
-const LEAD_SESSION = /^(?:HERDR_(?:ENV|SOCKET_PATH|CLIENT_SOCKET_PATH|SESSION|BIN_PATH|WORKSPACE_ID|TAB_ID|PANE_ID)|CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(?:ENTRYPOINT|EXECPATH|SESSION_ID|SESSION_ATTENDED|CHILD_SESSION|BRIDGE_SESSION_ID|MESSAGING_SOCKET|MESSAGING_TOKEN|SSE_PORT)|CODEX_THREAD_ID|CODEX_SESSION_ID|CODEX_TOOL_CALL_ID|CODEX_SANDBOX|CODEX_SANDBOX_NETWORK_DISABLED|CURSOR_CONVERSATION_ID|CURSOR_REQUEST_ID|CURSOR_AGENT|CURSOR_ASKPASS_SOCKET|CURSOR_ASKPASS_SECRET|CURSOR_AGENT_STORE_FILES_DIR|CURSOR_AGENT_STORE_SHARED_PATHS|CURSOR_SANDBOX|AGENT_TRANSCRIPTS|ANTIGRAVITY_CONVERSATION_ID|KIRO_SESSION_ID)$/i;
+const LEAD_SESSION = /^(?:HERDR_(?:ENV|SOCKET_PATH|CLIENT_SOCKET_PATH|SESSION|BIN_PATH|WORKSPACE_ID|TAB_ID|PANE_ID)|HC_(?:TERMINAL_ID|TERMINAL_SOCKET|SCOPE)|CLAUDECODE|CLAUDE_PID|CLAUDE_EFFORT|CLAUDE_CODE_(?:ENTRYPOINT|EXECPATH|SESSION_ID|SESSION_ATTENDED|CHILD_SESSION|BRIDGE_SESSION_ID|MESSAGING_SOCKET|MESSAGING_TOKEN|SSE_PORT)|CODEX_THREAD_ID|CODEX_SESSION_ID|CODEX_TOOL_CALL_ID|CODEX_SANDBOX|CODEX_SANDBOX_NETWORK_DISABLED|CURSOR_CONVERSATION_ID|CURSOR_REQUEST_ID|CURSOR_AGENT|CURSOR_ASKPASS_SOCKET|CURSOR_ASKPASS_SECRET|CURSOR_AGENT_STORE_FILES_DIR|CURSOR_AGENT_STORE_SHARED_PATHS|CURSOR_SANDBOX|AGENT_TRANSCRIPTS|ANTIGRAVITY_CONVERSATION_ID|KIRO_SESSION_ID)$/i;
 
 // W3C trace context, as OpenTelemetry's "environment variables as context propagation carriers" names it: routr hands
 // the carriers in its own environment on to workers unchanged when export is off. This transport boundary checks
@@ -517,11 +519,14 @@ export const workerEnv = (carriers, extra = {}, env = process.env) => ({ ...harn
 // EMFILE) is ignored; one that fails at once returns false.
 export function spawnSelf(args) {
   try {
-    if (!standalone() && !ROUTR_ENTRY) return false;
-    const c = start(process.execPath, [...(standalone() ? [] : [ROUTR_ENTRY]), ...args], { detached: true, stdio: "ignore", env: harnessEnv() });
+    const argv = selfCommand(args);
+    if (!argv) return false;
+    const c = start(argv[0], argv.slice(1), { detached: true, stdio: "ignore", env: harnessEnv() });
     c.on("error", () => {}); c.unref(); return true;
   } catch { return false; }
 }
+// The command line that runs routr again; null from a source checkout it cannot locate.
+export const selfCommand = (args) => (!standalone() && !ROUTR_ENTRY ? null : [process.execPath, ...(standalone() ? [] : [ROUTR_ENTRY]), ...args]);
 
 // Run a harness command read-only, in harnessEnv, and collect stdout; resolve null on any failure or timeout, never
 // throw.

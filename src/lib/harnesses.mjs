@@ -2,6 +2,8 @@
 // references/harnesses.md). Launch flags are measured; see references/harnesses.md.
 //   label, executable: how it is named to a person, and the command that starts it. installAs: how the install hint
 //     names it ("Cursor (cursor-agent)": the command, where the name does not already say it).
+//   app: the name it gives itself in program status, which herdr-core shows (routr-lab p50; Cursor reports none, so
+//     "cursor", the name of its icon in the Herdr app).
 //   skills: the skills folder it reads, when not the shared ~/.agents/skills (routr's skills are linked there on
 //     install, when the folder above it exists: that harness is set up on this machine).
 //   permissions, model, effort: its permissive flags and model/effort syntax. effortValue(level): the value passed
@@ -107,7 +109,7 @@ export function claudeBilling(out) {
 }
 
 export const HARNESSES = {
-  claude: { label: "Claude Code", executable: "claude", installAs: "Claude Code", skills: ".claude/skills",
+  claude: { label: "Claude Code", executable: "claude", app: "claude-code", installAs: "Claude Code", skills: ".claude/skills",
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
     // Measured 2.1.316, 2026-11-02: plain Agent and /code-review; both explicit spawn settings beat a differing pair.
     subagents: ({ model, effort }) => ({ env: { ...(model ? { CLAUDE_CODE_SUBAGENT_MODEL: model } : {}), ...(effort ? { CLAUDE_CODE_SUBAGENT_EFFORT: effort } : {}) },
@@ -129,7 +131,7 @@ export const HARNESSES = {
     // took the read from 7.1-8.8 s to 4.4-5.2 s wall. `--bare` is no use: it skips the keychain and shows no numbers.
     quiet: ["--settings", '{"disableAllHooks":true}', "--strict-mcp-config"],
     usage: { source: "claude /usage", read: (o) => readClaude({ ...o, quiet: HARNESSES.claude.quiet }) } },
-  codex: { label: "Codex", executable: "codex", installAs: "Codex",
+  codex: { label: "Codex", executable: "codex", app: "codex", installAs: "Codex",
     // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
     // "Update available" just after herdr reported it ready, and the Enter that submitted the task chose "Update now".
     // `--dangerously-bypass-hook-trust`: a hook the user has not trusted in Codex (new, or changed since) opens "Hooks need
@@ -152,7 +154,7 @@ export const HARNESSES = {
     efforts: async (model) => (await readCodexModels())?.find((m) => (m.slug ?? m.id) === model)?.supported_reasoning_levels?.map((e) => e.effort ?? e) ?? null,
     suggested: { hardest_work: "strong", reserve: 0.2 },
     usage: { source: "app-server", read: readCodexLive } },
-  cursor: { label: "Cursor", executable: "cursor-agent", installAs: "Cursor (cursor-agent)",
+  cursor: { label: "Cursor", executable: "cursor-agent", app: "cursor", installAs: "Cursor (cursor-agent)",
     permissions: ["--yolo", "--trust"], model: "--model", list: "cursor-agent models",
     noEffort: "cursor has no separate --effort flag; choose a model id with the desired effort",
     env: (dir) => ({ CURSOR_CONFIG_DIR: dir ?? "<private-cursor-config-dir>" }),
@@ -175,7 +177,7 @@ export const HARNESSES = {
   // Skills: measured 2026-10-05 on agy 1.2.17: asked to list its skills, it named one placed in ~/.gemini/config/skills
   // and none of those in ~/.gemini/antigravity-cli/skills (the folder its web docs name) or ~/.agents/skills (it reads
   // only a workspace's .agents/skills). Its bundled guide and its binary name ~/.gemini/config/skills too.
-  agy: { label: "Antigravity", executable: "agy", installAs: "Antigravity (agy)", skills: ".gemini/config/skills",
+  agy: { label: "Antigravity", executable: "agy", app: "antigravity", installAs: "Antigravity (agy)", skills: ".gemini/config/skills",
     permissions: ["--dangerously-skip-permissions"], model: "--model", list: "agy models", dirFlag: "--add-dir",
     noEffort: "agy encodes effort in --model; omit --effort (agy 1.2.11 refuses one that disagrees with the id)",
     // No status command. `agy models` says "Please sign in to view available models" (exit 1) when signed out, and never
@@ -190,7 +192,7 @@ export const HARNESSES = {
   // `--effort` is per model (kiro.dev/docs/models/effort: the newer Claude and GPT models); a model without it, `auto`
   // included, shows effort "n/a" and ignores the flag silently (measured). Kiro remembers an explicit level as the
   // user's default for that model (its docs), so `auto`, the default, passes none and the model decides.
-  kiro: { label: "Kiro", executable: "kiro-cli", installAs: "Kiro (kiro-cli)", skills: ".kiro/skills", // Kiro reads only ~/.kiro/skills (measured)
+  kiro: { label: "Kiro", executable: "kiro-cli", app: "kiro-cli", installAs: "Kiro (kiro-cli)", skills: ".kiro/skills", // Kiro reads only ~/.kiro/skills (measured)
     permissions: ["chat", "--trust-tools=*"], model: "--model", effort: "--effort", autoEffort: "auto", list: "kiro-cli chat --list-models",
     // 2026-09-26: an unknown id ran its default model without a word (its footer then showed no model). Checked
     // against `kiro-cli chat --list-models` before launch, not read from its screen; drop once Kiro refuses one.

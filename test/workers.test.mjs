@@ -321,7 +321,7 @@ function world(over = {}) {
   const helperPids = () => { try { return JSON.parse(readFileSync(join(helper, "pids"), "utf8")); } catch { return []; } };
   // Every process run from this world's helper folder too, recorded or not.
   const killHelper = () => { for (const pid of helperPids()) try { process.kill(pid, "SIGKILL"); } catch {} if (POSIX) Bun.spawnSync(["pkill", "-9", "-f", helper]); };
-  return { home, work, gate, linger, inputs, env, run, helperPids, killHelper, outputs, task, advise, launch: launchW, runDir, state, settled, release: () => writeFileSync(gate, "") };
+  return { home, bin, work, gate, linger, inputs, env, run, helperPids, killHelper, outputs, task, advise, launch: launchW, runDir, state, settled, release: () => writeFileSync(gate, "") };
 }
 const filesUnder = (dir) => readdirSync(dir, { recursive: true }).map(String).filter((f) => { try { return statSync(join(dir, f)).isFile(); } catch { return false; } });
 
@@ -1848,3 +1848,61 @@ test("a refused concurrent Codex send preserves the first send's prepared turn c
     expect(turns.map((s) => wireAttrs(s)["routr.turn.messages"])).toEqual([1, 1]);
   } finally { writeFileSync(w.env.FAKE_START_GATE, ""); w.release(); peer?.close(); w.run(["stop", "--name", "pending"]); await w.settled("pending"); w.run(["cleanup", "--worker", "pending"]); }
 }, 30000);
+
+// In a herdr-core terminal: a real holder and a fake harness, `hc` and `herdr-app` that write down what they are asked.
+const FAKE_HC = `
+const fs = require("node:fs"), a = process.argv.slice(2);
+fs.appendFileSync(process.env.FAKE_HC_LOG, JSON.stringify(a) + "\\n");
+if (process.env.FAKE_HC_REFUSE) process.exit(3);
+console.log(JSON.stringify(a[0] === "get" ? { address: "t3", labels: { "herdr.space": "sp1" } } : { address: "t9" }));
+`;
+test("in a core terminal launch shows the worker in a tab, the brief goes nowhere near hc, and a failure there costs only the tab", () => {
+  const w = world({ HC_TERMINAL_ID: "t3", HC_TERMINAL_SOCKET: "/s", HC_SCOPE: "x" }), log = join(w.home, "hc.jsonl");
+  w.env.FAKE_HC_LOG = log;
+  fakeExecutable(w.bin, "hc", FAKE_HC); fakeExecutable(w.bin, "herdr-app", FAKE_HC);
+  const secret = `${BRIEF} a brief only the worker may see`, l = w.launch("c1", w.task(secret));
+  expect(l.ok).toBe(true);
+  expect(l.worker.terminal).toBe("t9");
+  expect(l.steps.map((s) => s.step)).toContain("terminal");
+  const asked = readFileSync(log, "utf8");
+  expect(JSON.parse(asked.split("\n")[1]).slice(0, 2)).toEqual(["run", "--bg"]);
+  expect(asked).toContain("herdr.space=sp1");
+  expect(asked).toContain("watch");
+  expect(asked).not.toContain("only the worker may see");
+  expect(w.run(["wait", "--name", "c1"]).state).toBe("finished");
+  expect(w.run(["cleanup", "--worker", "c1"]).state).toBe("removed");
+  w.env.FAKE_HC_REFUSE = "1";
+  const r = w.launch("c2", w.task(secret));
+  expect(r.ok).toBe(true);
+  expect(r.worker.terminal).toBeUndefined();
+  expect(r.warnings.join(" ")).toContain("did not start a terminal");
+  expect(r.next.map((n) => n.argv)).toContainEqual(["routr", "watch", "--name", "c2"]);
+  expect(w.run(["wait", "--name", "c2"]).state).toBe("finished");
+  expect(w.run(["cleanup", "--worker", "c2"]).state).toBe("removed");
+}, 60000);
+
+test("watch follows a worker until it is cleaned up, with status only in a core terminal, and never its brief or its report's text", async () => {
+  const w = world();
+  const l = w.launch("c3", w.task(`${BRIEF} a brief only the worker may see`));
+  expect(l.ok).toBe(true);
+  expect(w.run(["wait", "--name", "c3"]).state).toBe("finished");
+  const follow = (extra) => Bun.spawn([process.execPath, SCRIPT, "watch", "--name", "c3"], { env: { ...w.env, ...extra }, stdout: "pipe", stderr: "pipe" });
+  const plain = follow({}), core = follow({ HC_TERMINAL_ID: "t3" });
+  await Bun.sleep(1500);
+  expect(w.run(["cleanup", "--worker", "c3"]).state).toBe("removed");
+  const [a, b] = await Promise.all([new Response(plain.stdout).text(), new Response(core.stdout).text()]);
+  expect(await plain.exited).toBe(0);
+  expect(await core.exited).toBe(0);
+  for (const out of [a, b]) {
+    expect(out).toContain("routr worker c3: Claude Code");
+    expect(out).toContain("report at ");
+    expect(out).toContain("cleaned up");
+    expect(out).not.toContain("only the worker may see");
+    expect(out).not.toContain("VERDICT");
+  }
+  expect(a).not.toContain("\x1b]");
+  expect(b).toContain("\x1b]7501;state=done:app=claude-code:");
+  const none = Bun.spawnSync([process.execPath, SCRIPT, "watch", "--name", "nobody"], { env: w.env });
+  expect(none.exitCode).toBe(1);
+  expect(none.stderr.toString()).toContain("no headless worker named nobody");
+}, 60000);
