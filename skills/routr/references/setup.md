@@ -3,8 +3,8 @@
 Walk the user through this. Ask before you write or install anything, and show what you are about to write.
 Requirements: the `routr` command (one standalone binary; `routr --version` shows it). To see workers as they run, use
 the Herdr app (tabs) or herdr in a terminal (panes): step 5. Without either, an orchestrator can launch headless
-Claude Code, Codex, Cursor, Antigravity and Kiro workers, and the worker and subagent parts work as they are. Reading
-Cursor's usage needs the terminal `herdr` installed (see step 4). If `routr` is missing, install it first:
+Claude Code, Codex, Cursor, Antigravity and Kiro workers, and the worker and subagent parts work as they are. On
+Windows, reading Cursor's usage needs the terminal `herdr` installed (see step 4). If `routr` is missing, install it first:
 
 macOS and Linux:
 
@@ -204,7 +204,7 @@ settings kept). It never needs Claude's statusline, and setup does not touch `~/
 `routr statusline` still works as a statusline command for a user who wants it (it prints the model and usage and
 saves a snapshot); routr uses that snapshot instead of starting Claude while it is under 5 minutes old. Do not
 suggest replacing a statusline the user already has. Codex and Antigravity are also read from the harness directly
-and need nothing; Cursor's usage is read from its `/usage` screen in a private herdr session, in the background: herdr must be installed.
+and need nothing; Cursor's usage is read from its `/usage` screen in a terminal of routr's own, in the background, and needs nothing on macOS and Linux; on Windows that is a private herdr session, so herdr must be installed.
 Kiro's is read from its own `/usage` command in the background and needs nothing either; routr deletes the empty Kiro
 session each reading leaves. `routr skill install` links the skill into `~/.kiro/skills`, the only folder Kiro reads.
 

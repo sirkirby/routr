@@ -12,7 +12,8 @@ import { olderThan, takeLock } from "../src/lib/runtime.mjs";
 import { usageCommand } from "./contract.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
 import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage, readCursor, refreshCursor } from "../src/lib/cursor-usage.mjs";
-import { cfg, cliEnv, herdrError, herdrOK, live, metered, none, NOW, scratch, SCRIPT, shellInfo, win } from "./helpers.mjs";
+import { ownTerminal } from "../src/lib/terminal.mjs";
+import { cfg, cliEnv, fakeExecutable, herdrError, herdrOK, live, metered, none, NOW, scratch, SCRIPT, shellInfo, win } from "./helpers.mjs";
 // Recorded 2026-09-22 from `codex app-server` (`account/rateLimits/read`, CLI 0.155.1), identifiers removed: a ChatGPT
 // Enterprise seat on flexible pricing, and a Pro login. Member-limit replies were recorded on 2026-11-03 (0.166.0).
 const ENTERPRISE_SEAT = { limitId: "codex", limitName: null, normalModelSlug: null, primary: null, secondary: null, credits: { hasCredits: true, unlimited: true, balance: null }, individualLimit: null, spendControlReached: false, planType: "business", rateLimitReachedType: null };
@@ -327,8 +328,9 @@ function fakeCursorUsage({ delayPanel = false, neverDraws = false, cursorRuns = 
   const calls = [], started = [], privateDirs = [];
   const tmp = CU_TMP, cursorConfig = join(tmp, "real-cli-config.json");
   writeFileSync(cursorConfig, '{"model":"mine"}');
+  // The private herdr session is Windows' way: every platform tests it here.
   const deps = {
-    tmp, cursorConfig, now: () => ticks, sleep: async (ms) => { ticks += ms; },
+    platform: "win32", tmp, cursorConfig, now: () => ticks, sleep: async (ms) => { ticks += ms; },
     terminal: { pid: 4242, alive: (pid) => pid === 7 || pid === 8, age: (dir) => (dir === "/old" ? 11 * 60 * 1000 : 1000),
       start: (name, failed) => { started.push(name); if (spawnFails) failed(Object.assign(new Error("spawn herdr EACCES"), { code: "EACCES" })); } },
     run: async (all) => {
@@ -1129,3 +1131,54 @@ test("a synthetic Codex spend-control stop overrides cap room while retaining it
   expect(row.windows).toEqual([{ name: "monthly_cap", usedPct: 100, windowMin: null, resetsAt }]);
   expect(codexSnapshot(limited(resetsAt, 71, { spendControlReached: true }), "session log", t, resetsAt + 1).headroom).toBe(1);
 });
+
+// macOS and Linux: routr's own terminal, a real one, around a fake Cursor that behaves as measured (p51): it draws, takes
+// /usage and Enter, shows its panel in control codes, and leaves its config folder's path where a test can see it.
+const FAKE_CURSOR_SCREEN = `
+const fs = require("node:fs");
+if (process.env.FAKE_SEEN) fs.writeFileSync(process.env.FAKE_SEEN, JSON.stringify({ config: process.env.CURSOR_CONFIG_DIR, tty: process.stdin.isTTY === true, term: process.env.TERM, lead: process.env.HERDR_ENV ?? null, core: process.env.HC_TERMINAL_ID ?? null, cols: process.stdout.columns }));
+if (process.env.FAKE_DIES) process.exit(1);
+process.stdout.write("\\x1b[2J\\x1b[H\\x1b[1mCursor Agent\\x1b[0m\\r\\n");
+let got = "";
+process.stdin.on("data", (d) => { got += d; if (got.includes("/usage")) process.stdout.write("\\x1b[2J\\x1b[H Usage \\u2022 Pro\\r\\n Included   14% used\\r\\n Auto   10% used\\r\\n API   83% used\\r\\n"); });
+setInterval(() => {}, 1000);
+`;
+test.skipIf(process.platform === "win32")("on macOS and Linux Cursor's usage is read in routr's own terminal: a private config, no herdr, nothing left", async () => {
+  const dir = scratch("own-terminal"), seen = join(dir, "seen.json"), config = join(dir, "cli-config.json");
+  writeFileSync(config, '{"model":"mine"}');
+  fakeExecutable(dir, "cursor-agent", FAKE_CURSOR_SCREEN);
+  const lead = { HERDR_ENV: process.env.HERDR_ENV, HC_TERMINAL_ID: process.env.HC_TERMINAL_ID, FAKE_SEEN: process.env.FAKE_SEEN };
+  Object.assign(process.env, { HERDR_ENV: "1", HC_TERMINAL_ID: "t3", FAKE_SEEN: seen });
+  let run = 0;
+  try {
+    const opened = [];
+    const r = await cursorUsage({ tmp: dir, cursorConfig: config, platform: "darwin", run: async () => { run++; throw new Error("no herdr"); },
+      open: (cmd, args, o) => { opened.push({ cmd, args, o }); return ownTerminal(join(dir, cmd), args, o); } });
+    expect(r).toEqual({ ok: true, subscription: "cursor", plan: "Pro", included_used_pct: 14, auto_used_pct: 10, api_used_pct: 83, headroom: 0.86 });
+    expect(run).toBe(0);
+    expect(opened[0].args).toEqual(["--trust"]);
+    const child = JSON.parse(readFileSync(seen, "utf8"));
+    // A real terminal, on the private copy, without the lead's herdr or core.
+    expect(child).toMatchObject({ tty: true, term: "xterm-256color", lead: null, core: null, cols: 119 });
+    expect(child.config).toBe(opened[0].o.extraEnv.CURSOR_CONFIG_DIR);
+    expect(existsSync(child.config)).toBe(false);
+    expect(readFileSync(config, "utf8")).toBe('{"model":"mine"}');
+  } finally { for (const [k, v] of Object.entries(lead)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+}, 20000);
+
+test.skipIf(process.platform === "win32")("in routr's own terminal, a cursor-agent that is missing, dies at once, or never answers is said, and nothing is left", async () => {
+  const dir = scratch("own-terminal-fails"), config = join(dir, "cli-config.json");
+  writeFileSync(config, "{}");
+  const dirs = () => readdirSync(dir).filter((f) => f.startsWith("routr-cursor-"));
+  const failed = { ok: false, code: "no_response" };
+  expect(await cursorUsage({ tmp: dir, cursorConfig: config, platform: "darwin", open: (_c, a, o) => ownTerminal(join(dir, "nothing-here"), a, o) })).toMatchObject(failed);
+  expect(dirs()).toEqual([]);
+  fakeExecutable(dir, "cursor-agent", FAKE_CURSOR_SCREEN);
+  const was = process.env.FAKE_DIES; process.env.FAKE_DIES = "1";
+  try { expect(await cursorUsage({ tmp: dir, cursorConfig: config, platform: "darwin", open: (c, a, o) => ownTerminal(join(dir, c), a, o) })).toMatchObject(failed); }
+  finally { if (was === undefined) delete process.env.FAKE_DIES; else process.env.FAKE_DIES = was; }
+  expect(dirs()).toEqual([]);
+  expect((await cursorUsage({ tmp: dir, platform: "darwin", cursorConfig: join(dir, "no-config"), open: () => { throw new Error("not reached"); } })).ok).toBe(false);
+  expect(dirs()).toEqual([]);
+}, 30000);
+

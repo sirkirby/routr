@@ -39,7 +39,7 @@ on their Cloudflare account or free on their machine through Ollama), its key if
 themselves with `routr key set`, so it never passes through you), and the config with `routr setup --yes --model <subscription>=<id> --reserve <subscription>=<share> --use <subscription>=normal ...`
 (a default model and effort, the hardest work, reserve and normal/fallback account use per subscription, settled with the user; never edit the file by
 hand), and, if they want workers in herdr panes, herdr and herdr's agent skill (the Herdr app needs neither, and shows
-workers in tabs; with neither, workers run headless; reading Cursor's usage still needs herdr installed). A user who would rather choose on screen can run `routr setup`
+workers in tabs; with neither, workers run headless; on Windows, reading Cursor's usage still needs herdr installed). A user who would rather choose on screen can run `routr setup`
 in their own terminal instead.
 
 After updating an existing install, recommend `routr setup` to review settings. Read the

@@ -78,7 +78,7 @@ harness. A native `.exe` install starts as before.
 ## Rules that hold for every harness
 
 routr removes the lead session and herdr pane names below by exact, case-insensitive match, not by prefix. This
-covers harness reads, headless turns and the private herdr server whose shells start
+covers harness reads, headless turns and, on Windows, the private herdr server whose shells start
 harnesses; herdr clients keep their environment to find their session. The private server still answers
 `herdr --session <name> pane list` with the pane names removed, and a shell in its pane no longer sees the lead's
 names (herdr 0.9.5, macOS zsh, checked live 2026-10-24: with `CODEX_SESSION_ID`, `CURSOR_ASKPASS_SECRET` and

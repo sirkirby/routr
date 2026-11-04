@@ -67,8 +67,9 @@ a failure.
   list`, `git worktree remove`, never `--force`), and cannot see whether anything runs in a worktree's folder: they say
   so in `warnings`. They do not close a herdr workspace open on that worktree: run cleanup for a pane worker from
   inside herdr.
-- `usage cursor` drives only a private headless herdr session it makes and removes, never your own, and keeps the
-  reading in `~/.cache/routr`.
+- `usage cursor` starts Cursor in a terminal of its own, on macOS and Linux with no herdr or hc, on Windows in a private
+  headless herdr session it makes and removes, never your own. It ends what it started and keeps the reading in
+  `~/.cache/routr`.
 - `usage kiro` runs Kiro's own `/usage` in the system temp folder, deletes the empty session that leaves with Kiro's
   own `--delete-session`, and keeps the reading in `~/.cache/routr`.
 
@@ -174,7 +175,7 @@ writes only:
 - a file at a path you name for that command (`share --out`, a `--ledger` or `--config` you give);
 - the files `launch --copy` copies into a worker's worktree, in a pane or headless, never through a link and never
   over a file the worktree has (which `cleanup` removes again only while they are unchanged);
-- temporary files it removes: the private herdr session `usage cursor` makes, the empty Kiro session `usage kiro`
+- temporary files it removes: the private herdr session `usage cursor` makes on Windows, the empty Kiro session `usage kiro`
   deletes again, the private folder each Claude `/usage` read runs in, with the empty `~/.claude/projects` folder
   Claude makes for it, removed after a normal exit (a timed-out read can leave that one empty folder), and the private
   copy of Cursor's config, in the system temp folder, that `usage cursor` and a Cursor pane launch run on (the pane's

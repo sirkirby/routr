@@ -1,5 +1,6 @@
 // Cursor has no local usage file: it shows usage only in its own /usage screen. This opens that screen in a throwaway
-// terminal (terminal.mjs) and reads Included N% used. routr keeps the reading (refreshCursor, below).
+// terminal (terminal.mjs: routr's own on macOS and Linux, a private herdr session on Windows) and reads Included N% used.
+// routr keeps the reading (refreshCursor, below).
 // The footer context meter (e.g. "Grok 4.6 High · 8.7%") is not usage and must never be parsed as it.
 import { randomBytes } from "node:crypto";
 import { chmodSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
@@ -9,7 +10,7 @@ import { stripVTControlCharacters } from "node:util";
 import { cmdTypable, deadline, runHerdr, SHELLS, shellAlone, shellFamily, waitForShell } from "./herdr.mjs";
 import { CURSOR_SNAPSHOT, home } from "./runtime.mjs";
 import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
-import { openTerminal } from "./terminal.mjs";
+import { openTerminal, ownTerminal } from "./terminal.mjs";
 import { USAGE_BY_HAND, usageFailure } from "./usage-failure.mjs";
 
 const cursorPlan = (p) => ["Free", "Pro", "Pro+", "Ultra", "Team", "Business", "Enterprise"].includes(p) ? p : null;
@@ -46,40 +47,63 @@ export const CURSOR_BY_HAND = USAGE_BY_HAND.cursor;
 
 // Cursor writes to its config folder as it runs (seen 2026-09-25: it rewrote cli-config.json and added a project
 // folder for the working directory), so it runs on a private copy, as `launch` does, removed when the read ends.
+const privateConfig = (tmp, cursorConfig) => {
+  const dir = join(tmp, `routr-cursor-${randomBytes(4).toString("hex")}`);
+  mkdirSync(dir, { mode: 0o700 });
+  try { copyFileSync(cursorConfig, join(dir, "cli-config.json")); chmodSync(join(dir, "cli-config.json"), 0o600); }
+  catch { rmSync(dir, { recursive: true, force: true }); throw new Error(`Cursor has no config at ${cursorConfig}: sign in with \`cursor-agent\` first`); }
+  return dir;
+};
+// Windows: the private herdr session, with Cursor started by typing into its shell. Ends as a terminal the read can
+// drive either way; `made` hears of what it made, so the caller removes it whatever fails.
+async function cursorInHerdr({ run, tmp, remaining, sleep, now, terminal, cursorConfig, made, failed }) {
+  const t = await openTerminal({ run, cwd: tmp, remaining, sleep, ...terminal });
+  made.t = t;
+  const ready = await waitForShell(t, { sleep, now, remaining });
+  if (!ready.ok) throw new Error(ready.why);
+  const shell = shellFamily(ready.name);
+  if (shell === "cmd" && !cmdTypable(join(tmp, "routr-cursor-00000000"))) { failed("cmd_path"); throw new Error(); } // before anything is typed
+  const dir = made.dir = privateConfig(tmp, cursorConfig);
+  if (SHELLS[shell].cursor) await t.call(["pane", "run", t.pane, SHELLS[shell].cursor(dir, "cursor-agent", ["--trust"])]);
+  else { await t.call(["pane", "run", t.pane, SHELLS[shell].cursorEnv(dir)]); await t.call(["pane", "run", t.pane, "cursor-agent --trust"]); }
+  return { ...t, type: (s) => t.call(["pane", "send-text", t.pane, s]), enter: () => t.call(["pane", "send-keys", t.pane, "enter"]), gone: () => shellAlone(t) };
+}
+
 export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(),
-  tmp = tmpdir(), timeout = 90000, terminal = {}, cursorConfig = join(home(), ".cursor", "cli-config.json") } = {}) {
-  let t = null, dir = null;
+  tmp = tmpdir(), timeout = 90000, terminal = {}, cursorConfig = join(home(), ".cursor", "cli-config.json"),
+  platform = process.platform, open = ownTerminal } = {}) {
+  const made = { t: null, dir: null };
   let code = "read_failed";
   try {
     const remaining = deadline(timeout, now, "Cursor usage timed out");
     const pause = async () => sleep(Math.min(250, remaining()));
-    t = await openTerminal({ run, cwd: tmp, remaining, sleep, ...terminal });
-    const ready = await waitForShell(t, { sleep, now, remaining });
-    if (!ready.ok) throw new Error(ready.why);
-    const shell = shellFamily(ready.name);
-    dir = join(tmp, `routr-cursor-${randomBytes(4).toString("hex")}`);
-    if (shell === "cmd" && !cmdTypable(dir)) { code = "cmd_path"; throw new Error(); } // before anything is typed
-    mkdirSync(dir, { mode: 0o700 });
-    try { copyFileSync(cursorConfig, join(dir, "cli-config.json")); chmodSync(join(dir, "cli-config.json"), 0o600); }
-    catch { throw new Error(`Cursor has no config at ${cursorConfig}: sign in with \`cursor-agent\` first`); }
-    if (SHELLS[shell].cursor) await t.call(["pane", "run", t.pane, SHELLS[shell].cursor(dir, "cursor-agent", ["--trust"])]);
-    else { await t.call(["pane", "run", t.pane, SHELLS[shell].cursorEnv(dir)]); await t.call(["pane", "run", t.pane, "cursor-agent --trust"]); }
+    let t;
+    if (platform === "win32") t = await cursorInHerdr({ run, tmp, remaining, sleep, now, terminal, cursorConfig, made, failed: (c) => { code = c; } });
+    else {
+      made.dir = privateConfig(tmp, cursorConfig);
+      // A cursor-agent that cannot start says so now.
+      code = "no_response";
+      t = made.t = open("cursor-agent", ["--trust"], { cwd: tmp, extraEnv: { CURSOR_CONFIG_DIR: made.dir } });
+      code = "read_failed";
+    }
     const ranAt = now();
     for (;;) {
       if (cursorUiReady(await t.read())) break;
       // A cursor-agent that is missing or exits at once leaves the shell alone: say so now, not at the timeout.
-      if (now() - ranAt >= 3000 && await shellAlone(t)) { code = "no_response"; throw new Error(); }
+      if (now() - ranAt >= 3000 && await t.gone()) { code = "no_response"; throw new Error(); }
       await pause();
     }
-    await t.call(["pane", "send-text", t.pane, "/usage"]);
-    await t.call(["pane", "send-keys", t.pane, "enter"]);
+    if (t.settleMs) await sleep(Math.min(t.settleMs, remaining()));
+    await t.type("/usage");
+    if (t.settleMs) await sleep(Math.min(200, remaining()));
+    await t.enter();
     const panelAt = now();
     let extraEnter = false, parsed = null;
     for (;;) {
       parsed = parseCursorUsage(await t.read());
       if (parsed?.included_used_pct != null) break;
       if (!extraEnter && now() - panelAt >= 6000) {
-        await t.call(["pane", "send-keys", t.pane, "enter"]);
+        await t.enter();
         extraEnter = true;
       } else if (extraEnter && now() - panelAt >= 12000) {
         code = "invalid_response"; throw new Error();
@@ -93,8 +117,8 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
   } catch {
     return { ok: false, ...usageFailure(code), read_yourself: CURSOR_BY_HAND };
   } finally {
-    await t?.close(); // stopping the session ends Cursor with it
-    if (dir) try { rmSync(dir, { recursive: true, force: true }); } catch {}
+    await made.t?.close(); // stopping the session ends Cursor with it
+    if (made.dir) try { rmSync(made.dir, { recursive: true, force: true }); } catch {}
   }
 }
 

@@ -56,7 +56,8 @@ console.error(JSON.stringify({ error: { code: process.env.FAKE_CODE, message: ${
     for (const [command, args, op, exitCode] of [
       ["launch", [...base, "--cwd", home, "--direction", "right"], ["pane", "split"], 1],
       ["cleanup", ["--pane", "w1:p9"], ["pane", "list"], 1],
-      ["usage", ["cursor"], ["session", "list"], 0],
+      // Only Windows reads Cursor through herdr. Elsewhere it does not call herdr at all (usage.test.mjs).
+      ...(process.platform === "win32" ? [["usage", ["cursor"], ["session", "list"], 0]] : []),
     ]) {
       writeFileSync(calls, "");
       const result = Bun.spawnSync([process.execPath, SCRIPT, command, ...args], { env: { ...env, FAKE_CODE: code }, stdin: "ignore" });

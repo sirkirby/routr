@@ -89,8 +89,8 @@ itself. "Did not answer its sign-in check" means the command is missing from PAT
 
 ## Cursor's usage is "unknown"
 
-Cursor shows usage only in its own `/usage` screen. routr reads it in a private herdr session in the background (nothing
-opens on your screen; herdr has to be installed), about once per working session, and at once after an update when
+Cursor shows usage only in its own `/usage` screen. routr reads it in a terminal of its own in the background (nothing
+opens on your screen; on Windows herdr has to be installed, for a private session), about once per working session, and at once after an update when
 the last try got no reading, and keeps the reading in
 `~/.cache/routr/cursor-usage.json`. Until the first reading lands, or when reading fails, Cursor is `unknown` and the
 row's `note` says why. Run `routr usage cursor` to read it now and see any error; if it cannot be read at all, pass

@@ -125,7 +125,7 @@ test("doctor sends an app user to neither the older herdr nor its skill, and say
   const r = (core, herdr) => ({ runtime: "routr 0.0.0-dev (from source)", from_source: true, core, herdr, skill: [], harnesses: {}, decision: [],
     config: { path: "/c.json", exists: true, subscriptions: [], off: [], problems: [], notes: [] }, auto_update: { on: false, why_off: "running from source" }, next_steps: [] });
   const none = { path: null, inside_terminal: false }, app = { path: "/bin/hc", inside_terminal: true }, installed = { path: "/bin/hc", inside_terminal: false };
-  const told = (x) => nextSteps(x).filter((s) => /herdr/i.test(s));
+  const told = (x, platform = "darwin") => nextSteps(x, { platform }).filter((s) => /herdr/i.test(s));
   // Neither: both ways to see workers are named.
   expect(told(r(none, { path: null, skill: false }))[0]).toContain("https://herdr.dev/download/");
   // Terminal herdr without its skill still needs it for panes; with the app it does not.
@@ -135,9 +135,14 @@ test("doctor sends an app user to neither the older herdr nor its skill, and say
   const inHerdr = r(installed, { path: "/bin/herdr", skill: false, inside_session: true });
   expect(told(inHerdr)[0]).toContain("skills add herdrdev/herdr");
   expect(render(inHerdr)).toContain("herdr skill not found");
-  // With the app and no herdr, only Cursor's usage is left to ask for it.
-  expect(told(r(app, { path: null, skill: false }))).toEqual([expect.stringContaining("Cursor's usage")]);
-  const inApp = render(r(app, { path: null, skill: false }));
+  // With the app and no herdr, nothing asks for it, except Cursor's usage on Windows.
+  expect(told(r(app, { path: null, skill: false }))).toEqual([]);
+  expect(told(r(app, { path: null, skill: false }), "win32")).toEqual([expect.stringContaining("Cursor's usage")]);
+  expect(told(r(none, { path: null, skill: false }))[0]).not.toContain("Cursor's usage");
+  expect(told(r(none, { path: null, skill: false }), "win32")[0]).toContain("Cursor's usage");
+  const inApp = render(r(app, { path: null, skill: false }), { platform: "darwin" });
+  expect(inApp).not.toContain("Cursor's usage");
+  expect(render(r(app, { path: null, skill: false }), { platform: "win32" })).toContain("Cursor's usage");
   expect(inApp).toContain("a tab of its own in the Herdr app");
   expect(inApp).toContain("The Herdr app does not need it otherwise");
   expect(inApp).not.toContain("herdr skill");
