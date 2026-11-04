@@ -38,19 +38,26 @@ test("a lead in the app gets a tab named for its worker, in its own space, runni
   expect(await show(f)).toEqual({ terminal: "t9", tab: "routr-abc" });
   expect(f.calls.map((c) => [c.cmd, c.args[0]])).toEqual([["hc", "get"], ["hc", "run"], ["herdr-app", "do"]]);
   expect(f.calls[0].args).toEqual(["get", "t3", "--json"]);
-  expect(f.calls[1].args).toEqual(["run", "--bg", "--json", "--name", "w1-abc", "--cwd", "/work", "--outlive-parent", "--no-notify", "--rm",
+  expect(f.calls[1].args).toEqual(["run", "--bg", "--json", "--name", "w1", "--cwd", "/work", "--outlive-parent", "--no-notify", "--rm",
     "--label", "herdr.space=sp1", "--label", "herdr.tab=routr-abc", "--", "/bin/routr", "watch", "--name", "w1"]);
   expect(f.calls[2].args).toEqual(["do", "tab.rename", "--id", "routr-abc", "--name", "w1"]);
 });
 
-test("a terminal's name fits hc's limit, and two workers never share one", async () => {
-  const given = async (name, id) => { const f = fake(); await show(f, { name, id }); return f.calls[1].args[f.calls[1].args.indexOf("--name") + 1]; };
-  // Different after the cut, and the same name again before the last terminal has gone.
-  const a = await given(`${"a".repeat(31)}1`, "11111111ffff"), b = await given(`${"a".repeat(31)}2`, "22222222ffff");
-  expect(a).toBe(`${"a".repeat(23)}-11111111`);
-  expect(a.length).toBe(32);
-  expect(b).not.toBe(a);
-  expect(await given("w1", "11111111ffff")).not.toBe(await given("w1", "22222222ffff"));
+test("a terminal takes the worker's own name, and its id only when hc refuses that one as taken", async () => {
+  const named = (f) => f.calls.filter((c) => c.args[0] === "run").map((c) => c.args[c.args.indexOf("--name") + 1]);
+  const f = fake();
+  await show(f, { name: "a".repeat(32) });
+  expect(named(f)).toEqual(["a".repeat(32)]);
+  // Taken: the same terminal again under a name of its own, within hc's limit.
+  let tries = 0;
+  const taken = fake({ run: () => (++tries === 1 ? { code: 1, out: "" } : { code: 0, out: JSON.stringify({ address: "t9" }) }) });
+  expect(await show(taken, { name: "a".repeat(32), id: "11111111ffff" })).toEqual({ terminal: "t9", tab: "routr-11111111ffff" });
+  expect(named(taken)).toEqual(["a".repeat(32), `${"a".repeat(23)}-11111111`]);
+  expect(named(taken)[1].length).toBe(32);
+  // A second refusal is the answer.
+  const refused = fake({ run: { code: 1, out: "" } });
+  expect(await show(refused)).toEqual({ code: "refused" });
+  expect(named(refused).length).toBe(2);
 });
 
 test("off the app there is no label to give, and nothing to name", async () => {
@@ -72,7 +79,7 @@ test("a tab the app has not adopted yet is named again; one that never lands cos
 
 test("hc missing, refusing or unreadable is a code, and nothing further is asked", async () => {
   for (const [answers, code, calls] of [[{ get: null }, "not_available", 1], [{ get: { code: 3, out: "" } }, "refused", 1], [{ get: { code: 0, out: "no" } }, "unreadable", 1],
-    [{ run: { code: 1, out: "" } }, "refused", 2], [{ run: { code: 0, out: "{}" } }, "unreadable", 2]]) {
+    [{ run: { code: 1, out: "" } }, "refused", 3], [{ run: { code: 0, out: "{}" } }, "unreadable", 2]]) {
     const f = fake(answers);
     expect(await show(f)).toEqual({ code });
     expect(f.calls.length).toBe(calls);

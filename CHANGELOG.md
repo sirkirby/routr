@@ -5,7 +5,12 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.11.0 — 2026-11-03
+
+[Full notes](docs/releases/v0.11.0.md)
+
 - Workers are visible in the Herdr app: each gets a tab named for it, showing its progress, and appears in the Agents list. `routr watch` follows a headless worker in any terminal. (#146)
+- The app's pop-ups say a worker's own name, with its id only when that name is taken. (#147)
 
 ## v0.10.0 — 2026-11-03
 
