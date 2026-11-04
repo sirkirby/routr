@@ -519,6 +519,7 @@ producer, including config and input notes forwarded into `warnings`.
 | `worker_not_shown` | No terminal shows the worker. |
 | `process_unseen` | Saved process id cannot prove the harness state. |
 | `cleanup_unseen` | Cleanup sees git state only. |
+| `cleanup_terminals_only` | Cleanup sees git state and core terminals. |
 | `other_worktrees` | Repository has other worktrees. |
 | `branch_unmerged` | Unmerged branch was kept. |
 | `detached_unseen` | Detached commands cannot be seen. |

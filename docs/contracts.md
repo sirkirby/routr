@@ -52,7 +52,7 @@ Names that mean one thing everywhere:
 | `usage` | `subscription` (null for routr's own ranking failure), `source`, `reading` (`unknown` or `kept`), `reading_source` and `age_sec` for a kept reading | `dispatch`, `usage` |
 | `brief`, `report` | none | `check` |
 | `model list` | `subscription` | `launch` (a harness whose model list routr checks could not be read) |
-| `pane`, `worktree` | `pane` or `path` | `cleanup` (what runs in a pane, or a worktree's git state, could not be read) |
+| `pane`, `worktree`, `terminal` | `pane` or `path` | `cleanup` (what runs in a pane, a worktree's git state, or, in herdr-core, whether a terminal runs in a worktree, could not be read) |
 
 `command_shadowed` means a user command named usage replaces the harness's own, so routr will not run it
 because that would spend. A print reply with positive `num_turns` is also refused with this code.
@@ -730,7 +730,13 @@ Inputs:
   only with `--worktree`, `--path` or `--worker`; `--pane` and `--worker` take no `--cwd`. Refused (with `error`)
   otherwise.
 - Outside herdr (`HERDR_ENV` is not `1`), the list and `--worktree`/`--path` modes read and remove worktrees through
-  git, with the same checks, and `warnings` says cleanup cannot see whether anything runs in a worktree's folder.
+  git, with the same checks. In herdr-core (`HC_TERMINAL_ID` set) a worktree is also refused (`refused`) while a live
+  terminal of this machine's core started in its folder or has its program there now, or when hc's terminals cannot
+  be read or it does not say where a live terminal's program is; for a terminal labelled as a routr worker's, `next` is
+  `cleanup --worker <name>` when this machine has its record. `--worker` makes the same check of its worktree, passing
+  over its own terminal, which it ends first. `warnings` says what cleanup sees: core's terminals there (`cleanup_terminals_only`), or nothing that runs
+  there (`cleanup_unseen`). After git removes a worktree in routr's own worktrees folder, an empty repository folder
+  left there is removed too (a `folder` step).
 - `--worktree <branch>` with no worktree on that branch refuses (`refused`) instead of answering `absent` when one or
   more of the repository's detached linked worktrees are in a folder with the name herdr or a headless launch gives
   that branch: a worker that checked out a commit left it there. `worktree` names it when there is just one, and
@@ -787,8 +793,8 @@ Modes and `state`:
 pane <pane>`); `routr: would remove <path>` or `routr: would close <pane>` (dry run); `routr: N worktrees, M can be removed now`; `routr: kept <path or pane>: <why>`;
 `routr: cleanup failed: <error>`.
 
-Shared fields: all six. `unavailable`: a `pane` or `worktree` entry when a refusal comes from a read cleanup could not
-make. `warnings`: a branch git kept, the repository's other worktrees when the named one is absent. `next`: what to
+Shared fields: all six. `unavailable`: a `pane`, `worktree` or `terminal` entry when a refusal comes from a read cleanup
+could not make. `warnings`: a branch git kept, the repository's other worktrees when the named one is absent. `next`: what to
 do about a refusal, the command that removes a worktree instead of closing its only pane, the list's removal template.
 A refusal's reason, and so the headline, is routr's own sentence: "git refused `worktree remove` for <path>",
 "<pane> is running 2 commands besides its shell", never

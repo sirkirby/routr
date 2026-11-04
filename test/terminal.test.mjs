@@ -560,3 +560,78 @@ test("the launch index keeps a terminal worker's launch", () => {
   expect(index.add({ ...entry, launch_id: "12345678-1234-4123-8123-123456789abd", advice_id: "bcd23456", backend: "another" })).toBe(true);
   expect(index.match({ advice_id: "bcd23456" })).toBeNull(); // written whole, and not read back
 });
+
+// cleanup --cwd/--worktree/--path in herdr-core: git lists and removes, core's terminals say what runs in a worktree.
+const gitRepo = () => {
+  const dir = scratch("core-repo"), g = (...a) => { const r = Bun.spawnSync(["git", "-C", dir, "-c", "user.name=t", "-c", "user.email=t@t.invalid", ...a]); if (r.exitCode) throw new Error(String(r.stderr)); return String(r.stdout).trim(); };
+  g("init", "-q", "-b", "main"); g("commit", "-q", "--allow-empty", "-m", "start");
+  return { dir, g };
+};
+// The lead's own terminal, as `get` describes a live one: where its program is.
+const LEAD_LIVE = { ...LEAD, state: "live", cwd: "/lead", foreground: { pid: 1, name: "zsh", argv: ["zsh"], cwd: "/lead" } };
+const coreHc = (terminals, got = {}) => { got = { t3: LEAD_LIVE, ...got }; return fakeHc({ over: { ls: { code: 0, out: JSON.stringify({ hidden_finished: 0, machines: [], terminals }) },
+  get: (a) => (got[a[1]] ? { code: 0, out: JSON.stringify(got[a[1]]) } : { code: 0, out: JSON.stringify(terminals.find((t) => t.address === a[1]) ?? {}) }) } }); };
+
+test("in herdr-core, cleanup refuses a worktree a live terminal is in, names cleanup --worker for a routr worker's, and says what it sees", async () => {
+  const { dir, g } = gitRepo(), wt = join(dir + "-wt", "side"); g("worktree", "add", "-q", "-b", "side", wt);
+  const env = { ...LEAD_ENV, HERDR_ENV: "" }, run = (hc) => cleanup(["--cwd", dir, "--path", wt], { env, hc: hc.run, settings: () => cfg() });
+  // A shell started elsewhere whose program is in the worktree now (an empty folder: git sees nothing to keep).
+  mkdirSync(join(wt, "src"));
+  const shell = coreHc([LEAD, { address: "t5", state: "live", cwd: "/elsewhere" }], { t5: { address: "t5", name: "notes", state: "live", cwd: "/elsewhere", foreground: { pid: 1, name: "zsh", argv: ["zsh"], cwd: join(wt, "src") } } });
+  const r1 = await run(shell);
+  // The path is git's own form of it (macOS /private/var, Windows forward slashes and long names): the reason is what is checked.
+  expect([r1.state, r1.headline.replace(/^routr: kept .*?: terminal/, "terminal").replace(/ runs in .*$/, " runs in")]).toEqual(["refused", "terminal t5 (notes) runs in"]);
+  expect(r1.next.map((n) => n.argv?.join(" ") ?? n.why)).toContain("hc read t5 --lines 200");
+  // A routr worker's terminal: finish it with cleanup --worker, by the name its record has.
+  mkdirSync(runDir("w9"), { recursive: true }); writeFileSync(join(runDir("w9"), "worker.json"), JSON.stringify({ format: 1, id: "f".repeat(32), name: "w9", kind: "claude", model: "m", cwd: wt, backend: "terminal" }));
+  const worker = coreHc([LEAD, { address: "t6", state: "live", cwd: wt }], { t6: { address: "t6", name: "w9", state: "live", cwd: wt, foreground: { pid: 2, name: "claude", argv: [], cwd: wt }, labels: { "routr.worker": "f".repeat(32) } } });
+  const r2 = await run(worker);
+  expect([r2.state, r2.headline.replace(/^routr: kept .*?: terminal/, "terminal").replace(/ runs in .*$/, " runs in"), r2.next[0].argv]).toEqual(["refused", "terminal t6 (w9), a routr worker's, runs in", ["routr", "cleanup", "--worker", "w9"]]);
+  // hc not answering is not knowing: nothing is removed. Nor is an answer that does not say where a live terminal's
+  // program is (core's schema: `foreground` is null only once it has finished), nor one that is not a terminal.
+  const r3 = await run(fakeHc({ over: { ls: null } }));
+  expect([r3.state, existsSync(wt)]).toEqual(["refused", true]);
+  const there = (cwd) => ({ address: "t5", state: "live", cwd: "/elsewhere", foreground: { pid: 5, name: "zsh", argv: [], cwd } });
+  for (const said of [{}, { address: "t5", state: "live", cwd: "/elsewhere", foreground: null }, there(""), there("side")]) {
+    const r = await run(coreHc([LEAD, { address: "t5", state: "live", cwd: "/elsewhere" }], { t5: said }));
+    expect([r.state, existsSync(wt), r.unavailable.map((u) => u.part)]).toEqual(["refused", true, ["terminal"]]);
+    expect(r.headline).toContain("did not say where terminal t5's program is");
+  }
+  // Only terminals elsewhere, and finished ones: removed, and the warning says what cleanup sees.
+  const r4 = await run(coreHc([LEAD, { address: "t7", state: "finished", cwd: wt }]));
+  expect([r4.state, existsSync(wt)]).toEqual(["removed", false]);
+  expect(r4.warnings).toContain("In herdr-core, cleanup sees the core's terminals in a worktree's folder, not other processes there: it checks git's state and hc's terminals");
+  expect(r4.warnings.join("\n")).not.toContain("Outside herdr");
+});
+
+test("cleanup removes a repository's folder in routr's worktrees folder once its last worktree is gone, and only an empty one", async () => {
+  const { dir, g } = gitRepo(), root = join(process.env.HOME, ".local/share/routr/worktrees", "repo-1234abcd");
+  const one = join(root, "routr-a"), two = join(root, "routr-b"); g("worktree", "add", "-q", "-b", "a", one); g("worktree", "add", "-q", "-b", "b", two);
+  const rm = (p) => cleanup(["--cwd", dir, "--path", p], { env: {}, settings: () => cfg() });
+  expect([(await rm(one)).state, existsSync(root)]).toEqual(["removed", true]);
+  const last = await rm(two);
+  expect([last.state, existsSync(root), last.steps.some((s) => s.step === "folder")]).toEqual(["removed", false, true]);
+  // A worktree outside routr's folder leaves its parent alone, empty or not.
+  const mine = join(dir + "-own", "x"); g("worktree", "add", "-q", "-b", "c", mine);
+  expect([(await rm(mine)).state, existsSync(dirname(mine))]).toEqual(["removed", true]);
+});
+
+test("cleanup --worker in herdr-core keeps the worktree while another terminal is in it, and passes over the worker's own", async () => {
+  const f = fixture("claude", { extra: ["--worktree", "wt-k"] }); repo(f.dir);
+  const { worktree } = await f.go(), id = recordOf().id;
+  const own = { address: "t9", name: "w1", state: "live", cwd: worktree.path, foreground: { pid: 3, name: "claude", argv: [], cwd: worktree.path }, labels: { "routr.worker": id }, status: { state: "done" }, turn: 1 };
+  const lead = LEAD_LIVE;
+  const shell = { address: "t5", name: "notes", state: "live", cwd: "/elsewhere", foreground: { pid: 4, name: "zsh", argv: [], cwd: worktree.path } };
+  const hcWith = (terms) => fakeHc({ over: { ls: { code: 0, out: JSON.stringify({ hidden_finished: 0, machines: [], terminals: terms }) },
+    get: (a) => ({ code: 0, out: JSON.stringify([lead, own, shell].find((t) => t.address === a[1])) }) } });
+  const go = (hc, extra = []) => cleanup(["--worker", "w1", ...extra], { env: LEAD_ENV, hc: hc.run, settings: () => cfg() });
+  // A dry run would end its own terminal: that terminal does not keep the worktree.
+  expect((await go(hcWith([lead, own]), ["--dry-run"])).state).toBe("planned");
+  // Another shell in the worktree keeps it, the worker's record with it.
+  const kept = await go(hcWith([lead, own, shell]));
+  expect([kept.state, existsSync(worktree.path), existsSync(runDir("w1"))]).toEqual(["refused", true, true]);
+  expect(kept.headline).toContain(`terminal t5 (notes) runs in`);
+  // With it gone, the worker is finished.
+  expect((await go(hcWith([lead, own]))).state).toBe("removed");
+  expect(existsSync(worktree.path)).toBe(false);
+});

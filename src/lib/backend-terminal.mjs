@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:os";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FORMAT, readWorkerAt, runDir } from "./worker-record.mjs";
+import { FORMAT, readWorkerAt, runDir, WORKER_LABEL } from "./worker-record.mjs";
 import { planWorktree } from "./worktree.mjs";
 import { cursorConfigOf, privateCursorConfig, refuseInputs, refuseSandbox, refuseSettings, refuseTaken, takeRun, worktreeRecord } from "./worker-start.mjs";
 import { HARNESSES, subagentDefaults, terminalPlan } from "./harnesses.mjs";
@@ -20,9 +20,6 @@ import { leadTerminal, openTerminal } from "./core-tab.mjs";
 import { configLocations, FORWARDED, processAlive, readJsonFile, start, terminalEnv, writeJsonAtomic } from "./runtime.mjs";
 
 const PROMPT_FILE = "prompt.md", RUN_FILE = "run.json";
-// Set at hc run with the record's id, and read back before routr ends a terminal: an address lasts on one core only, and
-// another core can have the same address under the same name. An id made for this worker cannot be another's.
-const WORKER_LABEL = "routr.worker";
 const pausing = (ms) => new Promise((r) => setTimeout(r, ms));
 const POLL_MS = 250;
 const WHERE = { where: "in a herdr-core terminal", runs: "runs in a terminal of its own" };

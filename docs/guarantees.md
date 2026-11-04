@@ -65,9 +65,13 @@ a failure.
   is under "Headless workers" below. A worker in a herdr-core terminal has its terminal ended first: "Workers in a
   herdr-core terminal", below.
 - Outside herdr, `cleanup --cwd`, `--worktree` and `--path` list and remove worktrees through git (`git worktree
-  list`, `git worktree remove`, never `--force`), and cannot see whether anything runs in a worktree's folder: they say
-  so in `warnings`. They do not close a herdr workspace open on that worktree: run cleanup for a pane worker from
-  inside herdr.
+  list`, `git worktree remove`, never `--force`). They do not close a herdr workspace open on that worktree: run cleanup
+  for a pane worker from inside herdr. In herdr-core (the Herdr app) they also refuse while a live terminal of the core
+  started in a worktree's folder or has its program there now (`hc ls`, `hc get`), naming `cleanup --worker` for a
+  routr worker's, and when hc cannot be read; other processes there are not seen. Anywhere else they cannot see
+  whether anything runs in a worktree's folder. `warnings` says which.
+- Once git has removed a worktree in routr's own worktrees folder, cleanup removes that repository's folder there if
+  it is now empty (`rmdir`, which takes only an empty folder); the next launch's worktree makes it again.
 - `usage cursor` starts Cursor in a terminal of its own, on macOS and Linux with no herdr or hc, on Windows in a private
   headless herdr session it makes and removes, never your own. It ends what it started, except on macOS and Linux a
   process that left Cursor's process group, which it cannot see. It keeps the reading in `~/.cache/routr`.

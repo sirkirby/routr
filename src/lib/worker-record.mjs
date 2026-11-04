@@ -10,6 +10,9 @@ import { lockIsStale, readJsonFile, STATE_DIR, UNINSTALL_LOCK, WORKER_NAME } fro
 export const FORMAT = 1;
 export const WORKERS_DIR = () => join(STATE_DIR(), "workers");
 export const runDir = (name) => join(WORKERS_DIR(), name);
+// Set at hc run with the record's id, and read back before routr ends a terminal: an address lasts on one core only, and
+// another core can have the same address under the same name. An id made for this worker cannot be another's.
+export const WORKER_LABEL = "routr.worker";
 // Every name a worker can be given, the folders that exist: the holder writes state, launch the worker file.
 export const workerNames = () => { try { return readdirSync(WORKERS_DIR()).filter((n) => WORKER_NAME.test(n)).sort(); } catch { return []; } };
 // What launch wrote: { format, id, name, kind, model, effort, cwd, created_at, carriers }. Never the brief, and of the

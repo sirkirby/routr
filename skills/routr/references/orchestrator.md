@@ -473,7 +473,8 @@ model and effort choice, `check` and `record` are as in herdr. What differs:
   what you need first. It refuses while the worker runs. It cannot see a background command the worker started that
   outlived it: stop those yourself first. Finish a headless worker's worktree with `cleanup --worker`, which checks its
   process first, not with `--path`. Outside herdr, `routr cleanup --cwd <repo>` lists and removes other worktrees
-  through git, and cannot see whether something runs in a worktree's folder: run it only for work that has ended. A
+  through git. In the Herdr app it refuses while a terminal is in the worktree; anywhere else it cannot see whether
+  something runs in a worktree's folder: run it only for work that has ended. A
   worker launched without `--worktree` worked in `--cwd`: its changes are yours to integrate. A Cursor worker's
   `cleanup --worker` leaves Cursor's own worker-server for its folder running and says so: it is Cursor's, as after a
   `cursor-agent` run there, so leave it. In `pgrep -lf -g <group>` (macOS; `pgrep -a -g <group>` on Linux),
