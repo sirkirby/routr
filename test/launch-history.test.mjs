@@ -80,10 +80,12 @@ test("record refuses a launch made with other advice, and an id that is not a la
   expect([added.ok, added.error]).toEqual([false, expect.stringContaining("recorded without --launch")]);
   // On the command line, --launch with no value or given twice is refused, never read as absent.
   // Another flag cannot take it as its value either (`--note --launch <id>`).
-  for (const extra of [["--launch"], ["--launch", id, "--launch", id], ["--note", "--launch"], ["--launch", id, "--note", "--launch", randomUUID()]]) {
+  // Another flag cannot take it as its value either: record's own (`--note --launch`) or a global one (`--headroom --launch`).
+  for (const extra of [["--launch"], ["--launch", id, "--launch", id], ["--note", "--launch"], ["--launch", id, "--note", "--launch", randomUUID()],
+    ["--headroom", "--launch"], ["--config", "--launch"], ["--launch", id, "--headroom", "--launch", randomUUID()]]) {
     const cli = Bun.spawnSync([process.execPath, SCRIPT, "record", "--advice", r.o.advice, "--subscription", "codex", "--model", "m", "--effort", "high", "--verdict", "done", "--check", "pass", "--ledger", r.ledger, ...extra], { env: cliEnv(scratch("history-cli")) });
     const out = JSON.parse(cli.stdout.toString());
-    expect([out.ok, out.error]).toEqual([false, expect.stringMatching(/--launch (takes|was given more than once)/)]);
+    expect([out.ok, out.error]).toEqual([false, expect.stringMatching(/--launch (takes|was given more than once|cannot be a value)/)]);
   }
 });
 

@@ -211,7 +211,7 @@ test("a terminal launch reports its backend, keeps its index entry, and cleanup 
 test("a pane launch records identity, session and immutable index; cleanup and later record link to it", async () => {
   const x = exporting({ HERDR_ENV: "1", CODEX_THREAD_ID: "019a1aaa-1234-7123-8123-123456789abc" }), advice = join(x.home, "advice.json"), task = "BRIEF_MARKER";
   writeFileSync(advice, JSON.stringify({ id: "abc12345", brief_sha: briefSha(task), mode: "dispatch", level: "standard" }));
-  let ticks = 0, started = false;
+  let ticks = 0, started = false, busy = false;
   const session = "12345678-1234-4123-8123-123456789abc", run = async (a) => {
     const ok = (result) => ({ ok: true, data: { result } });
     if (a[0] === "pane" && a[1] === "get") return ok({ pane: { pane_id: "w1:p2", terminal_id: "term-1", agent_session: { kind: "id", value: session } } });
@@ -219,7 +219,7 @@ test("a pane launch records identity, session and immutable index; cleanup and l
     if (a[1] === "read") return ok({ text: started ? "Welcome\n❯" : "user % " });
     if (a[1] === "process-info") return ok({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, cwd: process.cwd() }] } });
     if (a[1] === "start") { started = true; return ok({}); }
-    if (a[0] === "agent" && a[1] === "get") return started ? ok({ agent: { agent: "claude", agent_status: "idle", interactive_ready: true, cwd: process.cwd() } }) : { ok: false, data: { error: { code: "agent_not_found" } } };
+    if (a[0] === "agent" && a[1] === "get") return started ? ok({ agent: { agent: "claude", agent_status: busy ? "working" : "idle", interactive_ready: true, cwd: process.cwd() } }) : { ok: false, data: { error: { code: "agent_not_found" } } };
     if (a[0] === "pane" && a[1] === "list") return ok({ panes: [{ pane_id: "w1:p2", terminal_id: "term-1", agent_status: "idle" }] });
     if (a[0] === "workspace") return ok({ workspaces: [] });
     return ok({});
@@ -238,12 +238,18 @@ test("a pane launch records identity, session and immutable index; cleanup and l
   const entry = index.match({ advice_id: "abc12345" });
   expect(entry).not.toHaveProperty("worker_id");
   expect(entry).toMatchObject({ traceId: s.traceId, spanId: s.spanId, pane_id: "w1:p2", terminal_id: "term-1", launch_id: a["routr.launch.id"] });
+  // A rerun turned away (the worker busy) delivered nothing: no launch, and the original's entry stays as it was.
+  busy = true;
+  const turned = await launch(["--kind", "claude", "--name", "fixture", "--model", "sonnet", "--pane", "w1:p2", "--task", task, "--advice", advice], opts);
+  busy = false;
+  expect([turned.state, turned.launch_id]).toEqual(["needs_input", null]);
+  expect(index.entries().map((e) => [e.launch_id, Boolean(e.finished_at)])).toEqual([[r.launch_id, false]]);
   const rerun = await launch(["--kind", "claude", "--name", "fixture", "--model", "sonnet", "--pane", "w1:p2", "--task", task, "--advice", advice], opts);
   expect(rerun.state).toBe("prompted");
   // A recovery rerun is its own launch: its own id in its answer and span, whatever is exported, linked to the original.
   expect([r.launch_id, rerun.launch_id]).toEqual([a["routr.launch.id"], expect.any(String)]);
   expect(rerun.launch_id).not.toBe(r.launch_id);
-  const rs = x.spans().filter((sp) => sp.name === "routr launch").at(-1);
+  const rs = x.spans().filter((sp) => sp.name === "routr launch" && attrs(sp)["routr.launch.id"] === rerun.launch_id)[0];
   expect([attrs(rs)["routr.launch.id"], rs.links]).toEqual([rerun.launch_id, [{ traceId: s.traceId, spanId: s.spanId, attributes: [] }]]);
   // The rerun takes over the pane: the original entry ends, and the rerun's own is the active one.
   expect(index.entries().map((e) => [e.launch_id, Boolean(e.finished_at)])).toEqual(expect.arrayContaining([[r.launch_id, true], [rerun.launch_id, false]]));

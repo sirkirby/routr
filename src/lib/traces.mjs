@@ -100,11 +100,14 @@ export async function completeLaunch(r, run, { rerun = false, backend } = {}) {
   const reused = rerun && c.adviceId && facts?.terminal_id ? c.index.recovery({ advice_id: c.adviceId, pane_id: r.pane, terminal_id: facts.terminal_id }) : null;
   // A recovery rerun is its own launch, with its own id (launch's, as its history record has it whether or not anything is
   // exported), linked to the launch it finishes.
-  if (reused) { link(reused); c.replaces = reused.launch_id; }
+  // Only a rerun that delivered its task takes the pane over; one turned away (the worker busy) leaves the original as it was.
+  const tookOver = reused && ["ready", "prompted"].includes(r.state);
+  if (reused) link(reused);
+  if (tookOver) c.replaces = reused.launch_id;
   put(c.span, { "routr.kind": pick(r.kind, subscriptions), "routr.backend": backend, "routr.launch.id": c.launchId,
     "gen_ai.agent.name": WORKER_NAME.test(r.name) ? r.name : null, "routr.model": modelName(r.model), "routr.effort": pick(r.effort, EFFORTS),
     "routr.advice.matched": typeof r.advice?.matches === "boolean" ? r.advice.matches : null, "routr.carriers.forwarded": CARRIERS.filter((n) => r.start?.env?.[n] === "<forwarded>") });
-  if ((herdrId(r.pane) || r.worker) && ["ready", "prompted", "needs_input"].includes(r.state)) c.entry = { launch_id: c.launchId, advice_id: c.adviceId ?? null, backend, repository: identity.attributes["vcs.repository.url.full"] ?? null,
+  if ((!reused || tookOver) && (herdrId(r.pane) || r.worker) && ["ready", "prompted", "needs_input"].includes(r.state)) c.entry = { launch_id: c.launchId, advice_id: c.adviceId ?? null, backend, repository: identity.attributes["vcs.repository.url.full"] ?? null,
     project_hash: identity.project_hash ?? null, path_hash: identity.path_hash ?? null, branch: identity.attributes["vcs.ref.head.name"] ?? null,
     pane_id: herdrId(r.pane) ? r.pane : null, terminal_id: typeof facts?.terminal_id === "string" ? facts.terminal_id : null,
     traceId: c.span.traceId, spanId: c.span.spanId, created_at: new Date().toISOString() };

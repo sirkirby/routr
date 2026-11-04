@@ -321,9 +321,10 @@ ambiguous advice, reused panes or a wrong repository give no link. Headless comm
 launch context. Links carry only trace/span ids. `record` can link after cleanup, including revisions.
 
 A `--pane` recovery rerun finds an unfinished entry only for the same advice, pane and terminal. It is its own launch,
-with its own `routr.launch.id`: its command span links to the original launch, that entry is marked finished, and
-the rerun adds its own entry, which cleanup and its `record --launch` then find. The original entry's context is
-never replaced. A new terminal or
+with its own `routr.launch.id`, and its command span links to the original launch. Once it has delivered its task
+(`prompted` or `ready`) it takes the pane over: that entry is marked finished, and the rerun adds its own, which
+cleanup and its `record --launch` then find. A rerun turned away (`needs_input`) changes no entry. The original
+entry's context is never replaced. A new terminal or
 advice creates a new launch entry. Cleanup marks `finished_at` rather than deleting entries. Launch and the sender
 sweep entries 30 days after creation and only remove routr's UUID filenames. Export off and unsampled commands
 write no index. Missing folders, revoked consent, uninstall and write failures never change command results.
