@@ -42,6 +42,12 @@ a failure.
   A startup question's next step uses the guide's trust rule: accept only a directory the lead created or a worktree
   of the repository the user already has it working in; otherwise ask the user and leave the pane waiting. The lead
   reads the options before sending keys because the default can exit the worker.
+- **Folder trust for one run.** A harness with a flag that trusts a folder for one run and saves nothing gets it for the
+  worker's folder (its worktree, or `--cwd`), in a pane and in a herdr-core terminal: Codex `-c
+  'projects={"<folder>"={trust_level="trusted"}}'`, Kiro V3 `--trust-workspace`, Cursor `--trust`. That folder's own
+  settings, hooks and MCP servers then load for that run without the question, as for a headless worker, which is never
+  asked; nothing in your harness settings changes (measured for Codex and Kiro, 2026-11-04). For that run Codex reads no
+  other folder's trust. Claude Code and Antigravity have no such flag: they ask, and the rule above applies.
 - `record --task-file` checks that the advice belongs to that task before reading reports or appending anything.
   Without a task file it warns that the advice was not checked. Revisions require the original advice identity;
   if the original task file is gone, revise without `--task-file` and say so in `--note`.

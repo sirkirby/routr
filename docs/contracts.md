@@ -636,7 +636,10 @@ launch as before.
 - `--worktree <branch>` (with `--base`, `--copy`): as a headless launch.
 - `--timeout` (default 120000) bounds the wait for it to start.
 - `start` is the harness's command as the runner will run it: `start.argv` ends with its first message, which says only
-  where the task file is (after Antigravity's `-i`; first, Codex's `--no-daemon`; Kiro's `--v3 chat --trust-all-tools`, where a pane has `--v2 chat --trust-tools=*`). `start.env` lists
+  where the task file is (after Antigravity's `-i`; first, Codex's `--no-daemon`; Kiro's `--v3 chat --trust-all-tools`, where a pane has `--v2 chat --trust-tools=*`).
+  A harness with a flag that trusts a folder for one run, saving nothing, gets it for the worker's folder, in a pane too:
+  Codex `-c 'projects={"<folder>"={trust_level="trusted"}}'`, Kiro V3 `--trust-workspace` (Cursor's `--trust` as before);
+  a headless start never had the question. `start.env` lists
   each trace-context carrier and config location passed, as `"<forwarded>"`, plus any Claude Code subagent defaults. A
   Cursor worker's `CURSOR_CONFIG_DIR` is its run folder's private copy, which is not shown there. `ran` displays that
   command and the `hc run`, with the lead's space as `<lead's space>` and routr's own program as `routr`. `hc run` also carries the label
@@ -645,7 +648,9 @@ launch as before.
   - `prompted`: `hc get` says status `working` or `done`, or a turn above 0; for a harness that reports no status (Cursor),
     `run.json` says its process runs. Whether Cursor has read its task is then not known.
   - `needs_input` (`ok: false`, no `error`): status `blocked` before any of that, with `needs_input` `{ why, hc: { state:
-    "blocked", kind? }, note? }`; or `--timeout` reached first, with `hc.state` the last status word or null. `screen` is
+    "blocked", kind? }, note? }`; or, for a harness that reports status, its process running for 20 seconds while core
+    says it has reported nothing (`hc: { state: null, reported: false }`); or `--timeout` reached first, with `hc.state`
+    the last status word or null. `screen` is
     the fixed withheld sentence: the harness has the pointer to its task from its start, so launch reads no terminal.
     routr answers nothing. `next` starts with `hc read <t> --lines 200`, gives the guide's startup instruction with `hc keys <t>
     <keys>`, says not to launch it again, and adds the steps below: the worker has its task, and goes on once answered.

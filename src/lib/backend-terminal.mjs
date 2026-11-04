@@ -22,6 +22,10 @@ import { configLocations, FORWARDED, processAlive, readJsonFile, start, terminal
 const PROMPT_FILE = "prompt.md", RUN_FILE = "run.json";
 const pausing = (ms) => new Promise((r) => setTimeout(r, ms));
 const POLL_MS = 250;
+// A harness that has run this long and sent core no report at all is taken to be at a question it reports nothing for,
+// not still starting. Measured 2026-11-04 in core terminals, two starts each: Claude Code, Codex and Antigravity first
+// reported within 1 s, Kiro V3 with its folder trusted within 2 s; Kiro at its folder question sent nothing for 46 s.
+const SILENT_MS = 20000;
 const WHERE = { where: "in a herdr-core terminal", runs: "runs in a terminal of its own" };
 // The first message: where the task is, never the task. hc keeps a terminal's argv and `ps` shows a harness's (p50).
 export const firstMessage = (file) => `Your task is in ${file}. Read that whole file now and do what it says.`;
@@ -117,6 +121,7 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
   };
   const started = (detail) => { out.ok = true; out.state = "prompted"; step("prompt", true, detail); out.next.push(...follow); };
   const ended = (detail) => { out.screen = WITHHELD; out.next.push(readStep(w)); throw new Error(`${h.label} ended before it started the task (${detail})`); };
+  let quietSince = null; // when this launch first saw the harness running with nothing reported
   for (;;) {
     const left = until - now(), got = await getTerminal(opened.terminal, hc, Math.max(1000, Math.min(10000, left)));
     const ran = runRecord(o.name).value;
@@ -127,6 +132,11 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
       if (word === "blocked") { const kind = statusKind(t); return needsInput("startup_question", `${h.label} is waiting at a question before it can start.`, { hc: { state: "blocked", ...(kind ? { kind } : {}) } }); }
       if (word === "error") return ended("it reported an error");
       if (h.noStatus && Number.isInteger(ran?.harness_pid) && ran.ended_at == null) return started(`${h.label} is running; it reports no status, so whether it read its task is not known`);
+      // `reported` is core's own (hc 0.1.17 schema); a core without it never ends the wait early.
+      if (!h.noStatus && t.reported === false && Number.isInteger(ran?.harness_pid) && ran.ended_at == null) {
+        quietSince ??= now();
+        if (now() - quietSince >= SILENT_MS) return needsInput("start_unconfirmed", `${h.label} has run for ${SILENT_MS / 1000} seconds without reporting any status: it is most likely waiting at a question it reports no status for.`, { hc: { state: null, reported: false } });
+      }
     } else if (got.code === "not_found") return ended("its terminal is gone");
     if (ran?.ended_at) return ended(ran.not_started ? `it could not start: ${ran.not_started}` : `exit code ${ran.exit_code}`);
     if (left <= 0) return needsInput("start_unconfirmed", `${h.label} has not reported working within the timeout: it may be waiting at a question it reports no status for, or still starting.`, { hc: { state: got.ok ? statusWord(got.data) : null } });

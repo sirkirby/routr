@@ -755,7 +755,7 @@ test("the `next` of a startup question adopts the agent at once when herdr's liv
   const first = fakeHerdr({ kind: "codex", trust: codexTrust, notReady: true, reply: (a) => (a[1] === "explain" ? explained("blocked", "trust_directory") : undefined) });
   const stopped = await launch(codex, first.deps);
   expect(stopped).toMatchObject({ state: "needs_input", needs_input: { herdr: { state: "blocked", rule: "trust_directory" } } });
-  expect(stopped.needs_input.note).toContain("trusted the repository in Codex"); // Codex's own way to be asked no more
+  expect(stopped.needs_input.note).toContain("trusting the worker's folder for this run only"); // the question it asks is not that one
   // 2. The orchestrator answers it (herdr pane send-keys w1:p2 enter) and follows `next` at once: herdr's state still says
   // blocked, its explain (the live reading) says idle. The block is stale: the agent is adopted as idle.
   // The follow-up carries exact argv, independent of path quoting on each platform.
