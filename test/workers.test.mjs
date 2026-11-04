@@ -1,7 +1,7 @@
 // Headless workers outside herdr: launch, wait, send, workers, stop, cleanup --worker, the holder and its channel. A fake
 // `claude` stands in for Claude Code's stream-json mode, with the behaviours measured in prototypes p34 and p36.
 import { afterAll, expect, test } from "bun:test";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
@@ -1905,4 +1905,31 @@ test("watch follows a worker until it is cleaned up, with status only in a core 
   const none = Bun.spawnSync([process.execPath, SCRIPT, "watch", "--name", "nobody"], { env: w.env });
   expect(none.exitCode).toBe(1);
   expect(none.stderr.toString()).toContain("no headless worker named nobody");
+}, 60000);
+
+const FOLLOW = (w, name, extra = {}) => Bun.spawn([process.execPath, SCRIPT, "watch", "--name", name], { env: { ...w.env, ...extra }, stdout: "pipe", stderr: "pipe" });
+test.skipIf(!POSIX)("a lost worker stays lost in watch, and a record it cannot read for a moment does not end it", async () => {
+  const w = world(), name = "k2";
+  w.launch(name, w.task(`${BRIEF} HOLD`));
+  const dir = w.runDir(name), record = join(dir, "worker.json");
+  // Unreadable, then readable again: still watching, and nothing says it was cleaned up.
+  const f = FOLLOW(w, name, { HC_TERMINAL_ID: "t3" });
+  await Bun.sleep(1500);
+  chmodSync(record, 0o000);
+  await Bun.sleep(1500);
+  expect(f.exitCode).toBeNull();
+  chmodSync(record, 0o600);
+  // Its holder killed mid-turn: lost at every look from then on, never working again.
+  process.kill(w.state(name).holder_pid, "SIGKILL");
+  expect(await until(() => w.run(["workers", "--name", name]).workers[0].state === "lost")).toBe(true);
+  await Bun.sleep(7000); // past the five seconds between checks a wait takes
+  w.release();
+  await until(() => !existsSync(dir) || w.run(["cleanup", "--worker", name]).state === "removed", 15000);
+  const out = await new Response(f.stdout).text();
+  expect(await f.exited).toBe(0);
+  const after = out.slice(out.indexOf("lost, turn 1"));
+  expect(out).toContain("lost, turn 1");
+  expect(after).not.toContain("working");
+  expect(after).not.toContain("state=working");
+  expect(after).toContain("  cleaned up\n");
 }, 60000);

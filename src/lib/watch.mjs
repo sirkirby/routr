@@ -39,16 +39,17 @@ export async function watchCommand(args, { env = process.env, write = (s) => pro
   const w = rec.worker, status = Boolean(env.HC_TERMINAL_ID), seen = { turns: new Set(), state: null, turn: null, tool: null };
   write(`${status ? `\x1b]2;${name}\x07` : ""}routr worker ${name}: ${HARNESSES[w.kind]?.label ?? w.kind}, ${w.model}${w.effort ? ` at ${w.effort}` : ""}\nin ${w.cwd}\nClosing this does not stop the worker. Ends when the worker is cleaned up.\n\n`);
   let last = null;
-  for (let lastCheck = -Infinity; ;) {
-    const check = now() - lastCheck >= 5000;
-    if (check) lastCheck = now();
-    // Another worker launched under this name since is not this one.
-    const v = workerOf(name).worker?.id === w.id ? await view(name, { check }) : null;
+  for (;;) {
+    // Gone, or another worker launched under this name since: this one is over. A record it cannot read just now is
+    // neither: view shows it as `unreadable`, and it is looked at again. Every look asks the holder, so a lost worker
+    // stays lost: without that, its saved state would read `working` again between checks.
+    const latest = workerOf(name), over = !latest.unreadable && latest.worker?.id !== w.id;
+    const v = over ? null : await view(name);
     if (!v) { write(`${clock(now())}  cleaned up\n`); return 0; }
     for (const l of changes(v, seen, clock(now()))) write(`${l}\n`);
     const report = status ? statusReport(v) : null;
     if (report && report !== last) { write(report); last = report; }
-    // view looks for a group left behind once a worker is not running, which starts ps: not every half second.
-    await pause(STATUS[v.state] === "working" ? 500 : 3000);
+    // view looks for a group left behind once a worker is not running, which starts ps: less often then.
+    await pause(STATUS[v.state] === "working" ? 1000 : 3000);
   }
 }

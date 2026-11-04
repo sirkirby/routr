@@ -38,15 +38,19 @@ test("a lead in the app gets a tab named for its worker, in its own space, runni
   expect(await show(f)).toEqual({ terminal: "t9", tab: "routr-abc" });
   expect(f.calls.map((c) => [c.cmd, c.args[0]])).toEqual([["hc", "get"], ["hc", "run"], ["herdr-app", "do"]]);
   expect(f.calls[0].args).toEqual(["get", "t3", "--json"]);
-  expect(f.calls[1].args).toEqual(["run", "--bg", "--json", "--name", "routr-w1", "--cwd", "/work", "--outlive-parent", "--no-notify", "--rm",
+  expect(f.calls[1].args).toEqual(["run", "--bg", "--json", "--name", "w1-abc", "--cwd", "/work", "--outlive-parent", "--no-notify", "--rm",
     "--label", "herdr.space=sp1", "--label", "herdr.tab=routr-abc", "--", "/bin/routr", "watch", "--name", "w1"]);
   expect(f.calls[2].args).toEqual(["do", "tab.rename", "--id", "routr-abc", "--name", "w1"]);
 });
 
-test("a long worker name still fits hc's limit", async () => {
-  const f = fake(), name = "a".repeat(32);
-  await show(f, { name });
-  expect(f.calls[1].args[f.calls[1].args.indexOf("--name") + 1]).toBe(`routr-${"a".repeat(26)}`);
+test("a terminal's name fits hc's limit, and two workers never share one", async () => {
+  const given = async (name, id) => { const f = fake(); await show(f, { name, id }); return f.calls[1].args[f.calls[1].args.indexOf("--name") + 1]; };
+  // Different after the cut, and the same name again before the last terminal has gone.
+  const a = await given(`${"a".repeat(31)}1`, "11111111ffff"), b = await given(`${"a".repeat(31)}2`, "22222222ffff");
+  expect(a).toBe(`${"a".repeat(23)}-11111111`);
+  expect(a.length).toBe(32);
+  expect(b).not.toBe(a);
+  expect(await given("w1", "11111111ffff")).not.toBe(await given("w1", "22222222ffff"));
 });
 
 test("off the app there is no label to give, and nothing to name", async () => {
