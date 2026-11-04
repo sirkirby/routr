@@ -514,6 +514,11 @@ In a PowerShell or cmd pane, a harness command (as herdr's `agent start` types i
 in a folder path such as Codex's trusted folder or Antigravity's `--add-dir`, is refused the same way, with the fixed
 `error` "herdr types this worker's command into a PowerShell or cmd pane in a way that breaks at a typographic quote
 (‘ ’ ‚ ‛), and it would hold one in a folder path. Use a folder whose path has none, or a pane running a POSIX shell."
+In a fish pane, a folder launch would type or a word of the harness command holding a backslash before another
+backslash or a quote, or ending in a backslash, is refused the same way (fish reads those as escapes even inside
+quotes), with the fixed `error` "fish reads a backslash before another backslash or a quote as an escape even inside
+quotes, so a folder path holding one, or ending in a backslash, would reach it changed. Use a folder whose path has
+none, or a pane running another shell."
 
 A `--worktree` launch opens the worker's pane itself. `ran` shows, in order: `herdr worktree create`, then (after any
 `--copy`) `herdr pane split <root pane> --direction right --cwd <worktree path> --no-focus --env …`, a split of the

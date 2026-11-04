@@ -1347,6 +1347,23 @@ test("launch refuses a PowerShell or cmd pane before typing anything when herdr 
   }
 });
 
+test("launch refuses a fish pane before typing anything when a word would reach fish changed: \\\\, \\' or a trailing \\", async () => {
+  const { FISH_PATH, fishTypable } = await import("../src/lib/herdr.mjs");
+  expect(["/tmp/a\\b", "C:\\Users\\x", "/tmp/it's"].map((w) => fishTypable(w))).toEqual([true, true, true]);
+  expect(["/tmp/a\\\\b", "/tmp/x\\", "/tmp/a\\'b", '"/it\'s\\\\q"'].map((w) => fishTypable(w))).toEqual([false, false, false, false]);
+  if (process.platform === "win32") return; // a backslash is a separator there, not a folder name's
+  const reply = (cwd) => (a) => a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "fish", cwd }] } }) : undefined;
+  // Codex's trusted folder with a ' and a backslash goes as a basic string, its backslash doubled: refused in fish.
+  const bad = scratch("it's\\q"), f = fakeHerdr({ kind: "codex", reply: reply(bad) });
+  const r = await launch(["--kind", "codex", "--name", "worker", "--model", "gpt-6.1-sol", "--pane", "w1:p1", "--cwd", bad, "--task", "Task"], f.deps);
+  expect(r).toMatchObject({ ok: false, state: "failed", error: FISH_PATH });
+  expect(f.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
+  // One backslash alone goes as a literal string, unchanged by fish: not refused.
+  const fine = scratch("a\\b"), g = fakeHerdr({ kind: "codex", reply: reply(fine) });
+  const ok = await launch(["--kind", "codex", "--name", "worker", "--model", "gpt-6.1-sol", "--pane", "w1:p1", "--cwd", fine, "--task", "Task"], g.deps);
+  expect(ok.error ?? null).not.toBe(FISH_PATH);
+});
+
 test("waitForShell: ready at a settled prompt; stops at any question, a busy adopted pane, or the wrong folder", async () => {
   const { waitForShell } = await import("../src/lib/herdr.mjs");
   const here = process.cwd();

@@ -240,7 +240,9 @@ In a pane, routr types commands for that pane's own shell (POSIX `sh`, PowerShel
 path typed into a shell reaches it exactly (in PowerShell, curly quotes as well as `'`), or is refused before anything
 is typed: cmd expands `%` and `!` even inside quotes, so a cmd shell is never given a path holding either, and routr
 says to use another folder or PowerShell. herdr types a harness's own command into a PowerShell or cmd pane itself,
-escaping only the plain `'`, so a command that would hold a typographic quote in a folder path is refused there too. Follow-up commands have exact `argv` and a
+escaping only the plain `'`, so a command that would hold a typographic quote in a folder path is refused there too.
+fish reads a backslash before another backslash or a quote as an escape even inside quotes, so in a fish pane a path or
+command holding one, or ending in a backslash, is refused as well. Follow-up commands have exact `argv` and a
 common-shell `command` only for the documented safe alphabet and an unquoted, non-assignment executable; otherwise
 `command` is null. Instructions and templates are marked `kind: "do"`, never runnable.
 Unsafe template values become placeholders for the lead to fill, never expanding shell text. Execution history stays

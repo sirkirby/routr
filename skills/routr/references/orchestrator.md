@@ -177,7 +177,8 @@ object describing what it did.
   Anything asked anyway comes back to you as `needs_input` (below). `--trust` is no longer accepted.
 - A cmd shell expands `%` and `!` in a folder path even inside quotes, so launch refuses (`failed`) to type such a
   folder into one: use a folder without them, or a pane running PowerShell. In a PowerShell or cmd pane it also refuses
-  a folder path with a typographic quote (‘ ’) in the harness's command, which herdr would type broken.
+  a folder path with a typographic quote (‘ ’) in the harness's command, which herdr would type broken; in a fish pane,
+  one with a backslash before another backslash or a quote, or ending in one, which fish would read changed.
 - `--dry-run` requires `--model` and prints `would_run` without executing worker actions. It may queue a planned
   span when OpenTelemetry export is on, but creates no launch index entry. It returns `ok: false` and `error` when
   a real launch would refuse its arguments, folder, task or advice; otherwise `ok: true`. It does not check the

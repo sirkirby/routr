@@ -70,6 +70,11 @@ export const cmdTypable = (...paths) => !paths.some((p) => /[%!]/.test(String(p)
 // both forms). routr's own lines (psq) double them.
 export const HERDR_PS_QUOTE = "herdr types this worker's command into a PowerShell or cmd pane in a way that breaks at a typographic quote (‘ ’ ‚ ‛), and it would hold one in a folder path. Use a folder whose path has none, or a pane running a POSIX shell.";
 export const herdrTypable = (shell, argv) => !["powershell", "cmd"].includes(shell) || !argv.some((a) => /[\u2018-\u201B]/.test(String(a)));
+// fish reads \\ and \' as escapes even inside single quotes (its docs; fish 4.9.3, run in review of #153), and routr's
+// quote and herdr's own both single-quote: a word with a backslash before another or before a quote, or ending in one,
+// reaches fish changed or does not parse. Refused before anything is typed.
+export const FISH_PATH = "fish reads a backslash before another backslash or a quote as an escape even inside quotes, so a folder path holding one, or ending in a backslash, would reach it changed. Use a folder whose path has none, or a pane running another shell.";
+export const fishTypable = (...words) => !words.some((w) => /\\\\|\\'|\\$/.test(String(w)));
 const cmdq = (s) => { if (!cmdTypable(s)) throw new Error(CMD_PATH); return `"${String(s).replaceAll('"', '""')}"`; };
 export const SHELLS = {
   posix: {
