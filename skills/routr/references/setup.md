@@ -1,10 +1,10 @@
 # Setting up routr
 
 Walk the user through this. Ask before you write or install anything, and show what you are about to write.
-Requirements: the `routr` command (one standalone binary; `routr --version` shows it). Pane workers also
-need herdr with its agent skill (step 5), and reading Cursor's usage needs herdr installed (see step 4); without herdr, an
-orchestrator can launch headless Claude Code, Codex, Cursor, Antigravity and Kiro workers, and the worker and subagent
-parts work as they are. If `routr` is missing, install it first:
+Requirements: the `routr` command (one standalone binary; `routr --version` shows it). To see workers as they run, use
+the Herdr app (tabs) or herdr in a terminal (panes): step 5. Without either, an orchestrator can launch headless
+Claude Code, Codex, Cursor, Antigravity and Kiro workers, and the worker and subagent parts work as they are. Reading
+Cursor's usage needs the terminal `herdr` installed (see step 4). If `routr` is missing, install it first:
 
 macOS and Linux:
 
@@ -208,12 +208,19 @@ and need nothing; Cursor's usage is read from its `/usage` screen in a private h
 Kiro's is read from its own `/usage` command in the background and needs nothing either; routr deletes the empty Kiro
 session each reading leaves. `routr skill install` links the skill into `~/.kiro/skills`, the only folder Kiro reads.
 
-## 5. herdr (for pane workers)
+## 5. Seeing workers: the Herdr app or herdr panes
 
-For pane workers, routr's orchestrator part runs workers in [herdr](https://herdr.dev) panes and uses herdr's own
-skill for pane and agent commands. Both belong to herdr and are installed from herdr, not bundled with routr. If
-`routr doctor` shows either missing and the user wants pane workers, offer to install them; headless Claude Code,
-Codex, Cursor, Antigravity and Kiro workers need neither:
+Where the lead runs decides how its workers appear, and each of these is optional:
+
+- **The Herdr app** ([download](https://herdr.dev/download/), which also installs herdr-core): each worker gets a tab of
+  its own, showing its progress, and appears in the app's Agents list. Nothing else is needed. The tab shows routr's
+  progress, not the harness's own screen.
+- **herdr in a terminal**: each worker runs in a pane, on the harness's own screen, and you can type into it.
+- **Neither**: workers run headless, and `routr watch --name <name>` follows one in any terminal.
+
+For pane workers, routr's orchestrator part uses herdr's own skill for pane and agent commands. Both belong to herdr
+and are installed from herdr, not bundled with routr. If `routr doctor` shows either missing and the user wants pane
+workers, offer to install them; the app and headless workers need neither:
 
     curl -fsSL https://herdr.dev/install.sh | sh                 # herdr itself (see herdr.dev for brew and Windows)
     npx skills add herdrdev/herdr --skill herdr -g               # herdr's agent skill (bunx works where there is no Node)
@@ -225,7 +232,7 @@ decision model's API itself, and the only thing the user supplies is the key (or
 
 The install script says when `~/.local/bin` is not on the user's PATH (and `routr doctor` says when a harness's own
 command is installed but not on it). Offer to add it to their
-shell profile (or the user PATH on Windows), so that agents and herdr panes can run `routr` by name.
+shell profile (or the user PATH on Windows), so that agents, herdr panes and the Herdr app's terminals can run `routr` by name.
 
 ## 7. Telemetry
 

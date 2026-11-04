@@ -64,6 +64,9 @@ export const skillsIncomplete = (r) => [...mine(r).filter((k) => k.missing?.leng
 export const skillsStale = (r) => (r.from_source ? [] : mine(r).filter((k) => baseVersion(k.version) !== baseVersion(ROUTR_VERSION)));
 
 // What is left to do, most important first, each with the command that does it.
+// Pane workers use herdr's skill, so a lead in herdr needs it whatever else is installed. With herdr-core and not in
+// herdr, it is optional: the app shows workers without it.
+const needsHerdrSkill = (r) => !r.herdr.skill && (!r.core?.path || r.herdr.inside_session);
 export function nextSteps(r) {
   const steps = [];
   // Every configured entry is tested independently; one working backup does not hide a broken first choice.
@@ -97,8 +100,9 @@ export function nextSteps(r) {
   if (r.telemetry?.needs_attention) steps.push("Telemetry is on but not sending: `routr telemetry status` says why (last_send, daily_send), and `routr telemetry send` sends now");
   if (r.otel?.queue_error) steps.push(r.otel.queue_error);
   if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
-  if (!r.herdr.path) steps.push("For workers in herdr panes, and to read Cursor's usage, install herdr (https://herdr.dev). Without it, workers run headless");
-  else if (!r.herdr.skill) steps.push("Install herdr's agent skill: npx skills add herdrdev/herdr --skill herdr -g");
+  // With herdr-core, the app shows workers without herdr or its skill: only Cursor's usage still needs herdr.
+  if (!r.herdr.path) steps.push(r.core?.path ? "To read Cursor's usage, install herdr (https://herdr.dev). The Herdr app does not need it otherwise" : "For workers in herdr panes, and to read Cursor's usage, install herdr (https://herdr.dev), or for workers in tabs, the Herdr app (https://herdr.dev/download/). Without either, workers run headless");
+  else if (needsHerdrSkill(r)) steps.push("Install herdr's agent skill: npx skills add herdrdev/herdr --skill herdr -g");
   return steps;
 }
 
@@ -236,9 +240,10 @@ export function render(r) {
   const { notes, problems = [] } = r.config;
   const seen = r.update_seen_hours_ago == null ? "" : `, seen ${r.update_seen_hours_ago} h ago`;
   line(!r.update_available, `${r.runtime}${r.update_available ? ` · ${r.update_available} is available${seen}: run \`routr update\`` : ""}`);
-  if (r.core?.inside_terminal) line(Boolean(r.core.path), r.core.path ? "herdr-core (inside its terminal): workers run headless, each with its progress in a tab of its own" : "herdr-core terminal, but `hc` is not on PATH: workers run headless with nothing to show them; `routr watch` still follows one");
-  line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : "not found: workers in herdr panes and Cursor's usage need it (https://herdr.dev). Without it, workers run headless"}`);
-  if (r.herdr.path) line(r.herdr.skill, `herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
+  if (r.core?.inside_terminal) line(Boolean(r.core.path), r.core.path ? "herdr-core (inside its terminal): workers run headless, each with a terminal showing its progress, a tab of its own in the Herdr app" : "herdr-core terminal, but `hc` is not on PATH: workers run headless with nothing to show them; `routr watch` still follows one");
+  else if (r.core?.path) line(true, "herdr-core (installed; not inside its terminal): a lead in the Herdr app shows each worker in a tab of its own");
+  line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : `not found: workers in herdr panes and Cursor's usage need it (https://herdr.dev). ${r.core?.path ? "The Herdr app does not need it otherwise" : "Without it, workers run headless"}`}`);
+  if (r.herdr.path && (r.herdr.skill || needsHerdrSkill(r))) line(r.herdr.skill, `herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
   const base = baseVersion(ROUTR_VERSION);
   // One line per skill and version: the folders routr's copies are in, and whether they match this routr; then any copy
   // missing a file, and any folder of that name that is not routr's.

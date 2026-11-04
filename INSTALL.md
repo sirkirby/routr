@@ -38,8 +38,8 @@ reads the briefs (TypeSafe's Jev by default, with a key from https://console.typ
 on their Cloudflare account or free on their machine through Ollama), its key if it needs one (they store it
 themselves with `routr key set`, so it never passes through you), and the config with `routr setup --yes --model <subscription>=<id> --reserve <subscription>=<share> --use <subscription>=normal ...`
 (a default model and effort, the hardest work, reserve and normal/fallback account use per subscription, settled with the user; never edit the file by
-hand), and, if they want workers in herdr panes, herdr and herdr's agent skill (without herdr, workers run headless;
-reading Cursor's usage still needs herdr installed). A user who would rather choose on screen can run `routr setup`
+hand), and, if they want workers in herdr panes, herdr and herdr's agent skill (the Herdr app needs neither, and shows
+workers in tabs; with neither, workers run headless; reading Cursor's usage still needs herdr installed). A user who would rather choose on screen can run `routr setup`
 in their own terminal instead.
 
 After updating an existing install, recommend `routr setup` to review settings. Read the
@@ -51,6 +51,7 @@ with the user and applies the agreed flags.
     routr dispatch "Rename getUsr to getUser in src/api/users.ts and update its call sites"
 
 **5. Tell the user how to use it.** They start a session as the orchestrator by typing `/routr-orchestrate <plan>`
-(`$routr-orchestrate` in Codex), or ask their lead agent to "use routr" for a piece of work. In a
-[herdr](https://herdr.dev) session workers run in panes the user can watch; elsewhere they run headless. Sizing
+(`$routr-orchestrate` in Codex), or ask their lead agent to "use routr" for a piece of work. In the
+[Herdr app](https://herdr.dev/download/) each worker gets a tab showing its progress; in a [herdr](https://herdr.dev)
+session workers run in panes the user can watch; elsewhere they run headless, and `routr watch` follows one. Sizing
 subagents works in any session.

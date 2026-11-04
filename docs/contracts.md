@@ -110,6 +110,9 @@ request to judge missing readings applies only to true fallback or unavailable u
   one decision-model line per entry. JSON has `decision`, a list replacing the former single `key` object: each
   entry carries `provider`, `label`, `asked`, `measured`, `local`, `where`, optional `unversioned`, `found`, `works`;
   on success `model`, `ms`, `note`; on failure `code`, `error` (fixed wording). `next_steps` includes each repair.
+- `doctor` JSON has `core`: `path`, where `hc` was found on PATH or null, and `inside_terminal`, true when
+  `HC_TERMINAL_ID` is set and `HERDR_ENV` is not. Neither says the Herdr app is running. Herdr's skill is asked for
+  when herdr is installed and either the lead is in a herdr session or `hc` was not found.
 - `key set <provider>` keeps the existing owner-only key storage and test output (`ok`, `provider`, `file`, `works`,
   `model`, `ms`, `error` as applicable). For a provider outside the configured list, `note` names that fact and the
   `routr setup --decision ...` command that appends it while retaining existing choices. It changes no settings.

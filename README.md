@@ -7,7 +7,7 @@ Codex, Cursor, Antigravity, and Kiro.
 
 **It uses what is already on your machine.** The workers are the harness CLIs you have installed and logged in to,
 started in [herdr](https://github.com/herdrdev/herdr) panes (routr is named after it), or, without herdr, Claude Code,
-Codex, Cursor, Antigravity and Kiro running headless. There are no provider API
+Codex, Cursor, Antigravity and Kiro running headless, with a tab for each in the Herdr app. There are no provider API
 keys to hand over, no proxy, and no new accounts: your subscriptions, your logins, your settings. Keys routr
 needs are for its own chosen decision providers, and those are optional: it can run on your own machine.
 
@@ -35,7 +35,7 @@ model. routr spreads the work across what you have, and starts each piece at the
 2. **Build.** The lead chooses suitable model and effort options on normal accounts, then compares their capacity.
    Fallback accounts are available when none suitably takes the task. `routr launch` starts the worker in its own
    git worktree with that harness's flags: in a herdr pane, handling shell prompts on the way and reporting any
-   question a harness asks at startup, or, outside herdr, headless, followed with `routr wait`.
+   question a harness asks at startup, or, outside herdr, headless, followed with `routr wait` (in the Herdr app, with a tab showing each one's progress).
 3. **Judge.** When the worker reports, `routr check` takes a first read of the report against the brief. The lead
    then runs its own check, which is what decides.
 4. **Fix.** Work that falls short goes back to the same worker. If it falls short again, the lead relaunches it one
@@ -171,13 +171,18 @@ To remove it, run `routr uninstall`. It shows what it will remove and asks first
 for a later reinstall unless you choose otherwise (`--purge`). Finish any headless worker first (`routr cleanup
 --worker <name>`): uninstall stops and says so while one is there.
 
-For pane workers you also need [herdr](https://herdr.dev) and its agent skill
-(`npx skills add herdrdev/herdr --skill herdr -g`); setup offers to install both, and `routr doctor` tells you when
-either is missing. Without herdr, `routr launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless, followed with
-`routr wait`; Cursor's usage is still read through herdr, so it needs herdr installed. Sizing subagents works without it.
-In the Herdr app, workers run the same way, and each gets a tab showing its progress. See `routr watch`.
+Where the lead runs decides how you see its workers:
 
-To start an orchestration, open your lead agent (in herdr for pane workers) and type your plan after the `routr-orchestrate` skill, which
+- In the [Herdr app](https://herdr.dev/download/), each worker gets a tab showing its progress and appears in the
+  Agents list. Nothing else is needed. See `routr watch`.
+- In [herdr](https://herdr.dev) in a terminal, each worker runs in a pane on the harness's own screen. This needs herdr
+  and its agent skill (`npx skills add herdrdev/herdr --skill herdr -g`); `routr doctor` tells you when either is missing.
+- Anywhere else, `routr launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless, followed with
+  `routr wait`, and `routr watch` shows one in any terminal.
+
+Cursor's usage is still read through the terminal `herdr`, so it needs that installed. Sizing subagents needs none of these.
+
+To start an orchestration, open your lead agent (in the Herdr app for tabs, in herdr for panes) and type your plan after the `routr-orchestrate` skill, which
 routr installs beside the routr skill:
 
     /routr-orchestrate <your plan or task>
