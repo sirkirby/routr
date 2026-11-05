@@ -113,7 +113,7 @@ if (acting(argv)) {
 // its command sees it (`--headroom --launch <id>`), even when globals precede the command. Those commands refuse when
 // a count changed. Other commands retain their existing value/brief parsing.
 const counted = (words) => ({ level: words.filter((word) => /^--level(?:=|$)/.test(word)).length, launch: words.filter((word) => word === "--launch").length,
-  cwd: words.filter((word) => word === "--cwd").length });
+  cwd: words.filter((word) => word === "--cwd").length, out: words.filter((word) => word === "--out").length, noOpen: words.filter((word) => word === "--no-open").length });
 const raw = counted(argv);
 const take = (name) => { const i = argv.indexOf(name); return i >= 0 ? argv.splice(i, 2)[1] : undefined; };
 const takeAll = (name) => { const r = []; while (argv.includes(name)) r.push(take(name)); return r; };
@@ -159,6 +159,11 @@ const ADVISE = {
   board: async () => print(raw.cwd !== counted(rest).cwd ? (await import("./lib/output.mjs")).refusal("no board", "board: --cwd cannot be a value for --config or --headroom")
     : await (await import("./lib/board.mjs")).boardCommand(rest, loaded().config, { configPath, warnings: [...loaded().notes, ...inputNotes,
       ...(Object.keys(given).length ? [(await import("./lib/warnings.mjs")).warning("headroom_unused", "board ranks routr's kept readings; --headroom is for dispatch and usage")] : [])] }), 1),
+  // The ledger only: no config, no harness, no network. A flag a global took as its value is refused, never dropped.
+  dash: async () => print(raw.cwd !== counted(rest).cwd || raw.out !== counted(rest).out || raw.noOpen !== counted(rest).noOpen
+    ? (await import("./lib/output.mjs")).refusal("no dash", "dash: --cwd, --out or --no-open cannot be a value for --config or --headroom")
+    : await (await import("./lib/dash.mjs")).dashCommand(rest, { warnings: [...inputNotes,
+      ...(Object.keys(given).length ? [(await import("./lib/warnings.mjs")).warning("headroom_unused", "dash reads this machine's ledger only; --headroom is for dispatch and usage")] : [])] }), 1),
   doctor: async () => (await import("./lib/doctor.mjs")).doctor({ json: rest.includes("--json"), configPath }),
 };
 if (ADVISE[mode]) { await ADVISE[mode](); return 0; }

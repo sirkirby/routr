@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="generator" content="routr dash">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'">
+<title>routr dash</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #6f6d68;
+  --grid: #e1e0d9; --base: #c3c2b7; --ring: rgba(11,11,11,.10);
+  --claude: #2a78d6; --codex: #eb6834; --cursor: #1baf7a; --agy: #eda100; --kiro: #e87ba4; --other: #898781;
+  --same: #c3c2b7; --up: #2a78d6; --down: #e34948;
+  --seq-0: #f0efec; --seq-1: #cde2fb; --seq-2: #9ec5f4; --seq-3: #5598e7; --seq-4: #256abf; --seq-5: #104281;
+}
+@media (prefers-color-scheme: dark) { :root:where(:not([data-theme="light"])) {
+  color-scheme: dark;
+  --page: #0d0d0d; --surface: #1a1a19; --ink: #f0efec; --ink2: #c3c2b7; --muted: #a09e96;
+  --grid: #2c2c2a; --base: #383835; --ring: rgba(255,255,255,.10);
+  --claude: #3987e5; --codex: #d95926; --cursor: #199e70; --agy: #c98500; --kiro: #d55181;
+  --same: #55544f; --up: #3987e5; --down: #e66767;
+  --seq-0: #262624; --seq-1: #104281; --seq-2: #184f95; --seq-3: #256abf; --seq-4: #3987e5; --seq-5: #6da7ec;
+} }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 48px; }
+header { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: baseline; justify-content: space-between; }
+h1 { font-size: 20px; margin: 0; font-weight: 600; }
+h2 { font-size: 15px; margin: 0 0 2px; font-weight: 600; }
+.sub { color: var(--ink2); margin: 0 0 12px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 16px; }
+label { color: var(--ink2); display: inline-flex; gap: 6px; align-items: center; }
+select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--base); border-radius: 6px; padding: 4px 8px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.tile, .card { background: var(--surface); border-radius: 10px; box-shadow: 0 0 0 1px var(--ring); }
+.tile { padding: 12px 14px; }
+.tile b { display: block; font-size: 26px; font-weight: 600; line-height: 1.2; }
+.tile span { color: var(--ink2); font-size: 13px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 12px; }
+.card { padding: 14px; min-width: 0; }
+.wide { grid-column: 1 / -1; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 12px; color: var(--ink2); font-size: 13px; margin: 6px 0; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+svg { display: block; width: 100%; }
+svg text { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th { text-align: left; font-weight: 500; color: var(--ink2); border-bottom: 1px solid var(--base); padding: 4px 8px 4px 0; white-space: nowrap; }
+td { padding: 4px 8px 4px 0; border-bottom: 1px solid var(--grid); }
+td.n, th.n { text-align: right; }
+.bar { display: inline-block; height: 8px; border-radius: 0 4px 4px 0; vertical-align: 1px; min-width: 1px; }
+.matrix { width: auto; }
+.matrix td.c { width: 74px; height: 42px; text-align: center; border: 2px solid var(--surface); border-radius: 6px; padding: 0; }
+.matrix th.side { padding-right: 10px; }
+details { margin-top: 6px; color: var(--ink2); font-size: 13px; }
+summary { cursor: pointer; }
+.note { color: var(--ink2); font-size: 13px; margin: 8px 0 0; }
+#tip { position: fixed; pointer-events: none; display: none; background: var(--ink); color: var(--surface); padding: 6px 8px; border-radius: 6px; font-size: 12px; white-space: pre; z-index: 5; font-variant-numeric: tabular-nums; }
+footer { color: var(--ink2); font-size: 13px; margin-top: 16px; }
+footer li { margin-bottom: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1>routr dash</h1><span class="sub" id="asof"></span></header>
+  <p class="sub">What you asked routr, what you chose, and how it turned out, from this machine's ledger. It counts your choices; it does not judge them.</p>
+  <p class="sub" id="notice" hidden></p>
+  <div class="filters">
+    <label>Project <select id="project"></select></label>
+    <label>Period <select id="range"><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="0">All time</option></select></label>
+  </div>
+  <section class="tiles" id="tiles"></section>
+  <div class="grid">
+    <section class="card"><h2>Did the choice follow the advice?</h2><p class="sub">Recorded runs per week, by chosen level against advised level.</p><div class="legend" id="lg-follow"></div><div id="follow"></div><details><summary>As a table</summary><div class="scroll" id="follow-t"></div></details></section>
+    <section class="card"><h2>Advised level, chosen level</h2><p class="sub">Runs in each pair. The diagonal followed the advice.</p><div class="scroll" id="matrix"></div></section>
+    <section class="card"><h2>Where the work went</h2><p class="sub">Recorded runs per week, by account.</p><div class="legend" id="lg-acct"></div><div id="accts"></div><details><summary>As a table</summary><div class="scroll" id="accts-t"></div></details></section>
+    <section class="card"><h2>Room and who got the work</h2><p class="sub">The accounts in each run's advice, the usable room they showed then, and the share they got.</p><div class="scroll" id="room"></div><p class="note">Room is not a target: an account can be right with less of it, and this does not say an account suited the work.</p></section>
+    <section class="card wide"><h2>What you reached for</h2><p class="sub">Each chosen level, account, model and effort, as you recorded them.</p><div class="scroll" id="choices"></div></section>
+    <section class="card"><h2>Done first time</h2><p class="sub">Share of runs per week: done, check passed, one attempt, no extra work.</p><div id="first"></div><details><summary>As a table</summary><div class="scroll" id="first-t"></div></details></section>
+    <section class="card"><h2>Why work took more</h2><p class="sub">The causes recorded on runs that needed extra work.</p><div class="scroll" id="causes"></div></section>
+    <section class="card"><h2>Outcome by the choice's direction</h2><p class="sub">Not cause and effect: harder work may be the reason a level went up.</p><div class="scroll" id="direction"></div></section>
+    <section class="card"><h2>What routr read, by project</h2><p class="sub">How often routr was torn between two levels, and called the work high risk.</p><div class="scroll" id="reads"></div></section>
+  </div>
+  <footer><p>This page loads nothing and sends nothing. It holds no note, no brief and no path.</p><ul id="gaps"></ul></footer>
+</main>
+<div id="tip"></div>
+<script type="application/json" id="data">/*DATA*/</script>
+<script>
+const { rows: ALL, at, project: PROJECT = null, unavailable = null } = JSON.parse(document.getElementById("data").textContent);
+const KINDS = ["claude", "codex", "cursor", "agy", "kiro"], NAMES = { claude: "Claude Code", codex: "Codex", cursor: "Cursor", agy: "Antigravity", kiro: "Kiro" };
+const LV = { basic: 0, standard: 1, strong: 2 }, LEVELS = ["basic", "standard", "strong"], DAY = 864e5;
+const $ = (id) => document.getElementById(id);
+const el = (tag, attrs = {}, ...kids) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) k === "text" ? (n.textContent = v) : n.setAttribute(k, v); n.append(...kids); return n; };
+const svg = (tag, attrs = {}) => { const n = document.createElementNS("http://www.w3.org/2000/svg", tag); for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v); return n; };
+const pct = (a, b) => (b ? `${Math.round(100 * a / b)}%` : "–");
+const name = (k) => NAMES[k] ?? k ?? "not said";
+const colour = (k) => (KINDS.includes(k) ? `var(--${k})` : "var(--other)");
+const dirOf = (r) => (r.a in LV && r.c in LV ? (LV[r.c] === LV[r.a] ? "same" : LV[r.c] > LV[r.a] ? "up" : "down") : null);
+const weekOf = (iso) => { const d = new Date(iso); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getTime(); };
+const dayLabel = (ms) => new Date(ms).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+function weeks(rows) { if (!rows.length) return []; const a = Math.min(...rows.map((r) => weekOf(r.t))), z = Math.max(...rows.map((r) => weekOf(r.t))), out = []; for (let w = a; w <= z; w = new Date(new Date(w).setDate(new Date(w).getDate() + 7)).getTime()) out.push(w); return out; }
+const tip = $("tip");
+const hover = (node, text) => { const show = (e) => { tip.textContent = text; tip.style.display = "block"; const x = e.clientX ?? node.getBoundingClientRect().x, y = e.clientY ?? node.getBoundingClientRect().y; tip.style.left = `${Math.min(x + 12, innerWidth - tip.offsetWidth - 8)}px`; tip.style.top = `${Math.max(y - tip.offsetHeight - 8, 8)}px`; }; node.addEventListener("pointermove", show); node.addEventListener("pointerleave", () => (tip.style.display = "none")); node.setAttribute("tabindex", "0"); node.addEventListener("focus", show); node.addEventListener("blur", () => (tip.style.display = "none")); node.setAttribute("aria-label", text.replace(/\n/g, ", ")); };
+const legend = (id, items) => $(id).replaceChildren(...items.map(([label, c]) => el("span", {}, el("i", { style: `background:${c}` }), label)));
+const table = (head, body, numeric = []) => el("table", {}, el("thead", {}, el("tr", {}, ...head.map((h, i) => el("th", { text: h, class: numeric.includes(i) ? "n" : "" })))), el("tbody", {}, ...body.map((r) => el("tr", {}, ...r.map((c, i) => (c instanceof Node ? el("td", {}, c) : el("td", { text: c, class: numeric.includes(i) ? "n" : "" })))))));
+const inlineBar = (v, max, c = "var(--claude)") => el("span", { class: "bar", style: `width:${Math.round(120 * v / (max || 1))}px;background:${c}` });
+
+function axes(root, W, H, L, B, max, fmt) {
+  const ticks = max <= 4 ? max : 4;
+  for (let i = 0; i <= ticks; i++) { const y = H - B - (H - B - 6) * i / (ticks || 1), v = max * i / (ticks || 1);
+    root.append(svg("line", { x1: L, x2: W, y1: y, y2: y, stroke: i ? "var(--grid)" : "var(--base)" }));
+    const t = svg("text", { x: L - 6, y: y + 4, "text-anchor": "end" }); t.textContent = fmt(v); root.append(t); }
+}
+function stacked(host, wk, series, rows, keyOf) {
+  const W = Math.max(host.clientWidth, 280), H = 190, L = 30, B = 22, root = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" });
+  const counts = wk.map((w) => { const c = {}; for (const r of rows) if (weekOf(r.t) === w) { const k = keyOf(r); if (k != null) c[k] = (c[k] ?? 0) + 1; } return c; });
+  const totals = counts.map((c) => Object.values(c).reduce((a, b) => a + b, 0)), raw = Math.max(1, ...totals), max = raw <= 4 ? raw : Math.ceil(raw / 4 / (raw > 40 ? 10 : 1)) * 4 * (raw > 40 ? 10 : 1);
+  axes(root, W, H, L, B, max, (v) => String(Math.round(v)));
+  const step = (W - L) / wk.length, bw = Math.min(28, Math.max(5, step - 4)), scale = (H - B - 6) / max, every = Math.ceil(44 / step);
+  wk.forEach((w, i) => { const x = L + step * i + (step - bw) / 2; let y = H - B;
+    const keys = series.filter(([k]) => counts[i][k]);
+    keys.forEach(([k, label, c], j) => { const h = counts[i][k] * scale, top = j === keys.length - 1;
+      const seg = Math.max(h - (top ? 0 : 2), 1); y -= h;
+      root.append(svg("path", { fill: c, d: top ? `M${x} ${y + seg}V${y + Math.min(4, seg)}q0 -${Math.min(4, seg)} ${Math.min(4, bw / 2)} -${Math.min(4, seg)}h${bw - 2 * Math.min(4, bw / 2)}q${Math.min(4, bw / 2)} 0 ${Math.min(4, bw / 2)} ${Math.min(4, seg)}V${y + seg}z` : `M${x} ${y + h}h${bw}v-${seg}h-${bw}z` })); });
+    const hit = svg("rect", { x: L + step * i, y: 0, width: step, height: H - B, fill: "transparent" });
+    hover(hit, [`Week of ${dayLabel(w)}: ${totals[i]} runs`, ...keys.map(([k, label]) => `${label}: ${counts[i][k]}`)].join("\n")); root.append(hit);
+    if (i % every === 0) { const t = svg("text", { x: x + bw / 2, y: H - 6, "text-anchor": "middle" }); t.textContent = dayLabel(w); root.append(t); } });
+  host.replaceChildren(root);
+  return { counts, totals };
+}
+function line(host, wk, values) {
+  const W = Math.max(host.clientWidth, 280), H = 170, L = 42, B = 22, root = svg("svg", { viewBox: `0 0 ${W} ${H}`, height: H, role: "img" });
+  axes(root, W, H, L, B, 100, (v) => `${Math.round(v)}%`);
+  const step = (W - L) / wk.length, X = (i) => L + step * (i + .5), Y = (v) => H - B - (H - B - 6) * v / 100, pts = wk.map((w, i) => [i, values[i]]).filter(([, v]) => v);
+  if (pts.length > 1) root.append(svg("path", { fill: "none", stroke: "var(--claude)", "stroke-width": 2, "stroke-linejoin": "round", d: pts.map(([i, v], n) => `${n ? "L" : "M"}${X(i)} ${Y(v.p)}`).join("") }));
+  const every = Math.ceil(44 / step);
+  wk.forEach((w, i) => { const v = values[i];
+    if (v) { root.append(svg("circle", { cx: X(i), cy: Y(v.p), r: 4, fill: "var(--claude)", stroke: "var(--surface)", "stroke-width": 2 })); const hit = svg("rect", { x: X(i) - step / 2, y: 0, width: step, height: H - B, fill: "transparent" }); hover(hit, `Week of ${dayLabel(w)}\n${Math.round(v.p)}% done first time\n${v.a} of ${v.n} runs`); root.append(hit); }
+    if (i % every === 0) { const t = svg("text", { x: X(i), y: H - 6, "text-anchor": "middle" }); t.textContent = dayLabel(w); root.append(t); } });
+  host.replaceChildren(root);
+}
+
+const projects = [...new Set(ALL.map((r) => r.p).filter(Boolean))].map((p) => [p, ALL.filter((r) => r.p === p).length]).sort((a, b) => b[1] - a[1]);
+$("project").append(el("option", { value: "", text: "All projects" }), ...projects.map(([p, n]) => el("option", { value: p, text: `${p} (${n})` })));
+if (PROJECT && ![...$("project").options].some((o) => o.value === PROJECT)) $("project").append(el("option", { value: PROJECT, text: `${PROJECT} (0)` }));
+if (PROJECT) $("project").value = PROJECT;
+const said = [unavailable, PROJECT ? null : "Not in a git repository: every project."].filter(Boolean);
+if (said.length) { const n = $("notice"); n.hidden = false; n.textContent = said.join(" "); }
+
+function render() {
+  if (unavailable) { $("asof").textContent = at ? `Drawn ${new Date(at).toLocaleString()}` : ""; $("tiles").hidden = true; document.querySelector(".grid").hidden = true; return; }
+  const p = $("project").value, days = +$("range").value, now = new Date(at).getTime();
+  const rows = ALL.filter((r) => (!p || r.p === p) && (!days || new Date(r.t).getTime() >= now - days * DAY));
+  const wk = weeks(rows);
+  $("asof").textContent = `Drawn ${new Date(at).toLocaleString()}`;
+  const dirs = rows.map(dirOf), judged = dirs.filter(Boolean).length, same = dirs.filter((d) => d === "same").length, up = dirs.filter((d) => d === "up").length, down = dirs.filter((d) => d === "down").length;
+  const counted = rows.filter((r) => r.attempts != null), first = counted.filter((r) => r.first).length;
+  const byAcct = new Map(); for (const r of rows) if (r.s) byAcct.set(r.s, (byAcct.get(r.s) ?? 0) + 1);
+  const ranked = [...byAcct].sort((a, b) => b[1] - a[1]), top2 = ranked.slice(0, 2).reduce((a, [, n]) => a + n, 0);
+  const fails = rows.filter((r) => r.fail).length;
+  const tile = (big, small) => el("div", { class: "tile" }, el("b", { text: big }), el("span", { text: small }));
+  $("tiles").replaceChildren(
+    tile(String(rows.length), "recorded runs"),
+    tile(pct(same, judged), `chose the advised level (${up} above, ${down} below)`),
+    tile(pct(first, counted.length), `done first time (${first} of ${counted.length})`),
+    tile(pct(top2, rows.length), `went to ${ranked.slice(0, 2).map(([k]) => name(k)).join(" and ") || "no account"}`),
+    tile(String(fails), `failed their check`));
+
+  const dirSeries = [["same", "Followed", "var(--same)"], ["up", "Above advice", "var(--up)"], ["down", "Below advice", "var(--down)"]];
+  legend("lg-follow", dirSeries.map(([, l, c]) => [l, c]));
+  const f = stacked($("follow"), wk, dirSeries, rows, dirOf);
+  $("follow-t").replaceChildren(table(["Week", "Followed", "Above", "Below"], wk.map((w, i) => [dayLabel(w), f.counts[i].same ?? 0, f.counts[i].up ?? 0, f.counts[i].down ?? 0]), [1, 2, 3]));
+
+  const pair = (a, c) => rows.filter((r) => r.a === a && r.c === c).length, cellMax = Math.max(1, ...LEVELS.flatMap((a) => LEVELS.map((c) => pair(a, c))));
+  const shade = (n) => (!n ? 0 : Math.min(5, 1 + Math.floor(4.999 * n / cellMax)));
+  $("matrix").replaceChildren(el("table", { class: "matrix" }, el("thead", {}, el("tr", {}, el("th", { text: "advised ↓  chose →" }), ...LEVELS.map((l) => el("th", { text: l, style: "text-align:center" })))),
+    el("tbody", {}, ...LEVELS.map((a) => el("tr", {}, el("th", { text: a, class: "side" }), ...LEVELS.map((c) => { const n = pair(a, c), s = shade(n); const td = el("td", { class: "c", text: String(n), style: `background:var(--seq-${s});color:${s >= 3 ? "#fff" : "var(--ink)"}` }); hover(td, `Advised ${a}, chose ${c}: ${n} runs`); return td; }))))));
+
+  const acctSeries = [...KINDS, ...ranked.map(([k]) => k).filter((k) => !KINDS.includes(k))].filter((k) => byAcct.has(k)).map((k) => [k, name(k), colour(k)]);
+  legend("lg-acct", acctSeries.map(([, l, c]) => [l, c]));
+  const g = stacked($("accts"), wk, acctSeries, rows, (r) => r.s);
+  $("accts-t").replaceChildren(table(["Week", ...acctSeries.map(([, l]) => l)], wk.map((w, i) => [dayLabel(w), ...acctSeries.map(([k]) => g.counts[i][k] ?? 0)]), acctSeries.map((_, i) => i + 1)));
+
+  const room = new Map(); for (const r of rows) for (const [k, v] of Object.entries(r.room)) { const e = room.get(k) ?? { offered: 0, sum: 0, got: 0 }; e.offered++; e.sum += v; e.got += r.s === k ? 1 : 0; room.set(k, e); }
+  const rr = [...room].sort((a, b) => b[1].got - a[1].got);
+  $("room").replaceChildren(table(["Account", "In advice", "Room then", "Got the work", ""], rr.map(([k, e]) => [name(k), e.offered, pct(e.sum, e.offered), `${e.got} (${pct(e.got, e.offered)})`, inlineBar(e.got, e.offered, colour(k))]), [1, 2, 3]));
+
+  const combos = new Map(); for (const r of rows) { const k = [r.c, r.s, r.m, r.f].join("\0"); const e = combos.get(k) ?? { r, n: 0, first: 0, known: 0 }; e.n++; if (r.attempts != null) { e.known++; if (r.first) e.first++; } combos.set(k, e); }
+  const cs = [...combos.values()].sort((a, b) => b.n - a.n), shown = cs.slice(0, 12), rest = cs.slice(12).reduce((a, e) => a + e.n, 0), csMax = shown[0]?.n ?? 1;
+  $("choices").replaceChildren(table(["Level", "Account", "Model", "Effort", "Runs", "", "First time"], [...shown.map((e) => [e.r.c ?? "–", name(e.r.s), e.r.m ?? "–", e.r.f ?? "–", e.n, inlineBar(e.n, csMax, colour(e.r.s)), e.known ? `${pct(e.first, e.known)} of ${e.known}` : "–"]), ...(rest ? [["", `${cs.length - 12} other choices`, "", "", rest, "", ""]] : [])], [4, 6]));
+
+  const fv = wk.map((w) => { const rs = counted.filter((r) => weekOf(r.t) === w), a = rs.filter((r) => r.first).length; return rs.length ? { p: 100 * a / rs.length, a, n: rs.length } : null; });
+  line($("first"), wk, fv);
+  $("first-t").replaceChildren(table(["Week", "First time", "Runs"], wk.map((w, i) => [dayLabel(w), fv[i] ? `${Math.round(fv[i].p)}%` : "–", fv[i]?.n ?? 0]), [1, 2]));
+
+  const causes = new Map(); for (const r of rows) for (const c of r.causes) causes.set(c, (causes.get(c) ?? 0) + 1);
+  const cr = [...causes].sort((a, b) => b[1] - a[1]), cMax = cr[0]?.[1] ?? 1;
+  $("causes").replaceChildren(cr.length ? table(["Cause", "Runs", ""], cr.map(([c, n]) => [c, n, inlineBar(n, cMax)]), [1]) : el("p", { class: "note", text: "No causes recorded in this period." }));
+
+  $("direction").replaceChildren(table(["Chosen level", "Runs", "First time", "Mean attempts"], dirSeries.map(([k, l]) => { const rs = counted.filter((r) => dirOf(r) === k); return [l, rs.length, rs.length ? `${pct(rs.filter((r) => r.first).length, rs.length)} (${rs.filter((r) => r.first).length})` : "–", rs.length ? (rs.reduce((a, r) => a + r.attempts, 0) / rs.length).toFixed(1) : "–"]; }), [1, 2, 3]));
+
+  const per = new Map(); for (const r of rows) { const k = r.p ?? "(no project)"; const e = per.get(k) ?? { n: 0, risk: 0, unsure: 0 }; e.n++; e.risk += r.risk ? 1 : 0; e.unsure += r.unsure ? 1 : 0; per.set(k, e); }
+  const pr = [...per].sort((a, b) => b[1].n - a[1].n), prShown = pr.slice(0, 8);
+  $("reads").replaceChildren(table(["Project", "Runs", "Torn", "High risk"], prShown.map(([k, e]) => [k, e.n, pct(e.unsure, e.n), pct(e.risk, e.n)]), [1, 2, 3]));
+
+  const noAttempts = rows.length - counted.length, noProject = rows.filter((r) => !r.p).length, noRoom = rows.filter((r) => !Object.keys(r.room).length).length;
+  $("gaps").replaceChildren(...[noAttempts && `${noAttempts} runs recorded no attempts, so "done first time" leaves them out.`, noProject && `${noProject} runs have no project.`, noRoom && `${noRoom} runs kept no room reading.`].filter(Boolean).map((t) => el("li", { text: t })));
+}
+$("project").addEventListener("change", render); $("range").addEventListener("change", render);
+let timer; addEventListener("resize", () => { clearTimeout(timer); timer = setTimeout(render, 120); });
+render();
+</script>
+</body>
+</html>

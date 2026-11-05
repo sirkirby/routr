@@ -7,7 +7,7 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { answer, refusal } from "./output.mjs";
-import { firstTime, LEDGER_PATH, latestRuns, projectName, read } from "./ledger.mjs";
+import { firstTime, LEDGER_PATH, latestRuns, projectAdvised, projectChose, projectName, read } from "./ledger.mjs";
 import { HISTORY_DAYS, readHistory } from "./launch-history.mjs";
 import { cachedUsage } from "./harnesses.mjs";
 import { rankSubscriptions } from "./pick.mjs";
@@ -66,7 +66,7 @@ function entry(h, r) {
   return { at: Math.max(launched ?? 0, recorded ?? 0) || null, launch_id: h?.launch_id ?? r?.launch_id ?? null, run_id: r?.run_id ?? null, id: r?.id ?? h?.id ?? null,
     name: h?.name ?? null, backend: h?.backend ?? null, project: r?.project ?? h?.project ?? null,
     launched_at: iso(launched), recorded_at: iso(recorded),
-    advised: r?.advised ?? h?.advised ?? null, chose: r?.chose ?? (h ? choseOfLaunch(h) : null), outcome: outcomeOf(r?.outcome) };
+    advised: projectAdvised(r?.advised ?? h?.advised ?? null), chose: projectChose(r?.chose ?? (h ? choseOfLaunch(h) : null)), outcome: outcomeOf(r?.outcome) };
 }
 
 // The 7-day counts, from every row before the display limit: launches in the window (the history keeps 7 days), and runs

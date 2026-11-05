@@ -111,14 +111,17 @@ const linkTarget = (file) => {
   }
   throw new Error(`${file}: too many links (a loop?); nothing was written`);
 };
-export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnError = false, indent, rename = renameSync, userFile = false,
+// A temp file in the same folder, then a rename over the path. The rename replaces a symlink at the path; it does not
+// follow one, so the link's target is never the file written. `userFile` is the exception, for a file the person keeps
+// elsewhere: written where its link points.
+function writeAtomic(file, text, { mkdir = true, mode, preserveOnError = false, rename = renameSync, userFile = false,
   busyFor = process.platform === "win32" ? REPLACE_BUSY_MS : 0, now = () => performance.now(), pause = (ms) => Atomics.wait(replacePause, 0, 0, ms) } = {}) {
   let exact;
   if (userFile) { file = linkTarget(file); try { exact = mode ??= statSync(file).mode & 0o777; } catch {} }
   if (mkdir) ensureParent(file);
   const tmp = `${file}.tmp.${process.pid}`;
   try {
-    writeFileSync(tmp, JSON.stringify(value, null, indent) + "\n", { mode });
+    writeFileSync(tmp, text, { mode });
     if (exact !== undefined && process.platform !== "win32") chmodSync(tmp, exact);
     for (const began = now(); ;) {
       try { rename(tmp, file); return; }
@@ -131,6 +134,10 @@ export function writeJsonAtomic(file, value, { mkdir = true, mode, preserveOnErr
     try { unlinkSync(file); } catch {}
     rename(tmp, file);
   } catch (e) { try { unlinkSync(tmp); } catch {} throw e; }
+}
+export const writeTextAtomic = (file, text, opts) => writeAtomic(file, text, opts);
+export function writeJsonAtomic(file, value, { indent, ...opts } = {}) {
+  return writeAtomic(file, JSON.stringify(value, null, indent) + "\n", opts);
 }
 
 // Take a lock file, or say someone else holds it. Exclusive create, so two processes in a burst cannot both win; the
@@ -275,6 +282,25 @@ const prepare = (cmd, args = [], opts = {}, platform = process.platform) => {
 };
 export const start = (cmd, args, opts, { via = spawn, platform } = {}) => via(...prepare(cmd, args, opts, platform));
 export const startSync = (cmd, args, opts, { via = spawnSync, platform } = {}) => via(...prepare(cmd, args, opts, platform));
+
+// Open one file in the default browser. Direct, never through a shell: `open` on macOS, `xdg-open` on Linux,
+// `rundll32 url.dll,FileProtocolHandler` on Windows. A missing program or any exit but 0 is a failed open; the
+// caller still has the path. Ten seconds, then the opener is killed, so one that does not exit cannot hold the command.
+export function browserArgv(file, platform = process.platform) {
+  const path = resolve(file);
+  if (platform === "darwin") return ["open", path];
+  if (platform === "linux") return ["xdg-open", path];
+  if (platform === "win32") return ["rundll32", "url.dll,FileProtocolHandler", path];
+  return null;
+}
+export function openInBrowser(file, { platform = process.platform, start = startSync } = {}) {
+  const argv = browserArgv(file, platform);
+  if (!argv) return false;
+  try {
+    const r = start(argv[0], argv.slice(1), { stdio: "ignore", env: harnessEnv(), timeout: 10_000, killSignal: "SIGKILL" });
+    return r?.status === 0 && !r.error;
+  } catch { return false; }
+}
 
 // Windows: a command resolved as the shell would. A CLI installed with npm is a `.cmd` shim (`%APPDATA%\npm\codex.cmd`),
 // and child_process without a shell neither finds it by its bare name nor starts it. Measured on windows-latest,
