@@ -23,10 +23,13 @@ export function colourOk(stream, env = process.env) {
 export const accessibleOk = (env = process.env) => (env.ACCESSIBLE && !/^(0|false)$/i.test(env.ACCESSIBLE)) || env.TERM === "dumb";
 
 const GLYPHS = {
-  unicode: { updown: "↑/↓", leftright: "←/→", sep: " · ", caret: "▏", bar: "│", start: "┌", end: "└", active: "◆", done: "◇", error: "▲", cancel: "■", on: "●", off: "○", checked: "◼", unchecked: "◻", more: "…", arrow: "→", spin: ["◒", "◐", "◓", "◑"] },
-  ascii: { updown: "up/down", leftright: "left/right", sep: " - ", caret: "_", bar: "|", start: "T", end: "-", active: "*", done: "o", error: "x", cancel: "x", on: ">", off: " ", checked: "[+]", unchecked: "[ ]", more: "...", arrow: "->", spin: ["-", "\\", "|", "/"] },
+  unicode: { updown: "↑/↓", leftright: "←/→", sep: " · ", caret: "▏", bar: "│", start: "┌", end: "└", active: "◆", done: "◇", error: "▲", cancel: "■", on: "●", off: "○", checked: "◼", unchecked: "◻", more: "…", arrow: "→", spin: ["◒", "◐", "◓", "◑"], full: "█", empty: "░", pick: "›", enter: "⏎" },
+  ascii: { updown: "up/down", leftright: "left/right", sep: " - ", caret: "_", bar: "|", start: "T", end: "-", active: "*", done: "o", error: "x", cancel: "x", on: ">", off: " ", checked: "[+]", unchecked: "[ ]", more: "...", arrow: "->", spin: ["-", "\\", "|", "/"], full: "#", empty: ".", pick: ">", enter: "enter" },
 };
-const SGR = { cyan: 36, green: 32, yellow: 33, red: 31, gray: 90, dim: 2, bold: 1, strike: 9 };
+const SGR = { cyan: 36, green: 32, yellow: 33, red: 31, gray: 90, dim: 2, bold: 1, strike: 9, inverse: 7 };
+// The glyphs this terminal draws, and a style per SGR name (plain text without colour): every routr screen draws with these.
+export const glyphsFor = (env = process.env, platform = process.platform) => GLYPHS[unicodeOk(env, platform) ? "unicode" : "ascii"];
+export const styler = (colour) => Object.fromEntries(Object.entries(SGR).map(([k, n]) => [k, (s) => (colour ? `\x1b[${n}m${s}\x1b[${n === 1 || n === 2 ? 22 : n === 9 ? 29 : n === 7 ? 27 : 39}m` : String(s))]));
 
 // Plain text broken into lines that fit beside the gutter, at word boundaries (a word longer than a line stays whole).
 export function wrap(text, width) {
@@ -47,9 +50,8 @@ const rows = (text, width) => text.split("\n").reduce((n, line) => n + Math.max(
 // `input` and `output` are streams (a test passes fakes: an EventEmitter with setRawMode, and a writer).
 // `ask(question)` reads one line: accessible mode's only way in.
 export function createUI({ input = process.stdin, output = process.stderr, env = process.env, platform = process.platform, accessible = accessibleOk(env), ask } = {}) {
-  const g = GLYPHS[unicodeOk(env, platform) ? "unicode" : "ascii"];
-  const colour = colourOk(output, env);
-  const c = Object.fromEntries(Object.entries(SGR).map(([k, n]) => [k, (s) => (colour ? `\x1b[${n}m${s}\x1b[${n === 1 || n === 2 ? 22 : n === 9 ? 29 : 39}m` : String(s))]));
+  const g = glyphsFor(env, platform);
+  const c = styler(colourOk(output, env));
   const write = (s) => output.write(s);
   const width = () => output.columns || 80, height = () => output.rows || 24;
   let rawOn = false, prev = null, timer = null, lines = null;

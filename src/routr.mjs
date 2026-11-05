@@ -154,7 +154,7 @@ const ADVISE = {
     print((await commands()).recordCommand(o, takeAll("--subagent"), loaded().config, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } })); // never blocks the agent; the config resolves a "default" effort
   },
   usage: async () => print(await (await commands()).usageCommand(rest, loaded().config, given, { warnings: [...loaded().notes, ...inputNotes], otel: { configPath } }), 1), // never blocks an agent
-  // Kept readings only, no harness called: the Herdr app's routr panel asks it often. Given --headroom is not used, and said.
+  // Kept readings only, no harness called: `routr top` asks it every few seconds. Given --headroom is not used, and said.
   // A `--cwd` a global flag took as its value is refused, never read as no folder (every project's board).
   board: async () => print(raw.cwd !== counted(rest).cwd ? (await import("./lib/output.mjs")).refusal("no board", "board: --cwd cannot be a value for --config or --headroom")
     : await (await import("./lib/board.mjs")).boardCommand(rest, loaded().config, { configPath, warnings: [...loaded().notes, ...inputNotes,
@@ -162,6 +162,13 @@ const ADVISE = {
   doctor: async () => (await import("./lib/doctor.mjs")).doctor({ json: rest.includes("--json"), configPath }),
 };
 if (ADVISE[mode]) { await ADVISE[mode](); return 0; }
+// A person's screen, not an answer for an agent: text, kept current until they quit. Board's folder rule, and its
+// refusal of a `--cwd` a global flag took.
+if (mode === "top") {
+  if (raw.cwd !== counted(rest).cwd) { console.error("routr: top: --cwd cannot be a value for --config or --headroom"); return 2; }
+  return await (await import("./lib/top.mjs")).topCommand(rest, { configPath, warnings: [...inputNotes,
+    ...(Object.keys(given).length ? [warning("headroom_unused", "top draws routr's kept readings; --headroom is for dispatch and usage")] : [])] });
+}
 if (mode !== "subagent" && mode !== "dispatch") { console.error(formatUnknownUsage()); return 2; }
 
 const { doNext } = await import("./lib/next.mjs");

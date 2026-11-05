@@ -217,6 +217,9 @@ Where the lead runs decides how its workers appear, and each of these is optiona
 - **herdr in a terminal**: each worker runs in a pane, on the harness's own screen, and you can type into it.
 - **Neither**: workers run headless, and `routr watch --name <name>` follows one in any terminal.
 
+In any of these, `routr top` shows the project's room and decisions, kept current: suggest the user split a pane (a
+split in the Herdr app, a herdr pane, or any terminal) beside the lead and run it there.
+
 For pane workers, routr's orchestrator part uses herdr's own skill for pane and agent commands. Both belong to herdr
 and are installed from herdr, not bundled with routr. If `routr doctor` shows either missing and the user wants pane
 workers, offer to install them; the app and headless workers need neither:

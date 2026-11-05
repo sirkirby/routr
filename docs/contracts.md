@@ -1038,7 +1038,7 @@ person to check against its screen (Cursor `{ plan, included_used_pct, auto_used
 
 ## board
 
-What only routr knows, for one project, in one answer: the Herdr app's routr panel draws it, and any agent can read
+What only routr knows, for one project, in one answer: `routr top` draws it for a person, and any agent can read
 it. A reading command: it changes nothing of the user's, calls no harness, and answers within milliseconds.
 
 - Used when given: `--cwd <folder>`: the project, by the git repository that folder is in (a worktree counts as its
@@ -1067,6 +1067,24 @@ it. A reading command: it changes nothing of the user's, calls no harness, and a
 - `unavailable`: `usage` entries as `usage` gives them; `{ part: "launch history" | "ledger", code: "unreadable", why }`
   when either cannot be read, and then its counts are null, never zero. `next`: `usage`'s capacity steps.
 - `headline`: `routr: <n> decisions in <project or all projects>; <account> has the most room`.
+
+## top
+
+`routr top [--cwd <folder>]`: board for a person, as text and not JSON, kept current until they quit. It shows
+board's answer and nothing else, so never a ledger note or a brief.
+
+- Used when given: `--cwd <folder>` (default: the current folder): the project, by board's rule. A folder outside any
+  git repository shows every project, and says so. `--config`. Refused, with a line on stderr and exit 2: `--cwd` with
+  no value, given twice, not a folder, or taken as the value of `--config` or `--headroom`; any other flag or
+  argument. A given `--headroom` is not used, and says so as board does.
+- In a terminal: the alternate screen, board read again every 5 seconds and drawn to the terminal's size: Room and
+  Decisions one above the other, side by side from 120 columns. Keys: up/down (or j/k) pick a decision, Enter opens
+  its detail (board's fields for it), Esc closes it, `a` switches between the project and every project, `u` starts
+  one detached `routr usage` (with the `--config` given) and draws again when it ends, `q`, Esc or Ctrl+C quits with
+  exit 0. Raw mode and the screen are restored on quit, SIGTERM and SIGHUP. Unicode and colour by the rules setup's
+  prompts use; text from the user's records is drawn without control characters.
+- Not a terminal (a pipe, a file): one plain snapshot of every decision, exit 0. `ACCESSIBLE=1` or `TERM=dumb`: a
+  plain snapshot, and another for each line typed (`a`, `u`, or nothing), until `q`.
 
 ## The ledger and telemetry
 

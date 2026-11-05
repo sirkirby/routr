@@ -14,7 +14,9 @@ import { LAUNCH_ID } from "./launch-history.mjs";
 // The ledger is one file per user, shared by every project on the machine. Each row is labelled with its project so
 // `assess` can tell them apart: the folder name of the git repository the work happened in. A worktree counts as its
 // repository (its `.git` is a file pointing back at it). Local only: `routr share` never includes it.
-export function projectName(cwd = process.cwd()) {
+export const projectName = (cwd = process.cwd()) => repositoryName(cwd) ?? basename(resolve(cwd));
+// The git repository a folder is in, by name (a worktree counts as its repository); null outside any repository.
+export function repositoryName(cwd = process.cwd()) {
   for (let dir = resolve(cwd); ; dir = dirname(dir)) {
     const git = join(dir, ".git");
     if (existsSync(git)) {
@@ -24,7 +26,7 @@ export function projectName(cwd = process.cwd()) {
       } catch {} // a directory, not a file: this is the repository itself
       return basename(dir);
     }
-    if (dirname(dir) === dir) return basename(resolve(cwd));
+    if (dirname(dir) === dir) return null;
   }
 }
 
