@@ -245,15 +245,17 @@ test("routr top on the command line: a snapshot when piped, never a ledger note;
 // ---- found in review (rev159) ---------------------------------------------------------------------------------------
 test("a terminal smaller than the screen gets no line wider or row more than it has", () => {
   for (let width = 1; width <= 30; width++) for (let height = 1; height <= 8; height++) for (const open of [false, true]) {
-    const lines = renderTop(board(), { width, height, g: UNI, c: styler(true), now: NOW, selected: 0, open, scope: "project", project: "myco" });
-    expect(lines.length).toBeLessThanOrEqual(height);
-    for (const l of lines) expect(columns(l)).toBeLessThanOrEqual(width - 1);
+    for (const b of [board(), null]) for (const project of ["myco", null]) {
+      const lines = renderTop(b, { width, height, g: UNI, c: styler(true), now: NOW, selected: 0, open, scope: project ? "project" : "all", project });
+      expect(lines.length).toBeLessThanOrEqual(height);
+      for (const l of lines) expect(columns(l)).toBeLessThanOrEqual(width - 1);
+    }
   }
 });
 
 test("wide and combining characters are measured in columns, and never split", () => {
-  expect([columns("漢字"), columns("é"), columns("👍"), columns("█⏎›…"), columns("\x1b[1mab\x1b[22m")]).toEqual([4, 1, 2, 4, 2]);
-  const b = board({ decisions: [decision({ name: "漢".repeat(20), chose: { subscription: "codex", model: "모델".repeat(10), effort: "high", level: "strong" } })] });
+  expect([columns("漢字"), columns("e\u0301"), columns("👍"), columns("🚀⌚"), columns("❤\ufe0f"), columns("🇺🇸"), columns("█⏎›…░·→"), columns("\x1b[1mab\x1b[22m")]).toEqual([4, 1, 2, 4, 2, 2, 7, 2]);
+  const b = board({ decisions: [decision({ name: "漢🚀".repeat(10), chose: { subscription: "codex", model: "모델".repeat(10), effort: "high", level: "strong" } })] });
   for (const width of [40, 44, 80, 140]) for (const open of [false, true]) {
     const lines = renderTop(b, { width, height: 30, g: UNI, c: styler(false), now: NOW, selected: 0, open, scope: "project", project: "프로젝트" });
     for (const l of lines) { expect(columns(l)).toBeLessThanOrEqual(width - 1); expect(l).not.toContain("�"); }

@@ -24,10 +24,11 @@ const LEFT = 36; // Room's column when wide
 // the terminal from it.
 const t = (s) => String(s ?? "").replace(/[\p{Cc}\p{Cf}]/gu, "");
 const label = (n) => t(HARNESSES[n]?.label ?? n);
-// Terminal columns, by grapheme: a combining mark takes none, an East Asian wide or fullwidth character (and the emoji
-// blocks) two, the rest one. Close to wcwidth; what an emoji sequence takes still varies by terminal.
+// Terminal columns, by grapheme: a combining mark takes none, an East Asian wide or fullwidth character or an emoji
+// shown as emoji (Emoji_Presentation, or asked for with VS16) two, the rest one. Close to wcwidth; what an emoji
+// sequence takes still varies by terminal.
 const graphemes = (s) => Array.from(new Intl.Segmenter().segment(s), (x) => x.segment);
-const WIDE_CHAR = /^[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{1f300}-\u{1f64f}\u{1f900}-\u{1faff}\u{20000}-\u{3fffd}]/u;
+const WIDE_CHAR = /^[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{20000}-\u{3fffd}]|\p{Emoji_Presentation}|\ufe0f/u;
 const glyphColumns = (x) => (/^\p{M}+$/u.test(x) ? 0 : WIDE_CHAR.test(x) ? 2 : 1);
 export const columns = (s) => graphemes(stripVTControlCharacters(String(s))).reduce((n, x) => n + glyphColumns(x), 0);
 // Plain text cut to `w` columns, the cut marked with `more`; never a wide character split.
@@ -175,7 +176,7 @@ export function renderTop(b, o) {
   const right = `${o.note ? `${t(o.note)}  ` : ""}${snapshot ? "" : clock(v.now)}`;
   const top = [fit([["routr top", c.bold], [`${g.sep}${where}`], [" ".repeat(Math.max(1, width - 9 - columns(g.sep) - columns(where) - columns(right)))], [right, c.dim]], width, g.more)];
   if (!o.project) top.push(fit([[" not in a git repository: every project", c.dim]], width, g.more));
-  if (!b) return [...top, fit([[" reading routr's board…", c.dim]], width, g.more)];
+  if (!b) return [...top, fit([[" reading routr's board…", c.dim]], width, g.more)].slice(0, height);
   const notices = noticeLines(b, v), foot = footerLines(b, v), keys = snapshot ? [] : [help(v)];
   const ds = b.decisions ?? [], sel = Math.min(Math.max(0, o.selected ?? 0), Math.max(0, ds.length - 1));
   const heading = fit([["Decisions", c.bold], [ds.length && !snapshot ? `  ${sel + 1}/${ds.length}` : "", c.dim]], wide ? width - LEFT - 2 : width, g.more);
