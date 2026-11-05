@@ -63,7 +63,7 @@ export function uninstallPlan({ home = userHome(), purge = false, binary = null 
     if (p.state === "ours") remove.push({ path: p.path, what: `the ${p.skill} skill`, skill: p.skill });
     else if (p.state === "theirs") notOurs.push({ path: p.path, what: p.why });
   }
-  remove.push({ path: CACHE_DIR(home), what: "cache: usage snapshots, update log, OpenTelemetry queue and sender state" });
+  remove.push({ path: CACHE_DIR(home), what: "cache: usage snapshots, the dash page, update log, OpenTelemetry queue and sender state" });
   const left = leftovers(home);
   const data = [{ path: CONFIG_DIR(home), what: "your config and decision provider keys" },
     { path: DATA_DIR(home), what: left.worktrees.length ? "your ledger, and worktrees a headless launch made (yours to finish)" : "your ledger" }];

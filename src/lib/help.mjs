@@ -246,6 +246,15 @@ export const COMMANDS = {
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
     ],
   },
+  dash: {
+    name: "dash",
+    description: "one page of this machine's ledger: what you asked routr, what you chose, and how it turned out, written to an HTML file and opened in your browser. It counts; it does not judge. No harness is called. Piped, or with --no-open, it only writes the file and prints its path",
+    flags: [
+      { name: "--cwd", arg: "<folder>", description: "the project to preselect, by the git repository that folder is in (a worktree counts as its repository); outside a repository, every project", required: false, default: "the current folder" },
+      { name: "--out", arg: "<file>", description: "where to write the page", required: false, default: "dash.html in routr's cache folder" },
+      { name: "--no-open", description: "write the file and do not open it", required: false },
+    ],
+  },
   assess: {
     name: "assess",
     description: "verified outcomes, correction causes and capacity observations from your ledger; explicit run revisions counted once",

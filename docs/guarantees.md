@@ -23,7 +23,7 @@ reading and its headline names the model that answered; only no answer starts wi
 `check` also names an unreadable brief or report. `decision_model` continues to mean the model that answered
 (null in a fallback ledger row); `unavailable` is output only, never stored in the ledger or sent in telemetry.
 
-`record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `update`, `telemetry on|off|send`, `feedback`,
+`record`, `setup`, `uninstall`, `key set`, `skill install`, `share`, `dash`, `update`, `telemetry on|off|send`, `feedback`,
 `launch`, `cleanup`, `send`, `stop`, `usage cursor`, and `usage kiro` act, and each says what it did. Their read-only forms
 (`telemetry status`, `setup --show`) only read. `workers`, `wait` and `cleanup --dry-run` may
 queue records and start the detached OpenTelemetry sender when export is on; `wait` also records which turns it has reported in the worker's own run folder.
@@ -161,7 +161,7 @@ so one you copy into another folder makes routr treat that folder as its own.
 
 ## What routr writes
 
-The binary is self-contained: the files under `skills/` are embedded at build time, and it does not depend on a
+The binary is self-contained: the files under `skills/` and the dash page are embedded at build time, and it does not depend on a
 repository checkout at run time. It reads your harness state read-only (usage sources, settings, model lists) and
 writes only:
 
@@ -195,7 +195,12 @@ writes only:
 - in your repository's git metadata, the worktree and branch a headless or terminal `launch --worktree` adds;
 - its own binary, when it updates itself;
 - the skill folders, on `skill install` (and the updater's reinstall);
-- a file at a path you name for that command (`share --out`, a `--ledger` or `--config` you give);
+- `routr dash` writes one HTML file, `~/.cache/routr/dash.html` unless `--out` names another. On macOS and Linux that
+  file is owner-only (0600). It holds this machine's ledger as the page draws it: each run's time, project, advised
+  and chosen level, account, model and effort as recorded, whether it was done first time, attempts, a failed check,
+  causes, and the usable room each account showed. It holds no note, no brief hash or length, no advice id, no run
+  id and no path. Uninstall removes `~/.cache/routr`, and the default file with it;
+- a file at a path you name for that command (`share --out`, `dash --out`, a `--ledger` or `--config` you give);
 - the files `launch --copy` copies into a worker's worktree, in a pane or headless, never through a link and never
   over a file the worktree has (which `cleanup` removes again only while they are unchanged);
 - temporary files it removes: the private herdr session `usage cursor` makes on Windows, the empty Kiro session `usage kiro`
@@ -207,7 +212,7 @@ writes only:
 One exception: `uninstall` removes the `statusLine` entry an earlier routr's `setup` set in `~/.claude/settings.json`,
 after a backup, and only when it runs `routr statusline`. It writes the file whole, where a link to it points.
 
-`uninstall` removes the binary, routr's own skills (above), `~/.cache/routr` and `~/.local/state/routr` (sockets
+`uninstall` removes the binary, routr's own skills (above), `~/.cache/routr` (including the default dash page) and `~/.local/state/routr` (sockets
 and locks, and the launch share's records). It reports a running OpenTelemetry sender. A request already in flight can finish within its 10 s
 timeout, under the consent in force when it started. The sender checks the uninstall lock before each request and
 state write and cannot recreate removed queue folders. A removal race can report FAILED with ENOTEMPTY: a second
@@ -525,7 +530,7 @@ and ids, unlike anonymous telemetry. See [OpenTelemetry](opentelemetry.md) for e
 
 ## Output a lead reads
 
-`subagent`, `dispatch`, `check`, `launch`, `record`, `cleanup`, `wait`, `send`, `workers`, `stop` and `usage` always start with `ok`, `headline`,
+`subagent`, `dispatch`, `check`, `launch`, `record`, `cleanup`, `wait`, `send`, `workers`, `stop`, `usage` and `dash` always start with `ok`, `headline`,
 `unavailable`, `warnings` and `next`. Follow `next` for instructions. An `error` marks refused inputs or a stopped
 command; an expected outcome such as a worker needing input has `ok: false` without `error`. Missing required
 inputs are refused even by commands that exit 0: check needs `--brief` and `--report`; record needs `--subscription`,

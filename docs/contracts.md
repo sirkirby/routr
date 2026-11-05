@@ -5,7 +5,7 @@ The field maps document the migration from the previous output, and the reader i
 that the implementation changed together. In those migration notes, "today" means the output before this change.
 
 Commands covered: `subagent`, `dispatch`, `check`, `launch` (dry run, in herdr, in a herdr-core terminal, and headless), `record`, `cleanup` (each mode),
-`wait`, `send`, `workers`, `stop`, and
+`wait`, `send`, `workers`, `stop`, `board`, `top`, `dash`, and
 `usage` (no name, `--level`, and each named reader: `claude`, `codex`, `agy`, `cursor`, `kiro`). Setup, doctor and key output for decision models is covered below; other maintenance commands are not covered.
 
 ## What every answer says
@@ -1087,6 +1087,41 @@ board's answer and nothing else, so never a ledger note or a brief.
 - Not a terminal (a pipe, a file): one plain snapshot of every decision, exit 0. `ACCESSIBLE=1` or `TERM=dumb`: a
   plain snapshot, and another for each line typed (`a`, or nothing), until `q`; `u` starts the usage read and shows the
   board again when it ends, never waiting on it.
+
+## dash
+
+`routr dash [--cwd <folder>] [--out <file>] [--no-open]`: one HTML page of this machine's ledger, all of it, the
+latest revision of each run, and where that file is. It counts what was asked, what was chosen and how it turned out.
+It does not judge: no cost, no score, no recommendation. Model names appear only as they were recorded. It calls no
+harness and makes no network call. It changes nothing but the file it writes. Exit 0, including a refusal: the answer
+says so.
+
+- Used when given: `--cwd <folder>` (default: the current folder): the project filter, by the git repository that
+  folder is in (a worktree counts as its repository), the same rule as `top`. Outside a repository the page shows
+  every project and says so. The file holds every project's rows either way. `--out <file>`: where to write (default:
+  `dash.html` in routr's cache folder, owner-only on macOS and Linux). `--no-open`: write the file and do not open
+  it. A global `--config` is accepted and not read. Refused (`ok: false`, `error`): `--cwd` or `--out` with no value,
+  given twice, `--cwd` not a folder, `--out` a folder, `--no-open` given twice; any other flag or argument. A
+  `--cwd`, `--out` or `--no-open` taken as the value of `--config` or `--headroom` is refused. A given `--headroom`
+  is not used, and a `headroom_unused` warning says so.
+- At a terminal, opens the file in the default browser and says so. Piped, or with `--no-open`, opens nothing: the
+  answer is JSON, and `next` tells the agent to give the person the path. Opening starts a process directly, never
+  through a shell: `open` on macOS, `xdg-open` on Linux, `rundll32 url.dll,FileProtocolHandler` on Windows. A failed
+  open is still `ok: true`: it says it could not open, and gives the path.
+- `file`: the path written. `opened`: whether the browser was opened. `runs`: how many runs the page holds, or null
+  when the ledger could not be read. `project`: the repository's name, or null outside one. Absent on a refusal,
+  which writes nothing.
+- The page is self-contained. Its content security policy is `default-src 'none'`. Rows are embedded as JSON with
+  `<` escaped and drawn with `textContent`. A row is projected field by field: time, project, advised level, whether
+  routr was torn, whether it called the work high risk, the chosen level, account, model and effort, whether it was
+  done first time, attempts, whether the check failed, causes, and the usable room each account showed. Never a
+  note, a brief's hash or length, an advice id, a run id or a path.
+- `unavailable`: `{ part: "ledger", code: "unreadable", why }` when the ledger cannot be read, and then `runs` is
+  null, never zero. The page says so. A ledger that is missing or empty is readable: `runs` is 0. A line that is not
+  a JSON object is skipped.
+- `headline`: `routr: wrote <file> (<n> runs)`, adding ` and opened it` or `; could not open it`. When the ledger
+  could not be read: `routr: the ledger could not be read; wrote <file>`.
+- `next`: when the file was not opened, one step telling the agent to give the person the path. `[]` when it was opened.
 
 ## The ledger and telemetry
 

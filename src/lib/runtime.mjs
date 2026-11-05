@@ -276,6 +276,25 @@ const prepare = (cmd, args = [], opts = {}, platform = process.platform) => {
 export const start = (cmd, args, opts, { via = spawn, platform } = {}) => via(...prepare(cmd, args, opts, platform));
 export const startSync = (cmd, args, opts, { via = spawnSync, platform } = {}) => via(...prepare(cmd, args, opts, platform));
 
+// Open one file in the default browser. Direct, never through a shell: `open` on macOS, `xdg-open` on Linux,
+// `rundll32 url.dll,FileProtocolHandler` on Windows. A missing program or any exit but 0 is a failed open; the
+// caller still has the path. Ten seconds, then the opener is killed, so one that does not exit cannot hold the command.
+export function browserArgv(file, platform = process.platform) {
+  const path = resolve(file);
+  if (platform === "darwin") return ["open", path];
+  if (platform === "linux") return ["xdg-open", path];
+  if (platform === "win32") return ["rundll32", "url.dll,FileProtocolHandler", path];
+  return null;
+}
+export function openInBrowser(file, { platform = process.platform } = {}) {
+  const argv = browserArgv(file, platform);
+  if (!argv) return false;
+  try {
+    const r = startSync(argv[0], argv.slice(1), { stdio: "ignore", env: harnessEnv(), timeout: 10_000, killSignal: "SIGKILL" });
+    return r?.status === 0 && !r.error;
+  } catch { return false; }
+}
+
 // Windows: a command resolved as the shell would. A CLI installed with npm is a `.cmd` shim (`%APPDATA%\npm\codex.cmd`),
 // and child_process without a shell neither finds it by its bare name nor starts it. Measured on windows-latest,
 // 2026-10-05, Bun 1.4.2 (test/windows-shims.test.mjs): `codex`-style bare names failed with ERR_INVALID_ARG_VALUE, a

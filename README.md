@@ -183,6 +183,8 @@ Where the lead runs decides how you see its workers:
 In any of these, `routr top` in a terminal of its own (a split beside the lead) shows what routr knows for the project:
 each account's room, each launch's decision and how it turned out, kept current.
 
+`routr dash` writes one page of this machine's whole ledger and opens it in your browser.
+
 On Windows, Cursor's usage is still read through the terminal `herdr`, so it needs that installed. Sizing subagents needs none of these.
 
 To start an orchestration, open your lead agent (in the Herdr app for tabs, in herdr for panes) and type your plan after the `routr-orchestrate` skill, which
