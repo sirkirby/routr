@@ -107,9 +107,10 @@ export function resolveEffort({ subscription, model, effort }, config = null) {
   return { effort: effort ?? null, effort_from: "given" };
 }
 
-// What board, top and dash may show of a row, and what a new row may store. A level is one of the three. A string is
-// kept only up to a short length (a work type is shorter than a model id). A boolean or a finite number stays; anything
-// else, including an object or a list where a scalar belongs, is null. Facts keep a short name and a finite number.
+// What board, top and dash may show of a row. A level is one of the three. A string is shown only up to a short
+// length (a work type is shorter than a model id). A boolean or a finite number stays; anything else, including an
+// object or a list where a scalar belongs, is null. Facts keep a short name and a finite number. Record does not use
+// this for the choice: a model is stored as it was given, and a revision compares that.
 const TEXT = 128, SHORT = 32;
 const FACT_NAME = /^[a-z][a-z_]{0,31}$/;
 const asText = (v, max) => (typeof v === "string" ? v.slice(0, max) : null);
@@ -155,7 +156,8 @@ export function toEntry(advice, { subscription, model, effort, level, verdict, c
       high_risk: advice.high_risk, fallback: fallbackAdvice(advice),
       facts: Object.fromEntries(Object.entries(advice.facts ?? {}).flatMap(([k, f]) => (Number.isFinite(f?.p) ? [[k, f.p]] : []))) }),
     headroom: Object.fromEntries((advice.subscriptions?.ranked ?? []).map((r) => [r.subscription, { usable: r.usable, usage: r.usage }])),
-    chose: projectChose({ subscription: subscription ?? null, model: model ?? null, ...resolveEffort({ subscription, model, effort }, config), level: LEVELS.includes(level) ? level : advice.level }),
+    // The choice is stored as record validated it. The display cap is projectChose, on the way out only.
+    chose: { subscription: subscription ?? null, model: model ?? null, ...resolveEffort({ subscription, model, effort }, config), level: LEVELS.includes(level) ? level : asLevel(advice.level) },
     outcome: { verdict: verdict ?? "unknown", check: check ?? "none", seconds: seconds == null ? null : +seconds, attempts: attempts == null ? null : +attempts, causes: causes?.length ? [...new Set(causes)].filter((c) => c !== "none") : null,
       ...(run_id && note === undefined ? {} : { note: note ?? null }) },
     ...(run_id && subagents === undefined ? {} : { subagents: (subagents ?? []).map(parseSubagent).filter(Boolean) }),

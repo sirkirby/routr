@@ -112,6 +112,22 @@ test("record stores only scalar advice fields from a hostile advice file", async
   expect(JSON.stringify(row)).not.toContain(mark);
 });
 
+test("record stores a long model whole, and a revision with the same choice succeeds", async () => {
+  const { read } = await import("../src/lib/ledger.mjs");
+  const { recordCommand } = await import("../src/lib/commands.mjs");
+  const dir = scratch("long-model"), path = join(dir, "advice.json"), ledger = join(dir, "ledger.jsonl");
+  const model = `fixture-${"x".repeat(130)}`;
+  expect(model).toHaveLength(138);
+  writeFileSync(path, JSON.stringify({ id: "longmodel", brief_sha: "abc", mode: "dispatch", level: "standard", decision_model: "kept", facts: {} }));
+  const args = { advice: path, ledger, subscription: "codex", model, effort: "low", project: "fixture" };
+  const first = recordCommand({ ...args, verdict: "partial", check: "fail" });
+  expect(first.ok).toBe(true);
+  expect(read(ledger).at(-1).chose.model).toBe(model);
+  const revised = recordCommand({ ...args, verdict: "done", check: "pass", run_id: first.run_id });
+  expect(revised.ok).toBe(true);
+  expect(read(ledger).map((e) => e.chose.model)).toEqual([model, model]);
+});
+
 test("toEntry stores subagents correctly and never stores brief or report text", async () => {
   const { toEntry } = await import("../src/lib/ledger.mjs");
   const advice = {

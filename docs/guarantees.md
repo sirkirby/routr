@@ -202,7 +202,8 @@ writes only:
   the command refuses, naming the path and saying to choose another. The page holds this machine's ledger as it draws
   it: each run's time, project, advised and chosen level, account, model and effort, whether it was done first time,
   attempts, a failed check, causes, and the usable room each account showed. Those fields are scalars: a level only
-  when it is one of the three, a string cut to a short length, a boolean or a finite number, and null otherwise. It
+  when it is one of the three, a string cut to a short length for the page, a boolean or a finite number, and null
+  otherwise. The ledger keeps the choice as it was recorded. It
   holds no nested value, no note, no brief hash or length, no advice id, no run id and no path. Uninstall removes
   `~/.cache/routr`, and the default file with it;
 - a file at a path you name for that command (`share --out`, `dash --out`, a `--ledger` or `--config` you give);

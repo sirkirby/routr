@@ -1059,9 +1059,10 @@ it. A reading command: it changes nothing of the user's, calls no harness, and a
   `advised` (`{ level, sure, between, work_type, high_risk, fallback, facts }`) and `chose`
   (`{ subscription, model, effort, effort_from, level }`; before a record, from the launch, with `effort_from` and
   `level` null). Each field is that documented scalar or null: a level is `basic`, `standard` or `strong`; `between`
-  is a list of those, at most two; a string is kept up to a short length (32 characters for a work type, 128 for a
-  choice); a boolean or a finite number stays; an object, a list or anything else is null; `facts` keeps a short name
-  and a finite number. A good row's names and values are unchanged. `outcome` is `{ verdict, check, attempts, causes,
+  is a list of those, at most two; a string is shown up to a short length (32 characters for a work type, 128 for a
+  choice) and the ledger keeps the choice as recorded; a boolean or a finite number stays; an object, a list or
+  anything else is null; `facts` keeps a short name and a finite number. A good row's names and values are unchanged.
+  `outcome` is `{ verdict, check, attempts, causes,
   seconds }` (null until recorded; never the row's note). A run joins its launch by `launch_id`; a run recorded before
   launch ids, by its advice `id`, only when exactly one launch in the history used that advice. A revision counts as
   its run's latest row.
@@ -1138,7 +1139,8 @@ Neither schema changes. `record` writes the same row from these advice fields, w
 `work_type`, `high_risk`, `facts.*.p`, and each ranked row's `subscription`, `usable` and `usage`. A value that is not
 that field's shape is stored as null: `level` only when it is `basic`, `standard` or `strong`, `between` only as a
 list of those, `work_type` only as a string of at most 32 characters, `sure`, `high_risk` and `fallback` only as
-booleans, and each fact only as a finite number under a short name. One removal touches
+booleans, and each fact only as a finite number under a short name. The subscription, model, effort and level chosen
+are stored as `record` was given them, not cut to the length board, top and dash show. One removal touches
 how a column is filled, not the column: `advised.fallback` uses the shared fallback check above; earlier decision
 failures beside an answering model are ordinary advice. Telemetry rows are built from ledger
 rows, so nothing in them changes. Moving `subscriptions` into `usage` and adding `hardest_work` to `dispatch`'s rows
