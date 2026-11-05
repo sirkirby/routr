@@ -174,7 +174,8 @@ test("usage has per-subscription children and orchestration commands emit only c
 
 test("parallel usage child durations measure their own reading rather than the slowest subscription", async () => {
   const x = exporting(); x.config.subscriptions = { claude: {}, codex: {} };
-  const sources = Object.fromEntries([["claude", 40], ["codex", 1]].map(([name, delay]) => [name, { source: "app-server", read: async () => { await Bun.sleep(delay); return { pool: name, windows: [], headroom: 0.7 }; } }]));
+  // Far apart: Windows timers tick about every 15 ms, and a busy CI runner adds more (a 40 ms gap failed there twice).
+  const sources = Object.fromEntries([["claude", 150], ["codex", 1]].map(([name, delay]) => [name, { source: "app-server", read: async () => { await Bun.sleep(delay); return { pool: name, windows: [], headroom: 0.7 }; } }]));
   await usageCommand([], x.config, {}, { env: {}, otel: x.otel, read: (names, given, opts) => readUsage(names, given, { sources, observe: opts.observe, why: async () => null, billing: async () => null }) });
   const duration = (name) => { const s = x.spans().find((s) => s.name === `routr usage ${name}`); return Number(BigInt(s.endTimeUnixNano) - BigInt(s.startTimeUnixNano)); };
   expect(duration("codex")).toBeLessThan(duration("claude") * 0.7);

@@ -27,7 +27,8 @@ const label = (n) => t(HARNESSES[n]?.label ?? n);
 // Terminal columns, by grapheme: a combining mark takes none, an East Asian wide or fullwidth character or an emoji
 // shown as emoji (Emoji_Presentation, or asked for with VS16) two, the rest one. Close to wcwidth; what an emoji
 // sequence takes still varies by terminal.
-const graphemes = (s) => Array.from(new Intl.Segmenter().segment(s), (x) => x.segment);
+const SEGMENTER = new Intl.Segmenter();
+const graphemes = (s) => Array.from(SEGMENTER.segment(s), (x) => x.segment);
 const WIDE_CHAR = /^[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{20000}-\u{3fffd}]|\p{Emoji_Presentation}|\ufe0f/u;
 const glyphColumns = (x) => (/^\p{M}+$/u.test(x) ? 0 : WIDE_CHAR.test(x) ? 2 : 1);
 export const columns = (s) => graphemes(stripVTControlCharacters(String(s))).reduce((n, x) => n + glyphColumns(x), 0);
