@@ -8,7 +8,7 @@
 // bookkeeping, under its cache folder; it holds usage numbers and notes only, as the harness snapshots do.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CACHE_DIR, lockIsStale, lockToken, olderThan, releaseFileLock, spawnSelf, takeLock, writeJsonAtomic } from "./runtime.mjs";
+import { CACHE_DIR, ensureParent, lockIsStale, lockToken, olderThan, releaseFileLock, spawnSelf, takeLock, whileLockOwned, writeJsonAtomic } from "./runtime.mjs";
 import { summarize, usageReadingTime, usageTrustedUntil } from "./usage.mjs";
 
 export const USAGE_READINGS = () => join(CACHE_DIR(), "usage-readings.json");
@@ -67,12 +67,15 @@ export function cachedReadings(names, { file = USAGE_READINGS(), mark = USAGE_RE
   const newest = Math.max(0, ...rows.map((r) => (Number.isFinite(r.ageSec) ? now - r.ageSec : 0)), ...names.map((n) => readings[n]?.kept_at ?? 0));
   const due = () => { const t = read(mark).tried; return !(Number.isFinite(t) && now - t < STALE_SEC); };
   let refreshing = false;
-  if ((missing.length > 0 || now - newest > STALE_SEC) && !noRefresh() && due()
+  // The cache folder is made first: on a new machine it is not there, and a lock cannot be taken in it.
+  const lockable = () => { try { ensureParent(lock); return true; } catch { return false; } };
+  if ((missing.length > 0 || now - newest > STALE_SEC) && !noRefresh() && due() && lockable()
     && takeLock(lock, (f) => olderThan(LOCK_MS)(f) || lockIsStale(f))) {
     const token = lockToken(lock);
-    // Checked again under the lock: another caller may have started one since. Marked before it starts; a mark that
+    // Checked again under the lock, and marked and started only while the lock is still this call's: a caller paused
+    // past LOCK_MS has lost it to another, which may have started one already. Marked before it starts; a mark that
     // cannot be written starts nothing, so a cache folder that cannot be written never starts one on every call.
-    try { if (due()) { writeJsonAtomic(mark, { tried: now }, { mode: 0o600 }); refreshing = Boolean(refresh()); } } catch {}
+    try { whileLockOwned(lock, token, () => { if (due()) { writeJsonAtomic(mark, { tried: now }, { mode: 0o600 }); refreshing = Boolean(refresh()); } }); } catch {}
     finally { releaseFileLock(lock, token); }
   }
   return { rows, missing, refreshing };

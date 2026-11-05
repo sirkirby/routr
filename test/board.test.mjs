@@ -73,6 +73,14 @@ test("a kept reading obeys its source's own limit: a resetless Codex stop for 5 
   expect(at(NOW + 299)).toEqual([["codex", 0, "metered"], ["cursor", 0.8, "included"]]);
   expect(at(NOW + 301)).toEqual([["codex", null, "unknown"], ["cursor", 0.8, "included"]]);
   expect(at(NOW + 86401)).toEqual([["codex", null, "unknown"], ["cursor", null, "unknown"]]);
+  // Nor before it was read: a clock set back, as the live snapshot reader refuses a reading from the future.
+  expect(at(NOW - 60)).toEqual([["codex", null, "unknown"], ["cursor", null, "unknown"]]);
+}));
+
+test("a new machine, with no cache folder yet, starts its first refresh", () => withRefresh(() => {
+  const d = join(scratch("cache-cold"), "not", "made"); let started = 0;
+  const r = cachedReadings(["claude"], { file: join(d, "usage-readings.json"), mark: join(d, "usage-refresh.json"), now: NOW, refresh: () => ++started });
+  expect([r.refreshing, started, existsSync(join(d, "usage-refresh.json"))]).toEqual([true, 1, true]);
 }));
 
 test("cachedUsage calls no harness: a kept 'not signed in' answer leaves one out, a missing reading is not_read_yet, kept billing settles the class", () => {

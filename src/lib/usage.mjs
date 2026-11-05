@@ -19,16 +19,16 @@ const readingTimes = new WeakMap(), windowTimes = new WeakMap(), trustTimes = ne
 export const usageReadingTime = (row, window) => windowTimes.get(window) ?? readingTimes.get(row);
 export const withUsageReadingTime = (row, time) => { if (Number.isSafeInteger(time) && time > 0) readingTimes.set(row, time); return row; };
 // How long a reading may be used, as its source's own rule says (`until`, seconds): a resetless Codex stop for 5 minutes,
-// a Cursor or Kiro snapshot for a day. Internal like the reading time, so a reading kept and served later
-// (usage-cache.mjs) obeys the same rule as a live read of the same source.
+// a Cursor or Kiro snapshot for a day, and neither before it was read (a clock set back). Internal like the reading
+// time, so a reading kept and served later (usage-cache.mjs) obeys the same rule as a live read of the same source.
 export const usageTrustedUntil = (row) => trustTimes.get(row) ?? null;
 
 // One subscription's usage as every reader returns it. `ts` is when the harness reported it (null: nothing read);
 // `cls` the class, from the windows when not given; `reason` a stable key for a note doctor acts on. `nowSec` is
-// injectable so the recorded shapes are tests that do not age. `until`: past it, the windows are not used and the class
-// is unknown, as the live source would answer by then.
+// injectable so the recorded shapes are tests that do not age. `until`: past it, or before `ts`, the windows are not used
+// and the class is unknown, as the live source would answer then.
 export function summarize({ pool, source, ts = null, windows = [], note, cls, nowSec = now(), reason, failure, kept, until }) {
-  if (Number.isFinite(until) && nowSec >= until) return summarize({ pool, source, ts, nowSec, failure, kept, note: "the reading is too old to use: remaining capacity is unknown" });
+  if (Number.isFinite(until) && (nowSec >= until || !(Number.isFinite(ts) && nowSec >= ts))) return summarize({ pool, source, ts, nowSec, failure, kept, note: "the reading is too old to use: remaining capacity is unknown" });
   const trusted = (row) => { if (Number.isFinite(until)) trustTimes.set(row, until); return row; };
   return trusted(summarizeNow({ pool, source, ts, windows, note, cls, nowSec, reason, failure, kept }));
 }
