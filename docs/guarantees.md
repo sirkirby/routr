@@ -195,11 +195,16 @@ writes only:
 - in your repository's git metadata, the worktree and branch a headless or terminal `launch --worktree` adds;
 - its own binary, when it updates itself;
 - the skill folders, on `skill install` (and the updater's reinstall);
-- `routr dash` writes one HTML file, `~/.cache/routr/dash.html` unless `--out` names another. On macOS and Linux that
-  file is owner-only (0600). It holds this machine's ledger as the page draws it: each run's time, project, advised
-  and chosen level, account, model and effort as recorded, whether it was done first time, attempts, a failed check,
-  causes, and the usable room each account showed. It holds no note, no brief hash or length, no advice id, no run
-  id and no path. Uninstall removes `~/.cache/routr`, and the default file with it;
+- `routr dash` writes one HTML file, `~/.cache/routr/dash.html` unless `--out` names another. The write is a temporary
+  file in that folder, renamed over the path, so a symlink there is replaced and the file it pointed at is left as it
+  was. On macOS and Linux the new file is owner-only (0600). `--out` replaces a file only when it is missing or is a
+  page dash wrote (it carries `<meta name="generator" content="routr dash">`); any other file is left untouched and
+  the command refuses, naming the path and saying to choose another. The page holds this machine's ledger as it draws
+  it: each run's time, project, advised and chosen level, account, model and effort, whether it was done first time,
+  attempts, a failed check, causes, and the usable room each account showed. Those fields are scalars: a level only
+  when it is one of the three, a string cut to a short length, a boolean or a finite number, and null otherwise. It
+  holds no nested value, no note, no brief hash or length, no advice id, no run id and no path. Uninstall removes
+  `~/.cache/routr`, and the default file with it;
 - a file at a path you name for that command (`share --out`, `dash --out`, a `--ledger` or `--config` you give);
 - the files `launch --copy` copies into a worker's worktree, in a pane or headless, never through a link and never
   over a file the worktree has (which `cleanup` removes again only while they are unchanged);

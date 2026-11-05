@@ -1056,8 +1056,12 @@ it. A reading command: it changes nothing of the user's, calls no harness, and a
 - `decisions`: newest first, at most 50: each launch in routr's launch history (7 days) and each recorded run in
   scope, one entry per launch: `launch_id`, `run_id` (null until recorded), `id` (the advice's), `name` and `backend`
   (the launch's, null for a run with no launch kept), `project`, `launched_at`, `recorded_at` (either null),
-  `advised` (the ledger's shape), `chose` (the ledger's `{ subscription, model, effort, effort_from, level }`; before a
-  record, from the launch, with `effort_from` and `level` null), and `outcome` `{ verdict, check, attempts, causes,
+  `advised` (`{ level, sure, between, work_type, high_risk, fallback, facts }`) and `chose`
+  (`{ subscription, model, effort, effort_from, level }`; before a record, from the launch, with `effort_from` and
+  `level` null). Each field is that documented scalar or null: a level is `basic`, `standard` or `strong`; `between`
+  is a list of those, at most two; a string is kept up to a short length (32 characters for a work type, 128 for a
+  choice); a boolean or a finite number stays; an object, a list or anything else is null; `facts` keeps a short name
+  and a finite number. A good row's names and values are unchanged. `outcome` is `{ verdict, check, attempts, causes,
   seconds }` (null until recorded; never the row's note). A run joins its launch by `launch_id`; a run recorded before
   launch ids, by its advice `id`, only when exactly one launch in the history used that advice. A revision counts as
   its run's latest row.
@@ -1071,7 +1075,7 @@ it. A reading command: it changes nothing of the user's, calls no harness, and a
 ## top
 
 `routr top [--cwd <folder>]`: board for a person, as text and not JSON, kept current until they quit. It shows
-board's answer and nothing else, so never a ledger note or a brief.
+board's answer and nothing else, so never a ledger note, a brief, or a nested value.
 
 - Used when given: `--cwd <folder>` (default: the current folder): the project, by board's rule. A folder outside any
   git repository shows every project, and says so. `--config`. Refused, with a line on stderr and exit 2: `--cwd` with
@@ -1101,9 +1105,12 @@ says so.
   every project and says so. The file holds every project's rows either way. `--out <file>`: where to write (default:
   `dash.html` in routr's cache folder, owner-only on macOS and Linux). `--no-open`: write the file and do not open
   it. A global `--config` is accepted and not read. Refused (`ok: false`, `error`): `--cwd` or `--out` with no value,
-  given twice, `--cwd` not a folder, `--out` a folder, `--no-open` given twice; any other flag or argument. A
+  given twice, `--cwd` not a folder, `--out` a folder, `--out` a file that exists and is not a page `routr dash` wrote
+  (the error names the path and says to choose another; a missing file, or a page that carries
+  `<meta name="generator" content="routr dash">`, is written), `--no-open` given twice; any other flag or argument. A
   `--cwd`, `--out` or `--no-open` taken as the value of `--config` or `--headroom` is refused. A given `--headroom`
-  is not used, and a `headroom_unused` warning says so.
+  is not used, and a `headroom_unused` warning says so. The write is a temporary file in the same folder, renamed over
+  the path, so a symlink at the path is replaced and not followed.
 - At a terminal, opens the file in the default browser and says so. Piped, or with `--no-open`, opens nothing: the
   answer is JSON, and `next` tells the agent to give the person the path. Opening starts a process directly, never
   through a shell: `open` on macOS, `xdg-open` on Linux, `rundll32 url.dll,FileProtocolHandler` on Windows. A failed
@@ -1114,8 +1121,9 @@ says so.
 - The page is self-contained. Its content security policy is `default-src 'none'`. Rows are embedded as JSON with
   `<` escaped and drawn with `textContent`. A row is projected field by field: time, project, advised level, whether
   routr was torn, whether it called the work high risk, the chosen level, account, model and effort, whether it was
-  done first time, attempts, whether the check failed, causes, and the usable room each account showed. Never a
-  note, a brief's hash or length, an advice id, a run id or a path.
+  done first time, attempts, whether the check failed, causes, and the usable room each account showed. The advised
+  and chosen fields are the scalars `board` shows: a level, a short string, a boolean or a number, or null. Never a
+  nested value, a note, a brief's hash or length, an advice id, a run id or a path.
 - `unavailable`: `{ part: "ledger", code: "unreadable", why }` when the ledger cannot be read, and then `runs` is
   null, never zero. The page says so. A ledger that is missing or empty is readable: `runs` is 0. A line that is not
   a JSON object is skipped.
@@ -1127,7 +1135,10 @@ says so.
 
 Neither schema changes. `record` writes the same row from these advice fields, whose names do not change: `id`, `ts`,
 `mode`, `question_set`, `provider`, `decision_model`, `brief_sha`, `brief_chars`, `level`, `sure`, `between`,
-`work_type`, `high_risk`, `facts.*.p`, and each ranked row's `subscription`, `usable` and `usage`. One removal touches
+`work_type`, `high_risk`, `facts.*.p`, and each ranked row's `subscription`, `usable` and `usage`. A value that is not
+that field's shape is stored as null: `level` only when it is `basic`, `standard` or `strong`, `between` only as a
+list of those, `work_type` only as a string of at most 32 characters, `sure`, `high_risk` and `fallback` only as
+booleans, and each fact only as a finite number under a short name. One removal touches
 how a column is filled, not the column: `advised.fallback` uses the shared fallback check above; earlier decision
 failures beside an answering model are ordinary advice. Telemetry rows are built from ledger
 rows, so nothing in them changes. Moving `subscriptions` into `usage` and adding `hardest_work` to `dispatch`'s rows

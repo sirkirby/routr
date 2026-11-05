@@ -107,6 +107,33 @@ export function resolveEffort({ subscription, model, effort }, config = null) {
   return { effort: effort ?? null, effort_from: "given" };
 }
 
+// What board, top and dash may show of a row, and what a new row may store. A level is one of the three. A string is
+// kept only up to a short length (a work type is shorter than a model id). A boolean or a finite number stays; anything
+// else, including an object or a list where a scalar belongs, is null. Facts keep a short name and a finite number.
+const TEXT = 128, SHORT = 32;
+const FACT_NAME = /^[a-z][a-z_]{0,31}$/;
+const asText = (v, max) => (typeof v === "string" ? v.slice(0, max) : null);
+const asLevel = (v) => (LEVELS.includes(v) ? v : null);
+const asBool = (v) => (typeof v === "boolean" ? v : null);
+function asBetween(v) {
+  return Array.isArray(v) && v.length > 0 && v.length <= 2 && v.every((l) => LEVELS.includes(l)) ? [...v] : null;
+}
+function asFacts(f) {
+  if (!f || typeof f !== "object" || Array.isArray(f)) return {};
+  return Object.fromEntries(Object.entries(f).filter(([k, p]) => FACT_NAME.test(k) && typeof p === "number" && Number.isFinite(p)));
+}
+// The ledger's `advised` and `chose`, field by field. Null when the row has none. A good row keeps its names and values.
+export function projectAdvised(a) {
+  if (!a || typeof a !== "object" || Array.isArray(a)) return null;
+  return { level: asLevel(a.level), sure: asBool(a.sure), between: asBetween(a.between), work_type: asText(a.work_type, SHORT),
+    high_risk: asBool(a.high_risk), fallback: asBool(a.fallback), facts: asFacts(a.facts) };
+}
+export function projectChose(c) {
+  if (!c || typeof c !== "object" || Array.isArray(c)) return null;
+  return { subscription: asText(c.subscription, TEXT), model: asText(c.model, TEXT), effort: asText(c.effort, TEXT),
+    effort_from: asText(c.effort_from, TEXT), level: asLevel(c.level) };
+}
+
 export const OUTCOME_CAUSES = ["execution", "brief", "scope", "review", "launch", "unknown"];
 const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export class RunIdError extends Error {}
@@ -122,10 +149,13 @@ export function toEntry(advice, { subscription, model, effort, level, verdict, c
     // providers existed has `jev_model` instead, read as TypeSafe's (decisionOf).
     ...decisionOf(advice), // Advice saved by an older routr carries jev_model: read as TypeSafe's
     brief_sha: advice.brief_sha, brief_chars: advice.brief_chars, // never the brief itself: briefs can be private
-    advised: { level: advice.level, sure: advice.sure, between: advice.between ?? null, work_type: advice.work_type, high_risk: advice.high_risk, fallback: fallbackAdvice(advice),
-      facts: Object.fromEntries(Object.entries(advice.facts ?? {}).map(([k, f]) => [k, f.p])) },
+    // A value that is not its field's shape is null, never the object an advice file put there.
+    advised: projectAdvised({ level: advice.level, sure: advice.sure, between: advice.between ?? null,
+      work_type: typeof advice.work_type === "string" && advice.work_type.length <= SHORT ? advice.work_type : null,
+      high_risk: advice.high_risk, fallback: fallbackAdvice(advice),
+      facts: Object.fromEntries(Object.entries(advice.facts ?? {}).flatMap(([k, f]) => (Number.isFinite(f?.p) ? [[k, f.p]] : []))) }),
     headroom: Object.fromEntries((advice.subscriptions?.ranked ?? []).map((r) => [r.subscription, { usable: r.usable, usage: r.usage }])),
-    chose: { subscription: subscription ?? null, model: model ?? null, ...resolveEffort({ subscription, model, effort }, config), level: LEVELS.includes(level) ? level : advice.level },
+    chose: projectChose({ subscription: subscription ?? null, model: model ?? null, ...resolveEffort({ subscription, model, effort }, config), level: LEVELS.includes(level) ? level : advice.level }),
     outcome: { verdict: verdict ?? "unknown", check: check ?? "none", seconds: seconds == null ? null : +seconds, attempts: attempts == null ? null : +attempts, causes: causes?.length ? [...new Set(causes)].filter((c) => c !== "none") : null,
       ...(run_id && note === undefined ? {} : { note: note ?? null }) },
     ...(run_id && subagents === undefined ? {} : { subagents: (subagents ?? []).map(parseSubagent).filter(Boolean) }),

@@ -1,10 +1,10 @@
 // `routr dash`: the projection, what the file may hold, the page's own bounds, the ledger's bad lines, refusals,
 // and when a browser is started. No model and no harness.
 import { expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { dashCommand, dashRows } from "../src/lib/dash.mjs";
-import { browserArgv } from "../src/lib/runtime.mjs";
+import { DASH_PAGE, dashCommand, dashRows } from "../src/lib/dash.mjs";
+import { browserArgv, openInBrowser } from "../src/lib/runtime.mjs";
 import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 
 const RUN = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
@@ -177,13 +177,59 @@ test.skipIf(process.platform === "win32")("the file is owner-only on POSIX", () 
   for (const args of [["--no-open"], ["--out", named, "--no-open"]]) {
     const r = go(args, { home });
     expect(statSync(r.file).mode & 0o777).toBe(0o600);
+    expect(readFileSync(r.file, "utf8")).toContain(DASH_PAGE);
   }
   const loose = join(home, "loose.html");
-  writeFileSync(loose, "x", { mode: 0o644 });
+  writeFileSync(loose, "keep", { mode: 0o644 });
+  const refused = go(["--out", loose, "--no-open"], { home });
+  expect([refused.ok, refused.file, refused.error]).toEqual([false, undefined, expect.stringContaining(resolve(loose))]);
+  expect(refused.error).toContain("choose another");
+  expect([readFileSync(loose, "utf8"), statSync(loose).mode & 0o777]).toEqual(["keep", 0o644]);
+  writeFileSync(loose, DASH_PAGE, { mode: 0o644 });
   const r = go(["--out", loose, "--no-open"], { home });
   expect(statSync(r.file).mode & 0o777).toBe(0o600);
   chmodSync(r.file, 0o644);
   expect(statSync(go(["--out", loose, "--no-open"], { home }).file).mode & 0o777).toBe(0o600);
+});
+
+test.skipIf(process.platform === "win32")("a symlink is replaced, and the file it pointed at is left as it was", () => {
+  const home = scratch("dash-link"), target = join(home, "secret.txt"), link = join(home, ".cache/routr/dash.html");
+  writeFileSync(target, "SECRET-TARGET-9f3a", { mode: 0o644 });
+  mkdirSync(join(home, ".cache/routr"), { recursive: true });
+  symlinkSync(target, link);
+  const r = go(["--no-open"], { home });
+  expect(r.ok).toBe(true);
+  expect(lstatSync(link).isSymbolicLink()).toBe(false);
+  expect(readFileSync(link, "utf8")).toContain(DASH_PAGE);
+  expect(statSync(link).mode & 0o777).toBe(0o600);
+  expect([readFileSync(target, "utf8"), statSync(target).mode & 0o777]).toEqual(["SECRET-TARGET-9f3a", 0o644]);
+  const out = join(home, "out.html");
+  symlinkSync(target, out);
+  const refused = go(["--out", out, "--no-open"], { home });
+  expect(refused.ok).toBe(false);
+  expect(lstatSync(out).isSymbolicLink()).toBe(true);
+  expect(readFileSync(target, "utf8")).toBe("SECRET-TARGET-9f3a");
+});
+
+test("the page source draws with textContent and names itself", () => {
+  const src = readFileSync(new URL("../src/lib/dash.html", import.meta.url), "utf8");
+  expect(src).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write/);
+  expect(src).toContain(DASH_PAGE);
+  expect(src).toContain("textContent");
+});
+
+test("openInBrowser starts the platform's argv and reports a failed start", () => {
+  const file = join(scratch("dash-start"), "dash.html");
+  const seen = [];
+  const start = (cmd, args, opts) => { seen.push([[cmd, ...args], opts]); return { status: 0 }; };
+  expect(openInBrowser(file, { start })).toBe(true);
+  expect(seen[0][0]).toEqual(browserArgv(file));
+  expect(seen[0][1]).toMatchObject({ stdio: "ignore", timeout: 10_000, killSignal: "SIGKILL" });
+  expect(openInBrowser(file, { start: () => ({ status: 1 }) })).toBe(false);
+  expect(openInBrowser(file, { start: () => ({ status: null, error: Object.assign(new Error("missing"), { code: "ENOENT" }) }) })).toBe(false);
+  expect(openInBrowser(file, { start: () => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); } })).toBe(false);
+  expect(openInBrowser(file, { start: () => ({ status: null, signal: "SIGKILL" }) })).toBe(false);
+  expect(openInBrowser(file, { platform: "freebsd", start: () => { throw new Error("started"); } })).toBe(false);
 });
 
 test("a global flag cannot take --cwd, --out or --no-open as its value", () => {

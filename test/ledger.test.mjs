@@ -94,6 +94,24 @@ test("parsing of →, ->, none, and malformed lines for subagents", async () => 
   ]);
 });
 
+test("record stores only scalar advice fields from a hostile advice file", async () => {
+  const { read } = await import("../src/lib/ledger.mjs");
+  const { recordCommand } = await import("../src/lib/commands.mjs");
+  const dir = scratch("hostile-advice"), path = join(dir, "advice.json"), ledger = join(dir, "ledger.jsonl");
+  const mark = "HOSTILE-ADVICE-MARKER-9f3a", bad = { note: mark };
+  writeFileSync(path, JSON.stringify({
+    id: "hostile1", brief_sha: "abc", mode: "dispatch", decision_model: "kept",
+    level: bad, sure: bad, between: [bad, "basic"], work_type: bad, high_risk: bad, fallback: bad,
+    facts: { names_location: { p: bad }, cause_unknown: { p: 0.5 }, [mark]: { p: 1 } },
+  }));
+  const result = recordCommand({ advice: path, ledger, subscription: "codex", model: "m", effort: "low", verdict: "done", check: "pass" });
+  expect(result.ok).toBe(true);
+  const row = read(ledger).at(-1);
+  expect(row.advised).toEqual({ level: null, sure: null, between: null, work_type: null, high_risk: null, fallback: false, facts: { cause_unknown: 0.5 } });
+  expect(row.chose.level).toBeNull();
+  expect(JSON.stringify(row)).not.toContain(mark);
+});
+
 test("toEntry stores subagents correctly and never stores brief or report text", async () => {
   const { toEntry } = await import("../src/lib/ledger.mjs");
   const advice = {

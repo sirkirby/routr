@@ -3,19 +3,21 @@
 // the way the guides are, so a compiled binary writes it with no checkout beside it. Each row is projected field by
 // field: never a note, a brief's hash or length, an advice id, a run id or a path.
 import page from "./dash.html" with { type: "text" };
-import { chmodSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { firstTime, LEDGER_PATH, latestRuns, read, repositoryName } from "./ledger.mjs";
+import { firstTime, LEDGER_PATH, latestRuns, projectAdvised, projectChose, read, repositoryName } from "./ledger.mjs";
 import { doNext } from "./next.mjs";
 import { answer, refusal } from "./output.mjs";
-import { CACHE_DIR, ensureParent, home, openInBrowser } from "./runtime.mjs";
+import { CACHE_DIR, home, openInBrowser, writeTextAtomic } from "./runtime.mjs";
 
 const LEDGER_WHY = "The ledger could not be read: runs are not shown, and their counts are unknown";
+// The page carries this, and `--out` replaces a file only when the file already carries it.
+export const DASH_PAGE = '<meta name="generator" content="routr dash">';
 const obj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 
-// One row the page can draw. Names are the page's. Anything else on the ledger row stays out.
+// One row the page can draw. Names are the page's. advised and chose are the ledger's scalars; anything else stays out.
 export function dashRow(e) {
-  const advised = obj(e.advised) ? e.advised : null, chose = obj(e.chose) ? e.chose : null, outcome = obj(e.outcome) ? e.outcome : null;
+  const advised = projectAdvised(e.advised), chose = projectChose(e.chose), outcome = obj(e.outcome) ? e.outcome : null;
   const headroom = obj(e.headroom) ? e.headroom : {};
   return {
     t: typeof e.ts === "string" ? e.ts : null, p: typeof e.project === "string" ? e.project : null,
@@ -61,9 +63,18 @@ function parse(words) {
   return o;
 }
 
+// null: nothing is there to replace (including a parent that is a file). false: something is there and it is not a
+// page this command wrote, so `--out` refuses. A symlink is read for that check and, when it is a page, replaced.
+function dashPage(file) {
+  try {
+    const st = lstatSync(file);
+    if (!st.isFile() && !st.isSymbolicLink()) return false;
+    return readFileSync(file, "utf8").includes(DASH_PAGE);
+  } catch (e) { return e?.code === "ENOENT" || e?.code === "ENOTDIR" ? null : false; }
+}
+
 function writePage(file, html) {
-  ensureParent(file);
-  writeFileSync(file, html, { mode: 0o600 });
+  writeTextAtomic(file, html, { mode: 0o600 }); // rename over the path: a symlink there is replaced, not followed
   if (process.platform !== "win32") chmodSync(file, 0o600); // the mode flag is masked by the umask; this is the mode asked for
 }
 
@@ -72,6 +83,10 @@ export function dashCommand(words, { warnings = [], ledger = LEDGER_PATH(), home
   let o;
   try { o = parse(words); } catch (e) { return refusal("no dash", e.message, warnings); }
   const folder = o.cwd ?? resolve(cwd), project = repositoryName(folder), file = o.out ?? join(CACHE_DIR(homeDir), "dash.html");
+  if (o.out) {
+    const own = dashPage(file);
+    if (own === false) return refusal("no dash", `dash: ${file} is not a page routr dash wrote; choose another`, warnings);
+  }
   let entries, unreadable = false;
   try { entries = read(ledger); } catch { unreadable = true; }
   const rows = unreadable ? [] : dashRows(entries), runs = unreadable ? null : rows.length;

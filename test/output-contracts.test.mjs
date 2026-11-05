@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { adviseCommand, checkCommand, cleanup, contract, launch, recordCommand, usageCommand } from "./contract.mjs";
 import { ans, cfg, cliEnv, fakeExecutable, herdrOK, live, scratch, SCRIPT, shellInfo } from "./helpers.mjs";
+import { DASH_PAGE } from "../src/lib/dash.mjs";
 import { briefSha, read, shareRows } from "../src/lib/ledger.mjs";
 import { telemetryRows } from "../src/lib/telemetry.mjs";
 import { callGit, callHerdr } from "../src/lib/process-boundary.mjs";
@@ -353,6 +354,22 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
   expect(invoke("board", ["--cwd", join(f.dir, "no-such-folder")]).r).toMatchObject({ ok: false, error: expect.stringContaining("is not a folder") });
   const dash = invoke("dash", ["--no-open"]).r;
   expect([dash.ok, dash.opened, dash.runs > 0, dash.file.endsWith("dash.html")]).toEqual([true, false, true, true]);
+  // A hand-edited row: an object or a list in every advised and chose field. None of it reaches board, top or dash.
+  const nest = { note: MARK }, listed = [MARK];
+  const ledgerFile = join(f.dir, ".local/share/routr/ledger.jsonl");
+  appendFileSync(ledgerFile, JSON.stringify({ ts: new Date().toISOString(), run_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", project: "p",
+    advised: { level: nest, sure: listed, between: nest, work_type: nest, high_risk: nest, fallback: listed, facts: { names_location: nest } },
+    chose: { subscription: nest, model: listed, effort: nest, effort_from: nest, level: listed },
+    outcome: { verdict: "done", check: "pass", attempts: 1, causes: [], note: MARK } }) + "\n");
+  for (const [command, args] of [["board", []], ["top", []], ["dash", ["--no-open"]]]) {
+    const result = Bun.spawnSync([process.execPath, SCRIPT, command, ...args], { env });
+    const text = result.stdout.toString() + result.stderr.toString();
+    expect([command, result.exitCode, text.includes(MARK)]).toEqual([command, 0, false]);
+    if (command === "dash") expect(JSON.parse(result.stdout.toString()).runs).toBe(2);
+  }
+  const page = readFileSync(dash.file, "utf8");
+  expect(page).toContain(DASH_PAGE);
+  expect(page).not.toContain(MARK);
   const recordArgs = ["--advice", f.advice, "--ledger", f.ledger, "--subscription", "claude", "--model", "model", "--effort", "default", "--task-file", f.task];
   const recorded = invoke("record", [...recordArgs, "--verdict", "done", "--check", "pass"]).r;
   expect(recorded.id).toBe(f.body.id);
