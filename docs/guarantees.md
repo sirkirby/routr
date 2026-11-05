@@ -151,8 +151,10 @@ into each harness's own skills folder, or copied there on Windows, where a link 
 
 Where the Herdr app is set up (`~/.config/herdr-app` exists), `skill install` also writes routr's panel for it, a mod,
 to `~/.config/herdr-app/mods/routr`: the same staged write and manifest (naming `routr-panel`), never linked, and
-the same rules below. Where the app is not set up, nothing is written for it. `panel/` holds exactly that mod and
-nothing else. The panel itself only runs `routr board`, `routr workers`, `routr usage` and, after the app's own
+the same rules below, except that the two editor helpers the app writes into every mod folder it loads
+(`gpui-kit.d.ts` and `jsconfig.json`, as regular files) are taken for the app's: they stop no update and go with the
+panel. routr changes no layout and no key of the app's. Where the app is not set up, nothing is written for it.
+`panel/` holds exactly that mod and nothing else. The panel itself only runs `routr board`, `routr workers`, `routr usage` and, after the app's own
 confirm dialog, `routr cleanup --worker` for workers `routr workers` says to finish that way; it reads none of
 routr's files.
 

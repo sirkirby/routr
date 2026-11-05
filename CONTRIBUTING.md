@@ -175,8 +175,8 @@ release reaches users on the beta update channel (`"update_channel": "beta"`) th
 first routr command after their daily check (unless they turned automatic updates off): publishing one is shipping to them, so it gets the same review and notes as a release. An `-alpha.N`
 reaches no channel; it is installed only by naming it in `ROUTR_VERSION`. The guides are embedded
 in the binary (`routr skill install`), so a guide change ships with the next release; so is the Herdr app panel
-(`panel/`), which `herdr-app check` validates: run it on a copy, since it writes `gpui-kit.d.ts` and `jsconfig.json`
-into the folder it checks, and routr leaves a folder holding files it did not write.
+(`panel/`), which `herdr-app check` validates. Like the app when it loads a mod, `check` writes `gpui-kit.d.ts` and
+`jsconfig.json` into the folder; keep them out of `panel/` (run it on a copy).
 
 ## Tests
 

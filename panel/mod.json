@@ -1,1 +1,1 @@
-{ "place": "right", "size": 320, "title": "routr" }
+{ "place": "none", "title": "routr", "overlay": { "kind": "window", "key": "routr", "width": 360, "height": 0.8 }, "button": { "label": "routr", "icon": "icon.svg", "opens": "panel", "order": 50 } }

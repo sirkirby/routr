@@ -3,10 +3,13 @@
 // turned out, for the shown space's project. It reads nothing of routr's itself: it runs `routr board` (and `routr
 // workers` for the one action that acts) through the app's `exec`, so routr's storage can change without breaking it.
 // Installed and updated by `routr skill install`, with the skills; written for the Herdr app's mod API (its AGENTS.md).
+// Shown as community panel mods are: `mod.open` (or a key the person adds) opens it as a window (`overlay` in mod.json);
+// any layout can hold it, docked (where it folds to a rail) or in a stack; and its `button` is the shape Herdr's tab bar
+// will read beside Files and Changes once herdr-app#247 lands.
 
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { exec, focused, layout, nextCommand, notify, openOverlay, panes, run, setShared, shared, spaces, theme } from "herdr";
+import { closeOverlay, exec, focused, layout, nextCommand, notify, openOverlay, panes, props, run, setShared, shared, spaces, theme } from "herdr";
 
 const ICON = { claude: "claude", codex: "codex", cursor: "cursor", agy: "antigravity", kiro: "kiro" };
 const LABEL = { claude: "Claude Code", codex: "Codex", cursor: "Cursor", agy: "Antigravity", kiro: "Kiro" };
@@ -213,7 +216,9 @@ export default class Routr extends View {
       .child(h_flex().px(16).h(44).flex_none().items_center().gap(8).border_b(1).border_color(t.border)
         .child(div().font_semibold().text_color(t.foreground).child("routr"))
         .child(div().flex_1())
-        .when(Boolean(me?.size?.px), (el) => el.child(icon("routr-fold", "mods/workspace-chrome/panel-right.svg", "Fold routr", () => fold(me, false)))))
+        .when(Boolean(me?.size?.px), (el) => el.child(icon("routr-fold", "mods/workspace-chrome/panel-right.svg", "Fold routr", () => fold(me, false))))
+        .when(!me && Boolean(props()?.overlay), (el) => el.child(div().id("routr-close").px(4).rounded(4).text_color(t.dim).cursor_pointer()
+          .hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Close").on_click(() => closeOverlay(props().overlay)).child("✕"))))
       .when(Boolean(this.error), (el) => el.child(div().px(16).pt(12).text_size(12).text_color(t.blocked).child(this.error)))
       .when(!b && !this.error, (el) => el.child(div().p(16).text_size(12).text_color(t.dim).child("Reading routr…")))
       .when(Boolean(b), (el) => el.child(v_flex().id("routr-body").flex_1().min_h(0).overflow_y_scrollbar().pb(12)

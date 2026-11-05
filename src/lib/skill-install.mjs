@@ -17,6 +17,7 @@ import orchestrateMd from "../../skills/routr-orchestrate/SKILL.md" with { type:
 import orchestrateYaml from "../../skills/routr-orchestrate/agents/openai.yaml" with { type: "text" };
 import panelMain from "../../panel/main.js" with { type: "text" };
 import panelMod from "../../panel/mod.json" with { type: "text" };
+import panelIcon from "../../panel/icon.svg" with { type: "text" };
 import { ensureParent, home as userHome } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
@@ -29,7 +30,13 @@ export const FILES = {
 // where that folder exists (the app is set up). Not `$HERDR_APP_HOME`: that names a test window. It is not a skill, and
 // no harness reads it, so it is never linked: one folder, owned by its manifest exactly as a skill's copy is.
 export const PANEL = "routr-panel";
-export const PANEL_FILES = { "main.js": panelMain, "mod.json": panelMod };
+export const PANEL_FILES = { "main.js": panelMain, "mod.json": panelMod, "icon.svg": panelIcon };
+// The editor helpers the app writes into every mod folder it loads (herdr-app's mods.rs: gpui-shell writes them; its own
+// check of a shipped mod passes over exactly these two). In routr's panel folder they are the app's, made for routr's
+// mod: not files that stop an update, and removed with the panel. Only as regular files at the folder's top: a link of
+// that name is someone else's.
+const APP_HELPERS = ["gpui-kit.d.ts", "jsconfig.json"];
+const appHelpers = (dir, item) => (item !== PANEL ? [] : APP_HELPERS.filter((f) => { try { return lstatSync(join(dir, f)).isFile(); } catch { return false; } }));
 const shipped = (item) => (item === PANEL ? PANEL_FILES : FILES[item]);
 export const appFolder = (home) => join(home, ".config/herdr-app");
 export const panelPath = (home) => join(appFolder(home), "mods", "routr");
@@ -137,7 +144,7 @@ const entries = (dir, pre = "") => {
   return list.flatMap((e) => (e.isDirectory() && !e.isSymbolicLink() ? entries(join(dir, e.name), `${pre}${e.name}/`) : [`${pre}${e.name}`]));
 };
 // What is in routr's folder that routr did not write there (a link where a folder was counts: it is not routr's).
-export const extraFiles = (dir, skill) => { const own = new Set([...ownedFiles(dir, skill), MANIFEST].map((f) => f.replace(/\\/g, "/"))); return entries(dir).filter((f) => !own.has(f)); };
+export const extraFiles = (dir, skill) => { const own = new Set([...ownedFiles(dir, skill), ...appHelpers(dir, skill), MANIFEST].map((f) => f.replace(/\\/g, "/"))); return entries(dir).filter((f) => !own.has(f)); };
 export const hasExtras = (dir, extras) => `${dir} has files routr didn't write (${extras.join(", ")}): remove them or the folder, then run \`routr skill install\``;
 // Remove routr's files from its folder: each listed file, never through a link; the manifest only once all of them are
 // gone; then each folder left empty, the folder itself only if nothing is left. Returns what stayed (`left`: the
@@ -145,7 +152,7 @@ export const hasExtras = (dir, extras) => `${dir} has files routr didn't write (
 export function removeOwned(dir, skill) {
   if (lstatSync(dir).isSymbolicLink()) { unlinkSync(dir); return { left: [], failed: [] }; }
   const left = extraFiles(dir, skill), failed = [];
-  for (const f of ownedFiles(dir, skill)) {
+  for (const f of [...ownedFiles(dir, skill), ...appHelpers(dir, skill)]) {
     const p = join(dir, f);
     if (linkAbove(dir, f)) { failed.push(`${p}: a folder above it is a link, not followed`); continue; }
     try { if (lstatSync(p).isDirectory()) failed.push(`${p}: a folder where routr wrote a file`); else unlinkSync(p); }
