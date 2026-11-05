@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.13.1 — 2026-11-05
+
+[Full notes](docs/releases/v0.13.1.md)
+
 - `routr dash` writes one HTML page of this machine's ledger, what you asked, what you chose and how it turned out, and opens it in your browser. It replaces a symlink at that path instead of the file the link points at, and it will not overwrite a file that is not a dash page. A ledger value that is not a level, a short string, a boolean or a number is left out of the page, and out of `routr board` and `routr top`. The choice is stored as it was recorded. (#161)
 
 ## v0.13.0 — 2026-11-05
