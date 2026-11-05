@@ -10,9 +10,11 @@ yours (`doctor --fix` is `setup` under another name). What they do besides answe
 
 - read your harnesses in the foreground, through each harness's own CLI (its status command, Claude's `/usage`);
 - keep routr's own bookkeeping under `~/.cache/routr` (which harnesses are signed in, when a usage source was last
-  refreshed);
-- start one of routr's detached jobs and carry on: the updater, Cursor's or Kiro's usage refresh, or the
-  OpenTelemetry sender when export is configured.
+  refreshed, and each subscription's last good usage reading, in `usage-readings.json`: windows, class and note, as
+  the harness reported them, never a brief);
+- start one of routr's detached jobs and carry on: the updater, Cursor's or Kiro's usage refresh, a `routr usage`
+  that `routr board` starts when its kept readings are over 10 minutes old, or the OpenTelemetry sender when export
+  is configured.
 
 They fail open: any error still prints usable output and exits 0. `dispatch`, `subagent` and `check` return
 `unavailable`, a list of the readings they could not make (`[]` when nothing was missing). Decision-model failures

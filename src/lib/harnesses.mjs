@@ -55,7 +55,8 @@
 import { warning } from "./warnings.mjs";
 import { dirname } from "node:path";
 import { run } from "./runtime.mjs";
-import { billingFromSignIn, signInHint, signInState } from "./signin.mjs";
+import { billingFromSignIn, keptSignIn, signInHint, signInState } from "./signin.mjs";
+import { cachedReadings, keepReadings } from "./usage-cache.mjs";
 import { NO_WINDOWS_AFTER_ANSWER, readAgy, readClaude, readCodexLive, summarize, failedUsage, usageReadingTime, withUsageReadingTime } from "./usage.mjs";
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // JSON's string escapes are TOML basic-string escapes too, except JSON permits a literal DEL and TOML does not.
@@ -311,8 +312,15 @@ export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usag
 // and dispatch leaves it out (pick.mjs). `billing(name, { fresh })`: `{ billing, not }`, what its sign-in answer said
 // about billing (signin.mjs, kept beside `why`'s answer) or null, and, when it was asked again, why it is not signed
 // in now (null when it is).
-export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFor, observe = (read) => read() } = {}) {
-  const signedOut = (name, note) => ({ ...summarize({ pool: name, source: "sign-in check", note }), signedIn: false });
+export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFor, observe = (read) => read(), keep = keepReadings } = {}) {
+  // What its sources read, before billing settles it, is kept for the reads that must not wait (cachedUsage, below):
+  // they settle billing again from the kept sign-in answer, as this does.
+  const read = [], rows = await readEach(names, given, { sources, background, why, billing, observe, read });
+  keep(read);
+  return rows;
+}
+const signedOut = (name, note) => ({ ...summarize({ pool: name, source: "sign-in check", note }), signedIn: false });
+function readEach(names, given, { sources, background, why, billing, observe, read = [] }) {
   return Promise.all(names.map((name) => observe(async () => {
     const src = sources[name], source = src?.source ?? name;
     try {
@@ -323,6 +331,7 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
       let u;
       if (!src?.read) u = failedUsage(name, source, "source_missing");
       else try { u = await src.read({ background: background.includes(name) }); } catch { u = failedUsage(name, source); }
+      read.push(u);
       // The billing reading settles only a reading without windows, and then it must be today's: a sign-in kept for 6
       // hours can predate a switch between a subscription and an API key (a switch an hour in still ranked the
       // old way). So in exactly that case the status check runs again now. With windows there is no call. That
@@ -333,6 +342,20 @@ export async function readUsage(names, given = {}, { sources = SOURCES, backgrou
       return withBilling(name, u, b?.billing);
     } catch { return failedUsage(name, source); }
   })));
+}
+
+// Usage that must not wait: each subscription's last kept reading (usage-cache.mjs), aged to now, with no harness
+// called, no status check run. A harness whose kept sign-in answer says it is not signed in is out, as in readUsage;
+// one with no kept reading is unknown (`not_read_yet`) while a detached `routr usage` (with `configPath`, the caller's
+// `--config`) reads it. Billing is settled from the kept sign-in answer, as readUsage settles it from the same answer
+// (without asking again: nothing here waits). `refreshing` says a read was started.
+export function cachedUsage(names, { cache = cachedReadings, signIn = keptSignIn, configPath } = {}) {
+  const { rows, refreshing } = cache(names, { configPath });
+  return { refreshing, rows: names.map((name) => {
+    const { state, billing } = signIn(name) ?? {};
+    if (HARNESSES[name] && state && state !== "yes") return signedOut(name, signInHint(HARNESSES[name], state));
+    return withBilling(name, rows.find((r) => r.pool === name) ?? failedUsage(name, SOURCES[name]?.source ?? name, "not_read_yet"), billing);
+  }) };
 }
 
 // What the harness's sign-in status says about billing: the kept answer, or with `fresh` its status check run again

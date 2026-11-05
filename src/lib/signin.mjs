@@ -42,6 +42,12 @@ export async function signInState(name, harness, { fresh = false, nowSec = Date.
   return state;
 }
 export const signedIn = async (name, harness, o) => (await signInState(name, harness, o)) === "yes";
+// The kept answer alone, however old, or null: for a read that must not run a harness (cachedUsage). `{ state, billing }`:
+// what the same answer said about billing, as signInState keeps it, only beside "yes".
+export const keptSignIn = (name, { file = SIGNED_IN_FILE() } = {}) => {
+  const kept = readJson(file)[name], state = kept?.state;
+  return ["yes", "no", "no answer"].includes(state) ? { state, billing: state === "yes" ? billingOf(kept.billing) : null } : null;
+};
 // What to tell the user about a harness that is not ready.
 export const signInHint = (harness, state) => (state === "no answer"
   ? `\`${harness.executable}\` did not answer its sign-in check (not installed, or it hung)`

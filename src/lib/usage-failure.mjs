@@ -9,6 +9,7 @@ export const USAGE_FAILURES = Object.freeze({
   command_shadowed: "A user command named usage replaces the harness's own, so routr will not run it because that would spend.",
   private_folder: "routr could not make a private folder for the usage read.",
   source_missing: "No usage reader is available for this subscription.",
+  not_read_yet: "routr has kept no usage reading for this subscription yet; routr usage reads one, and routr board starts that in the background.",
   // Launch says the same of a work folder (herdr's CMD_PATH); here the folder is the read's own, under TEMP.
   cmd_path: "The usage read's shell is cmd, which expands % and ! even inside quotes, and the temporary folder's path holds one. Set TEMP to a folder whose path has neither, or make PowerShell the shell herdr opens.",
 });
