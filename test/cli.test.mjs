@@ -193,6 +193,51 @@ test("routr skill install writes both skills and links each into every harness f
   expect(readdirSync(`${home}/.agents/skills`).sort()).toEqual(SKILLS); // no staging folder left behind
 });
 
+test("routr's panel goes to the Herdr app with the skills, only where the app is set up, by the same ownership rules, and uninstall takes it back", async () => {
+  const { installSkill, MANIFEST, PANEL, PANEL_FILES, panelPlace, removeOwned } = await import("../src/lib/skill-install.mjs");
+  const { uninstallPlan } = await import("../src/lib/uninstall.mjs");
+  const { existsSync, readdirSync } = await import("node:fs");
+  // What ships is exactly the repository's panel folder.
+  expect(readdirSync(join(import.meta.dir, "../panel")).sort()).toEqual(Object.keys(PANEL_FILES).sort());
+  // Shown as community panel mods are: never docked into a layout by itself, opened as a window, with the tab-bar button
+  // herdr-app#247 reads (its icon ships beside it).
+  expect(JSON.parse(PANEL_FILES["mod.json"])).toMatchObject({ place: "none", overlay: { kind: "window", key: "routr" }, button: { label: "routr", icon: "icon.svg", opens: "panel" } });
+  const home = scratch("panel"), at = join(home, ".config/herdr-app/mods/routr");
+  // No app here: nothing is written for it, and nothing is said.
+  expect(installSkill({ home }).installed.some((x) => x.skill === PANEL)).toBe(false);
+  expect(existsSync(`${home}/.config`)).toBe(false);
+  // The app set up: the panel is written whole, with its manifest, and again on the next install.
+  mkdirSync(`${home}/.config/herdr-app`, { recursive: true });
+  expect(installSkill({ home }).installed.filter((x) => x.skill === PANEL)).toEqual([{ skill: PANEL, where: at, how: "written for the Herdr app" }]);
+  expect(readFileSync(`${at}/main.js`, "utf8")).toBe(PANEL_FILES["main.js"]);
+  expect(JSON.parse(readFileSync(`${at}/${MANIFEST}`, "utf8"))).toEqual({ skill: PANEL, version: "0.0.0-dev", files: ["main.js", "mod.json", "icon.svg"] });
+  expect(installSkill({ home }).ok).toBe(true);
+  expect(readdirSync(`${home}/.config/herdr-app/mods`)).toEqual(["routr"]); // no staging folder left
+  // The editor helpers the app writes into every mod it loads are the app's: the next install still updates the panel.
+  writeFileSync(`${at}/jsconfig.json`, "{}"); writeFileSync(`${at}/gpui-kit.d.ts`, "// generated");
+  const again = installSkill({ home });
+  expect([again.ok, again.kept, again.installed.some((x) => x.skill === PANEL)]).toEqual([true, undefined, true]);
+  // Uninstall removes the panel with the helpers the app wrote for it, and nothing else: the folder goes once empty.
+  writeFileSync(`${at}/jsconfig.json`, "{}");
+  const plan = uninstallPlan({ home });
+  expect(plan.remove.find((x) => x.skill === PANEL)).toMatchObject({ path: at, what: "routr's panel in the Herdr app" });
+  expect(removeOwned(at, PANEL)).toEqual({ left: [], failed: [] });
+  expect(existsSync(at)).toBe(false);
+  // A file of the person's there: the folder is left as it is by install, and by uninstall but for routr's own files.
+  installSkill({ home }); writeFileSync(`${at}/notes.md`, "mine");
+  expect(installSkill({ home }).kept?.find((k) => k.skill === PANEL)?.why).toContain("notes.md");
+  expect(removeOwned(at, PANEL).left).toEqual(["notes.md"]);
+  expect(readdirSync(at)).toEqual(["notes.md"]);
+  // A mod folder named routr that routr did not write is never routr's: kept by install, never in uninstall's plan.
+  const other = scratch("panel-theirs"); mkdirSync(`${other}/.config/herdr-app/mods/routr`, { recursive: true });
+  writeFileSync(`${other}/.config/herdr-app/mods/routr/main.js`, "// mine");
+  expect(panelPlace(other).state).toBe("theirs");
+  expect(installSkill({ home: other }).kept?.find((k) => k.skill === PANEL)).toMatchObject({ where: join(other, ".config/herdr-app/mods/routr") });
+  expect(readFileSync(`${other}/.config/herdr-app/mods/routr/main.js`, "utf8")).toBe("// mine");
+  expect(uninstallPlan({ home: other }).remove.some((x) => x.skill === PANEL)).toBe(false);
+  expect(uninstallPlan({ home: other }).not_ours.some((x) => x.path === join(other, ".config/herdr-app/mods/routr"))).toBe(true);
+});
+
 test("routr touches only its own skills: a same-named skill, a folder behind someone else's link, and a developer's link are kept", async () => {
   const { FILES, installSkill, owner } = await import("../src/lib/skill-install.mjs");
   const { uninstallPlan } = await import("../src/lib/uninstall.mjs");

@@ -8,7 +8,7 @@
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmdirSync, rmSync, statSync, unlinkSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
-import { notOursWhy, owner, removeOwned, skillPlaces } from "./skill-install.mjs";
+import { notOursWhy, owner, panelPlace, removeOwned, skillPlaces } from "./skill-install.mjs";
 import { CACHE_DIR, CONFIG_DIR, DATA_DIR, folderId, lockIsStale, home as userHome, releaseFileLock, standalone, start, STATE_DIR, takeLock, UNINSTALL_LOCK, WORKER_NAME, writeJsonAtomic, WORKTREES_DIR } from "./runtime.mjs";
 import { FORMAT } from "./worker-record.mjs";
 import { isOurStatusline } from "./statusline.mjs";
@@ -63,6 +63,10 @@ export function uninstallPlan({ home = userHome(), purge = false, binary = null 
     if (p.state === "ours") remove.push({ path: p.path, what: `the ${p.skill} skill`, skill: p.skill });
     else if (p.state === "theirs") notOurs.push({ path: p.path, what: p.why });
   }
+  // routr's panel in the Herdr app, by the same rule: a mod folder of that name routr did not write stays.
+  const panel = panelPlace(home);
+  if (panel.state === "ours") remove.push({ path: panel.path, what: "routr's panel in the Herdr app", skill: panel.skill });
+  else if (panel.state === "theirs") notOurs.push({ path: panel.path, what: panel.why });
   remove.push({ path: CACHE_DIR(home), what: "cache: usage snapshots, update log, OpenTelemetry queue and sender state" });
   const left = leftovers(home);
   const data = [{ path: CONFIG_DIR(home), what: "your config and decision provider keys" },

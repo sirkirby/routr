@@ -986,6 +986,14 @@ test("doctor reports both skills with their versions, setup repairs a missing on
   // The repair it names works: install replaces routr's incomplete copy and links Kiro again.
   expect(Bun.spawnSync([process.execPath, SCRIPT, "skill", "install"], { env }).exitCode).toBe(0);
   expect(JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString()).next_steps.join(" ")).not.toContain("skill install");
+  // The Herdr app set up: doctor reports routr's panel there, asks for it while it is missing, and is content once installed.
+  mkdirSync(join(home, ".config/herdr-app"), { recursive: true });
+  const noPanel = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString());
+  expect([noPanel.panel.state, noPanel.next_steps]).toEqual(["absent", expect.arrayContaining(["Install routr's panel for the Herdr app: routr skill install"])]);
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "skill", "install"], { env }).exitCode).toBe(0);
+  const withPanel = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json"], { env }).stdout.toString());
+  expect([withPanel.panel, withPanel.next_steps.join(" ")]).toEqual([{ where: join("~", ".config/herdr-app/mods/routr"), state: "ours", version: "0.0.0-dev", missing: [], extra: [] }, expect.not.stringContaining("skill install")]);
+  expect(Bun.spawnSync([process.execPath, SCRIPT, "doctor"], { env }).stdout.toString()).toContain(`routr's panel for the Herdr app ${join("~", ".config/herdr-app/mods/routr")} is 0.0.0-dev`);
   // Uninstall removes only the files routr's manifest lists: a file the user added to routr's folder stays, and is said.
   mkdirSync(join(home, ".agents/skills/routr/notes")); writeFileSync(join(home, ".agents/skills/routr/notes/mine.md"), "the user's");
   const un = Bun.spawnSync([process.execPath, SCRIPT, "uninstall", "--yes"], { env });
