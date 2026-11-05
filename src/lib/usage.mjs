@@ -15,14 +15,24 @@ const now = () => Date.now() / 1000;
 
 // Source time is internal provenance, not a new command field. Headroom observations must not timestamp a
 // cached read as now.
-const readingTimes = new WeakMap(), windowTimes = new WeakMap();
+const readingTimes = new WeakMap(), windowTimes = new WeakMap(), trustTimes = new WeakMap();
 export const usageReadingTime = (row, window) => windowTimes.get(window) ?? readingTimes.get(row);
 export const withUsageReadingTime = (row, time) => { if (Number.isSafeInteger(time) && time > 0) readingTimes.set(row, time); return row; };
+// How long a reading may be used, as its source's own rule says (`until`, seconds): a resetless Codex stop for 5 minutes,
+// a Cursor or Kiro snapshot for a day. Internal like the reading time, so a reading kept and served later
+// (usage-cache.mjs) obeys the same rule as a live read of the same source.
+export const usageTrustedUntil = (row) => trustTimes.get(row) ?? null;
 
 // One subscription's usage as every reader returns it. `ts` is when the harness reported it (null: nothing read);
 // `cls` the class, from the windows when not given; `reason` a stable key for a note doctor acts on. `nowSec` is
-// injectable so the recorded shapes are tests that do not age.
-export function summarize({ pool, source, ts = null, windows = [], note, cls, nowSec = now(), reason, failure, kept }) {
+// injectable so the recorded shapes are tests that do not age. `until`: past it, the windows are not used and the class
+// is unknown, as the live source would answer by then.
+export function summarize({ pool, source, ts = null, windows = [], note, cls, nowSec = now(), reason, failure, kept, until }) {
+  if (Number.isFinite(until) && nowSec >= until) return summarize({ pool, source, ts, nowSec, failure, kept, note: "the reading is too old to use: remaining capacity is unknown" });
+  const trusted = (row) => { if (Number.isFinite(until)) trustTimes.set(row, until); return row; };
+  return trusted(summarizeNow({ pool, source, ts, windows, note, cls, nowSec, reason, failure, kept }));
+}
+function summarizeNow({ pool, source, ts, windows, note, cls, nowSec, reason, failure, kept }) {
   windows = windows.filter((w) => Number.isFinite(w.usedPct)); // a window without a number must not turn headroom into NaN
   cls ??= windows.length ? "included" : "unknown";
   const ageSec = ts ? Math.round(nowSec - ts) : null;
@@ -71,6 +81,7 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
       return summarize({ pool: "codex", source, ts, nowSec, note: "spend control reading is too old to use: its reset is unknown" });
     ws.push({ name: "spend_limit", usedPct: 100, windowMin: null, resetsAt: null });
   }
+  const until = stopped && !cap ? ts + LOCAL_FRESH_SEC : undefined;
   const reached = g(rl, "rateLimitReachedType", "rate_limit_reached_type");
   if (reached) notes.push("a rate limit was reached");
   if (g(rl, "spendControlReached", "spend_control_reached") === true) notes.push("spend control reached: the cap is used up");
@@ -84,7 +95,7 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
   if (metered) notes.push(credits.unlimited ? "metered: unlimited credits, usage is billed, no quota reported"
     : `metered: workspace credits${Number.isFinite(balance) ? ` (balance ${balance})` : ""}, usage is billed, no window reported`);
   else if (!cap && !stopped && ws.length && (credits?.unlimited || hasCredits)) notes.push("workspace credits are on: the harness keeps working past 100% on billed usage");
-  return summarize({ pool: "codex", source, ts, windows: ws, note: notes.join("; ") || undefined, cls: cap || stopped || metered ? "metered" : undefined, nowSec });
+  return summarize({ pool: "codex", source, ts, windows: ws, note: notes.join("; ") || undefined, cls: cap || stopped || metered ? "metered" : undefined, nowSec, until });
 }
 
 // The Claude snapshot `routr statusline` writes. Windows come from `rate_limits`; `spend_limit` (behind a Claude apps

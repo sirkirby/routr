@@ -84,8 +84,9 @@ function outcomesOf(launches, rows, now, inScope) {
   };
 }
 
-// `usage` is cachedUsage's seam; `ledger`, `history` and `now` are tests'.
-export async function boardCommand(words, config, { usage = cachedUsage, ledger = LEDGER_PATH(), history = readHistory, now = Date.now(), warnings = [] } = {}) {
+// `usage` is cachedUsage's seam; `ledger`, `history` and `now` are tests'. `configPath`, the `--config` given, goes to
+// the background refresh, so it reads the subscriptions this config names.
+export async function boardCommand(words, config, { usage = cachedUsage, ledger = LEDGER_PATH(), history = readHistory, now = Date.now(), warnings = [], configPath } = {}) {
   let o;
   try { o = parse(words); } catch (e) { return refusal("no board", e.message, warnings); }
   const project = o.cwd ? projectName(o.cwd) : null, inScope = (x) => project == null || x.project === project;
@@ -94,7 +95,7 @@ export async function boardCommand(words, config, { usage = cachedUsage, ledger 
   // Room: every configured account that is on, as `usage` ranks it for plain work, from kept readings.
   try {
     const names = Object.keys(config.subscriptions ?? {}).filter((n) => config.subscriptions[n]?.enabled !== false);
-    const { rows } = usage(names);
+    const { rows } = usage(names, { configPath: configPath ? resolve(configPath) : undefined });
     out.subscriptions = rankSubscriptions("basic", rows, config, recentLaunches());
     out.unavailable.push(...usageUnavailable(rows).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
     out.next.push(...capacityNext(out.subscriptions, out.unavailable, out.level, config)); // as usage says them
@@ -108,7 +109,9 @@ export async function boardCommand(words, config, { usage = cachedUsage, ledger 
   let rows = null;
   try { rows = read(ledger); } catch { out.unavailable.push({ part: "ledger", code: "unreadable", why: "The ledger could not be read: recorded outcomes are not shown, and their counts are unknown" }); }
   const launches = h.unreadable ? null : h.records.filter(inScope);
-  const decisions = joinDecisions(launches ?? [], rows ? latestRuns(rows).filter(inScope) : []);
+  // Joined across every project, then scoped: whether a run joins a launch, and which, never depends on the folder asked
+  // about (a legacy run's advice used by launches in two projects joins neither, in each project's board too).
+  const decisions = joinDecisions(h.unreadable ? [] : h.records, rows ? latestRuns(rows) : []).filter(inScope);
   out.decisions = decisions.slice(0, DECISIONS_MAX).map(({ at, ...d }) => d);
   out.outcomes = outcomesOf(launches, rows, now, inScope);
   const room = out.subscriptions?.most_room;

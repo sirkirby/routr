@@ -313,13 +313,14 @@ export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usag
 // about billing (signin.mjs, kept beside `why`'s answer) or null, and, when it was asked again, why it is not signed
 // in now (null when it is).
 export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFor, observe = (read) => read(), keep = keepReadings } = {}) {
-  // What it read is kept for the reads that must not wait (cachedUsage, below).
-  const rows = await readEach(names, given, { sources, background, why, billing, observe });
-  keep(rows);
+  // What its sources read, before billing settles it, is kept for the reads that must not wait (cachedUsage, below):
+  // they settle billing again from the kept sign-in answer, as this does.
+  const read = [], rows = await readEach(names, given, { sources, background, why, billing, observe, read });
+  keep(read);
   return rows;
 }
 const signedOut = (name, note) => ({ ...summarize({ pool: name, source: "sign-in check", note }), signedIn: false });
-function readEach(names, given, { sources, background, why, billing, observe }) {
+function readEach(names, given, { sources, background, why, billing, observe, read = [] }) {
   return Promise.all(names.map((name) => observe(async () => {
     const src = sources[name], source = src?.source ?? name;
     try {
@@ -330,6 +331,7 @@ function readEach(names, given, { sources, background, why, billing, observe }) 
       let u;
       if (!src?.read) u = failedUsage(name, source, "source_missing");
       else try { u = await src.read({ background: background.includes(name) }); } catch { u = failedUsage(name, source); }
+      read.push(u);
       // The billing reading settles only a reading without windows, and then it must be today's: a sign-in kept for 6
       // hours can predate a switch between a subscription and an API key (a switch an hour in still ranked the
       // old way). So in exactly that case the status check runs again now. With windows there is no call. That
@@ -344,14 +346,15 @@ function readEach(names, given, { sources, background, why, billing, observe }) 
 
 // Usage that must not wait: each subscription's last kept reading (usage-cache.mjs), aged to now, with no harness
 // called, no status check run. A harness whose kept sign-in answer says it is not signed in is out, as in readUsage;
-// one with no kept reading is unknown (`not_read_yet`) while a detached `routr usage` reads it. `refreshing` says one
-// was started.
-export function cachedUsage(names, { cache = cachedReadings, signIn = keptSignIn } = {}) {
-  const { rows, refreshing } = cache(names);
+// one with no kept reading is unknown (`not_read_yet`) while a detached `routr usage` (with `configPath`, the caller's
+// `--config`) reads it. Billing is settled from the kept sign-in answer, as readUsage settles it from the same answer
+// (without asking again: nothing here waits). `refreshing` says a read was started.
+export function cachedUsage(names, { cache = cachedReadings, signIn = keptSignIn, configPath } = {}) {
+  const { rows, refreshing } = cache(names, { configPath });
   return { refreshing, rows: names.map((name) => {
-    const state = signIn(name);
+    const { state, billing } = signIn(name) ?? {};
     if (HARNESSES[name] && state && state !== "yes") return signedOut(name, signInHint(HARNESSES[name], state));
-    return rows.find((r) => r.pool === name) ?? failedUsage(name, SOURCES[name]?.source ?? name, "not_read_yet");
+    return withBilling(name, rows.find((r) => r.pool === name) ?? failedUsage(name, SOURCES[name]?.source ?? name, "not_read_yet"), billing);
   }) };
 }
 

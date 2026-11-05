@@ -152,7 +152,10 @@ export function append(entry, path = LEDGER_PATH(), { revision = false } = {}) {
 
 export function read(path = LEDGER_PATH()) {
   if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8").split("\n").filter(Boolean).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } });
+  // A line that is not a JSON object (`null`, a number, a list: a hand edit) is skipped like one that does not parse:
+  // every reader takes a row's fields, and one such line stopped `board` with a TypeError.
+  const row = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+  return readFileSync(path, "utf8").split("\n").filter(Boolean).flatMap((l) => { try { const v = JSON.parse(l); return row(v) ? [v] : []; } catch { return []; } });
 }
 
 const MIN = 5; // below this many runs a rate is an anecdote, and the report says so
