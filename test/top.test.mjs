@@ -78,6 +78,10 @@ test("the detail: board's fields for one decision, and nothing it does not have"
   const bare = board({ decisions: [decision({ name: null, advised: null, recorded_at: null, run_id: null, outcome: null })] });
   expect(draw(bare).join("\n")).toMatch(/›launch +2h {2}open\n {3}\? {2}Codex/);
   expect(draw(bare, { open: true }).join("\n")).toContain("advised    not kept");
+  // Launched this minute, or by a clock ahead of this one: never "now ago", or " ago" with nothing before it.
+  const at = (launched_at) => draw(board({ decisions: [decision({ launched_at })] }), { open: true }).join("\n");
+  expect(at(new Date(NOW - 5000).toISOString())).toMatch(/launched {3}now, \d/);
+  expect(at(new Date(NOW + 60_000).toISOString())).toMatch(/launched {3}\d/);
 });
 
 test("what board could not read is said, and a missing count is ? (never 0)", () => {

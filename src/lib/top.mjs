@@ -140,7 +140,8 @@ function decisionLines(b, o, rows) {
 export function detailLines(d, { width, g, c, now }) {
   const k = 10, lines = [fit([[`${nameOf(d)}${d.backend ? `${g.sep}${t(d.backend)}` : ""}`, c.bold]], width, g.more)];
   const field = (key, value) => wrap(value, Math.max(10, width - k - 1)).forEach((l, i) => lines.push(fit([[i ? " ".repeat(k + 1) : `${key.padEnd(k)} `, c.dim], [l]], width, g.more)));
-  const when = (iso) => { const ms = Date.parse(iso); return Number.isFinite(ms) ? `${span((now - ms) / 1000)} ago, ${clock(ms)}` : null; };
+  // Under a minute span says "now", and for a time ahead of this clock nothing: neither is "<that> ago".
+  const when = (iso) => { const ms = Date.parse(iso); if (!Number.isFinite(ms)) return null; const ago = span((now - ms) / 1000); return ago === "now" ? `now, ${clock(ms)}` : ago ? `${ago} ago, ${clock(ms)}` : clock(ms); };
   const a = d.advised ?? {}, ch = d.chose ?? {}, o = d.outcome;
   field("launched", d.launched_at ? when(d.launched_at) : "not started with routr launch");
   field("recorded", d.recorded_at ? when(d.recorded_at) : "not yet");
