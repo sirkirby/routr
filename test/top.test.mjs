@@ -4,7 +4,7 @@ import { EventEmitter } from "node:events";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
-import { decisionKey, renderTop, reselect, span, topCommand, topKey } from "../src/lib/top.mjs";
+import { columns, decisionKey, renderTop, reselect, span, topCommand, topKey } from "../src/lib/top.mjs";
 import { repositoryName, projectName } from "../src/lib/ledger.mjs";
 import { glyphsFor, styler } from "../src/lib/tui.mjs";
 import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
@@ -32,7 +32,7 @@ test("every line fits the width it is drawn at, and the screen its height, in Un
   for (const width of [24, 40, 44, 80, 119, 120, 160]) for (const height of [8, 24, 50]) for (const g of [UNI, ASCII]) for (const colour of [false, true]) for (const open of [false, true]) {
     const lines = renderTop(board(), { width, height, g, c: styler(colour), now: NOW, selected: 1, open, scope: "project", project: "myco" });
     expect(lines.length).toBeLessThanOrEqual(height);
-    for (const l of lines) expect(stripVTControlCharacters(l).length).toBeLessThan(Math.max(21, width));
+    for (const l of lines) expect(columns(l)).toBeLessThanOrEqual(width - 1);
   }
   // ASCII terminals get no glyph they cannot draw: every character is plain.
   const ascii = renderTop(board(), { width: 80, height: 30, g: ASCII, c: styler(false), now: NOW, selected: 0, scope: "project", project: "myco" }).join("\n");
@@ -233,11 +233,78 @@ test("routr top on the command line: a snapshot when piped, never a ledger note;
     outcome: { verdict: "done", check: "pass", note: "SECRET-NOTE-TOP" } })}\n`);
   const r = Bun.spawnSync([process.execPath, SCRIPT, "top", "--cwd", repo], { env: cliEnv(home) });
   const out = r.stdout.toString();
-  expect([r.exitCode, out.split("\n")[0]]).toEqual([0, "routr top · myco"]);
+  expect([r.exitCode, out.split("\n")[0]]).toEqual([0, expect.stringMatching(/^routr top (·|-) myco$/)]); // ASCII in the Windows console
   expect(out).toContain("1 recorded");
   expect(out + r.stderr.toString()).not.toContain("SECRET-NOTE-TOP");
   for (const extra of [["--headroom", "--cwd"], ["--config", "--cwd"]]) {
     const bad = Bun.spawnSync([process.execPath, SCRIPT, "top", ...extra, repo], { env: cliEnv(home) });
     expect([bad.exitCode, bad.stderr.toString()]).toEqual([2, expect.stringContaining("--cwd cannot be a value")]);
   }
+});
+
+// ---- found in review (rev159) ---------------------------------------------------------------------------------------
+test("a terminal smaller than the screen gets no line wider or row more than it has", () => {
+  for (let width = 1; width <= 30; width++) for (let height = 1; height <= 8; height++) for (const open of [false, true]) {
+    const lines = renderTop(board(), { width, height, g: UNI, c: styler(true), now: NOW, selected: 0, open, scope: "project", project: "myco" });
+    expect(lines.length).toBeLessThanOrEqual(height);
+    for (const l of lines) expect(columns(l)).toBeLessThanOrEqual(width - 1);
+  }
+});
+
+test("wide and combining characters are measured in columns, and never split", () => {
+  expect([columns("漢字"), columns("é"), columns("👍"), columns("█⏎›…"), columns("\x1b[1mab\x1b[22m")]).toEqual([4, 1, 2, 4, 2]);
+  const b = board({ decisions: [decision({ name: "漢".repeat(20), chose: { subscription: "codex", model: "모델".repeat(10), effort: "high", level: "strong" } })] });
+  for (const width of [40, 44, 80, 140]) for (const open of [false, true]) {
+    const lines = renderTop(b, { width, height: 30, g: UNI, c: styler(false), now: NOW, selected: 0, open, scope: "project", project: "프로젝트" });
+    for (const l of lines) { expect(columns(l)).toBeLessThanOrEqual(width - 1); expect(l).not.toContain("�"); }
+  }
+});
+
+test("every field from the user's records is cleaned, including numbers that are not numbers", () => {
+  const b = board({ decisions: [decision({ outcome: { verdict: "done", check: "pass", attempts: "\x1b[2JINJECTED", causes: "\x1b[2J", seconds: "\x1b[2J" } })] });
+  const s = renderTop(b, { width: 80, height: 30, g: UNI, c: styler(false), now: NOW, selected: 0, open: true, scope: "project", project: "myco" }).join("\n");
+  expect(s).not.toContain("\x1b");
+  expect(s).toContain("outcome    done · check pass\n");
+});
+
+test("a draw that fails on a refresh ends top with the terminal restored, and says why", async () => {
+  const { input, output } = terminal(), err = { text: "", write(s) { this.text += s; } };
+  let n = 0, fail = false; const write = output.write.bind(output);
+  output.write = (s) => { if (fail && !s.includes("\x1b[?1049l")) { fail = false; throw new Error("EIO"); } return write(s); };
+  const running = topCommand([], { ...seams([], { board: async () => { if (n++) fail = true; return board(); } }), cwd: scratch("top-drawfail"), input, output, errors: err, every: 10 });
+  expect(await running).toBe(1);
+  expect(input.raw.at(-1)).toBe(false);
+  expect(output.text.endsWith("\x1b[?25h\x1b[?1049l")).toBe(true);
+  expect(err.text).toContain("top stopped: the screen could not be drawn");
+});
+
+test("SIGINT from outside restores the terminal too, and no signal listener is left", async () => {
+  const before = Object.fromEntries(["SIGINT", "SIGTERM", "SIGHUP"].map((s) => [s, process.listenerCount(s)]));
+  const { input, output } = terminal();
+  const running = topCommand([], { ...seams([]), cwd: scratch("top-sigint"), input, output });
+  await tick();
+  expect(process.listenerCount("SIGINT")).toBe(before.SIGINT + 1);
+  process.emit("SIGINT");
+  expect(await running).toBe(0);
+  expect(output.text.endsWith("\x1b[?25h\x1b[?1049l")).toBe(true);
+  for (const s of ["SIGINT", "SIGTERM", "SIGHUP"]) expect(process.listenerCount(s)).toBe(before[s]);
+});
+
+test("ACCESSIBLE: a usage read that never ends does not stop q", async () => {
+  const { output } = terminal(), input = Object.assign(new (await import("node:stream")).PassThrough(), { isTTY: true });
+  const running = topCommand([], { ...seams([]), env: { ACCESSIBLE: "1" }, cwd: scratch("top-a11y-hung"), input, output, spawn: () => true });
+  await tick(); input.write("u\n"); await tick(); input.write("u\n"); await tick(); input.write("q\n");
+  expect(await running).toBe(0);
+  expect(output.text).toContain("a usage read is already running");
+});
+
+test("the pick stays on its decision when one arrives before any key is pressed", async () => {
+  const { input, output } = terminal(), first = board(), later = board({ decisions: [decision({ launch_id: "new", name: "newest" }), ...first.decisions] });
+  let n = 0;
+  const running = topCommand([], { ...seams([], { board: async () => (n++ ? later : first) }), cwd: scratch("top-pick"), input, output, every: 10 });
+  await new Promise((r) => setTimeout(r, 40));
+  const s = stripVTControlCharacters(output.text);
+  expect(s.slice(s.lastIndexOf("routr top"))).toMatch(/Decisions {2}2\/4[\s\S]*›rev · review/);
+  input.emit("keypress", "q", { name: "q" });
+  expect(await running).toBe(0);
 });

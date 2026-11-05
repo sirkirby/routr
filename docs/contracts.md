@@ -1081,10 +1081,12 @@ board's answer and nothing else, so never a ledger note or a brief.
   Decisions one above the other, side by side from 120 columns. Keys: up/down (or j/k) pick a decision, Enter opens
   its detail (board's fields for it), Esc closes it, `a` switches between the project and every project, `u` starts
   one detached `routr usage` (with the `--config` given) and draws again when it ends, `q`, Esc or Ctrl+C quits with
-  exit 0. Raw mode and the screen are restored on quit, SIGTERM and SIGHUP. Unicode and colour by the rules setup's
-  prompts use; text from the user's records is drawn without control characters.
+  exit 0. Raw mode and the screen are restored on quit, SIGINT, SIGTERM and SIGHUP (exit 0), and when the screen
+  cannot be drawn (a line on stderr, exit 1). Lines are cut to the terminal's columns, wide characters counted as two.
+  Unicode and colour by the rules setup's prompts use; text from the user's records is drawn without control characters.
 - Not a terminal (a pipe, a file): one plain snapshot of every decision, exit 0. `ACCESSIBLE=1` or `TERM=dumb`: a
-  plain snapshot, and another for each line typed (`a`, `u`, or nothing), until `q`.
+  plain snapshot, and another for each line typed (`a`, or nothing), until `q`; `u` starts the usage read and shows the
+  board again when it ends, never waiting on it.
 
 ## The ledger and telemetry
 

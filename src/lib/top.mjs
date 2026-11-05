@@ -24,8 +24,22 @@ const LEFT = 36; // Room's column when wide
 // the terminal from it.
 const t = (s) => String(s ?? "").replace(/[\p{Cc}\p{Cf}]/gu, "");
 const label = (n) => t(HARNESSES[n]?.label ?? n);
-const visible = (s) => stripVTControlCharacters(s).length;
-const pad = (s, w) => s + " ".repeat(Math.max(0, w - visible(s)));
+// Terminal columns, by grapheme: a combining mark takes none, an East Asian wide or fullwidth character (and the emoji
+// blocks) two, the rest one. Close to wcwidth; what an emoji sequence takes still varies by terminal.
+const graphemes = (s) => Array.from(new Intl.Segmenter().segment(s), (x) => x.segment);
+const WIDE_CHAR = /^[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{1f300}-\u{1f64f}\u{1f900}-\u{1faff}\u{20000}-\u{3fffd}]/u;
+const glyphColumns = (x) => (/^\p{M}+$/u.test(x) ? 0 : WIDE_CHAR.test(x) ? 2 : 1);
+export const columns = (s) => graphemes(stripVTControlCharacters(String(s))).reduce((n, x) => n + glyphColumns(x), 0);
+// Plain text cut to `w` columns, the cut marked with `more`; never a wide character split.
+function cut(s, w, more) {
+  if (w <= 0) return "";
+  if (columns(s) <= w) return s;
+  const room = columns(more) < w ? w - columns(more) : w;
+  let out = "", n = 0;
+  for (const x of graphemes(s)) { const k = glyphColumns(x); if (n + k > room) break; out += x; n += k; }
+  return room < w ? `${out}${more}` : out;
+}
+const pad = (s, w) => s + " ".repeat(Math.max(0, w - columns(s)));
 // How long, in the largest whole unit: now, 12m, 5h, 3d.
 export const span = (sec) => (!Number.isFinite(sec) || sec < 0 ? "" : sec < 60 ? "now" : sec < 3600 ? `${Math.floor(sec / 60)}m` : sec < 86400 ? `${Math.floor(sec / 3600)}h` : `${Math.floor(sec / 86400)}d`);
 const clock = (ms) => new Date(ms).toTimeString().slice(0, 5);
@@ -36,13 +50,14 @@ function fit(parts, width, more) {
   for (const [text, style] of parts) {
     if (left <= 0) break;
     let s = String(text);
-    if (s.length > left) { s = left > more.length ? `${s.slice(0, left - more.length)}${more}` : s.slice(0, left); left = 0; } else left -= s.length;
+    const n = columns(s);
+    if (n > left) { s = cut(s, left, more); left = 0; } else left -= n;
     out += style && s ? style(s) : s;
   }
   return out;
 }
-// A cell `w` wide: cut, or padded (to the left with `right`).
-const cell = (s, w, more, right = false) => (s.length > w ? (w > more.length ? `${s.slice(0, w - more.length)}${more}` : s.slice(0, w)) : right ? s.padStart(w) : s.padEnd(w));
+// A cell `w` columns wide: cut, or padded (to the left with `right`).
+const cell = (s, w, more, right = false) => { const x = cut(s, w, more), gap = " ".repeat(Math.max(0, w - columns(x))); return right ? gap + x : x + gap; };
 
 // ---- the parts of the screen -------------------------------------------------------------------------------------------
 
@@ -51,7 +66,7 @@ function roomLines(b, { width, g, c }) {
   if (!s) return [fit([[" not read", c.dim]], width, g.more)];
   const ranked = s.ranked ?? [], excluded = s.excluded ?? [];
   if (!ranked.length && !excluded.length) return [fit([[" no subscription is set up: routr setup", c.dim]], width, g.more)];
-  const nameW = Math.min(12, Math.max(...[...ranked, ...excluded].map((r) => label(r.subscription).length)));
+  const nameW = Math.min(12, Math.max(...[...ranked, ...excluded].map((r) => columns(label(r.subscription)))));
   const barW = Math.max(4, Math.min(20, width - nameW - 15));
   const lines = ranked.map((r) => {
     const name = [` ${cell(label(r.subscription), nameW, g.more)} `];
@@ -98,12 +113,12 @@ function decisionItem(d, picked, { width, g, c, now, wide, snapshot }) {
   const [verdict, tone] = verdictOf(d, c), age = ageOf(d, now), risk = d.advised?.high_risk ? " risk" : "";
   if (wide) {
     const rest = width - mark.length - 13 - 11 - 16 - 5 - 12, level = levelOf(d, g);
-    const shown = level.length + risk.length > 15 ? cell(level, 15 - risk.length, g.more) : level;
-    return [fit([[mark], [`${cell(nameOf(d), 12, g.more)} `, strong ?? (d.name ? null : c.dim)], [`${cell(t(d.advised?.work_type ?? ""), 10, g.more)} `], [shown], [risk, c.yellow], [" ".repeat(16 - shown.length - risk.length)],
+    const shown = columns(level) + risk.length > 15 ? cut(level, 15 - risk.length, g.more) : level;
+    return [fit([[mark], [`${cell(nameOf(d), 12, g.more)} `, strong ?? (d.name ? null : c.dim)], [`${cell(t(d.advised?.work_type ?? ""), 10, g.more)} `], [shown], [risk, c.yellow], [" ".repeat(Math.max(0, 16 - columns(shown) - risk.length))],
       [`${cell(choiceOf(d, g), Math.max(1, rest), g.more)} `, c.dim], [`${age.padStart(4)} `], [verdict, tone]], width, g.more)];
   }
   const right = `${age.padStart(3)}  ${verdict}`, left = titleOf(d, g);
-  const room = Math.max(1, width - mark.length - right.length - 1);
+  const room = Math.max(1, width - mark.length - columns(right) - 1);
   return [
     fit([[mark], [cell(left, room, g.more), strong], [` ${age.padStart(3)}  `], [verdict, tone]], width, g.more),
     fit([[`${" ".repeat(mark.length)}  ${levelOf(d, g)}`], [risk, c.yellow], ["  "], [choiceOf(d, g), c.dim]], width, g.more),
@@ -129,8 +144,8 @@ export function detailLines(d, { width, g, c, now }) {
   field("recorded", d.recorded_at ? when(d.recorded_at) : "not yet");
   field("advised", !a.level ? "not kept" : `${t(a.level)}${a.sure === false && Array.isArray(a.between) ? `, torn between ${a.between.map(t).join(" and ")}` : ""}${a.work_type ? `${g.sep}${t(a.work_type)}` : ""}${a.high_risk ? `${g.sep}high risk` : ""}${a.fallback ? `${g.sep}fallback advice` : ""}`);
   field("chose", `${choiceOf(d, g) || "?"}${g.sep}level ${ch.level ? t(ch.level) : "not recorded yet"}`);
-  field("outcome", o ? [t(o.verdict ?? "?"), `check ${t(o.check ?? "?")}`, o.attempts ? `${o.attempts} attempt${o.attempts === 1 ? "" : "s"}` : null,
-    o.causes?.length ? `extra work: ${o.causes.map(t).join(", ")}` : null, Number.isFinite(o.seconds) ? `${o.seconds}s` : null].filter(Boolean).join(g.sep) : "not recorded yet");
+  field("outcome", o ? [t(o.verdict ?? "?"), `check ${t(o.check ?? "?")}`, Number.isInteger(o.attempts) && o.attempts > 0 ? `${o.attempts} attempt${o.attempts === 1 ? "" : "s"}` : null,
+    Array.isArray(o.causes) && o.causes.length ? `extra work: ${o.causes.map(t).join(", ")}` : null, Number.isFinite(o.seconds) ? `${o.seconds}s` : null].filter(Boolean).join(g.sep) : "not recorded yet");
   field("ids", [d.launch_id ? `launch ${t(d.launch_id).slice(0, 8)}` : null, d.run_id ? `run ${t(d.run_id).slice(0, 8)}` : null, d.id ? `advice ${t(d.id)}` : null].filter(Boolean).join(g.sep) || "none");
   return lines;
 }
@@ -154,11 +169,11 @@ const help = (o) => {
 // The whole screen, as lines that fit `width` (the last column is left free: a line that fills it can wrap or lose its
 // last character) and, unless it is a snapshot, `height`. `b` is board's answer, or null before the first one.
 export function renderTop(b, o) {
-  const width = Math.max(20, o.width - 1), wide = o.width >= WIDE, snapshot = Boolean(o.snapshot), height = snapshot ? Infinity : Math.max(6, o.height);
+  const width = Math.max(0, o.width - 1), wide = o.width >= WIDE, snapshot = Boolean(o.snapshot), height = snapshot ? Infinity : Math.max(1, o.height);
   const v = { ...o, width, wide, snapshot, now: o.now ?? Date.now() }, { g, c } = v;
   const where = o.scope === "project" && o.project ? t(o.project) : "all projects";
   const right = `${o.note ? `${t(o.note)}  ` : ""}${snapshot ? "" : clock(v.now)}`;
-  const top = [fit([["routr top", c.bold], [`${g.sep}${where}`], [" ".repeat(Math.max(1, width - 9 - g.sep.length - where.length - right.length))], [right, c.dim]], width, g.more)];
+  const top = [fit([["routr top", c.bold], [`${g.sep}${where}`], [" ".repeat(Math.max(1, width - 9 - columns(g.sep) - columns(where) - columns(right)))], [right, c.dim]], width, g.more)];
   if (!o.project) top.push(fit([[" not in a git repository: every project", c.dim]], width, g.more));
   if (!b) return [...top, fit([[" reading routr's board…", c.dim]], width, g.more)];
   const notices = noticeLines(b, v), foot = footerLines(b, v), keys = snapshot ? [] : [help(v)];
@@ -255,77 +270,94 @@ export async function topCommand(words, { configPath, warnings = [], input = pro
     write(`${snapshot(await read(), c)}\n${keys()}\n`);
     if (!input.isTTY && !accessibleOk(env)) return 0;
     const rl = createInterface({ input, terminal: false });
+    let reading = false, quit = false;
+    // A usage read is never waited on: the board is shown again when it ends, and q works meanwhile.
+    const ended = async () => { reading = false; if (!quit) { const b = await read(); if (!quit) write(`usage read\n${snapshot(b, c)}\n${keys()}\n`); } };
     for await (const line of rl) {
       const a = line.trim().toLowerCase();
       if (a === "q") break;
       if (a === "a" && project) scope = scope === "project" ? "all" : "project";
-      if (a === "u") await new Promise((done) => { if (spawn(usageArgs, { onExit: done })) write("reading usage…\n"); else { write("could not start a usage read\n"); done(); } });
+      if (a === "u") {
+        if (reading) write("a usage read is already running\n");
+        else if ((reading = spawn(usageArgs, { onExit: () => void ended().catch(() => {}) }))) { write("reading usage…; the board is shown again when it ends\n"); continue; }
+        else write("could not start a usage read\n");
+      }
       write(`${snapshot(await read(), c)}\n${keys()}\n`);
     }
+    quit = true;
     rl.close();
     return 0;
   }
 
-  const c = styler(colourOk(output, env));
-  let b = null, state = { selected: 0, open: false }, key = null, note = null, reading = false, busy = false, again = false, closed = false;
-  const draw = () => {
-    if (closed) return;
-    const lines = renderTop(b, { width: output.columns || 80, height: output.rows || 24, g, c, now: now(), ...state, scope, project, note: reading ? "reading usage…" : note });
-    write(`\x1b[?2026h\x1b[H${lines.map((l) => `${l}\x1b[K`).join("\r\n")}\x1b[J\x1b[?2026l`);
-  };
-  const refresh = async () => {
-    if (busy) { again = true; return; }
-    busy = true;
-    try {
-      do {
-        again = false;
-        const next = await read();
-        if (next) { b = next; note = note === "could not read the board" ? null : note; } else note = "could not read the board";
-        state = reselect(state, b?.decisions ?? [], key);
-      } while (again && !closed);
-    } finally { busy = false; }
-    draw();
-  };
-  return await new Promise((done) => {
-    let timer = null;
+  const c = styler(colourOk(output, env)), SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"];
+  return await new Promise((exit) => {
+    let b = null, state = { selected: 0, open: false, scope }, note = null, reading = false, busy = false, again = false, keep = true, ended = false, restored = false, timer = null;
     // Raw mode off first, then the screen back: a terminal left raw is the worst way to leave.
     const restore = () => {
-      if (closed) return; closed = true;
+      if (restored) return; restored = true;
       try { input.setRawMode?.(false); } catch {}
       try { write("\x1b[?25h\x1b[?1049l"); } catch {}
     };
-    const finish = (code = 0) => {
-      clearInterval(timer); input.removeListener("keypress", onKey); output.removeListener?.("resize", draw);
-      for (const sig of ["SIGTERM", "SIGHUP"]) process.removeListener(sig, onSignal);
+    const finish = (code, why) => {
+      if (ended) return; ended = true;
+      clearInterval(timer); input.removeListener("keypress", onKey); output.removeListener?.("resize", onResize);
+      for (const sig of SIGNALS) process.removeListener(sig, onSignal);
       process.removeListener("exit", restore);
-      restore(); input.pause?.(); done(code);
+      restore(); try { input.pause?.(); } catch {}
+      if (why) try { errors.write(`routr: top stopped: ${why}\n`); } catch {}
+      exit(code);
     };
-    const onSignal = () => finish(0);
-    const onKey = (str, k = {}) => {
+    // Every way in (a key, the timer, a resize, a usage read ending) goes through this: a failure ends top with the
+    // terminal restored, never left raw on the alternate screen.
+    const guard = (fn) => (...args) => {
+      if (ended) return;
+      try { const r = fn(...args); if (r && typeof r.catch === "function") r.catch(() => finish(1, "the screen could not be drawn")); } catch { finish(1, "the screen could not be drawn"); }
+    };
+    const draw = () => {
+      if (ended) return;
+      const lines = renderTop(b, { width: output.columns || 80, height: output.rows || 24, g, c, now: now(), ...state, project, note: reading ? "reading usage…" : note });
+      write(`\x1b[?2026h\x1b[H${lines.map((l) => `${l}\x1b[K`).join("\r\n")}\x1b[J\x1b[?2026l`);
+    };
+    const refresh = async () => {
+      if (busy) { again = true; return; }
+      busy = true;
       try {
-        const [next, act] = topKey(state, str, k, { count: b?.decisions?.length ?? 0, scopes: Boolean(project) });
-        state = next; key = decisionKey(b?.decisions?.[state.selected]);
-        if (act === "quit") return finish(0);
-        if (act === "scope") { scope = state.scope; key = null; draw(); return void refresh(); }
-        if (act === "usage" && !reading) {
-          note = null;
-          reading = spawn(usageArgs, { onExit: () => { reading = false; note = `usage read ${clock(now())}`; refresh(); } });
-          if (!reading) note = "could not start a usage read";
-        }
-        draw();
-      } catch { finish(1); }
+        do {
+          again = false;
+          const next = await read();
+          if (ended) return;
+          // The pick is the decision picked now, on the board shown now: a new launch at the top must not move it.
+          const pick = keep ? decisionKey(b?.decisions?.[state.selected]) : null;
+          keep = true;
+          if (next) { b = next; if (note === "could not read the board") note = null; } else note = "could not read the board";
+          state = reselect(state, b?.decisions ?? [], pick);
+        } while (again && !ended);
+      } finally { busy = false; }
+      draw();
     };
-    state.scope = scope;
+    const onRefresh = guard(refresh), onResize = guard(draw), onSignal = () => finish(0);
+    const onKey = guard((str, k = {}) => {
+      const [next, act] = topKey(state, str, k, { count: b?.decisions?.length ?? 0, scopes: Boolean(project) });
+      state = next;
+      if (act === "quit") return finish(0);
+      if (act === "scope") { scope = state.scope; keep = false; draw(); return refresh(); }
+      if (act === "usage" && !reading) {
+        note = null;
+        reading = spawn(usageArgs, { onExit: guard(() => { reading = false; note = `usage read ${clock(now())}`; return refresh(); }) });
+        if (!reading) note = "could not start a usage read";
+      }
+      draw();
+    });
     process.once("exit", restore);
-    for (const sig of ["SIGTERM", "SIGHUP"]) process.on(sig, onSignal);
-    try {
+    for (const sig of SIGNALS) process.on(sig, onSignal);
+    guard(() => {
       write("\x1b[?1049h\x1b[?25l");
       emitKeypressEvents(input);
       input.setRawMode?.(true); input.resume?.(); input.on("keypress", onKey);
-      output.on?.("resize", draw);
+      output.on?.("resize", onResize);
       draw();
-      timer = setInterval(refresh, every);
-      refresh();
-    } catch { finish(1); }
+      timer = setInterval(onRefresh, every);
+      return refresh();
+    })();
   });
 }
