@@ -5,7 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
-- `routr dash` writes one HTML page of this machine's ledger, what you asked, what you chose and how it turned out, and opens it in your browser.
+- `routr dash` writes one HTML page of this machine's ledger, what you asked, what you chose and how it turned out, and opens it in your browser. (#161)
 
 ## v0.13.0 — 2026-11-05
 
