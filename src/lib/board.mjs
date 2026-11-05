@@ -1,4 +1,4 @@
-// `routr board`: what only routr knows, for a folder's project, in one answer the Herdr app's routr panel draws (and any
+// `routr board`: what only routr knows, for a folder's project, in one answer `routr top` draws for a person (and any
 // agent can read). The room each account has (as `usage` ranks it, from kept readings: no harness is called), each
 // launch's decision (the launch history) joined to how it turned out (the ledger), and a 7-day count. Reads only:
 // it changes nothing of the user's and writes nothing but the usage cache's refresh mark (usage-cache.mjs). Fails open:

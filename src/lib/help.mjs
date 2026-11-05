@@ -232,9 +232,17 @@ export const COMMANDS = {
   },
   board: {
     name: "board",
-    description: "what only routr knows, for a folder's project: each account's room as usage ranks it (from routr's kept readings: no harness is called, and a detached usage read is started when they are over 10 minutes old), each launch's decision joined to its recorded outcome, and the last 7 days' counts. Never the ledger's notes; changes nothing of yours. The Herdr app's routr panel draws it",
+    description: "what only routr knows, for a folder's project: each account's room as usage ranks it (from routr's kept readings: no harness is called, and a detached usage read is started when they are over 10 minutes old), each launch's decision joined to its recorded outcome, and the last 7 days' counts. Never the ledger's notes; changes nothing of yours. `routr top` draws it for a person",
     flags: [
       { name: "--cwd", arg: "<folder>", description: "the project to show, by the git repository that folder is in (a worktree counts as its repository); omitted, every project on this machine", required: false },
+      { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
+    ],
+  },
+  top: {
+    name: "top",
+    description: "a person's view of routr board, kept current in a terminal (a pane or split beside the lead): each account's room, each launch's decision and outcome, and the last 7 days' counts, every 5 seconds. Keys: up/down pick a decision, Enter its detail, a this project or all, u read usage now (runs the harnesses' usage commands), q quit. Shows only what board does; changes nothing of yours. Piped: one plain snapshot; ACCESSIBLE=1: a plain snapshot per Enter",
+    flags: [
+      { name: "--cwd", arg: "<folder>", description: "the project to show, by the git repository that folder is in (a worktree counts as its repository); outside a repository, every project", required: false, default: "the current folder" },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
     ],
   },

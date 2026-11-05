@@ -549,12 +549,14 @@ export const terminalEnv = ({ carriers, config, adapter = {} }, env = process.en
 // Start routr again, detached, with `args`, and carry on without waiting: the binary itself, or `bun <script>` from a
 // source checkout, located beside this module rather than the importing script. A spawn that fails later (EACCES,
 // EMFILE) is ignored; one that fails at once returns false.
-export function spawnSelf(args) {
+// `onExit` hears when it ends, for a caller that shows it running; it still never keeps the caller alive.
+export function spawnSelf(args, { onExit } = {}) {
   try {
     const argv = selfCommand(args);
     if (!argv) return false;
     const c = start(argv[0], argv.slice(1), { detached: true, stdio: "ignore", env: harnessEnv() });
-    c.on("error", () => {}); c.unref(); return true;
+    let heard = false; const end = () => { if (!heard && onExit) { heard = true; onExit(); } };
+    c.on("error", end); c.on("exit", end); c.unref(); return true;
   } catch { return false; }
 }
 // A process in a terminal of its own, from Bun (POSIX only), for what a harness shows only on an interactive screen.
