@@ -149,6 +149,13 @@ starts a harness's sign-in; it says what to run.
 into each harness's own skills folder, or copied there on Windows, where a link is refused, or where linking fails
 (a copy routr made stays a copy).
 
+Where the Herdr app is set up (`~/.config/herdr-app` exists), `skill install` also writes routr's panel for it, a mod,
+to `~/.config/herdr-app/mods/routr`: the same staged write and manifest (naming `routr-panel`), never linked, and
+the same rules below. Where the app is not set up, nothing is written for it. `panel/` holds exactly that mod and
+nothing else. The panel itself only runs `routr board`, `routr workers`, `routr usage` and, after the app's own
+confirm dialog, `routr cleanup --worker` for workers `routr workers` says to finish that way; it reads none of
+routr's files.
+
 Install and uninstall touch only what is provably routr's, by structure: a folder holding routr's manifest
 `.routr-install.json` (written in the same staged write as the skill, naming it and every file routr wrote), or a
 link to such a folder in `~/.agents/skills`. Nothing is written or removed through a link inside a skill folder. One
@@ -194,7 +201,8 @@ writes only:
   tombstones for later record links; launch and the sender sweep routr's own UUID filenames after 30 days;
 - in your repository's git metadata, the worktree and branch a headless or terminal `launch --worktree` adds;
 - its own binary, when it updates itself;
-- the skill folders, on `skill install` (and the updater's reinstall);
+- the skill folders, and the Herdr app's `mods/routr` where the app is set up, on `skill install` (and the
+  updater's reinstall);
 - a file at a path you name for that command (`share --out`, a `--ledger` or `--config` you give);
 - the files `launch --copy` copies into a worker's worktree, in a pane or headless, never through a link and never
   over a file the worktree has (which `cleanup` removes again only while they are unchanged);

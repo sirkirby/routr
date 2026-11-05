@@ -1,6 +1,8 @@
 // `routr skill install`: write routr's skills (the routr skill with the guides agents read, and routr-orchestrate,
 // which only the user starts) into the shared skills folder, and link each into every harness's own skills folder, so
-// a machine with no Node and no Bun needs nothing but the routr binary. The files are embedded at build time.
+// a machine with no Node and no Bun needs nothing but the routr binary. Where the Herdr app is set up, also routr's
+// panel for it (a mod: `routr-panel`, written to the app's `mods/routr`), by the same rules. The files are embedded at
+// build time.
 // routr touches only what is provably its own (`owner` below): anything else of the same name is kept and reported.
 import { doNext } from "./next.mjs";
 import { accessSync, constants, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, renameSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
@@ -13,6 +15,8 @@ import harnesses from "../../skills/routr/references/harnesses.md" with { type: 
 import setup from "../../skills/routr/references/setup.md" with { type: "text" };
 import orchestrateMd from "../../skills/routr-orchestrate/SKILL.md" with { type: "text" };
 import orchestrateYaml from "../../skills/routr-orchestrate/agents/openai.yaml" with { type: "text" };
+import panelMain from "../../panel/main.js" with { type: "text" };
+import panelMod from "../../panel/mod.json" with { type: "text" };
 import { ensureParent, home as userHome } from "./runtime.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
@@ -21,6 +25,14 @@ export const FILES = {
   routr: { "SKILL.md": skillMd, "references/worker.md": worker, "references/orchestrator.md": orchestrator, "references/harnesses.md": harnesses, "references/setup.md": setup },
   "routr-orchestrate": { "SKILL.md": orchestrateMd, "agents/openai.yaml": orchestrateYaml },
 };
+// routr's panel for the Herdr app: a mod, in the app's own folder (`~/.config/herdr-app`, its AGENTS.md), written only
+// where that folder exists (the app is set up). Not `$HERDR_APP_HOME`: that names a test window. It is not a skill, and
+// no harness reads it, so it is never linked: one folder, owned by its manifest exactly as a skill's copy is.
+export const PANEL = "routr-panel";
+export const PANEL_FILES = { "main.js": panelMain, "mod.json": panelMod };
+const shipped = (item) => (item === PANEL ? PANEL_FILES : FILES[item]);
+export const appFolder = (home) => join(home, ".config/herdr-app");
+export const panelPath = (home) => join(appFolder(home), "mods", "routr");
 // Harnesses that read their own skills folder rather than the shared one (`skills` in the registry). Codex and Cursor
 // read ~/.agents/skills.
 const LINKED = Object.fromEntries(KINDS.filter((n) => HARNESSES[n].skills).map((n) => [HARNESSES[n].label, HARNESSES[n].skills]));
@@ -96,7 +108,7 @@ export function notOursWhy(home, skill, path) {
 // The second only for the grandfathered legacy folder (no manifest at all, and the legacy rule holds). A folder
 // with no manifest, swapped in while uninstall's prompt waited, had its SKILL.md and agents/openai.yaml deleted
 // by this fallback. Any other folder lists nothing of routr's.
-export const ownedFiles = (dir, skill) => manifest(dir, skill)?.files ?? (!present(join(dir, MANIFEST)) && legacy(dir, skill) ? Object.keys(FILES[skill]) : []);
+export const ownedFiles = (dir, skill) => manifest(dir, skill)?.files ?? (!present(join(dir, MANIFEST)) && legacy(dir, skill) ? Object.keys(shipped(skill)) : []);
 // Is any folder between `root` and `rel` (not `root` itself, not the target) a link? routr never writes, renames or
 // deletes through one: a link inside a skill folder could point anywhere (a user's real files).
 export function linkAbove(root, rel) {
@@ -113,7 +125,7 @@ function writeInside(root, rel, text) {
 // Every file routr's copy at `dir` should have that is not a readable regular file there (a folder in place of a file
 // counts as missing): its manifest's list and what this routr ships, and the manifest itself.
 export function missingFiles(skill, dir) {
-  const want = [...new Set([...(manifest(dir, skill)?.files ?? []), ...Object.keys(FILES[skill]), MANIFEST])];
+  const want = [...new Set([...(manifest(dir, skill)?.files ?? []), ...Object.keys(shipped(skill)), MANIFEST])];
   return want.filter((f) => { try { if (!statSync(join(dir, f)).isFile()) return true; accessSync(join(dir, f), constants.R_OK); return false; } catch { return true; } });
 }
 // Every entry in a folder that is not a folder (files, links), as relative paths. Links are listed, never
@@ -153,6 +165,12 @@ export function skillPlaces(home = userHome()) {
   ].map((p) => { const state = owner(home, skill, p.path); return { ...p, state, ...(state === "theirs" ? { why: notOursWhy(home, skill, p.path) } : {}) }; }));
 }
 export const NOT_OURS = "not routr's: left as it is";
+// The panel's one place, with its owner (`owner`: a link there is never routr's, as no skill's shared copy is its
+// target). `set`: the Herdr app is set up here.
+export function panelPlace(home = userHome()) {
+  const path = panelPath(home), state = owner(home, PANEL, path);
+  return { skill: PANEL, label: "the Herdr app", path, set: existsSync(appFolder(home)), state, ...(state === "theirs" ? { why: NOT_OURS } : {}) };
+}
 
 // A folder is filled beside its place, then renamed into it, so a failure leaves the old one (or none), never half a skill.
 export function staged(dest, fill) {
@@ -163,6 +181,11 @@ export function staged(dest, fill) {
   if (had) { rmSync(old, { recursive: true, force: true }); renameSync(dest, old); }
   try { renameSync(tmp, dest); } catch (e) { if (had) renameSync(old, dest); rmSync(tmp, { recursive: true, force: true }); throw e; }
   if (had) rmSync(old, { recursive: true, force: true });
+}
+// routr's files for `item` and its manifest, in one staged write: the folder is routr's exactly when it is complete.
+function writeOwned(dest, item) {
+  const files = shipped(item), receipt = JSON.stringify({ skill: item, version: ROUTR_VERSION, files: Object.keys(files) }, null, 1) + "\n";
+  staged(dest, (tmp) => { for (const [rel, text] of Object.entries(files)) writeInside(tmp, rel, text); writeInside(tmp, MANIFEST, receipt); });
 }
 // A real folder of routr's holding anything routr did not write is left exactly as it is: routr neither replaces nor
 // merges it (the person decides what to keep). Returns that folder's extra entries, or none.
@@ -178,16 +201,8 @@ export function installSkill({ home = userHome(), dryRun = false } = {}) {
     if (shared.state === "theirs") { kept.push({ skill, where: shared.path, why: shared.why }); continue; } // nothing to link to
     const extra = shared.state === "ours" ? extrasIn(shared.path, skill) : [];
     if (extra.length) { kept.push({ skill, where: shared.path, why: hasExtras(shared.path, extra) }); continue; }
-    const receipt = JSON.stringify({ skill, version: ROUTR_VERSION, files: Object.keys(FILES[skill]) }, null, 1) + "\n";
     try {
-      if (!dryRun) {
-        ensureParent(shared.path);
-        // routr's files and its manifest, in the same staged write: the folder is routr's exactly when it is complete.
-        staged(shared.path, (tmp) => {
-          for (const [rel, text] of Object.entries(FILES[skill])) writeInside(tmp, rel, text);
-          writeInside(tmp, MANIFEST, receipt);
-        });
-      }
+      if (!dryRun) { ensureParent(shared.path); writeOwned(shared.path, skill); }
       done.push({ skill, where: shared.path, how: "written" });
     } catch (e) { failed.push({ skill, where: shared.path, error: String(e?.message ?? e).slice(0, 160) }); continue; }
     // Read each harness's place again now that routr's shared copy is in place: a link to it is routr's only from here.
@@ -201,12 +216,23 @@ export function installSkill({ home = userHome(), dryRun = false } = {}) {
         // A link keeps one copy; Windows often refuses links without admin rights, so copy there (staged, like the shared
         // one, with its manifest: routr's files only, written afresh, never through a link). A copy routr made stays a copy.
         let how;
-        const copy = () => { staged(p.path, (tmp) => { for (const [rel, text] of Object.entries(FILES[skill])) writeInside(tmp, rel, text); writeInside(tmp, MANIFEST, receipt); }); how = "copied"; };
+        const copy = () => { writeOwned(p.path, skill); how = "copied"; };
         if (process.platform === "win32" || (p.state === "ours" && !lstatSync(p.path).isSymbolicLink())) copy();
         else try { if (p.state === "ours") unlinkSync(p.path); symlinkSync(shared.path, p.path, "dir"); how = "linked"; } catch { copy(); }
         done.push({ skill, where: p.path, how: `${how} for ${p.label}` });
       } catch (e) { failed.push({ skill, where: p.path, error: String(e?.message ?? e).slice(0, 160) }); }
     }
+  }
+  // The panel, where the Herdr app is set up: written whole, or left and said when the folder there is not routr's.
+  const panel = panelPlace(home);
+  if (panel.set) {
+    const more = panel.state === "ours" ? extrasIn(panel.path, PANEL) : [];
+    if (panel.state === "theirs") kept.push({ skill: PANEL, where: panel.path, why: panel.why });
+    else if (more.length) kept.push({ skill: PANEL, where: panel.path, why: hasExtras(panel.path, more) });
+    else try {
+      if (!dryRun) { ensureParent(panel.path); writeOwned(panel.path, PANEL); }
+      done.push({ skill: PANEL, where: panel.path, how: "written for the Herdr app" });
+    } catch (e) { failed.push({ skill: PANEL, where: panel.path, error: String(e?.message ?? e).slice(0, 160) }); }
   }
   return { ok: !failed.length, skill: sharedPath(home, SKILLS[0]), skills: SKILLS.map((s) => sharedPath(home, s)), installed: done,
     ...(kept.length ? { kept } : {}), ...(failed.length ? { failed } : {}),

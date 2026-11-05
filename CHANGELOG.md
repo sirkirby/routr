@@ -5,6 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- routr's panel for the Herdr app, installed with the skills where the app is set up: each account's room, each launch's decision and outcome for the shown space's project, the last 7 days, reading usage now, and cleaning up finished workers after a confirm. `doctor` reports it and `uninstall` removes it.
 - `routr board [--cwd <folder>]` answers what only routr knows for a project: each account's room (from kept usage readings, no harness called), each launch's decision joined to its recorded outcome, and 7-day counts. Every live usage read now keeps its result for it.
 - `routr workers` asks `hc` where a worker in the Herdr app is: in its tab, finished, gone, or unknown, and gives `cleanup --worker` for a finished or gone one; the guide says never to remove such a worker's worktree by hand.
 - Each launch gets a `launch_id`, kept in routr's launch history with its decision, and `record --launch` (in launch's record template) labels the row with the launch's project, so work recorded from a scratch folder lands under its repository.

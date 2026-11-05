@@ -214,6 +214,10 @@ Where the lead runs decides how its workers appear, and each of these is optiona
 
 - **The Herdr app** ([download](https://herdr.dev/download/), which also installs herdr-core): each worker gets a tab of
   its own, on the harness's own screen, and you can type into it. Nothing else is needed. The lead follows it with `hc`.
+  `routr skill install` (run by the installer and every update) also adds routr's panel, docked on the right: each
+  account's room, each launch's decision and how it turned out for the shown space's project, and the last 7 days.
+  Its header folds it to a rail. To put it somewhere else, the person's agent edits the app's layout as the app's own
+  `~/.config/herdr-app/AGENTS.md` says; the panel is the mod named `routr`.
 - **herdr in a terminal**: each worker runs in a pane, on the harness's own screen, and you can type into it.
 - **Neither**: workers run headless, and `routr watch --name <name>` follows one in any terminal.
 
