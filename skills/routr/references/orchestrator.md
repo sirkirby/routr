@@ -53,7 +53,7 @@ to the worker and routr does not judge. In 18 of 36 real tasks such rules were 5
 readings.
 
 First, the brief: if `states_check` or `standalone` reads `no`, fix the brief and ask again. A worker cannot ask you
-questions.
+questions. Even when neither reads `no`, the brief may still be incomplete: check it against part 2 of "Write the task" (step 3).
 
 Follow "Deciding" in `SKILL.md`: settle the work level, identify suitable model/effort options, then compare accounts.
 Use `facts`, `notes`, `subscriptions.candidates`, `subscriptions.ranked` and relevant repository or verified outcome
@@ -117,8 +117,12 @@ fourth; you write the second and third.
        ~/.agents/skills/routr/references/worker.md. It is mandatory for this task: it says how to size each subagent
        before you spawn it and the exact report format the orchestrator parses.
 
-2. The task: what to do, where, what done looks like, and what is out of scope. For a fix, state the rule it must
-   keep everywhere and where else that rule applies, not only the symptom you saw.
+2. The task: what to do and where; what the result must satisfy (the behaviour that must stay unchanged, the limits
+   each part must keep, what it must not touch); what done looks like; and what is out of scope. For a fix, state the
+   rule it must keep everywhere and where else that rule applies, not only the symptom you saw. A brief that names the
+   change and asks for tests, but says none of what the result must satisfy, can pass both brief facts: on one of
+   three tasks measured, such a brief read `standalone` yes and `states_check` unclear, and every worker given it made
+   the same mistakes, whichever model ran it (`docs/evidence.md`).
 3. How to verify it (the command to run), so the worker can check its own work.
 
 Parts 2 and 3 are the work, and they go in `--task-file`: it is what you ask routr about. Your rules for how the
