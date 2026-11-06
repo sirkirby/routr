@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.13.2 — 2026-11-06
+
+[Full notes](docs/releases/v0.13.2.md)
+
 - The orchestrator guide asks a brief to state what the result must satisfy (what must stay unchanged, the limits each part must keep, what it must not touch), and says a brief can pass both brief facts and still miss it. (#163)
 
 ## v0.13.1 — 2026-11-05
