@@ -53,7 +53,7 @@ to the worker and routr does not judge. In 18 of 36 real tasks such rules were 5
 readings.
 
 First, the brief: if `states_check` or `standalone` reads `no`, fix the brief and ask again. A worker cannot ask you
-questions. Neither reading `no` does not make the brief complete: check it against part 2 of "Write the task" (step 3).
+questions. Even when neither reads `no`, the brief may still be incomplete: check it against part 2 of "Write the task" (step 3).
 
 Follow "Deciding" in `SKILL.md`: settle the work level, identify suitable model/effort options, then compare accounts.
 Use `facts`, `notes`, `subscriptions.candidates`, `subscriptions.ranked` and relevant repository or verified outcome
