@@ -147,20 +147,13 @@ test("board scopes to the folder's repository, joins, counts by the ledger's rul
   expect(JSON.stringify(b)).not.toContain("SECRET-NOTE");
 });
 
-test("board warns when a usage reader stopped working and gives its retry", async () => {
-  const w = world();
-  const usage = () => ({ rows: [{ pool: "claude", source: "claude /usage", ageSec: 89 * 3600, class: "unknown", headroom: null, windows: [], failure: { code: "read_failed" } }] });
-  const b = await boardCommand([], config, { usage, ledger: w.ledger, history: () => ({ records: [] }) });
-  expect(b.warnings).toEqual(["claude's usage has not been read for 89 h, and its last try failed (read_failed), so remaining capacity is unknown: an update of claude or herdr may have changed what routr reads"]);
-  expect(b.next.some((n) => n.argv?.join(" ") === "routr usage claude")).toBe(true);
-});
-
 test("board fails open: an unreadable ledger or history is said, its numbers null, never zero; bad input is refused", async () => {
   const w = world(); mkdirSync(w.ledger); // a folder where the ledger file should be: unreadable
   const b = await boardCommand([], config, { usage: usageOk, ledger: w.ledger, history: () => ({ records: [], unreadable: true }) });
   expect([b.ok, b.unavailable.map((u) => u.part).sort(), b.outcomes]).toEqual([true, ["launch history", "ledger"], { launches: null, recorded: null, done_first_time: null, level_changed: null, check_failed: null }]);
   const broken = await boardCommand([], config, { usage: () => { throw new Error("x"); }, ledger: join(w.dir, "none.jsonl"), history: () => ({ records: [] }) });
   expect([broken.ok, broken.subscriptions, broken.unavailable[0].code, broken.unavailable[0].why]).toEqual([true, null, "internal_error", "routr could not rank its kept usage readings"]);
+  expect(broken.next.filter((n) => /capacity/i.test(n.why))).toEqual([]); // board's contract: no recovery step when ranking fails
   for (const [args, why] of [[["--cwd"], "takes a folder"], [["--cwd", w.repo, "--cwd", w.repo], "more than once"], [["--level", "strong"], "unknown flag"], [["--cwd", join(w.dir, "gone")], "is not a folder"]]) {
     const r = await boardCommand(args, config, { usage: usageOk, ledger: w.ledger, history: () => ({ records: [] }) });
     expect([r.ok, r.error]).toEqual([false, expect.stringContaining(why)]);

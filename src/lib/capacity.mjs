@@ -1,5 +1,5 @@
-// One capacity view wherever a command shows ranked subscriptions: the ranking, failed usage reads, stale-reader
-// warnings, and what to do next. Callers add only the steps and fallbacks their own contracts require.
+// One capacity view wherever a command shows ranked subscriptions (dispatch, usage, board): the ranking, the usage that
+// could not be read, the readers that stopped working, and what to do next. Callers add what is only theirs.
 import { doNext, runNext } from "./next.mjs";
 import { levelExcludedWhy, rankSubscriptions } from "./pick.mjs";
 import { staleReaders, USAGE_BY_HAND, usageFailure, usageUnavailable } from "./usage-failure.mjs";
@@ -7,33 +7,31 @@ import { staleReaders, USAGE_BY_HAND, usageFailure, usageUnavailable } from "./u
 const hasCandidates = (r) => r && [...r.candidates.normal, ...r.candidates.fallback].length > 0;
 export const emptyRanking = (note) => ({ most_room: null, candidates: { normal: [], fallback: [] }, ranked: [], excluded: [], note });
 
-// `capacityConfig` is usage's full config when a named view ranks only one subscription. The other options preserve
-// that named view's own retry and fallback contracts while this module still owns their ordering and wording.
-export function capacityView(level, usage, config, launches = null, { capacityConfig = config, unavailable: extra = [], subscription = null, failureWhy } = {}) {
-  try {
-    const subscriptions = rankSubscriptions(level, usage, config, launches);
-    const unavailable = usageUnavailable(usage).filter((u) => !subscriptions.excluded.some((e) => e.subscription === u.subscription));
-    for (const u of extra) if (!unavailable.some((x) => x.subscription === u.subscription)) unavailable.push(u);
-    const stale = staleReaders(usage, config);
-    const warnings = stale.map((s) => s.warning);
-    const next = [...capacityNext(subscriptions, unavailable, level, capacityConfig, subscription),
-      ...stale.map((s) => runNext(`Try reading ${s.pool}'s usage again.`, ["routr", "usage", s.pool]))];
-    return { subscriptions, unavailable, warnings, next, stale };
-  } catch {
-    return capacityFailure(failureWhy);
-  }
+// The view of `usage` (rows from a read or kept readings) ranked for `level`. `named`: the subscription a named `usage`
+// view ranks alone, which never offers a lower level. `configured`: whether routr has any subscription configured,
+// when `config` is narrowed to the named one. `unavailable`: entries only the caller knows (a named fresh read that
+// failed), merged before the steps are worked out, so their by-hand step is said too. Throws when ranking fails: each
+// command says that its own way, with capacityFailure.
+// Returns `subscriptions`, `unavailable`, `next` (the capacity steps, which go first in a command's `next`) and `stale`,
+// each reader that stopped working as `{ pool, warning, retry }`: its warning, and the step to try it again.
+export function capacityView(level, usage, config, launches = null, { named = null, configured = Object.keys(config.subscriptions).length > 0, unavailable: extra = [] } = {}) {
+  const subscriptions = rankSubscriptions(level, usage, config, launches);
+  const unavailable = usageUnavailable(usage).filter((u) => !subscriptions.excluded.some((e) => e.subscription === u.subscription));
+  for (const u of extra) if (!unavailable.some((x) => x.subscription === u.subscription)) unavailable.push(u);
+  const stale = staleReaders(usage, config).map((s) => ({ ...s, retry: runNext(`Try reading ${s.pool}'s usage again.`, ["routr", "usage", s.pool]) }));
+  return { subscriptions, unavailable, next: capacityNext(subscriptions, unavailable, level, configured, named), stale };
 }
 
+// What a command says when ranking failed: its `unavailable` entry (with the command's own `why`, if it has one) and
+// the step to read capacity by hand.
 export function capacityFailure(why = usageFailure("internal_error").why) {
-  const failure = { part: "usage", subscription: null, source: "routr", ...usageFailure("internal_error"), why };
-  return { subscriptions: null, unavailable: [failure], warnings: [], next: [doNext("Read capacity yourself before choosing an account")], stale: [] };
+  return { failure: { part: "usage", subscription: null, source: "routr", ...usageFailure("internal_error"), why }, next: doNext("Read capacity yourself before choosing an account") };
 }
 
-function capacityNext(r, unavailable, level, config, subscription) {
+function capacityNext(r, unavailable, level, configured, named) {
   const steps = [];
-  if (unavailable.some((u) => u.part === "usage" && u.code === "internal_error")) steps.push(doNext("Read capacity yourself before choosing an account"));
-  else if (!Object.keys(config.subscriptions).length) steps.push(doNext("Tell the user routr is not set up (routr setup), and ask which subscription to use meanwhile"));
-  else if (!r.ranked.length) steps.push(doNext(level !== "basic" && !subscription && r.excluded.some((e) => e.why === levelExcludedWhy(level))
+  if (!configured) steps.push(doNext("Tell the user routr is not set up (routr setup), and ask which subscription to use meanwhile"));
+  else if (!r.ranked.length) steps.push(doNext(level !== "basic" && !named && r.excluded.some((e) => e.why === levelExcludedWhy(level))
     ? "Hold the work, or choose a lower level and refresh with routr usage --level, or ask the user"
     : "Hold the work, use an eligible subscription for this run, or ask the user; the exclusions explain what fixes eligibility"));
   else if (!hasCandidates(r)) steps.push(doNext(`Hold the work or ask the user: every subscription that takes ${level} work is at its reserve`));

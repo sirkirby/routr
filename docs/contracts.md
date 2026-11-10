@@ -307,7 +307,7 @@ Nothing is wrong with the call when they appear, and the lead reads them to choo
 moves to `subscriptions.note`, the same place as in `dispatch`.
 
 **A reader that stopped working.** When a subscription's last reading is over a day old and its last try failed,
-`dispatch`, `usage` and `board` (and therefore `top`) add a `warnings` line saying so (its age and the failure's code, and that room is unknown: a harness or herdr update may have changed what routr reads) and a `next` step to try `routr usage <name>`
+`dispatch` and `usage` add a `warnings` line saying so (its age and the failure's code, and that room is unknown: a harness or herdr update may have changed what routr reads) and a `next` step to try `routr usage <name>`
 again; in `doctor --json` each signed-in harness so affected carries `usage_stale` (that warning and the command
 to try again), and one that is configured and on adds it to `next_steps`. How to read it by hand stays in `next` too. A metered seat (by its harness, or the
 user's `billing`) is ranked as unknown capacity, and gets no such line; nor does a reader that never read
@@ -1070,8 +1070,7 @@ it. A reading command: it changes nothing of the user's, calls no harness, and a
   `done_first_time` (the ledger's rule: done, check pass, attempts 1, no causes), `level_changed` (the chosen level
   is not the advised one), `check_failed`. Counted before the 50-entry limit.
 - `unavailable`: `usage` entries as `usage` gives them; `{ part: "launch history" | "ledger", code: "unreadable", why }`
-  when either cannot be read, and then its counts are null, never zero. `warnings` and `next` include a stopped usage
-  reader and its retry as `usage` does; `next` also has `usage`'s other capacity steps.
+  when either cannot be read, and then its counts are null, never zero. `next`: `usage`'s capacity steps.
 - `headline`: `routr: <n> decisions in <project or all projects>; <account> has the most room`.
 
 ## top

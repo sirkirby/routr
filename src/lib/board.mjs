@@ -15,7 +15,6 @@ import { capacityFailure, capacityView } from "./capacity.mjs";
 
 export const DECISIONS_MAX = 50;
 const WINDOW_MS = HISTORY_DAYS * 86400000;
-const CAPACITY_FAILURE = "routr could not rank its kept usage readings";
 const iso = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString() : null);
 const ms = (t) => { const v = Date.parse(t); return Number.isFinite(v) ? v : null; };
 
@@ -92,17 +91,19 @@ export async function boardCommand(words, config, { usage = cachedUsage, ledger 
   // `level`: the work the room is ranked for, as in usage: plain work, so no account is left out for its hardest_work.
   const out = { ok: true, headline: "", unavailable: [], warnings: [...warnings], next: [], project, level: "basic" };
   // Room: every configured account that is on, as `usage` ranks it for plain work, from kept readings.
-  let capacity;
+  // Kept readings keep no failed read (usage-cache), so no reader reads as stopped here: `stale` is usage's to say.
+  // When ranking fails, board says so in `unavailable` and leaves `next` alone.
   try {
     const names = Object.keys(config.subscriptions ?? {}).filter((n) => config.subscriptions[n]?.enabled !== false);
     const { rows } = usage(names, { configPath: configPath ? resolve(configPath) : undefined });
-    capacity = capacityView(out.level, rows, config, recentLaunches(), { failureWhy: CAPACITY_FAILURE });
-  } catch { capacity = capacityFailure(CAPACITY_FAILURE); }
-  out.subscriptions = capacity.subscriptions;
-  out.unavailable.push(...capacity.unavailable);
-  out.warnings.push(...capacity.warnings);
-  // The existing board contract keeps no recovery step when ranking itself fails.
-  if (capacity.subscriptions) out.next.push(...capacity.next);
+    const capacity = capacityView(out.level, rows, config, recentLaunches());
+    out.subscriptions = capacity.subscriptions;
+    out.unavailable.push(...capacity.unavailable);
+    out.next.push(...capacity.next);
+  } catch {
+    out.subscriptions = null;
+    out.unavailable.push(capacityFailure("routr could not rank its kept usage readings").failure);
+  }
   // Decisions: launches in the history and recorded runs, in scope.
   const h = history({ now });
   if (h.unreadable) out.unavailable.push({ part: "launch history", code: "unreadable", why: "routr's launch history could not be read: open launches are not shown, and the launch count is unknown" });

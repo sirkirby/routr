@@ -71,12 +71,14 @@ async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] 
   Object.assign(out, { headline: !answered ? `${out.headline}; fallback level ${advice.level}` : `${headline(advice)}; reading by ${readingModel(out)}`, ...advice, meaning: MEANING[advice.level] });
   if (mode === "dispatch") {
     const usage = await usageP;
-    const capacity = capacityView(advice.level, usage, config, recentLaunches());
-    out.subscriptions = capacity.subscriptions ?? emptyRanking(capacity.unavailable[0].why);
+    let capacity;
+    try { capacity = capacityView(advice.level, usage, config, recentLaunches()); }
+    catch { const { failure, next } = capacityFailure(); capacity = { subscriptions: emptyRanking(failure.why), unavailable: [failure], next: [next], stale: [] }; }
+    out.subscriptions = capacity.subscriptions;
     out.unavailable.push(...capacity.unavailable);
-    out.warnings.push(...capacity.warnings);
-    // Capacity instructions precede advice instructions; stale-reader retries follow them, as before this view was shared.
-    out.next = [...capacity.next.filter((n) => n.kind === "do"), ...out.next, ...capacity.next.filter((n) => n.kind === "run")];
+    out.warnings.push(...capacity.stale.map((s) => s.warning));
+    // Capacity steps first, then the advice's own; a stopped reader's retry after them.
+    out.next = [...capacity.next, ...out.next, ...capacity.stale.map((s) => s.retry)];
   }
   out.next = [...out.next, ...ADVICE_STEPS[mode].map((s) => doNext(s)),
     ...(mode === "dispatch" ? readingNext(out) : []),
@@ -249,19 +251,12 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
       const kept = rows.find((r) => r.pool === name && r.headroom != null);
       additionalUnavailable.push({ part: "usage", subscription: name, source: sources[name].source ?? name, ...usageFailure(reading?.code), reading: kept ? "kept" : "unknown", ...(kept ? { reading_source: kept.source, age_sec: kept.ageSec } : {}) });
     }
-    const capacity = capacityView(level, rows, viewConfig, name ? null : recentLaunches(), { capacityConfig: config, unavailable: additionalUnavailable, subscription: name });
-    if (!capacity.subscriptions) {
-      out.ok = false;
-      out.unavailable.push(...capacity.unavailable); out.subscriptions = emptyRanking(capacity.unavailable[0].why);
-      out.headline = "routr: no usage ranking (internal_error)";
-      out.next.push(...capacity.next);
-      return answer(out);
-    }
+    const capacity = capacityView(level, rows, viewConfig, name ? null : recentLaunches(), { named: name, configured: Object.keys(config.subscriptions).length > 0, unavailable: additionalUnavailable });
     out.subscriptions = capacity.subscriptions;
     out.unavailable.push(...capacity.unavailable);
-    const ownStale = fresh ? capacity.stale.find((s) => s.pool === name) : null;
     // A fresh read that just worked clears its own warning; one that failed again keeps it (the retry is this call).
-    out.warnings.push(...capacity.warnings.filter((w) => !(reading?.ok && w === ownStale?.warning)));
+    const own = (s) => fresh && s.pool === name;
+    out.warnings.push(...capacity.stale.filter((s) => !(own(s) && reading?.ok)).map((s) => s.warning));
     if (reading?.excluded && !out.subscriptions.excluded.some((r) => r.subscription === name)) out.subscriptions.excluded.push({ subscription: name, why: reading.why });
     if (name && !configured.includes(name)) {
       const excluded = out.subscriptions.excluded.find((e) => e.subscription === name);
@@ -269,17 +264,16 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
       if (excluded) excluded.why = why; else out.subscriptions.excluded.push({ subscription: name, why });
       out.subscriptions.note = `${name} is ${why}`;
     }
-    out.next = [...capacity.next.filter((n) => n.kind === "do"), ...out.next,
-      ...capacity.next.filter((n) => n.kind === "run" && !(fresh && n.argv?.[2] === name))];
+    out.next = [...capacity.next, ...out.next, ...capacity.stale.filter((s) => !own(s)).map((s) => s.retry)];
     if (explicit && hasCandidates(out.subscriptions)) out.next.push(doNext("Choose from subscriptions.candidates, normal before fallback, and keep the original dispatch advice for launch and record"));
     out.headline = fresh ? reading?.ok ? `routr: ${reader.label}, ${reader.used(reading)}, read now${!out.subscriptions.ranked.length ? `; ${out.subscriptions.note}` : ""}` : `routr: no fresh ${reader.label} reading (${reading?.excluded ? "not signed in" : usageFailure(reading?.code).code})`
       : `routr: ${out.subscriptions.most_room ? `${out.subscriptions.most_room} has the most usable headroom for ${level} work (normal first); normal: ${out.subscriptions.candidates.normal.join(", ") || "none"}, fallback: ${out.subscriptions.candidates.fallback.join(", ") || "none"}` : out.subscriptions.note}${out.unavailable.length ? `; ${count(out.unavailable.length, "reading")} unavailable` : ""}`;
   } catch {
     out.ok = false;
-    const capacity = capacityFailure(), failure = capacity.unavailable[0];
+    const { failure, next } = capacityFailure();
     out.unavailable.push(failure); out.subscriptions = emptyRanking(failure.why);
     out.headline = "routr: no usage ranking (internal_error)";
-    out.next.push(...capacity.next);
+    out.next.push(next);
   }
   return answer(out);
 }
