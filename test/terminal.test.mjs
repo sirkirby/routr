@@ -162,6 +162,20 @@ test("a name hc refuses gets one more try with the worker's id, and the record s
   expect(JSON.parse(readFileSync(join(runDir("w1"), "worker.json"), "utf8")).terminal_name).toBe(names[1]);
 });
 
+test("a long name hc refuses keeps hc's 32-character limit with the id added; a run with no address fails the launch", async () => {
+  const long = "a".repeat(32);
+  let tries = 0;
+  const f = fixture("claude", { name: long, hc: fakeHc({ name: "other", over: { run: () => (++tries === 1 ? { code: 1, out: "" } : undefined) } }) });
+  expect((await f.go()).state).toBe("prompted");
+  const names = f.hc.calls.filter((c) => c.args[0] === "run").map((c) => c.args[c.args.indexOf("--name") + 1]);
+  expect(names[0]).toBe(long);
+  expect(names[1]).toMatch(new RegExp(`^${"a".repeat(23)}-[a-f0-9]{8}$`));
+  expect(names[1].length).toBe(32);
+  const blank = fixture("claude", { name: "w2", hc: fakeHc({ name: "w2", over: { run: { code: 0, out: "{}" } } }) }), r = await blank.go();
+  expect([r.ok, r.state]).toEqual([false, "failed"]);
+  expect(blank.hc.calls.filter((c) => c.cmd === "herdr-app")).toEqual([]);
+});
+
 test("started means status working, or a turn already gone by; idle at turn 0 is only not started yet", async () => {
   for (const sees of [[{ status: null, turn: 0 }, { status: { state: "idle" }, turn: 0 }, { status: { state: "working" }, turn: 0 }], [{ status: { state: "done" }, turn: 1 }], [{ status: { state: "idle" }, turn: 2 }], [{ status: "working", turn: 0 }]]) {
     const f = fixture("claude", { hc: fakeHc({ sees }) }), r = await f.go();

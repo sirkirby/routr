@@ -5,7 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
-- `routr watch` in a herdr pane no longer sends the Herdr app's status codes when that pane's session was started from an app terminal. (#165)
+- `routr watch` in a herdr pane no longer sends the Herdr app's status codes or a terminal title when that pane's session was started from an app terminal. (#165)
 
 ## v0.13.2 — 2026-11-06
 
