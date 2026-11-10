@@ -64,9 +64,17 @@ test("top-level help flags and help command print usage and exit 0", () => {
   }
 });
 
+test("the commands docs/contracts.md covers are the table's commands with a contract", () => {
+  const page = readFileSync(join(import.meta.dir, "../docs/contracts.md"), "utf8");
+  // The list is the first sentence after "Commands covered:", its parenthesised notes aside.
+  const after = page.slice(page.indexOf("Commands covered:") + "Commands covered:".length).replace(/\([^)]*\)/g, "");
+  const covered = after.slice(0, after.indexOf(".")).match(/`([a-z]+)`/g).map((w) => w.slice(1, -1));
+  expect([...new Set(covered)].sort()).toEqual(Object.keys(COMMANDS).filter((n) => COMMANDS[n].contract).sort());
+  for (const [name, { contract }] of Object.entries(COMMANDS)) if (contract) expect([name, Boolean(contract.text) !== Boolean(contract.fields?.length)]).toEqual([name, true]);
+});
+
 test("command help prints usage for each command and exits 0", () => {
-  const commands = ["subagent", "dispatch", "launch", "usage", "doctor", "check", "record", "assess"];
-  for (const cmd of commands) {
+  for (const cmd of Object.keys(COMMANDS)) {
     for (const flag of ["--help", "-h"]) {
       const res = Bun.spawnSync(["bun", SCRIPT, cmd, flag]);
       expect(res.exitCode).toBe(0);

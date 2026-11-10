@@ -16,6 +16,7 @@ import { Writable } from "node:stream";
 import { worktreesFromGit } from "../src/lib/cleanup.mjs";
 import { besidesHelper, callGit, groupMembers } from "../src/lib/process-boundary.mjs";
 import { HARNESSES } from "../src/lib/harnesses.mjs";
+import { COMMANDS } from "../src/lib/help.mjs";
 import { launch } from "../src/lib/launch.mjs";
 import { CARRIERS, harnessEnv, installedAt, start, stop } from "../src/lib/runtime.mjs";
 import { cfg, cliEnv, CONFIG_ENV, fakeExecutable, LEAD_ENV, scratch, SCRIPT } from "./helpers.mjs";
@@ -314,7 +315,14 @@ function world(over = {}) {
   const run = (args, extra = {}) => {
     const r = Bun.spawnSync([process.execPath, entry, ...args], { cwd: work, env: { ...env, ...extra }, stdin: "ignore" });
     const text = r.stdout.toString(); outputs.push(text, r.stderr.toString());
-    try { return JSON.parse(text); } catch { return { raw: text }; }
+    let out; try { out = JSON.parse(text); } catch { return { raw: text }; }
+    // Every answer a covered command gives here, a real worker's included, keeps to its contract's fields.
+    const fields = COMMANDS[args[0]]?.contract?.fields;
+    if (fields && out && typeof out === "object" && "ok" in out) {
+      const allowed = new Set(["ok", "headline", "unavailable", "warnings", "next", "error", ...fields]);
+      expect([args[0], Object.keys(out).filter((k) => !allowed.has(k))]).toEqual([args[0], []]);
+    }
+    return out;
   };
   const task = (text, name = "task.md") => { const f = join(inputs, name); writeFileSync(f, text); return f; };
   const advise = (file) => { const a = join(home, `${file.split(/[\\/]/).pop()}.advice.json`); writeFileSync(a, JSON.stringify(run(["dispatch", "--task-file", file]))); return a; };

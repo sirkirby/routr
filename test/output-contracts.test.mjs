@@ -8,6 +8,7 @@ import { briefSha, read, shareRows } from "../src/lib/ledger.mjs";
 import { telemetryRows } from "../src/lib/telemetry.mjs";
 import { callGit, callHerdr } from "../src/lib/process-boundary.mjs";
 import { usageFailure } from "../src/lib/usage-failure.mjs";
+import { COMMANDS } from "../src/lib/help.mjs";
 
 const MARK = "OUTSIDE_TEXT_MARKER_9c61";
 // Trace-context carriers in routr's environment: handed on, never shown, logged or stored (docs/guarantees.md).
@@ -316,20 +317,17 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
   executable("agy", `console.log('Please sign in'); process.exit(1);`);
   executable("cursor-agent", `console.log('Logged in as local@example.invalid');`);
   executable("kiro-cli", `const a = process.argv.slice(2); console.log(a[0] === 'whoami' ? '{"email":"local@example.invalid"}' : JSON.stringify({ type: 'runFinished', data: { finalText: 'Estimated Usage | resets on 2026-11-01 | KIRO FREE\\nCredits (20 of 50 covered in plan), 40.0%' } }));`);
-  const fields = {
-    subagent: 'id ts mode question_set brief_sha brief_chars provider decision_model unmeasured ms answers level sure between work_type high_risk worker facts notes meaning',
-    dispatch: 'id ts mode question_set brief_sha brief_chars provider decision_model unmeasured ms answers level sure between work_type high_risk worker facts notes meaning subscriptions',
-    check: 'mode question_set provider decision_model unmeasured ms claimed flags unclear checks',
-    launch: 'state kind name pane cwd model effort start steps ran would_run prompt_chars advice worktree needs_input screen launch_id',
-    record: 'id run_id ledger', board: 'project level subscriptions decisions outcomes', dash: 'file opened runs project', cleanup: 'state steps ran cwd pane worktrees worktree branch', usage: 'level subscriptions subscription reading',
-  };
+  // Each covered command's own fields, from the command table: a command the contract covers is invoked here, every one.
+  const fields = Object.fromEntries(Object.entries(COMMANDS).filter(([, c]) => c.contract?.fields).map(([n, c]) => [n, c.contract.fields]));
+  const invoked = new Set();
   const split = join(f.dir, "split.json");
   const env = cliEnv(f.dir, { PATH: bin + delimiter + dirname(process.execPath), HERDR_ENV: "1", FAKE_CWD: f.dir, FAKE_SENT: sent, FAKE_REPO: repo, FAKE_WORKER: worker, FAKE_SPLIT: split, ...CARRIED });
   const invoke = (command, args = [], mode = "ordinary", input) => {
     const result = Bun.spawnSync([process.execPath, SCRIPT, command, ...args], { env: { ...env, FAKE_MODE: mode }, stdin: input == null ? "ignore" : Buffer.from(input) });
     expect(result.stderr.toString()).toBe("");
-    const r = contract(JSON.parse(result.stdout.toString()));
-    const allowed = new Set(['ok', 'headline', 'unavailable', 'warnings', 'next', 'error', ...fields[command].split(' ')]);
+    const r = contract(JSON.parse(result.stdout.toString()), command);
+    invoked.add(command);
+    const allowed = new Set(['ok', 'headline', 'unavailable', 'warnings', 'next', 'error', ...fields[command]]);
     for (const key of Object.keys(r)) expect(allowed.has(key)).toBe(true);
     expect(withoutScreen(r)).not.toContain(MARK);
     expect(result.stdout.toString() + result.stderr.toString()).not.toContain(CARRIER_MARK);
@@ -363,6 +361,7 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
     outcome: { verdict: "done", check: "pass", attempts: 1, causes: [], note: MARK } }) + "\n");
   for (const [command, args] of [["board", []], ["top", []], ["dash", ["--no-open"]]]) {
     const result = Bun.spawnSync([process.execPath, SCRIPT, command, ...args], { env });
+    if (COMMANDS[command].contract?.text) invoked.add(command);
     const text = result.stdout.toString() + result.stderr.toString();
     expect([command, result.exitCode, text.includes(MARK)]).toEqual([command, 0, false]);
     if (command === "dash") expect(JSON.parse(result.stdout.toString()).runs).toBe(2);
@@ -410,6 +409,9 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
   expect(JSON.parse(readFileSync(split, "utf8")).slice(-6)).toEqual(Object.entries(CARRIED).flatMap(([k, v]) => ["--env", `${k}=${v}`]));
   const rows = read(f.ledger);
   for (const value of [readFileSync(f.ledger, "utf8"), JSON.stringify(telemetryRows(rows, "local-test"))]) { expect(value).not.toContain(MARK); expect(value).not.toContain(CARRIER_MARK); }
+  // The worker commands, with no worker of that name: what they say about one that is not there.
+  invoke("workers"); invoke("wait", ["--name", "nobody", "--timeout", "0"]); invoke("send", ["--name", "nobody", "--task", MARK]); invoke("stop", ["--name", "nobody"]);
+  expect([...invoked].sort()).toEqual(Object.keys(COMMANDS).filter((n) => COMMANDS[n].contract).sort());
 }, 60000); // dozens of CLI runs: the Windows CI job takes about 5 s, past bun's default limit
 
 test("classification preserves plain private-session pane reads and discards successful action prose", async () => {

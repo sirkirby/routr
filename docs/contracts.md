@@ -7,6 +7,8 @@ that the implementation changed together. In those migration notes, "today" mean
 Commands covered: `subagent`, `dispatch`, `check`, `launch` (dry run, in herdr, in a herdr-core terminal, and headless), `record`, `cleanup` (each mode),
 `wait`, `send`, `workers`, `stop`, `board`, `top`, `dash`, and
 `usage` (no name, `--level`, and each named reader: `claude`, `codex`, `agy`, `cursor`, `kiro`). Setup, doctor and key output for decision models is covered below; other maintenance commands are not covered.
+The command table that drives help text marks these same commands; a test holds the two lists equal and runs every
+covered command's whole output through the field-map and no-private-text checks.
 
 ## What every answer says
 

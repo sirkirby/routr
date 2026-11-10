@@ -1,4 +1,6 @@
-// Single source of truth for routr CLI commands, flags, descriptions, and help formatting.
+// Single source of truth for routr CLI commands, flags, descriptions, and help formatting. `contract` marks a command
+// whose output docs/contracts.md covers: `fields`, its own top-level fields beside the five every answer starts with, or
+// `text` for a screen. The contract tests walk this table, so a covered command cannot be left out of them.
 import { HARDEST, RESERVE } from "./wording.mjs";
 import { KINDS } from "./harnesses.mjs";
 import { NAME_RULE } from "./runtime.mjs";
@@ -7,6 +9,7 @@ export const DESCRIPTION = "routr: quick, calibrated advice for an agent that is
 export const COMMANDS = {
   subagent: {
     name: "subagent",
+    contract: { fields: ["id", "ts", "mode", "question_set", "brief_sha", "brief_chars", "provider", "decision_model", "unmeasured", "ms", "answers", "level", "sure", "between", "work_type", "high_risk", "worker", "facts", "notes", "meaning"] },
     description: "a worker, or an agent outside herdr, is about to spawn a subagent → what the work demands (an orchestrator, in herdr or not, uses dispatch); unavailable names missing readings, with a no-reading headline on fallback",
     args: [
       { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); unknown flag-led input without a stdin brief is refused; quote a multi-word inline brief containing flags", required: true },
@@ -19,6 +22,7 @@ export const COMMANDS = {
   },
   dispatch: {
     name: "dispatch",
+    contract: { fields: ["id", "ts", "mode", "question_set", "brief_sha", "brief_chars", "provider", "decision_model", "unmeasured", "ms", "answers", "level", "sure", "between", "work_type", "high_risk", "worker", "facts", "notes", "meaning", "subscriptions"] },
     description: "an orchestrator is about to launch a worker → work assessment plus eligible subscriptions and headroom; choose for quality, then compare capacity among suitable options; unavailable names failed decision-model and usage readings, with recovery actions; fresh usable readings stay available",
     args: [
       { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); unknown flag-led input without a stdin brief is refused; quote a multi-word inline brief containing flags", required: true },
@@ -32,6 +36,7 @@ export const COMMANDS = {
   },
   usage: {
     name: "usage",
+    contract: { fields: ["level", "subscriptions", "subscription", "reading"] },
     description: "what routr sees of each subscription's usage and how dispatch ranks it; most_room prefers a normal account with a positive number, otherwise the largest positive number; changes nothing of yours. Claude Code's is read from its own /usage (hooks and MCP servers off), or from `routr statusline`'s snapshot when one is under 5 minutes old. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session, and `routr usage kiro` runs Kiro's /usage now and deletes the empty session it leaves (routr otherwise does both in the background about once per working session, and at once after an update when the last try got no reading)",
     args: [{ name: "[<subscription>]", description: "only this one; for cursor or kiro, read its /usage now (cursor needs herdr installed)", required: false }],
     flags: [
@@ -42,6 +47,7 @@ export const COMMANDS = {
   },
   launch: {
     name: "launch",
+    contract: { fields: ["state", "kind", "name", "pane", "cwd", "model", "effort", "start", "steps", "ran", "would_run", "prompt_chars", "advice", "worktree", "needs_input", "screen", "launch_id", "worker"] },
     description: "start a worker with matching task advice: in a herdr pane; in a herdr-core terminal (the Herdr app), the harness itself in a tab of its own, which you follow with hc; or anywhere else a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker that `routr wait` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
     flags: [
       { name: "--lead-session", arg: "<id>", description: "your known session id when routr cannot read it from the harness environment; UUIDv4, UUIDv7 or 16–64 lowercase hex characters; malformed values are ignored with a fixed warning; never invent one", required: false },
@@ -67,6 +73,7 @@ export const COMMANDS = {
   },
   cleanup: {
     name: "cleanup",
+    contract: { fields: ["state", "steps", "ran", "cwd", "pane", "worktrees", "worktree", "branch", "name"] },
     description: "finish a worker: remove the worktree `launch --worktree` made (closing its workspace), or close the pane launch split, or (`--worker`) a headless or terminal worker's worktree, through the same checks, and then its run folder and reports; a terminal worker's terminal is ended first. The way to end every worker: closing a worktree's pane leaves the worktree behind. Refuses while anything it can see runs there (outside herdr it cannot see what runs in a worktree's folder), and never removes uncommitted changes, files the worker made, or a commit no branch or tag holds; files copied in with --copy and left unchanged go with it, and so do files git ignores. Keeps the branch unless --delete-branch. With no worker named, lists the repo's worktrees and what it would do with each",
     flags: [
       { name: "--cwd", arg: "<repo>", description: "the repository (the main checkout or any of its worktrees)", required: false, default: "." },
@@ -80,6 +87,7 @@ export const COMMANDS = {
   },
   wait: {
     name: "wait",
+    contract: { fields: ["state", "workers"] },
     description: "outside herdr: wait for headless workers; returns when one finishes a turn (with its report's path), fails, stops or is lost, or at the timeout with the ones still running; changes nothing of yours. A terminal worker is followed with hc, and it says so",
     flags: [
       { name: "--name", arg: "<name>", description: "a worker to wait on (repeatable)", required: false, default: "every worker still running or with a turn not yet reported", repeatable: true },
@@ -88,6 +96,7 @@ export const COMMANDS = {
   },
   send: {
     name: "send",
+    contract: { fields: ["state", "name", "message"] },
     description: "outside herdr: a correction or follow-up for a headless worker, into its running turn where the harness takes it, or as the next turn of the same session; new work is a new launch with its own advice. A terminal worker is followed with hc, and it says so",
     flags: [
       { name: "--name", arg: "<name>", description: "the worker", required: true },
@@ -97,11 +106,13 @@ export const COMMANDS = {
   },
   workers: {
     name: "workers",
+    contract: { fields: ["workers"] },
     description: "outside herdr: each headless worker's state, turn, seconds since its last event, last tool, session and the path of its latest report; never its text; a terminal worker's row says which terminal to follow it in with hc; with export off, changes nothing; when export is on, may queue records and start the detached sender",
     flags: [{ name: "--name", arg: "<name>", description: "only this worker (repeatable)", required: false, repeatable: true }],
   },
   stop: {
     name: "stop",
+    contract: { fields: ["state", "name"] },
     description: "outside herdr: stop a headless worker through its own process (macOS and Linux: SIGTERM to the harness's process group, then SIGKILL if the harness has not gone; Windows: taskkill /T); never by a saved process id. A terminal worker is ended with hc, and it says so",
     flags: [{ name: "--name", arg: "<name>", description: "the worker", required: true }],
   },
@@ -200,6 +211,7 @@ export const COMMANDS = {
   },
   check: {
     name: "check",
+    contract: { fields: ["mode", "question_set", "provider", "decision_model", "unmeasured", "ms", "claimed", "flags", "unclear", "checks"] },
     description: "a quick first read of a worker's report (writes nothing); you remain the judge; unavailable names an unreadable brief/report or the attempted decision model and its failure",
     flags: [
       { name: "--brief", arg: "<file>", description: "path to task brief file", required: true },
@@ -208,6 +220,7 @@ export const COMMANDS = {
   },
   record: {
     name: "record",
+    contract: { fields: ["id", "run_id", "ledger"] },
     description: "append what you chose and how it turned out to the ledger; next integrates and cleans up only for done with check pass, otherwise sends back or escalates, and always includes a template to revise this run with absolute advice, task and ledger paths",
     flags: [
       { name: "--task-file", arg: "<path>", description: "compare this worker’s task with the advice before appending; omit only for inline tasks, or revisions when the original file is gone (say so in --note)", required: false },
@@ -232,6 +245,7 @@ export const COMMANDS = {
   },
   board: {
     name: "board",
+    contract: { fields: ["project", "level", "subscriptions", "decisions", "outcomes"] },
     description: "what only routr knows, for a folder's project: each account's room as usage ranks it (from routr's kept readings: no harness is called, and a detached usage read is started when they are over 10 minutes old), each launch's decision joined to its recorded outcome, and the last 7 days' counts. Never the ledger's notes; changes nothing of yours. `routr top` draws it for a person",
     flags: [
       { name: "--cwd", arg: "<folder>", description: "the project to show, by the git repository that folder is in (a worktree counts as its repository); omitted, every project on this machine", required: false },
@@ -240,6 +254,7 @@ export const COMMANDS = {
   },
   top: {
     name: "top",
+    contract: { text: true },
     description: "a person's view of routr board, kept current in a terminal (a pane or split beside the lead): each account's room, each launch's decision and outcome, and the last 7 days' counts, every 5 seconds. Keys: up/down pick a decision, Enter its detail, a this project or all, u read usage now (runs the harnesses' usage commands), q quit. Shows only what board does; changes nothing of yours. Piped: one plain snapshot; ACCESSIBLE=1: a plain snapshot per Enter",
     flags: [
       { name: "--cwd", arg: "<folder>", description: "the project to show, by the git repository that folder is in (a worktree counts as its repository); outside a repository, every project", required: false, default: "the current folder" },
@@ -248,6 +263,7 @@ export const COMMANDS = {
   },
   dash: {
     name: "dash",
+    contract: { fields: ["file", "opened", "runs", "project"] },
     description: "one page of this machine's ledger: what you asked routr, what you chose, and how it turned out, written to an HTML file and opened in your browser. It counts; it does not judge. No harness is called. Piped, or with --no-open, it only writes the file and prints its path",
     flags: [
       { name: "--cwd", arg: "<folder>", description: "the project to preselect, by the git repository that folder is in (a worktree counts as its repository); outside a repository, every project", required: false, default: "the current folder" },

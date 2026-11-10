@@ -32,7 +32,8 @@ export function noMovedInstructions(out) {
   };
   walk(out);
 }
-export function contract(r) {
+// `command` names whose headline a non-launch failure starts with (cleanup when not given).
+export function contract(r, command = "cleanup") {
   expect(Object.keys(r).slice(0, 5)).toEqual(["ok", "headline", "unavailable", "warnings", "next"]);
   expect(typeof r.ok).toBe("boolean"); expect(r.headline).toStartWith("routr: ");
   for (const key of ["unavailable", "warnings", "next"]) expect(Array.isArray(r[key])).toBe(true);
@@ -46,7 +47,7 @@ export function contract(r) {
     const lead = r.kind !== undefined ? {
       planned: "routr: planned ", ready: `routr: ${r.name} is ready`, prompted: `routr: ${r.name} (${r.kind}) took its task`,
       needs_input: `routr: ${r.name} needs input`, failed: "routr: launch failed:",
-    } : { listed: "routr:", absent: "routr: nothing to remove:", planned: "routr: would ", refused: "routr: kept ", failed: "routr: cleanup failed:", closed: "routr: closed ", removed: "routr: removed " };
+    } : { listed: "routr:", absent: "routr: nothing to remove:", planned: "routr: would ", refused: "routr: kept ", failed: `routr: ${command} failed:`, closed: "routr: closed ", removed: "routr: removed " };
     expect(r.headline).toStartWith(lead[r.state]);
     expect(r.headline).not.toContain("undefined");
     expect(r.ok).toBe(!["failed", "needs_input", "refused"].includes(r.state) && !r.error);
