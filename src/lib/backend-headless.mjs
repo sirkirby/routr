@@ -9,13 +9,13 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { connect, generations, MESSAGE_MAX, probe, removeEndpoint, socketPathFits, writeSecret } from "./channel.mjs";
 import { groupAlive, HEADLESS_KINDS, headlessArgv, stateOf } from "./headless.mjs";
-import { FORMAT, readWorker, runDir, unreadableWhy, WORKERS_DIR, workerOf } from "./worker-record.mjs";
+import { FORMAT, runDir, unreadableWhy, WORKERS_DIR, workerOf } from "./worker-record.mjs";
 import { git, planWorktree } from "./worktree.mjs";
 import { privateCursorConfig, refuseInputs, refuseSandbox, refuseSettings, refuseTaken, sandboxOf, takeRun, worktreeRecord } from "./worker-start.mjs";
 import { HARNESSES, subagentDefaults } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext } from "./next.mjs";
 import { launchFailed } from "./launch-answer.mjs";
-import { inCore, presentWorker } from "./presenter-watch.mjs";
+import { inCore } from "./backends.mjs";
 import { CARRIERS, FORWARDED, folderId, lockIsStale, lockOwned, lockToken, realOr, releaseFileLock, spawnSelf, takeLock, writeJsonAtomic } from "./runtime.mjs";
 
 export const RUNNING = new Set(["working", "waiting", "starting"]);
@@ -172,7 +172,6 @@ async function startWorker(o, out, { prompt, env, settings, ready, spawn, checkL
     out.worker.session = r.session ?? null;
     step("prompt", true, r.session ? `${HARNESSES[o.kind].label} started the task's turn (session ${r.session})` : `The task was written to ${HARNESSES[o.kind].label}'s input; it has not named its session yet`);
     out.ok = true; out.state = "prompted";
-    if (inCore(env)) await presentWorker({ name: o.name, id: readWorker(o.name)?.id ?? randomUUID().replace(/-/g, ""), cwd: out.cwd, env, out });
     out.next.push(runNext("Wait for this worker's turn to end (it returns earlier when any worker you wait on finishes); then read its report.", ["routr", "wait", "--name", o.name]));
     return;
   }
@@ -288,7 +287,7 @@ export async function cleanupWorker(name, { dryRun = false, deleteBranch = false
       if (there && there.branch !== w.worktree.branch) return refuse(`the worktree at ${w.worktree.path} is ${there.branch ? `on branch ${there.branch}` : "detached"}, not on ${w.worktree.branch}: it is not the one launch made`, finish);
       if (there && folderId(w.worktree.path) !== w.worktree.folder) return refuse(`the worktree at ${w.worktree.path} was made again since launch: it is not the one launch made`, finish);
       // Through git, as launch made it; in herdr-core with core's terminals checked too, but for this worker's own.
-      const core = env.HERDR_ENV !== "1" && env.HC_TERMINAL_ID ? { HC_TERMINAL_ID: env.HC_TERMINAL_ID } : {};
+      const core = inCore(env) ? { HC_TERMINAL_ID: env.HC_TERMINAL_ID } : {};
       const r = await cleanup(["--cwd", w.worktree.source, "--path", w.worktree.path, ...(deleteBranch ? ["--delete-branch"] : []), ...(dryRun ? ["--dry-run"] : [])], { env: core, assertOwned, ...(hc ? { hc } : {}), ownWorker: w.id });
       out.ran.push(...r.ran); out.unavailable.push(...r.unavailable);
       // The worker's own process and its harness's process group were checked above; what that cannot see is said here.

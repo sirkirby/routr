@@ -279,9 +279,7 @@ instead (next section). What a headless worker means on your machine:
 
 - **Its watch terminal.** `routr watch` follows a worker from any terminal, and reads and changes nothing of it. In a
   herdr-core terminal it also reports the worker's status with OSC 7501: its state and its harness's name, nothing of its
-  text. routr keeps the means to open it in a labelled tab beside a headless worker, naming only the worker and its
-  folder, and a failure there never fails the worker; launch does not use that today, as every harness runs
-  interactively in a core terminal.
+  text. Launch opens no watch terminal of its own: in a core terminal every harness runs interactively instead.
 - **Its worktree.** With `--worktree <branch>`, launch makes the worktree with git (`git worktree add -b`), under
   `~/.local/share/routr/worktrees/<repository>-<hash>/<branch>` (`/` and `\` in the branch become `-`), on a branch
   that must not exist yet, from `--base` or the checkout's HEAD, and copies the `--copy` files and folders in from

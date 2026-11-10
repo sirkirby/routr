@@ -82,7 +82,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     ran: [], next: [], start: { executable: null, argv: [], env: {} }, steps: [], warnings: [], prompt_chars: null, unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
   // Where this launch runs (backends.mjs): what the trace says, whatever becomes of the launch, a refusal of its arguments too.
-  let backend = executionFor(env, null), outcome = { attempted: false, submitted: false, adopted: false, cleanup: null }, recordOptions = null, planned = false, advised = null;
+  let backend = executionFor(env), outcome = { attempted: false, submitted: false, adopted: false, cleanup: null }, recordOptions = null, planned = false, advised = null;
   // `next` is built once the launch has its identity (launch, below): its record template carries it.
   const finish = (launchId) => {
     out.next = launchNext(out.next, { record: recordOptions, cleanup: outcome.cleanup, adopted: outcome.adopted, launchId,
@@ -91,7 +91,6 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
   const done = () => ({ out, backend, finish, adopted: outcome.adopted, advised });
   try {
     const o = parseLaunchArgs(args);
-    backend = executionFor(env, o.kind);
     out.warnings.push(...(o.leadWarnings ?? []));
     Object.assign(out, { kind: o.kind ?? null, name: o.name, pane: o.pane ?? null, cwd: resolve(o.cwd ?? "."), model: o.model ?? null, effort: o.effort ?? null });
     if (!statSync(out.cwd).isDirectory()) throw new Error("--cwd must be a directory");

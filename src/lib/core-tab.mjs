@@ -1,5 +1,5 @@
 // A terminal for a worker in herdr-core, in a tab of its own when the lead is in the app: which space, which names, and
-// what the app is told. The watch presenter and the terminal backend both open theirs here.
+// what the app is told. The terminal backend opens a worker's terminal here.
 import { callHc, client, isAddress, renameTab } from "./hc.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -18,11 +18,11 @@ export async function leadTerminal(env, run = client) {
 }
 
 // Off the app (no space label) it is still a terminal, listed by `hc ls`. It outlives the lead and types nothing into the
-// lead. `rm`: it goes when its program exits. `labels`: its own, beside the app's. `trying(name)`: told each name before it is asked for.
+// lead. `labels`: its own, beside the app's. `trying(name)`: told each name before it is asked for.
 // Answers `{ terminal, name, tab }`, or `{ code, name }` with one of callHc's codes and what it last asked for.
-export async function openTerminal({ name, id, cwd, lead, argv, rm = false, labels = [], trying = () => {}, run = client, pause = sleep }) {
+export async function openTerminal({ name, id, cwd, lead, argv, labels = [], trying = () => {}, run = client, pause = sleep }) {
   const tab = lead.space ? `routr-${id}` : null;
-  const open = (terminal) => { trying(terminal); return callHc(["run", "--bg", "--json", "--name", terminal, "--cwd", cwd, "--outlive-parent", "--no-notify", ...(rm ? ["--rm"] : []),
+  const open = (terminal) => { trying(terminal); return callHc(["run", "--bg", "--json", "--name", terminal, "--cwd", cwd, "--outlive-parent", "--no-notify",
     ...(tab ? ["--label", `herdr.space=${lead.space}`, "--label", `herdr.tab=${tab}`] : []), ...labels.flatMap((l) => ["--label", l]), "--", ...argv], run); };
   let terminal = name, r = await open(terminal);
   if (r.code === "refused") r = await open(terminal = withId(name, id));

@@ -137,6 +137,19 @@ test("off the app there are no app labels to give and no tab to name; it still c
   expect(f.hc.calls.filter((c) => c.cmd === "herdr-app")).toEqual([]);
 });
 
+test("a tab the app has not adopted yet is named again", async () => {
+  let tries = 0;
+  const late = fixture("claude", { hc: fakeHc({ over: { do: () => ({ code: ++tries < 3 ? 1 : 0, out: "" }) } }) }), r = await late.go();
+  expect(r.state).toBe("prompted");
+  expect(tries).toBe(3);
+});
+
+test("a tab name that never lands is tried six times, and the worker has started all the same", async () => {
+  const never = fixture("claude", { hc: fakeHc({ over: { do: { code: 1, out: "" } } }) }), n = await never.go();
+  expect(n.state).toBe("prompted");
+  expect(never.hc.calls.filter((c) => c.cmd === "herdr-app").length).toBe(6);
+});
+
 test("a name hc refuses gets one more try with the worker's id, and the record says the name it got", async () => {
   let tries = 0;
   const f = fixture("claude", { hc: fakeHc({ name: "other", over: { run: () => (++tries === 1 ? { code: 1, out: "" } : undefined) } }) });

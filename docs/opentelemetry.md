@@ -519,7 +519,6 @@ producer, including config and input notes forwarded into `warnings`.
 | `terminal_followed` | A terminal worker is followed with hc. |
 | `terminal_left` | A finished worker terminal could not be removed. |
 | `terminal_status_unknown` | The harness reports no status to herdr-core. |
-| `worker_not_shown` | No terminal shows the worker. |
 | `process_unseen` | Saved process id cannot prove the harness state. |
 | `cleanup_unseen` | Cleanup sees git state only. |
 | `launch_history_unreadable` | Launch history could not be read. |

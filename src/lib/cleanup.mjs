@@ -26,6 +26,7 @@ import { callHerdr, callGit, processError, processSteps } from "./process-bounda
 import { probe, realOr, realPath, WORKER_NAME, WORKTREES_DIR, worktreeFolder } from "./runtime.mjs";
 import { callHc, client, getTerminal, isAddress } from "./hc.mjs";
 import { readWorker, WORKER_LABEL, workerNames } from "./worker-record.mjs";
+import { inCore } from "./backends.mjs";
 
 const herdrLine = (args) => displayCommand(["herdr", ...args]);
 const gitIn = (dir, args) => probe("git", ["-C", dir, ...args], { timeoutMs: 15000, separate: true });
@@ -121,7 +122,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
   // Outside herdr, worktrees are listed and removed through git alone (headless and terminal workers make theirs that
   // way). In herdr-core (the Herdr app) core's terminals show what runs in one, as herdr's panes do; anywhere else what
   // runs in a folder is not seen. The warning says which.
-  const viaGit = env.HERDR_ENV !== "1", inCore = viaGit && Boolean(env.HC_TERMINAL_ID), hcRun = hc ?? client;
+  const viaGit = env.HERDR_ENV !== "1", core = inCore(env), hcRun = hc ?? client;
   let target = null;
   const out = { ok: false, state: "failed", ran: [], next: [], steps: [], warnings: [], unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
@@ -217,7 +218,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
     const rootReal = w.is_prunable ? null : real(w.path);
     if (rootReal && !linked(rootReal, source)) return { why: `${w.path} is not a linked worktree of ${source}`, next: inspect("Check the repository’s actual worktrees.", ["git", "-C", source, "worktree", "list"]) };
     if (w.open_workspace_id) { const b = await busyIn(w.open_workspace_id); if (b) return b; }
-    if (inCore) { const b = await terminalIn(w.path); if (b) return b; }
+    if (core) { const b = await terminalIn(w.path); if (b) return b; }
     if (w.is_prunable) {
       // Its folder is gone. git still records the commit it was on, and removing the record loses that commit unless
       // a branch or tag holds it.
@@ -282,7 +283,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
       const r = await gitRun(out.cwd, ["worktree", "list", "--porcelain"]);
       if (!r?.ok) throw new Error(`git found no repository at ${out.cwd} it could list the worktrees of (${r?.code ?? "git_unreachable"})`);
       list = worktreesFromGit(r.out);
-      out.warnings.push(inCore ? warning("cleanup_terminals_only", "In herdr-core, cleanup sees the core's terminals in a worktree's folder, not other processes there: it checks git's state and hc's terminals")
+      out.warnings.push(core ? warning("cleanup_terminals_only", "In herdr-core, cleanup sees the core's terminals in a worktree's folder, not other processes there: it checks git's state and hc's terminals")
         : warning("cleanup_unseen", "Outside herdr and herdr-core, cleanup cannot see whether anything runs in a worktree's folder: it checks git's state only"));
     } else list = (await herdr(["worktree", "list", "--cwd", out.cwd])).data?.result ?? {};
     const source = list.source?.source_checkout_path ?? list.source?.repo_root;
@@ -342,7 +343,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
     // The last looks before the removal: the commit it is on, then what runs there, read last of all.
     if (c.head && (await headOf(w.path)) !== c.head) return refuse(`${w.path} moved to another commit since cleanup checked it`, runNext("Recheck the worktree at its current commit.", ["routr", "cleanup", ...args]));
     if (w.open_workspace_id) { const b = await busyIn(w.open_workspace_id); if (b) return refuse(b.why, b.next); }
-    if (inCore) { const b = await terminalIn(w.path); if (b) return refuse(b.why, b.next); }
+    if (core) { const b = await terminalIn(w.path); if (b) return refuse(b.why, b.next); }
     // Never --force: if anything changed since the check, herdr and git refuse and the worktree stays.
     assertOwned();
     if (w.open_workspace_id) {
