@@ -66,6 +66,8 @@ page and its tests in the same PR.
 - An input a command is only correct with is a required input: the command refuses without it. Failing open covers
   the advice commands' output, never a skipped required input.
 - Rules and guides name concepts, not source files: a source path in prose goes stale when the code moves.
+- `GLOSSARY.md` names routr's concepts. Use its terms in code, prose and briefs; a new concept gets its entry in the PR
+  that introduces it.
 
 ## Quality gates
 

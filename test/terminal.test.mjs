@@ -137,6 +137,19 @@ test("off the app there are no app labels to give and no tab to name; it still c
   expect(f.hc.calls.filter((c) => c.cmd === "herdr-app")).toEqual([]);
 });
 
+test("a tab the app has not adopted yet is named again", async () => {
+  let tries = 0;
+  const late = fixture("claude", { hc: fakeHc({ over: { do: () => ({ code: ++tries < 3 ? 1 : 0, out: "" }) } }) }), r = await late.go();
+  expect(r.state).toBe("prompted");
+  expect(tries).toBe(3);
+});
+
+test("a tab name that never lands is tried six times, and the worker has started all the same", async () => {
+  const never = fixture("claude", { hc: fakeHc({ over: { do: { code: 1, out: "" } } }) }), n = await never.go();
+  expect(n.state).toBe("prompted");
+  expect(never.hc.calls.filter((c) => c.cmd === "herdr-app").length).toBe(6);
+});
+
 test("a name hc refuses gets one more try with the worker's id, and the record says the name it got", async () => {
   let tries = 0;
   const f = fixture("claude", { hc: fakeHc({ name: "other", over: { run: () => (++tries === 1 ? { code: 1, out: "" } : undefined) } }) });
@@ -147,6 +160,20 @@ test("a name hc refuses gets one more try with the worker's id, and the record s
   expect(names[0]).toBe("w1");
   expect(names[1]).toMatch(/^w1-[a-f0-9]{8}$/);
   expect(JSON.parse(readFileSync(join(runDir("w1"), "worker.json"), "utf8")).terminal_name).toBe(names[1]);
+});
+
+test("a long name hc refuses keeps hc's 32-character limit with the id added; a run with no address fails the launch", async () => {
+  const long = "a".repeat(32);
+  let tries = 0;
+  const f = fixture("claude", { name: long, hc: fakeHc({ name: "other", over: { run: () => (++tries === 1 ? { code: 1, out: "" } : undefined) } }) });
+  expect((await f.go()).state).toBe("prompted");
+  const names = f.hc.calls.filter((c) => c.args[0] === "run").map((c) => c.args[c.args.indexOf("--name") + 1]);
+  expect(names[0]).toBe(long);
+  expect(names[1]).toMatch(new RegExp(`^${"a".repeat(23)}-[a-f0-9]{8}$`));
+  expect(names[1].length).toBe(32);
+  const blank = fixture("claude", { name: "w2", hc: fakeHc({ name: "w2", over: { run: { code: 0, out: "{}" } } }) }), r = await blank.go();
+  expect([r.ok, r.state]).toEqual([false, "failed"]);
+  expect(blank.hc.calls.filter((c) => c.cmd === "herdr-app")).toEqual([]);
 });
 
 test("started means status working, or a turn already gone by; idle at turn 0 is only not started yet", async () => {

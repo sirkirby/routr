@@ -2,7 +2,7 @@
 // the decision model (its provider's key, or a local Ollama), and the config, and ends with the commands that fix what is missing. It writes nothing:
 // `routr setup` (lib/setup.mjs) does, from the same inspection.
 import { existsSync, lstatSync, readFileSync } from "node:fs";
-import { inCore } from "./presenter-watch.mjs";
+import { inCore } from "./backends.mjs";
 import { delimiter, join, win32 } from "node:path";
 import { CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
 import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";

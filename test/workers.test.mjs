@@ -1897,13 +1897,14 @@ test("watch follows a worker until it is cleaned up, with status only in a core 
   expect(l.ok).toBe(true);
   expect(w.run(["wait", "--name", "c3"]).state).toBe("finished");
   const follow = (extra) => Bun.spawn([process.execPath, SCRIPT, "watch", "--name", "c3"], { env: { ...w.env, ...extra }, stdout: "pipe", stderr: "pipe" });
-  const plain = follow({}), core = follow({ HC_TERMINAL_ID: "t3" });
+  // A herdr pane whose session was started from a core terminal has both names: herdr's session wins, so no status.
+  const plain = follow({}), core = follow({ HC_TERMINAL_ID: "t3" }), pane = follow({ HC_TERMINAL_ID: "t3", HERDR_ENV: "1" });
   await Bun.sleep(1500);
   expect(w.run(["cleanup", "--worker", "c3"]).state).toBe("removed");
-  const [a, b] = await Promise.all([new Response(plain.stdout).text(), new Response(core.stdout).text()]);
-  expect(await plain.exited).toBe(0);
-  expect(await core.exited).toBe(0);
-  for (const out of [a, b]) {
+  const [a, b, c] = await Promise.all([new Response(plain.stdout).text(), new Response(core.stdout).text(), new Response(pane.stdout).text()]);
+  for (const p of [plain, core, pane]) expect(await p.exited).toBe(0);
+  expect(c).not.toContain("\x1b]");
+  for (const out of [a, b, c]) {
     expect(out).toContain("routr worker c3: Claude Code");
     expect(out).toContain("report at ");
     expect(out).toContain("cleaned up");

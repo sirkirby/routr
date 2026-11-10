@@ -1,104 +1,12 @@
-// Workers in herdr-core: which path a lead takes, what routr asks of `hc`, and `routr watch`. No hc and no harness run.
+// Workers in herdr-core: what a harness keeps of a core terminal, `routr watch`, and doctor. No hc and no harness run.
 import { expect, test } from "bun:test";
-import { inCore, presentWorker, showWorker } from "../src/lib/presenter-watch.mjs";
 import { changes, statusReport } from "../src/lib/watch.mjs";
 import { KINDS, HARNESSES } from "../src/lib/harnesses.mjs";
 import { harnessEnv } from "../src/lib/runtime.mjs";
 
-test("a pane wins, a core terminal comes next, and anything else is plain headless", () => {
-  expect(inCore({ HC_TERMINAL_ID: "t7" })).toBe(true);
-  expect(inCore({ HC_TERMINAL_ID: "t7", HERDR_ENV: "1" })).toBe(false);
-  expect(inCore({ HERDR_ENV: "1" })).toBe(false);
-  expect(inCore({})).toBe(false);
-  expect(inCore({ HC_TERMINAL_ID: "" })).toBe(false);
-});
-
 test("a harness never takes itself for the lead's core terminal, and HC_SESSION, which chooses a core, stays", () => {
   const kept = harnessEnv({ HC_TERMINAL_ID: "t7", HC_TERMINAL_SOCKET: "/s", HC_SCOPE: "x", HC_SESSION: "mine" });
   expect(kept).toEqual({ HC_SESSION: "mine" });
-});
-
-// What `hc` and `herdr-app` are asked, answering as they were seen to (p50).
-const fake = (answers = {}) => {
-  const calls = [];
-  const run = async (cmd, args) => {
-    calls.push({ cmd, args });
-    const a = answers[args[0]];
-    if (a !== undefined) return typeof a === "function" ? a(calls) : a;
-    if (args[0] === "get") return { code: 0, out: JSON.stringify({ address: "t3", labels: { "herdr.space": "sp1", "herdr.tab": "tb1" } }) };
-    if (args[0] === "run") return { code: 0, out: JSON.stringify({ address: "t9", name: "routr-w1" }) };
-    return { code: 0, out: "{}" };
-  };
-  return { run, calls };
-};
-const show = (f, over = {}) => showWorker({ name: "w1", id: "abc", cwd: "/work", env: { HC_TERMINAL_ID: "t3", LEAD: "kept" }, run: f.run, self: (a) => ["/bin/routr", ...a], pause: async () => {}, ...over });
-
-test("a lead in the app gets a tab named for its worker, in its own space, running watch and nothing of the brief", async () => {
-  const f = fake();
-  expect(await show(f)).toEqual({ terminal: "t9", tab: "routr-abc" });
-  expect(f.calls.map((c) => [c.cmd, c.args[0]])).toEqual([["hc", "get"], ["hc", "run"], ["herdr-app", "do"]]);
-  expect(f.calls[0].args).toEqual(["get", "t3", "--json"]);
-  expect(f.calls[1].args).toEqual(["run", "--bg", "--json", "--name", "w1", "--cwd", "/work", "--outlive-parent", "--no-notify", "--rm",
-    "--label", "herdr.space=sp1", "--label", "herdr.tab=routr-abc", "--", "/bin/routr", "watch", "--name", "w1"]);
-  expect(f.calls[2].args).toEqual(["do", "tab.rename", "--id", "routr-abc", "--name", "w1"]);
-});
-
-test("a terminal takes the worker's own name, and its id only when hc refuses that one as taken", async () => {
-  const named = (f) => f.calls.filter((c) => c.args[0] === "run").map((c) => c.args[c.args.indexOf("--name") + 1]);
-  const f = fake();
-  await show(f, { name: "a".repeat(32) });
-  expect(named(f)).toEqual(["a".repeat(32)]);
-  // Taken: the same terminal again under a name of its own, within hc's limit.
-  let tries = 0;
-  const taken = fake({ run: () => (++tries === 1 ? { code: 1, out: "" } : { code: 0, out: JSON.stringify({ address: "t9" }) }) });
-  expect(await show(taken, { name: "a".repeat(32), id: "11111111ffff" })).toEqual({ terminal: "t9", tab: "routr-11111111ffff" });
-  expect(named(taken)).toEqual(["a".repeat(32), `${"a".repeat(23)}-11111111`]);
-  expect(named(taken)[1].length).toBe(32);
-  // A second refusal is the answer.
-  const refused = fake({ run: { code: 1, out: "" } });
-  expect(await show(refused)).toEqual({ code: "refused" });
-  expect(named(refused).length).toBe(2);
-});
-
-test("off the app there is no label to give, and nothing to name", async () => {
-  const f = fake({ get: { code: 0, out: JSON.stringify({ address: "t3", labels: {} }) } });
-  expect(await show(f)).toEqual({ terminal: "t9", tab: null });
-  expect(f.calls.map((c) => c.args[0])).toEqual(["get", "run"]);
-  expect(f.calls[1].args).not.toContain("--label");
-});
-
-test("a tab the app has not adopted yet is named again; one that never lands costs only its name", async () => {
-  let tries = 0;
-  const late = fake({ do: () => ({ code: ++tries < 3 ? 1 : 0, out: "" }) });
-  expect(await show(late)).toEqual({ terminal: "t9", tab: "routr-abc" });
-  expect(tries).toBe(3);
-  const never = fake({ do: null });
-  expect(await show(never)).toEqual({ terminal: "t9", tab: "routr-abc" });
-  expect(never.calls.filter((c) => c.cmd === "herdr-app").length).toBe(6);
-});
-
-test("hc missing, refusing or unreadable is a code, and nothing further is asked", async () => {
-  for (const [answers, code, calls] of [[{ get: null }, "not_available", 1], [{ get: { code: 3, out: "" } }, "refused", 1], [{ get: { code: 0, out: "no" } }, "unreadable", 1],
-    [{ run: { code: 1, out: "" } }, "refused", 3], [{ run: { code: 0, out: "{}" } }, "unreadable", 2]]) {
-    const f = fake(answers);
-    expect(await show(f)).toEqual({ code });
-    expect(f.calls.length).toBe(calls);
-  }
-  const f = fake();
-  expect(await show(f, { self: () => null })).toEqual({ code: "not_available" });
-});
-
-test("a watch terminal beside a headless worker says what it did, and failing to start costs only the terminal", async () => {
-  const shown = { worker: {}, steps: [], warnings: [], next: [] };
-  await presentWorker({ name: "w1", id: "abc", cwd: "/work", env: { HC_TERMINAL_ID: "t3" }, out: shown, run: fake().run, self: (a) => ["/bin/routr", ...a], pause: async () => {} });
-  expect(shown.worker.terminal).toBe("t9");
-  expect(shown.steps.map((s) => s.step)).toEqual(["terminal"]);
-  expect(shown.warnings).toEqual([]);
-  const left = { worker: {}, steps: [], warnings: [], next: [] };
-  await presentWorker({ name: "w1", id: "abc", cwd: "/work", env: { HC_TERMINAL_ID: "t3" }, out: left, run: fake({ run: { code: 1, out: "" } }).run, self: (a) => ["/bin/routr", ...a], pause: async () => {} });
-  expect(left.worker.terminal).toBeUndefined();
-  expect(left.warnings.join(" ")).toContain("did not start a terminal");
-  expect(left.next.map((n) => n.argv)).toEqual([["routr", "watch", "--name", "w1"]]);
 });
 
 const decoded = (s) => Object.fromEntries(s.slice("\x1b]7501;".length, -2).split(":").map((f) => f.split("=", 2)));
