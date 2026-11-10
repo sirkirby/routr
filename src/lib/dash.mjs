@@ -10,6 +10,7 @@ import { doNext } from "./next.mjs";
 import { answer, refusal } from "./output.mjs";
 import { CACHE_DIR, home, writeTextAtomic } from "./state-files.mjs";
 import { openInBrowser } from "./processes.mjs";
+import { HARNESSES, KINDS } from "./harnesses.mjs";
 
 const LEDGER_WHY = "The ledger could not be read: runs are not shown, and their counts are unknown";
 // The page carries this, and `--out` replaces a file only when the file already carries it.
@@ -32,8 +33,10 @@ export function dashRow(e) {
 export const dashRows = (entries) => latestRuns(entries).map(dashRow);
 
 // `<` becomes a JSON escape, so a name cannot close the script tag the JSON sits in. The page draws with textContent.
+// `names`: each harness's label, in the registry's order, which the page keeps for its accounts (a colour each, by key).
 export function dashHtml({ rows, at, project, unavailable = null }) {
-  const json = JSON.stringify({ rows, at, project, unavailable }).replace(/</g, "\\u003c");
+  const names = Object.fromEntries(KINDS.map((k) => [k, HARNESSES[k].label]));
+  const json = JSON.stringify({ rows, at, project, unavailable, names }).replace(/</g, "\\u003c");
   return page.replace("/*DATA*/", () => json);
 }
 

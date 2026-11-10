@@ -17,7 +17,7 @@ import { projectName } from "./ledger.mjs";
 import { fallbackAdvice } from "./output.mjs";
 import { executionFor } from "./backends.mjs";
 import { launchFailed } from "./launch-answer.mjs";
-import { command, launchPane, paneEnvOf, panePromptArgs, paneStartArgs, promptForLog, usualShell } from "./backend-pane.mjs";
+import { command, launchPane, paneConfigEnvArgs, paneEnvOf, panePromptArgs, paneStartArgs, promptForLog, usualShell } from "./backend-pane.mjs";
 import { client } from "./hc.mjs";
 import { home, NAME_RULE, WORKER_NAME } from "./state-files.mjs";
 import { selfCommand, spawnSelf } from "./processes.mjs";
@@ -78,7 +78,7 @@ export function parseLaunchArgs(args) {
 // Inject transport and time for tests; no test needs a live pane.
 // `ready(kind)`: null when the harness is signed in, or why not (harnesses.mjs). `settings()`: the user's config.
 async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms), now = () => performance.now(), env = process.env, ready = notReady, settings = () => loadConfig(),
-  cursorConfigSource = join(home(), ".cursor", "cli-config.json"), tempRoot = tmpdir(), models = (kind) => HARNESSES[kind].models?.(), spawn = spawnSelf, hc = client, self = selfCommand } = {}) {
+  cursorConfigSource, tempRoot = tmpdir(), models = (kind) => HARNESSES[kind].models?.(), spawn = spawnSelf, hc = client, self = selfCommand } = {}) {
   const out = { ok: false, state: "failed", kind: null, name: null, pane: null, cwd: resolve("."), model: null, effort: null,
     ran: [], next: [], start: { executable: null, argv: [], env: {} }, steps: [], warnings: [], prompt_chars: null, unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
@@ -95,7 +95,8 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     out.warnings.push(...(o.leadWarnings ?? []));
     Object.assign(out, { kind: o.kind ?? null, name: o.name, pane: o.pane ?? null, cwd: resolve(o.cwd ?? "."), model: o.model ?? null, effort: o.effort ?? null });
     if (!statSync(out.cwd).isDirectory()) throw new Error("--cwd must be a directory");
-    const privateDir = join(tempRoot, `routr-cursor-${randomUUID()}`);
+    // A harness's private config folder for this launch (its `privateConfig`): named for every launch, made only for one with it.
+    const privateDir = join(tempRoot, `routr-${o.kind}-${randomUUID()}`);
     // A harness that names its folder in its command (Antigravity's --add-dir) is planned for the worktree: a
     // placeholder until herdr has made it, then planned again for its path (issue #22: it was given the main checkout,
     // where a worker launched into its own worktree would have written).
@@ -103,7 +104,9 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     const p = planFor(o.worktree ? "<worktree-path>" : out.cwd);
     Object.assign(out, { start: { executable: p.executable, argv: p.argv, env: p.env }, warnings: [...out.warnings, ...p.warnings.filter((w) => !w.startsWith("Plan only:"))] });
     if (!o.model) out.next.push(doNext("Choose --model before launching"));
-    if (o.kind === "kiro" && o.effort && o.effort !== "auto") out.next.push(doNext("Check the model’s /effort panel in the pane"));
+    // A harness that keeps an explicit effort as the user's default (Kiro): the lead checks the effort in force.
+    const h = HARNESSES[o.kind];
+    if (h.remembersEffort && o.effort && o.effort !== h.autoEffort) out.next.push(doNext(`Check the model’s ${h.remembersEffort} panel in the pane`));
     const task = o["task-file"] != null ? readTask(resolve(o["task-file"])) : o.task;
     if (task != null && !task.trim()) throw new Error("The task must not be empty");
     const rules = o["rules-file"] != null ? readFileSync(resolve(o["rules-file"]), "utf8") : null;
@@ -143,13 +146,13 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         command(["pane", "process-info", "--pane", pane]),
         ...(o.pane ? [command(["pane", "run", pane, SHELLS[shell].cd(out.cwd)]),
           command(["pane", "read", pane, "--source", "visible"]), command(["pane", "process-info", "--pane", pane])] : []),
-        ...(o.kind === "cursor" && SHELLS[shell].cursorEnv ? [command(["pane", "run", pane, SHELLS[shell].cursorEnv(privateDir)])] : []),
+        ...(paneConfigEnvArgs(o, shell, privateDir, pane) ? [command(paneConfigEnvArgs(o, shell, privateDir, pane))] : []),
         command(startArgs(pane, Math.min(o.timeout, 30000))),
         command(["pane", "read", pane, "--source", "visible"]),
         command(["agent", "wait", pane, "--timeout", String(Math.min(1000, o.timeout))]),
         command(["pane", "read", pane, "--source", "visible"]),
         command(["agent", "get", pane]),
-        ...(o.kind === "cursor" ? [command(["agent", "rename", pane, o.name])] : []),
+        ...(HARNESSES[o.kind].privateConfig ? [command(["agent", "rename", pane, o.name])] : []),
         ...(prompt ? [promptForLog(promptArgs(pane, Math.max(1, Math.min(Math.floor(o.timeout / 2), 30000)))), command(["agent", "get", pane])] : []),
       ];
       step("plan", true, "No worker commands executed or worker files written. Pane ids, geometry, polling, timeouts and shell questions are resolved at launch. Environment, subscription settings and sign-in are not checked.");

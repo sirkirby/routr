@@ -50,12 +50,14 @@ export function shellFamily(name) {
   return "posix";
 }
 
-// What gets typed into a pane's shell, in that shell's own syntax (launch, and Cursor's usage read). Cursor gets a private config folder for the life of the
-// process. On a POSIX shell one command starts Cursor and removes the folder when it exits, however it exits (`cursor`).
-// On Windows, herdr sees only the shell in a pane's foreground, so a Cursor started that way is never tracked and its
-// readiness cannot be waited on (seen on Windows 11: `agent get` said not found while Cursor sat at its prompt). There
-// the shell is given the variable first (`cursorEnv`) and herdr starts and tracks Cursor itself, as for every other
-// kind; on PowerShell a watcher removes the folder when that shell is gone, cmd leaves it (one small file in %TEMP%).
+// What gets typed into a pane's shell, in that shell's own syntax (launch, and Cursor's usage read). A harness with a
+// private config folder (the registry's `privateConfig`: Cursor) gets it for the life of the process, named to it by
+// `variable`. On a POSIX shell one command starts the harness and removes the folder when it exits, however it exits
+// (`privateStart`). On Windows, herdr sees only the shell in a pane's foreground, so a Cursor started that way is never
+// tracked and its readiness cannot be waited on (seen on Windows 11: `agent get` said not found while Cursor sat at its
+// prompt). There the shell is given the variable first (`privateEnv`) and herdr starts and tracks the harness itself, as
+// for every other kind; on PowerShell a watcher removes the folder when that shell is gone, cmd leaves it (one small
+// file in %TEMP%). `variable` is the registry's own name (a test holds it to a plain identifier), never a user's text.
 // Every folder path typed into a shell goes through these, so it reaches the shell exactly or is refused.
 // PowerShell ends a single-quoted string at ' and also at the smart quotes U+2018 to U+201B, and reads any two in a row
 // as one: each is doubled (its tokenizer; a folder named "Chris’s" broke the line before). Checked by PowerShell's own
@@ -81,8 +83,8 @@ const cmdq = (s) => { if (!cmdTypable(s)) throw new Error(CMD_PATH); return `"${
 export const SHELLS = {
   posix: {
     cd: (dir) => `cd -- ${quote(dir)}`,
-    cursor: (dir, exe, argv) => ["env", `CURSOR_CONFIG_DIR=${dir}`, "sh", "-c",
-      `trap 'rm -rf -- "$CURSOR_CONFIG_DIR"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; ${[exe, ...argv].map(quote).join(" ")}`].map(quote).join(" "),
+    privateStart: (variable, dir, exe, argv) => ["env", `${variable}=${dir}`, "sh", "-c",
+      `trap 'rm -rf -- "$${variable}"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; ${[exe, ...argv].map(quote).join(" ")}`].map(quote).join(" "),
   },
   powershell: {
     cd: (dir) => `Set-Location -LiteralPath ${psq(dir)}`,
@@ -93,11 +95,11 @@ export const SHELLS = {
     // `;`-separated statements. A process WMI creates gets its own console, which showed before `-WindowStyle Hidden`
     // took effect; a Win32_ProcessStartup with ShowWindow = 0 (SW_HIDE) is the documented way to start it hidden. Not
     // yet confirmed on Windows 11. The watcher's path is a string inside $w's string, so it is quoted twice.
-    cursorEnv: (dir) => `$env:CURSOR_CONFIG_DIR=${psq(dir)}; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ${psEscape(psq(dir))} -Recurse -Force -ErrorAction SilentlyContinue"'; $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $si.ShowWindow = 0; ([wmiclass]'Win32_Process').Create($w, $null, $si) | Out-Null`,
+    privateEnv: (variable, dir) => `$env:${variable}=${psq(dir)}; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ${psEscape(psq(dir))} -Recurse -Force -ErrorAction SilentlyContinue"'; $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $si.ShowWindow = 0; ([wmiclass]'Win32_Process').Create($w, $null, $si) | Out-Null`,
   },
   cmd: {
     cd: (dir) => `cd /d ${cmdq(dir)}`,
-    cursorEnv: (dir) => `set ${cmdq(`CURSOR_CONFIG_DIR=${dir}`)}`,
+    privateEnv: (variable, dir) => `set ${cmdq(`${variable}=${dir}`)}`,
   },
 };
 

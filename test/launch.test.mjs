@@ -1240,13 +1240,13 @@ test("launch types each shell's own syntax: Cursor's private config is set and r
   expect(["powershell.exe", "pwsh", "cmd.exe", "CMD"].map(shellFamily)).toEqual(["powershell", "powershell", "cmd", "cmd"]);
   const dir = "C:\\Users\\u\\AppData\\Local\\Temp\\routr-cursor-1";
   // Windows shells only set the variable; herdr then starts Cursor itself, because it cannot see a Cursor a shell started.
-  expect(SHELLS.powershell.cursor).toBeUndefined();
+  expect(SHELLS.powershell.privateStart).toBeUndefined();
   // The line without the hidden startup ($si) was run on Windows 11: the watcher appeared, and the folder was gone once
   // the shell exited. The startup with ShowWindow = 0 is the documented way to hide its console; not yet confirmed there.
-  expect(SHELLS.powershell.cursorEnv(dir)).toBe(`$env:CURSOR_CONFIG_DIR='${dir}'; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ''${dir}'' -Recurse -Force -ErrorAction SilentlyContinue"'; $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $si.ShowWindow = 0; ([wmiclass]'Win32_Process').Create($w, $null, $si) | Out-Null`);
-  expect(SHELLS.cmd.cursorEnv(dir)).toBe(`set "CURSOR_CONFIG_DIR=${dir}"`);
+  expect(SHELLS.powershell.privateEnv("CURSOR_CONFIG_DIR", dir)).toBe(`$env:CURSOR_CONFIG_DIR='${dir}'; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ''${dir}'' -Recurse -Force -ErrorAction SilentlyContinue"'; $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $si.ShowWindow = 0; ([wmiclass]'Win32_Process').Create($w, $null, $si) | Out-Null`);
+  expect(SHELLS.cmd.privateEnv("CURSOR_CONFIG_DIR", dir)).toBe(`set "CURSOR_CONFIG_DIR=${dir}"`);
   expect(SHELLS.cmd.cd("C:\\a b")).toBe('cd /d "C:\\a b"');
-  expect(SHELLS.posix.cursor("/tmp/x", "cursor-agent", ["--trust"])).toMatch(/^env CURSOR_CONFIG_DIR=\/tmp\/x sh -c 'trap .*cursor-agent --trust'$/);
+  expect(SHELLS.posix.privateStart("CURSOR_CONFIG_DIR", "/tmp/x", "cursor-agent", ["--trust"])).toMatch(/^env CURSOR_CONFIG_DIR=\/tmp\/x sh -c 'trap .*cursor-agent --trust'$/);
   expect(SHELLS.posix.cd("/a b")).toBe("cd -- '/a b'");
 });
 
@@ -1263,7 +1263,7 @@ const psString = (line, at) => {
   }
   throw new Error(`Unterminated string in ${line}`);
 };
-// What each line hands PowerShell: the folder of `cd`, the variable `cursorEnv` sets, and the folder its watcher removes,
+// What each line hands PowerShell: the folder of `cd`, the variable `privateEnv` sets, and the folder its watcher removes,
 // read from the -Command text the watcher process gets once $w is built (with some pid for $PID).
 const psPaths = (cd, env) => {
   const set = "Set-Location -LiteralPath ";
@@ -1298,8 +1298,8 @@ test("a folder path typed into PowerShell reaches it exactly: ' and the four sma
   expect(ps.cd("C:\\it's Chris\u2019s")).toBe("Set-Location -LiteralPath 'C:\\it''s Chris\u2019\u2019s'");
   // The watcher's path sits in a string inside a string: quoted for the inner one, then each quote doubled for the outer.
   const dir = "C:\\Temp\\it's Chris\u2019s";
-  expect(ps.cursorEnv(dir)).toBe(`$env:CURSOR_CONFIG_DIR='C:\\Temp\\it''s Chris\u2019\u2019s'; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ''C:\\Temp\\it''''s Chris\u2019\u2019\u2019\u2019s'' -Recurse -Force -ErrorAction SilentlyContinue"'; $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $si.ShowWindow = 0; ([wmiclass]'Win32_Process').Create($w, $null, $si) | Out-Null`);
-  for (const path of QUOTED_PATHS) expect(psPaths(ps.cd(path), ps.cursorEnv(path))).toEqual({ cd: path, env: path, watcher: path });
+  expect(ps.privateEnv("CURSOR_CONFIG_DIR", dir)).toBe(`$env:CURSOR_CONFIG_DIR='C:\\Temp\\it''s Chris\u2019\u2019s'; $w = 'powershell -NoProfile -WindowStyle Hidden -Command "Wait-Process -Id ' + $PID + '; Remove-Item -LiteralPath ''C:\\Temp\\it''''s Chris\u2019\u2019\u2019\u2019s'' -Recurse -Force -ErrorAction SilentlyContinue"'; $si = ([wmiclass]'Win32_ProcessStartup').CreateInstance(); $si.ShowWindow = 0; ([wmiclass]'Win32_Process').Create($w, $null, $si) | Out-Null`);
+  for (const path of QUOTED_PATHS) expect(psPaths(ps.cd(path), ps.privateEnv("CURSOR_CONFIG_DIR", path))).toEqual({ cd: path, env: path, watcher: path });
 });
 
 // PowerShell's own parser, where it is installed (the Windows CI job has pwsh): each line is parsed, never run. $w is
@@ -1324,7 +1324,7 @@ test.skipIf(!PWSH)("PowerShell itself parses each typed line back to the exact f
   const { SHELLS } = await import("../src/lib/herdr.mjs");
   for (const path of QUOTED_PATHS) {
     const r = Bun.spawnSync([PWSH, "-NoProfile", "-NonInteractive", "-Command", PARSE_TYPED],
-      { env: { ...process.env, ROUTR_TYPED_CD: SHELLS.powershell.cd(path), ROUTR_TYPED_ENV: SHELLS.powershell.cursorEnv(path) } });
+      { env: { ...process.env, ROUTR_TYPED_CD: SHELLS.powershell.cd(path), ROUTR_TYPED_ENV: SHELLS.powershell.privateEnv("CURSOR_CONFIG_DIR", path) } });
     expect(r.stderr.toString()).toBe("");
     expect(JSON.parse(r.stdout.toString())).toEqual({ cd: path, env: path, watcher: path });
   }
@@ -1335,7 +1335,7 @@ test("a folder path with % or ! is never typed into cmd: it would expand even in
   expect(CMD_PATH).toBe("A cmd shell expands % and ! in a folder path even inside quotes, so routr will not type this one into it. Use a folder whose path has neither, or a pane running PowerShell.");
   for (const path of ["C:\\100%", "C:\\%PATH%", "C:\\hi!", "C:\\!x!"]) {
     expect(() => SHELLS.cmd.cd(path)).toThrow(CMD_PATH);
-    expect(() => SHELLS.cmd.cursorEnv(path)).toThrow(CMD_PATH);
+    expect(() => SHELLS.cmd.privateEnv("CURSOR_CONFIG_DIR", path)).toThrow(CMD_PATH);
   }
   expect(SHELLS.cmd.cd("C:\\it's ^&")).toBe('cd /d "C:\\it\'s ^&"');
 });

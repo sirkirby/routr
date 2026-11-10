@@ -11,7 +11,7 @@ import { connect, generations, MESSAGE_MAX, probe, removeEndpoint, socketPathFit
 import { groupAlive, HEADLESS_KINDS, headlessArgv, stateOf } from "./headless.mjs";
 import { FORMAT, runDir, unreadableWhy, WORKERS_DIR, workerOf } from "./worker-record.mjs";
 import { git, planWorktree } from "./worktree.mjs";
-import { privateCursorConfig, refuseInputs, refuseSandbox, refuseSettings, refuseTaken, sandboxOf, takeRun, worktreeRecord } from "./worker-start.mjs";
+import { makePrivateConfig, refuseInputs, refuseSandbox, refuseSettings, refuseTaken, sandboxOf, takeRun, worktreeRecord } from "./worker-start.mjs";
 import { HARNESSES, subagentDefaults } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext } from "./next.mjs";
 import { launchFailed } from "./launch-answer.mjs";
@@ -155,7 +155,7 @@ async function startWorker(o, out, { prompt, env, settings, ready, spawn, checkL
       ...worktreeRecord(wt) };
     writeJsonAtomic(join(dir, "worker.json"), w, { mkdir: false, mode: 0o600 }); // whole: a reader never sees it half written
     writeSecret(dir);
-    if (o.kind === "cursor") privateCursorConfig(dir);
+    makePrivateConfig(o.kind, dir);
   } catch (e) { await unreserve(); throw e; }
   out.worker = { name: o.name, backend: "headless", run: dir, session: null };
   step("reserve", true, `Made ${dir} for ${o.name}`);

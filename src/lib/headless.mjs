@@ -43,7 +43,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, probe, removeEndpoint, serve } from "./channel.mjs";
 import { FORMAT, readWorker, runDir } from "./worker-record.mjs";
-import { HARNESSES, plan, subagentDefaults } from "./harnesses.mjs";
+import { configEnv, HARNESSES, plan, privateConfigDir, subagentDefaults } from "./harnesses.mjs";
 import { CARRIERS, savedCarriers, workerEnv } from "./worker-env.mjs";
 import { installedAt, probe as collect, start, stop } from "./processes.mjs";
 import { readJsonFile, writeJsonAtomic } from "./state-files.mjs";
@@ -224,6 +224,8 @@ const readyWithin = (ready) => Promise.race([ready, new Promise((r) => setTimeou
 //     took it is then not known, so it is never sent again on its own); null when it never got it (its input closed)
 //   line(l): one line of its output as an event (session, turn, tool, tasks, activity, result), or null
 //   open(): whether it can take more input; done(): nothing more to say to it, so it ends
+// `processPerTurn`: each turn is a process of its own that resumes the session (Cursor's `-p`), so every process starts
+// with its own turn's trace context, never the launch's saved one.
 export const ADAPTERS = {
   claude: {
     argv: ({ model, effort, session }) => [...STREAM, ...plan({ kind: "claude", model, effort }).argv, ...(session ? ["--resume", session] : [])],
@@ -366,7 +368,7 @@ export const ADAPTERS = {
   cursor: {
     // As in a pane: --yolo --trust and the model id (its effort in it), on the run folder's private config copy.
     argv: ({ model, effort, session }) => ["-p", "--output-format", "stream-json", ...plan({ kind: "cursor", model, effort }).argv, ...(session ? ["--resume", session] : [])],
-    env: (dir) => ({ CURSOR_CONFIG_DIR: join(dir, "cursor-config") }),
+    processPerTurn: true,
     connect: (c) => {
       // The task in, and the input closed: Cursor starts once it has read to the end. A message while it runs waits in
       // the holder, and runs as the next turn, in a new process resuming the session (one turn each).
@@ -527,12 +529,12 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       const answer = (r) => { if (!answered) { answered = true; resolve(r); } };
       beginTurn(carried, carried ? 0 : 1);
       // Environment records the cause of this process, never a later message into an existing process.
-      const processCarriers = w.kind === "cursor" || st.turn > 1 || w.launch == null ? turnCarriers() : savedCarriers(w.carriers).carriers;
+      const processCarriers = ADAPTERS[w.kind].processPerTurn || st.turn > 1 || w.launch == null ? turnCarriers() : savedCarriers(w.carriers).carriers;
       let c, h;
       try {
         const defaults = { kind: w.kind, subagentModel: w.subagent_model, subagentEffort: w.subagent_effort };
         c = run(HARNESSES[w.kind].executable, headlessArgv({ ...defaults, model: w.model, effort: w.effort, session, cwd: w.cwd }),
-          { cwd: w.cwd, env: workerEnv(processCarriers, { ...ADAPTERS[w.kind].env?.(dir), ...subagentDefaults(defaults).env }), stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
+          { cwd: w.cwd, env: workerEnv(processCarriers, { ...configEnv(w.kind, privateConfigDir(w.kind, dir)), ...subagentDefaults(defaults).env }), stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
       } catch { endTurn("not_started", null); answer({ code: "failed", why: "harness_not_started" }); return settle(); }
       child = c;
       // What it says, as events: bound to this process, and ignored once it has finished.

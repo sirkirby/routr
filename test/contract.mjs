@@ -1,6 +1,6 @@
 // Every existing command scenario also checks the public envelope and absence of retired fields.
 import { expect } from "bun:test";
-import { USAGE_BY_HAND } from "../src/lib/usage-failure.mjs";
+import { HARNESSES } from "../src/lib/harnesses.mjs";
 import * as commands from "../src/lib/commands.mjs";
 import { launch as launchCommand } from "../src/lib/launch.mjs";
 import { cleanup as cleanupCommand } from "../src/lib/cleanup.mjs";
@@ -57,7 +57,7 @@ export function contract(r, command = "cleanup") {
   const steps = r.next.map((n) => n.why).join(" ");
   if (r.mode === "dispatch" && r.unavailable.length) expect(steps).toMatch(/tell the user what was unavailable/i);
   for (const u of r.unavailable.filter((u) => u.part === "usage")) {
-    if (USAGE_BY_HAND[u.subscription]) expect(r.next).toContainEqual(expect.objectContaining({ template: `--headroom ${u.subscription}=<share left>` }));
+    if (HARNESSES[u.subscription]?.usage.byHand) expect(r.next).toContainEqual(expect.objectContaining({ template: `--headroom ${u.subscription}=<share left>` }));
     if (u.code === "internal_error") expect(steps).toMatch(/read capacity yourself/i);
   }
   if (r.level === "basic") expect(steps).not.toMatch(/choose a lower level/i);

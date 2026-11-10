@@ -20,6 +20,11 @@ _Avoid_: agent, subagent (a subagent is what a worker spawns inside its own harn
 A coding agent CLI the user already has installed and signed in: Claude Code, Codex, Cursor, Antigravity or Kiro.
 _Avoid_: tool, provider (a provider is where a decision model runs)
 
+**Harness registry**:
+The one place routr knows a harness: one entry each, holding how to start it, read its sign-in and usage, and what sets
+it apart, as properties named for the reason. Beside it sit only the harness's own protocol work: its headless adapter
+and the parsing inside its usage reader.
+
 ## Where a worker runs
 
 **Backend**:

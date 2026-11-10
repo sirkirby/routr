@@ -11,6 +11,7 @@
   color-scheme: light;
   --page: #f9f9f7; --surface: #fcfcfb; --ink: #0b0b0b; --ink2: #52514e; --muted: #6f6d68;
   --grid: #e1e0d9; --base: #c3c2b7; --ring: rgba(11,11,11,.10);
+  /* One colour per harness, by its registry key, here and in the dark theme: a test holds each. */
   --claude: #2a78d6; --codex: #eb6834; --cursor: #1baf7a; --agy: #eda100; --kiro: #e87ba4; --other: #898781;
   --same: #c3c2b7; --up: #2a78d6; --down: #e34948;
   --seq-0: #f0efec; --seq-1: #cde2fb; --seq-2: #9ec5f4; --seq-3: #5598e7; --seq-4: #256abf; --seq-5: #104281;
@@ -88,8 +89,8 @@ footer li { margin-bottom: 2px; }
 <div id="tip"></div>
 <script type="application/json" id="data">/*DATA*/</script>
 <script>
-const { rows: ALL, at, project: PROJECT = null, unavailable = null } = JSON.parse(document.getElementById("data").textContent);
-const KINDS = ["claude", "codex", "cursor", "agy", "kiro"], NAMES = { claude: "Claude Code", codex: "Codex", cursor: "Cursor", agy: "Antigravity", kiro: "Kiro" };
+const { rows: ALL, at, project: PROJECT = null, unavailable = null, names: NAMES = {} } = JSON.parse(document.getElementById("data").textContent);
+const KINDS = Object.keys(NAMES);
 const LV = { basic: 0, standard: 1, strong: 2 }, LEVELS = ["basic", "standard", "strong"], DAY = 864e5;
 const $ = (id) => document.getElementById(id);
 const el = (tag, attrs = {}, ...kids) => { const n = document.createElement(tag); for (const [k, v] of Object.entries(attrs)) k === "text" ? (n.textContent = v) : n.setAttribute(k, v); n.append(...kids); return n; };

@@ -11,8 +11,8 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { FORMAT, readWorkerAt, runDir, WORKER_LABEL } from "./worker-record.mjs";
 import { planWorktree } from "./worktree.mjs";
-import { cursorConfigOf, privateCursorConfig, refuseInputs, refuseSandbox, refuseSettings, refuseTaken, takeRun, worktreeRecord } from "./worker-start.mjs";
-import { HARNESSES, subagentDefaults, terminalPlan } from "./harnesses.mjs";
+import { makePrivateConfig, refuseInputs, refuseSandbox, refuseSettings, refuseTaken, takeRun, worktreeRecord } from "./worker-start.mjs";
+import { HARNESSES, privateConfigDir, subagentDefaults, terminalPlan } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { launchFailed, STARTUP_INPUT } from "./launch-answer.mjs";
 import { actHc, client, getTerminal, isAddress, isFinished, statusKind, statusWord, turnOf } from "./hc.mjs";
@@ -125,7 +125,7 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
     out.ran.push(displayCommand([h.executable, ...shown.argv]));
     out.prompt_chars = text.length;
     writeFileSync(file, text, { flag: "wx", mode: 0o600 });
-    if (o.kind === "cursor") privateCursorConfig(dir);
+    makePrivateConfig(o.kind, dir);
     w = { format: FORMAT, id, name: o.name, backend: "terminal", kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, created_at: new Date().toISOString(), carriers: found.carriers,
       terminal_name: o.name, config: locations,
       ...(o["subagent-model"] ? { subagent_model: o["subagent-model"] } : {}), ...(o["subagent-effort"] ? { subagent_effort: o["subagent-effort"] } : {}),
@@ -182,7 +182,7 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
 }
 
 // ---- the runner: `routr workers --run <name>`, the program in the worker's terminal -----------------------------------
-const planOf = (w, dir) => ({ kind: w.kind, model: w.model, effort: w.effort ?? undefined, cwd: w.cwd, subagentModel: w.subagent_model, subagentEffort: w.subagent_effort, cursorConfigDir: cursorConfigOf(dir) });
+const planOf = (w, dir) => ({ kind: w.kind, model: w.model, effort: w.effort ?? undefined, cwd: w.cwd, subagentModel: w.subagent_model, subagentEffort: w.subagent_effort, cursorConfigDir: privateConfigDir(w.kind, dir) });
 // What the runner wrote: when it started the harness, and how that ended. Launch and cleanup read it.
 const runFile = (name) => join(runDir(name), RUN_FILE);
 export const runRecord = (name) => readJsonFile(runFile(name));
