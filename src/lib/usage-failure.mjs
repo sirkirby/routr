@@ -32,12 +32,3 @@ export const staleReaders = (rows, config = {}) => rows
   .filter((r) => r.failure && r.signedIn !== false && r.headroom == null && r.class !== "metered" && config.subscriptions?.[r.pool]?.billing !== "metered"
     && r.ageSec != null && r.ageSec >= STALE_SEC)
   .map((r) => ({ pool: r.pool, warning: warning("usage_stale", `${r.pool}'s usage has not been read for ${Math.round(r.ageSec / 3600)} h, and its last try failed (${r.failure.code}), so remaining capacity is unknown: an update of ${r.pool} or herdr may have changed what routr reads`) }));
-
-// Shared by reader diagnostics and command next steps; never tucked into a ranked row's note.
-export const USAGE_BY_HAND = {
-  cursor: 'run `cursor-agent`, type /usage, read "Included N% used", and pass --headroom cursor=<1 - N/100>',
-  kiro: 'run `kiro-cli chat --no-interactive /usage`, read "Credits (X of Y covered in plan)", and pass --headroom kiro=<1 - X/Y>',
-  claude: 'open Claude Code and read /usage, then pass --headroom claude=<share left>',
-  codex: 'open Codex and read /status, then pass --headroom codex=<share left>',
-  agy: 'run `agy` and read /usage, then pass --headroom agy=<share left>',
-};

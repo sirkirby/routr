@@ -1,16 +1,26 @@
 // Everything routr knows about each harness, in one place: adding a harness is one entry here (and its row in
-// references/harnesses.md). Launch flags are measured; see references/harnesses.md.
+// references/harnesses.md). Launch flags are measured; see references/harnesses.md. Every field below that the rest of
+// routr reads is checked on every entry by a test (FIELDS in test/harnesses.test.mjs), so a new harness missing one fails.
 //   label, executable: how it is named to a person, and the command that starts it. installAs: how the install hint
-//     names it ("Cursor (cursor-agent)": the command, where the name does not already say it).
+//     names it ("Cursor (cursor-agent)": the command, where the name does not already say it). shortLabel: its name in a
+//     sentence that names several, or names it again ("Claude", where the label is "Claude Code").
 //   app: the name it gives itself in program status, which herdr-core shows (routr-lab p50; Cursor reports none, so
 //     "cursor", the name of its icon in the Herdr app).
 //   skills: the skills folder it reads, when not the shared ~/.agents/skills (routr's skills are linked there on
 //     install, when the folder above it exists: that harness is set up on this machine).
 //   permissions, model, effort: its permissive flags and model/effort syntax. effortValue(level): the value passed
 //     after `effort`, when not the level itself. autoEffort: the effort that means "the model's own default", passed
-//     as no flag at all. noEffort: why a separate effort is refused. dirFlag: the flag naming the working directory,
-//     for a harness that ignores its current one. env(dir): its environment, given a private config folder.
-//     notes(model, effort): what launch tells the orchestrator about this start.
+//     as no flag at all, and autoEffortMeans what choosing it means, as setup says. noEffort: why a separate effort is refused. dirFlag: the flag naming the working directory,
+//     for a harness that ignores its current one. notes(model, effort): what launch tells the orchestrator about this start.
+//   remembersEffort: it keeps an explicit effort as the user's default for that model, so launch asks the lead to check
+//     the effort in force in this panel of its screen (Kiro's /effort: above its entry).
+//   privateConfig: it rewrites its own config as it runs, so every run of it (a worker's, or routr's own usage read)
+//     runs on a private copy: `file`, under home, copied into a folder of the run's own (privateConfigCopy) that
+//     `variable` names to it (configEnv), removed when the run ends. In a pane, the folder is typed into the pane's own
+//     shell, which removes it when the harness exits (herdr.mjs's SHELLS): on a POSIX shell the shell's own command
+//     starts it, not herdr's agent start, so herdr learns its name after.
+//   otelProvider: its OpenTelemetry `gen_ai.provider.name` on a headless worker's turn (docs/opentelemetry.md): routr's
+//     best knowledge of the platform it runs on, not the model's author.
 //   subagents({ model, effort }): optional defaults for unnamed subagent choices, as argv/env/warnings. Absent means
 //     no setting for all subagents was found; launch refuses either default rather than silently ignoring it.
 //   trust(dir): its own flags that trust the worker's folder for this run only and save nothing, where it has them:
@@ -22,8 +32,8 @@
 //     none; herdr reports it blocked). unknownModelRunsDefault: it runs its default model on an id it does not know,
 //     without a word, so launch checks the id against its own list (models()) first.
 //   list: its own command that lists model ids; models(): that list, read now (routr keeps no model list of its own).
-//     openList: the list is a sample, not every id it takes (Claude Code names its aliases; its help says it also takes a model's full name),
-//     so an id not on it is not refused.
+//     openList: the list is a sample, not every id it takes, so an id not on it is not refused; it says what else it
+//     takes (Claude Code names its aliases; its help says it also takes a model's full name).
 //     efforts(model): the effort levels it accepts for that model, read from the harness too, or null when it does
 //     not say (a harness without `effort` has none: its model ids carry it).
 //   auth: how to tell it is signed in (signin.mjs): `check` is its own status command, which never starts a sign-in,
@@ -48,12 +58,19 @@
 //   promptFlag: the flag before a first message given as an argument, where it is not a plain
 //     positional (Antigravity's `-i`; measured 2026-11-03 for all five).
 //   noStatus: it reports no status to herdr-core (Cursor 2026.10.22, measured), so only its own `hc send` says it finished.
-//   suggested: the settings setup offers for it. usage: `read` runs on every call and must be fast; `check` takes a
-//     fresh reading now and prints it raw (`routr usage <name>`). Cursor's and Kiro's readers bring herdr's terminal and
+//   suggested: the settings setup offers for it. usage: `source` names its reader; `read` runs on every call and must be
+//     fast; `check` takes a fresh reading now and prints it raw (`routr usage <name>`). `byHand`: how a person reads its
+//     usage when routr cannot (said with a failed read, and as a next step). `windows`: the names of the windows its
+//     reader produces, the only ones OpenTelemetry export sends. `readHelp`, `checkHelp`: what help says of how it is
+//     read, and of what `check` does. `needsHerdrOn`: the platforms where its reader needs herdr, which doctor asks for.
+//     `unexplainedNoWindows`: its reader can answer with no windows for a reason routr cannot tell (a seat with no quota,
+//     or a plan routr has not seen send them), so doctor asks the person to say how it bills. Cursor's and Kiro's readers bring herdr's terminal and
 //     their snapshot rules with them, so they load when first read: help, --version, and every command that reads no
 //     usage stay light. (Literal import paths, so the compiled binary still bundles them.)
 import { warning } from "./warnings.mjs";
-import { dirname } from "node:path";
+import { chmodSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
+import { home } from "./state-files.mjs";
 import { run } from "./processes.mjs";
 import { billingFromSignIn, keptSignIn, signInHint, signInState } from "./signin.mjs";
 import { cachedReadings, keepReadings } from "./usage-cache.mjs";
@@ -127,7 +144,7 @@ export function claudeBilling(out) {
 }
 
 export const HARNESSES = {
-  claude: { label: "Claude Code", executable: "claude", app: "claude-code", installAs: "Claude Code", skills: ".claude/skills",
+  claude: { label: "Claude Code", executable: "claude", app: "claude-code", installAs: "Claude Code", shortLabel: "Claude", skills: ".claude/skills", otelProvider: "anthropic",
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
     // Measured 2.1.316, 2026-11-02: plain Agent and /code-review; both explicit spawn settings beat a differing pair.
     subagents: ({ model, effort }) => ({ env: { ...(model ? { CLAUDE_CODE_SUBAGENT_MODEL: model } : {}), ...(effort ? { CLAUDE_CODE_SUBAGENT_EFFORT: effort } : {}) },
@@ -135,7 +152,7 @@ export const HARNESSES = {
     // `"loggedIn": false` and exit 1 when signed out.
     auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`", billing: (out) => claudeBilling(out) },
     // Its help names the latest aliases (fable, opus, sonnet on 2.1.283); its help says `--model` also takes a model's full name.
-    models: async () => modelsInHelp(await readClaudeHelp()), openList: true,
+    models: async () => modelsInHelp(await readClaudeHelp()), openList: "takes a model's full name, which it does not list",
     efforts: async () => effortsInHelp(await readClaudeHelp()),
     // Measured 2.1.284, 2026-09-28: it asks whether to trust a folder not under one already trusted (herdr: blocked at
     // startup), and a git worktree counts as its main repository: a worktree in ~/.herdr/worktrees of a repository under
@@ -148,8 +165,13 @@ export const HARNESSES = {
     // drops the user's settings. `--strict-mcp-config` with no --mcp-config starts none of their MCP servers, which
     // took the read from 7.1-8.8 s to 4.4-5.2 s wall. `--bare` is no use: it skips the keychain and shows no numbers.
     quiet: ["--settings", '{"disableAllHooks":true}', "--strict-mcp-config"],
-    usage: { source: "claude /usage", read: (o) => readClaude({ ...o, quiet: HARNESSES.claude.quiet }) } },
-  codex: { label: "Codex", executable: "codex", app: "codex", installAs: "Codex", core: { interactive: ["--no-daemon"] },
+    usage: { source: "claude /usage", read: (o) => readClaude({ ...o, quiet: HARNESSES.claude.quiet }),
+      // Its /usage lines and its statusline's rate_limits (usage.mjs); `spend_limit` behind a Claude apps gateway.
+      windows: ["five_hour", "seven_day", "spend_limit"], byHand: "open Claude Code and read /usage, then pass --headroom claude=<share left>",
+      readHelp: "Claude Code's is read from its own /usage (hooks and MCP servers off), or from `routr statusline`'s snapshot when one is under 5 minutes old.",
+      // Its /usage, or its statusline after a prompt, showed no windows: routr does not guess which plan that is.
+      unexplainedNoWindows: true } },
+  codex: { label: "Codex", executable: "codex", app: "codex", installAs: "Codex", shortLabel: "Codex", otelProvider: "openai", core: { interactive: ["--no-daemon"] },
     // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
     // "Update available" just after herdr reported it ready, and the Enter that submitted the task chose "Update now".
     // `--dangerously-bypass-hook-trust`: a hook the user has not trusted in Codex (new, or changed since) opens "Hooks need
@@ -176,11 +198,14 @@ export const HARNESSES = {
     models: async () => (await readCodexModels())?.filter((m) => m.visibility !== "hide").map((m) => m.slug ?? m.id).filter(Boolean) ?? null,
     efforts: async (model) => (await readCodexModels())?.find((m) => (m.slug ?? m.id) === model)?.supported_reasoning_levels?.map((e) => e.effort ?? e) ?? null,
     suggested: { hardest_work: "strong", reserve: 0.2 },
-    usage: { source: "app-server", read: readCodexLive } },
-  cursor: { label: "Cursor", executable: "cursor-agent", app: "cursor", installAs: "Cursor (cursor-agent)", noStatus: true,
+    // Its rate limits' primary and secondary, a member's monthly cap, and a spend control's stop (codexSnapshot).
+    usage: { source: "app-server", read: readCodexLive, windows: ["primary", "secondary", "monthly_cap", "spend_limit"],
+      byHand: "open Codex and read /status, then pass --headroom codex=<share left>" } },
+  cursor: { label: "Cursor", executable: "cursor-agent", app: "cursor", installAs: "Cursor (cursor-agent)", shortLabel: "Cursor", noStatus: true, otelProvider: "cursor",
     permissions: ["--yolo", "--trust"], model: "--model", list: "cursor-agent models",
     noEffort: "cursor has no separate --effort flag; choose a model id with the desired effort",
-    env: (dir) => ({ CURSOR_CONFIG_DIR: dir ?? "<private-cursor-config-dir>" }),
+    // Seen 2026-09-25: it rewrote cli-config.json (its default model) and added a project folder for the working directory.
+    privateConfig: { file: ".cursor/cli-config.json", variable: "CURSOR_CONFIG_DIR" },
     notes: () => [warning("cursor_private_config", "Cursor changes its configured default model; launch uses a private copy of ~/.cursor/cli-config.json.")],
     // Its own long-lived helper, one per project folder, which outlives a headless turn in that turn's process group, and
     // the language server it starts (observed 2026-10-22: references/harnesses.md, "Cursor headless"). Cursor installs as
@@ -196,11 +221,15 @@ export const HARNESSES = {
     suggested: { hardest_work: "standard", reserve: 0.1 },
     // `check`: `routr usage cursor` reads it now; `fields` are what that answer's `reading` keeps, `used` its headline.
     usage: { source: "cursor /usage", read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor({ ...o, ready: ready("cursor") }),
-      fields: ["plan", "included_used_pct", "auto_used_pct", "api_used_pct", "headroom"], used: (r) => `Included ${r.included_used_pct}% used` } },
+      fields: ["plan", "included_used_pct", "auto_used_pct", "api_used_pct", "headroom"], used: (r) => `Included ${r.included_used_pct}% used`, windows: ["included"],
+      byHand: 'run `cursor-agent`, type /usage, read "Included N% used", and pass --headroom cursor=<1 - N/100>',
+      checkHelp: "takes a fresh reading of Cursor's own /usage screen now, in a private herdr session",
+      // Its /usage screen opens in routr's own terminal on macOS and Linux, and in a private herdr session on Windows.
+      needsHerdrOn: ["win32"] } },
   // Skills: measured 2026-10-05 on agy 1.2.17: asked to list its skills, it named one placed in ~/.gemini/config/skills
   // and none of those in ~/.gemini/antigravity-cli/skills (the folder its web docs name) or ~/.agents/skills (it reads
   // only a workspace's .agents/skills). Its bundled guide and its binary name ~/.gemini/config/skills too.
-  agy: { label: "Antigravity", executable: "agy", app: "antigravity", installAs: "Antigravity (agy)", skills: ".gemini/config/skills", promptFlag: "-i",
+  agy: { label: "Antigravity", executable: "agy", app: "antigravity", installAs: "Antigravity (agy)", shortLabel: "Antigravity", skills: ".gemini/config/skills", promptFlag: "-i", otelProvider: "gcp.gen_ai",
     // Measured 2026-11-03 in a core terminal: it reports blocked at this question.
     startup: "Antigravity asks whether to trust a folder it has not been told to trust, and waits at that question.",
     permissions: ["--dangerously-skip-permissions"], model: "--model", list: "agy models", dirFlag: "--add-dir",
@@ -210,7 +239,8 @@ export const HARNESSES = {
     auth: { check: ["models"], signedIn: (out, code) => code === 0 && !/\bsign in\b/i.test(out), signIn: "run `agy` and sign in" },
     models: () => lines("agy", ["models"], /^([a-z0-9][\w.-]+)\t/i),
     suggested: { hardest_work: "standard", reserve: 0.1 },
-    usage: { source: "agy /usage", read: readAgy } },
+    // Its Gemini pool's buckets (readAgy); a bucket it names otherwise is `unknown`, never sent.
+    usage: { source: "agy /usage", read: readAgy, windows: ["5h", "weekly"], byHand: "run `agy` and read /usage, then pass --headroom agy=<share left>" } },
   // A pane stays on V2, `--v2 chat --trust-tools=*`: `--trust-tools=*` allows every built-in tool (its /tools list: all 14
   // "allowed") and asks nothing (Kiro CLI 2.24.1, measured 2026-09-28; MCP tools not measured; `--v2` from its docs, not yet
   // measured). herdr's rules do not read V3's questions: measured 2026-11-04 (kiro-cli 3.0.0, herdr 0.9.5), herdr read V3's
@@ -228,8 +258,8 @@ export const HARNESSES = {
   // `--effort` is per model (kiro.dev/docs/models/effort: the newer Claude and GPT models); a model without it, `auto`
   // included, shows effort "n/a" and ignores the flag silently (measured). Kiro remembers an explicit level as the
   // user's default for that model (its docs), so `auto`, the default, passes none and the model decides.
-  kiro: { label: "Kiro", executable: "kiro-cli", app: "kiro-cli", installAs: "Kiro (kiro-cli)", skills: ".kiro/skills", // Kiro reads only ~/.kiro/skills (measured)
-    interactive: ["--v2", "chat"], permissions: ["--trust-tools=*"], model: "--model", effort: "--effort", autoEffort: "auto", list: "kiro-cli chat --list-models",
+  kiro: { label: "Kiro", executable: "kiro-cli", app: "kiro-cli", installAs: "Kiro (kiro-cli)", shortLabel: "Kiro", skills: ".kiro/skills", otelProvider: "kiro", // Kiro reads only ~/.kiro/skills (measured)
+    interactive: ["--v2", "chat"], permissions: ["--trust-tools=*"], model: "--model", effort: "--effort", autoEffort: "auto", autoEffortMeans: "the model decides; nothing is saved in Kiro", list: "kiro-cli chat --list-models",
     // 2026-09-26: an unknown id ran its default model without a word (its footer then showed no model). Checked
     // against `kiro-cli chat --list-models` before launch, not read from its screen; drop once Kiro refuses one.
     unknownModelRunsDefault: true,
@@ -238,6 +268,7 @@ export const HARNESSES = {
       startup: "routr starts Kiro V3 trusting the worker's folder for this launch only (--trust-workspace, not saved), so it asks no folder-trust question. It may ask whether to run in trust-all-tools mode, for the user to answer: No, exit is selected; Yes, and don't ask again saves the answer, and later starts ask nothing." },
     // Its docs: "start with --effort, and Kiro remembers it for future sessions". Not measured: no model on the
     // measured account took effort.
+    remembersEffort: "/effort",
     notes: (model, effort) => [...(effort ? [warning("kiro_effort_default", `Kiro remembers --effort as the user's default for ${model ?? "this model"} in ~/.kiro/settings/cli.json (its docs say so), and a model without effort ignores it silently.`)] : [])],
     // `{"accountType":"SocialGitHub","email":…}` / `{"account":null}` (exit 1). Any `chat` command opens a sign-in.
     auth: { check: ["whoami", "--format", "json"], signedIn: (out, code) => code === 0 && /"email"\s*:\s*"[^"]/.test(out), signIn: "run `kiro-cli login`" },
@@ -249,7 +280,9 @@ export const HARNESSES = {
     suggested: { hardest_work: "standard", reserve: 0.1, default_model: "auto", default_effort: "auto" },
     // A read that leaves its usage session behind says so in `note`: `left` is the warning and the step for it.
     usage: { source: "kiro /usage", read: async (o) => (await import("./kiro-usage.mjs")).readKiro(o), check: async (o) => (await import("./kiro-usage.mjs")).refreshKiro({ ...o, ready: ready("kiro") }),
-      fields: ["plan", "credits_used", "credits_limit", "used_pct", "resets_at", "unrecognized_lines", "headroom"], used: (r) => `${r.used_pct}% used`,
+      fields: ["plan", "credits_used", "credits_limit", "used_pct", "resets_at", "unrecognized_lines", "headroom"], used: (r) => `${r.used_pct}% used`, windows: ["monthly_credits"],
+      byHand: 'run `kiro-cli chat --no-interactive /usage`, read "Credits (X of Y covered in plan)", and pass --headroom kiro=<1 - X/Y>',
+      checkHelp: "runs Kiro's /usage now and deletes the empty session it leaves",
       left: { warning: () => warning("kiro_session_left", "Kiro kept an empty usage session"), next: "Inspect Kiro's saved sessions to remove the empty usage session" } } },
 };
 export const KINDS = Object.keys(HARNESSES);
@@ -263,6 +296,23 @@ const KIND_ERROR = `--kind must be ${KINDS.slice(0, -1).join(", ")}, or ${KINDS.
 export const kindError = () => new Error(KIND_ERROR);
 // The harnesses that take a reasoning effort of their own; Cursor and Antigravity model ids carry it.
 export const TAKES_EFFORT = KINDS.filter((n) => HARNESSES[n].effort);
+// A harness with a `privateConfig`: the environment naming its private folder `dir` to it (a placeholder in a plan made
+// without one), and the folder a run folder keeps it in. Every other harness has none.
+export const configEnv = (kind, dir) => { const c = HARNESSES[kind]?.privateConfig; return c ? { [c.variable]: dir ?? `<private-${kind}-config-dir>` } : {}; };
+export const privateConfigDir = (kind, runDir) => join(runDir, `${kind}-config`);
+// Its private copy: `dir` made for the owner only, and its config file copied in, readable by the owner only, from
+// `from` (its own file under home, unless a test or a read names another). Nothing is left when the copy fails, and it
+// is never run on its account's own config instead. `failed(error, from)`: the error to throw then; by default one that
+// says to sign in, which writes that file (a pane launch keeps the file system's own). A folder that cannot be removed
+// never replaces that error: the caller's own cleanup tries again and says what was left (a pane's `cursor_config_left`).
+const signInFirst = (kind) => (_, from) => new Error(`${HARNESSES[kind].label} has no config at ${from}: sign in with \`${HARNESSES[kind].executable}\` first`);
+export function privateConfigCopy(kind, dir, { from = join(home(), HARNESSES[kind].privateConfig.file), failed = signInFirst(kind), remove = rmSync } = {}) {
+  const to = join(dir, basename(HARNESSES[kind].privateConfig.file));
+  mkdirSync(dir, { mode: 0o700 });
+  try { copyFileSync(from, to); chmodSync(to, 0o600); }
+  catch (e) { try { remove(dir, { recursive: true, force: true }); } catch {} throw failed(e, from); }
+  return dir;
+}
 // Where routr's skills are installed: the shared folder, then each harness's own.
 export const SKILL_FOLDERS = [".agents/skills", ...KINDS.map((n) => HARNESSES[n].skills).filter(Boolean)];
 // The skills routr installs, each a folder under skills/ in this repository: the routr skill, and routr-orchestrate,
@@ -278,7 +328,7 @@ export function subagentDefaults({ kind, subagentModel, subagentEffort }) {
   return { argv: [], env: {}, warnings: [], ...(h.subagents?.({ model: subagentModel, effort: subagentEffort }) ?? {}) };
 }
 // `interactive: false`: the flags for a headless start, which has words of its own in place of `interactive`. `core`: as it
-// starts in a herdr-core terminal.
+// starts in a herdr-core terminal. `cursorConfigDir`: the private folder of a harness with a `privateConfig` (configEnv).
 export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir, subagentModel, subagentEffort, interactive = true, core = false }) {
   const h = Object.hasOwn(HARNESSES, kind) && HARNESSES[kind];
   if (!h) throw kindError();
@@ -291,7 +341,7 @@ export function plan({ kind, model, effort, cwd, dryRun = false, cursorConfigDir
   const argv = [...(interactive ? start.interactive ?? [] : []), ...start.permissions, ...(interactive && start.trust && cwd ? start.trust(cwd) : []), ...(h.dirFlag ? [h.dirFlag, cwd] : []), ...(model ? [h.model, model] : []),
     ...(effort ? [h.effort, h.effortValue?.(effort) ?? effort] : []), ...subagents.argv];
   return {
-    executable: h.executable, argv, env: { ...h.env?.(cursorConfigDir), ...subagents.env },
+    executable: h.executable, argv, env: { ...configEnv(kind, cursorConfigDir), ...subagents.env },
     warnings: [...(!model ? [warning("model_required", "Plan only: choose --model before launching.")] : []), ...(h.notes?.(model, effort) ?? []), ...subagents.warnings],
   };
 }

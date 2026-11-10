@@ -3,10 +3,10 @@
 // start and the prompt; what a launch that stopped part way leaves, and what to do about it.
 import { warning } from "./warnings.mjs";
 import { inputNeeded, launchCarriers } from "./traces.mjs";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { configOf } from "./config.mjs";
-import { HARNESSES } from "./harnesses.mjs";
+import { configEnv, HARNESSES, privateConfigCopy } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { OFF } from "./wording.mjs";
 import { clean, CMD_PATH, cmdTypable, FISH_PATH, fishTypable, HERDR_PS_QUOTE, herdrTypable, deadline, paneText, paneView, promptReadArgs, SHELLS, shellFamily, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
@@ -33,10 +33,17 @@ function logCommand(log, text) {
 export const usualShell = () => (process.platform === "win32" ? "powershell" : "posix");
 // A pane worker's environment (worker-env's paneEnv): the carriers this launch holds, and its plan's subagent
 // fallbacks, less the names the harness adapter sets for itself.
-export const paneEnvOf = (o, out, env, p, privateDir) => paneEnv({ pane: o.pane, found: launchCarriers(env), plan: p.env, adapter: HARNESSES[o.kind].env?.(privateDir) ?? {} }, out);
-export const paneStartArgs = (o, shell, p, privateDir, pane, timeout) => o.kind === "cursor" && SHELLS[shell].cursor
-  ? ["pane", "run", pane, SHELLS[shell].cursor(privateDir, p.executable, p.argv)]
+export const paneEnvOf = (o, out, env, p, privateDir) => paneEnv({ pane: o.pane, found: launchCarriers(env), plan: p.env, adapter: configEnv(o.kind, privateDir) }, out);
+// A harness with a private config folder (the registry's `privateConfig`) is started by the pane's own shell where that
+// shell can remove the folder when it exits (SHELLS' `privateStart`), not by herdr's agent start; herdr then learns its
+// name after (shellStarted). Everywhere else herdr starts it.
+export const shellStarted = (o, shell) => Boolean(HARNESSES[o.kind]?.privateConfig && SHELLS[shell].privateStart);
+export const paneStartArgs = (o, shell, p, privateDir, pane, timeout) => shellStarted(o, shell)
+  ? ["pane", "run", pane, SHELLS[shell].privateStart(HARNESSES[o.kind].privateConfig.variable, privateDir, p.executable, p.argv)]
   : ["agent", "start", o.name, "--kind", o.kind, "--pane", pane, "--timeout", String(timeout), "--", ...p.argv];
+// The line that gives the pane's shell the folder first, where the shell cannot start the harness itself (Windows).
+export const paneConfigEnvArgs = (o, shell, privateDir, pane) => (HARNESSES[o.kind]?.privateConfig && SHELLS[shell].privateEnv
+  ? ["pane", "run", pane, SHELLS[shell].privateEnv(HARNESSES[o.kind].privateConfig.variable, privateDir)] : null);
 export const panePromptArgs = (prompt, pane, timeout) => ["agent", "prompt", pane, prompt, "--wait", "--until", "working",
   "--until", "idle", "--until", "done", "--until", "blocked", "--timeout", String(timeout)];
 
@@ -44,6 +51,7 @@ export const panePromptArgs = (prompt, pane, timeout) => ["agent", "prompt", pan
 // or a prompt was tried), `submitted` (the prompt was), `adopted` (an agent already in the pane took it) and `cleanup` (how
 // this worker is finished, when anything of it is left).
 export async function launchPane(args, o, out, { run, sleep, now, env, ready, settings, cursorConfigSource, prompt, p, planFor, privateDir, checkListed }) {
+  const privateConfig = HARNESSES[o.kind]?.privateConfig;
   const safeRun = async (args, ms) => processSteps(out, await callHerdr(run, args, ms));
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
   // Every screen launch returns goes through here: a shell's startup line can print the trace-context carriers
@@ -177,13 +185,12 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
       }
     }
     if (!adopted) await checkListed();
-    // Check Cursor's copy before creating a pane; never fall back to its account config.
-    if (o.kind === "cursor" && !adopted) {
+    // Check the private copy (Cursor's) before creating a pane; never fall back to its account config. A missing file
+    // here fails with the file system's own error (a pane launch's error policy), and the folder is removed below too.
+    if (privateConfig && !adopted) {
       configDir = privateDir;
-      mkdirSync(configDir, { mode: 0o700 });
-      copyFileSync(cursorConfigSource, join(configDir, "cli-config.json"));
-      chmodSync(join(configDir, "cli-config.json"), 0o600);
-      step("cursor_config", true, `Private config at ${configDir}; the pane's shell removes it when Cursor (or the shell) exits`);
+      privateConfigCopy(o.kind, configDir, { ...(cursorConfigSource ? { from: cursorConfigSource } : {}), failed: (e) => e });
+      step("cursor_config", true, `Private config at ${configDir}; the pane's shell removes it when ${HARNESSES[o.kind].label} (or the shell) exits`);
     }
     const repoCwd = out.cwd;
     if (!out.pane && o.worktree) {
@@ -242,10 +249,10 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
     // Every folder this launch will type into a cmd shell is checked as soon as the shell is known, so a refusal comes
     // before anything is typed, not between a `cd` and the variable.
     const typable = () => {
-      if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(o.kind === "cursor" ? [privateDir] : []))) throw new Error(CMD_PATH);
+      if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(privateConfig ? [privateDir] : []))) throw new Error(CMD_PATH);
       // What herdr types for us: the harness's command, as planned for this worker's folder (`agent start`).
-      if (!(o.kind === "cursor" && SHELLS[shell].cursor) && !herdrTypable(shell, p.argv)) throw new Error(HERDR_PS_QUOTE);
-      if (fish && !fishTypable(...(o.pane ? [out.cwd] : []), ...(o.kind === "cursor" ? [privateDir] : []), ...p.argv)) throw new Error(FISH_PATH);
+      if (!shellStarted(o, shell) && !herdrTypable(shell, p.argv)) throw new Error(HERDR_PS_QUOTE);
+      if (fish && !fishTypable(...(o.pane ? [out.cwd] : []), ...(privateConfig ? [privateDir] : []), ...p.argv)) throw new Error(FISH_PATH);
     };
     // A pane we split already opened in --cwd; one adopted from the caller must be checked before we type `cd`.
     if (o.pane && !adopted) {
@@ -257,11 +264,12 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
       if (!same) { await call(["pane", "run", out.pane, SHELLS[shell].cd(out.cwd)]); await pause(); }
     }
     if (!adopted) { stop = await shellReady(out.cwd); if (stop) return stop; typable(); }
-    if (o.kind === "cursor" && SHELLS[shell].cursorEnv && !adopted) {
-      await call(["pane", "run", out.pane, SHELLS[shell].cursorEnv(privateDir)]);
+    const configEnvArgs = paneConfigEnvArgs(o, shell, privateDir, out.pane);
+    if (configEnvArgs && !adopted) {
+      await call(configEnvArgs);
       await pause();
       stop = await shellReady(out.cwd); if (stop) return stop;
-      step("cursor_env", true, `Set CURSOR_CONFIG_DIR in the pane's ${shell} shell`);
+      step("cursor_env", true, `Set ${privateConfig.variable} in the pane's ${shell} shell`);
     }
     // After the start: wait until herdr says the agent is ready, and check it took the model. routr answers no question
     // a harness asks at startup: it passes each harness's own flags so none is asked (the registry), and when one is
@@ -321,7 +329,7 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
         }
       }
       // pane-run: herdr did not get the name.
-      if (o.kind === "cursor" && SHELLS[shell].cursor) await call(["agent", "rename", out.pane, o.name]);
+      if (shellStarted(o, shell)) await call(["agent", "rename", out.pane, o.name]);
       return null;
     };
     // Submit the task once and let herdr say whether the worker took it. herdr sends the text and Enter as one
@@ -435,11 +443,11 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
       } catch { step("cleanup_pane", false, "Could not close unused pane (herdr_unreachable)"); }
     }
     if (configDir && !startAttempted) {
-      try { rmSync(configDir, { recursive: true, force: true }); step("cleanup_config", true, "Removed unused Cursor config"); }
-      catch (e) { out.warnings.push(warning("cursor_config_left", `Could not remove unused Cursor config ${configDir}`)); }
+      try { rmSync(configDir, { recursive: true, force: true }); step("cleanup_config", true, `Removed unused ${HARNESSES[o.kind].label} config`); }
+      catch (e) { out.warnings.push(warning("cursor_config_left", `Could not remove unused ${HARNESSES[o.kind].label} config ${configDir}`)); }
     }
     if (createdPane && !out.ok) { out.warnings.push(warning("pane_left", `Pane ${out.pane} was left alive`)); if (out.state !== "needs_input") out.next.push(doNext(`Inspect pane ${out.pane} before closing it or retrying`)); }
-    if (configDir && startAttempted && !out.ok) { out.warnings.push(warning("cursor_config_retained", `Cursor config ${configDir} is retained for a possible running worker`)); out.next.push(doNext(`Remove the private Cursor config ${configDir} if the launch command did not run`)); }
+    if (configDir && startAttempted && !out.ok) { out.warnings.push(warning("cursor_config_retained", `${HARNESSES[o.kind].label} config ${configDir} is retained for a possible running worker`)); out.next.push(doNext(`Remove the private ${HARNESSES[o.kind].label} config ${configDir} if the launch command did not run`)); }
     if (promptAttempted && out.state !== "prompted") { out.warnings.push(warning("prompt_uncertain", "Prompt may have been submitted")); out.next.push(doNext(`Inspect pane ${out.pane} before retrying`)); }
   }
   return { attempted: startAttempted || promptAttempted, submitted: promptAttempted, adopted, cleanup: cleanupArgs };

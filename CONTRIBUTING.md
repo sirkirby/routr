@@ -111,15 +111,25 @@ Say which version of the harness you ran and what you saw. Read the harness's ow
 only what its plan offers (Kiro's effort levels exist only on its newer models), and what comes from the docs alone is
 marked as claimed.
 
-Adding a harness is one entry in `src/lib/harnesses.mjs` (its command, launch flags, model list and effort levels,
-suggested settings, usage reader, skills folder, and `auth`: the status command that says whether it is signed in,
-measured signed in and signed out, and never one that starts a sign-in), its row in `references/harnesses.md` (the
-launch table and the sign-in table), its status output both ways in the `STATUS` table of `test/usage.test.mjs`, and
-its name in `test/fixtures/seen-values.json`.
-Doctor, setup, launch, help, skill install and uninstall all build from the registry. To start it outside herdr it
-also needs an adapter for its own headless mode in `src/lib/headless.mjs` (measured against the harness first, as the
-others' were) and a fake for it in `test/workers.test.mjs`. When you try it in a throwaway
-home, empty `PATH` too: a harness that is not logged in there opens a browser to sign in.
+Adding a harness is one entry in the harness registry: its command and how it names itself (its label, its short label
+in a sentence that names several, and its install hint), its launch flags, model list and effort levels, suggested
+settings, skills folder, and `auth` (the status command that says whether it is signed in, measured signed in and
+signed out, and never one that starts a sign-in); its usage reader, with the names of the windows that reader
+produces, how a person reads its usage by hand, and what help says of it; its OpenTelemetry provider name; and what
+sets it apart, as properties named for the reason (it rewrites its own config as it runs, it remembers an effort as
+the user's default, its usage read needs herdr on Windows). Doctor, setup, launch, usage, help, OpenTelemetry export,
+`routr dash`, skill install and uninstall all build from the registry, and the registry test fails until the entry
+declares every field routr needs, in the shape routr reads it, including the fields one property brings with it.
+Beside the entry: its row in `references/harnesses.md` (the launch table and the sign-in table), its status output
+both ways in the usage tests' sign-in table, its name in the telemetry test's seen values, its colour in both themes
+of the `routr dash` page, its headless adapter (measured against the harness first, as the others' were) with a fake
+for it in the worker tests, and, where the harness has a skills folder of its own, its name in help's list of them (a
+test checks the colour, the adapter and that list). Three tables name environment variables, not harnesses, so no test
+can say one is missing: a harness may set none. Check each against the harness: the lead's session variables a worker
+must not inherit, and the config locations it keeps (the worker environment); the lead's session id routr reads for
+its trace (the trace context); and a sandbox it runs commands in, from which a worker cannot start (worker start).
+When you try it in a throwaway home, empty `PATH` too: a harness that is not logged in there opens a browser to sign
+in.
 
 ## Testing an install
 

@@ -208,7 +208,6 @@ export function launchCarriers(env) {
 // Headless turn consent: fresh consent per turn; missing launch uses saved-parent sampling, or a root
 // without one.
 export const WORKER_STATES = Object.freeze(["starting", "working", "waiting", "idle", "failed", "stopped", "no_task"]);
-const WORKER_PROVIDERS = { claude: "anthropic", codex: "openai", cursor: "cursor", agy: "gcp.gen_ai", kiro: "kiro" };
 // Read identity only for a generated turn, once per holder: export-off startup performs no git reads.
 export function workerTracing(worker, options = {}) {
   let identity;
@@ -221,12 +220,12 @@ export function workerTurn(worker, number, { env = process.env, otel = {}, ident
   try {
     const launch = launchContext(worker.launch); inherited = parseTraceparent(saved.TRACEPARENT);
     session = otelSession(loadConfig(otel.configPath).config, env, otel);
-    if (session.on && (launch || !Object.hasOwn(worker, "launch")) && inherited?.sampled !== false && Object.hasOwn(WORKER_PROVIDERS, worker.kind) && WORKER_NAME.test(worker.name)) {
+    if (session.on && (launch || !Object.hasOwn(worker, "launch")) && inherited?.sampled !== false && Object.hasOwn(HARNESSES, worker.kind) && WORKER_NAME.test(worker.name)) {
       const parent = launch ?? inherited;
       span = started({ name: `invoke_agent ${worker.name}`, kind: 3, traceId: parent?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"), ...(parent ? { parentSpanId: parent.spanId } : {}),
         flags: 1, attributes: {} });
       put(span, identity ? identity() : traceIdentity(worker.cwd).attributes);
-      put(span, { "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": WORKER_PROVIDERS[worker.kind], "gen_ai.agent.name": worker.name,
+      put(span, { "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": HARNESSES[worker.kind].otelProvider, "gen_ai.agent.name": worker.name,
         "routr.kind": pick(worker.kind, subscriptions), "routr.backend": "headless", "routr.launch.id": launch?.launch_id, "routr.model": modelName(worker.model), "routr.effort": pick(worker.effort, EFFORTS), "routr.turn": number });
     }
   } catch {} // Missing context, malformed state or optional observation cannot change a turn.

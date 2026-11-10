@@ -2,7 +2,8 @@
 // could not be read, the readers that stopped working, and what to do next. Callers add what is only theirs.
 import { doNext, runNext } from "./next.mjs";
 import { levelExcludedWhy, rankSubscriptions } from "./pick.mjs";
-import { staleReaders, USAGE_BY_HAND, usageFailure, usageUnavailable } from "./usage-failure.mjs";
+import { staleReaders, usageFailure, usageUnavailable } from "./usage-failure.mjs";
+import { HARNESSES } from "./harnesses.mjs";
 
 const hasCandidates = (r) => r && [...r.candidates.normal, ...r.candidates.fallback].length > 0;
 export const emptyRanking = (note) => ({ most_room: null, candidates: { normal: [], fallback: [] }, ranked: [], excluded: [], note });
@@ -36,7 +37,8 @@ function capacityNext(r, unavailable, level, configured, named) {
     : "Hold the work, use an eligible subscription for this run, or ask the user; the exclusions explain what fixes eligibility"));
   else if (!hasCandidates(r)) steps.push(doNext(`Hold the work or ask the user: every subscription that takes ${level} work is at its reserve`));
   for (const u of unavailable.filter((u) => u.part === "usage")) {
-    const byHand = USAGE_BY_HAND[u.subscription];
+    // Each harness's own words for reading it by hand: shared by reader diagnostics and these steps, never tucked into a ranked row's note.
+    const byHand = Object.hasOwn(HARNESSES, u.subscription) ? HARNESSES[u.subscription].usage.byHand : null;
     if (u.code === "command_shadowed") steps.push(doNext("Rename or remove your own usage skill or command, or pass --headroom from a number you already have", `--headroom ${u.subscription}=<share left>`));
     else if (byHand) steps.push(doNext(`Read ${u.subscription}'s usage by hand: ${byHand}`, `--headroom ${u.subscription}=<share left>`));
   }

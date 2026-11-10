@@ -2,14 +2,13 @@
 // written yet, and then its run folder and worktree, taken back whole if the start stops before anything ran. Each backend
 // adds what it runs and how; `where` says, in its refusals, where this lead is.
 import { warning } from "./warnings.mjs";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { ownedBy, reserve, runDir } from "./worker-record.mjs";
 import { copyInto, makeWorktree, newWorktree, unmakeWorktree } from "./worktree.mjs";
-import { HARNESSES } from "./harnesses.mjs";
+import { HARNESSES, privateConfigCopy, privateConfigDir } from "./harnesses.mjs";
 import { configOf } from "./config.mjs";
 import { OFF } from "./wording.mjs";
-import { home } from "./state-files.mjs";
 
 // A lead's sandbox carries over to what it starts (prototype p36, 2026-10-22): inside Claude Code's Bash sandbox a
 // worker could not write routr's state folder or reach api.anthropic.com, and inside Codex's (workspace-write) it could
@@ -71,12 +70,6 @@ export async function takeRun(o, out, plannedTree) {
 }
 // How a record names the worktree a launch made.
 export const worktreeRecord = (wt) => (wt ? { worktree: { branch: wt.branch, base: wt.base, path: wt.path, source: wt.source, start: wt.start, folder: wt.folder } } : {});
-// Cursor rewrites its config as it runs (its default model, a project folder): it runs on a private copy in the
-// run folder, made now from ~/.cursor/cli-config.json as a pane's is, and removed with the run folder.
-export const cursorConfigOf = (dir) => join(dir, "cursor-config");
-export function privateCursorConfig(dir) {
-  const conf = cursorConfigOf(dir);
-  mkdirSync(conf, { mode: 0o700 });
-  try { copyFileSync(join(home(), ".cursor", "cli-config.json"), join(conf, "cli-config.json")); chmodSync(join(conf, "cli-config.json"), 0o600); }
-  catch { throw new Error(`Cursor has no config at ${join(home(), ".cursor", "cli-config.json")}: sign in with \`cursor-agent\` first`); }
-}
+// A harness that rewrites its config as it runs (its `privateConfig`: Cursor's default model, a project folder) runs on
+// a private copy in the run folder, made now from its own file as a pane's is, and removed with the run folder.
+export const makePrivateConfig = (kind, dir) => { if (HARNESSES[kind].privateConfig) privateConfigCopy(kind, privateConfigDir(kind, dir)); };
