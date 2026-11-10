@@ -10,10 +10,8 @@ import { answer, refusal } from "./output.mjs";
 import { firstTime, LEDGER_PATH, latestRuns, projectAdvised, projectChose, projectName, read } from "./ledger.mjs";
 import { HISTORY_DAYS, readHistory } from "./launch-history.mjs";
 import { cachedUsage } from "./harnesses.mjs";
-import { rankSubscriptions } from "./pick.mjs";
 import { recentLaunches } from "./shares.mjs";
-import { usageUnavailable } from "./usage-failure.mjs";
-import { capacityNext } from "./commands.mjs";
+import { capacityFailure, capacityView } from "./capacity.mjs";
 
 export const DECISIONS_MAX = 50;
 const WINDOW_MS = HISTORY_DAYS * 86400000;
@@ -93,15 +91,18 @@ export async function boardCommand(words, config, { usage = cachedUsage, ledger 
   // `level`: the work the room is ranked for, as in usage: plain work, so no account is left out for its hardest_work.
   const out = { ok: true, headline: "", unavailable: [], warnings: [...warnings], next: [], project, level: "basic" };
   // Room: every configured account that is on, as `usage` ranks it for plain work, from kept readings.
+  // Kept readings keep no failed read (usage-cache), so no reader reads as stopped here: `stale` is usage's to say.
+  // When ranking fails, board says so in `unavailable` and leaves `next` alone.
   try {
     const names = Object.keys(config.subscriptions ?? {}).filter((n) => config.subscriptions[n]?.enabled !== false);
     const { rows } = usage(names, { configPath: configPath ? resolve(configPath) : undefined });
-    out.subscriptions = rankSubscriptions("basic", rows, config, recentLaunches());
-    out.unavailable.push(...usageUnavailable(rows).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
-    out.next.push(...capacityNext(out.subscriptions, out.unavailable, out.level, config)); // as usage says them
+    const capacity = capacityView(out.level, rows, config, recentLaunches());
+    out.subscriptions = capacity.subscriptions;
+    out.unavailable.push(...capacity.unavailable);
+    out.next.push(...capacity.next);
   } catch {
     out.subscriptions = null;
-    out.unavailable.push({ part: "usage", subscription: null, source: "routr", code: "internal_error", why: "routr could not rank its kept usage readings" });
+    out.unavailable.push(capacityFailure("routr could not rank its kept usage readings").failure);
   }
   // Decisions: launches in the history and recorded runs, in scope.
   const h = history({ now });
