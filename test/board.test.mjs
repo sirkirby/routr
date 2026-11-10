@@ -160,7 +160,7 @@ test("board fails open: an unreadable ledger or history is said, its numbers nul
   const b = await boardCommand([], config, { usage: usageOk, ledger: w.ledger, history: () => ({ records: [], unreadable: true }) });
   expect([b.ok, b.unavailable.map((u) => u.part).sort(), b.outcomes]).toEqual([true, ["launch history", "ledger"], { launches: null, recorded: null, done_first_time: null, level_changed: null, check_failed: null }]);
   const broken = await boardCommand([], config, { usage: () => { throw new Error("x"); }, ledger: join(w.dir, "none.jsonl"), history: () => ({ records: [] }) });
-  expect([broken.ok, broken.subscriptions, broken.unavailable[0].code]).toEqual([true, null, "internal_error"]);
+  expect([broken.ok, broken.subscriptions, broken.unavailable[0].code, broken.unavailable[0].why]).toEqual([true, null, "internal_error", "routr could not rank its kept usage readings"]);
   for (const [args, why] of [[["--cwd"], "takes a folder"], [["--cwd", w.repo, "--cwd", w.repo], "more than once"], [["--level", "strong"], "unknown flag"], [["--cwd", join(w.dir, "gone")], "is not a folder"]]) {
     const r = await boardCommand(args, config, { usage: usageOk, ledger: w.ledger, history: () => ({ records: [] }) });
     expect([r.ok, r.error]).toEqual([false, expect.stringContaining(why)]);

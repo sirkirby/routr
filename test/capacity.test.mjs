@@ -24,6 +24,21 @@ const situations = [
     },
   },
   {
+    name: "a named view keeps the eligible-subscription wording when the level excludes it",
+    input: ["strong", [live("cursor")], config({ cursor: subscription({ hardest_work: "basic" }) }), null, { subscription: "cursor" }],
+    check: (view) => {
+      expect(view.next[0].why).toBe("Hold the work, use an eligible subscription for this run, or ask the user; the exclusions explain what fixes eligibility");
+    },
+  },
+  {
+    name: "a fresh-read failure stays unavailable when ranking excludes its subscription",
+    input: ["strong", [failed("cursor")], config({ cursor: subscription({ hardest_work: "basic" }) }), null,
+      { unavailable: [{ part: "usage", subscription: "cursor", source: "cursor /usage", code: "read_failed", why: "routr could not read this usage source.", reading: "unknown" }] }],
+    check: (view) => {
+      expect(view.unavailable).toEqual([{ part: "usage", subscription: "cursor", source: "cursor /usage", code: "read_failed", why: "routr could not read this usage source.", reading: "unknown" }]);
+    },
+  },
+  {
     name: "a stale reader warns and gives its retry",
     input: ["basic", [failed("cursor", 89 * 3600)], config({ cursor: subscription() }), null],
     check: (view) => {

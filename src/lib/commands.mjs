@@ -249,7 +249,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
       const kept = rows.find((r) => r.pool === name && r.headroom != null);
       additionalUnavailable.push({ part: "usage", subscription: name, source: sources[name].source ?? name, ...usageFailure(reading?.code), reading: kept ? "kept" : "unknown", ...(kept ? { reading_source: kept.source, age_sec: kept.ageSec } : {}) });
     }
-    const capacity = capacityView(level, rows, viewConfig, name ? null : recentLaunches(), { capacityConfig: config, unavailable: additionalUnavailable });
+    const capacity = capacityView(level, rows, viewConfig, name ? null : recentLaunches(), { capacityConfig: config, unavailable: additionalUnavailable, subscription: name });
     if (!capacity.subscriptions) {
       out.ok = false;
       out.unavailable.push(...capacity.unavailable); out.subscriptions = emptyRanking(capacity.unavailable[0].why);

@@ -15,6 +15,7 @@ import { capacityFailure, capacityView } from "./capacity.mjs";
 
 export const DECISIONS_MAX = 50;
 const WINDOW_MS = HISTORY_DAYS * 86400000;
+const CAPACITY_FAILURE = "routr could not rank its kept usage readings";
 const iso = (ms) => (Number.isFinite(ms) ? new Date(ms).toISOString() : null);
 const ms = (t) => { const v = Date.parse(t); return Number.isFinite(v) ? v : null; };
 
@@ -95,8 +96,8 @@ export async function boardCommand(words, config, { usage = cachedUsage, ledger 
   try {
     const names = Object.keys(config.subscriptions ?? {}).filter((n) => config.subscriptions[n]?.enabled !== false);
     const { rows } = usage(names, { configPath: configPath ? resolve(configPath) : undefined });
-    capacity = capacityView(out.level, rows, config, recentLaunches());
-  } catch { capacity = capacityFailure(); }
+    capacity = capacityView(out.level, rows, config, recentLaunches(), { failureWhy: CAPACITY_FAILURE });
+  } catch { capacity = capacityFailure(CAPACITY_FAILURE); }
   out.subscriptions = capacity.subscriptions;
   out.unavailable.push(...capacity.unavailable);
   out.warnings.push(...capacity.warnings);
