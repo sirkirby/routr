@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import * as otel from "../src/lib/otel.mjs";
 import { readdirSync, writeFileSync } from "node:fs";
-import { writeJsonAtomic } from "../src/lib/runtime.mjs";
+import { writeJsonAtomic } from "../src/lib/state-files.mjs";
 import { join } from "node:path";
 import { ids, install, points, receiver } from "./fixtures/otel-signals.mjs";
 

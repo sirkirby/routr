@@ -54,7 +54,7 @@
 //     usage stay light. (Literal import paths, so the compiled binary still bundles them.)
 import { warning } from "./warnings.mjs";
 import { dirname } from "node:path";
-import { run } from "./runtime.mjs";
+import { run } from "./processes.mjs";
 import { billingFromSignIn, keptSignIn, signInHint, signInState } from "./signin.mjs";
 import { cachedReadings, keepReadings } from "./usage-cache.mjs";
 import { NO_WINDOWS_AFTER_ANSWER, readAgy, readClaude, readCodexLive, summarize, failedUsage, usageReadingTime, withUsageReadingTime } from "./usage.mjs";

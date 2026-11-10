@@ -6,7 +6,7 @@ import { DEFAULTS } from "../src/lib/config.mjs";
 export const SCRATCH = process.env.ROUTR_TEST_SCRATCH;
 if (!SCRATCH) throw new Error("test/setup.mjs did not run: run the tests from the repository root with `bun test`, so bunfig.toml preloads it");
 export const scratch = (name) => mkdtempSync(join(SCRATCH, `${name}-`));
-// Session names observed in the harnesses (references/harnesses.md); independent of runtime's removal rule.
+// Session names observed in the harnesses (references/harnesses.md); independent of worker-env's removal rule.
 export const LEAD_ENV = Object.fromEntries([
   "HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_CLIENT_SOCKET_PATH", "HERDR_SESSION", "HERDR_BIN_PATH", "HERDR_WORKSPACE_ID", "HERDR_TAB_ID", "HERDR_PANE_ID",
   "HC_TERMINAL_ID", "HC_TERMINAL_SOCKET", "HC_SCOPE",

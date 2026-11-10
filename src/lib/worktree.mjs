@@ -6,7 +6,8 @@ import { createHash } from "node:crypto";
 import { displayCommand } from "./next.mjs";
 import { callGit } from "./process-boundary.mjs";
 import { dropCopy } from "./cleanup.mjs";
-import { ensureParent, folderId, probe as runProbe, realPath, WORKTREES_DIR, worktreeFolder } from "./runtime.mjs";
+import { ensureParent, folderId, realPath, WORKTREES_DIR, worktreeFolder } from "./state-files.mjs";
+import { probe as runProbe } from "./processes.mjs";
 
 // In routr's own folder, one per repository and branch, its branch new and starting at --base (or the checkout's HEAD).
 export const git = (dir, args) => callGit((d, a) => runProbe("git", ["-C", d, ...a], { timeoutMs: 20000, separate: true }), dir, args);

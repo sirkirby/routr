@@ -12,7 +12,8 @@ import { CONFIG_PATH } from "./config.mjs";
 import { existsSync, linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { CACHE_DIR, home as userHome, lockIsStale, lockOwned, olderThan, releaseFileLock, spawnSelf, STATE_DIR, takeLock, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
+import { CACHE_DIR, home as userHome, lockIsStale, lockOwned, olderThan, releaseFileLock, STATE_DIR, takeLock, UNINSTALL_LOCK, writeJsonAtomic } from "./state-files.mjs";
+import { spawnSelf } from "./processes.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 const RESERVED_HEADERS = new Set(["content-type", "content-length", "host", "transfer-encoding", "connection", "accept-encoding", "content-encoding", "te", "upgrade", "expect", "trailer", "keep-alive"]);

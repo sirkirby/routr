@@ -11,7 +11,8 @@ import { TRACE_ATTRIBUTES, ERROR_CODES, WORKER_STATES } from "../src/lib/traces.
 import { OTEL_RESOURCE_ATTRIBUTES, otelEndpoint, prepareOtel, newOtelConsent } from "../src/lib/otel.mjs";
 import { generations, genFile } from "../src/lib/channel.mjs";
 import { DEFAULTS } from "../src/lib/config.mjs";
-import { start, stop, harnessEnv, probe } from "../src/lib/runtime.mjs";
+import { start, stop, probe } from "../src/lib/processes.mjs";
+import { harnessEnv } from "../src/lib/worker-env.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
 import { launch } from "../src/lib/launch.mjs";
 import { cleanup } from "../src/lib/cleanup.mjs";

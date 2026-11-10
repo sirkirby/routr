@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { cmdTypable, deadline, runHerdr, SHELLS, shellAlone, shellFamily, waitForShell } from "./herdr.mjs";
-import { CURSOR_SNAPSHOT, home } from "./runtime.mjs";
+import { CURSOR_SNAPSHOT, home } from "./state-files.mjs";
 import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
 import { openTerminal, ownTerminal } from "./terminal.mjs";
 import { USAGE_BY_HAND, usageFailure } from "./usage-failure.mjs";

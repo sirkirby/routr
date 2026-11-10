@@ -8,7 +8,8 @@
 // check afresh.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CACHE_DIR, probe, writeJsonAtomic } from "./runtime.mjs";
+import { CACHE_DIR, writeJsonAtomic } from "./state-files.mjs";
+import { probe } from "./processes.mjs";
 
 export const SIGNED_IN_FILE = () => join(CACHE_DIR(), "signed-in.json");
 const KEEP_SEC = { true: 6 * 3600, false: 10 * 60 };

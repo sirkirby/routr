@@ -8,7 +8,8 @@
 // bookkeeping, under its cache folder; it holds usage numbers and notes only, as the harness snapshots do.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CACHE_DIR, ensureParent, lockIsStale, lockToken, olderThan, releaseFileLock, spawnSelf, takeLock, whileLockOwned, writeJsonAtomic } from "./runtime.mjs";
+import { CACHE_DIR, ensureParent, lockIsStale, lockToken, olderThan, releaseFileLock, takeLock, whileLockOwned, writeJsonAtomic } from "./state-files.mjs";
+import { spawnSelf } from "./processes.mjs";
 import { summarize, usageReadingTime, usageTrustedUntil } from "./usage.mjs";
 
 export const USAGE_READINGS = () => join(CACHE_DIR(), "usage-readings.json");

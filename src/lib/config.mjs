@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { LEVELS } from "./questions.mjs";
 import { HARDEST, NO_CONFIG, RESERVE } from "./wording.mjs";
-import { CONFIG_DIR } from "./runtime.mjs";
+import { CONFIG_DIR } from "./state-files.mjs";
 import { DEFAULT_PROVIDER, decisionSettings } from "./providers.mjs";
 import { otelSwitch } from "./otel-settings.mjs";
 

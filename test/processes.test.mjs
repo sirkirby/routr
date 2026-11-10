@@ -1,13 +1,10 @@
-// runtime.mjs: every process routr starts, and the environment a harness read gets
-import { expect, spyOn, test } from "bun:test";
-import { EventEmitter } from "node:events";
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, win32 } from "node:path";
-import { cmdArg, cmdLine, ensureParent, harnessEnv, npmShimScript, probe, resolveCommand, run, start, startOptions, startSync, stop, windowsCommand } from "../src/lib/runtime.mjs";
-import * as runtime from "../src/lib/runtime.mjs";
-import { openTerminal } from "../src/lib/terminal.mjs";
-import { runHerdr } from "../src/lib/herdr.mjs";
-import { cliEnv, CONFIG_ENV, fakeExecutable, LEAD_ENV, npmShim, scratch } from "./helpers.mjs";
+// processes.mjs: every process routr starts, and how
+import { expect, test } from "bun:test";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, relative, resolve, win32 } from "node:path";
+import { cmdArg, cmdLine, npmShimScript, resolveCommand, run, start, startOptions, startSync, stop, windowsCommand } from "../src/lib/processes.mjs";
+import { realPath } from "../src/lib/state-files.mjs";
+import { cliEnv, fakeExecutable, npmShim, scratch } from "./helpers.mjs";
 
 test("spawnSelf invoked by a foreign script starts routr's own entry for every background command", () => {
   for (const alias of [undefined, "foreign-entry.ts", "foreign-no-extension"]) {
@@ -26,7 +23,7 @@ test("spawnSelf invoked by a foreign script starts routr's own entry for every b
   }
 });
 
-test("runtime import falls back to source if compiled detection cannot read its URL", () => {
+test("the processes module falls back to source if compiled detection cannot read its URL", () => {
   for (const mode of ["once", "always"]) {
     const r = Bun.spawnSync([process.execPath, join(import.meta.dir, "fixtures/spawn-self-foreign.mjs")], { env: cliEnv(scratch("self-url"), { ROUTR_SELF_FAIL_URL: mode }) });
     expect(r.exitCode, r.stderr.toString()).toBe(0);
@@ -45,224 +42,8 @@ test("a compiled spawnSelf uses only its binary even when the caller names anoth
   expect(JSON.parse(r.stdout.toString())).toEqual({ standalone: true, started: true });
   for (let i = 0; i < 100 && !existsSync(out); i++) await Bun.sleep(20);
   const child = JSON.parse(readFileSync(out, "utf8"));
-  expect(child.argv).toEqual(["--self-child", out]); expect(runtime.realPath(child.executable)).toBe(runtime.realPath(exe));
+  expect(child.argv).toEqual(["--self-child", out]); expect(realPath(child.executable)).toBe(realPath(exe));
 }, 60000);
-
-test("two takers observing the same stale lock admit only one, with a token the loser cannot release", () => {
-  const file = join(scratch("stale-lock-race"), "job.lock"); writeFileSync(file, "999999999");
-  let second = false;
-  const first = runtime.takeLock(file, () => true, { rename: (from, to) => {
-    second = runtime.takeLock(file, () => true);
-    renameSync(from, to);
-  } });
-  expect([first, second].filter(Boolean)).toHaveLength(1);
-  const owner = JSON.parse(readFileSync(file, "utf8"));
-  const token = owner.token;
-  expect(runtime.lockOwned(file, token)).toBe(true);
-  expect(owner).toMatchObject({ pid: process.pid, token: expect.stringMatching(/^[a-f0-9-]{36}$/) });
-  expect(runtime.lockOwned(file, "another-token")).toBe(false);
-  expect(runtime.releaseFileLock(file, "another-token")).toBe(false); expect(existsSync(file)).toBe(true);
-  expect(runtime.lockOwned(file, token)).toBe(true);
-  expect(runtime.releaseFileLock(file, token)).toBe(true); expect(existsSync(file)).toBe(false);
-});
-
-test("three takers cannot move a newer owner's lock during a stale takeover", () => {
-  const file = join(scratch("three-lock-takers"), "job.lock"); writeFileSync(file, "999999999");
-  let a = false, c = false;
-  const b = runtime.takeLock(file, runtime.lockIsStale, { rename: (from, to) => {
-    a = runtime.takeLock(file, runtime.lockIsStale);
-    renameSync(from, to);
-    c = runtime.takeLock(file, runtime.lockIsStale);
-  } });
-  expect([a, b, c].filter(Boolean)).toHaveLength(1);
-  expect(runtime.lockOwned(file)).toBe(true);
-});
-
-test("stale takeovers need no hard links and preserve the winning owner's file", async () => {
-  const file = join(scratch("lock-without-links"), "job.lock");
-  const p = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/lock-no-links.mjs"), file], { stdout: "pipe", stderr: "pipe" });
-  expect(await p.exited).toBe(0);
-  // Links are tried, refused, and the exclusive open used instead.
-  const r = JSON.parse(await new Response(p.stdout).text());
-  expect(r).toMatchObject({ winners: 1, owned: true }); expect(r.links).toBeGreaterThan(0);
-});
-
-test("a failed initial lock write removes only its own incomplete lock and allows a retry", () => {
-  const file = join(scratch("lock-write-failure"), "uninstall.lock");
-  const write = () => { throw Object.assign(new Error("disk full"), { code: "ENOSPC" }); };
-  expect(runtime.takeLock(file, () => false, { write })).toBe(false);
-  expect(existsSync(file)).toBe(false);
-  expect(runtime.takeLock(file, () => false)).toBe(true);
-  const before = readFileSync(file, "utf8");
-  expect(runtime.takeLock(file, () => false, { write })).toBe(false);
-  expect(readFileSync(file, "utf8")).toBe(before);
-});
-
-test("retries for non-stale uninstall and worker locks write no takeover guard", () => {
-  for (const name of ["uninstalling", "worker.lock"]) {
-    const dir = scratch("live-lock-retry"), file = join(dir, name), guard = `${file}.takeover`;
-    expect(runtime.takeLock(file, () => false)).toBe(true);
-    const before = readFileSync(file, "utf8"), guarded = []; let writes = 0;
-    for (let retry = 0; retry < 3; retry++) expect(runtime.takeLock(file, () => { guarded.push(existsSync(guard)); return false; }, {
-      write: (...args) => { writes++; writeFileSync(...args); }
-    })).toBe(false);
-    expect(writes).toBe(0); expect(guarded).toEqual([false, false, false]);
-    expect(readFileSync(file, "utf8")).toBe(before); expect(readdirSync(dir)).toEqual([name]);
-  }
-});
-
-test("a stale lock is checked again under the takeover guard before it can be moved", () => {
-  const file = join(scratch("stale-lock-recheck"), "job.lock"), guard = `${file}.takeover`, guarded = [];
-  writeFileSync(file, "999999999");
-  expect(runtime.takeLock(file, () => { guarded.push(existsSync(guard)); return guarded.length === 1; })).toBe(false);
-  expect(guarded).toEqual([false, true]); expect(readFileSync(file, "utf8")).toBe("999999999");
-  expect(existsSync(guard)).toBe(false);
-});
-
-test("a guard with no pid to read is reclaimed only after minutes, and losing one prevents moving the main lock", () => {
-  const file = join(scratch("takeover-guard"), "job.lock"), guard = `${file}.takeover`, ago = (ms) => new Date(Date.now() - ms);
-  writeFileSync(file, "999999999"); writeFileSync(guard, "abandoned");
-  expect(runtime.takeLock(file, () => true)).toBe(false);
-  utimesSync(guard, ago(6000), ago(6000));
-  expect(runtime.takeLock(file, () => true)).toBe(false); // seconds are not enough: its taker may be paused
-  utimesSync(guard, ago(11 * 60_000), ago(11 * 60_000));
-  expect(runtime.takeLock(file, () => {
-    if (readFileSync(guard, "utf8") !== "abandoned") writeFileSync(guard, JSON.stringify({ pid: process.pid, token: "replacement" }));
-    return true;
-  })).toBe(false);
-  expect(readFileSync(file, "utf8")).toBe("999999999");
-  expect(JSON.parse(readFileSync(guard)).token).toBe("replacement");
-});
-
-test("a guard whose owner crashed is reclaimed at once, and the lock behind it taken over", () => {
-  const dir = scratch("crashed-guard"), file = join(dir, "job.lock"), guard = `${file}.takeover`;
-  writeFileSync(file, "999999999"); writeFileSync(guard, JSON.stringify({ pid: 999999999, token: "crashed" }));
-  expect(runtime.takeLock(file, runtime.lockIsStale)).toBe(true);
-  expect(runtime.lockOwned(file)).toBe(true); expect(readdirSync(dir)).toEqual(["job.lock"]);
-  // An owner that is alive keeps its guard, however old it is.
-  runtime.releaseFileLock(file); writeFileSync(file, "999999999"); writeFileSync(guard, JSON.stringify({ pid: process.pid, token: "paused" }));
-  utimesSync(guard, new Date(Date.now() - 3600_000), new Date(Date.now() - 3600_000));
-  expect(runtime.takeLock(file, runtime.lockIsStale)).toBe(false);
-  expect(runtime.takeLock(file, runtime.lockIsStale, { alive: (pid) => pid !== process.pid })).toBe(true);
-});
-
-test("a taker paused between its last guard check and its move keeps its guard: no one else takes the lock meanwhile", () => {
-  // With a guard that expired by age: A paused after its check; B reclaimed A's guard and took the lock; A then moved
-  // B's live lock aside, and C took the empty path while B worked.
-  const file = join(scratch("paused-taker"), "job.lock"), guard = `${file}.takeover`, ago = new Date(Date.now() - 60_000);
-  writeFileSync(file, "999999999");
-  let b = false, c = false;
-  const a = runtime.takeLock(file, runtime.lockIsStale, { rename: (from, to) => {
-    if (from === file) { utimesSync(guard, ago, ago); b = runtime.takeLock(file, runtime.lockIsStale); }
-    renameSync(from, to);
-  } });
-  c = runtime.takeLock(file, runtime.lockIsStale);
-  expect([a, b, c]).toEqual([true, false, false]);
-  expect(JSON.parse(readFileSync(file, "utf8")).token).toBe(runtime.lockToken(file));
-});
-
-test("two takers reclaiming the same crashed guard cannot both act: one moves it, the other stops", () => {
-  // B checks the dead guard, then pauses before moving it; D reclaims it meanwhile and pauses before moving the stale
-  // lock; B's move then takes D's live guard, and E takes the lock that D is about to move.
-  const dir = scratch("guard-reclaim-race"), file = join(dir, "job.lock"), guard = `${file}.takeover`;
-  writeFileSync(file, "999999999"); writeFileSync(guard, JSON.stringify({ pid: 999999999, token: "crashed" }));
-  let d = false, e = false;
-  const b = runtime.takeLock(file, runtime.lockIsStale, { rename: (from, to) => {
-    if (from !== guard) return renameSync(from, to);
-    let moved = false;
-    d = runtime.takeLock(file, runtime.lockIsStale, { rename: (f, t) => {
-      if (f === file && !moved) { moved = true; renameSync(guard, to); e = runtime.takeLock(file, runtime.lockIsStale); }
-      renameSync(f, t);
-    } });
-    if (!moved) renameSync(from, to);
-  } });
-  expect([b, d, e].filter(Boolean)).toHaveLength(1);
-  expect(existsSync(file)).toBe(true); expect(JSON.parse(readFileSync(file, "utf8")).token).toBe(runtime.lockToken(file));
-  expect(readdirSync(dir).sort()).toEqual(["job.lock"]);
-});
-
-const paused = async (mode) => {
-  const dir = scratch(`lock-pause-${mode}`);
-  const p = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/lock-pauses.mjs"), mode, dir], { stdout: "pipe", stderr: "pipe" });
-  expect(await p.exited, await new Response(p.stderr).text()).toBe(0);
-  return JSON.parse(await new Response(p.stdout).text());
-};
-
-test("an owner releasing its lock holds the guard: a takeover meanwhile cannot have its new lock removed", async () => {
-  const r = await paused("release");
-  expect(r).toMatchObject({ released: true, taken: false, lock: null });
-});
-
-test("a guard is never seen without its owner's pid, so an owner paused publishing it never acts unguarded", async () => {
-  // Paused ten minutes as its guard is published, then released while a third process tries to take the lock over.
-  const r = await paused("guard");
-  expect(r.seen).not.toBe("no pid");
-  expect(r.taken === false || r.lock === r.token).toBe(true); // a takeover that won keeps its lock
-  expect(r).toMatchObject({ released: true, taken: false, lock: null });
-});
-
-test("a lock is never seen without its owner's pid, so a taker paused publishing it cannot share it", async () => {
-  const r = await paused("lock");
-  expect(r.seen).not.toBe("no pid");
-  expect([r.other, r.mine].filter(Boolean)).toHaveLength(1);
-  expect(r.lock).toBe(r.other ? r.otherToken : r.mineToken);
-});
-
-test("a claim on a dead guard is never seen without its owner's pid", async () => {
-  const r = await paused("claim");
-  expect(r.seen).not.toBe("no pid");
-  expect(r.taken === undefined || r.taken === false || r.lock === r.token).toBe(true);
-});
-
-test("release makes one attempt at a busy guard and never waits: the lock stays for the stale rule", () => {
-  const file = join(scratch("busy-release"), "job.lock"), guard = `${file}.takeover`;
-  expect(runtime.takeLock(file, () => false)).toBe(true);
-  writeFileSync(guard, JSON.stringify({ pid: process.pid, token: "busy" }));
-  const wait = spyOn(Atomics, "wait");
-  try {
-    const began = performance.now();
-    expect(runtime.releaseFileLock(file)).toBe(false);
-    expect(wait).not.toHaveBeenCalled(); expect(performance.now() - began).toBeLessThan(100);
-    expect(runtime.lockOwned(file)).toBe(true);
-  } finally { wait.mockRestore(); }
-  unlinkSync(guard);
-  expect(runtime.releaseFileLock(file)).toBe(true); expect(existsSync(file)).toBe(false);
-});
-
-test("a moved lock with an unexpected generation is kept, never deleted as stale", () => {
-  const dir = scratch("unexpected-lock"), file = join(dir, "job.lock"); writeFileSync(file, "999999999");
-  expect(runtime.takeLock(file, () => true, { rename: (from, to) => { writeFileSync(from, "replacement"); renameSync(from, to); } })).toBe(false);
-  const aside = readdirSync(dir).find((n) => n.startsWith("job.lock.stale."));
-  expect(aside).toBeDefined(); expect(readFileSync(join(dir, aside), "utf8")).toBe("replacement");
-});
-
-test("a worker cleanup that loses its lock during checks keeps the worker and the replacement lock", async () => {
-  const home = scratch("worker-lost-lock");
-  const p = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/worker-lost-lock.mjs")], { env: cliEnv(home), stdout: "pipe", stderr: "pipe" });
-  expect(await p.exited).toBe(0);
-  expect(JSON.parse(await new Response(p.stdout).text())).toEqual({ stopped: true, kept: true, owner: "replacement" });
-});
-
-test("real processes racing over the same observed stale lock elect one owner", async () => {
-  const dir = scratch("stale-lock-processes"), file = join(dir, "job.lock"); writeFileSync(file, "999999999");
-  const children = Array.from({ length: 2 }, () => Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/lock-taker.mjs"), file, dir], { env: cliEnv(dir), stdout: "pipe", stderr: "pipe" }));
-  try {
-    const until = Date.now() + 10_000;
-    while (readdirSync(dir).filter((n) => n.startsWith("ready-")).length < 2) {
-      if (Date.now() > until) throw new Error("lock test start timed out");
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    writeFileSync(join(dir, "go"), "go");
-    while (readdirSync(dir).filter((n) => n.startsWith("result-")).length < 2) {
-      if (Date.now() > until) throw new Error("lock test result timed out");
-      await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    writeFileSync(join(dir, "finish"), "finish");
-    const answers = await Promise.all(children.map(async (p) => { expect(await p.exited).toBe(0); return JSON.parse(await new Response(p.stdout).text()); }));
-    expect(answers.filter((r) => r.won)).toHaveLength(1);
-    expect(JSON.parse(readFileSync(file, "utf8")).token).toBe(answers.find((r) => r.won).token);
-  } finally { for (const p of children) p.kill(); }
-}, 20_000);
 
 test("the Windows fake herdr forwards a multiline worker prompt without a batch-shell parse", () => {
   const dir = scratch("fake-herdr-prompt"), root = "C:\\fake-tools";
@@ -274,23 +55,6 @@ test("the Windows fake herdr forwards a multiline worker prompt without a batch-
   expect(w).toEqual({ cmd: `${root}\\node.exe`, args: [`${root}\\herdr.mjs`, ...args] });
   const r = Bun.spawnSync([physical(w.cmd), physical(w.args[0]), ...w.args.slice(1)], { stdin: "ignore" });
   expect(r.exitCode).toBe(0); expect(r.stderr.toString()).toBe(""); expect(JSON.parse(r.stdout.toString())).toEqual(args);
-});
-
-test("parent creation resolves relative files and accepts EEXIST only for an existing directory", () => {
-  const exists = Object.assign(new Error("EEXIST: file already exists, mkdir '.'"), { code: "EEXIST" });
-  const calls = [];
-  // Bun on Windows can throw even with recursive:true when the parent is '.'. Simulate it on every platform.
-  ensureParent("ledger.jsonl", { mkdir: (dir, opts) => { calls.push([dir, opts]); throw exists; } });
-  expect(calls).toEqual([[resolve("."), { recursive: true }]]);
-  expect(isAbsolute(calls[0][0])).toBe(true);
-  const dir = scratch("parents"), file = join(dir, "collision"); writeFileSync(file, "keep");
-  expect(() => ensureParent(join(file, "row.json"), { mkdir: () => { throw exists; } })).toThrow(exists);
-  expect(() => ensureParent(join(dir, "gone", "row.json"), { mkdir: () => { throw exists; } })).toThrow(exists);
-  const denied = Object.assign(new Error("permission denied"), { code: "EACCES" });
-  expect(() => ensureParent(join(dir, "row.json"), { mkdir: () => { throw denied; } })).toThrow(denied);
-  ensureParent(join(dir, "new", "nested", "row.json"));
-  expect(statSync(join(dir, "new", "nested")).isDirectory()).toBe(true);
-  ensureParent(join(dir, "new", "nested", "another.json"));
 });
 
 test("CLI fixture PATH overrides its inherited Windows Path spelling so fake commands are found", () => {
@@ -308,14 +72,14 @@ test("CLI fixture PATH overrides its inherited Windows Path spelling so fake com
 // naming Bun.spawn trips it. It guards against the ordinary mistake; review covers the rest.
 const STARTS_PROCESSES = /["'`](?:node:)?child_process["'`]|\bBun\.spawn(?:Sync)?\b/;
 
-test("only runtime.mjs starts processes: no other file in src/ imports child_process or calls Bun.spawn", () => {
+test("only processes.mjs starts processes: no other file in src/ imports child_process or calls Bun.spawn", () => {
   const root = join(import.meta.dir, "../src");
   const files = readdirSync(root, { recursive: true }).map(String).filter((f) => /\.[cm]?[jt]s$/.test(f));
   expect(files.length).toBeGreaterThan(10);
-  const offenders = files.filter((f) => relative("lib/runtime.mjs", f) !== "" && STARTS_PROCESSES.test(readFileSync(join(root, f), "utf8")));
+  const offenders = files.filter((f) => relative("lib/processes.mjs", f) !== "" && STARTS_PROCESSES.test(readFileSync(join(root, f), "utf8")));
   expect(offenders).toEqual([]);
   // The scan sees the one file that is allowed, so a pattern that matched nothing could not pass for a clean tree.
-  expect(STARTS_PROCESSES.test(readFileSync(join(root, "lib/runtime.mjs"), "utf8"))).toBe(true);
+  expect(STARTS_PROCESSES.test(readFileSync(join(root, "lib/processes.mjs"), "utf8"))).toBe(true);
   for (const s of ['import { spawn } from "node:child_process";', "require('child_process')", "await import(`node:child_process`)", "Bun.spawnSync(["]) expect(STARTS_PROCESSES.test(s)).toBe(true);
 });
 
@@ -333,75 +97,6 @@ test("every start hides its console on Windows, whatever the caller passed, and 
     ["routr", ["--version"], { encoding: "utf8", windowsHide: true }],
     ["cmd", ["/c"], { windowsHide: true }],
   ]);
-});
-
-test("a harness read's environment drops only herdr's pane variables and keeps its settings", () => {
-  const env = { PATH: "/bin", HOME: "/h", HERDR_ENV: "1", HERDR_SOCKET_PATH: "/s", HERDR_PANE_ID: "p", herdr_other: "x", NOT_HERDR_ENV: "kept" };
-  expect(harnessEnv(env)).toEqual({ PATH: "/bin", HOME: "/h", herdr_other: "x", NOT_HERDR_ENV: "kept" });
-  expect(env.HERDR_PANE_ID).toBe("p"); // the caller's copy is untouched
-});
-
-test("run and probe remove every harness's lead session names, in either case, while keeping sign-in and config (a bun child prints what it got)", async () => {
-  const lead = { ...LEAD_ENV, ...Object.fromEntries(Object.entries(LEAD_ENV).map(([k, v]) => [k.toLowerCase(), v])) };
-  const env = { ...lead, ...CONFIG_ENV }, names = Object.keys(env), saved = names.map((k) => process.env[k]);
-  Object.assign(process.env, env);
-  try {
-    const keys = ["-e", "process.stdout.write(JSON.stringify(process.env))"];
-    const viaRun = JSON.parse(await run(process.execPath, keys, { timeoutMs: 15000 }));
-    const viaProbe = JSON.parse((await probe(process.execPath, keys)).out);
-    for (const got of [viaRun, viaProbe]) {
-      for (const k of Object.keys(lead)) expect(got).not.toHaveProperty(k);
-      expect(got).toMatchObject(CONFIG_ENV);
-      expect(Object.keys(got).some((k) => /^path$/i.test(k))).toBe(true); // Windows spells it Path
-    }
-    expect(harnessEnv(env)).toEqual(CONFIG_ENV);
-  } finally {
-    names.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; });
-  }
-});
-
-test("the private herdr server removes every lead session name before its shells inherit them and keeps herdr's settings", async () => {
-  const env = { ...LEAD_ENV, ...Object.fromEntries(Object.entries(LEAD_ENV).map(([k, v]) => [k.toLowerCase(), v])), ...CONFIG_ENV };
-  const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]])), starts = [];
-  Object.assign(process.env, env);
-  const spawn = spyOn(runtime, "start").mockImplementation((cmd, args, opts) => {
-    starts.push({ cmd, args, opts, env: { ...(opts.env ?? process.env) } });
-    return Object.assign(new EventEmitter(), { unref() {} });
-  });
-  let terminal;
-  try {
-    terminal = await openTerminal({ cwd: "/work", remaining: () => 1000, sleep: async () => {}, run: async (args) => {
-      if (args[0] === "session" && args[1] === "list") return { ok: true, data: { sessions: [] } };
-      return { ok: true, data: { result: args.includes("create") ? { root_pane: { pane_id: "w1:p1" } } : { workspaces: [] } } };
-    } });
-    expect(starts).toHaveLength(1);
-    expect(starts[0].cmd).toBe("herdr");
-    expect(starts[0].args).toEqual(["--session", expect.stringMatching(/^routr-scratch-/), "server"]);
-    for (const k of Object.keys(env).filter((k) => !Object.hasOwn(CONFIG_ENV, k))) expect(starts[0].env).not.toHaveProperty(k);
-    expect(starts[0].env).toMatchObject(CONFIG_ENV);
-    await terminal.close();
-  } finally {
-    await terminal?.close(); spawn.mockRestore();
-    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
-  }
-});
-
-test("herdr's real client transport keeps pane and config variables at its process boundary", async () => {
-  const env = { ...LEAD_ENV, ...CONFIG_ENV }, saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
-  Object.assign(process.env, env);
-  const starts = [];
-  try {
-    const result = await runHerdr(["pane", "list"], 1000, { via: (cmd, args, opts) => {
-      starts.push({ cmd, args, env: Object.fromEntries(Object.keys(env).map((k) => [k, (opts.env ?? process.env)[k]])) });
-      const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() });
-      queueMicrotask(() => { child.stdout.emit("data", JSON.stringify({ result: { panes: [] } })); child.emit("close", 0); });
-      return child;
-    } });
-    expect(result.ok).toBe(true);
-    expect(starts).toEqual([{ cmd: "herdr", args: ["pane", "list"], env }]);
-  } finally {
-    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
-  }
 });
 
 // Windows resolution and quoting, with PATH, PATHEXT and the files given, so they run on every OS. The same rules
@@ -629,7 +324,7 @@ test.skipIf(process.platform === "win32")("a real child that ignores SIGTERM is 
 // From the verification of 2b89d1d, with real processes in a routr-like parent (`bun -e`), so what is checked is
 // whether that parent exits and what it leaves behind. A process that ends by itself after `life` ms stands in for a
 // CLI, and for a taskkill that hangs: none outlives the test by more than that.
-const RUNTIME = JSON.stringify(new URL("../src/lib/runtime.mjs", import.meta.url).href);
+const PROCESSES = JSON.stringify(new URL("../src/lib/processes.mjs", import.meta.url).href);
 const lingering = (life) => `setTimeout(() => {}, ${life})`;
 const parent = (code) => {
   const began = Date.now();
@@ -639,7 +334,7 @@ const parent = (code) => {
 
 // A taskkill that hung was outlived by the grace, then left running and referenced: routr stayed up until it ended.
 test("a taskkill that hangs is killed and let go at the grace, so routr exits; the child it was for is killed", () => {
-  const r = parent(`import { spawn } from "node:child_process"; import { stop } from ${RUNTIME};
+  const r = parent(`import { spawn } from "node:child_process"; import { stop } from ${PROCESSES};
     const target = spawn(process.execPath, ["-e", ${JSON.stringify(lingering(12000))}], { stdio: "ignore" });
     target.on("exit", (code, sig) => console.error("target", sig));
     const hang = () => spawn(process.execPath, ["-e", ${JSON.stringify(lingering(12000))}], { stdio: "ignore" });
@@ -654,7 +349,7 @@ test("a taskkill that hangs is killed and let go at the grace, so routr exits; t
 test.skipIf(process.platform === "win32")("a child that ignores SIGTERM does not outlive a routr that exits right after the timeout", async () => {
   const pidFile = join(scratch("exit-reap"), "pid");
   const child = `process.on("SIGTERM", () => {}); require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); ${lingering(15000)}`;
-  const r = parent(`import { run } from ${RUNTIME};
+  const r = parent(`import { run } from ${PROCESSES};
     console.log(await run(process.execPath, ["-e", ${JSON.stringify(child)}], { timeoutMs: 1000 })); process.exit(0);`);
   expect([r.code, r.ms < 5000]).toEqual([0, true]);
   const pid = Number(readFileSync(pidFile, "utf8"));
@@ -689,80 +384,6 @@ test("release binaries do not load a .env or bunfig.toml from the folder they ru
   expect(seen([], join(dir, `default${ext}`))).toBe("loaded preloaded");
   expect(seen(NO_AUTOLOAD, join(dir, `release${ext}`))).toBe("unset unset");
 }, 60000);
-
-test("the per-turn runtime loads only node built-ins", () => {
-  const text = readFileSync(new URL("../src/lib/runtime.mjs", import.meta.url), "utf8");
-  const imports = new Bun.Transpiler({ loader: "js" }).scanImports(text);
-  expect(imports.every((entry) => entry.path.startsWith("node:"))).toBe(true);
-});
-
-// A file routr wrote and reads back is read, absent, or unreadable: never "absent" for one it could not read. On Windows
-// a reader can meet a file another process holds or is replacing, so an unreadable one is read again for up to
-// REPLACE_BUSY_MS; elsewhere routr's writers replace whole files, so one that does not parse is read once.
-test("readJsonFile tells a file read from one absent and one there but unreadable, reading again on Windows", () => {
-  const dir = scratch("read-json-file"), file = join(dir, "state.json");
-  expect(runtime.readJsonFile(file)).toEqual({ absent: true });
-  writeFileSync(file, '{"turn":2}');
-  expect(runtime.readJsonFile(file)).toEqual({ value: { turn: 2 } });
-  for (const bad of ["", '{"turn":', "not json"]) { writeFileSync(file, bad); expect(runtime.readJsonFile(file)).toEqual({ unreadable: "not_json" }); }
-  // In use, then readable: read again with the old file in place, within the budget.
-  let t = 0, tries = 0;
-  const clock = { now: () => t, pause: (ms) => { expect(ms).toBe(5); t += ms; } };
-  const inUse = () => Object.assign(new Error("in use"), { code: "EBUSY" });
-  expect(runtime.readJsonFile(file, { busyFor: 100, ...clock, read: () => (++tries < 3 ? (() => { throw inUse(); })() : '{"turn":3}') })).toEqual({ value: { turn: 3 } });
-  expect(tries).toBe(3);
-  // Half written until the writer finishes: also read again.
-  tries = 0; t = 0;
-  expect(runtime.readJsonFile(file, { busyFor: 100, ...clock, read: () => (++tries < 2 ? '{"tu' : '{"turn":4}') })).toEqual({ value: { turn: 4 } });
-  // Unreadable throughout: given up once the budget is spent, slow reads counted in.
-  for (const [cost, want] of [[0, 21], [40, 3]]) {
-    tries = 0; t = 0;
-    expect(runtime.readJsonFile(file, { busyFor: 100, ...clock, read: () => { tries++; t += cost; throw inUse(); } })).toEqual({ unreadable: "EBUSY" });
-    expect([cost, tries]).toEqual([cost, want]);
-  }
-  // Absent is absent at once, and off Windows (busyFor 0, the default there) nothing is read twice.
-  tries = 0;
-  expect(runtime.readJsonFile(file, { busyFor: 100, ...clock, read: () => { tries++; throw Object.assign(new Error("gone"), { code: "ENOENT" }); } })).toEqual({ absent: true });
-  expect(tries).toBe(1);
-  tries = 0;
-  expect(runtime.readJsonFile(file, { busyFor: 0, ...clock, read: () => { tries++; throw inUse(); } })).toEqual({ unreadable: "EBUSY" });
-  expect(tries).toBe(1);
-  if (process.platform !== "win32") { tries = 0; expect(runtime.readJsonFile(file, { read: () => { tries++; throw inUse(); } })).toEqual({ unreadable: "EBUSY" }); expect(tries).toBe(1); }
-});
-
-test.skipIf(process.platform === "win32")("writeJsonAtomic userFile writes through the person's link, keeps it, and keeps the file's mode", () => {
-  const dir = scratch("user-file"), real = join(dir, "dotfiles-settings.json"), link = join(dir, "settings.json");
-  writeFileSync(real, "{}"); chmodSync(real, 0o600); symlinkSync(real, link);
-  runtime.writeJsonAtomic(link, { a: 1 }, { indent: 2, preserveOnError: true, userFile: true });
-  expect(lstatSync(link).isSymbolicLink()).toBe(true);
-  expect(JSON.parse(readFileSync(real, "utf8"))).toEqual({ a: 1 });
-  expect(statSync(real).mode & 0o777).toBe(0o600);
-  expect(readdirSync(dir).sort()).toEqual(["dotfiles-settings.json", "settings.json"]); // no temporary file left
-});
-
-test.skipIf(process.platform === "win32")("writeJsonAtomic userFile keeps a link to a file not made yet, and a group-writable mode the umask would narrow", () => {
-  const dir = scratch("user-file-edge"), target = join(dir, "dotfiles", "config.json"), link = join(dir, "config.json");
-  mkdirSync(join(dir, "dotfiles")); symlinkSync("dotfiles/config.json", link); // relative, and dangling
-  runtime.writeJsonAtomic(link, { a: 1 }, { userFile: true, preserveOnError: true });
-  expect(lstatSync(link).isSymbolicLink()).toBe(true); expect(JSON.parse(readFileSync(target, "utf8"))).toEqual({ a: 1 });
-  chmodSync(target, 0o660);
-  const was = process.umask(0o022);
-  try { runtime.writeJsonAtomic(link, { a: 2 }, { userFile: true, preserveOnError: true }); } finally { process.umask(was); }
-  expect(statSync(target).mode & 0o777).toBe(0o660);
-});
-
-test.skipIf(process.platform === "win32")("writeJsonAtomic userFile takes a link's .. where its folder really is, and refuses a loop of links", () => {
-  const dir = scratch("user-file-links");
-  mkdirSync(join(dir, "physical", "nested"), { recursive: true }); symlinkSync("physical/nested", join(dir, "alias"));
-  writeFileSync(join(dir, "physical", "target.json"), "{}"); writeFileSync(join(dir, "target.json"), JSON.stringify({ owner: "unrelated" }));
-  symlinkSync("../target.json", join(dir, "physical", "nested", "settings.json"));
-  runtime.writeJsonAtomic(join(dir, "alias", "settings.json"), { a: 1 }, { userFile: true, preserveOnError: true });
-  expect(JSON.parse(readFileSync(join(dir, "physical", "target.json"), "utf8"))).toEqual({ a: 1 });
-  expect(JSON.parse(readFileSync(join(dir, "target.json"), "utf8"))).toEqual({ owner: "unrelated" });
-  symlinkSync("b.json", join(dir, "a.json")); symlinkSync("a.json", join(dir, "b.json"));
-  expect(() => runtime.writeJsonAtomic(join(dir, "a.json"), { a: 1 }, { userFile: true })).toThrow("too many links");
-  expect(lstatSync(join(dir, "a.json")).isSymbolicLink()).toBe(true);
-});
 
 test("run() with exitZero answers null for a command that printed and then exited non-zero; without it, what it printed", async () => {
   const script = "process.stdout.write('{\"subtype\":\"success\"}'); process.exitCode = 1";

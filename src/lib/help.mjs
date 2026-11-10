@@ -3,7 +3,7 @@
 // `text` for a screen. The contract tests walk this table, so a covered command cannot be left out of them.
 import { HARDEST, RESERVE } from "./wording.mjs";
 import { KINDS } from "./harnesses.mjs";
-import { NAME_RULE } from "./runtime.mjs";
+import { NAME_RULE } from "./state-files.mjs";
 export const DESCRIPTION = "routr: quick, calibrated advice for an agent that is about to hand out work.";
 
 export const COMMANDS = {

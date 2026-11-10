@@ -1,12 +1,13 @@
 // Only this boundary builds shipped spans, events and usage observations. Raw output never enters an OTLP encoder.
 import { IDENTITY_ATTRIBUTES, LOG_EVENTS, NEEDS_INPUT_CODES, OTEL_ATTRIBUTES, SCHEMA_URL, TOKEN_USAGE, TRACE_ATTRIBUTES, signalAttributes, typed } from "./otel-schema.mjs";
 export { LOG_EVENTS, NEEDS_INPUT_CODES, OTEL_ATTRIBUTES, TRACE_ATTRIBUTES } from "./otel-schema.mjs";
-import { warning, warningCode, carrierWithheld } from "./warnings.mjs";
+import { warningCode } from "./warnings.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
 import { encodeTraces, encodeLogs, headroomObservation, otelSession, otelSwitch } from "./otel.mjs";
 import { loadConfig } from "./config.mjs";
-import { CARRIERS, carriersFrom, savedCarriers, WORKER_NAME } from "./runtime.mjs";
+import { CARRIERS, carriersFrom, savedCarriers } from "./worker-env.mjs";
+import { WORKER_NAME } from "./state-files.mjs";
 import { parseTraceparent, leadSession, sessionId } from "./trace-context.mjs";
 import { pick, modelName, EFFORTS, questionSet, VERDICTS, CHECK_RESULTS } from "./shaped.mjs";
 import { HARNESSES, SOURCES } from "./harnesses.mjs";
@@ -204,9 +205,6 @@ export function launchCarriers(env) {
   const carriers = spanCarriers(found.carriers, c.span, c.inherited);
   return { carriers, withheld: found.withheld, launchSpan: true };
 }
-export const launchCarrierWarnings = (found) => found.withheld.map((n) => found.launchSpan && n === "TRACEPARENT"
-  ? warning("launch_parent_replaced", "The inherited TRACEPARENT exceeded routr's forwarding limits; the worker gets this routr launch span instead")
-  : carrierWithheld(n));
 // Headless turn consent: fresh consent per turn; missing launch uses saved-parent sampling, or a root
 // without one.
 export const WORKER_STATES = Object.freeze(["starting", "working", "waiting", "idle", "failed", "stopped", "no_task"]);

@@ -6,7 +6,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, closeSync, existsSync, lstatSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { loadConfig } from "./config.mjs";
-import { CACHE_DIR, ensureParent, lockIsStale, lockOwned, lockToken, releaseFileLock, spawnSelf, standalone, startSync, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP, writeJsonAtomic } from "./runtime.mjs";
+import { CACHE_DIR, ensureParent, lockIsStale, lockOwned, lockToken, releaseFileLock, takeLock, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP, writeJsonAtomic } from "./state-files.mjs";
+import { spawnSelf, standalone, startSync } from "./processes.mjs";
 import { forgetConsentUnlessOn, hoursAgo, sendRows, telemetryStatus } from "./telemetry.mjs";
 import { newer, ROUTR_VERSION } from "./version.mjs";
 
@@ -258,7 +259,7 @@ export async function update({ checkOnly = false, force = false, base = process.
 // A normal command only looks at one file's age. When the last check is more than a day old it starts a DETACHED
 // updater and carries on; it never waits for it and makes no network call itself. The updater swaps the binary in
 // place, so a run already in progress keeps the binary it started with and the next run gets the new one.
-export { lockIsStale }; // lives in runtime.mjs now, beside takeLock, so telemetry status can read the lock too
+export { lockIsStale }; // lives with the state files now, beside takeLock, so telemetry status can read the lock too
 
 // Put `bin` where `self` is: a Buffer, or the path of a downloaded file, which is moved (not copied) to `${self}.new`.
 // A running binary can be renamed on every system, but on Windows it cannot be overwritten, so it is moved aside first.

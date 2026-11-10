@@ -3,7 +3,9 @@
 // and an advice command that reads Cursor's usage never loads the launcher.
 import { stripVTControlCharacters } from "node:util";
 import { callHerdr } from "./process-boundary.mjs";
-import { CARRIERS, FORWARDED, realPath, start } from "./runtime.mjs";
+import { CARRIERS, FORWARDED } from "./worker-env.mjs";
+import { realPath } from "./state-files.mjs";
+import { start } from "./processes.mjs";
 
 // A branch name launch gives `herdr worktree create`, and cleanup finds a worktree by.
 export const BRANCH = /^[A-Za-z0-9][A-Za-z0-9._\/-]{0,80}$/;
@@ -125,7 +127,7 @@ export const promptSettled = (text, previous) => {
 // started through cmd.exe, where the kill reaches cmd.exe and not the hung client below it. Only the child is
 // killed, never its tree: a herdr client may have started the herdr server, the user's whole session. Our ends
 // of the pipes are closed and the child unref'd, so a client that lingers holds neither this call nor routr's
-// exit. `via` is a test seam (runtime's start).
+// exit. `via` is a test seam (the processes module's start).
 function transport(args, timeout, { via = start } = {}) {
   return new Promise((done, reject) => {
     const child = via("herdr", args, { stdio: ["ignore", "pipe", "pipe"] });
@@ -164,7 +166,7 @@ export const paneView = (call, pane) => ({
 });
 
 // A new pane, in `cwd`: beside the caller's (`--current`), or beside `pane` (a worktree's root pane, which launch then
-// closes). Its shell gets each trace-context carrier as `--env NAME=VALUE`, from `carriers` (runtime's, checked): the
+// closes). Its shell gets each trace-context carrier as `--env NAME=VALUE`, from `carriers` (worker-env's, checked): the
 // only herdr start with an environment option (0.9.5: `worktree create` and `agent start` have none). Measured
 // 2026-10-24, herdr 0.9.5 on macOS zsh: values holding `,` `=` TAB `"` `'` `&` `!` `%` and spaces reached the pane's
 // shell byte for byte. A pane starts from the herdr server's environment, and herdr's pane filter keeps the three names

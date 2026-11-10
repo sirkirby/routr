@@ -1,13 +1,7 @@
-// Workers in herdr-core: what a harness keeps of a core terminal, `routr watch`, and doctor. No hc and no harness run.
+// Workers in herdr-core: `routr watch`, and doctor. No hc and no harness run.
 import { expect, test } from "bun:test";
 import { changes, statusReport } from "../src/lib/watch.mjs";
 import { KINDS, HARNESSES } from "../src/lib/harnesses.mjs";
-import { harnessEnv } from "../src/lib/runtime.mjs";
-
-test("a harness never takes itself for the lead's core terminal, and HC_SESSION, which chooses a core, stays", () => {
-  const kept = harnessEnv({ HC_TERMINAL_ID: "t7", HC_TERMINAL_SOCKET: "/s", HC_SCOPE: "x", HC_SESSION: "mine" });
-  expect(kept).toEqual({ HC_SESSION: "mine" });
-});
 
 const decoded = (s) => Object.fromEntries(s.slice("\x1b]7501;".length, -2).split(":").map((f) => f.split("=", 2)));
 test("a worker's state reads as program status, in core's encoding, under its harness's own name", () => {

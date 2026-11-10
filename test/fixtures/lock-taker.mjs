@@ -1,6 +1,6 @@
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { lockIsStale, lockToken, takeLock } from "../../src/lib/runtime.mjs";
+import { lockIsStale, lockToken, takeLock } from "../../src/lib/state-files.mjs";
 
 const [file, barrier] = process.argv.slice(2);
 const wait = (name) => {

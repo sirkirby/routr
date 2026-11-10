@@ -1,7 +1,8 @@
 // A usage reading that takes seconds, kept as a snapshot every call reads in milliseconds and refreshed in the
 // background. Cursor's (cursor-usage.mjs) and Kiro's (kiro-usage.mjs) are read this way.
 import { readFileSync } from "node:fs";
-import { adoptLock, lockToken, olderThan, releaseFileLock, spawnSelf, takeLock, whileLockOwned, writeJsonAtomic } from "./runtime.mjs";
+import { adoptLock, lockToken, olderThan, releaseFileLock, takeLock, whileLockOwned, writeJsonAtomic } from "./state-files.mjs";
+import { spawnSelf } from "./processes.mjs";
 import { summarize } from "./usage.mjs";
 import { usageFailure } from "./usage-failure.mjs";
 import { isVersion, newer, ROUTR_VERSION } from "./version.mjs";

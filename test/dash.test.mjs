@@ -4,7 +4,7 @@ import { expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { DASH_PAGE, dashCommand, dashRows } from "../src/lib/dash.mjs";
-import { browserArgv, openInBrowser } from "../src/lib/runtime.mjs";
+import { browserArgv, openInBrowser } from "../src/lib/processes.mjs";
 import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 
 const RUN = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";

@@ -599,6 +599,6 @@ It then checks process command lines for its exact temp home (including `--otel-
 checks the holder pids recorded in its own claims. Unreadable inventory or a survivor fails the smoke and retains
 the home for inspection. A reused pid belonging to another command is never signalled. Success is reported only
 after teardown. In-process queueing and every other background caller start routr's own source
-entry resolved from its runtime module, or its compiled binary, independently of the importing script.
+entry resolved from the module that starts its processes, or its compiled binary, independently of the importing script.
 
 Account class is not exported. Missing usage uses `routr.usage.state=unknown` and carries no headroom number.

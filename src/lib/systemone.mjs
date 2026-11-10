@@ -2,7 +2,7 @@
 // answers, so advise.mjs and check.mjs read every provider the same way. Raw HTTP, node: built-ins only; exposes the
 // exact answers, latency and tokens.
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { ensureParent } from "./runtime.mjs";
+import { ensureParent } from "./state-files.mjs";
 import { TOKEN_USAGE } from "./otel-schema.mjs";
 import { DecisionError, DecisionListError, decisionTarget, decisionTargets, decisionUnavailable, isModel, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 

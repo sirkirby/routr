@@ -1,5 +1,5 @@
 import { writeFileSync } from "node:fs";
-import { spawnSelf, standalone } from "../../src/lib/runtime.mjs";
+import { spawnSelf, standalone } from "../../src/lib/processes.mjs";
 if (process.argv[2] === "--self-child" && process.argv.length === 4) {
   writeFileSync(process.argv[3], JSON.stringify({ argv: process.argv.slice(2), executable: process.execPath })); process.exit(0);
 }

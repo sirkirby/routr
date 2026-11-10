@@ -9,7 +9,7 @@ import { LAUNCH_HISTORY_DIR as LAUNCH_COUNTS_DIR, recordLaunch } from "../src/li
 const countLaunch = (subscription, opts) => recordLaunch(randomUUID(), { subscription }, opts);
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { loadConfig } from "../src/lib/config.mjs";
-import { UNINSTALL_LOCK } from "../src/lib/runtime.mjs";
+import { UNINSTALL_LOCK } from "../src/lib/state-files.mjs";
 import { cfg, live, metered, scratch } from "./helpers.mjs";
 
 const DAY = 86400000, NOW = 1_800_000_000_000;

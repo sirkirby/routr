@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { cachedReadings, keepReadings, STALE_SEC } from "../src/lib/usage-cache.mjs";
 import { cachedUsage, readUsage } from "../src/lib/harnesses.mjs";
 import { codexSnapshot, summarize, failedUsage } from "../src/lib/usage.mjs";
-import { releaseFileLock, takeLock } from "../src/lib/runtime.mjs";
+import { releaseFileLock, takeLock } from "../src/lib/state-files.mjs";
 import { cliEnv, SCRIPT } from "./helpers.mjs";
 import { boardCommand, DECISIONS_MAX, joinDecisions } from "../src/lib/board.mjs";
 import { projectName } from "../src/lib/ledger.mjs";

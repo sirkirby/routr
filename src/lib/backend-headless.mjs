@@ -3,7 +3,7 @@
 // worker's holder only through its channel (channel.mjs) and reads what the holder wrote; none stops a process by a saved
 // id. Answers carry report paths, never worker text.
 import { warning } from "./warnings.mjs";
-import { launchCarriers, launchCarrierWarnings, currentLaunch } from "./traces.mjs";
+import { launchCarriers, currentLaunch } from "./traces.mjs";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -16,7 +16,9 @@ import { HARNESSES, subagentDefaults } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext } from "./next.mjs";
 import { launchFailed } from "./launch-answer.mjs";
 import { inCore } from "./backends.mjs";
-import { CARRIERS, FORWARDED, folderId, lockIsStale, lockOwned, lockToken, realOr, releaseFileLock, spawnSelf, takeLock, writeJsonAtomic } from "./runtime.mjs";
+import { CARRIERS, FORWARDED, launchCarrierWarnings } from "./worker-env.mjs";
+import { folderId, lockIsStale, lockOwned, lockToken, realOr, releaseFileLock, takeLock, writeJsonAtomic } from "./state-files.mjs";
+import { spawnSelf } from "./processes.mjs";
 
 export const RUNNING = new Set(["working", "waiting", "starting"]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -35,7 +37,7 @@ const NOT_STARTED = (p) => p.state === "unreadable" ? p.why : p.released?.why ==
 const PATH_TOO_LONG = NOT_STARTED({ released: { why: "path_too_long" } });
 
 // Starting a holder and removing a run folder go through one lock per worker, so cleanup can never delete a folder
-// a send is starting a new holder in. Taken over only when its taker has gone (runtime's lock).
+// a send is starting a new holder in. Taken over only when its taker has gone (the state files' lock).
 async function locked(name, fn) {
   const file = join(WORKERS_DIR(), `${name}.lock`);
   let took = false;

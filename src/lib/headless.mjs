@@ -44,7 +44,9 @@ import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, probe, removeEndpoint, serve } from "./channel.mjs";
 import { FORMAT, readWorker, runDir } from "./worker-record.mjs";
 import { HARNESSES, plan, subagentDefaults } from "./harnesses.mjs";
-import { CARRIERS, installedAt, probe as collect, readJsonFile, savedCarriers, start, stop, workerEnv, writeJsonAtomic } from "./runtime.mjs";
+import { CARRIERS, savedCarriers, workerEnv } from "./worker-env.mjs";
+import { installedAt, probe as collect, start, stop } from "./processes.mjs";
+import { readJsonFile, writeJsonAtomic } from "./state-files.mjs";
 import { besidesHelper, groupMembers } from "./process-boundary.mjs";
 
 // What the holder wrote last (this module is its only writer and reader), as readJsonFile reads it: { value }, { absent: true }
@@ -422,7 +424,7 @@ export const listGroup = async (pgid, timeoutMs, { ps = PS } = {}) => {
 };
 
 // The holder: `routr workers --hold <name>`, started detached by launch or send. Exits on its own; never prints.
-// `run` starts the harness (runtime's start); a test passes a fake.
+// `run` starts the harness (the processes module's start); a test passes a fake.
 export async function hold(name, { run = start, noTaskMs = 30000, startMs = 30000, otel = {} } = {}) {
   const dir = runDir(name), w = readWorker(name);
   if (w?.backend !== "headless") return; // a terminal worker's own program runs it (backend-terminal.mjs)
@@ -613,9 +615,10 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
     return started;
   };
 
-  // stop: SIGTERM to the harness's group, then SIGKILL to it after the grace while Claude is still there (runtime's
-  // stop; signalled only while Claude is unreaped, so the group id is still its own). Anything of the group left once
-  // Claude has gone is not signalled again (its id may be someone else's by then): it is reported, and recorded.
+  // stop: SIGTERM to the harness's group, then SIGKILL to it after the grace while Claude is still there (the
+  // processes module's stop; signalled only while Claude is unreaped, so the group id is still its own). Anything of
+  // the group left once Claude has gone is not signalled again (its id may be someone else's by then): it is reported,
+  // and recorded.
   // Messages the holder still keeps are dropped, and counted in the answer.
   let dropped = 0;
   const stopAll = () => {

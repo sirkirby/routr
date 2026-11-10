@@ -7,7 +7,7 @@
 // launch, and history that cannot be read is said, never read as empty.
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { home as userHome, STATE_DIR, UNINSTALL_LOCK, WORKER_NAME, writeJsonAtomic } from "./runtime.mjs";
+import { home as userHome, STATE_DIR, UNINSTALL_LOCK, WORKER_NAME, writeJsonAtomic } from "./state-files.mjs";
 import { LEVELS } from "./questions.mjs";
 
 export const HISTORY_DAYS = 7;

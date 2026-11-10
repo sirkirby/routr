@@ -4,7 +4,7 @@
 // hc runs routr's own runner in the terminal, never the harness: core gives a terminal its server's environment, not
 // its caller's (measured 2026-11-03), so the runner is what gives the harness the environment launch decided on.
 import { warning } from "./warnings.mjs";
-import { launchCarriers, launchCarrierWarnings, currentLaunch, inputNeeded } from "./traces.mjs";
+import { launchCarriers, currentLaunch, inputNeeded } from "./traces.mjs";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:os";
 import { writeFileSync } from "node:fs";
@@ -17,7 +17,9 @@ import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { launchFailed, STARTUP_INPUT } from "./launch-answer.mjs";
 import { actHc, client, getTerminal, isAddress, isFinished, statusKind, statusWord, turnOf } from "./hc.mjs";
 import { leadTerminal, openTerminal } from "./core-tab.mjs";
-import { configLocations, FORWARDED, processAlive, readJsonFile, start, terminalEnv, writeJsonAtomic } from "./runtime.mjs";
+import { configLocations, FORWARDED, launchCarrierWarnings, terminalEnv } from "./worker-env.mjs";
+import { processAlive, readJsonFile, writeJsonAtomic } from "./state-files.mjs";
+import { start } from "./processes.mjs";
 
 const PROMPT_FILE = "prompt.md", RUN_FILE = "run.json";
 const pausing = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -186,8 +188,8 @@ const runFile = (name) => join(runDir(name), RUN_FILE);
 export const runRecord = (name) => readJsonFile(runFile(name));
 // `dir`: the run folder launch made, by its path, and `id`: the id launch gave its record, checked there. The terminal's
 // HOME is the core's, so this process cannot find that folder from a name. Reads the record, builds the environment, starts the harness on this terminal, waits, records its exit, exits with its
-// code. Says only fixed lines of its own, on stderr: the screen is the person's. `begin` starts the process (runtime's
-// start); a test passes a fake.
+// code. Says only fixed lines of its own, on stderr: the screen is the person's. `begin` starts the process (the
+// processes module's start); a test passes a fake.
 export async function runWorker(dir, id, { env = process.env, begin = start, say = (s) => process.stderr.write(`${s}\n`), on = (sig, fn) => process.on(sig, fn), now = () => new Date().toISOString() } = {}) {
   const w = readWorkerAt(dir);
   if (w?.backend !== "terminal" || w.id !== id) { say(`routr: ${dir} does not hold the terminal worker launch started; nothing was started`); return 2; }

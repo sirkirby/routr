@@ -18,7 +18,8 @@ import { besidesHelper, callGit, groupMembers } from "../src/lib/process-boundar
 import { HARNESSES } from "../src/lib/harnesses.mjs";
 import { COMMANDS } from "../src/lib/help.mjs";
 import { launch } from "../src/lib/launch.mjs";
-import { CARRIERS, harnessEnv, installedAt, start, stop } from "../src/lib/runtime.mjs";
+import { CARRIERS } from "../src/lib/worker-env.mjs";
+import { installedAt, start, stop } from "../src/lib/processes.mjs";
 import { cfg, cliEnv, CONFIG_ENV, fakeExecutable, LEAD_ENV, scratch, SCRIPT } from "./helpers.mjs";
 
 // A worker's socket lives under its home, and macOS caps a socket path at 103 bytes: the test scratch folder under
@@ -274,7 +275,9 @@ function world(over = {}) {
   if (over.FAKE_TRACE_WRITES) writeFileSync(entry, `
     import { readFileSync, existsSync, appendFileSync, writeFileSync } from "node:fs";
     import { join } from "node:path";
-    import { writeJsonAtomic, start, harnessEnv } from ${JSON.stringify(new URL("../src/lib/runtime.mjs", import.meta.url).href)};
+    import { writeJsonAtomic } from ${JSON.stringify(new URL("../src/lib/state-files.mjs", import.meta.url).href)};
+    import { start } from ${JSON.stringify(new URL("../src/lib/processes.mjs", import.meta.url).href)};
+    import { harnessEnv } from ${JSON.stringify(new URL("../src/lib/worker-env.mjs", import.meta.url).href)};
     import { fileURLToPath } from "node:url";
     if (process.argv.includes("--hold")) {
       process.env.FAKE_HOLDER_TRACE = "1";
@@ -1343,12 +1346,6 @@ test("every headless adapter removes every lead session name on its initial and 
     } finally { w.run(["stop", "--name", "env"]); w.run(["cleanup", "--worker", "env"]); }
   }
 }, 90000);
-
-test("a harness gets none of the lead's session variables, and keeps its sign-in settings", () => {
-  const env = { PATH: "/bin", CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s", CLAUDE_CODE_MESSAGING_TOKEN: "t", CLAUDE_PID: "1", CODEX_THREAD_ID: "c", HERDR_PANE_ID: "p",
-    CLAUDE_CODE_OAUTH_TOKEN: "kept", CLAUDE_CODE_USE_BEDROCK: "1", CODEX_HOME: "/c" };
-  expect(harnessEnv(env)).toEqual({ PATH: "/bin", CLAUDE_CODE_OAUTH_TOKEN: "kept", CLAUDE_CODE_USE_BEDROCK: "1", CODEX_HOME: "/c" });
-});
 
 test.skipIf(!POSIX)("stop with group: true ends what a detached child started in its group, SIGTERM first", async () => {
   const dir = scratch("group"), pidFile = join(dir, "grandchild");

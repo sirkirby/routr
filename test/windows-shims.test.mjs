@@ -1,10 +1,10 @@
-// On Windows, a harness CLI installed with npm is a .cmd shim. These start real .cmd files through runtime.mjs, so they
-// run on Windows only (CI's windows-latest); the pure parts are tested everywhere in runtime.test.mjs.
+// On Windows, a harness CLI installed with npm is a .cmd shim. These start real .cmd files through the processes module, so they
+// run on Windows only (CI's windows-latest); the pure parts are tested everywhere in processes.test.mjs.
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { probe, resolveCommand, run, startSync } from "../src/lib/runtime.mjs";
+import { probe, resolveCommand, run, startSync } from "../src/lib/processes.mjs";
 import { cliEnv, fakeExecutable, npmShim, scratch } from "./helpers.mjs";
 
 const ECHO = "process.stdout.write(JSON.stringify(process.argv.slice(2)))\n";
@@ -41,7 +41,7 @@ test.skipIf(process.platform !== "win32")("Windows only: run and probe start a .
     }
     // The compiled binary starts them the same way.
     const entry = join(dir, "entry.mjs"), exe = join(dir, "entry.exe");
-    writeFileSync(entry, `import { run } from ${JSON.stringify(join(import.meta.dir, "../src/lib/runtime.mjs"))};\n`
+    writeFileSync(entry, `import { run } from ${JSON.stringify(join(import.meta.dir, "../src/lib/processes.mjs"))};\n`
       + `console.log(JSON.stringify(await Promise.all(["fake", "fake2"].map((c) => run(c, ${JSON.stringify(ARGS)}, { timeoutMs: 20000 })))));\n`);
     expect(spawnSync(process.execPath, ["build", "--compile", entry, "--outfile", exe], { encoding: "utf8" }).status).toBe(0);
     const out = spawnSync(exe, [], { encoding: "utf8", env: process.env });

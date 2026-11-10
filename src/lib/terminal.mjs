@@ -11,7 +11,8 @@ import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import { callHerdr, processError } from "./process-boundary.mjs";
 import { paneView } from "./herdr.mjs";
-import { harnessEnv, start as startProcess, startInTerminal } from "./runtime.mjs";
+import { harnessEnv } from "./worker-env.mjs";
+import { start as startProcess, startInTerminal } from "./processes.mjs";
 
 // A session routr made carries the pid of the routr that made it, so a run that was killed half way is cleaned up by
 // the next one without touching a session another routr is still using. A pid can be reused, so a session older than
