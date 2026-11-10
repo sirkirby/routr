@@ -3,7 +3,9 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { HARNESSES, KINDS, SOURCES } from "../src/lib/harnesses.mjs";
+import { existsSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { HARNESSES, KINDS, privateConfigCopy, SOURCES } from "../src/lib/harnesses.mjs";
 import { claudeSnapshot, codexSnapshot, readAgy } from "../src/lib/usage.mjs";
 import { readCursor, refreshCursor } from "../src/lib/cursor-usage.mjs";
 import { readKiro, refreshKiro } from "../src/lib/kiro-usage.mjs";
@@ -134,4 +136,14 @@ test("each usage reader names only the windows its harness declares", async () =
   await refreshKiro({ file: kiroFile, nowSec: now, read: async () => ({ ok: true, subscription: "kiro", plan: "KIRO FREE", credits_used: 5, credits_limit: 50, used_pct: 10, resets_at: now + 86400, unrecognized_lines: 0, headroom: 0.9 }) });
   const kiro = readKiro({ file: kiroFile, nowSec: now, off: true });
   expect(kiro.windows.length).toBeGreaterThan(0); declared("kiro", names(kiro));
+});
+
+test("a private config copy that fails throws its own error, even when its folder cannot be removed after", () => {
+  const root = mkdtempSync(join(tmpdir(), "routr-private-")), from = join(root, "missing.json");
+  const signIn = () => privateConfigCopy("cursor", join(root, "a"), { from });
+  expect(signIn).toThrow(`Cursor has no config at ${from}: sign in with \`cursor-agent\` first`);
+  expect(existsSync(join(root, "a"))).toBe(false);
+  // The pane's policy (the file system's own error), and a removal that fails: the copy's error is still the one thrown.
+  const stuck = () => privateConfigCopy("cursor", join(root, "b"), { from, failed: (e) => e, remove: () => { throw new Error("EBUSY"); } });
+  expect(stuck).toThrow(/ENOENT/);
 });

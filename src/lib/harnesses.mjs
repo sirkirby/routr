@@ -303,13 +303,14 @@ export const privateConfigDir = (kind, runDir) => join(runDir, `${kind}-config`)
 // Its private copy: `dir` made for the owner only, and its config file copied in, readable by the owner only, from
 // `from` (its own file under home, unless a test or a read names another). Nothing is left when the copy fails, and it
 // is never run on its account's own config instead. `failed(error, from)`: the error to throw then; by default one that
-// says to sign in, which writes that file (a pane launch keeps the file system's own).
+// says to sign in, which writes that file (a pane launch keeps the file system's own). A folder that cannot be removed
+// never replaces that error: the caller's own cleanup tries again and says what was left (a pane's `cursor_config_left`).
 const signInFirst = (kind) => (_, from) => new Error(`${HARNESSES[kind].label} has no config at ${from}: sign in with \`${HARNESSES[kind].executable}\` first`);
-export function privateConfigCopy(kind, dir, { from = join(home(), HARNESSES[kind].privateConfig.file), failed = signInFirst(kind) } = {}) {
+export function privateConfigCopy(kind, dir, { from = join(home(), HARNESSES[kind].privateConfig.file), failed = signInFirst(kind), remove = rmSync } = {}) {
   const to = join(dir, basename(HARNESSES[kind].privateConfig.file));
   mkdirSync(dir, { mode: 0o700 });
   try { copyFileSync(from, to); chmodSync(to, 0o600); }
-  catch (e) { rmSync(dir, { recursive: true, force: true }); throw failed(e, from); }
+  catch (e) { try { remove(dir, { recursive: true, force: true }); } catch {} throw failed(e, from); }
   return dir;
 }
 // Where routr's skills are installed: the shared folder, then each harness's own.
