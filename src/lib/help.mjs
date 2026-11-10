@@ -47,7 +47,7 @@ export const COMMANDS = {
   },
   launch: {
     name: "launch",
-    contract: { fields: ["state", "kind", "name", "pane", "cwd", "model", "effort", "start", "steps", "ran", "would_run", "prompt_chars", "advice", "worktree", "needs_input", "screen", "launch_id"] },
+    contract: { fields: ["state", "kind", "name", "pane", "cwd", "model", "effort", "start", "steps", "ran", "would_run", "prompt_chars", "advice", "worktree", "needs_input", "screen", "launch_id", "worker"] },
     description: "start a worker with matching task advice: in a herdr pane; in a herdr-core terminal (the Herdr app), the harness itself in a tab of its own, which you follow with hc; or anywhere else a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker that `routr wait` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
     flags: [
       { name: "--lead-session", arg: "<id>", description: "your known session id when routr cannot read it from the harness environment; UUIDv4, UUIDv7 or 16–64 lowercase hex characters; malformed values are ignored with a fixed warning; never invent one", required: false },
@@ -73,7 +73,7 @@ export const COMMANDS = {
   },
   cleanup: {
     name: "cleanup",
-    contract: { fields: ["state", "steps", "ran", "cwd", "pane", "worktrees", "worktree", "branch"] },
+    contract: { fields: ["state", "steps", "ran", "cwd", "pane", "worktrees", "worktree", "branch", "name"] },
     description: "finish a worker: remove the worktree `launch --worktree` made (closing its workspace), or close the pane launch split, or (`--worker`) a headless or terminal worker's worktree, through the same checks, and then its run folder and reports; a terminal worker's terminal is ended first. The way to end every worker: closing a worktree's pane leaves the worktree behind. Refuses while anything it can see runs there (outside herdr it cannot see what runs in a worktree's folder), and never removes uncommitted changes, files the worker made, or a commit no branch or tag holds; files copied in with --copy and left unchanged go with it, and so do files git ignores. Keeps the branch unless --delete-branch. With no worker named, lists the repo's worktrees and what it would do with each",
     flags: [
       { name: "--cwd", arg: "<repo>", description: "the repository (the main checkout or any of its worktrees)", required: false, default: "." },
@@ -96,7 +96,7 @@ export const COMMANDS = {
   },
   send: {
     name: "send",
-    contract: { fields: ["state", "name"] },
+    contract: { fields: ["state", "name", "message"] },
     description: "outside herdr: a correction or follow-up for a headless worker, into its running turn where the harness takes it, or as the next turn of the same session; new work is a new launch with its own advice. A terminal worker is followed with hc, and it says so",
     flags: [
       { name: "--name", arg: "<name>", description: "the worker", required: true },
