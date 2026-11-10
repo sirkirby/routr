@@ -68,6 +68,11 @@ export const skillsStale = (r) => (r.from_source ? [] : mine(r).filter((k) => ba
 // Pane workers use herdr's skill, so a lead in herdr needs it whatever else is installed. With herdr-core and not in
 // herdr, it is optional: the app shows workers without it.
 const needsHerdrSkill = (r) => !r.herdr.skill && (!r.core?.path || r.herdr.inside_session);
+// The usage readers that need herdr on this platform, as a sentence names them ("Cursor's usage"), or null.
+const herdrUsage = (platform) => {
+  const names = KINDS.filter((n) => HARNESSES[n].usage.needsHerdrOn?.includes(platform)).map((n) => `${HARNESSES[n].label}'s`);
+  return names.length ? `${names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0]} usage` : null;
+};
 export function nextSteps(r, { platform = process.platform } = {}) {
   const steps = [];
   // Every configured entry is tested independently; one working backup does not hide a broken first choice.
@@ -84,13 +89,15 @@ export function nextSteps(r, { platform = process.platform } = {}) {
   // A subscription the user set up whose harness is signed out gets no work until they sign in again.
   for (const n of r.config.subscriptions ?? []) if (!r.config.off?.includes(n) && r.harnesses[n]?.installed && !r.harnesses[n].signed_in) steps.push(`${HARNESSES[n].label} is set up in routr but gets no work: ${r.harnesses[n].sign_in}`);
   if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push(`Install and log in to at least one harness: ${KINDS.slice(0, -1).map((n) => HARNESSES[n].installAs).join(", ")}, or ${HARNESSES[KINDS.at(-1)].installAs}`);
-  // Claude showed no windows (its /usage, or its statusline after a prompt): a seat with no quota, or a plan routr has
-  // not seen send them.
-  // routr does not guess which; the user says, either way, and the step clears. Nor is there anything to ask when
-  // Claude's sign-in status already said how it bills (an API key login: `usage_billing`, readUsage).
-  const cl = r.harnesses.claude;
-  if (cl?.installed && cl.usage_reason === NO_WINDOWS_AFTER_ANSWER && !cl.usage_billing && !r.config.billing?.claude)
-    steps.push(`Claude reports no usage windows, and routr cannot tell why. If this seat has no quota, add "billing": "metered" under subscriptions.claude in ${r.config.path} and routr ranks it as billed usage. If it has a quota, add "billing": "included", or check again after another turn`);
+  // A harness whose reader answered with no windows for a reason routr cannot tell (its `usage.unexplainedNoWindows`:
+  // Claude's /usage, or its statusline after a prompt): a seat with no quota, or a plan routr has not seen send them.
+  // routr does not guess which; the user says, either way, and the step clears. Nor is there anything to ask when its
+  // sign-in status already said how it bills (an API key login: `usage_billing`, readUsage).
+  for (const n of KINDS.filter((k) => HARNESSES[k].usage.unexplainedNoWindows)) {
+    const h = r.harnesses[n];
+    if (h?.installed && h.usage_reason === NO_WINDOWS_AFTER_ANSWER && !h.usage_billing && !r.config.billing?.[n])
+      steps.push(`${HARNESSES[n].shortLabel} reports no usage windows, and routr cannot tell why. If this seat has no quota, add "billing": "metered" under subscriptions.${n} in ${r.config.path} and routr ranks it as billed usage. If it has a quota, add "billing": "included", or check again after another turn`);
+  }
   if (skillsMissing(r).length || skillsIncomplete(r).length || skillsStale(r).length) steps.push("Install the routr skills that match this routr: routr skill install");
   // A folder of the same name that routr did not write is never replaced: the user moves it, or keeps theirs.
   for (const k of r.skill.filter((x) => x.ours === false && x.where.endsWith(`.agents/skills/${x.name}`))) steps.push(k.why
@@ -101,10 +108,11 @@ export function nextSteps(r, { platform = process.platform } = {}) {
   if (r.telemetry?.needs_attention) steps.push("Telemetry is on but not sending: `routr telemetry status` says why (last_send, daily_send), and `routr telemetry send` sends now");
   if (r.otel?.queue_error) steps.push(r.otel.queue_error);
   if (r.update_available) steps.push(`Update to ${r.update_available}: routr update`);
-  // With herdr-core, the app shows workers without herdr or its skill. Only Windows still reads Cursor's usage through it.
-  const forCursor = platform === "win32";
-  if (!r.herdr.path && !r.core?.path) steps.push(`For workers in herdr panes${forCursor ? ", and to read Cursor's usage," : ""} install herdr (https://herdr.dev), or for workers in tabs, the Herdr app (https://herdr.dev/download/). Without either, workers run headless`);
-  else if (!r.herdr.path && forCursor) steps.push("To read Cursor's usage, install herdr (https://herdr.dev). The Herdr app does not need it otherwise");
+  // With herdr-core, the app shows workers without herdr or its skill. A reader that needs herdr on this platform (its
+  // `usage.needsHerdrOn`: Cursor's, on Windows) still reads through it.
+  const usageViaHerdr = herdrUsage(platform);
+  if (!r.herdr.path && !r.core?.path) steps.push(`For workers in herdr panes${usageViaHerdr ? `, and to read ${usageViaHerdr},` : ""} install herdr (https://herdr.dev), or for workers in tabs, the Herdr app (https://herdr.dev/download/). Without either, workers run headless`);
+  else if (!r.herdr.path && usageViaHerdr) steps.push(`To read ${usageViaHerdr}, install herdr (https://herdr.dev). The Herdr app does not need it otherwise`);
   else if (needsHerdrSkill(r)) steps.push("Install herdr's agent skill: npx skills add herdrdev/herdr --skill herdr -g");
   return steps;
 }
@@ -245,7 +253,7 @@ export function render(r, { platform = process.platform } = {}) {
   line(!r.update_available, `${r.runtime}${r.update_available ? ` · ${r.update_available} is available${seen}: run \`routr update\`` : ""}`);
   if (r.core?.inside_terminal) line(Boolean(r.core.path), r.core.path ? "herdr-core (inside its terminal): each worker runs in a terminal of its own, a tab of its own in the Herdr app, which you follow with hc" : "herdr-core terminal, but `hc` is not on PATH: workers run headless with nothing to show them; `routr watch` still follows one");
   else if (r.core?.path) line(true, "herdr-core (installed; not inside its terminal): a lead in the Herdr app shows each worker in a tab of its own");
-  line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : `not found: workers in herdr panes${platform === "win32" ? " and Cursor's usage" : ""} need it (https://herdr.dev). ${r.core?.path ? "The Herdr app does not need it otherwise" : "Without it, workers run headless"}`}`);
+  line(Boolean(r.herdr.path), `herdr ${r.herdr.path ? (r.herdr.inside_session ? "(inside a herdr session)" : "(installed; not inside a session)") : `not found: workers in herdr panes${herdrUsage(platform) ? ` and ${herdrUsage(platform)}` : ""} need it (https://herdr.dev). ${r.core?.path ? "The Herdr app does not need it otherwise" : "Without it, workers run headless"}`}`);
   if (r.herdr.path && (r.herdr.skill || needsHerdrSkill(r))) line(r.herdr.skill, `herdr skill ${r.herdr.skill ? "installed" : "not found: the orchestrator guide uses it. Install with: npx skills add herdrdev/herdr --skill herdr -g"}`);
   const base = baseVersion(ROUTR_VERSION);
   // One line per skill and version: the folders routr's copies are in, and whether they match this routr; then any copy

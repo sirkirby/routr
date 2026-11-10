@@ -1105,6 +1105,8 @@ unixOnly("Cursor removes configs on pre-start failure and on worker exit without
       expect(existsSync(r.start.env.CURSOR_CONFIG_DIR)).toBe(false);
       expect(readdirSync(root)).toEqual(["source.json"]);
       if (missing) expect(f.calls).toHaveLength(0);
+      // A pane launch keeps the file system's own error for a missing config, and says it removed the folder.
+      if (missing) expect([r.error.startsWith("ENOENT: no such file or directory"), r.steps.some((s) => s.step === "cleanup_config" && s.detail === "Removed unused Cursor config")]).toEqual([true, true]);
     }
     const bin = join(root, "bin"); mkdirSync(bin);
     // This executable is a shell stub, never an agent. It proves the actual wrapper's exit cleanup.

@@ -21,9 +21,12 @@ A coding agent CLI the user already has installed and signed in: Claude Code, Co
 _Avoid_: tool, provider (a provider is where a decision model runs)
 
 **Harness registry**:
-The one place routr knows a harness: one entry each, holding how to start it, read its sign-in and usage, and what sets
-it apart, as properties named for the reason. Beside it sit only the harness's own protocol work: its headless adapter
-and the parsing inside its usage reader.
+The one place routr knows a harness: one entry each, with how to start it, read its sign-in and usage, name it in
+help and doctor, and what sets it apart, as properties named for the reason. Three measured tables beside it name
+the environment variables harnesses set or read, by variable rather than by harness: the lead's session variables a
+worker must not inherit and the config locations it keeps (worker environment), the lead's session ids routr reads
+(trace context), and the sandboxes a worker cannot start from (worker start). A harness's own protocol work (its
+headless adapter, the parsing inside its usage reader) sits beside the registry too.
 
 ## Where a worker runs
 

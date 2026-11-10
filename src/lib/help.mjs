@@ -2,8 +2,18 @@
 // whose output docs/contracts.md covers: `fields`, its own top-level fields beside the five every answer starts with, or
 // `text` for a screen. The contract tests walk this table, so a covered command cannot be left out of them.
 import { HARDEST, RESERVE } from "./wording.mjs";
-import { KINDS } from "./harnesses.mjs";
+import { HARNESSES, KINDS, TAKES_EFFORT } from "./harnesses.mjs";
 import { NAME_RULE } from "./state-files.mjs";
+// What help says of the harnesses comes from the registry: which ones have a property, and what it says of itself.
+const list = (xs, last) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} ${last} ${xs.at(-1)}` : xs[0] ?? "");
+const having = (test) => KINDS.filter((n) => test(HARNESSES[n]));
+const labels = (kinds, key = "label") => kinds.map((n) => HARNESSES[n][key]);
+const FRESH = having((h) => h.usage.check);
+// The harnesses with a skills folder of their own, in the order help has always named them (a test holds it to the registry).
+export const OWN_SKILL_FOLDERS = "Claude Code, Kiro, Antigravity";
+const SUBAGENT_DEFAULTS = list(labels(having((h) => h.subagents)), "or");
+const USAGE_HELP = [...having((h) => h.usage.readHelp).map((n) => HARNESSES[n].usage.readHelp),
+  `${FRESH.map((n) => `\`routr usage ${n}\` ${HARNESSES[n].usage.checkHelp}`).join(", and ")} (routr otherwise does ${FRESH.length === 1 ? "it" : FRESH.length === 2 ? "both" : "each"} in the background about once per working session, and at once after an update when the last try got no reading)`].join(" ");
 export const DESCRIPTION = "routr: quick, calibrated advice for an agent that is about to hand out work.";
 
 export const COMMANDS = {
@@ -37,8 +47,8 @@ export const COMMANDS = {
   usage: {
     name: "usage",
     contract: { fields: ["level", "subscriptions", "subscription", "reading"] },
-    description: "what routr sees of each subscription's usage and how dispatch ranks it; most_room prefers a normal account with a positive number, otherwise the largest positive number; changes nothing of yours. Claude Code's is read from its own /usage (hooks and MCP servers off), or from `routr statusline`'s snapshot when one is under 5 minutes old. `routr usage cursor` takes a fresh reading of Cursor's own /usage screen now, in a private herdr session, and `routr usage kiro` runs Kiro's /usage now and deletes the empty session it leaves (routr otherwise does both in the background about once per working session, and at once after an update when the last try got no reading)",
-    args: [{ name: "[<subscription>]", description: "only this one; for cursor or kiro, read its /usage now (cursor needs herdr installed)", required: false }],
+    description: `what routr sees of each subscription's usage and how dispatch ranks it; most_room prefers a normal account with a positive number, otherwise the largest positive number; changes nothing of yours. ${USAGE_HELP}`,
+    args: [{ name: "[<subscription>]", description: `only this one; for ${list(FRESH, "or")}, read its /usage now (${list(having((h) => h.usage.needsHerdrOn), "and")} needs herdr installed)`, required: false }],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--headroom", arg: "<subscription>=<share>", description: "usage you read yourself, as for dispatch (0.9 or 90%)", required: false, repeatable: true },
@@ -48,7 +58,7 @@ export const COMMANDS = {
   launch: {
     name: "launch",
     contract: { fields: ["state", "kind", "name", "pane", "cwd", "model", "effort", "start", "steps", "ran", "would_run", "prompt_chars", "advice", "worktree", "needs_input", "screen", "launch_id", "worker"] },
-    description: "start a worker with matching task advice: in a herdr pane; in a herdr-core terminal (the Herdr app), the harness itself in a tab of its own, which you follow with hc; or anywhere else a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker that `routr wait` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup",
+    description: `start a worker with matching task advice: in a herdr pane; in a herdr-core terminal (the Herdr app), the harness itself in a tab of its own, which you follow with hc; or anywhere else a headless ${list(labels(KINDS), "or")} worker that \`routr wait\` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup`,
     flags: [
       { name: "--lead-session", arg: "<id>", description: "your known session id when routr cannot read it from the harness environment; UUIDv4, UUIDv7 or 16–64 lowercase hex characters; malformed values are ignored with a fixed warning; never invent one", required: false },
       { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
@@ -56,8 +66,8 @@ export const COMMANDS = {
       { name: "--model", arg: "<id>", description: "model id; model, effort and fallback values refuse PowerShell quote characters (ASCII quotes or U+2018–U+201E) on every path", required: true },
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
       { name: "--effort", arg: "<level>", description: "reasoning effort", required: false },
-      { name: "--subagent-model", arg: "<id>", description: "opt-in fallback for a spawn that names no model (Claude Code or Codex); leave off unless this worker needs it; independent of --subagent-effort; existing panes get no environment fallback, existing agents keep their settings, with a warning", required: false },
-      { name: "--subagent-effort", arg: "<level>", description: "opt-in fallback for a spawn that names no effort (Claude Code or Codex); leave off unless this worker needs it; independent of --subagent-model; Anthropic's changelog dates it to 2.1.316, earlier versions untested; existing panes get no environment fallback, existing agents keep their settings, with a warning", required: false },
+      { name: "--subagent-model", arg: "<id>", description: `opt-in fallback for a spawn that names no model (${SUBAGENT_DEFAULTS}); leave off unless this worker needs it; independent of --subagent-effort; existing panes get no environment fallback, existing agents keep their settings, with a warning`, required: false },
+      { name: "--subagent-effort", arg: "<level>", description: `opt-in fallback for a spawn that names no effort (${SUBAGENT_DEFAULTS}); leave off unless this worker needs it; independent of --subagent-model; Anthropic's changelog dates it to 2.1.316, earlier versions untested; existing panes get no environment fallback, existing agents keep their settings, with a warning`, required: false },
       { name: "--rules-file", arg: "<path>", description: "your process rules for the worker (what it may do, how to report, git steps): added after the task, and never read by routr, which judges only the task", required: false },
       { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch refuses unreadable, malformed, nonmatching or `routr subagent` advice; dry runs refuse with ok:false and still plan", required: "required with a task" },
       { name: "--pane", arg: "<id>", description: "existing herdr pane to run in: at a shell prompt, or with an idle agent of --kind already running in --cwd (it is adopted, keeps its model and effort, and is sent the task; one not idle yet is never waited on: run the launch again once it is)", required: false },
@@ -156,7 +166,7 @@ export const COMMANDS = {
   },
   skill: {
     name: "skill",
-    description: "`routr skill install` writes routr's two skills into ~/.agents/skills (read by Codex and Cursor) and links them into the skills folder of each other harness set up here (Claude Code, Kiro, Antigravity): the routr skill, and routr-orchestrate, which you type to start a session as the orchestrator (`/routr-orchestrate <plan>`; `$routr-orchestrate` in Codex). It replaces only routr's own copies: a skill or link of the same name that routr did not write is kept, and listed",
+    description: `\`routr skill install\` writes routr's two skills into ~/.agents/skills (read by ${list(labels(having((h) => !h.skills)), "and")}) and links them into the skills folder of each other harness set up here (${OWN_SKILL_FOLDERS}): the routr skill, and routr-orchestrate, which you type to start a session as the orchestrator (\`/routr-orchestrate <plan>\`; \`$routr-orchestrate\` in Codex). It replaces only routr's own copies: a skill or link of the same name that routr did not write is kept, and listed`,
     args: [{ name: "install", description: "install or update the skills", required: true }],
     flags: [{ name: "--dry-run", description: "show where it would be written", required: false }],
   },
@@ -171,12 +181,12 @@ export const COMMANDS = {
     description: "do what doctor says is missing: write your settings for the harnesses found, and choose a first decision model and optional backup, and ask for their keys. It leaves Claude Code's settings alone. At a terminal it is a guided screen (run again: a menu to change one thing; nothing is written until you review it); an agent passes --yes. Run it again with a flag to change one setting. Unknown flags are refused before any changes; saving removes obsolete account settings",
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
-      { name: "--model", arg: "<subscription>=<model id>", description: "your everyday model on a subscription, from the harness's live list (Claude Code also takes a model's full name, which it does not list); repeatable. Also changes it on an existing config", required: false, repeatable: true },
+      { name: "--model", arg: "<subscription>=<model id>", description: `your everyday model on a subscription, from the harness's live list (${having((h) => h.openList).map((n) => `${HARNESSES[n].label} also ${HARNESSES[n].openList}`).join("; ")}); repeatable. Also changes it on an existing config`, required: false, repeatable: true },
       { name: "--use", arg: "<subscription>=normal|fallback", description: "normal: consider for everyday work; fallback: when normal accounts cannot suitably take it. Independent of billing; repeatable", required: false, repeatable: true },
       { name: "--share", arg: "<subscription>=<1-99>|off", description: "this account's weight in your ratio of launches between normal metered accounts with room (claude=3 and codex=1: about three workers on claude for every one on codex); advice, never enforced; off removes it; repeatable", required: false, repeatable: true },
       { name: "--hardest", arg: "<subscription>=basic|standard|strong", description: `${HARDEST.flag}: basic, standard, or strong; repeatable. Also changes it on an existing config`, required: false, repeatable: true },
       { name: "--reserve", arg: "<subscription>=<share>", description: `${RESERVE.flag}; repeatable. Also changes it on an existing config`, required: false, repeatable: true },
-      { name: "--effort", arg: "<subscription>=<level>", description: "your everyday effort there, one of the levels the harness takes for that model (Kiro: auto leaves it to the model); repeatable", required: false, repeatable: true },
+      { name: "--effort", arg: "<subscription>=<level>", description: `your everyday effort there, one of the levels the harness takes for that model (${having((h) => h.autoEffort).map((n) => `${HARNESSES[n].label}: ${HARNESSES[n].autoEffort} leaves it to the model`).join("; ")}); repeatable`, required: false, repeatable: true },
       { name: "--enable", arg: "<subscription>", description: "let routr hand work to this subscription again (it kept its settings while off); repeatable", required: false, repeatable: true },
       { name: "--disable", arg: "<subscription>", description: "turn a subscription off: routr gives it no work, and it keeps its settings; repeatable", required: false, repeatable: true },
       { name: "--channel", arg: "stable|beta", description: "which releases updates install: stable (the default), or beta for beta and release-candidate builds too (a newer stable release still wins). Read by `routr update` and the daily update; nothing moves you back to an older stable by itself", required: false },
@@ -226,7 +236,7 @@ export const COMMANDS = {
       { name: "--task-file", arg: "<path>", description: "compare this worker’s task with the advice before appending; omit only for inline tasks, or revisions when the original file is gone (say so in --note)", required: false },
       { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")})`, required: true },
       { name: "--model", arg: "<name>", description: "model chosen", required: true },
-      { name: "--effort", arg: "<level>", description: "reasoning effort chosen. On Claude, Codex and Kiro, \"default\" is recorded as your configured default_effort; on Cursor and Antigravity, \"default\" is recorded as the effort word at the end of the model id, or just before a last qualifier (grok-4.7-high, grok-4.6-high-fast). Otherwise it is kept as written; chose.effort_from records which", required: true },
+      { name: "--effort", arg: "<level>", description: `reasoning effort chosen. On ${list(labels(TAKES_EFFORT, "shortLabel"), "and")}, "default" is recorded as your configured default_effort; on ${list(labels(KINDS.filter((n) => !TAKES_EFFORT.includes(n)), "shortLabel"), "and")}, "default" is recorded as the effort word at the end of the model id, or just before a last qualifier (grok-4.7-high, grok-4.6-high-fast). Otherwise it is kept as written; chose.effort_from records which`, required: true },
       { name: "--verdict", arg: "<done|partial|blocked>", description: "worker outcome verdict", required: true },
       { name: "--check", arg: "<pass|fail|none>", description: "verification outcome", required: true },
       { name: "--advice", arg: "<file>", description: "path to advice JSON file (or pipe on stdin)", required: false, default: "stdin" },

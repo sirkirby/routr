@@ -3,17 +3,17 @@
 // start and the prompt; what a launch that stopped part way leaves, and what to do about it.
 import { warning } from "./warnings.mjs";
 import { inputNeeded, launchCarriers } from "./traces.mjs";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
 import { configOf } from "./config.mjs";
-import { configEnv, HARNESSES } from "./harnesses.mjs";
+import { configEnv, HARNESSES, privateConfigCopy } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { OFF } from "./wording.mjs";
 import { clean, CMD_PATH, cmdTypable, FISH_PATH, fishTypable, HERDR_PS_QUOTE, herdrTypable, deadline, paneText, paneView, promptReadArgs, SHELLS, shellFamily, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
 import { launchFailed, STARTUP_INPUT } from "./launch-answer.mjs";
 import { carrierValues, paneEnv, redactCarriers } from "./worker-env.mjs";
-import { home, realPath } from "./state-files.mjs";
+import { realPath } from "./state-files.mjs";
 
 export const command = (args) => displayCommand(["herdr", ...args]);
 // The command log is printed and may be stored by whoever called launch: it carries the prompt's length, never its
@@ -185,14 +185,11 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
       }
     }
     if (!adopted) await checkListed();
-    // Check the private copy (Cursor's) before creating a pane; never fall back to its account config. Not
-    // privateConfigCopy: a missing file here fails with the file system's own error, and the folder is removed below.
+    // Check the private copy (Cursor's) before creating a pane; never fall back to its account config. A missing file
+    // here fails with the file system's own error (a pane launch's error policy), and the folder is removed below too.
     if (privateConfig && !adopted) {
-      const copied = join(privateDir, basename(privateConfig.file));
       configDir = privateDir;
-      mkdirSync(configDir, { mode: 0o700 });
-      copyFileSync(cursorConfigSource ?? join(home(), privateConfig.file), copied);
-      chmodSync(copied, 0o600);
+      privateConfigCopy(o.kind, configDir, { ...(cursorConfigSource ? { from: cursorConfigSource } : {}), failed: (e) => e });
       step("cursor_config", true, `Private config at ${configDir}; the pane's shell removes it when ${HARNESSES[o.kind].label} (or the shell) exits`);
     }
     const repoCwd = out.cwd;
@@ -446,7 +443,7 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
       } catch { step("cleanup_pane", false, "Could not close unused pane (herdr_unreachable)"); }
     }
     if (configDir && !startAttempted) {
-      try { rmSync(configDir, { recursive: true, force: true }); step("cleanup_config", true, "Removed unused Cursor config"); }
+      try { rmSync(configDir, { recursive: true, force: true }); step("cleanup_config", true, `Removed unused ${HARNESSES[o.kind].label} config`); }
       catch (e) { out.warnings.push(warning("cursor_config_left", `Could not remove unused ${HARNESSES[o.kind].label} config ${configDir}`)); }
     }
     if (createdPane && !out.ok) { out.warnings.push(warning("pane_left", `Pane ${out.pane} was left alive`)); if (out.state !== "needs_input") out.next.push(doNext(`Inspect pane ${out.pane} before closing it or retrying`)); }

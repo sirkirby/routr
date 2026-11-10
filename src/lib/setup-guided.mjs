@@ -82,7 +82,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       if (!levels?.length) return "skip";
       const now = levels.includes(draft[n].default_effort) ? draft[n].default_effort : levels.includes("medium") ? "medium" : levels[0];
       const v = await ui.select({ message: `${HARNESSES[n].label}: everyday effort`, initial: now,
-        options: levels.map((l) => ({ value: l, label: l, hint: l === "auto" ? "the model decides; nothing is saved in Kiro" : undefined })) });
+        options: levels.map((l) => ({ value: l, label: l, hint: l === HARNESSES[n].autoEffort ? HARNESSES[n].autoEffortMeans : undefined })) });
       if (typeof v === "string") draft[n].default_effort = v;
       return v;
     },

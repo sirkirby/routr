@@ -48,7 +48,7 @@ export const CURSOR_BY_HAND = HARNESSES.cursor.usage.byHand;
 
 // Cursor writes to its config folder as it runs (its `privateConfig`), so the read runs on a private copy, as `launch`
 // does, removed when the read ends. `cursorConfig`: the file copied, when not Cursor's own.
-const privateConfig = (tmp, cursorConfig) => privateConfigCopy("cursor", join(tmp, `routr-cursor-${randomBytes(4).toString("hex")}`), cursorConfig);
+const privateConfig = (tmp, cursorConfig) => privateConfigCopy("cursor", join(tmp, `routr-cursor-${randomBytes(4).toString("hex")}`), { from: cursorConfig });
 const { variable } = HARNESSES.cursor.privateConfig;
 // Windows: the private herdr session, with Cursor started by typing into its shell. Ends as a terminal the read can
 // drive either way; `made` hears of what it made, so the caller removes it whatever fails.
