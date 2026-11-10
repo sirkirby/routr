@@ -5,7 +5,7 @@ import { warning } from "./warnings.mjs";
 import { commandTrace, decisionSpan, recordSpan, spanClock, usageSpans } from "./traces.mjs";
 import { matchAdvice, readAdvice, readTask } from "./advice-file.mjs";
 import { answer, refusal } from "./output.mjs";
-import { doNext, recordRevisionNext, runNext } from "./next.mjs";
+import { doNext, recordRevisionNext } from "./next.mjs";
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -18,13 +18,13 @@ import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus
 import { ensureParent, standalone } from "./runtime.mjs";
 import { CHECK_VERSION, checkQuestions, LEVELS, MEANING, questions, VERSION } from "./questions.mjs";
 import { ADVICE_STEPS, count } from "./wording.mjs";
-import { rankSubscriptions, levelExcludedWhy } from "./pick.mjs";
 import { recentLaunches } from "./shares.mjs";
 import { findLaunch, LAUNCH_ID } from "./launch-history.mjs";
 import { enabledSubscriptions } from "./config.mjs";
 import { HARNESSES, readUsage, SOURCES } from "./harnesses.mjs";
 import { failedUsage } from "./usage.mjs";
-import { staleReaders, USAGE_BY_HAND, usageFailure, usageUnavailable } from "./usage-failure.mjs";
+import { usageFailure } from "./usage-failure.mjs";
+import { capacityFailure, capacityView, emptyRanking } from "./capacity.mjs";
 
 const short = (e, n = 160) => e instanceof DecisionError ? e.message : String(e?.message ?? e).slice(0, n);
 
@@ -71,20 +71,14 @@ async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] 
   Object.assign(out, { headline: !answered ? `${out.headline}; fallback level ${advice.level}` : `${headline(advice)}; reading by ${readingModel(out)}`, ...advice, meaning: MEANING[advice.level] });
   if (mode === "dispatch") {
     const usage = await usageP;
-    try {
-      out.subscriptions = rankSubscriptions(advice.level, usage, config, recentLaunches());
-      out.unavailable.push(...usageUnavailable(usage).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
-      for (const s of staleReaders(usage, config)) { out.warnings.push(s.warning); out.next.push(runNext(`Try reading ${s.pool}'s usage again.`, ["routr", "usage", s.pool])); }
-    } catch {
-      const failure = usageFailure("internal_error");
-      out.unavailable.push({ part: "usage", subscription: null, source: "routr", ...failure });
-      out.subscriptions = { most_room: null, candidates: { normal: [], fallback: [] }, ranked: [], excluded: [], note: failure.why };
-    }
-    // An unconfigured routr ranks nothing; say why, so the lead tells the user instead of guessing (seen in a real session).
-    if (!Object.keys(config.subscriptions).length) out.subscriptions.note = "no subscriptions are configured: routr setup has not been run";
+    const capacity = capacityView(advice.level, usage, config, recentLaunches());
+    out.subscriptions = capacity.subscriptions ?? emptyRanking(capacity.unavailable[0].why);
+    out.unavailable.push(...capacity.unavailable);
+    out.warnings.push(...capacity.warnings);
+    // Capacity instructions precede advice instructions; stale-reader retries follow them, as before this view was shared.
+    out.next = [...capacity.next.filter((n) => n.kind === "do"), ...out.next, ...capacity.next.filter((n) => n.kind === "run")];
   }
-  out.next = [...(mode === "dispatch" ? capacityNext(out.subscriptions, out.unavailable, out.level, config) : []), ...out.next,
-    ...ADVICE_STEPS[mode].map((s) => doNext(s)),
+  out.next = [...out.next, ...ADVICE_STEPS[mode].map((s) => doNext(s)),
     ...(mode === "dispatch" ? readingNext(out) : []),
     ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Choose a suitable model and effort from normal candidates first; use fallback when none suitably takes the work. State the advised and chosen level, model, effort and account with separate reasons for model and effort")] : []),
     ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Launch with this saved advice on the exact task; record from launch's template.", "routr launch --kind <subscription> --name <name> --model <model> --effort <effort> --task-file <task-file> --advice <advice-file>")] : [])];
@@ -210,23 +204,6 @@ export function shareCommand({ ledger = LEDGER_PATH(), out }, config = null, { e
 // `routr usage [<subscription>]`: what routr sees of each subscription's usage and how dispatch would rank it, with no
 // brief. Named, a harness with a `check` (Cursor) prints its raw reading instead, for a person to verify. Fails open.
 const hasCandidates = (r) => r && [...r.candidates.normal, ...r.candidates.fallback].length > 0;
-// One set of capacity steps wherever the same ranking is printed.
-export function capacityNext(r, unavailable, level, config, subscription = null) {
-  const steps = [];
-  if (unavailable.some((u) => u.part === "usage" && u.code === "internal_error")) steps.push(doNext("Read capacity yourself before choosing an account"));
-  else if (!Object.keys(config.subscriptions).length) steps.push(doNext("Tell the user routr is not set up (routr setup), and ask which subscription to use meanwhile"));
-  else if (!r.ranked.length) steps.push(doNext(level !== "basic" && !subscription && r.excluded.some((e) => e.why === levelExcludedWhy(level))
-    ? "Hold the work, or choose a lower level and refresh with routr usage --level, or ask the user"
-    : "Hold the work, use an eligible subscription for this run, or ask the user; the exclusions explain what fixes eligibility"));
-  else if (!hasCandidates(r)) steps.push(doNext(`Hold the work or ask the user: every subscription that takes ${level} work is at its reserve`));
-  for (const u of unavailable.filter((u) => u.part === "usage")) {
-    const byHand = USAGE_BY_HAND[u.subscription];
-    if (u.code === "command_shadowed") steps.push(doNext("Rename or remove your own usage skill or command, or pass --headroom from a number you already have", `--headroom ${u.subscription}=<share left>`));
-    else if (byHand) steps.push(doNext(`Read ${u.subscription}'s usage by hand: ${byHand}`, `--headroom ${u.subscription}=<share left>`));
-  }
-  return steps;
-}
-const emptyRanking = (note) => ({ most_room: null, candidates: { normal: [], fallback: [] }, ranked: [], excluded: [], note });
 async function usageCommandBody(words, config, given = {}, { read = readUsage, sources = SOURCES, warnings = [] } = {}) {
   words = [...words];
   const at = words.indexOf("--level"), explicit = at !== -1;
@@ -267,17 +244,24 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
     const viewConfig = { ...config, subscriptions: subs };
     const readingNames = fresh && !configured.includes(name) ? [name] : names.filter((n) => subs[n].enabled !== false);
     const rows = reading?.excluded ? [{ pool: name, signedIn: false, note: reading.why }] : await usageSpans((observe) => read(readingNames, given, { sources, background: fresh ? [] : names, observe }), fresh ? { since: readingStart } : {});
-    out.subscriptions = rankSubscriptions(level, rows, viewConfig, name ? null : recentLaunches());
-    out.unavailable.push(...usageUnavailable(rows).filter((u) => !out.subscriptions.excluded.some((e) => e.subscription === u.subscription)));
-    // A fresh read that just worked clears its own warning; one that failed again keeps it (the retry is this call).
-    for (const s of staleReaders(rows, viewConfig).filter((x) => !(fresh && reading?.ok && x.pool === name))) {
-      out.warnings.push(s.warning);
-      if (!(fresh && s.pool === name)) out.next.push(runNext(`Try reading ${s.pool}'s usage again.`, ["routr", "usage", s.pool]));
-    }
-    if (fresh && !reading?.ok && !reading?.excluded && !out.unavailable.some((u) => u.subscription === name)) {
+    const additionalUnavailable = [];
+    if (fresh && !reading?.ok && !reading?.excluded) {
       const kept = rows.find((r) => r.pool === name && r.headroom != null);
-      out.unavailable.push({ part: "usage", subscription: name, source: sources[name].source ?? name, ...usageFailure(reading?.code), reading: kept ? "kept" : "unknown", ...(kept ? { reading_source: kept.source, age_sec: kept.ageSec } : {}) });
+      additionalUnavailable.push({ part: "usage", subscription: name, source: sources[name].source ?? name, ...usageFailure(reading?.code), reading: kept ? "kept" : "unknown", ...(kept ? { reading_source: kept.source, age_sec: kept.ageSec } : {}) });
     }
+    const capacity = capacityView(level, rows, viewConfig, name ? null : recentLaunches(), { capacityConfig: config, unavailable: additionalUnavailable });
+    if (!capacity.subscriptions) {
+      out.ok = false;
+      out.unavailable.push(...capacity.unavailable); out.subscriptions = emptyRanking(capacity.unavailable[0].why);
+      out.headline = "routr: no usage ranking (internal_error)";
+      out.next.push(...capacity.next);
+      return answer(out);
+    }
+    out.subscriptions = capacity.subscriptions;
+    out.unavailable.push(...capacity.unavailable);
+    const ownStale = fresh ? capacity.stale.find((s) => s.pool === name) : null;
+    // A fresh read that just worked clears its own warning; one that failed again keeps it (the retry is this call).
+    out.warnings.push(...capacity.warnings.filter((w) => !(reading?.ok && w === ownStale?.warning)));
     if (reading?.excluded && !out.subscriptions.excluded.some((r) => r.subscription === name)) out.subscriptions.excluded.push({ subscription: name, why: reading.why });
     if (name && !configured.includes(name)) {
       const excluded = out.subscriptions.excluded.find((e) => e.subscription === name);
@@ -285,16 +269,17 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
       if (excluded) excluded.why = why; else out.subscriptions.excluded.push({ subscription: name, why });
       out.subscriptions.note = `${name} is ${why}`;
     }
-    out.next = [...capacityNext(out.subscriptions, out.unavailable, level, config, name), ...out.next];
+    out.next = [...capacity.next.filter((n) => n.kind === "do"), ...out.next,
+      ...capacity.next.filter((n) => n.kind === "run" && !(fresh && n.argv?.[2] === name))];
     if (explicit && hasCandidates(out.subscriptions)) out.next.push(doNext("Choose from subscriptions.candidates, normal before fallback, and keep the original dispatch advice for launch and record"));
     out.headline = fresh ? reading?.ok ? `routr: ${reader.label}, ${reader.used(reading)}, read now${!out.subscriptions.ranked.length ? `; ${out.subscriptions.note}` : ""}` : `routr: no fresh ${reader.label} reading (${reading?.excluded ? "not signed in" : usageFailure(reading?.code).code})`
       : `routr: ${out.subscriptions.most_room ? `${out.subscriptions.most_room} has the most usable headroom for ${level} work (normal first); normal: ${out.subscriptions.candidates.normal.join(", ") || "none"}, fallback: ${out.subscriptions.candidates.fallback.join(", ") || "none"}` : out.subscriptions.note}${out.unavailable.length ? `; ${count(out.unavailable.length, "reading")} unavailable` : ""}`;
   } catch {
     out.ok = false;
-    const failure = { part: "usage", subscription: null, source: "routr", ...usageFailure("internal_error") };
+    const capacity = capacityFailure(), failure = capacity.unavailable[0];
     out.unavailable.push(failure); out.subscriptions = emptyRanking(failure.why);
     out.headline = "routr: no usage ranking (internal_error)";
-    out.next.push(doNext("Read capacity yourself before choosing an account"));
+    out.next.push(...capacity.next);
   }
   return answer(out);
 }

@@ -147,6 +147,14 @@ test("board scopes to the folder's repository, joins, counts by the ledger's rul
   expect(JSON.stringify(b)).not.toContain("SECRET-NOTE");
 });
 
+test("board warns when a usage reader stopped working and gives its retry", async () => {
+  const w = world();
+  const usage = () => ({ rows: [{ pool: "claude", source: "claude /usage", ageSec: 89 * 3600, class: "unknown", headroom: null, windows: [], failure: { code: "read_failed" } }] });
+  const b = await boardCommand([], config, { usage, ledger: w.ledger, history: () => ({ records: [] }) });
+  expect(b.warnings).toEqual(["claude's usage has not been read for 89 h, and its last try failed (read_failed), so remaining capacity is unknown: an update of claude or herdr may have changed what routr reads"]);
+  expect(b.next.some((n) => n.argv?.join(" ") === "routr usage claude")).toBe(true);
+});
+
 test("board fails open: an unreadable ledger or history is said, its numbers null, never zero; bad input is refused", async () => {
   const w = world(); mkdirSync(w.ledger); // a folder where the ledger file should be: unreadable
   const b = await boardCommand([], config, { usage: usageOk, ledger: w.ledger, history: () => ({ records: [], unreadable: true }) });
