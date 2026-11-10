@@ -3,7 +3,7 @@
 // reader asks Claude's own `/usage` (usage.mjs), so setup no longer sets it. It keeps working for anyone who has it.
 // It must never fail or print an error: a broken statusline is visible in every Claude session.
 import { readFileSync } from "node:fs";
-import { CLAUDE_SNAPSHOT, writeJsonAtomic } from "./runtime.mjs";
+import { CLAUDE_SNAPSHOT, writeJsonAtomic } from "./state-files.mjs";
 
 export function statusline() { try { run(); } catch {} }
 

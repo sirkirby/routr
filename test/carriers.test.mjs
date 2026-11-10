@@ -1,10 +1,18 @@
-// The W3C trace-context carriers routr hands on to the workers it starts: which it takes, the transport limits, and
-// the two environments (a harness read gets none; a worker start gets the checked ones, its adapter's own keys winning).
-import { expect, test } from "bun:test";
+// The environment each process routr starts gets, through the worker-environment module: the W3C trace-context carriers
+// it hands on (which it takes, the transport limits), and the environments of a harness read (none of them, nor the
+// lead's session), a headless turn, a terminal worker's runner and a pane worker (the checked ones, the adapter's own
+// keys winning), and of routr's own herdr calls.
+import { expect, spyOn, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import { existsSync, rmSync } from "node:fs";
 import { displayCommand } from "../src/lib/next.mjs";
-import { carrierWithheld } from "../src/lib/warnings.mjs";
-import { CARRIERS, carriersFrom, carrierValues, harnessEnv, redactCarriers, savedCarriers, workerEnv } from "../src/lib/runtime.mjs";
+import { warningCode } from "../src/lib/warnings.mjs";
+import { CARRIERS, carriersFrom, carrierValues, carrierWithheld, configLocations, FORWARDED, harnessEnv, launchCarrierWarnings, paneEnv, redactCarriers, savedCarriers, savedConfigLocations, terminalEnv, workerEnv } from "../src/lib/worker-env.mjs";
+import * as processes from "../src/lib/processes.mjs";
+import { probe, run } from "../src/lib/processes.mjs";
+import { openTerminal } from "../src/lib/terminal.mjs";
+import { runHerdr } from "../src/lib/herdr.mjs";
+import { CONFIG_ENV, LEAD_ENV } from "./helpers.mjs";
 
 const TP = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
 // No smoke carrier value in what the smoke printed: its hostile values and its agent markers. Its own folder's name
@@ -76,6 +84,151 @@ test("carriers saved with a worker are checked again on every load: unknown keys
   // Only an absent key is absent: one present that is not a non-empty string (null, empty, a number) is withheld and named.
   for (const v of [null, "", 0, false, undefined]) expect([v, savedCarriers({ BAGGAGE: v, TRACEPARENT: TP })]).toEqual([v, { carriers: { TRACEPARENT: TP }, withheld: ["BAGGAGE"] }]);
   expect(workerEnv({ BAGGAGE: null, TRACEPARENT: TP }, {}, { PATH: "/bin" })).toEqual({ PATH: "/bin", TRACEPARENT: TP });
+});
+
+
+// ---- a pane worker ----------------------------------------------------------------------------------------------------
+const answer = () => ({ warnings: [], start: { env: { CLAUDE_CODE_SUBAGENT_MODEL: "s" } } });
+const PANE_PLAN = { CURSOR_CONFIG_DIR: "/run/cursor-config", CLAUDE_CODE_SUBAGENT_MODEL: "s", CLAUDE_CODE_SUBAGENT_EFFORT: "low" };
+const PANE_ADAPTER = { CURSOR_CONFIG_DIR: "/run/cursor-config" };
+
+test("a pane routr splits gets the checked carriers and the plan's subagent fallbacks; output shows each carrier as FORWARDED", () => {
+  const out = answer(), found = carriersFrom({ TRACEPARENT: TP, TRACESTATE: "a\nb", BAGGAGE: "k=v" });
+  const got = paneEnv({ pane: undefined, found, plan: PANE_PLAN, adapter: PANE_ADAPTER }, out);
+  expect(got).toEqual({ carried: { TRACEPARENT: TP, BAGGAGE: "k=v" }, extraEnv: { CLAUDE_CODE_SUBAGENT_MODEL: "s", CLAUDE_CODE_SUBAGENT_EFFORT: "low" }, fallbacks: { CLAUDE_CODE_SUBAGENT_MODEL: "s", CLAUDE_CODE_SUBAGENT_EFFORT: "low" } });
+  expect(out.start.env).toEqual({ CLAUDE_CODE_SUBAGENT_MODEL: "s", TRACEPARENT: FORWARDED, BAGGAGE: FORWARDED });
+  expect(out.warnings).toEqual([carrierWithheld("TRACESTATE")]);
+  expect(JSON.stringify(out)).not.toContain("k=v"); // a carrier value never reaches the answer
+  // No adapter names: the plan's environment is the fallbacks, whole.
+  expect(paneEnv({ found: carriersFrom({}), plan: { A: "1" } }, answer()).extraEnv).toEqual({ A: "1" });
+});
+
+test("an existing pane gets no carrier and no fallback, each said once without a value; a retry keeps what its split supplied", () => {
+  const out = answer(), found = carriersFrom({ TRACEPARENT: TP, BAGGAGE: "a\x1bb" });
+  const got = paneEnv({ pane: "w1:p2", found, plan: PANE_PLAN, adapter: PANE_ADAPTER }, out);
+  expect(got).toEqual({ carried: {}, extraEnv: {}, fallbacks: { CLAUDE_CODE_SUBAGENT_MODEL: "s", CLAUDE_CODE_SUBAGENT_EFFORT: "low" } });
+  expect(out.start.env).toEqual({}); // the fallbacks the plan showed are taken out of the answer
+  expect(out.warnings.map(warningCode)).toEqual(["carriers_not_passed", "subagent_fallback_not_passed"]);
+  expect(out.warnings[0]).toContain("passed none of TRACEPARENT, BAGGAGE");
+  expect(out.warnings.join("\n")).not.toContain(TP);
+  // A launch span the pane cannot get is named as such; nothing to pass, nothing said.
+  const span = answer();
+  paneEnv({ pane: "w1:p2", found: { carriers: { TRACEPARENT: TP }, withheld: [], launchSpan: true }, plan: {} }, span);
+  expect(span.warnings.map(warningCode)).toEqual(["carriers_not_passed"]); expect(span.warnings[0]).toContain("routr launch span");
+  const quiet = { warnings: [], start: { env: {} } };
+  expect(paneEnv({ pane: "w1:p2", found: carriersFrom({}), plan: PANE_ADAPTER, adapter: PANE_ADAPTER }, quiet)).toEqual({ carried: {}, extraEnv: {}, fallbacks: {} });
+  expect(quiet.warnings).toEqual([]);
+});
+
+test("a TRACEPARENT out of limits under a routr launch span is replaced by that span, and said so; any other withheld carrier is named", () => {
+  expect(launchCarrierWarnings({ carriers: {}, withheld: ["TRACEPARENT", "BAGGAGE"], launchSpan: true }).map(warningCode)).toEqual(["launch_parent_replaced", "carrier_withheld"]);
+  expect(launchCarrierWarnings({ carriers: {}, withheld: ["TRACEPARENT"] })).toEqual([carrierWithheld("TRACEPARENT")]);
+});
+
+// ---- a terminal worker's runner ---------------------------------------------------------------------------------------
+const TERMINAL_CORE = { PATH: "/core/bin", HOME: "/core/home", HC_SESSION: "s1", CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "core-lead", TRACEPARENT: "00-core", HERDR_ENV: "1", OPENAI_API_KEY: "core-key",
+  HC_TERMINAL_ID: "t9", HC_TERMINAL_SOCKET: "/core/t9.sock", HC_SCOPE: "worker-scope", CODEX_HOME: "/core/codex" };
+const TERMINAL_CALLER = { HC_TERMINAL_ID: "t3", HC_TERMINAL_SOCKET: "/lead.sock", HC_SCOPE: "lead-scope", PATH: "/lead/bin", CODEX_HOME: "/lead/codex", CLAUDE_CONFIG_DIR: "/lead/claude", CURSOR_CONFIG_DIR: "/lead/cursor", XDG_CONFIG_HOME: "/lead/xdg", ANTHROPIC_API_KEY: "lead-key", CLAUDE_CODE_OAUTH_TOKEN: "lead-token", SOME_LEAD_SETTING: "x",
+  TRACEPARENT: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" };
+
+test("the runner's environment: the core's, without a lead's identity, its own terminal, and only what launch saved", () => {
+  const saved = { carriers: { TRACEPARENT: TERMINAL_CALLER.TRACEPARENT }, config: configLocations(TERMINAL_CALLER) };
+  expect(saved.config).toEqual({ CODEX_HOME: "/lead/codex", CLAUDE_CONFIG_DIR: "/lead/claude", CURSOR_CONFIG_DIR: "/lead/cursor", XDG_CONFIG_HOME: "/lead/xdg" });
+  const env = terminalEnv({ ...saved, adapter: { CLAUDE_CODE_SUBAGENT_MODEL: "s" } }, TERMINAL_CORE);
+  expect(env).toEqual({ PATH: "/core/bin", HOME: "/core/home", HC_SESSION: "s1", OPENAI_API_KEY: "core-key", HC_TERMINAL_ID: "t9", HC_TERMINAL_SOCKET: "/core/t9.sock", HC_SCOPE: "worker-scope",
+    TRACEPARENT: TERMINAL_CALLER.TRACEPARENT, CODEX_HOME: "/lead/codex", CLAUDE_CONFIG_DIR: "/lead/claude", CURSOR_CONFIG_DIR: "/lead/cursor", XDG_CONFIG_HOME: "/lead/xdg", CLAUDE_CODE_SUBAGENT_MODEL: "s" });
+  // Cursor's private config beats the caller's; a caller who set none leaves the core's, and carriers it saved none of are none.
+  expect(terminalEnv({ carriers: {}, config: saved.config, adapter: { CURSOR_CONFIG_DIR: "/run/cursor-config" } }, TERMINAL_CORE).CURSOR_CONFIG_DIR).toBe("/run/cursor-config");
+  const bare = terminalEnv({ carriers: {}, config: {} }, TERMINAL_CORE);
+  expect(bare.CODEX_HOME).toBe("/core/codex");
+  expect(bare).not.toHaveProperty("TRACEPARENT");
+  // Exact names, checked again: anything else saved is ignored, and so is a value that is no path.
+  expect(savedConfigLocations({ CODEX_HOME: "/a", ANTHROPIC_API_KEY: "k", CLAUDE_CONFIG_DIR: 3, XDG_DATA_HOME: "bad\nvalue", XDG_STATE_HOME: "" })).toEqual({ CODEX_HOME: "/a" });
+  expect(terminalEnv({ carriers: { TRACEPARENT: "x\ny", OTHER: "z" }, config: "not an object" }, { PATH: "/p" })).toEqual({ PATH: "/p" });
+  // Windows names differ by case only: one variable, the later layer's.
+  const win = terminalEnv({ carriers: {}, config: { CODEX_HOME: "/a" } }, { codex_home: "/core", hc_terminal_id: "t9" }, { platform: "win32" });
+  expect(win).toEqual({ HC_TERMINAL_ID: "t9", CODEX_HOME: "/a" });
+});
+
+// ---- harness reads, routr's own jobs, and the private herdr server ----------------------------------------------------
+test("a harness never takes itself for the lead's core terminal, and HC_SESSION, which chooses a core, stays", () => {
+  const kept = harnessEnv({ HC_TERMINAL_ID: "t7", HC_TERMINAL_SOCKET: "/s", HC_SCOPE: "x", HC_SESSION: "mine" });
+  expect(kept).toEqual({ HC_SESSION: "mine" });
+});
+
+test("a harness gets none of the lead's session variables, and keeps its sign-in settings", () => {
+  const env = { PATH: "/bin", CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s", CLAUDE_CODE_MESSAGING_TOKEN: "t", CLAUDE_PID: "1", CODEX_THREAD_ID: "c", HERDR_PANE_ID: "p",
+    CLAUDE_CODE_OAUTH_TOKEN: "kept", CLAUDE_CODE_USE_BEDROCK: "1", CODEX_HOME: "/c" };
+  expect(harnessEnv(env)).toEqual({ PATH: "/bin", CLAUDE_CODE_OAUTH_TOKEN: "kept", CLAUDE_CODE_USE_BEDROCK: "1", CODEX_HOME: "/c" });
+});
+
+test("a harness read's environment drops only herdr's pane variables and keeps its settings", () => {
+  const env = { PATH: "/bin", HOME: "/h", HERDR_ENV: "1", HERDR_SOCKET_PATH: "/s", HERDR_PANE_ID: "p", herdr_other: "x", NOT_HERDR_ENV: "kept" };
+  expect(harnessEnv(env)).toEqual({ PATH: "/bin", HOME: "/h", herdr_other: "x", NOT_HERDR_ENV: "kept" });
+  expect(env.HERDR_PANE_ID).toBe("p"); // the caller's copy is untouched
+});
+
+test("run and probe remove every harness's lead session names, in either case, while keeping sign-in and config (a bun child prints what it got)", async () => {
+  const lead = { ...LEAD_ENV, ...Object.fromEntries(Object.entries(LEAD_ENV).map(([k, v]) => [k.toLowerCase(), v])) };
+  const env = { ...lead, ...CONFIG_ENV }, names = Object.keys(env), saved = names.map((k) => process.env[k]);
+  Object.assign(process.env, env);
+  try {
+    const keys = ["-e", "process.stdout.write(JSON.stringify(process.env))"];
+    const viaRun = JSON.parse(await run(process.execPath, keys, { timeoutMs: 15000 }));
+    const viaProbe = JSON.parse((await probe(process.execPath, keys)).out);
+    for (const got of [viaRun, viaProbe]) {
+      for (const k of Object.keys(lead)) expect(got).not.toHaveProperty(k);
+      expect(got).toMatchObject(CONFIG_ENV);
+      expect(Object.keys(got).some((k) => /^path$/i.test(k))).toBe(true); // Windows spells it Path
+    }
+    expect(harnessEnv(env)).toEqual(CONFIG_ENV);
+  } finally {
+    names.forEach((k, i) => { if (saved[i] === undefined) delete process.env[k]; else process.env[k] = saved[i]; });
+  }
+});
+
+test("the private herdr server removes every lead session name before its shells inherit them and keeps herdr's settings", async () => {
+  const env = { ...LEAD_ENV, ...Object.fromEntries(Object.entries(LEAD_ENV).map(([k, v]) => [k.toLowerCase(), v])), ...CONFIG_ENV };
+  const saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]])), starts = [];
+  Object.assign(process.env, env);
+  const spawn = spyOn(processes, "start").mockImplementation((cmd, args, opts) => {
+    starts.push({ cmd, args, opts, env: { ...(opts.env ?? process.env) } });
+    return Object.assign(new EventEmitter(), { unref() {} });
+  });
+  let terminal;
+  try {
+    terminal = await openTerminal({ cwd: "/work", remaining: () => 1000, sleep: async () => {}, run: async (args) => {
+      if (args[0] === "session" && args[1] === "list") return { ok: true, data: { sessions: [] } };
+      return { ok: true, data: { result: args.includes("create") ? { root_pane: { pane_id: "w1:p1" } } : { workspaces: [] } } };
+    } });
+    expect(starts).toHaveLength(1);
+    expect(starts[0].cmd).toBe("herdr");
+    expect(starts[0].args).toEqual(["--session", expect.stringMatching(/^routr-scratch-/), "server"]);
+    for (const k of Object.keys(env).filter((k) => !Object.hasOwn(CONFIG_ENV, k))) expect(starts[0].env).not.toHaveProperty(k);
+    expect(starts[0].env).toMatchObject(CONFIG_ENV);
+    await terminal.close();
+  } finally {
+    await terminal?.close(); spawn.mockRestore();
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
+});
+
+test("herdr's real client transport keeps pane and config variables at its process boundary", async () => {
+  const env = { ...LEAD_ENV, ...CONFIG_ENV }, saved = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+  Object.assign(process.env, env);
+  const starts = [];
+  try {
+    const result = await runHerdr(["pane", "list"], 1000, { via: (cmd, args, opts) => {
+      starts.push({ cmd, args, env: Object.fromEntries(Object.keys(env).map((k) => [k, (opts.env ?? process.env)[k]])) });
+      const child = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() });
+      queueMicrotask(() => { child.stdout.emit("data", JSON.stringify({ result: { panes: [] } })); child.emit("close", 0); });
+      return child;
+    } });
+    expect(result.ok).toBe(true);
+    expect(starts).toEqual([{ cmd: "herdr", args: ["pane", "list"], env }]);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+  }
 });
 
 test("smoke:carriers' own values are hostile but valid, exactly at each limit, and its checks find a value changed by a byte; the agent half uses short markers ps shows whole", async () => {

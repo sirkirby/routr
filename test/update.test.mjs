@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { startSync } from "../src/lib/runtime.mjs";
+import { startSync } from "../src/lib/processes.mjs";
 import { loadConfig } from "../src/lib/config.mjs";
 import { SCRATCH, scratch } from "./helpers.mjs";
 
@@ -478,7 +478,7 @@ test("the daily job records the newest release it saw and on which channel, and 
 
 test("the background job writes that record to update.log, with a fake update and no network", async () => {
   const { backgroundUpdate, UPDATE_LOG } = await import("../src/lib/update.mjs");
-  const { UPDATE_STAMP } = await import("../src/lib/runtime.mjs");
+  const { UPDATE_STAMP } = await import("../src/lib/state-files.mjs");
   const before = process.env.ROUTR_NO_UPDATE;
   delete process.env.ROUTR_NO_UPDATE;
   const asked = [];

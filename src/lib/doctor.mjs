@@ -11,15 +11,16 @@ import { failureMessage, ping, secretsFor } from "./systemone.mjs";
 import { DecisionError, decisionTargets, DEFAULT_PROVIDER, ollamaHost, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
 import { staleReaders } from "./usage-failure.mjs";
-import { home, resolveCommand, standalone } from "./runtime.mjs";
+import { home } from "./state-files.mjs";
+import { resolveCommand, standalone } from "./processes.mjs";
 import { autoUpdateStatus } from "./update.mjs";
 import { dailyTelemetrySend, hoursAgo, lastTelemetrySend, pendingCount, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 import { otelStatus } from "./otel.mjs";
 import { extraFiles, hasExtras, missingFiles, NOT_OURS, notOursWhy, owner, skillPlaces } from "./skill-install.mjs";
 
-// Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows. On Windows it is runtime.mjs's
-// resolveCommand, the rule start() follows: a harness doctor calls found is one routr can start (PATH in order,
+// Search PATH directly (no shell), so this works the same on macOS, Linux, and Windows. On Windows it is the process
+// module's resolveCommand, the rule start() follows: a harness doctor calls found is one routr can start (PATH in order,
 // PATHEXT's .com/.exe/.bat/.cmd only, never the current folder first). Raw PATHEXT also lists .JS and .VBS, so doctor
 // once called a harness found that routr could not start. `platform`, `env`, `cwd` and `exists` are test seams.
 export function which(cmd, { platform = process.platform, env = process.env, cwd = process.cwd(), exists, path } = {}) {

@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { privateDir } from "./channel.mjs";
-import { lockIsStale, readJsonFile, STATE_DIR, UNINSTALL_LOCK, WORKER_NAME } from "./runtime.mjs";
+import { lockIsStale, readJsonFile, STATE_DIR, UNINSTALL_LOCK, WORKER_NAME } from "./state-files.mjs";
 
 export const FORMAT = 1;
 export const WORKERS_DIR = () => join(STATE_DIR(), "workers");

@@ -2,7 +2,7 @@
 // paths.
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { home as userHome, STATE_DIR, UNINSTALL_LOCK, writeJsonAtomic } from "./runtime.mjs";
+import { home as userHome, STATE_DIR, UNINSTALL_LOCK, writeJsonAtomic } from "./state-files.mjs";
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 const OWN = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.json$/;

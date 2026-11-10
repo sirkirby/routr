@@ -1,4 +1,4 @@
-// Inventory the process boundary, including renamed imports and injected defaults. Like runtime's import guard,
+// Inventory the process boundary, including renamed imports and injected defaults. Like the processes module's import guard,
 // this is a lexical check: computed imports/calls need review. Tests run before dependencies are installed in CI.
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
@@ -107,16 +107,16 @@ const tokens = (source, file = "<process allowlist>") => {
 };
 const compact = (s) => tokens(s).join("");
 const calls = (source, file) => {
-  const names = new Set(file === "lib/runtime.mjs" ? ["start", "startSync"] : []);
+  const names = new Set(file === "lib/processes.mjs" ? ["start", "startSync"] : []);
   for (const m of source.matchAll(/import\s*\{([^}]+)\}\s*from\s*["']([^"']+)["']/g)) {
-    if (!/(?:runtime\.mjs|node:child_process)$/.test(m[2])) continue;
+    if (!/(?:processes\.mjs|node:child_process)$/.test(m[2])) continue;
     for (const entry of m[1].split(",")) {
       const [name, alias] = entry.trim().split(/\s+as\s+/);
       if (["start", "startSync", "spawn", "spawnSync"].includes(name)) names.add(alias ?? name);
     }
   }
   // Refuse an unhandled import shape rather than silently missing namespace member calls.
-  if (/import\s+(?!\{)[^;]+from\s*["'][^"']*(?:runtime\.mjs|child_process)["']/.test(source)) throw new Error(`unhandled process import: ${file}`);
+  if (/import\s+(?!\{)[^;]+from\s*["'][^"']*(?:processes\.mjs|child_process)["']/.test(source)) throw new Error(`unhandled process import: ${file}`);
   const ts = tokens(source, file);
   for (let changed = true; changed;) {
     changed = false;
@@ -138,8 +138,8 @@ const calls = (source, file) => {
 
 // Exact calls, not whole files: another start beside a client or updater must still pass the filter.
 const ALLOWED = [
-  ["lib/runtime.mjs", "platform adapters", "via(...prepare(cmd, args, opts, platform))", 2],
-  ["lib/runtime.mjs", "Windows taskkill", '(via ?? spawn)(exe, ["/PID", String(child.pid), "/T", "/F"], startOptions({ stdio: "ignore" }))', 1],
+  ["lib/processes.mjs", "platform adapters", "via(...prepare(cmd, args, opts, platform))", 2],
+  ["lib/processes.mjs", "Windows taskkill", '(via ?? spawn)(exe, ["/PID", String(child.pid), "/T", "/F"], startOptions({ stdio: "ignore" }))', 1],
   ["lib/herdr.mjs", "herdr clients", 'via("herdr", args, { stdio: ["ignore", "pipe", "pipe"] })', 1],
   ["lib/hc.mjs", "hc and herdr-app clients", 'start(cmd, args, { stdio: ["ignore", "pipe", "pipe"] })', 1],
   ["lib/update.mjs", "updater version inspection and confirmation", 'spawn(self, ["--version"], { encoding: "utf8", timeout: ASK_BINARY_MS, killSignal: "SIGKILL" })', 2],
@@ -171,12 +171,12 @@ test("every process start filters the harness environment or names an exact non-
 
 test("the inventory detects a new or renamed start and a removed filter on every harness path", () => {
   for (const name of ["start", "startSync"]) {
-    const source = `import { ${name} as launch } from "./runtime.mjs"; launch("new-harness", [], {});`;
+    const source = `import { ${name} as launch } from "./processes.mjs"; launch("new-harness", [], {});`;
     expect(calls(source, "lib/new.mjs")).toEqual(['launch("new-harness",[],{})']);
     expect(filtered(calls(source, "lib/new.mjs")[0])).toBe(false);
     expect(allowed("lib/new.mjs", calls(source, "lib/new.mjs")[0])).toBeUndefined();
   }
-  for (const file of ["runtime", "terminal", "headless"]) {
+  for (const file of ["processes", "terminal", "headless"]) {
     const path = `lib/${file}.mjs`, source = readFileSync(join(import.meta.dir, "../src", path), "utf8");
     const original = calls(source, path).filter(filtered);
     expect(original.length).toBeGreaterThan(0);
@@ -208,13 +208,13 @@ test("regex literals containing quotes and backticks cannot hide a later process
     'const pattern = /start\\("decoy"\\)/;',
   ];
   for (const prefix of prefixes) {
-    const source = `import { start } from "./runtime.mjs"; ${prefix} start("harness", [], {});`;
+    const source = `import { start } from "./processes.mjs"; ${prefix} start("harness", [], {});`;
     expect(calls(source, "lib/regex.mjs")).toEqual(['start("harness",[],{})']);
   }
 });
 
 test("literal template text is ignored but a process start in a template expression stays visible", () => {
-  const source = 'import { start } from "./runtime.mjs"; const message = `start("literal") ${start("harness", [], {})}`;';
+  const source = 'import { start } from "./processes.mjs"; const message = `start("literal") ${start("harness", [], {})}`;';
   expect(calls(source, "lib/template.mjs")).toEqual(['start("harness",[],{})']);
 });
 
@@ -231,20 +231,20 @@ test("regex prefixes include expression keywords and operators, while division n
     `async function value() { await ${regex}; }`,
     ...["=", "+", "-", "*", "/", "&&", "||", "??", ","].map((op) => `let value; value ${op} ${regex};`),
   ];
-  for (const prefix of prefixes) expect(calls(`import { start } from "./runtime.mjs"; ${prefix} start("worker", [], {});`, "lib/prefixes.mjs")).toEqual(['start("worker",[],{})']);
+  for (const prefix of prefixes) expect(calls(`import { start } from "./processes.mjs"; ${prefix} start("worker", [], {});`, "lib/prefixes.mjs")).toEqual(['start("worker",[],{})']);
   for (const left of ["value", "12", "(value)", "[value][0]", "{}", "function() {}", "value++", "obj.return", '"literal"', "`literal`"]) {
-    expect(calls(`import { start } from "./runtime.mjs"; const result = ${left} / start("worker", [], {}) / scale;`, "lib/division.mjs")).toEqual(['start("worker",[],{})']);
+    expect(calls(`import { start } from "./processes.mjs"; const result = ${left} / start("worker", [], {}) / scale;`, "lib/division.mjs")).toEqual(['start("worker",[],{})']);
   }
 });
 
 test("nested template expressions expose starts without exposing literal text or losing bracket state", () => {
-  const source = 'import { start } from "./runtime.mjs"; const value = `literal start("decoy") ${ { value: `nested ${start("nested", [], {})}` } } ${/[' + "'\"`" + ']/.test(text) ? start("outer", [], {}) : ""}`; start("after", [], {});';
+  const source = 'import { start } from "./processes.mjs"; const value = `literal start("decoy") ${ { value: `nested ${start("nested", [], {})}` } } ${/[' + "'\"`" + ']/.test(text) ? start("outer", [], {}) : ""}`; start("after", [], {});';
   expect(calls(source, "lib/nested.mjs")).toEqual(['start("nested",[],{})', 'start("outer",[],{})', 'start("after",[],{})']);
 });
 
 test("the inventory refuses malformed source with its filename instead of returning partial calls", () => {
   for (const suffix of ['"unclosed', "'unclosed", "`unclosed", "/[unclosed/", "/* unclosed", "(", "[", "{", "([)]", "const value = ;", '`outer ${`inner ${value}', '`outer ${ ({ nested: 1 })', '"escape\\', "/escape\\"]) {
-    const source = `import { start } from "./runtime.mjs"; start("harness", [], {}); ${suffix}`;
+    const source = `import { start } from "./processes.mjs"; start("harness", [], {}); ${suffix}`;
     expect(() => calls(source, "lib/broken.mjs")).toThrow("lib/broken.mjs");
   }
 });

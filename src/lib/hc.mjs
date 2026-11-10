@@ -3,7 +3,7 @@
 // HERDR_ENV; the app shows a terminal only with the labels herdr.space and herdr.tab (routr-lab p50, hc 0.1.17, 2026-11-03).
 // Shapes are core's own schema (`hc schema`, hc 0.1.17): a terminal's `state` is live or finished, `status` the program's
 // own report or null, `turn` goes up each time that status leaves working. What hc says is never passed on as text.
-import { start, stop } from "./runtime.mjs";
+import { start, stop } from "./processes.mjs";
 
 // routr's own calls keep the environment, as a herdr client's do: hc finds its core and its caller there. Resolves
 // `{ out, err, code }`, or null when it could not start or did not answer in time; never throws.

@@ -9,7 +9,8 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSy
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { notOursWhy, owner, removeOwned, skillPlaces } from "./skill-install.mjs";
-import { CACHE_DIR, CONFIG_DIR, DATA_DIR, folderId, lockIsStale, home as userHome, releaseFileLock, standalone, start, STATE_DIR, takeLock, UNINSTALL_LOCK, WORKER_NAME, writeJsonAtomic, WORKTREES_DIR } from "./runtime.mjs";
+import { CACHE_DIR, CONFIG_DIR, DATA_DIR, folderId, lockIsStale, home as userHome, releaseFileLock, STATE_DIR, takeLock, UNINSTALL_LOCK, WORKER_NAME, writeJsonAtomic, WORKTREES_DIR } from "./state-files.mjs";
+import { standalone, start } from "./processes.mjs";
 import { FORMAT } from "./worker-record.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { otelSenderRunning } from "./otel.mjs";

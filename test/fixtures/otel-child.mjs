@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { otelGaugeInstanceId, otelResource, otelSession, sendOtel } from "../../src/lib/otel.mjs";
-import { writeJsonAtomic } from "../../src/lib/runtime.mjs";
+import { writeJsonAtomic } from "../../src/lib/state-files.mjs";
 
 const home = process.env.HOME, configPath = join(home, "config.json"), mode = process.argv[2];
 if (mode === "queue") {

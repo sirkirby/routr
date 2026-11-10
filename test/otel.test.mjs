@@ -4,7 +4,7 @@ import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, renameSync
 import { dirname, join, resolve } from "node:path";
 import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 import { ROUTR_VERSION } from "../src/lib/version.mjs";
-import { REPLACE_BUSY_MS, writeJsonAtomic } from "../src/lib/runtime.mjs";
+import { REPLACE_BUSY_MS, writeJsonAtomic } from "../src/lib/state-files.mjs";
 import { carryOut, uninstall } from "../src/lib/uninstall.mjs";
 import { COMMANDS, formatCommandHelp } from "../src/lib/help.mjs";
 import { briefSha, read as readLedger } from "../src/lib/ledger.mjs";

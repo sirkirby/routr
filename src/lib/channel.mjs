@@ -15,7 +15,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { linkSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import { basename, dirname, join } from "node:path";
-import { readJsonFile, STATE_DIR, writeJsonAtomic } from "./runtime.mjs";
+import { readJsonFile, STATE_DIR, writeJsonAtomic } from "./state-files.mjs";
 
 export const PROTO = 1;
 // One frame holds a whole task: launch and send refuse a message over MESSAGE_MAX before anything starts. Until a peer

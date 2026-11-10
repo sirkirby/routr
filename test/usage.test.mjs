@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { claudeProjectFolders, claudeSnapshot, codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, parseClaudeReset, parseClaudeUsage, readClaude, readCodex, summarize } from "../src/lib/usage.mjs";
 import { KIRO_BY_HAND, kiroUsage, parseKiroUsage, readKiro, refreshKiro } from "../src/lib/kiro-usage.mjs";
 import { HARNESSES, readUsage } from "../src/lib/harnesses.mjs";
-import { olderThan, takeLock } from "../src/lib/runtime.mjs";
+import { olderThan, takeLock } from "../src/lib/state-files.mjs";
 import { usageCommand } from "./contract.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
 import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage, readCursor, refreshCursor } from "../src/lib/cursor-usage.mjs";

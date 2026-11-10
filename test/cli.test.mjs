@@ -527,7 +527,7 @@ test("help, --version and statusline load none of the harness drivers: those loa
 });
 
 test("routr's own code in the test process sees the scratch home, not the maintainer's (Bun's os.homedir ignores a changed HOME)", async () => {
-  const { home, CACHE_DIR } = await import("../src/lib/runtime.mjs");
+  const { home, CACHE_DIR } = await import("../src/lib/state-files.mjs");
   const { CONFIG_PATH } = await import("../src/lib/config.mjs");
   expect(home()).toBe(process.env.HOME);
   expect(CONFIG_PATH().startsWith(process.env.HOME)).toBe(true);

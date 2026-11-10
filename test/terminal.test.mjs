@@ -15,7 +15,7 @@ import { HARNESSES, KINDS, plan, terminalPlan } from "../src/lib/harnesses.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
 import { LaunchIndex } from "../src/lib/launch-index.mjs";
 import { runDir } from "../src/lib/worker-record.mjs";
-import { configLocations, savedConfigLocations, start as runtimeStart, startOptions, terminalEnv } from "../src/lib/runtime.mjs";
+import { start as processStart, startOptions } from "../src/lib/processes.mjs";
 import { cfg, cliEnv, fakeExecutable, scratch, SCRIPT } from "./helpers.mjs";
 
 // bun test runs every file in one process, in an order that differs by platform, so a test here has a home of its own:
@@ -344,25 +344,6 @@ const CORE = { PATH: "/core/bin", HOME: "/core/home", HC_SESSION: "s1", CLAUDECO
 const CALLER = { ...LEAD_ENV, PATH: "/lead/bin", CODEX_HOME: "/lead/codex", CLAUDE_CONFIG_DIR: "/lead/claude", CURSOR_CONFIG_DIR: "/lead/cursor", XDG_CONFIG_HOME: "/lead/xdg", ANTHROPIC_API_KEY: "lead-key", CLAUDE_CODE_OAUTH_TOKEN: "lead-token", SOME_LEAD_SETTING: "x",
   TRACEPARENT: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" };
 
-test("the runner's environment: the core's, without a lead's identity, its own terminal, and only what launch saved", () => {
-  const saved = { carriers: { TRACEPARENT: CALLER.TRACEPARENT }, config: configLocations(CALLER) };
-  expect(saved.config).toEqual({ CODEX_HOME: "/lead/codex", CLAUDE_CONFIG_DIR: "/lead/claude", CURSOR_CONFIG_DIR: "/lead/cursor", XDG_CONFIG_HOME: "/lead/xdg" });
-  const env = terminalEnv({ ...saved, adapter: { CLAUDE_CODE_SUBAGENT_MODEL: "s" } }, CORE);
-  expect(env).toEqual({ PATH: "/core/bin", HOME: "/core/home", HC_SESSION: "s1", OPENAI_API_KEY: "core-key", HC_TERMINAL_ID: "t9", HC_TERMINAL_SOCKET: "/core/t9.sock", HC_SCOPE: "worker-scope",
-    TRACEPARENT: CALLER.TRACEPARENT, CODEX_HOME: "/lead/codex", CLAUDE_CONFIG_DIR: "/lead/claude", CURSOR_CONFIG_DIR: "/lead/cursor", XDG_CONFIG_HOME: "/lead/xdg", CLAUDE_CODE_SUBAGENT_MODEL: "s" });
-  // Cursor's private config beats the caller's; a caller who set none leaves the core's, and carriers it saved none of are none.
-  expect(terminalEnv({ carriers: {}, config: saved.config, adapter: { CURSOR_CONFIG_DIR: "/run/cursor-config" } }, CORE).CURSOR_CONFIG_DIR).toBe("/run/cursor-config");
-  const bare = terminalEnv({ carriers: {}, config: {} }, CORE);
-  expect(bare.CODEX_HOME).toBe("/core/codex");
-  expect(bare).not.toHaveProperty("TRACEPARENT");
-  // Exact names, checked again: anything else saved is ignored, and so is a value that is no path.
-  expect(savedConfigLocations({ CODEX_HOME: "/a", ANTHROPIC_API_KEY: "k", CLAUDE_CONFIG_DIR: 3, XDG_DATA_HOME: "bad\nvalue", XDG_STATE_HOME: "" })).toEqual({ CODEX_HOME: "/a" });
-  expect(terminalEnv({ carriers: { TRACEPARENT: "x\ny", OTHER: "z" }, config: "not an object" }, { PATH: "/p" })).toEqual({ PATH: "/p" });
-  // Windows names differ by case only: one variable, the later layer's.
-  const win = terminalEnv({ carriers: {}, config: { CODEX_HOME: "/a" } }, { codex_home: "/core", hc_terminal_id: "t9" }, { platform: "win32" });
-  expect(win).toEqual({ HC_TERMINAL_ID: "t9", CODEX_HOME: "/a" });
-});
-
 test("a harness starts where the terminal is, on its stdio, with a caller and a core whose environments differ; what launch saved holds no key", async () => {
   cursorHome();
   const f = fixture("cursor", { env: CALLER, hc: fakeHc({ sees: [{ status: null, turn: 1 }] }) }), r = await f.go();
@@ -451,7 +432,7 @@ test("a runner's start keeps its console on Windows; every other start stays hid
   expect(startOptions({ stdio: "inherit", visible: true })).toEqual({ stdio: "inherit", windowsHide: false });
   expect(startOptions({ stdio: "ignore" })).toEqual({ stdio: "ignore", windowsHide: true });
   expect(startOptions({ windowsHide: false })).toEqual({ windowsHide: true });
-  let seen; runtimeStart("x", [], { visible: true, env: {} }, { via: (c, a, o) => { seen = o; }, platform: "linux" });
+  let seen; processStart("x", [], { visible: true, env: {} }, { via: (c, a, o) => { seen = o; }, platform: "linux" });
   expect(seen).toEqual({ env: {}, windowsHide: false });
 });
 

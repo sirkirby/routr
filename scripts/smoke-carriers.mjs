@@ -37,7 +37,9 @@ import { deadline, paneView, quote, runHerdr, splitArgs, waitForShell, worktreeA
 import { worktreesFromGit } from "../src/lib/cleanup.mjs";
 import { displayCommand } from "../src/lib/next.mjs";
 import { processError } from "../src/lib/process-boundary.mjs";
-import { CARRIERS, carriersFrom, installedAt, probe, realOr } from "../src/lib/runtime.mjs";
+import { CARRIERS, carriersFrom } from "../src/lib/worker-env.mjs";
+import { installedAt, probe } from "../src/lib/processes.mjs";
+import { realOr } from "../src/lib/state-files.mjs";
 
 const LIMITS = { TRACEPARENT: 512, TRACESTATE: 512, BAGGAGE: 8192 };
 // What a shell or herdr could take for something else: quotes, expansions, separators, TAB and spaces.

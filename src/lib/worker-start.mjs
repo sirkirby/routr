@@ -9,7 +9,7 @@ import { copyInto, makeWorktree, newWorktree, unmakeWorktree } from "./worktree.
 import { HARNESSES } from "./harnesses.mjs";
 import { configOf } from "./config.mjs";
 import { OFF } from "./wording.mjs";
-import { home } from "./runtime.mjs";
+import { home } from "./state-files.mjs";
 
 // A lead's sandbox carries over to what it starts (prototype p36, 2026-10-22): inside Claude Code's Bash sandbox a
 // worker could not write routr's state folder or reach api.anthropic.com, and inside Codex's (workspace-write) it could

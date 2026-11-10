@@ -1,6 +1,7 @@
 // Kiro's usage: its own /usage command, kept as a snapshot refreshed in the background (snapshot.mjs).
 import { tmpdir } from "node:os";
-import { KIRO_SNAPSHOT, run } from "./runtime.mjs";
+import { KIRO_SNAPSHOT } from "./state-files.mjs";
+import { run } from "./processes.mjs";
 import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
 import { monthMinutes } from "./usage.mjs";
 import { USAGE_BY_HAND, usageFailure } from "./usage-failure.mjs";

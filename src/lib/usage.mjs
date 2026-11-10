@@ -3,7 +3,8 @@
 // Every pool has windows and a payment class: `included` (a plan), `metered` (billed per use),
 // or `unknown` (nothing readable). Measured 2026-09-22 on a ChatGPT Enterprise seat: no windows at all, only
 // `credits.unlimited: true`, and a plan name of `business`. So the shape is the key, never the plan name.
-import { CLAUDE_SNAPSHOT, home, run } from "./runtime.mjs";
+import { CLAUDE_SNAPSHOT, home } from "./state-files.mjs";
+import { run } from "./processes.mjs";
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -258,7 +259,7 @@ function removeProjectFolder(folder) {
   removeEmpty(folder);
 }
 
-// Seams: `file` the statusline snapshot, `nowSec` the clock, `exec` runtime's run, `tmp` the folder that holds
+// Seams: `file` the statusline snapshot, `nowSec` the clock, `exec` the processes module's run, `tmp` the folder that holds
 // each read's private folder, `projects` Claude's projects folder. It is only called once readUsage's sign-in gate says Claude is signed in. That
 // answer is kept up to 6 hours (signin.mjs, as for every harness), so one read may follow a sign-out; Claude's `-p`
 // does not open a browser sign-in.

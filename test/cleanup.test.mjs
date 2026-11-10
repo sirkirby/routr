@@ -7,7 +7,7 @@ import { templateCommand } from "../src/lib/next.mjs";
 import { cleanup, dropCopy, linkedWorktree, parseCleanupArgs, parseStatus, parseWorktreeHeads, sameFile } from "./contract.mjs";
 import { herdrError, herdrOK, scratch } from "./helpers.mjs";
 import { herdrWorktreeFolder } from "../src/lib/herdr.mjs";
-import { worktreeFolder } from "../src/lib/runtime.mjs";
+import { worktreeFolder } from "../src/lib/state-files.mjs";
 
 test("cleanup names one worker, by branch, folder, or pane; --delete-branch only for a worktree", () => {
   expect(parseCleanupArgs(["--cwd", "/r", "--worktree", "feat/x", "--delete-branch"])).toMatchObject({ cwd: "/r", worktree: "feat/x", deleteBranch: true, dryRun: false });

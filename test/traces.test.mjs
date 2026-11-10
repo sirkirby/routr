@@ -493,7 +493,7 @@ test("every command's queue, launch index and worker metadata exclude content an
   // worker.json holds native cwd, checked carriers and explicit subagent fallbacks; only those values may be kept.
   const prior = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }, fits = spyOn(channel, "socketPathFits").mockReturnValue(true); let saved;
   try {
-    // Windows CI, PR #115: runtime.home() reads USERPROFILE; HOME alone reserved metadata in the wrong home.
+    // Windows CI, PR #115: home() reads USERPROFILE; HOME alone reserved metadata in the wrong home.
     process.env.HOME = process.env.USERPROFILE = x.home;
     const r = await checked(() => launch(["--kind", "claude", "--name", "metadata", "--model", "fixture", "--cwd", x.home, "--subagent-model", "PRIVATE_SUBAGENT_MODEL", "--subagent-effort", "PRIVATE_SUBAGENT_EFFORT", "--task-file", brief, "--advice", advice], { ...opts, ready: async () => null, spawn: () => {
       saved = JSON.parse(readFileSync(join(x.home, ".local/state/routr/workers/metadata/worker.json"), "utf8")); return false;

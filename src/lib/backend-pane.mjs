@@ -2,7 +2,7 @@
 // The whole lifecycle of one launch into a pane: its shell, its split or worktree, adopting an agent already there, the
 // start and the prompt; what a launch that stopped part way leaves, and what to do about it.
 import { warning } from "./warnings.mjs";
-import { inputNeeded, launchCarriers, launchCarrierWarnings } from "./traces.mjs";
+import { inputNeeded, launchCarriers } from "./traces.mjs";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { configOf } from "./config.mjs";
@@ -12,13 +12,10 @@ import { OFF } from "./wording.mjs";
 import { clean, CMD_PATH, cmdTypable, FISH_PATH, fishTypable, HERDR_PS_QUOTE, herdrTypable, deadline, paneText, paneView, promptReadArgs, SHELLS, shellFamily, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
 import { launchFailed, STARTUP_INPUT } from "./launch-answer.mjs";
-import { CARRIERS, carrierValues, FORWARDED, realPath, redactCarriers } from "./runtime.mjs";
+import { carrierValues, paneEnv, redactCarriers } from "./worker-env.mjs";
+import { realPath } from "./state-files.mjs";
 
 export const command = (args) => displayCommand(["herdr", ...args]);
-// Trace-context carriers reach only a pane launch splits (herdr's `pane split --env`), beside the caller or in a new
-// worktree. In an existing pane (--pane, an adopted agent) this fixed warning says the launch passed none: never that the
-// worker has none (a --pane rerun into a pane routr split already has them in its shell), and never with a value.
-const PASSED_NONE = (names) => `This launch passed none of ${names.join(", ")} to the worker: an existing pane keeps the environment its shell, or the agent already running there, started with, and routr never types a carrier into a shell`;
 // The command log is printed and may be stored by whoever called launch: it carries the prompt's length, never its
 // text (the brief must not be printed, logged, or stored).
 const PANE_WITHHELD = "withheld: the prompt was already submitted, so the pane shows the task. Read the pane yourself.";
@@ -34,33 +31,9 @@ function logCommand(log, text) {
 
 // Known once the pane's shell has been seen; until then, this platform's usual shell.
 export const usualShell = () => (process.platform === "win32" ? "powershell" : "posix");
-export const fallbackEnvOf = (o, p, privateDir) => {
-  const configEnv = HARNESSES[o.kind].env?.(privateDir) ?? {};
-  return Object.fromEntries(Object.entries(p.env).filter(([k]) => !Object.hasOwn(configEnv, k)));
-};
-// Like carriers, fallback environment enters only a pane we create, never an assignment in an existing shell;
-// a --pane retry keeps the environment that its original split supplied and applies nothing again.
-export const paneFallbacks = (o, out, fallbackEnv) => {
-  if (!o.pane) return fallbackEnv;
-  for (const k of Object.keys(fallbackEnv)) delete out.start.env[k];
-  if (Object.keys(fallbackEnv).length) out.warnings.push(warning("subagent_fallback_not_passed", "This launch passed no subagent environment fallback to the existing pane; its shell or agent keeps the environment it started with, including any fallback from the original split on a retry."));
-  return {};
-};
-// The carriers this launch hands on: a pane it splits (beside the caller, or in a worktree) gets the ones within
-// routr's limits, with a warning for each withheld; an existing pane gets none, said once. Only names and FORWARDED
-// reach the output.
-export const paneCarriers = (o, out, found) => {
-  if (!o.pane) {
-    out.warnings.push(...launchCarrierWarnings(found));
-    out.start.env = { ...out.start.env, ...Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) };
-    return found.carriers;
-  }
-  const present = CARRIERS.filter((n) => Object.hasOwn(found.carriers, n) || found.withheld.includes(n));
-  if (present.length) out.warnings.push(warning("carriers_not_passed", found.launchSpan
-    ? "This launch did not pass its routr launch span or carriers to the worker: an existing pane keeps the environment its shell, or the agent already running there, started with, and routr never types a carrier into a shell"
-    : PASSED_NONE(present)));
-  return {};
-};
+// A pane worker's environment (worker-env's paneEnv): the carriers this launch holds, and its plan's subagent
+// fallbacks, less the names the harness adapter sets for itself.
+export const paneEnvOf = (o, out, env, p, privateDir) => paneEnv({ pane: o.pane, found: launchCarriers(env), plan: p.env, adapter: HARNESSES[o.kind].env?.(privateDir) ?? {} }, out);
 export const paneStartArgs = (o, shell, p, privateDir, pane, timeout) => o.kind === "cursor" && SHELLS[shell].cursor
   ? ["pane", "run", pane, SHELLS[shell].cursor(privateDir, p.executable, p.argv)]
   : ["agent", "start", o.name, "--kind", o.kind, "--pane", pane, "--timeout", String(timeout), "--", ...p.argv];
@@ -109,10 +82,9 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
   };
   const lifecycle = async () => {
     let shell = usualShell(), fish = false;
-    const found = launchCarriers(env), fallbackEnv = fallbackEnvOf(o, p, privateDir);
     const startArgs = (pane, timeout) => paneStartArgs(o, shell, p, privateDir, pane, timeout);
     const promptArgs = (pane, timeout) => panePromptArgs(prompt, pane, timeout);
-    const carried = paneCarriers(o, out, found), extraEnv = paneFallbacks(o, out, fallbackEnv);
+    const { carried, extraEnv, fallbacks: fallbackEnv } = paneEnvOf(o, out, env, p, privateDir);
     // The user turned this subscription off: it gets no work, launched by hand or not.
     const loaded = settings(), config = configOf(loaded);
     out.warnings.push(...(loaded.notes ?? []));

@@ -1,7 +1,7 @@
 // The commands for workers: `wait`, `send`, `workers` and `stop`, their parsing and what they answer. What each does to a
 // worker is its backend's, from its record (backend-headless.mjs); a terminal worker is the lead's to follow with hc, and
 // these commands say so (backend-terminal.mjs). Answers carry report paths, never worker text.
-import { warning, carrierWithheld } from "./warnings.mjs";
+import { warning } from "./warnings.mjs";
 import { commandTrace } from "./traces.mjs";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -15,7 +15,8 @@ import { readTask } from "./advice-file.mjs";
 import { doNext, runNext, templateCommand } from "./next.mjs";
 import { answer } from "./output.mjs";
 import { CLOSING, count, OFF } from "./wording.mjs";
-import { NAME_RULE, WORKER_NAME, readJsonFile, savedCarriers, writeJsonAtomic } from "./runtime.mjs";
+import { NAME_RULE, WORKER_NAME, readJsonFile, writeJsonAtomic } from "./state-files.mjs";
+import { carrierWithheld, savedCarriers } from "./worker-env.mjs";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // wait, workers and stop read the channel, which a sandbox may block: they say what it may have made them see.

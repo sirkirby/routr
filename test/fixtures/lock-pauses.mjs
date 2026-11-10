@@ -16,7 +16,7 @@ mock.module("node:fs", () => ({
   linkSync: (from, to) => { fire("link", to); return fs.linkSync(from, to); },
   unlinkSync: (path) => { fire("unlink", path); return fs.unlinkSync(path); },
 }));
-const { lockToken, releaseFileLock, takeLock } = await import("../../src/lib/runtime.mjs");
+const { lockToken, releaseFileLock, takeLock } = await import("../../src/lib/state-files.mjs");
 const file = join(dir, "job.lock"), guard = `${file}.takeover`, out = {};
 const record = (p) => { try { return JSON.parse(fs.readFileSync(p, "utf8")); } catch { return null; } };
 // What another process sees at that path now: absent, or present with or without its owner's pid.
@@ -36,7 +36,7 @@ if (mode === "guard" || mode === "claim") {
   out.lock = record(file)?.token ?? null;
 } else if (mode === "lock") {
   // Paused ten minutes as it publishes the lock itself: another taker sees what is there, and takes it if it can.
-  const { lockIsStale } = await import("../../src/lib/runtime.mjs");
+  const { lockIsStale } = await import("../../src/lib/state-files.mjs");
   hook(publishing((p) => p === file), (p) => { out.seen = seen(p); age(p); out.other = takeLock(file, lockIsStale); out.otherToken = lockToken(file) ?? null; });
   out.mine = takeLock(file, lockIsStale); out.mineToken = lockToken(file) ?? null;
   out.lock = record(file)?.token ?? null;

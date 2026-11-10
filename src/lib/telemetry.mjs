@@ -16,7 +16,8 @@ import { HARNESSES } from "./harnesses.mjs";
 import { decisionOf, LEDGER_PATH, read } from "./ledger.mjs";
 import { KNOWN_MODELS, PROVIDER_NAMES } from "./providers.mjs";
 import { FACTS, questions } from "./questions.mjs";
-import { lockIsStale, standalone, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP, writeJsonAtomic } from "./runtime.mjs";
+import { lockIsStale, TELEMETRY_LOG, UPDATE_LOCK, UPDATE_STAMP, writeJsonAtomic } from "./state-files.mjs";
+import { standalone } from "./processes.mjs";
 import { ROUTR_VERSION } from "./version.mjs";
 
 export const ENDPOINT = process.env.ROUTR_TELEMETRY_URL || "https://telemetry.routr.build";

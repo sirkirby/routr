@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, relative, sep } from "node:path";
-import { harnessEnv, realPath, startSync } from "./runtime.mjs";
+import { harnessEnv } from "./worker-env.mjs";
+import { realPath } from "./state-files.mjs";
+import { startSync } from "./processes.mjs";
 
 // VCS semantic conventions 1.44.0: a URL is a repository identity, never a transport credential or arbitrary
 // remote text.

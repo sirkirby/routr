@@ -7,7 +7,7 @@ import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { HARNESSES } from "./harnesses.mjs";
 import { LEVELS } from "./questions.mjs";
-import { DATA_DIR, ensureParent } from "./runtime.mjs";
+import { DATA_DIR, ensureParent } from "./state-files.mjs";
 import { EFFORTS } from "./shaped.mjs";
 import { LAUNCH_ID } from "./launch-history.mjs";
 

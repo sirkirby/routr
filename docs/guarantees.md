@@ -240,7 +240,7 @@ over: uninstall names the file to remove (launches treat it as free).
 
 ## Processes and platforms
 
-Detached background work starts routr's own compiled binary, or its source entry resolved from its runtime module.
+Detached background work starts routr's own compiled binary, or its source entry resolved from the module that starts its processes.
 It never restarts the script that happened to import routr.
 
 routr runs on macOS, Linux and Windows. It starts every process directly, never through `sh`, and with no Unix-only

@@ -1,4 +1,4 @@
-import { adviceForLaunch, commandTrace, completeLaunch, launchCarriers } from "./traces.mjs";
+import { adviceForLaunch, commandTrace, completeLaunch } from "./traces.mjs";
 import { takeLeadSession } from "./trace-context.mjs";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -17,9 +17,10 @@ import { projectName } from "./ledger.mjs";
 import { fallbackAdvice } from "./output.mjs";
 import { executionFor } from "./backends.mjs";
 import { launchFailed } from "./launch-answer.mjs";
-import { command, fallbackEnvOf, launchPane, paneCarriers, paneFallbacks, panePromptArgs, paneStartArgs, promptForLog, usualShell } from "./backend-pane.mjs";
+import { command, launchPane, paneEnvOf, panePromptArgs, paneStartArgs, promptForLog, usualShell } from "./backend-pane.mjs";
 import { client } from "./hc.mjs";
-import { home, NAME_RULE, selfCommand, WORKER_NAME, spawnSelf } from "./runtime.mjs";
+import { home, NAME_RULE, WORKER_NAME } from "./state-files.mjs";
+import { selfCommand, spawnSelf } from "./processes.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
 // around it, so it points at the installed skill (written by the installer or `routr skill install`).
@@ -134,7 +135,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     if (o.dryRun) {
       const shell = usualShell();
       const startArgs = (pane, timeout) => paneStartArgs(o, shell, p, privateDir, pane, timeout), promptArgs = (pane, timeout) => panePromptArgs(prompt, pane, timeout);
-      const pane = o.pane ?? "<new-pane>", carried = paneCarriers(o, out, launchCarriers(env)), extraEnv = paneFallbacks(o, out, fallbackEnvOf(o, p, privateDir));
+      const pane = o.pane ?? "<new-pane>", { carried, extraEnv } = paneEnvOf(o, out, env, p, privateDir);
       out.would_run = [
         ...(o.worktree ? [command(worktreeArgs(out.cwd, o.worktree, o.base)), command(splitArgs("right", "<worktree-path>", carried, { pane: "<root-pane>", shown: true, env: extraEnv })), command(["pane", "close", "<root-pane>"])] : []),
         ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true, env: extraEnv }))] : []),

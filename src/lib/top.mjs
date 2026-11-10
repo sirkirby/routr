@@ -13,7 +13,7 @@ import { boardCommand } from "./board.mjs";
 import { loadConfig } from "./config.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { repositoryName } from "./ledger.mjs";
-import { spawnSelf } from "./runtime.mjs";
+import { spawnSelf } from "./processes.mjs";
 import { accessibleOk, colourOk, glyphsFor, styler, wrap } from "./tui.mjs";
 
 export const REFRESH_MS = 5000; // board answers in ~30 ms from kept readings: a redraw this often costs nothing
