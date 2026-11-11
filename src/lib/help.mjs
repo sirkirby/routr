@@ -3,7 +3,7 @@
 // `text` for a screen. The contract tests walk this table, so a covered command cannot be left out of them.
 import { HARDEST, RESERVE } from "./wording.mjs";
 import { HARNESSES, KINDS, TAKES_EFFORT } from "./harnesses.mjs";
-import { NAME_RULE } from "./state-files.mjs";
+import { NAME_RULE } from "./worker-record.mjs";
 // What help says of the harnesses comes from the registry: which ones have a property, and what it says of itself.
 const list = (xs, last) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} ${last} ${xs.at(-1)}` : xs[0] ?? "");
 const having = (test) => KINDS.filter((n) => test(HARNESSES[n]));

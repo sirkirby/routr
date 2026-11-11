@@ -499,7 +499,7 @@ test("every command's queue, launch index and worker metadata exclude content an
       saved = JSON.parse(readFileSync(join(x.home, ".local/state/routr/workers/metadata/worker.json"), "utf8")); return false;
     } }));
     expect(r.ok).toBe(false); expect(saved).toBeDefined();
-    expect(Object.keys(saved).sort()).toEqual(["format", "id", "name", "kind", "model", "effort", "cwd", "created_at", "carriers", "launch", "subagent_model", "subagent_effort"].sort());
+    expect(Object.keys(saved).sort()).toEqual(["format", "id", "name", "backend", "kind", "model", "effort", "cwd", "created_at", "carriers", "launch", "subagent_model", "subagent_effort"].sort());
     const { cwd, carriers, subagent_model, subagent_effort, ...metadata } = saved;
     expect([subagent_model, subagent_effort]).toEqual(["PRIVATE_SUBAGENT_MODEL", "PRIVATE_SUBAGENT_EFFORT"]);
     expect(cwd).toBe(x.home); expect(carriers.BAGGAGE).toBe(markers[3]); expect(carriers.TRACESTATE).toBe(x.env.TRACESTATE);

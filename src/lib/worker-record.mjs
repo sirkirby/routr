@@ -1,67 +1,104 @@
-// A worker's record: who it is (its name, its run folder, its worker.json), how a name is reserved, and the checked
-// loading of that record. Nothing here knows how the worker runs; a backend's own state stays with that backend.
-import { linkWorker } from "./traces.mjs";
+// A worker's record: its name rule, the one constructor both launches build it with, the one check every reader reads
+// it through, and where records are kept under a state root (recordStore). Nothing here knows how a worker runs; a
+// backend's own state stays with that backend. Imports only node: and the state files: help reads NAME_RULE while it
+// loads, and nothing else may come with it.
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { basename, join } from "node:path";
-import { privateDir } from "./channel.mjs";
-import { lockIsStale, readJsonFile, STATE_DIR, UNINSTALL_LOCK, WORKER_NAME } from "./state-files.mjs";
+import { lockIsStale, lockOwned, lockToken, readJsonFile, releaseFileLock, STATE_DIR, takeLock, writeJsonAtomic } from "./state-files.mjs";
 
+// A worker's name (launch --name), which cleanup --worker, the worker commands and a span's agent name take.
+export const NAME_RULE = "[a-z][a-z0-9_-]{0,31}", WORKER_NAME = new RegExp(`^${NAME_RULE}$`);
 export const FORMAT = 1;
-export const WORKERS_DIR = () => join(STATE_DIR(), "workers");
-export const runDir = (name) => join(WORKERS_DIR(), name);
 // Set at hc run with the record's id, and read back before routr ends a terminal: an address lasts on one core only, and
 // another core can have the same address under the same name. An id made for this worker cannot be another's.
 export const WORKER_LABEL = "routr.worker";
-// Every name a worker can be given, the folders that exist: the holder writes state, launch the worker file.
-export const workerNames = () => { try { return readdirSync(WORKERS_DIR()).filter((n) => WORKER_NAME.test(n)).sort(); } catch { return []; } };
-// What launch wrote: { format, id, name, kind, model, effort, cwd, created_at, carriers }. Never the brief, and of the
-// environment only the trace-context carriers within routr's limits, which every load checks again (savedCarriers).
-// `backend` is where it runs: a record that names none is headless, as every record written before terminal workers is.
-// A terminal worker's also has `terminal` (its address), `terminal_name` and `config` (where-is-my-config paths, checked
-// again by savedConfigLocations); its prompt is a file beside the record, never in it.
-// As readJsonFile reads it: { worker } for one routr's launch wrote, { absent: true }, { foreign: true } (another
-// shape: not routr's), or { unreadable } (there, and not read: what it is is not known, so nothing acts on it).
-export const workerOf = (name) => {
-  const r = readJsonFile(join(runDir(name), "worker.json"));
-  if (r.absent || r.unreadable) return r;
-  const w = r.value;
-  if (w?.format !== FORMAT || w.name !== name) return { foreign: true };
-  linkWorker(w); return { worker: { ...w, backend: w.backend ?? "headless" } };
+// The backends a record is built for: the ones routr keeps a run folder for. A pane worker has none.
+export const RECORD_BACKENDS = ["headless", "terminal"];
+
+// ---- building one -------------------------------------------------------------------------------------------------
+// The record's shape, as code: each field and what it must be. Never the brief, and of the environment only the
+// trace-context carriers within routr's limits, which every load checks again (savedCarriers). A terminal worker's also
+// has `terminal` (its address, once hc gave one), `terminal_name` and `config` (where-is-my-config paths, checked again
+// by savedConfigLocations); its prompt is a file beside the record, never in it.
+const str = (v) => typeof v === "string" && v !== "";
+const plain = (v) => v != null && typeof v === "object" && !Array.isArray(v);
+const SHAPE = {
+  format: (v) => v === FORMAT, id: (v) => typeof v === "string" && /^[0-9a-f]{32}$/.test(v), name: (v) => typeof v === "string" && WORKER_NAME.test(v),
+  backend: (v) => RECORD_BACKENDS.includes(v), kind: str, model: str, effort: (v) => v === null || str(v), cwd: str,
+  created_at: (v) => typeof v === "string" && Number.isFinite(Date.parse(v)),
+  carriers: (v) => plain(v) && Object.values(v).every((x) => typeof x === "string"),
+  subagent_model: str, subagent_effort: str, launch: plain,
+  worktree: (v) => plain(v) && ["branch", "path", "source"].every((k) => str(v[k])),
+  terminal: str, terminal_name: str, config: (v) => plain(v) && Object.values(v).every((x) => typeof x === "string"),
 };
-export const readWorker = (name) => workerOf(name).worker ?? null;
+const REQUIRED = { headless: ["format", "id", "name", "backend", "kind", "model", "effort", "cwd", "created_at", "carriers"] };
+REQUIRED.terminal = [...REQUIRED.headless, "terminal_name", "config"];
+const ONLY = { headless: new Set([...REQUIRED.headless, "subagent_model", "subagent_effort", "launch", "worktree"]) };
+ONLY.terminal = new Set([...ONLY.headless, "terminal_name", "config", "terminal"]);
+// Strict: a field missing, of the wrong kind, or not of this backend is a mistake in routr, never the user's input.
+const built = (r) => {
+  const backend = RECORD_BACKENDS.includes(r.backend) ? r.backend : null;
+  const bad = !backend ? ["backend"] : [...REQUIRED[backend].filter((k) => !Object.hasOwn(r, k)), ...Object.keys(r).filter((k) => !ONLY[backend].has(k) || !SHAPE[k](r[k]))];
+  if (bad.length) throw new Error(`routr built a worker record it would not read back (${[...new Set(bad)].join(", ")})`);
+  return r;
+};
+// Optional fields are left out when not given, so a record says only what launch decided.
+const given = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null));
+// `common`: what every launch decides. `where`: { backend: "headless" } or { backend: "terminal", terminal_name, config }.
+// `id` is made here unless launch needed it first (a terminal's program carries it).
+export function newRecord({ id, name, kind, model, effort = null, cwd, carriers = {}, subagent_model, subagent_effort, launch, worktree }, { backend, ...where }) {
+  return built({ format: FORMAT, id: id ?? randomUUID().replace(/-/g, ""), name, backend, kind, model, effort: effort ?? null, cwd, created_at: new Date().toISOString(), carriers,
+    ...given({ subagent_model, subagent_effort }), ...given(where), ...given({ launch, worktree }) });
+}
+// A record launch built, with what it learned since (a terminal's address and name), checked again as a whole.
+export const amend = (record, patch) => built({ ...record, ...patch });
+
+// ---- reading one --------------------------------------------------------------------------------------------------
+// What every reader takes for a record of routr's: this format, and the name of its own folder. Lenient on the rest, as
+// it has always been: a record that names no backend is headless, as every record written before terminal workers is.
+// Anything else is null: another shape, not routr's.
+export const checkRecord = (value, name) => (value?.format === FORMAT && typeof value.name === "string" && value.name === name && WORKER_NAME.test(name)
+  ? { ...value, backend: value.backend ?? "headless" } : null);
 // The same, from a run folder named by its path, for a process whose HOME may not be the one launch ran under.
-export const readWorkerAt = (dir) => { const w = readJsonFile(join(dir, "worker.json")).value; return w?.format === FORMAT && w.name === basename(dir) ? { ...w, backend: w.backend ?? "headless" } : null; };
+export const readRecordAt = (dir) => checkRecord(readJsonFile(join(dir, "worker.json")).value, basename(dir));
 // A worker file that is there and cannot be read, said to a person: the file, the code, and that it may pass.
 export const unreadableWhy = (name, file, code) => `${name}'s ${file} could not be read just now (${code}), so what it is doing is not known: try again in a moment`;
 
-// The run folder of a new worker, reserved by its name: made whole, owner-only, or refused when one exists.
-// Made first, then the uninstall lock looked at: uninstall takes its lock first, then looks for run folders, so
-// one of the two always sees the other. Each reservation writes its own random token into its folder,
-// exclusively, before anything else, and only the launch whose token is there removes that folder (its rollback
-// in backend-headless.mjs). An uninstall releases its lock only once everything else in its state folder is gone, so
-// when this call finds no lock, any earlier uninstall has finished removing: the token still being there then
-// means the folder is this call's for good (a later uninstall takes its lock first and sees it). Found held, it
-// backs out by removing nothing: the uninstall running removes the folder, or, if it came after that
-// uninstall's sweep, keeps its own state folder and says so. (an identity by device, inode and birth time, and
-// a token checked and then acted on by path, each left a moment where another launch's folder could be taken
-// for this one's.)
-export const OWNER = ".reserved-by";
-export const ownedBy = (dir, token) => { try { return readFileSync(join(dir, OWNER), "utf8") === token; } catch { return false; } };
-export function reserve(name, { beforeOwn = () => {}, afterOwn = () => {}, beforeBackout = () => {} } = {}) {
-  privateDir(WORKERS_DIR());
-  const dir = runDir(name), token = randomUUID().replace(/-/g, "");
-  mkdirSync(dir, { mode: 0o700 }); // not recursive: EEXIST when that name is taken
-  beforeOwn(); // a test acts here: as if this call paused while uninstall and another launch ran
-  try { writeFileSync(join(dir, OWNER), token, { flag: "wx", mode: 0o600 }); } // EEXIST: another reservation's folder
-  catch (e) { if (e?.code === "ENOENT") throw new Error(`${name}'s run folder was removed while launch was making it; run launch again`); throw e; }
-  afterOwn(); // and here
-  let held = false;
-  try { held = existsSync(UNINSTALL_LOCK()) && !lockIsStale(UNINSTALL_LOCK()); } catch { held = existsSync(UNINSTALL_LOCK()); }
-  if (held) {
-    beforeBackout(); // and here
-    throw new Error("routr is being uninstalled on this machine: no worker can start now");
-  }
-  if (!ownedBy(dir, token)) throw Object.assign(new Error(`a worker named ${name} exists`), { code: "EEXIST" });
-  return { dir, token };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Where records are kept: `<root>/workers/<name>/worker.json`, root defaulting to this home's state folder.
+export function recordStore(root = STATE_DIR()) {
+  const dir = join(root, "workers"), runDir = (name) => join(dir, name);
+  return {
+    root, dir, runDir,
+    // Every name a worker can be given, the folders that exist: the holder writes state, launch the worker file.
+    names: () => { try { return readdirSync(dir).filter((n) => WORKER_NAME.test(n)).sort(); } catch { return []; } },
+    // As readJsonFile reads it: { worker } for one routr's launch wrote, { absent: true }, { foreign: true } (another
+    // shape: not routr's), or { unreadable } (there, and not read: what it is is not known, so nothing acts on it).
+    // Never throws, and changes nothing.
+    read: (name) => {
+      const r = readJsonFile(join(runDir(name), "worker.json"));
+      if (r.absent || r.unreadable) return r;
+      const worker = checkRecord(r.value, name);
+      return worker ? { worker } : { foreign: true };
+    },
+    readAt: readRecordAt,
+    // Whole, owner-only, into a folder that exists: a reader never sees it half written. Only what newRecord or amend built.
+    write: (folder, record) => writeJsonAtomic(join(folder, "worker.json"), built(record), { mkdir: false, mode: 0o600 }),
+    // Starting a holder and removing a run folder go through one lock per worker, so cleanup can never delete a folder
+    // a send is starting a new holder in. Taken over only when its taker has gone (the state files' lock). `fn` gets
+    // `assertOwned`, which throws once the lock is no longer this call's: checks await channels and git, so a lock at
+    // entry is not enough, and every action is fenced with its token.
+    lock: async (name, fn) => {
+      const file = join(dir, `${name}.lock`);
+      let took = false;
+      for (let i = 0; i < 50 && !(took = takeLock(file, lockIsStale)); i++) await sleep(100);
+      const token = lockToken(file);
+      const assertOwned = () => { if (!took || !lockOwned(file, token)) throw new Error(`the worker lock for ${name} is held by another routr command; run it again in a moment`); };
+      try { assertOwned(); return await fn(assertOwned); } finally { if (took) releaseFileLock(file, token); }
+    },
+  };
 }
+// This home's, for the holder and launch, which find a worker by its name under HOME.
+export const runDir = (name) => recordStore().runDir(name);
+export const readWorker = (name) => recordStore().read(name).worker ?? null;

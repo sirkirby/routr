@@ -9,9 +9,9 @@ import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSy
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { notOursWhy, owner, removeOwned, skillPlaces } from "./skill-install.mjs";
-import { CACHE_DIR, CONFIG_DIR, DATA_DIR, folderId, lockIsStale, home as userHome, releaseFileLock, STATE_DIR, takeLock, UNINSTALL_LOCK, WORKER_NAME, writeJsonAtomic, WORKTREES_DIR } from "./state-files.mjs";
+import { CACHE_DIR, CONFIG_DIR, DATA_DIR, folderId, lockIsStale, home as userHome, releaseFileLock, STATE_DIR, takeLock, UNINSTALL_LOCK, writeJsonAtomic, WORKTREES_DIR } from "./state-files.mjs";
 import { standalone, start } from "./processes.mjs";
-import { FORMAT } from "./worker-record.mjs";
+import { recordStore } from "./worker-record.mjs";
 import { isOurStatusline } from "./statusline.mjs";
 import { otelSenderRunning } from "./otel.mjs";
 
@@ -25,12 +25,11 @@ const emptyTree = (p) => isDir(p) && entries(p).every((n) => emptyTree(join(p, n
 // layout is reported, never trusted), plus paths it could not read.
 export function leftovers(home = userHome()) {
   const workers = [], unknown = [], worktrees = [], unreadable = [];
-  const dir = join(STATE_DIR(home), "workers");
+  const store = recordStore(STATE_DIR(home)), dir = store.dir;
   try {
     for (const n of entries(dir)) {
       if (!isDir(join(dir, n))) continue; // a worker's lock file
-      let w = null; try { w = JSON.parse(readFileSync(join(dir, n, "worker.json"), "utf8")); } catch {}
-      if (WORKER_NAME.test(n) && w?.format === FORMAT && w.name === n) workers.push(n); else unknown.push(join(dir, n));
+      if (store.read(n).worker) workers.push(n); else unknown.push(join(dir, n));
     }
   } catch (e) { unreadable.push(e.path ?? dir); }
   const root = WORKTREES_DIR(home);
@@ -112,7 +111,7 @@ export async function uninstall(args, { home = userHome(), platform = process.pl
   }
 
   // Again now, under the uninstall lock: the person may have been asked for minutes, and a launch that reserves a run
-  // folder from here on sees the lock and backs out (worker-record.mjs reserve). The lock goes with the state folder.
+  // folder from here on sees the lock and backs out (worker-start.mjs reserve). The lock goes with the state folder.
   const lock = UNINSTALL_LOCK(home);
   try { mkdirSync(STATE_DIR(home), { recursive: true, mode: 0o700 }); } catch {}
   // Never taken over, even from a process that is gone: two uninstalls could both decide it is stale.

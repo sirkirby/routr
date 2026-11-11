@@ -7,7 +7,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { encodeTraces, encodeLogs, headroomObservation, otelSession, otelSwitch } from "./otel.mjs";
 import { loadConfig } from "./config.mjs";
 import { CARRIERS, carriersFrom, savedCarriers } from "./worker-env.mjs";
-import { WORKER_NAME } from "./state-files.mjs";
+import { WORKER_NAME } from "./worker-record.mjs";
 import { parseTraceparent, leadSession, sessionId } from "./trace-context.mjs";
 import { pick, modelName, EFFORTS, questionSet, VERDICTS, CHECK_RESULTS } from "./shaped.mjs";
 import { HARNESSES, SOURCES } from "./harnesses.mjs";

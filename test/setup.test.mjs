@@ -591,7 +591,8 @@ test("routr uninstall stops while a headless worker is here, and --purge while a
 }, 30000);
 
 test("a headless launch that reserves its run folder while uninstall holds its lock backs out, so neither misses the other", async () => {
-  const { OWNER, ownedBy, reserve, runDir } = await import("../src/lib/worker-record.mjs");
+  const { OWNER, ownedBy, reserve } = await import("../src/lib/worker-start.mjs");
+  const { runDir } = await import("../src/lib/worker-record.mjs");
   const { UNINSTALL_LOCK } = await import("../src/lib/state-files.mjs");
   const { removeState } = await import("../src/lib/uninstall.mjs");
   const home = scratch("un-lock"), saved = [process.env.HOME, process.env.USERPROFILE];
