@@ -67,6 +67,9 @@ function link(entry) {
   if (!c.span.links.some((l) => l.traceId === v.traceId && l.spanId === v.spanId)) c.span.links.push({ traceId: v.traceId, spanId: v.spanId });
   c.matched.add(v.launch_id);
 }
+// The id of the launch trace already open in this process, if any: the CLI opens its command's trace before launch()
+// runs (routr.mjs), so launch takes that id instead of making a second one. Null outside a launch trace.
+export const openLaunchId = () => { const c = context.getStore(); return c?.command === "launch" ? c.launchId ?? null : null; };
 export function currentLaunch(config, env = process.env) {
   const c = context.getStore();
   if (c?.span && c.command === "launch") return { launch_id: c.launchId, traceId: c.span.traceId, spanId: c.span.spanId };
