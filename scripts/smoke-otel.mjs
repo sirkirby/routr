@@ -320,7 +320,7 @@ async function runSmoke({ env: original, log }) {
     check(got.TRACEPARENT === `00-${saved.launch.traceId}-${saved.launch.spanId}-01` && got.BAGGAGE === never[6] && got.TRACESTATE === "vendor=fixture", "first process carriers");
     await cli(["send", "--name", "fixture", "--task", never[0]]); await cli(["wait", "--name", "fixture"]); await until(holderReleased, "resumed fixture holder release");
     await cli(["cleanup", "--worker", "fixture"]);
-    await cli(["record", "--advice", advice, "--subscription", "claude", "--model", "fixture", "--effort", "low", "--verdict", "done", "--check", "pass", "--note", never[3]]);
+    await cli(["record", "--advice", advice, "--launch", launched.launch_id, "--task-file", task, "--subscription", "claude", "--model", "fixture", "--effort", "low", "--verdict", "done", "--check", "pass", "--note", never[3]]);
     if (original.HERDR_ENV === "1") {
       // Herdr's agent registry recognizes real harnesses, not a fixture. Only its pane operations are live; agent
       // protocol replies are fixture-owned and agent start runs the absolute fixture, so the server's PATH is irrelevant.
@@ -353,6 +353,7 @@ async function runSmoke({ env: original, log }) {
     check(checked.duplicates >= 1, "mid-batch recovery kept the same span ids");
     const launchSpan = checked.spans.find((s) => s.traceId === saved.launch.traceId && s.spanId === saved.launch.spanId);
     check(launchSpan, "headless launch arrived");
+    check(attributes(launchSpan.attributes, TRACE_ATTRIBUTES)["routr.launch.id"] === launched.launch_id, "launch answer and span carry one launch id");
     for (const name of ["send", "wait", "cleanup", "record"]) check(checked.spans.some((s) => s.name === `routr ${name}` && s.links?.some((l) => l.spanId === saved.launch.spanId && l.traceId === saved.launch.traceId)), `missing ${name} launch link`);
     summary = `smoke:otel ok: ${checked.unique} spans, ${signals.logs} logs, ${signals.points} gauge points, ${checked.duplicates} duplicate records recovered; ${original.HERDR_ENV === "1" ? "pane fixture checked" : "pane fixture skipped (outside herdr)"}`;
     return 0;

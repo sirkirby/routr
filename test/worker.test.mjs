@@ -59,6 +59,20 @@ test("wait answers from what an adapter sees: a turn ended once, said once, and 
   expect([missing.ok, missing.error]).toEqual([false, "no worker named nobody; routr workers lists them"]);
 });
 
+test("wait says a turn that did not finish by how it ended, never as finished, while its worker has not settled", async () => {
+  // Measured live 2026-11-11: Claude turns that failed to sign in were headlined "finished a turn" before the holder
+  // settled as failed. The state here is the holder's between turns, so no notice says it.
+  const turn = (n, outcome) => ({ turn: n, outcome, report: `/r/turn-${n}.md`, delivered: 0 });
+  for (const [turns, said] of [[[turn(1, "failed")], "routr: w1's turn 1 failed"], [[turn(1, "no_finish")], "routr: w1's turn 1 ended without finishing"],
+    [[turn(1, "finished"), turn(2, "failed")], "routr: w1 finished a turn, turn 2 failed"], [[turn(1, "finished"), turn(2, "finished")], "routr: w1 finished 2 turns"],
+    [[turn(1, "stopped"), turn(2, "not_started")], "routr: w1's turn 1 was stopped, turn 2 did not start"]]) {
+    const root = scratch("worker-wait-outcome"); worker(root);
+    const f = fake({ looks: [{ state: "waiting", turns }] });
+    const r = await waitCommand(["--name", "w1", "--timeout", "0"], opts(workers({ root, adapters: { headless: f.adapter } })));
+    expect([r.state, r.headline]).toEqual(["finished", said]);
+  }
+});
+
 test("a worker another backend follows is said, with that backend's steps, by wait, send, stop and watch, and none acts on it", async () => {
   const root = scratch("worker-elsewhere"), f = fake();
   worker(root, "w1", { backend: "terminal", terminal_name: "w1", config: {} });

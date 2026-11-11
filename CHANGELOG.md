@@ -5,6 +5,14 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.14.1 — 2026-11-11
+
+[Full notes](docs/releases/v0.14.1.md)
+
+- `routr wait` returns a terminal worker at a question as `needs_input`, with steps to read and answer it: one hc reports blocked, or one that has reported no status for 20 seconds, as at Claude Code's folder question. (#179)
+- `routr wait` no longer headlines a turn that failed, was stopped or did not finish as "finished a turn". (#179)
+- `routr top --help` and `routr dash --help` say a folder outside a repository is its own project, and `routr send --help` says the message file is owner-only on macOS and Linux. (#179)
+
 ## v0.14.0 — 2026-11-11
 
 [Full notes](docs/releases/v0.14.0.md)

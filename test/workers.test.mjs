@@ -1125,6 +1125,8 @@ test("after a failed turn, wait reports the failure once, then the turn a follow
   expect(w.launch("f1", w.task(`${BRIEF} FAIL`)).state).toBe("prompted");
   const first = w.run(["wait", "--name", "f1", "--timeout", "20000"]);
   expect(first.workers[0].turns).toMatchObject([{ turn: 1, outcome: "failed" }]);
+  // Caught before its holder settles, the turn is said as failed, never as finished.
+  expect(["routr: f1's turn 1 failed", "routr: f1 failed"]).toContain(first.headline);
   await w.settled("f1");
   // The worker's failed state is said once: with its turn, or by the next wait, never twice.
   const later = [w.run(["wait", "--name", "f1", "--timeout", "2000"]), w.run(["wait", "--name", "f1", "--timeout", "1000"])];
@@ -1482,6 +1484,8 @@ test("the holder queues one safe invoke_agent span when a turn ends, before its 
     expect(w.run(["send", "--name", "traced", "--task", SENT]).ok).toBe(true);
     w.release();
     expect(await until(() => w.spans().some((s) => s.name === "invoke_agent traced"))).toBe(true);
+    // Logs are their own export and can land in a later batch than the span (seen on Windows CI, PR #179).
+    expect(await until(() => w.logs().some((l) => l.eventName === "routr.worker.state" && wireAttrs(l)["routr.worker.state.to"] === "waiting"))).toBe(true);
     expect(w.state("traced").harness_pid).toBeGreaterThan(0);
     const spans = w.spans(), launch = spans.find((s) => s.name === "routr launch"), turn = spans.find((s) => s.name === "invoke_agent traced");
     expect(turn).toMatchObject({ kind: 3, traceId: launch.traceId, parentSpanId: launch.spanId });

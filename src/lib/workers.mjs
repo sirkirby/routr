@@ -42,8 +42,21 @@ export function parseNamed(args, cmd, values, flags = []) {
 const SEEN = (w) => join(w.dir, "seen.json");
 // Written whole (writeJsonAtomic), so a wait never reads one half written; one it cannot read at all reports again.
 const seenOf = (w) => { const s = readJsonFile(SEEN(w)).value; return { turn: Number.isInteger(s?.turn) ? s.turn : 0, notice: typeof s?.notice === "string" ? s.notice : null }; };
-const NOTICE = new Set(["failed", "stopped", "lost", "no_task", "unreachable"]);
-const noticeOf = (v) => (NOTICE.has(v.state) ? `${v.gen}:${v.state}` : null);
+// needs_input: a terminal worker at a question, which returns for the lead to answer.
+const NOTICE = new Set(["failed", "stopped", "lost", "no_task", "unreachable", "needs_input"]);
+const stateWords = (state) => (state === "needs_input" ? "needs input" : state);
+// The turns a wait reports, in its headline, by how each ended: one that did not finish is never said as finished
+// (measured live 2026-11-11: Claude turns that failed to sign in were headlined "finished a turn" before the holder
+// settled as failed).
+const OUTCOME_SAID = { failed: "failed", no_finish: "ended without finishing", not_started: "did not start", stopped: "was stopped" };
+const turnsSaid = (name, turns) => {
+  const bad = turns.filter((t) => t.outcome !== "finished"), good = turns.length - bad.length;
+  const finished = good > 1 ? `finished ${good} turns` : good ? "finished a turn" : null, ended = bad.map((t) => `turn ${t.turn} ${OUTCOME_SAID[t.outcome] ?? t.outcome}`);
+  return !ended.length ? `${name} ${finished}` : !finished ? `${name}'s ${ended.join(", ")}` : `${name} ${finished}, ${ended.join(", ")}`;
+};
+// A question is news once for each turn it comes at (a terminal worker's generation stays 0): a later question, after the
+// first was answered, is news again.
+const noticeOf = (v) => (!NOTICE.has(v.state) ? null : v.state === "needs_input" ? `${v.gen}:${v.state}:${v.turn}` : `${v.gen}:${v.state}`);
 const fresh = (v, seen) => v.turns.filter((t) => t.turn > seen.turn && t.outcome !== "running");
 const isNews = (v, seen) => fresh(v, seen).length > 0 || (noticeOf(v) != null && noticeOf(v) !== seen.notice);
 // Still to wait for: running, or its state could not be read just now (it may be running).
@@ -76,7 +89,7 @@ async function waitCommandBody(args, { now = () => Date.now(), pause = sleep, en
       const check = now() - lastCheck >= 5000;
       if (check) lastCheck = now();
       // Each with the worker it is of: one cleaned up meanwhile has no look, and is left out.
-      views = (await Promise.all(watched.map(async (w) => { const l = await w.look({ check, kept: true, wait: true }); return { w, v: l?.view, next: l?.next ?? [] }; }))).filter((x) => x.v);
+      views = (await Promise.all(watched.map(async (w) => { const l = await w.look({ check, kept: true, wait: true, at: now() }); return { w, v: l?.view, next: l?.next ?? [] }; }))).filter((x) => x.v);
       if (views.some(({ w, v }) => isNews(v, seenOf(w))) || !views.some(({ v }) => pending(v)) || now() >= deadline) break;
       await pause(Math.min(500, Math.max(0, deadline - now())));
     }
@@ -88,12 +101,18 @@ async function waitCommandBody(args, { now = () => Date.now(), pause = sleep, en
       done.push({ v, turns, noticed: notice != null && notice !== seen.notice, next });
       if (existsSync(w.dir)) try { writeJsonAtomic(SEEN(w), { turn: Math.max(seen.turn, ...turns.map((t) => t.turn)), notice: notice ?? seen.notice }, { mkdir: false }); } catch {}
     }
+    // A question already reported is still said, with its steps, each time: the lead has to answer it.
+    const asking = views.filter(({ v }) => v.state === "needs_input" && !done.some((d) => d.v === v));
     views = views.map(({ v }) => v);
     out.ok = true;
     const running = views.filter(pending);
     out.state = done.length ? "finished" : running.length ? "running" : "idle";
-    out.headline = done.length ? `routr: ${done.map(({ v, turns, noticed }) => `${v.name} ${noticed ? v.state : turns.length > 1 ? `finished ${turns.length} turns` : "finished a turn"}`).join("; ")}`
-      : running.length ? `routr: still running: ${running.map((v) => `${v.name}${v.state === "unreadable" ? " (its state could not be read)" : v.state === "starting" && v.backend === "terminal" ? " (it has not started its task yet)" : ""}`).join(", ")}` : `routr: nothing running: ${views.map((v) => `${v.name} ${v.state}`).join(", ")}`;
+    // A question that came with turns says both: the turns before it would otherwise go unsaid.
+    const said = [...done.map(({ v, turns, noticed }) =>
+      v.state === "needs_input" && turns.length ? `${turnsSaid(v.name, turns)} and needs input` : noticed ? `${v.name} ${stateWords(v.state)}` : turnsSaid(v.name, turns)), ...asking.map(({ v }) => `${v.name} needs input`)];
+    out.headline = said.length ? `routr: ${said.join("; ")}`
+      : running.length ? `routr: still running: ${running.map((v) => `${v.name}${v.state === "unreadable" ? " (its state could not be read)" : v.state === "starting" && v.backend === "terminal" ? " (it has not started its task yet)" : ""}`).join(", ")}` : `routr: nothing running: ${views.map((v) => `${v.name} ${stateWords(v.state)}`).join(", ")}`;
+    for (const { next } of asking) out.next.push(...next);
     for (const { v, turns, next } of done) {
       let terminalNext = false;
       for (const t of turns) {
