@@ -10,7 +10,7 @@ import { warningCode } from "../src/lib/warnings.mjs";
 import { CARRIERS, carriersFrom, carrierValues, carrierWithheld, configLocations, FORWARDED, harnessEnv, launchCarrierWarnings, paneEnv, redactCarriers, savedCarriers, savedConfigLocations, terminalEnv, workerEnv } from "../src/lib/worker-env.mjs";
 import * as processes from "../src/lib/processes.mjs";
 import { probe, run } from "../src/lib/processes.mjs";
-import { openTerminal } from "../src/lib/terminal.mjs";
+import { openTerminal } from "../src/lib/scratch-terminal.mjs";
 import { runHerdr } from "../src/lib/herdr.mjs";
 import { CONFIG_ENV, LEAD_ENV } from "./helpers.mjs";
 

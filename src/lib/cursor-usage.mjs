@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { cmdTypable, deadline, runHerdr, SHELLS, shellAlone, shellFamily, waitForShell } from "./herdr.mjs";
-import { openTerminal, ownTerminal } from "./terminal.mjs";
+import { openTerminal, ownTerminal } from "./scratch-terminal.mjs";
 import { usageFailure } from "./usage-failure.mjs";
 import { configEnv, HARNESSES, privateConfigCopy } from "./harnesses.mjs";
 
