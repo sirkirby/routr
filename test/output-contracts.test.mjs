@@ -8,7 +8,7 @@ import { briefSha, read, shareRows } from "../src/lib/ledger.mjs";
 import { telemetryRows } from "../src/lib/telemetry.mjs";
 import { callGit, callHerdr } from "../src/lib/process-boundary.mjs";
 import { usageFailure } from "../src/lib/usage-failure.mjs";
-import { COMMANDS } from "../src/lib/help.mjs";
+import { COMMANDS } from "../src/lib/command-table.mjs";
 import { sendCommand, stopCommand, waitCommand, workersCommand } from "../src/lib/workers.mjs";
 import { workers as workersOf } from "../src/lib/worker.mjs";
 import { newRecord, recordStore } from "../src/lib/worker-record.mjs";

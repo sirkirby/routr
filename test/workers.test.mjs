@@ -17,7 +17,7 @@ import { Writable } from "node:stream";
 import { worktreesFromGit } from "../src/lib/cleanup.mjs";
 import { besidesHelper, callGit, groupMembers } from "../src/lib/process-boundary.mjs";
 import { HARNESSES } from "../src/lib/harnesses.mjs";
-import { COMMANDS } from "../src/lib/help.mjs";
+import { COMMANDS } from "../src/lib/command-table.mjs";
 import { launch } from "../src/lib/launch.mjs";
 import { isLaunchId } from "../src/lib/launch-identity.mjs";
 import { readHistory } from "../src/lib/launch-history.mjs";

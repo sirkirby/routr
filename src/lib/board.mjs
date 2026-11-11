@@ -4,8 +4,8 @@
 // it changes nothing of the user's and writes nothing but a usage refresh's mark (usage-readings.mjs). Fails open:
 // a part it cannot read is said in `unavailable` and its numbers are null, never zero. Every field is projected here,
 // field by field: a ledger note (the recorder's text) never reaches its output.
-import { statSync } from "node:fs";
 import { resolve } from "node:path";
+import { readFlags } from "./command-line.mjs";
 import { answer, refusal } from "./output.mjs";
 import { firstTime, LEDGER_PATH, latestRuns, projectAdvised, projectChose, projectName, read } from "./ledger.mjs";
 import { HISTORY_DAYS, readHistory } from "./launch-history.mjs";
@@ -23,22 +23,8 @@ const outcomeOf = (o) => (o ? { verdict: o.verdict ?? null, check: o.check ?? nu
 // A launch's choice before it is recorded: the level is the recorder's, so not yet known.
 const choseOfLaunch = (h) => ({ subscription: h.subscription, model: h.model, effort: h.effort, effort_from: null, level: null });
 
-// Parses `--cwd <folder>` (once, an existing folder). Anything else is refused.
-function parse(words) {
-  const o = {}, rest = [...words];
-  while (rest.length) {
-    const w = rest.shift();
-    if (w === "--json") continue;
-    if (w !== "--cwd") throw new Error(`board: unknown ${w.startsWith("-") ? "flag" : "argument"} ${w}; routr board [--cwd <folder>]`);
-    if (o.cwd != null) throw new Error("board: --cwd was given more than once");
-    const v = rest.shift();
-    if (!v || v.startsWith("--")) throw new Error("board: --cwd takes a folder");
-    let dir; try { dir = statSync(resolve(v)).isDirectory(); } catch { dir = false; }
-    if (!dir) throw new Error(`board: --cwd ${v} is not a folder`);
-    o.cwd = resolve(v);
-  }
-  return o;
-}
+// `--cwd <folder>`, once, an existing folder. Anything else is refused; `--json` is passed over.
+const parse = (words) => readFlags("board", words, { "--cwd": "folder" }, { ignored: ["--json"] });
 
 // Each launch in the history, joined to its recorded run: by the `launch_id` the run names; a run from before launch
 // ids by its advice id, only when exactly one launch in the window used that advice. Runs no launch joins stand alone.

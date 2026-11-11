@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { guided } from "../src/lib/setup-guided.mjs";
-import { COMMANDS, formatCommandHelp } from "../src/lib/help.mjs";
+import { COMMANDS } from "../src/lib/command-table.mjs";
+import { formatCommandHelp } from "../src/lib/help.mjs";
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 const schema = "https://github.com/sirkirby/routr/blob/main/docs/opentelemetry.md";

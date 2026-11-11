@@ -5,11 +5,11 @@
 // rules: node built-ins only, glyphs and colour as this terminal takes them, the terminal always restored. A pipe gets
 // one plain snapshot; ACCESSIBLE (or TERM=dumb) gets a plain snapshot per Enter, never a redrawn screen.
 // The renderer and the key handler are pure (tests draw them at any width); the loop below them is the only impure part.
-import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createInterface, emitKeypressEvents } from "node:readline";
 import { stripVTControlCharacters } from "node:util";
 import { boardCommand } from "./board.mjs";
+import { readFlags } from "./command-line.mjs";
 import { loadConfig } from "./config.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { repositoryName } from "./ledger.mjs";
@@ -234,20 +234,8 @@ export function reselect(state, decisions, key) {
 
 // ---- the loop --------------------------------------------------------------------------------------------------------
 
-function parse(words) {
-  const o = {}, rest = [...words];
-  while (rest.length) {
-    const w = rest.shift();
-    if (w !== "--cwd") throw new Error(`top: unknown ${w.startsWith("-") ? "flag" : "argument"} ${w}; routr top [--cwd <folder>]`);
-    if (o.cwd != null) throw new Error("top: --cwd was given more than once");
-    const v = rest.shift();
-    if (!v || v.startsWith("--")) throw new Error("top: --cwd takes a folder");
-    let dir; try { dir = statSync(resolve(v)).isDirectory(); } catch { dir = false; }
-    if (!dir) throw new Error(`top: --cwd ${v} is not a folder`);
-    o.cwd = resolve(v);
-  }
-  return o;
-}
+// Board's folder rule: `--cwd <folder>`, once, an existing folder.
+const parse = (words) => readFlags("top", words, { "--cwd": "folder" });
 
 // Runs until the person quits; answers the exit code. `warnings` are the command line's own (an unused --headroom).
 // The rest are seams for tests.

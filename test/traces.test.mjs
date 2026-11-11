@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { cfg, scratch, ans, fact, cliEnv, SCRIPT } from "./helpers.mjs";
+import { COMMANDS } from "../src/lib/command-table.mjs";
 import { prepareOtel, OTEL_RESOURCE_ATTRIBUTES } from "../src/lib/otel.mjs";
 import { usageCommand, adviseCommand, recordCommand, checkCommand, parseHeadroom } from "../src/lib/commands.mjs";
 import { launch } from "../src/lib/launch.mjs";
@@ -360,6 +361,22 @@ test("housekeeping emits nothing even when an argument names an emitting command
   expect(x.batches()).toEqual([]);
 });
 
+test("a line dispatch refuses records no span: tracing reads the line as dispatch does", () => {
+  const x = exporting();
+  writeFileSync(join(x.home, ".cache/routr/otel/sender.lock"), JSON.stringify({ pid: process.pid, token: "fixture" }));
+  const env = cliEnv(x.home, { PATH: x.home, OTEL_SDK_DISABLED: "false", ROUTR_OTEL: "1", ROUTR_NO_UPDATE: "1" });
+  const run = (args) => Bun.spawnSync([process.execPath, SCRIPT, ...args], { env, cwd: x.home, stdin: "ignore" });
+  // A traced command reached first, after a global flag, is unknown usage, and so is a second --config before a command.
+  const refused = [...Object.keys(COMMANDS).filter((n) => COMMANDS[n].trace && COMMANDS[n].reach === "first").map((n) => ["--config", x.otel.configPath, n]),
+    ["--config", x.otel.configPath, "--config", x.otel.configPath, "dispatch", "safe task"], ["--config", x.otel.configPath, "constructor"]];
+  expect(refused.length).toBeGreaterThan(3);
+  for (const args of refused) { const r = run(args); expect([args, r.exitCode]).toEqual([args, 2]); }
+  expect(x.batches()).toEqual([]);
+  // The same export records the span of a line that runs.
+  expect(run(["--config", x.otel.configPath, "check", "--brief", "none", "--report", "none"]).exitCode).toBe(0);
+  expect(x.spans().map((s) => s.name)).toEqual(["routr check"]);
+});
+
 test("detached background usage emits no spans through the CLI or module command", async () => {
   const x = exporting({ TRACEPARENT: parent });
   writeFileSync(join(x.home, ".cache/routr/otel/sender.lock"), JSON.stringify({ pid: process.pid, token: "fixture" }));
@@ -489,7 +506,11 @@ test("every command's queue, launch index and worker metadata exclude content an
   await checked(() => workersCommand([], opts)); await checked(() => stopCommand([], opts)); await checked(() => cleanup(["--unknown"], opts));
   for (const signal of ["logs", "metrics"]) expect(readdirSync(join(x.home, ".cache/routr/otel", signal)).length).toBeGreaterThan(0);
   const names = x.spans().map((s) => s.name);
-  for (const command of ["dispatch", "subagent", "check", "usage", "record", "launch", "send", "wait", "workers", "stop", "cleanup"]) expect(names).toContain(`routr ${command}`);
+  // Every command the table traces made its span above: a new traced command with no call here fails.
+  const traced = Object.keys(COMMANDS).filter((n) => COMMANDS[n].trace);
+  expect(traced.length).toBeGreaterThan(5);
+  for (const command of traced) expect(names).toContain(`routr ${command}`);
+  expect([...new Set(names.filter((n) => /^routr [a-z]+$/.test(n)))].sort()).toEqual(traced.map((n) => `routr ${n}`).sort());
   const index = new LaunchIndex({ home: x.home }); expect(index.entries()).toHaveLength(1);
   // worker.json holds native cwd, checked carriers and explicit subagent fallbacks; only those values may be kept.
   const prior = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }, fits = spyOn(channel, "socketPathFits").mockReturnValue(true); let saved;

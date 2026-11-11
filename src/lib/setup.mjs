@@ -4,7 +4,7 @@
 // still accepted, and does nothing, for scripts written for an older routr.
 // A person gets questions; an agent passes `--yes` and the choices it settled with the user as flags. Same code, same file.
 import { copyFileSync, existsSync, readFileSync } from "node:fs";
-import { COMMANDS } from "./help.mjs";
+import { COMMANDS } from "./command-table.mjs";
 import { ACCOUNT_USE, CONFIG_PATH, isShare, loadConfig, SHARE_MAX, SUB_DEFAULTS, UPDATE_CHANNELS } from "./config.mjs";
 import { LEVELS } from "./questions.mjs";
 import { settingSummary } from "./wording.mjs";

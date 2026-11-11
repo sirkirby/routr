@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import { dirname, join } from "node:path";
 import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 
-import { COMMANDS } from "../src/lib/help.mjs";
+import { COMMANDS } from "../src/lib/command-table.mjs";
 import { cliEnv, row, scratch, SCRIPT } from "./helpers.mjs";
 import { questionSet, VERDICTS, CHECK_RESULTS } from "../src/lib/shaped.mjs";
 
@@ -359,8 +359,7 @@ test("ROUTR_NO_UPDATE stops updates, never a daily send the person turned on (fr
 
 test("the commands telemetry status names as starting the daily job are the ones that start it", async () => {
   const { DAILY_STARTERS } = await import("../src/lib/telemetry.mjs");
-  const started = readFileSync(join(import.meta.dir, "../src/routr.mjs"), "utf8").match(/if \((\[[^\]]+\])\.includes\(mode\)\)[^\n]*maybeAutoUpdate/);
-  expect(JSON.parse(started[1])).toEqual(DAILY_STARTERS);
+  expect([...DAILY_STARTERS].sort()).toEqual(Object.values(COMMANDS).filter((c) => c.autoUpdate).map((c) => c.name).sort());
 });
 
 test("each provider finding stays fixed", async () => {

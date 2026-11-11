@@ -80,9 +80,9 @@ test("uninstall reads records through the store: a run folder of routr's is a wo
   expect(found.unknown).toEqual(["c3", "d4", "e5"].map((n) => store.runDir(n)));
 });
 
-test("the help module alone gives the name rule a value, and the record module imports only node: and the state files", async () => {
+test("the command table alone gives the name rule a value, and the record module imports only node: and the state files", async () => {
   // A process of its own: nothing else of routr loaded first.
-  const p = Bun.spawnSync([process.execPath, "-e", `const { COMMANDS } = await import(${JSON.stringify(new URL("../src/lib/help.mjs", import.meta.url).href)});
+  const p = Bun.spawnSync([process.execPath, "-e", `const { COMMANDS } = await import(${JSON.stringify(new URL("../src/lib/command-table.mjs", import.meta.url).href)});
     console.log(JSON.stringify(COMMANDS.launch.flags.find((f) => f.name === "--name").description));`]);
   expect(p.exitCode).toBe(0);
   expect(JSON.parse(p.stdout.toString())).toBe(`worker agent name (${NAME_RULE})`);

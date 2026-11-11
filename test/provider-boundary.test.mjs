@@ -7,6 +7,11 @@ import { adviseCommand, checkCommand } from "./contract.mjs";
 import { checkQuestions, questions } from "../src/lib/questions.mjs";
 import { BRIEF_MARKER, KEY_MARKER, PROVIDER_MARKER, replyFetch } from "./fixtures/provider-fetch.mjs";
 import { cfg, cliEnv, scratch, SCRIPT } from "./helpers.mjs";
+import { COMMANDS } from "../src/lib/command-table.mjs";
+// What the command table says of a command line's decision model: its answer carries a reading (or an unavailable
+// naming the model), it reads a brief, or it only tests the model.
+const reading = ([c]) => ["assessment", "check"].includes(COMMANDS[c].decisionModel);
+const briefed = ([c]) => COMMANDS[c].reach === "brief";
 
 const providers = ["typesafe", "cloudflare", "ollama"];
 const credentials = { TYPESAFE_API_KEY: KEY_MARKER, CLOUDFLARE_API_TOKEN: KEY_MARKER, CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef" };
@@ -67,8 +72,12 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
   writeFileSync(config, JSON.stringify({ decision: { provider }, subscriptions: {}, auto_update: false }));
   const brief = join(home, "brief"), report = join(home, "report"), advice = join(home, "advice.json"), ledger = join(home, "ledger.jsonl");
   writeFileSync(brief, BRIEF_MARKER); writeFileSync(report, "Worker report with verification. ".repeat(10));
-  const commands = [["dispatch", BRIEF_MARKER], ["subagent", BRIEF_MARKER], ["check", "--brief", brief, "--report", report], ["doctor", "--json"], ["doctor"]];
-  if (provider !== "ollama") commands.push(["key", "set", provider]); // Ollama never asks for a key or runs a key test
+  // Every command the table says calls a decision model, with the lines that drive it here: one without lines fails.
+  // setup keeps the config it finds (it covers every harness here) and names a failing model in next_steps, as doctor does.
+  const lines = { dispatch: [["dispatch", BRIEF_MARKER]], subagent: [["subagent", BRIEF_MARKER]], check: [["check", "--brief", brief, "--report", report]],
+    doctor: [["doctor", "--json"], ["doctor"]], setup: [["setup", "--yes", "--json"]], key: provider !== "ollama" ? [["key", "set", provider]] : [] }; // Ollama never asks for a key or runs a key test
+  expect(Object.keys(lines).sort()).toEqual(Object.keys(COMMANDS).filter((n) => COMMANDS[n].decisionModel).sort());
+  const commands = Object.values(lines).flat();
   const run = (args, scenario, noKey = false, extraEnv = {}) => {
     const result = Bun.spawnSync([process.execPath, "--preload", join(import.meta.dir, "fixtures/provider-fetch.mjs"), SCRIPT, ...args], {
       env: cliEnv(home, { PATH: home, ...(noKey ? {} : credentials), ROUTR_TEST_PROVIDER: provider, ROUTR_TEST_REPLY: scenario, ...extraEnv }),
@@ -80,7 +89,7 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
   const rows = () => existsSync(ledger) ? readFileSync(ledger, "utf8").trim().split("\n").map(JSON.parse) : [];
   const covered = new Set();
   const unavailable = (stdout, command, code, status) => {
-    if (!["dispatch", "subagent", "check"].includes(command[0])) return;
+    if (!reading(command)) return;
     const r = JSON.parse(stdout), model = decisionTarget({ decision: { provider } }, {}).model;
     expect(r.unavailable).toEqual([{ part: "decision model", provider, model, code, why: expected(provider, code, status, { file: join(home, ".config/routr/env") }),
       ...(code === "provider_error" ? { status: status ?? 0 } : {}) }]);
@@ -110,7 +119,7 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
       const stdout = run(command, scenario);
       expect(stdout).toContain(expected(provider, code, status));
       unavailable(stdout, command, code, status);
-      if (["dispatch", "subagent"].includes(command[0])) {
+      if (briefed(command)) {
         const parsed = JSON.parse(stdout); expect(parsed).toMatchObject({ ok: true, level: "standard" });
         record(stdout);
       }
@@ -120,11 +129,11 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
     }
   }
   for (const scenario of ["work_type", "verdict"]) {
-    for (const command of commands.filter(([c]) => c === "check" || (scenario === "work_type" && ["dispatch", "subagent"].includes(c)))) {
+    for (const command of commands.filter((line) => reading(line) && (!briefed(line) || scenario === "work_type"))) {
       const stdout = run(command, scenario);
       expect(stdout).toContain(expected(provider, "invalid_response"));
       unavailable(stdout, command, "invalid_response");
-      if (command[0] !== "check") {
+      if (briefed(command)) {
         record(stdout);
       }
     }
@@ -132,25 +141,25 @@ for (const provider of providers) test(`${provider}: every CLI caller prints fix
   // A valid answer can still carry arbitrary text in unused fields and response metadata: none crosses the boundary.
   for (const command of commands) {
     const stdout = run(command, "valid");
-    if (["dispatch", "subagent", "check"].includes(command[0])) {
+    if (reading(command)) {
       expect(JSON.parse(stdout).fallback).toBeUndefined();
       expect(JSON.parse(stdout).unavailable).toEqual([]);
     }
-    if (["dispatch", "subagent"].includes(command[0])) {
+    if (briefed(command)) {
       record(stdout);
     }
   }
   if (provider !== "ollama") {
     // Clear the test key saved above before testing absent credentials and an unreadable secrets file.
     writeFileSync(join(home, ".config/routr/env"), "");
-    for (const command of commands.filter(([c]) => c !== "key")) {
+    for (const command of commands.filter(([c]) => c !== "key")) { // key set is what writes the key
       const stdout = run(command, "valid", true);
       expect(stdout).toContain(expected(provider, "no_key"));
       unavailable(stdout, command, "no_key");
       if (command[0] === "doctor" && command.includes("--json")) doctorFailure(stdout);
     }
     rmSync(join(home, ".config/routr/env")); mkdirSync(join(home, ".config/routr/env"));
-    for (const command of commands.filter(([c]) => c !== "key")) {
+    for (const command of commands.filter(([c]) => c !== "key")) { // key set is what writes the key
       const stdout = run(command, "valid", true);
       // JSON output escapes a Windows path's backslashes; text output (doctor without --json) prints it as it is.
       const file = join(home, ".config/routr/env");
