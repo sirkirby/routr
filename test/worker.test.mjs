@@ -224,11 +224,12 @@ test("a finish for a worker someone was shown needs an id to bind: none named, o
     const r = await ws.finish("w1", { expect: shown }, cleanupOut());
     expect([r.state, r.headline]).toEqual(["refused", "routr: kept w1: its record changed while cleanup waited"]);
   }
-  // A record written before records had ids: two with none are not provably one worker, so nothing it was shown finishes it.
+  // A record written before records had ids: the commands take two with none as one worker, as they always have, but
+  // nothing it was shown finishes it.
   const legacy = { format: 1, name: "w1", kind: "claude", model: "m", cwd: "/work" };
   writeFileSync(join(dir, "worker.json"), JSON.stringify(legacy));
   const w = ws.one("w1");
-  expect(w.still()).toBe("unproven");
+  expect(w.still()).toBe("same");
   const shown = await ws.finish("w1", { expect: { id: undefined, states: ["idle"] } }, cleanupOut());
   expect([shown.state, existsSync(dir)]).toEqual(["refused", true]);
   expect(f.calls.filter((c) => c[0] === "end")).toEqual([]);
@@ -286,28 +287,69 @@ test("an unnamed wait that finds a running folder whose record is not routr's fa
   expect([atRest.ok, atRest.state, atRest.headline]).toEqual([true, "none", "routr: no headless worker to wait on"]);
 });
 
-test("one handle looks through the adapter it picked: a record of another backend or id under its name is another worker", async () => {
-  const root = scratch("worker-one-adapter"), { dir, record, store } = worker(root), h = fake(), t = fake();
-  const ws = workers({ root, adapters: { headless: h.adapter, terminal: { ...elsewhere, look: t.adapter.look } } });
+test("an action's identity is the record's id as written: different ids are different workers, whatever their kind", async () => {
+  const root = scratch("worker-raw-ids"), store = recordStore(root), dir = store.runDir("w1"), f = fake();
+  mkdirSync(dir, { recursive: true });
+  const as = (id) => writeFileSync(join(dir, "worker.json"), JSON.stringify({ format: 1, name: "w1", kind: "claude", model: "m", cwd: "/work", ...(id === undefined ? {} : { id }) }));
+  const ws = workers({ root, adapters: { headless: f.adapter } });
+  for (const [first, then, want] of [[0, 1, "replaced"], [undefined, null, "replaced"], [null, undefined, "replaced"], [0, "0", "replaced"], [undefined, undefined, "same"], [0, 0, "same"]]) {
+    as(first); const w = ws.one("w1"); as(then);
+    expect([first, then, w.still()]).toEqual([first, then, want]);
+  }
+  // A finish for a worker someone was shown never binds an id that is not a string, even one that matches.
+  as(0);
+  const shown = await ws.finish("w1", { expect: { id: 0, states: ["working"] } }, cleanupOut());
+  expect([shown.state, existsSync(dir)]).toEqual(["refused", true]);
+});
+
+test("what a command sees follows the name: a worker launched again under it while wait sleeps is shown as it is now", async () => {
+  const root = scratch("worker-relaunched-seen"), { dir, store } = worker(root), f = fake({ looks: [{ state: "working" }] });
+  const ws = workers({ root, adapters: { headless: f.adapter } });
+  let t = 0;
+  const r = await waitCommand(["--name", "w1", "--timeout", "1000"], opts(ws, { now: () => t,
+    pause: async () => { store.write(dir, newRecord({ name: "w1", kind: "claude", model: "m2", cwd: "/work" }, { backend: "headless" })); t += 2000; } }));
+  expect([r.state, r.workers.map((w) => [w.name, w.model])]).toEqual(["running", [["w1", "m2"]]]);
+  // A handle looks at what is under its name now; only an action asks whether it is still the worker it began with.
   const w = ws.one("w1");
-  expect((await w.look()).view.name).toBe("w1");
-  // The same id, now a terminal worker's record: not this worker.
-  store.write(dir, newRecord({ id: record.id, name: "w1", kind: "claude", model: "m", cwd: "/work" }, { backend: "terminal", terminal_name: "w1", config: {} }));
-  expect([w.still(), await w.look(), w.backend]).toEqual(["replaced", null, "headless"]);
-  // Another id, same backend: not this worker either.
-  store.write(dir, newRecord({ name: "w1", kind: "claude", model: "m", cwd: "/work" }, { backend: "headless" }));
-  expect([w.still(), await w.look()]).toEqual(["replaced", null]);
-  expect([h.calls.filter((c) => c[0] === "look").length, t.calls]).toEqual([1, []]);
-  // A wait over it while it is replaced leaves it out, as one cleaned up.
-  const waited = await waitCommand(["--name", "w1", "--timeout", "0"], opts({ ...ws, one: () => w }));
-  expect([waited.state, waited.workers]).toEqual(["idle", []]);
-  // A handle made while its record could not be read takes the first record it reads as its own.
+  store.write(dir, newRecord({ name: "w1", kind: "claude", model: "m3", cwd: "/work" }, { backend: "headless" }));
+  expect([(await w.look()).view.model, w.still()]).toEqual(["m3", "replaced"]);
+  const listed = await workersCommand(["--name", "w1"], opts({ ...ws, find: () => w }));
+  expect(listed.workers.map((x) => x.model)).toEqual(["m3"]);
+});
+
+test("a wait keeps looking through the adapter it began with: a record unreadable at first and a terminal worker's later reads as main read it", async () => {
+  const root = scratch("worker-recovered"), store = recordStore(root), dir = store.runDir("w1");
+  mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "worker.json"), "{");
-  const u = ws.one("w1");
-  expect([u.record, (await u.look()).view.state]).toEqual([null, "unreadable"]);
-  const back = newRecord({ name: "w1", kind: "claude", model: "m", cwd: "/work" }, { backend: "headless" });
-  store.write(dir, back);
-  expect([(await u.look()).view.name, u.record.id, u.still()]).toEqual(["w1", back.id, "same"]);
+  const record = newRecord({ id: "c".repeat(32), name: "w1", kind: "claude", model: "m", cwd: "/work" }, { backend: "terminal", terminal_name: "w1", config: {} });
+  let t = 0;
+  // The real adapters, and no hc: a terminal adapter asked here would fail.
+  const r = await waitCommand(["--name", "w1", "--timeout", "1000"], opts(workers({ root, hc: async () => { throw new Error("hc asked"); } }), { now: () => t,
+    pause: async () => { store.write(dir, amend(record, { terminal: "t9" })); t += 2000; } }));
+  // What main answers for the same files (checked against main with this home's layout).
+  expect(r).toEqual({ ok: true, headline: "routr: still running: w1", unavailable: [], warnings: [], state: "running",
+    next: [{ kind: "run", why: "Wait for the workers still running.", argv: ["routr", "wait", "--name", "w1"], command: "routr wait --name w1" }],
+    workers: [{ name: "w1", kind: "claude", model: "m", effort: null, cwd: "/work", state: "starting", gen: 0, turn: 0, seconds_since_event: null, last_tool: null, tasks: 0, queued: 0, session: null, report: null, turns: [] }] });
+});
+
+test("an action reads its worker again where it starts: one whose record could not be read when its handle was made is acted on once it can", async () => {
+  const root = scratch("worker-action-fresh"), { dir, record, store } = worker(root);
+  const sent = { state: "delivered", ok: true, message: { code: "accepted" }, said: "w1: taken", next: [] };
+  const f = fake({ sent, pending: false, stopped: { state: "stopped", ok: true, said: "stopped w1", warnings: [], next: [] } });
+  const ws = workers({ root, adapters: { headless: f.adapter } });
+  writeFileSync(join(dir, "worker.json"), "{");
+  const w = ws.one("w1");
+  expect([w.record, w.unreadable, w.pending(0)]).toEqual([null, "not_json", true]);
+  store.write(dir, record);
+  expect(w.pending(0)).toBe(false);
+  expect((await w.send(() => "fix it", { settings: () => cfg() })).state).toBe("delivered");
+  expect((await w.stop()).state).toBe("stopped");
+  // And the other way: readable when the handle was made, unreadable when it acts, is refused as unreadable.
+  const v = ws.one("w1");
+  writeFileSync(join(dir, "worker.json"), "{");
+  await expect(v.send(() => "fix it", { settings: () => cfg() })).rejects.toThrow("w1's worker.json could not be read just now (not_json)");
+  expect((await v.stop()).state).toBe("unknown");
+  expect(f.calls.filter((c) => ["send", "stop", "pending"].includes(c[0])).map((c) => c[0])).toEqual(["pending", "send", "stop"]);
 });
 
 // ---- the headless adapter's classification, against a stubbed channel ------------------------------------------------

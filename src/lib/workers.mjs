@@ -76,7 +76,7 @@ async function waitCommandBody(args, { now = () => Date.now(), pause = sleep, en
       const check = now() - lastCheck >= 5000;
       if (check) lastCheck = now();
       // Each with the worker it is of: one cleaned up meanwhile has no look, and is left out.
-      views = (await Promise.all(watched.map(async (w) => { const l = await w.look({ check }); return { w, v: l?.view, next: l?.next ?? [] }; }))).filter((x) => x.v);
+      views = (await Promise.all(watched.map(async (w) => { const l = await w.look({ check, kept: true }); return { w, v: l?.view, next: l?.next ?? [] }; }))).filter((x) => x.v);
       if (views.some(({ w, v }) => isNews(v, seenOf(w))) || !views.some(({ v }) => pending(v)) || now() >= deadline) break;
       await pause(Math.min(500, Math.max(0, deadline - now())));
     }
