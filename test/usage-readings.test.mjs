@@ -84,7 +84,7 @@ test("eight processes at once against one store claim each key once between them
   expect(started.length).toBeGreaterThanOrEqual(1); expect(started.length).toBeLessThanOrEqual(2);
   expect(outs.filter(Boolean)).toHaveLength(started.length);
   expect(new Set(tokens).size).toBe(started.length);
-  for (const argv of started) expect(argv.slice(-2)).toEqual(["--config", "/x/routr.json"]);
+  for (const argv of started) expect(argv.slice(-2)).toEqual(["--config", resolve("/x/routr.json")]); // resolved: a drive letter on Windows
   const store = fileStore(join(dir, "usage"), { legacy: null });
   expect(tokens.flatMap((t) => store.claimed(t)).sort()).toEqual(["claude", "cursor"]);
 });
@@ -133,7 +133,7 @@ test("a slow source's background refresh carries the caller's --config, on a new
   const dir = join(scratch("cold"), "not", "made", "usage"), starter = recorder();
   const r = usageReadings({ configPath: "/x/routr.json", store: fileStore(dir, { legacy: null }), clock: clockAt(), starter, readers: { cursor: slow([]), kiro: slow([], kiroReading, "kiro /usage") }, signIn: answers() });
   const served = await r.live(["cursor", "kiro"]);
-  expect(starter.calls).toEqual([["usage", "--background", "--claim", expect.any(String), "--config", "/x/routr.json"]]);
+  expect(starter.calls).toEqual([["usage", "--background", "--claim", expect.any(String), "--config", resolve("/x/routr.json")]]);
   expect(readdirSync(dir).sort()).toEqual(["cursor.json", "kiro.json"]);
   expect(served.map((s) => s.row.note)).toEqual(["no reading yet; a fresh reading is being taken in the background; remaining capacity is unknown.", "no reading yet; a fresh reading is being taken in the background; remaining capacity is unknown."]);
 });
