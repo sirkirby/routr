@@ -845,7 +845,7 @@ reported), `--timeout <ms>` (default 90000; in a foreground call, keep it under 
 2 minutes by default in Claude Code). A name with no worker is refused (`error`).
 
 `state`: `finished` (a watched worker has a turn not reported before, or has newly `failed`, `stopped`, `lost`,
-`no_task` or become `unreachable`, or a terminal worker newly `needs_input`: each said once per holder generation), `running` (the timeout came first), `idle`
+`no_task` or become `unreachable`, or a terminal worker newly `needs_input`: each said once per holder generation, a question once per turn), `running` (the timeout came first), `idle`
 (nothing watched is running and nothing is new), `none` (no worker to wait on), `failed` (refused). A worker whose
 state is `unreadable` is waited for as one running: unnamed, it is watched; at the timeout, `running`, and the headline
 names it with `(its state could not be read)`.
@@ -880,7 +880,7 @@ same answer can report a finished turn (`<name> finished a turn and needs input`
 (run), a `hc keys <t> <keys>` template (before its first turn and any send, with the orchestrator guide's startup-input
 rule, as at launch; later, to answer within the task's scope or ask the user), and `routr wait --name <name>` (run). A
 later wait that watches nothing still running, while it still sits at a question already reported, returns at once
-with the same headline and steps; with a worker still running, it waits for that one and then says the question
+saying `<name> needs input` again, with the same steps; with a worker still running, it waits for that one and then says the question
 again. At turn 0
 with no send and no question, status `idle` or none is state `starting`, which is pending: once a startup question is
 answered, hc reports idle at turn 0 until the harness takes up its prompt. A wait that times out on it says the worker
