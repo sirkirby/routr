@@ -92,13 +92,17 @@ const nothingSent = (w, why, next = [], message = { code: "refused", why: "refus
 
 // hc's JSON error kind is an outside boundary. Only `blocked` is meaningful here: hc deliberately refuses to paste
 // into a program at a question. Every other failure is the same unknown result, and none of hc's text leaves this file.
+// hc answers a send on stdout, and a refusal as `{ error: { kind, message, hint } }` on stderr with a nonzero exit (hc
+// 0.1.19, seen 2026-11-10: a terminal still starting is `unavailable`, "nothing was typed"). A refusal it names typed
+// nothing: refused, never unknown. Only its kind is read; its message and hint are never passed on.
+const REFUSED_KINDS = new Set(["blocked", "unavailable"]);
 async function sendToTerminal(target, pointer, hc) {
   const r = await hc("hc", ["send", target, pointer, "--json"], 15000);
   if (r == null) return { code: "unknown" };
-  let body;
-  try { body = JSON.parse(r.out); } catch { return { code: "unknown" }; }
-  if (r.code === 0 && body && typeof body === "object" && Number.isSafeInteger(body.turn) && body.turn >= 0) return { code: "handed_to_harness", turn: body.turn };
-  if (r.code !== 0 && body?.error?.kind === "blocked") return { code: "refused", why: "refused" };
+  const parsed = (text) => { try { const v = JSON.parse(text); return v && typeof v === "object" ? v : null; } catch { return null; } };
+  const body = parsed(r.out) ?? (r.code !== 0 ? parsed(r.err ?? "") : null);
+  if (r.code === 0 && body && Number.isSafeInteger(body.turn) && body.turn >= 0) return { code: "handed_to_harness", turn: body.turn };
+  if (r.code !== 0 && REFUSED_KINDS.has(body?.error?.kind)) return { code: "refused", why: "refused" };
   return { code: "unknown" };
 }
 
@@ -319,6 +323,15 @@ export const terminal = {
       : nothingSent(w, `whether ${w.name}'s terminal runs is not known`, actionLook(w, "send"));
     const checked = checkedTarget(me, seen.terminal);
     if (!checked.target) return nothingSent(w, checked.why, lookAgain(w.name));
+    // Never typed into a harness at a question: hc presses Enter, and at Claude Code's folder question that picks its
+    // default, "No, exit" (seen 2026-11-10: the worker's terminal finished). A harness that reports status and has
+    // reported none yet is starting, or at a question it reports nothing for; `blocked` is at one. Cursor reports no
+    // status at all and starts trusting its folder (--trust), so its silence says nothing.
+    const word = statusWord(seen.terminal);
+    if (!HARNESSES[w.kind]?.noStatus && (word == null || word === "blocked")) {
+      const answer = [readStep(w), doNext("Read the question and answer it only when it is yours to answer; then send the message again.", templateCommand(["hc", "keys", checked.target, "<keys>"]))];
+      return nothingSent(w, word === "blocked" ? `${w.name} is at a question` : `${w.name} has reported no status yet: it is starting, or at a question it reports nothing for`, answer);
+    }
     const file = join(me.dir, `${MESSAGE_FILE}-${randomUUID().replace(/-/g, "")}.md`);
     writeFileSync(file, message, { flag: "wx", mode: 0o600 });
     const reply = await sendToTerminal(checked.target, nextMessage(file), hc);

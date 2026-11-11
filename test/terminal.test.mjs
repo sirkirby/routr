@@ -654,6 +654,26 @@ test("send writes an owner-only message file and gives hc only its pointer, clas
   }
 });
 
+test("send types nothing into a harness at a question, or one that has reported no status yet; hc's own refusal on stderr is refused", async () => {
+  // Seen live (hc 0.1.19): typed at Claude Code's folder question, Enter picked "No, exit" and the worker ended.
+  for (const sees of [[{ status: null, turn: 0 }], [{ status: { state: "blocked", kind: "question" }, turn: 0 }]]) {
+    await launched();
+    const hc = fakeHc({ sees });
+    const r = await sendCommand(["--name", "w1", "--task", SECRET], { settings: () => cfg(), env: {}, hc: hc.run });
+    expect([r.ok, r.state, r.headline.includes("nothing was sent"), hc.words()]).toEqual([false, "refused", true, ["get"]]);
+    expect(r.next.map((n) => n.argv ?? n.template)).toEqual([["hc", "read", "t9", "--lines", "200"], "hc keys t9 <keys>"]);
+    expect(readdirSync(runDir("w1")).filter((n) => n.startsWith("message-"))).toEqual([]);
+    rmSync(runDir("w1"), { recursive: true, force: true });
+  }
+  // A terminal still starting: hc exits nonzero with its error on stderr, having typed nothing.
+  await launched();
+  const starting = fakeHc({ over: { send: { code: 5, out: "", err: JSON.stringify({ error: { kind: "unavailable", message: SECRET, hint: "nothing was typed" } }) } } });
+  const r = await sendCommand(["--name", "w1", "--task", "more"], { settings: () => cfg(), env: {}, hc: starting.run });
+  expect([r.ok, r.state, r.message]).toEqual([false, "refused", { code: "refused", why: "refused" }]);
+  expect(JSON.stringify(r)).not.toContain(SECRET);
+  rmSync(runDir("w1"), { recursive: true, force: true });
+});
+
 test("wait after send stays pending at the old idle turn until hc advances the turn", async () => {
   await launched();
   const sentHc = fakeHc({ sees: [{ status: { state: "idle" }, turn: 0 }], over: { send: { code: 0, out: JSON.stringify({ turn: 0 }) } } });
