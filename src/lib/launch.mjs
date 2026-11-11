@@ -1,4 +1,4 @@
-import { adviceForLaunch, commandTrace, completeLaunch } from "./traces.mjs";
+import { adviceForLaunch, commandTrace, completeLaunch, openLaunchId } from "./traces.mjs";
 import { takeLeadSession } from "./trace-context.mjs";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -198,11 +198,12 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
 
 // One identity per launch (launch-identity.mjs), made here, whether or not anything is exported: its history record, its
 // answer's `launch_id`, its record template's `--launch`, and its trace's `routr.launch.id` when launch starts its own
-// trace (a `--pane` recovery rerun links to the launch it finishes, with its own id). From the CLI the trace is started
-// before launch runs and has an id of its own (commandTrace).
+// trace (a `--pane` recovery rerun links to the launch it finishes, with its own id). From the CLI the trace is opened
+// before launch runs (routr.mjs): launch takes that trace's id (openLaunchId), so its answer, history, worker record,
+// span and launch index all carry one id.
 export function launch(args, opts = {}) {
   const lead = takeLeadSession(args); args = [...lead.args, ...(lead.lead ? ["--lead-session", lead.lead] : [])];
-  const settings = oneReading(opts.settings), made = newLaunchId();
+  const settings = oneReading(opts.settings), made = openLaunchId() ?? newLaunchId();
   return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead, launchId: made }), async () => { const { out: r, backend, finish, adopted, advised } = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings);
     // Whether it counts toward the user's launch share, and so gets its launch_id and history record (launch-identity.mjs).
     const took = countsTowardShare({ state: r.state, backend });

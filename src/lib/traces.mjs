@@ -67,6 +67,9 @@ function link(entry) {
   if (!c.span.links.some((l) => l.traceId === v.traceId && l.spanId === v.spanId)) c.span.links.push({ traceId: v.traceId, spanId: v.spanId });
   c.matched.add(v.launch_id);
 }
+// The id of the launch trace already open in this process, if any: the CLI opens its command's trace before launch()
+// runs (routr.mjs), so launch takes that id instead of making a second one. Null outside a launch trace.
+export const openLaunchId = () => { const c = context.getStore(); return c?.command === "launch" ? c.launchId ?? null : null; };
 export function currentLaunch(config, env = process.env) {
   const c = context.getStore();
   if (c?.span && c.command === "launch") return { launch_id: c.launchId, traceId: c.span.traceId, spanId: c.span.spanId };
@@ -274,9 +277,8 @@ export function commandTrace(command, setup = {}, run) {
         ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, attributes: {} });
       const id = leadSession(env, lead); if (id && ["dispatch", "subagent", "launch"].includes(command)) put(span, { "routr.lead.session_id": id });
       const identity = traceIdentity(cwd); put(span, identity.attributes);
-      // A launch's id is launch's (launch-identity.mjs). The CLI starts a launch's trace before launch runs (routr.mjs), so
-      // launch's own id never reaches it and the trace makes one here: from the CLI a launch's `routr.launch.id` (and its
-      // index entry and worker record) is not its answer's `launch_id`. Kept as found; making them one changes behaviour.
+      // A launch's id (launch-identity.mjs). The CLI opens a launch's trace before launch runs (routr.mjs), so the id is
+      // made here, and launch takes it (openLaunchId): one id in its answer, history, worker record, span and index.
       batch = { ...batch, span, spans: [span], logs: [], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: launchId ?? (command === "launch" ? newLaunchId() : null), matched: new Set(), observed: new Set() };
     }
   } catch {} // Setup is optional too: a bad config or identity lookup cannot refuse a command.

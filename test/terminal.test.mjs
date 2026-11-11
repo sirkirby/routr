@@ -15,6 +15,9 @@ import { ADAPTERS } from "../src/lib/headless.mjs";
 import { HARNESSES, KINDS, plan, terminalPlan } from "../src/lib/harnesses.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
 import { LaunchIndex } from "../src/lib/launch-index.mjs";
+import { commandTrace } from "../src/lib/traces.mjs";
+import { prepareOtel } from "../src/lib/otel.mjs";
+import { findLaunch } from "../src/lib/launch-history.mjs";
 import { runDir } from "../src/lib/worker-record.mjs";
 import { start as processStart, startOptions } from "../src/lib/processes.mjs";
 import { CLOSING } from "../src/lib/wording.mjs";
@@ -805,6 +808,25 @@ test("Cursor keeps wait's status refusal, while terminal send and stop still act
   const stopHc = fakeHc({ sees: [{ status: null, turn: 1 }] });
   const stopped = await stopCommand(["--name", "w1"], { settings: () => cfg(), env: {}, hc: stopHc.run });
   expect([stopped.ok, stopped.state, stopHc.words()]).toEqual([true, "stopped", ["get", "kill"]]);
+});
+
+// The CLI opens its command's trace before launch() runs (routr.mjs), with no id of launch's: launch takes that trace's
+// id, so one id is in its answer, its history, its worker's record, its span and the launch index (#155's one identity).
+test("a launch inside a trace the CLI opened has one id: its answer, history, record, span and index agree", async () => {
+  const home = process.env.HOME, configPath = join(home, "otel-config.json");
+  const config = cfg({ otel: { endpoint: "http://127.0.0.1:4318", consent: "1234567890abcdef1234567890abcdef" } });
+  writeFileSync(configPath, JSON.stringify(config)); prepareOtel({ home });
+  let tick = 1800000000000;
+  const otel = { home, configPath, now: () => tick++, spawn: () => true };
+  const f = fixture("claude", { settings: () => ({ config }) });
+  let r;
+  await commandTrace("launch", () => ({ config, otel }), async () => { r = await f.go(); return 0; });
+  expect(r.state).toBe("prompted");
+  const span = readdirSync(join(home, ".cache/routr/otel/traces")).filter((n) => n.endsWith(".json")).flatMap((n) => JSON.parse(readFileSync(join(home, ".cache/routr/otel/traces", n), "utf8")).resourceSpans[0].scopeSpans[0].spans).find((x) => x.name === "routr launch");
+  const traced = span.attributes.find((a) => a.key === "routr.launch.id").value.stringValue;
+  expect([recordOf().launch.launch_id, traced]).toEqual([r.launch_id, r.launch_id]);
+  expect(findLaunch(r.launch_id, { home }).record).not.toBeNull(); // its history record, under that id
+  expect(new LaunchIndex({ home }).entries().map((e) => e.launch_id)).toContain(r.launch_id);
 });
 
 test("the launch index keeps a terminal worker's launch", () => {
