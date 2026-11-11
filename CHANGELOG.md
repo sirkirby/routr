@@ -14,6 +14,10 @@ A short history of what changed in each routr release, one line per change. Each
 - `routr cleanup --worker` keeps a worker launched again under the same name while it waited, and says its record changed, instead of finishing the new worker. (#170)
 - `routr constructor`, `routr toString` and other names every JavaScript object has are now unknown commands: they print the usage and exit 2, as any unknown word does, instead of exiting 0 with no output (or, with `--help`, printing help for no command). (#175)
 - A command line routr refuses as unknown usage, such as `routr --config <path> launch`, no longer records an OpenTelemetry span for a command that never ran. (#175)
+- `routr top` and `routr dash` outside a git repository show the folder's project, named as launch and record name it, instead of every project. (#177)
+- The `routr dash` page counts "done first time" out of every recorded run, as `routr assess` and `routr board` do; a run with no attempts recorded is no longer left out. (#177)
+- `routr wait` on a terminal worker that has not started its task yet (idle at turn 0, as right after a startup question is answered) keeps waiting to its timeout and says so, instead of reporting nothing running. (#177)
+- `routr usage --help` says Cursor's usage read needs herdr on Windows only. (#177)
 
 ## v0.13.2 — 2026-11-06
 
