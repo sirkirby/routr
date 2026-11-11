@@ -33,10 +33,6 @@ export const TELEMETRY_LOG = () => join(CACHE_DIR(), "telemetry.log");
 export const UPDATE_LOCK = () => join(CACHE_DIR(), "update.lock");
 // Written by `routr statusline` on each Claude Code turn, read by the usage reader.
 export const CLAUDE_SNAPSHOT = () => join(CACHE_DIR(), "claude-usage.json");
-// Written by `routr usage cursor` (by hand, or in the background when the reading is old), read by the usage reader.
-export const CURSOR_SNAPSHOT = () => join(CACHE_DIR(), "cursor-usage.json");
-// Written by `routr usage kiro` the same way, read by the usage reader.
-export const KIRO_SNAPSHOT = () => join(CACHE_DIR(), "kiro-usage.json");
 
 // A path as the file system names it, for comparing two paths. The native call: on Windows it also expands 8.3 short
 // names and folds case, which the JS one leaves as written (measured 2026-10-22, Bun 1.4.3 on Windows 11 x64:
@@ -214,16 +210,6 @@ function underGuard(file, fn, { wait = false, ...opts } = {}) {
 export const releaseFileLock = (file, token = lockToken(file), { alive } = {}) => underGuard(file, () => dropOwn(file, token), { alive });
 // `fn` only while this process owns the lock, and with no takeover possible until it returns: true once it has run.
 export const whileLockOwned = (file, token, fn, { wait = false } = {}) => underGuard(file, () => { if (!lockOwned(file, token)) return false; fn(); return true; }, { wait });
-// A lock another process took for this one and handed it the token of (the background usage refresh): this process's
-// from here, its age counted again, and only while it still holds that token. Background work: it waits for a busy guard.
-export const adoptLock = (file, token) => underGuard(file, () => {
-  try {
-    if (!token || lockRecord(file)?.token !== token) return false;
-    // Replaced whole or not at all: removing it first would leave the path empty for any taker.
-    writeJsonAtomic(file, { pid: process.pid, token }, { mkdir: false, mode: 0o600, preserveOnError: true });
-  } catch { return false; }
-  locksHere.set(realOr(file), token); return true;
-}, { wait: true });
 export function takeLock(file, stale, { token = randomUUID(), rename = renameSync, write = writeFileSync, alive } = {}) {
   const make = () => { publishLock(file, token, { write }); locksHere.set(realOr(file), token); };
   // Published only when nothing is there: a retry on a live lock writes nothing, not even a temporary file.

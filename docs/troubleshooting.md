@@ -92,7 +92,8 @@ itself. "Did not answer its sign-in check" means the command is missing from PAT
 Cursor shows usage only in its own `/usage` screen. routr reads it in a terminal of its own in the background (nothing
 opens on your screen; on Windows herdr has to be installed, for a private session), about once per working session, and at once after an update when
 the last try got no reading, and keeps the reading in
-`~/.cache/routr/cursor-usage.json`. Until the first reading lands, or when reading fails, Cursor is `unknown` and the
+`~/.cache/routr/usage/cursor.json`. Until the first reading lands (after an upgrade to this version, too: earlier
+versions' readings are not carried over), or when reading fails, Cursor is `unknown` and the
 row's `note` says why. Run `routr usage cursor` to read it now and see any error; if it cannot be read at all, pass
 `--headroom cursor=<share left>` yourself (0.9 or 90%) (the by-hand step in `next` says how to read the screen).
 
@@ -108,7 +109,7 @@ fails. Until it reads again, pass `--headroom <name>=<share left>` yourself (0.9
 
 Kiro's `/usage` command takes about 10 seconds, so routr runs it in the background about once per working session (and at once
 after an update when the last try got no reading), in
-the system temp folder, and keeps the reading in `~/.cache/routr/kiro-usage.json`. Each run leaves an empty saved
+the system temp folder, and keeps the reading in `~/.cache/routr/usage/kiro.json`. Each run leaves an empty saved
 session in Kiro, which routr deletes with `kiro-cli chat --delete-session`; if that fails, `routr usage kiro` warns
 that Kiro kept an empty usage session: remove it from Kiro's saved sessions. Until the first reading lands, or when reading fails, Kiro is `unknown` and the row's `note` says why.
 Run `routr usage kiro` to read it now; if it cannot be read, pass `--headroom kiro=<share left>` yourself (0.9 or 90%).

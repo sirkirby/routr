@@ -9,12 +9,17 @@ The advice commands (`subagent`, `dispatch`, `check`, `doctor`, `assess`, `usage
 yours (`doctor --fix` is `setup` under another name). What they do besides answering:
 
 - read your harnesses in the foreground, through each harness's own CLI (its status command, Claude's `/usage`);
-- keep routr's own bookkeeping under `~/.cache/routr` (which harnesses are signed in, when a usage source was last
-  refreshed, and each subscription's last good usage reading, in `usage-readings.json`: windows, class and note, as
-  the harness reported them, never a brief);
-- start one of routr's detached jobs and carry on: the updater, Cursor's or Kiro's usage refresh, a `routr usage`
-  that `routr board` (and so `routr top`) starts when its kept readings are over 10 minutes old, or that `routr top`
-  starts when you press `u`, or the OpenTelemetry sender when export is configured.
+- keep routr's own bookkeeping under `~/.cache/routr` (which harnesses are signed in, and in `usage/`, one file per
+  subscription, its last good usage reading and its last try: windows, class and note, as the harness reported them,
+  when it was tried, and a failure's code, never a brief). Once one of these is written, routr removes the files
+  earlier versions kept there (`cursor-usage.json`, `kiro-usage.json`, `usage-readings.json`, `usage-refresh.json`),
+  each only when no older routr can be using it: its last change more than 24 hours ago, and its lock, where it has
+  one, absent or abandoned. A stale lock is removed only together with its file. While an older routr is in use it
+  rewrites its files, so they never reach that age; once nothing old runs, they age out and a later write removes
+  them. Nothing in them is carried over;
+- start one of routr's detached jobs and carry on: the updater, a usage refresh (`routr usage --background`) for
+  the subscriptions a call found due, or the `routr usage` that `routr top` starts when you press `u`, or the
+  OpenTelemetry sender when export is configured.
 
 They fail open: any error still prints usable output and exits 0. `dispatch`, `subagent` and `check` return
 `unavailable`, a list of the readings they could not make (`[]` when nothing was missing). Decision-model failures
@@ -110,17 +115,18 @@ routr never has to own a harness feature (a statusline slot, a hook) to get its 
   would repeat it. Only those named locations are checked; plugin and managed skills are not measured.
 - Claude, Codex and Antigravity are read in the call (1 to 9 s, beside the decision model).
 - Cursor's own screen takes seconds more and starts Cursor, and Kiro's `/usage` takes about 10 s plus its cleanup, so
-  their readings are snapshots: when the last try is over 4 hours old, or an older routr made it and got no reading
-  (an update reads again at once), a call starts a detached `routr usage cursor`
-  (or `kiro`) to refresh it, says a fresh reading is being taken, and carries on without waiting (unlike the updater,
-  also from a source checkout: it swaps nothing).
+  their readings are kept: when the last try is over 4 hours old, or an older routr made it and got no reading (an
+  update reads again at once, even beside a fresh reading), a call claims it, starts a detached `routr usage
+  --background` with its own `--config` to refresh it, says a fresh reading is being taken, and carries on without
+  waiting (unlike the updater, also from a source checkout: it swaps nothing). Callers at the same moment claim each
+  subscription once between them.
 
-Failed usage reads have fixed codes and sentences at the reader boundary and in the snapshot cache; harness
+Failed usage reads have fixed codes and sentences at the reader boundary and in the kept readings; harness
 output and exception text are never copied into their diagnostics. A failed refresh keeps the last good reading
 and notes the failed attempt. A fresh usable reading stays available. When a failed source leaves unknown
-capacity or a kept older reading, `unavailable` says which; a kept reading names its source and age. Snapshot
-readings are fresh for the four-hour refresh interval, local statusline/session-log readings for five minutes.
-A snapshot at least a day old is too old to use: its age is shown with unknown
+capacity or a kept older reading, `unavailable` says which; a kept reading names its source and age. Cursor's and
+Kiro's kept readings are fresh for the four-hour refresh interval, local statusline/session-log readings for five
+minutes. A Cursor or Kiro reading at least a day old is too old to use: its age is shown with unknown
 capacity, and age alone is not a failure. A source whose last reading is a day old or more and whose last try
 failed is also said in `warnings` of `dispatch` and `usage`, with a step to read it again, and `doctor` lists it; a
 metered seat, which has no reading to make, is not. Metered accounts without known capacity are valid readings. Accounts

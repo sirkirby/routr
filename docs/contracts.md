@@ -687,7 +687,7 @@ launch as before.
 ## record
 
 Appends one row to the ledger: the advice, what the lead chose, and how it went. The only command that appends to the
-ledger. (Others write only in routr's own folders: usage snapshots and the marks of a background refresh, the
+ledger. (Others write only in routr's own folders: kept usage readings and the marks of a background refresh, the
 sign-in answers a harness check keeps, and headless workers' run folders.)
 
 Inputs:
@@ -989,9 +989,10 @@ Inputs:
 - Required: none.
 - Used when given: one subscription name (`claude`, `codex`, `agy`, `cursor`, `kiro`); `--level <basic|standard|strong>`
   (once, unnamed only, without `--background`); `--config`; `--headroom` (repeatable); `--json` (accepted, changes
-  nothing); `--background` (routr's own refresh job, which no one reads) with `--lock-token <token>` (the refresh lock its
-  starter took: without it the job reads nothing, and it writes its snapshot and releases the lock only while that lock
-  is still the one it was handed). Refused (with `error`) for an unknown flag, `--lock-token` without `--background`, a
+  nothing); `--background` (routr's own refresh job, which no one reads, unnamed) with `--claim <token>` (the claim its
+  starter marked on each subscription it reads: without it, or once a newer claim has taken a subscription, the job
+  reads nothing of it, and it keeps each reading as it lands). Refused (with `error`) for an unknown flag, `--claim`
+  without `--background`, a name with `--background`, a
   second name, a bad `--level`, or a name that is not configured (except `cursor` and `kiro`, which can be read
   unconfigured).
 
@@ -1052,9 +1053,11 @@ it. A reading command: it changes nothing of the user's, calls no harness, and a
 - `subscriptions`: exactly `usage`'s ranking, from each subscription's last good reading kept by any live read
   (`dispatch`, `usage`, `doctor`, `setup`), aged to now: `age_sec` says how old, and a window that has reset since
   counts as reset. A kept "not signed in" answer leaves a harness out, as in `usage`; no status check is run. A
-  subscription with no kept reading has a `usage` entry in `unavailable` with code `not_read_yet`. When the newest
-  kept reading is over 10 minutes old, or one is missing, board starts one detached `routr usage` (at most once per
-  10 minutes) and does not wait. Null, with an `internal_error` usage entry, when routr could not rank.
+  subscription with no kept reading has a `usage` entry in `unavailable` with code `not_read_yet`. When a
+  subscription is due (Claude, Codex, Antigravity: its kept reading missing or over 10 minutes old, with no try in that
+  time; Cursor and Kiro: no try in 4 hours, or the last an older routr's that got no reading), board claims it and starts one detached `routr usage --background` for all it claimed (at most one per
+  subscription per period, however many callers) and does not wait. A note says a fresh reading is being taken only
+  when this call started it. Null, with an `internal_error` usage entry, when routr could not rank.
 - `decisions`: newest first, at most 50: each launch in routr's launch history (7 days) and each recorded run in
   scope, one entry per launch: `launch_id`, `run_id` (null until recorded), `id` (the advice's), `name` and `backend`
   (the launch's, null for a run with no launch kept), `project`, `launched_at`, `recorded_at` (either null),

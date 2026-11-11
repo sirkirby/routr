@@ -24,11 +24,11 @@ export const usageUnavailable = (rows) => rows.filter((r) => r.failure && r.sign
 // A reader that has not produced a reading for over a day and failed its last try: said in `warnings`, not only in a
 // row's note. From the herdr 0.9.5 change of 2026-10-22: Cursor's reader failed on every try, ranking ran on the
 // assumed headroom, and the only trace was a note inside a ranked row for 89 hours.
-export const STALE_SEC = 24 * 3600;
+export const READER_STOPPED_SEC = 24 * 3600;
 // One that never read anything is already `unknown` in `unavailable`; this is for one that worked and stopped. A
 // metered seat (said by its harness, or the user's `billing`) is ranked as unknown capacity, never given a made-up number: it is not
 // said here. Each is `{ pool, warning }`: the warning states what happened; trying again is a step in `next`.
 export const staleReaders = (rows, config = {}) => rows
   .filter((r) => r.failure && r.signedIn !== false && r.headroom == null && r.class !== "metered" && config.subscriptions?.[r.pool]?.billing !== "metered"
-    && r.ageSec != null && r.ageSec >= STALE_SEC)
+    && r.ageSec != null && r.ageSec >= READER_STOPPED_SEC)
   .map((r) => ({ pool: r.pool, warning: warning("usage_stale", `${r.pool}'s usage has not been read for ${Math.round(r.ageSec / 3600)} h, and its last try failed (${r.failure.code}), so remaining capacity is unknown: an update of ${r.pool} or herdr may have changed what routr reads`) }));

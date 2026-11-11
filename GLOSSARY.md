@@ -28,6 +28,23 @@ worker must not inherit and the config locations it keeps (worker environment), 
 (trace context), and the sandboxes a worker cannot start from (worker start). A harness's own protocol work (its
 headless adapter, the parsing inside its usage reader) sits beside the registry too.
 
+## What routr knows of usage
+
+**Usage reading**:
+One subscription's usage as its harness reported it: its windows, class and note, when it was taken, and how long its
+source lets it be used. routr keeps the last good one of each subscription, so a command that must not wait (board)
+serves it aged to now. Every command is served it as a row, the shape it ranks. A kept Cursor or Kiro reading is
+named `<name> snapshot` where output says where a reading came from.
+_Avoid_: cache entry
+
+**Source key**:
+What a usage reading is kept, claimed and billed under: today a harness's name, so a later change can key one
+harness's logins apart.
+
+**Refresh claim**:
+The mark a call writes on a subscription whose kept reading is due, under that subscription's lock, before it starts
+one detached refresh for everything it claimed: callers at the same moment claim each subscription once between them.
+
 ## Where a worker runs
 
 **Backend**:

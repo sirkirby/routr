@@ -16,35 +16,29 @@ const KEEP_SEC = { true: 6 * 3600, false: 10 * 60 };
 const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return {}; } };
 
 // What the same answer said about billing (the registry's `auth.billing`), kept beside the state with the same
-// lifetime. Where it decides a class (a reading without windows), readUsage asks again first (`billingFor`, fresh):
-// a login switched within the 6 hours must not keep the old class. Only the class, the
-// reader's fixed reason and its fixed condition are kept, never anything else the status printed (Claude's carries the email, organisation and
-// ids). A reader that throws, or answers anything else, is no reading.
+// lifetime and returned with it: one answer, so no reader of billing depends on which check ran first in a process.
+// Where it decides a class (a reading without windows), the usage-readings module asks again first (fresh): a login
+// switched within the 6 hours must not keep the old class. Only the class, the reader's fixed reason and its fixed
+// condition are kept, never anything else the status printed (Claude's carries the email, organisation and ids). A
+// reader that throws, or answers anything else, is no reading.
 const billingOf = (b) => (b?.billing === "metered" && typeof b.why === "string" ? { billing: "metered", why: b.why.slice(0, 200), ...(b.when === "no_windows" ? { when: "no_windows" } : {}) } : null);
-// The billing reading of each harness this process last asked (or found kept), for readUsage beside the sign-in gate:
-// in memory too, so a cache that cannot be written still carries it through this call.
-const billingSeen = new Map();
-export const billingFromSignIn = (name) => billingSeen.get(name) ?? null;
 
-// `harness` is the registry entry. The state is "yes", "no", or "no answer" (not installed, or it hung): only "yes" gets
-// work, and each other state says what to do about it.
+// `harness` is the registry entry. `{ state, billing }`: the state is "yes", "no", or "no answer" (not installed, or it
+// hung): only "yes" gets work, and each other state says what to do about it. `billing` is what the same answer said
+// about billing, or null (always null beside a state that is not "yes").
 export async function signInState(name, harness, { fresh = false, nowSec = Date.now() / 1000, file = SIGNED_IN_FILE(), ask = probe } = {}) {
   const kept = readJson(file)[name];
-  if (!fresh && kept?.state && nowSec - kept.ts < KEEP_SEC[kept.state === "yes"]) {
-    billingSeen.set(name, kept.state === "yes" ? billingOf(kept.billing) : null);
-    return kept.state;
-  }
+  if (!fresh && kept?.state && nowSec - kept.ts < KEEP_SEC[kept.state === "yes"]) return { state: kept.state, billing: kept.state === "yes" ? billingOf(kept.billing) : null };
   const r = await ask(harness.executable, harness.auth.check);
   const state = !r ? "no answer" : harness.auth.signedIn(r.out, r.code) ? "yes" : "no";
   let billing = null;
   if (state === "yes") try { billing = billingOf(harness.auth.billing?.(r.out, r.code)); } catch {}
-  billingSeen.set(name, billing);
   try { writeJsonAtomic(file, { ...readJson(file), [name]: { ts: nowSec, state, ...(billing ? { billing } : {}) } }); } catch {}
-  return state;
+  return { state, billing };
 }
-export const signedIn = async (name, harness, o) => (await signInState(name, harness, o)) === "yes";
-// The kept answer alone, however old, or null: for a read that must not run a harness (cachedUsage). `{ state, billing }`:
-// what the same answer said about billing, as signInState keeps it, only beside "yes".
+export const signedIn = async (name, harness, o) => (await signInState(name, harness, o)).state === "yes";
+// The kept answer alone, however old, or null: for a read that must not run a harness (the usage-readings module's
+// kept readings). `{ state, billing }`, as signInState returns it.
 export const keptSignIn = (name, { file = SIGNED_IN_FILE() } = {}) => {
   const kept = readJson(file)[name], state = kept?.state;
   return ["yes", "no", "no answer"].includes(state) ? { state, billing: state === "yes" ? billingOf(kept.billing) : null } : null;

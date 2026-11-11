@@ -1,8 +1,7 @@
-// Kiro's usage: its own /usage command, kept as a snapshot refreshed in the background (snapshot.mjs).
+// Kiro's usage: its own /usage command, kept and refreshed in the background (usage-readings.mjs); kiroReading, below,
+// is what routr keeps.
 import { tmpdir } from "node:os";
-import { KIRO_SNAPSHOT } from "./state-files.mjs";
 import { run } from "./processes.mjs";
-import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
 import { monthMinutes } from "./usage.mjs";
 import { usageFailure } from "./usage-failure.mjs";
 import { HARNESSES } from "./harnesses.mjs";
@@ -43,13 +42,12 @@ export async function kiroUsage({ exec = run, cwd = tmpdir() } = {}) {
     return { ok: true, subscription: "kiro", ...p, headroom: Math.round((1 - p.used_pct / 100) * 1000) / 1000, ...cleanup };
   } catch { return { ok: false, ...usageFailure("read_failed"), read_yourself: KIRO_BY_HAND }; }
 }
-const number = (x) => Number.isFinite(x) ? x : null;
-const keepKiro = (r) => ({ plan: kiroPlan(r.plan), credits_used: number(r.credits_used), credits_limit: number(r.credits_limit), used_pct: number(r.used_pct), resets_at: number(r.resets_at),
-  ...(Number.isSafeInteger(r.unrecognized_lines) && r.unrecognized_lines > 0 ? { unrecognized_lines: r.unrecognized_lines } : {}) });
-export const refreshKiro = ({ read = kiroUsage, file = KIRO_SNAPSHOT(), ...o } = {}) => refreshSnapshot({ read, file, ...o,
-  keep: keepKiro });
 // A reset on a UTC month boundary makes the window that month, so the reserve tapers toward it as for Codex's cap.
-export const readKiro = ({ file = KIRO_SNAPSHOT(), ...o } = {}) => readSnapshot({ name: "kiro", source: "kiro /usage", byHand: KIRO_BY_HAND, file, ...o,
-  keep: keepKiro,
-  windows: (r) => [{ name: "monthly_credits", usedPct: r.used_pct, windowMin: monthMinutes(r.resets_at), resetsAt: r.resets_at }],
-  describe: (r) => `${kiroPlan(r.plan) ? `${kiroPlan(r.plan)}: ` : ""}${r.credits_used} of ${r.credits_limit} credits used${Number.isSafeInteger(r.unrecognized_lines) && r.unrecognized_lines > 0 ? ` (${r.unrecognized_lines} additional lines not read)` : ""}` });
+// `at` is when it was read (seconds).
+const number = (x) => Number.isFinite(x) ? x : null;
+export const kiroReading = (raw, at) => {
+  const plan = kiroPlan(raw.plan), extra = Number.isSafeInteger(raw.unrecognized_lines) && raw.unrecognized_lines > 0 ? raw.unrecognized_lines : 0;
+  return { source: "kiro /usage", takenAt: at,
+    windows: [{ name: "monthly_credits", usedPct: number(raw.used_pct), windowMin: monthMinutes(number(raw.resets_at)), resetsAt: number(raw.resets_at) }],
+    note: `${plan ? `${plan}: ` : ""}${number(raw.credits_used)} of ${number(raw.credits_limit)} credits used${extra ? ` (${extra} additional lines not read)` : ""}` };
+};

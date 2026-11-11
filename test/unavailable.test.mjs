@@ -1,14 +1,14 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { adviseCommand, checkCommand, usageCommand } from "./contract.mjs";
 import { launch } from "./contract.mjs";
 import { savedDecisionUnavailable } from "../src/lib/advice-file.mjs";
 import { DECISION_CODES, DecisionError, decisionTarget, PROVIDERS } from "../src/lib/providers.mjs";
-import { readUsage } from "../src/lib/harnesses.mjs";
+import { fileStore, memoryStore, usageReadings } from "../src/lib/usage-readings.mjs";
 import { readAgy, readClaude, readCodexLive, summarize } from "../src/lib/usage.mjs";
-import { parseKiroUsage, refreshKiro, readKiro, kiroUsage } from "../src/lib/kiro-usage.mjs";
-import { readCursor, refreshCursor } from "../src/lib/cursor-usage.mjs";
+import { parseKiroUsage, kiroReading, kiroUsage } from "../src/lib/kiro-usage.mjs";
+import { cursorReading } from "../src/lib/cursor-usage.mjs";
 import { usageFailure } from "../src/lib/usage-failure.mjs";
 import { briefSha, toEntry } from "../src/lib/ledger.mjs";
 import { telemetryRows } from "../src/lib/telemetry.mjs";
@@ -22,24 +22,30 @@ const clean = (value) => {
 };
 const reading = async () => ({ answers: fact(ans(1, 1), {}), provider: "typesafe", model: "jev-1.13.0", latencyMs: 1 });
 const empty = async () => [];
+// The usage-readings module with fake readers, every harness signed in, at the clock given.
+const signedIn = { state: async () => ({ state: "yes", billing: null }), kept: () => null, why: () => "" };
+const readingsWith = (readers, clock = { now: () => Date.now() / 1000 }, store = memoryStore()) => usageReadings({ configPath: null, store, clock, readers, signIn: signedIn });
+const liveRead = (readers) => (names, given, o) => readingsWith(readers).live(names, { given, ...o });
+const slowReader = (source, toReading, outcomes) => ({ source, speed: "background", reading: toReading, check: async () => { const o = outcomes.shift(); if (o instanceof Error) throw o; return o; } });
 const dispatchUsage = (row) => adviseCommand("dispatch", marker, { config: cfg({ subscriptions: { [row.pool]: cfg().subscriptions.codex } }) }, {}, { askFn: reading, read: async () => [row] });
 
 test("failed background refreshes leave fresh snapshots available; older and unknown readings say what was used", async () => {
   const T = 1800000000;
-  for (const [name, refresh, read, good] of [
-    ["cursor", refreshCursor, readCursor, { included_used_pct: 40 }],
-    ["kiro", refreshKiro, readKiro, { credits_used: 20, credits_limit: 50, used_pct: 40 }],
+  for (const [name, toReading, good] of [
+    ["cursor", cursorReading, { included_used_pct: 40 }],
+    ["kiro", kiroReading, { credits_used: 20, credits_limit: 50, used_pct: 40 }],
   ]) {
-    const file = join(scratch("fresh-usage"), "snapshot");
-    await refresh({ file, nowSec: T, read: async () => ({ ok: true, ...good }) });
-    await refresh({ file, nowSec: T + 1, read: async () => ({ ok: false, ...usageFailure("read_failed") }) });
-    const fresh = await dispatchUsage(read({ file, nowSec: T, background: false }));
+    const clock = { t: T, now: () => clock.t };
+    const r = readingsWith({ [name]: slowReader(`${name} /usage`, toReading, [{ ok: true, ...good }, { ok: false, ...usageFailure("read_failed") }]) }, clock);
+    await r.readNow(name); clock.t = T + 1; await r.readNow(name);
+    const read = async (t) => { clock.t = t; return (await r.live([name], { mayRefresh: [] }))[0].row; };
+    const fresh = await dispatchUsage(await read(T));
     expect(fresh.unavailable).toEqual([]);
     expect(fresh.subscriptions.ranked[0]).toMatchObject({ usage: "live", age_sec: 0 });
-    const older = await dispatchUsage(read({ file, nowSec: T + 4 * 3600, background: false }));
+    const older = await dispatchUsage(await read(T + 4 * 3600));
     expect(older.unavailable).toEqual([{ part: "usage", subscription: name, source: `${name} /usage`, ...usageFailure("read_failed"),
       reading: "kept", reading_source: `${name} snapshot`, age_sec: 4 * 3600 }]);
-    const expired = await dispatchUsage(read({ file, nowSec: T + 86400, background: false }));
+    const expired = await dispatchUsage(await read(T + 86400));
     expect(expired.unavailable).toEqual([{ part: "usage", subscription: name, source: `${name} /usage`, ...usageFailure("read_failed"), reading: "unknown" }]);
     expect(expired.subscriptions.ranked[0]).toMatchObject({ usage: "unknown", age_sec: 86400 });
     clean([fresh, older, expired]);
@@ -139,17 +145,16 @@ test("check lists both unreadable files and does not ask for a decision", async 
 
 test("a subscription excluded by the user's work-level setting is not reported as a failed reading", async () => {
   const config = cfg({ subscriptions: { codex: { ...cfg().subscriptions.codex, hardest_work: "basic" } } });
-  const read = (names) => readUsage(names, {}, { why: () => null, billing: () => null,
-    sources: { codex: { read: () => { throw new Error(marker); } } } });
+  const read = liveRead({ codex: { source: "app-server", speed: "inline", read: () => { throw new Error(marker); } } });
   const r = await adviseCommand("dispatch", marker, { config }, {}, { askFn: reading, read });
   expect(r.unavailable).toEqual([]); expect(r.subscriptions.excluded).toEqual([{ subscription: "codex", why: "the user does not give it standard work" }]); clean(r);
 });
 
 test("one source's failed read is isolated, structured at the reader, and never includes its output", async () => {
-  const read = (names, given) => readUsage(names, given, { why: () => null, billing: () => null, sources: {
-    codex: { source: "app-server", read: () => { throw new Error(marker); } },
-    cursor: { read: () => summarize({ pool: "cursor", source: "cursor /usage", windows: [{ usedPct: 10 }] }) },
-  } });
+  const read = liveRead({
+    codex: { source: "app-server", speed: "inline", read: () => { throw new Error(marker); } },
+    cursor: { source: "cursor /usage", speed: "inline", read: () => summarize({ pool: "cursor", source: "cursor /usage", windows: [{ usedPct: 10 }] }) },
+  });
   const config = cfg({ subscriptions: { codex: cfg().subscriptions.codex, cursor: cfg().subscriptions.cursor } });
   const r = await adviseCommand("dispatch", marker, { config }, {}, { askFn: reading, read });
   expect(r.unavailable).toEqual([{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("read_failed"), reading: "unknown" }]);
@@ -159,17 +164,20 @@ test("one source's failed read is isolated, structured at the reader, and never 
 test("CLI distinguishes failed reads, stale snapshots with age, valid metered unknown capacity, and exclusions", () => {
   const home = scratch("unavailable-cli"), dir = join(home, ".config/routr"), cache = join(home, ".cache/routr");
   mkdirSync(dir, { recursive: true }); mkdirSync(cache, { recursive: true });
-  const snapshot = join(cache, "cursor-usage.json"), ts = Date.now() / 1000 - 90000;
+  const snapshot = join(cache, "usage", "cursor.json"), ts = Date.now() / 1000 - 90000;
+  mkdirSync(join(cache, "usage"), { recursive: true });
+  // What routr keeps of Cursor (usage-readings.mjs): its reading, read `age` seconds ago.
+  const keep = (age) => { const at = Date.now() / 1000 - age; writeFileSync(snapshot, JSON.stringify({ reading: { ...cursorReading({ included_used_pct: 40 }, at), trustedUntil: at + 86400 }, attempt: { at, by: null, outcome: "ok" } })); };
   const subscriptions = Object.fromEntries(["codex", "cursor", "kiro", "agy"].map((n) => [n, { hardest_work: "strong", enabled: n !== "agy" }]));
   writeFileSync(join(dir, "config.json"), JSON.stringify({ subscriptions, auto_update: false }));
   const run = (scenario, signedIn = true) => {
     writeFileSync(join(cache, "signed-in.json"), JSON.stringify(Object.fromEntries(["codex", "cursor", "kiro"].map((n) => [n, { state: n === "codex" && !signedIn ? "no" : "yes", ts: Date.now() / 1000 }]))));
     const p = Bun.spawnSync([process.execPath, "--preload", join(import.meta.dir, "fixtures/provider-fetch.mjs"), "--preload", join(import.meta.dir, "fixtures/usage-sources.mjs"), SCRIPT, "dispatch", marker], {
-      env: cliEnv(home, { PATH: home, TYPESAFE_API_KEY: KEY_MARKER, ROUTR_TEST_PROVIDER: "typesafe", ROUTR_TEST_REPLY: "valid", ROUTR_TEST_USAGE: scenario, ROUTR_TEST_SNAPSHOT: snapshot }), stdin: "ignore",
+      env: cliEnv(home, { PATH: home, TYPESAFE_API_KEY: KEY_MARKER, ROUTR_TEST_PROVIDER: "typesafe", ROUTR_TEST_REPLY: "valid", ROUTR_TEST_USAGE: scenario }), stdin: "ignore",
     });
     expect(p.exitCode).toBe(0); expect(p.stderr.toString()).toBe(""); clean(p.stdout.toString()); return JSON.parse(p.stdout.toString());
   };
-  writeFileSync(snapshot, JSON.stringify({ ts, tried: ts, reading: { included_used_pct: 40 } }));
+  keep(Date.now() / 1000 - ts);
   const r = run("four_cases");
   expect(r.unavailable).toEqual([{ part: "usage", subscription: "codex", source: "app-server", ...usageFailure("read_failed"), reading: "unknown" }]);
   expect(r.subscriptions.ranked.find((r) => r.subscription === "cursor")).toMatchObject({ usage: "unknown" });
@@ -182,54 +190,83 @@ test("CLI distinguishes failed reads, stale snapshots with age, valid metered un
   const failed = run("snapshot_failure", false);
   expect(failed.unavailable).toEqual([{ part: "usage", subscription: "cursor", source: "cursor /usage", ...usageFailure("invalid_response"), reading: "unknown" }]);
   const saved = readFileSync(snapshot, "utf8"); clean(saved);
-  expect(JSON.parse(saved).failure).toEqual(usageFailure("invalid_response")); expect(JSON.parse(saved)).not.toHaveProperty("error");
-  writeFileSync(snapshot, JSON.stringify({ ts: Date.now() / 1000, reading: { included_used_pct: 40 } }));
+  expect(JSON.parse(saved).attempt).toMatchObject({ outcome: "failed", code: "invalid_response" }); expect(saved).not.toContain("error");
+  keep(0);
   const fresh = run("snapshot_failure", false);
   expect(fresh.unavailable).toEqual([]);
   expect(fresh.subscriptions.ranked.find((r) => r.subscription === "cursor")).toMatchObject({ usage: "live", age_sec: 0 });
-  writeFileSync(snapshot, JSON.stringify({ ts: Date.now() / 1000 - 18000, reading: { included_used_pct: 40 } }));
+  keep(18000);
   const kept = run("snapshot_failure", false), age = kept.unavailable[0].age_sec;
   expect(age).toBeGreaterThanOrEqual(18000);
   expect(kept.unavailable).toEqual([{ part: "usage", subscription: "cursor", source: "cursor /usage", ...usageFailure("invalid_response"), reading: "kept", reading_source: "cursor snapshot", age_sec: age }]);
 });
 
-test("snapshot writer and reader share codes, redact raw failures, and forget a failure after success", async () => {
-  for (const [refresh, read, good] of [
-    [refreshCursor, readCursor, { included_used_pct: 20 }],
-    [refreshKiro, readKiro, { credits_used: 10, credits_limit: 50, used_pct: 20 }],
+test("a slow source's kept try and its named read share codes, redact raw failures, and forget a failure after success", async () => {
+  for (const [name, toReading, good] of [
+    ["cursor", cursorReading, { included_used_pct: 20 }],
+    ["kiro", kiroReading, { credits_used: 10, credits_limit: 50, used_pct: 20 }],
   ]) {
-    const file = join(scratch("snapshot-failures"), "snapshot.json"), nowSec = 1800000000;
+    const nowSec = 1800000000, store = memoryStore(), clock = { now: () => nowSec }, later = { now: () => nowSec + 1 };
+    const named = (outcome) => readingsWith({ [name]: slowReader(`${name} /usage`, toReading, [outcome]) }, clock, store).readNow(name);
+    const served = async () => (await readingsWith({ [name]: slowReader(`${name} /usage`, toReading, []) }, later, store).live([name], { mayRefresh: [] }))[0].row;
     for (const code of ["no_response", "invalid_response", "private_folder", "source_missing", "read_failed", marker]) {
-      const r = await refresh({ file, nowSec, read: async () => ({ ok: false, code, why: marker, error: marker }) });
+      const r = await named({ ok: false, code, why: marker, error: marker });
       expect(r).toEqual({ ok: false, ...usageFailure(code) }); clean(r);
-      const saved = readFileSync(file, "utf8"); clean(saved); expect(JSON.parse(saved).failure).toEqual(usageFailure(code));
-      expect(read({ file, nowSec: nowSec + 1, background: false }).failure).toEqual(usageFailure(code));
+      clean(JSON.stringify([...store.entries])); expect(store.get(name).entry.attempt).toEqual({ at: nowSec, by: expect.anything(), outcome: "failed", code: usageFailure(code).code });
+      const row = await served(); expect(row.failure).toEqual(usageFailure(code)); clean(row);
     }
-    await refresh({ file, nowSec, read: async () => { throw new Error(marker); } });
-    clean(readFileSync(file, "utf8"));
-    await refresh({ file, nowSec, read: async () => ({ ok: true, ...good }) });
-    expect(read({ file, nowSec: nowSec + 1 }).failure).toBeUndefined();
-    expect(JSON.parse(readFileSync(file, "utf8"))).not.toHaveProperty("failure");
-    // Old raw errors and unclassified notes cannot be replayed or copied by the next refresh.
-    writeFileSync(file, JSON.stringify({ ts: nowSec, tried: nowSec, reading: { ...good, plan: marker, other: marker }, error: marker }));
-    clean(read({ file, nowSec: nowSec + 1 }));
-    await refresh({ file, nowSec: nowSec + 2, read: async () => ({ ok: false, error: marker }) });
-    clean(readFileSync(file, "utf8"));
+    await named(new Error(marker));
+    clean(JSON.stringify([...store.entries]));
+    await named({ ok: true, ...good });
+    expect((await served()).failure).toBeUndefined();
+    expect(store.get(name).entry.attempt).not.toHaveProperty("code");
+    // Raw errors and unclassified text in a kept entry cannot be replayed, or copied by the next try.
+    store.entries.set(name, { reading: { ...toReading(good, nowSec), plan: marker, other: marker }, attempt: { at: nowSec, outcome: "failed", code: marker, error: marker }, error: marker });
+    clean(await served());
+    await named({ ok: false, error: marker });
+    clean(JSON.stringify([...store.entries]));
   }
 });
 
-test("snapshot file failures have codes too; a missing first snapshot is not a failed source", () => {
-  const dir = scratch("snapshot-files"), missing = join(dir, "missing"), invalid = join(dir, "invalid"), malformed = join(dir, "malformed");
-  writeFileSync(invalid, `{ ${marker}`);
-  for (const read of [readCursor, readKiro]) {
-    expect(read({ file: missing }).failure).toBeUndefined();
-    const broken = read({ file: invalid }); expect(broken.failure).toEqual(usageFailure("invalid_response")); clean(broken);
-    const unreadable = read({ file: dir }); expect(unreadable.failure).toEqual(usageFailure("read_failed")); clean(unreadable);
-    writeFileSync(malformed, JSON.stringify({ ts: marker, reading: { included_used_pct: 10, used_pct: 10 } }));
-    const badTime = read({ file: malformed }); expect(badTime.failure).toEqual(usageFailure("invalid_response")); expect(badTime.headroom).toBeNull(); clean(badTime);
-    writeFileSync(malformed, JSON.stringify({ ts: Date.now() / 1000, reading: { included_used_pct: marker, used_pct: marker } }));
-    const badNumbers = read({ file: malformed }); expect(badNumbers.failure).toEqual(usageFailure("invalid_response")); clean(badNumbers);
+test("kept entries that cannot be read have codes too; a missing first reading is not a failed source", async () => {
+  const dir = scratch("kept-files"), store = fileStore(dir, { legacy: null }), nowSec = Date.now() / 1000;
+  for (const [name, window] of [["cursor", "included"], ["kiro", "monthly_credits"]]) {
+    const file = join(dir, `${name}.json`);
+    const read = async () => (await readingsWith({ [name]: slowReader(`${name} /usage`, () => null, []) }, { now: () => nowSec }, store).live([name], { mayRefresh: [] }))[0].row;
+    expect((await read()).failure).toBeUndefined();
+    writeFileSync(file, `{ ${marker}`);
+    const broken = await read(); expect(broken.failure).toEqual(usageFailure("invalid_response")); clean(broken);
+    rmSync(file); mkdirSync(file);
+    const unreadable = await read(); expect(unreadable.failure).toEqual(usageFailure("read_failed")); clean(unreadable);
+    rmSync(file, { recursive: true });
+    writeFileSync(file, JSON.stringify({ reading: { source: `${name} /usage`, takenAt: marker, windows: [{ name: window, usedPct: 10 }] } }));
+    const badTime = await read(); expect(badTime.failure).toEqual(usageFailure("invalid_response")); expect(badTime.headroom).toBeNull(); clean(badTime);
+    writeFileSync(file, JSON.stringify({ reading: { source: `${name} /usage`, takenAt: nowSec, windows: [{ name: window, usedPct: marker }] } }));
+    const badNumbers = await read(); expect(badNumbers.failure).toEqual(usageFailure("invalid_response")); clean(badNumbers);
   }
+});
+
+test("a signed-in Cursor whose kept entry cannot be read says invalid_response, with its recovery step, on every path that may refresh it", async () => {
+  const was = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }, home = scratch("unreadable-paths");
+  process.env.HOME = process.env.USERPROFILE = home;
+  try {
+    const cache = join(home, ".cache/routr");
+    mkdirSync(join(cache, "usage"), { recursive: true });
+    writeFileSync(join(cache, "signed-in.json"), JSON.stringify({ cursor: { ts: Date.now() / 1000, state: "yes" } }));
+    writeFileSync(join(cache, "usage/cursor.json"), `{ ${marker}`);
+    const config = cfg({ subscriptions: { cursor: { hardest_work: "strong", reserve: 0 } } });
+    const entry = { part: "usage", subscription: "cursor", source: "cursor /usage", ...usageFailure("invalid_response"), reading: "unknown" };
+    // Each may claim a refresh (its mark lands beside the entry); each, and the next after it, still says why.
+    for (const [path, run] of [["usage", () => usageCommand([], config)], ["usage --level", () => usageCommand(["--level", "basic"], config)],
+      ["dispatch", () => adviseCommand("dispatch", marker, { config }, {}, { askFn: reading })]]) {
+      for (let i = 0; i < 2; i++) {
+        const r = await run();
+        expect([path, i, r.unavailable]).toEqual([path, i, [entry]]);
+        expect([path, i, r.next.some((n) => n.template === "--headroom cursor=<share left>")]).toEqual([path, i, true]);
+        clean(r);
+      }
+    }
+  } finally { for (const [k, v] of Object.entries(was)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
 });
 
 test("live usage readers classify failed reads and never reflect harness output", async () => {

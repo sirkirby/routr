@@ -1,6 +1,6 @@
 // Cursor has no local usage file: it shows usage only in its own /usage screen. This opens that screen in a throwaway
 // terminal (terminal.mjs: routr's own on macOS and Linux, a private herdr session on Windows) and reads Included N% used.
-// routr keeps the reading (refreshCursor, below).
+// routr keeps the reading and refreshes it in the background (usage-readings.mjs); cursorReading, below, is what it keeps.
 // The footer context meter (e.g. "Grok 4.6 High · 8.7%") is not usage and must never be parsed as it.
 import { randomBytes } from "node:crypto";
 import { rmSync } from "node:fs";
@@ -8,8 +8,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { cmdTypable, deadline, runHerdr, SHELLS, shellAlone, shellFamily, waitForShell } from "./herdr.mjs";
-import { CURSOR_SNAPSHOT } from "./state-files.mjs";
-import { readSnapshot, refreshSnapshot } from "./snapshot.mjs";
 import { openTerminal, ownTerminal } from "./terminal.mjs";
 import { usageFailure } from "./usage-failure.mjs";
 import { configEnv, HARNESSES, privateConfigCopy } from "./harnesses.mjs";
@@ -120,12 +118,11 @@ export async function cursorUsage({ run = runHerdr, sleep = (ms) => Bun.sleep(ms
 
 // Cursor: only Included counts: it is the whole plan, and Cursor's own models (Composer, Grok) draw on it through Auto.
 // API is other vendors' models inside Cursor, which routr does not route to, so it is shown in the note and never ranked.
+// `at` is when it was read (seconds); the plan has no reset time on Cursor's screen, so the window has none.
 const pct = (x) => (x == null ? "?" : `${x}%`);
 const number = (x) => Number.isFinite(x) ? x : null;
-const keepCursor = (r) => ({ plan: cursorPlan(r.plan), included_used_pct: number(r.included_used_pct), auto_used_pct: number(r.auto_used_pct), api_used_pct: number(r.api_used_pct) });
-export const refreshCursor = ({ read = cursorUsage, file = CURSOR_SNAPSHOT(), ...o } = {}) => refreshSnapshot({ read, file, ...o,
-  keep: keepCursor });
-export const readCursor = ({ file = CURSOR_SNAPSHOT(), ...o } = {}) => readSnapshot({ name: "cursor", source: "cursor /usage", byHand: CURSOR_BY_HAND, file, ...o,
-  keep: keepCursor,
-  windows: (r) => [{ name: "included", usedPct: r.included_used_pct, windowMin: null, resetsAt: null }],
-  describe: (r) => `Included ${pct(r.included_used_pct)} used (Auto ${pct(r.auto_used_pct)}, API ${pct(r.api_used_pct)})` });
+export const cursorReading = (raw, at) => {
+  const r = { included_used_pct: number(raw.included_used_pct), auto_used_pct: number(raw.auto_used_pct), api_used_pct: number(raw.api_used_pct) };
+  return { source: "cursor /usage", takenAt: at, windows: [{ name: "included", usedPct: r.included_used_pct, windowMin: null, resetsAt: null }],
+    note: `Included ${pct(r.included_used_pct)} used (Auto ${pct(r.auto_used_pct)}, API ${pct(r.api_used_pct)})` };
+};

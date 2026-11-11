@@ -518,7 +518,7 @@ test("help, --version and statusline load none of the harness drivers: those loa
     for (const [, rel] of readFileSync(file, "utf8").matchAll(/^import [^;]*? from "(\.{1,2}\/[^"]+\.mjs)";/gm)) reach(join(dirname(file), rel), seen);
     return seen;
   };
-  const heavy = ["cursor-usage.mjs", "kiro-usage.mjs", "terminal.mjs", "herdr.mjs", "launch.mjs", "snapshot.mjs"];
+  const heavy = ["cursor-usage.mjs", "kiro-usage.mjs", "terminal.mjs", "herdr.mjs", "launch.mjs", "usage-readings.mjs"];
   for (const start of ["lib/help.mjs", "lib/statusline.mjs", "lib/harnesses.mjs"]) {
     const loaded = [...reach(join(root, start))].map((f) => f.split(/[\\/]/).at(-1));
     expect(loaded.filter((f) => heavy.includes(f))).toEqual([]);

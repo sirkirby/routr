@@ -1,9 +1,10 @@
 // The maintainer's setups: reader replies flow through the command's real ranking and launch history.
 import { expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { claudeSnapshot, codexSnapshot, failedUsage, readAgy } from "../src/lib/usage.mjs";
 import { claudeBilling, withBilling } from "../src/lib/harnesses.mjs";
-import { readCursor, parseCursorUsage } from "../src/lib/cursor-usage.mjs";
+import { cursorReading, parseCursorUsage } from "../src/lib/cursor-usage.mjs";
+import { memoryStore, usageReadings } from "../src/lib/usage-readings.mjs";
 import { randomUUID } from "node:crypto";
 import { recordLaunch } from "../src/lib/launch-history.mjs";
 const countLaunch = (subscription) => recordLaunch(randomUUID(), { subscription });
@@ -20,6 +21,9 @@ const work = () => ({ ...DEFAULTS, now: T * 1000, subscriptions: {
   claude: { hardest_work: "strong", reserve: 0, use: "normal", share: 2 },
   codex: { hardest_work: "strong", reserve: 0, use: "normal", share: 1 },
 } });
+// Cursor's row as routr serves its kept reading, taken at T.
+const keptCursor = (screen) => usageReadings({ configPath: null, store: memoryStore({ entries: { cursor: { reading: cursorReading(screen, T) } } }), clock: { now: () => T },
+  signIn: { kept: () => null, why: () => "" } }).kept(["cursor"], { mayRefresh: [] }).served[0].row;
 const row = (out, name) => out.subscriptions.ranked.find((r) => r.subscription === name);
 async function view(config, readings, level = "strong") {
   return usageCommand(["--level", level], config, {}, { read: async () => readings });
@@ -43,11 +47,10 @@ async function ratio(reply, config = work(), other = claude()) {
 test("Personal: included Claude Code and Codex, strong work; Cursor and Antigravity, standard work; reserve 0", async () => {
   const config = { ...DEFAULTS, now: T * 1000, subscriptions: Object.fromEntries(["claude", "codex", "cursor", "agy"].map((name) => [name, { hardest_work: ["claude", "codex"].includes(name) ? "strong" : "standard", reserve: 0 }])) };
   for (const used of [0, 99, 100]) {
-    const cursor = parseCursorUsage(`Usage • Pro\nIncluded ${used}% used`), file = `${scratch("personal-cursor")}/usage.json`;
-    writeFileSync(file, JSON.stringify({ ts: T, reading: cursor }));
+    const cursor = parseCursorUsage(`Usage • Pro\nIncluded ${used}% used`);
     const readings = [claudeSnapshot({ ts: T, rate_limits: { five_hour: { used_percentage: used, resets_at: T + 300 } } }, T),
       codex({ primary: { usedPercent: used, windowDurationMins: 300, resetsAt: T + 300 } }),
-      readCursor({ file, nowSec: T, background: false }),
+      keptCursor(cursor),
       await readAgy({ exec: async () => JSON.stringify({ command: { data: { groups: [{ name: "Gemini", buckets: [{ window: "weekly", remaining_fraction: 1 - used / 100, reset_time: "2030-01-01T00:00:00Z" }] }] } } }) })];
     const standard = await view(config, readings, "standard");
     expect(standard.subscriptions.candidates.normal).toEqual(used < 100 ? ["agy", "claude", "codex", "cursor"] : []);

@@ -18,7 +18,7 @@ import { briefSha } from "../src/lib/ledger.mjs";
 import { OTEL_ATTRIBUTES, ERROR_CODES, workerTurn, commandTrace, linkWorker, usageSpans, decisionSpan } from "../src/lib/traces.mjs";
 import { summarize } from "../src/lib/usage.mjs";
 import { warningCode } from "../src/lib/warnings.mjs";
-import { readUsage } from "../src/lib/harnesses.mjs";
+import { memoryStore, usageReadings } from "../src/lib/usage-readings.mjs";
 
 function exporting(env = {}) {
   const home = scratch("traces"), configPath = join(home, "config.json"), config = cfg({ subscriptions: {}, otel: { endpoint: "http://127.0.0.1:4318", consent: "1234567890abcdef1234567890abcdef" } });
@@ -175,8 +175,9 @@ test("usage has per-subscription children and orchestration commands emit only c
 test("parallel usage child durations measure their own reading rather than the slowest subscription", async () => {
   const x = exporting(); x.config.subscriptions = { claude: {}, codex: {} };
   // Far apart: Windows timers tick about every 15 ms, and a busy CI runner adds more (a 40 ms gap failed there twice).
-  const sources = Object.fromEntries([["claude", 150], ["codex", 1]].map(([name, delay]) => [name, { source: "app-server", read: async () => { await Bun.sleep(delay); return { pool: name, windows: [], headroom: 0.7 }; } }]));
-  await usageCommand([], x.config, {}, { env: {}, otel: x.otel, read: (names, given, opts) => readUsage(names, given, { sources, observe: opts.observe, why: async () => null, billing: async () => null }) });
+  const readers = Object.fromEntries([["claude", 150], ["codex", 1]].map(([name, delay]) => [name, { source: "app-server", speed: "inline", read: async () => { await Bun.sleep(delay); return { pool: name, windows: [], headroom: 0.7 }; } }]));
+  const readings = usageReadings({ configPath: null, store: memoryStore(), readers, signIn: { state: async () => ({ state: "yes", billing: null }), kept: () => null, why: () => "" } });
+  await usageCommand([], x.config, {}, { env: {}, otel: x.otel, readings });
   const duration = (name) => { const s = x.spans().find((s) => s.name === `routr usage ${name}`); return Number(BigInt(s.endTimeUnixNano) - BigInt(s.startTimeUnixNano)); };
   expect(duration("codex")).toBeLessThan(duration("claude") * 0.7);
 });

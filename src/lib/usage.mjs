@@ -14,15 +14,13 @@ export { CLAUDE_SNAPSHOT };
 export const CODEX_SESSIONS = () => join(home(), ".codex/sessions");
 const now = () => Date.now() / 1000;
 
-// Source time is internal provenance, not a new command field. Headroom observations must not timestamp a
-// cached read as now.
-const readingTimes = new WeakMap(), windowTimes = new WeakMap(), trustTimes = new WeakMap();
-export const usageReadingTime = (row, window) => windowTimes.get(window) ?? readingTimes.get(row);
-export const withUsageReadingTime = (row, time) => { if (Number.isSafeInteger(time) && time > 0) readingTimes.set(row, time); return row; };
-// How long a reading may be used, as its source's own rule says (`until`, seconds): a resetless Codex stop for 5 minutes,
-// a Cursor or Kiro snapshot for a day, and neither before it was read (a clock set back). Internal like the reading
-// time, so a reading kept and served later (usage-cache.mjs) obeys the same rule as a live read of the same source.
-export const usageTrustedUntil = (row) => trustTimes.get(row) ?? null;
+// Where a reading came from in time travels as plain fields on the row a reader returns, so a spread keeps them:
+// `takenAt` (seconds, null when nothing was read), `trustedUntil` (seconds: its source's own limit on how long it may be
+// used, when it has one: a resetless Codex stop for 5 minutes, a Cursor or Kiro reading for a day) and `windowSince`
+// (seconds, by window name: a window that reset since it was read starts at its reset, never back at the reading). They
+// are provenance, not command fields: the usage-readings module serves the row without them (`servedRow`), and
+// OpenTelemetry stamps a headroom observation with them, never with now.
+const PROVENANCE = ["takenAt", "trustedUntil", "windowSince"];
 
 // One subscription's usage as every reader returns it. `ts` is when the harness reported it (null: nothing read);
 // `cls` the class, from the windows when not given; `reason` a stable key for a note doctor acts on. `nowSec` is
@@ -30,24 +28,34 @@ export const usageTrustedUntil = (row) => trustTimes.get(row) ?? null;
 // and the class is unknown, as the live source would answer then.
 export function summarize({ pool, source, ts = null, windows = [], note, cls, nowSec = now(), reason, failure, kept, until }) {
   if (Number.isFinite(until) && (nowSec >= until || !(Number.isFinite(ts) && nowSec >= ts))) return summarize({ pool, source, ts, nowSec, failure, kept, note: "the reading is too old to use: remaining capacity is unknown" });
-  const trusted = (row) => { if (Number.isFinite(until)) trustTimes.set(row, until); return row; };
-  return trusted(summarizeNow({ pool, source, ts, windows, note, cls, nowSec, reason, failure, kept }));
+  return summarizeNow({ pool, source, ts, windows, note, cls, nowSec, reason, failure, kept, until });
 }
-function summarizeNow({ pool, source, ts, windows, note, cls, nowSec, reason, failure, kept }) {
+// A window that has reset since the reading: rolled over to empty from its reset. Caps roll only after the observation;
+// plan windows roll as before (synthetic probes, 2026-11-03, not seen live).
+const rolledOver = (w, ts, nowSec) => Number.isFinite(w.resetsAt) && w.resetsAt > 0 && w.resetsAt < nowSec
+  && !(["monthly_cap", "spend_limit"].includes(w.name) && (!Number.isFinite(ts) || ts <= 0 || w.resetsAt <= ts));
+function summarizeNow({ pool, source, ts, windows, note, cls, nowSec, reason, failure, kept, until }) {
   windows = windows.filter((w) => Number.isFinite(w.usedPct)); // a window without a number must not turn headroom into NaN
   cls ??= windows.length ? "included" : "unknown";
   const ageSec = ts ? Math.round(nowSec - ts) : null;
   const missing = failure ? { failure: usageFailure(failure.code), ...(kept ? { kept } : {}) } : {};
-  if (!windows.length) return withUsageReadingTime({ pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? missing.failure?.why ?? "no usage data", ...(reason ? { reason } : {}), ...missing }, Math.round(ts * 1000));
-  // Synthetic probes, 2026-11-03, not seen live: caps roll only after the observation; plan windows roll as before.
-  const live = windows.map((w) => {
-    if (!Number.isFinite(w.resetsAt) || w.resetsAt <= 0 || w.resetsAt >= nowSec || ["monthly_cap", "spend_limit"].includes(w.name) && (!Number.isFinite(ts) || ts <= 0 || w.resetsAt <= ts)) return w;
-    const reset = { ...w, usedPct: 0 };
-    // The inferred empty window starts at its reset, never back at the source snapshot's time.
-    windowTimes.set(reset, Math.round(w.resetsAt * 1000)); return reset;
-  });
+  const from = { takenAt: Number.isFinite(ts) && ts > 0 ? ts : null, ...(Number.isFinite(until) ? { trustedUntil: until } : {}) };
+  if (!windows.length) return { pool, source, ageSec, windows, headroom: null, class: cls, note: note ?? missing.failure?.why ?? "no usage data", ...(reason ? { reason } : {}), ...missing, ...from };
+  const since = {};
+  const live = windows.map((w) => { if (!rolledOver(w, ts, nowSec)) return w; since[w.name] = w.resetsAt; return { ...w, usedPct: 0 }; });
   const headroom = Math.min(...live.map((w) => Math.max(0, 1 - w.usedPct / 100)));
-  return withUsageReadingTime({ pool, source, ageSec, windows: live, headroom, class: cls, note, ...missing }, Math.round(ts * 1000));
+  return { pool, source, ageSec, windows: live, headroom, class: cls, note, ...missing, ...from, ...(Object.keys(since).length ? { windowSince: since } : {}) };
+}
+// What every entry point of the usage-readings module serves for one subscription: `row`, exactly the reader's row
+// without its provenance, and that provenance in milliseconds (`takenAt`, and `windowSince` by window name), which only
+// OpenTelemetry reads. A value already served passes through, so a command can take either.
+const ms = (sec) => (Number.isFinite(sec) && sec > 0 && Number.isSafeInteger(Math.round(sec * 1000)) ? Math.round(sec * 1000) : null);
+export function servedRow(x, key = x?.key ?? x?.pool) {
+  if (x && typeof x === "object" && x.row && typeof x.row === "object" && "windowSince" in x) return x;
+  const row = { ...x };
+  for (const k of PROVENANCE) delete row[k];
+  const windowSince = Object.fromEntries(Object.entries(x?.windowSince ?? {}).map(([n, t]) => [n, ms(t)]).filter(([, t]) => t != null));
+  return { key, row, takenAt: ms(x?.takenAt), windowSince };
 }
 export const failedUsage = (pool, source, code = "read_failed") => summarize({ pool, source, failure: usageFailure(code) });
 
@@ -63,6 +71,13 @@ export function monthMinutes(resetsAt) {
   return Math.round((d.getTime() - Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - 1, 1)) / 60000);
 }
 
+// How long a resetless Codex spend stop holds: its reset is unknown, so it is not trusted for longer. A judgment, not
+// a measurement (the stop has not been seen live).
+export const CODEX_STOP_SEC = 300;
+// How old the session log's reading may be and still stand for a live read when the app server fails: as fresh as
+// Claude's statusline snapshot must be (CLAUDE_FRESH_SEC). Older, it is a kept reading, and says its age.
+const CODEX_LOG_FRESH_SEC = 5 * 60;
+
 // One reader for both Codex shapes: the app-server's camelCase and the session log's snake_case. Pure, so the recorded
 // shapes (an Enterprise seat, a Pro login) are tests. Observed 2026-09-22: the Enterprise seat has `primary` and
 // `secondary` null and `credits.unlimited` true; the Pro login one weekly `primary` and credits off.
@@ -76,13 +91,13 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
   // A member credit limit (the owner's monthly cap) is one more window: the tightest wins, as with any other.
   // A stop beside a cap with room is synthetic, not seen live: the stop wins and keeps the cap reset.
   if (cap) { const resetsAt = g(cap, "resetsAt", "resets_at"); ws.push({ name: "monthly_cap", usedPct: stopped ? 100 : 100 - g(cap, "remainingPercent", "remaining_percent"), windowMin: monthMinutes(resetsAt), resetsAt }); }
-  // Resetless stops (unobserved) expire after 5 min, including logs: an old stop cannot block a seat forever.
+  // Resetless stops (unobserved) expire after CODEX_STOP_SEC, including logs: an old stop cannot block a seat forever.
   if (stopped && !cap) {
-    if (!(Number.isFinite(ts) && nowSec - ts >= 0 && nowSec - ts < LOCAL_FRESH_SEC))
+    if (!(Number.isFinite(ts) && nowSec - ts >= 0 && nowSec - ts < CODEX_STOP_SEC))
       return summarize({ pool: "codex", source, ts, nowSec, note: "spend control reading is too old to use: its reset is unknown" });
     ws.push({ name: "spend_limit", usedPct: 100, windowMin: null, resetsAt: null });
   }
-  const until = stopped && !cap ? ts + LOCAL_FRESH_SEC : undefined;
+  const until = stopped && !cap ? ts + CODEX_STOP_SEC : undefined;
   const reached = g(rl, "rateLimitReachedType", "rate_limit_reached_type");
   if (reached) notes.push("a rate limit was reached");
   if (g(rl, "spendControlReached", "spend_control_reached") === true) notes.push("spend control reached: the cap is used up");
@@ -104,7 +119,7 @@ export function codexSnapshot(rl, source, ts, nowSec = now()) {
 // or a plan that sends none) is served the last windows seen, however old: `ageSec` says how old, and a lapsed window
 // rolls over to empty, as before. Absence is NOT read as "no quota": the statusline docs list only Pro and Max as
 // sending `rate_limits` (yet a Team seat's `/usage` shows the same windows: the plan does not change it), and a plan
-// with no quota is the user's `billing: "metered"` to say, unless Claude's sign-in status says so (an API key: readUsage).
+// with no quota is the user's `billing: "metered"` to say, unless Claude's sign-in status says so (an API key: usage-readings.mjs).
 // The one `reason` a Claude reading carries, so doctor keys on it and not on the wording of the note.
 export const NO_WINDOWS_AFTER_ANSWER = "no_windows_after_answer";
 export function claudeSnapshot(s, nowSec = now()) {
@@ -225,8 +240,7 @@ export function parseClaudeUsage(text, nowSec = now()) {
 // recent one is used as it is. Five minutes is a judgment, not a measurement: a working session renders far more
 // often than that, and a weekly window does not move much in five minutes. Otherwise Claude's own `/usage` is read in
 // the call, through its CLI, as Codex and Antigravity are: routr never needs to own Claude's single statusline slot.
-const LOCAL_FRESH_SEC = 5 * 60;
-export const CLAUDE_FRESH_SEC = LOCAL_FRESH_SEC;
+export const CLAUDE_FRESH_SEC = 5 * 60;
 // Measured 2026-10-05 (2.1.289, macOS, load average 9 to 14 from other agents): 4.4 to 5.2 s wall with the user's
 // hooks and MCP servers off (5 reads), 6.8 to 8.8 s with them on (Claude reports ~2 s of that as its own). No hang in
 // 18 reads, unlike agy's one in six, so one try, with room for a slower machine; a hang costs this once, and the call
@@ -260,7 +274,7 @@ function removeProjectFolder(folder) {
 }
 
 // Seams: `file` the statusline snapshot, `nowSec` the clock, `exec` the processes module's run, `tmp` the folder that holds
-// each read's private folder, `projects` Claude's projects folder. It is only called once readUsage's sign-in gate says Claude is signed in. That
+// each read's private folder, `projects` Claude's projects folder. It is only called once the usage-readings module's sign-in gate says Claude is signed in. That
 // answer is kept up to 6 hours (signin.mjs, as for every harness), so one read may follow a sign-out; Claude's `-p`
 // does not open a browser sign-in.
 export async function readClaude({ configDir = process.env.CLAUDE_CONFIG_DIR || join(home(), ".claude"), quiet = [], file = CLAUDE_SNAPSHOT(), nowSec = now(), exec = run, tmp = tmpdir(), projects = claudeProjectsDir() } = {}) {
@@ -341,9 +355,9 @@ export async function readCodexLive({ exec = run, fallback = readCodex, nowSec =
   let kept;
   try { kept = fallback(); } catch {}
   const failure = usageFailure(code ?? (out == null ? "no_response" : "invalid_response"));
-  return withUsageReadingTime({ ...(kept ?? failedUsage("codex", "app-server")), source: "app-server", failure,
-    ...(kept?.class === "metered" || kept?.headroom != null && !(Number.isFinite(kept.ageSec) && kept.ageSec >= 0 && kept.ageSec < LOCAL_FRESH_SEC) ? { kept: { source: "session log", ageSec: kept.ageSec } } : {}),
-    note: `${failure.why}${kept?.headroom != null || kept?.class === "metered" ? " Using the session log's last reading." : " Remaining capacity is unknown."}` }, usageReadingTime(kept));
+  return { ...(kept ?? failedUsage("codex", "app-server")), source: "app-server", failure,
+    ...(kept?.class === "metered" || kept?.headroom != null && !(Number.isFinite(kept.ageSec) && kept.ageSec >= 0 && kept.ageSec < CODEX_LOG_FRESH_SEC) ? { kept: { source: "session log", ageSec: kept.ageSec } } : {}),
+    note: `${failure.why}${kept?.headroom != null || kept?.class === "metered" ? " Using the session log's last reading." : " Remaining capacity is unknown."}` };
 }
 
 // Antigravity: `/usage` in print mode is answered without an agent turn (0 tokens, ~2 s). It reports two pools;

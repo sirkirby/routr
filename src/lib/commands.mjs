@@ -22,8 +22,9 @@ import { ADVICE_STEPS, count } from "./wording.mjs";
 import { recentLaunches } from "./shares.mjs";
 import { findLaunch, LAUNCH_ID } from "./launch-history.mjs";
 import { enabledSubscriptions } from "./config.mjs";
-import { HARNESSES, readUsage, SOURCES } from "./harnesses.mjs";
-import { failedUsage } from "./usage.mjs";
+import { HARNESSES, SOURCES } from "./harnesses.mjs";
+import { failedUsage, servedRow } from "./usage.mjs";
+import { usageReaders, usageReadings } from "./usage-readings.mjs";
 import { usageFailure } from "./usage-failure.mjs";
 import { capacityFailure, capacityView, emptyRanking } from "./capacity.mjs";
 
@@ -45,16 +46,23 @@ export function parseHeadroom(values) {
 // `routr subagent|dispatch "<brief>"`: the decision model's reading of the brief with the user's preferences, and for
 // dispatch the subscriptions ranked by usage, read while it answers. An unreachable model still gets an answer: the
 // user's fallback.
-async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read = readUsage, warnings = [] } = {}) {
+// `read(names, given, { observe })`: each subscription's usage, Served or rows (a test's); by default the usage-readings
+// module's live read, whose background refresh carries the caller's --config.
+const liveRead = (otel) => (names, given, o) => usageReadings({ configPath: otel?.configPath ?? null }).live(names, { given, ...o });
+// Rows to rank; anything but a list is left for ranking to refuse (internal_error), as a malformed answer always was.
+const rowsOf = (xs) => (Array.isArray(xs) ? xs.map((x) => servedRow(x).row) : xs);
+async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read, warnings = [], otel } = {}) {
+  read ??= liveRead(otel);
   const callWarnings = [...configNotes, ...warnings];
   if (typeof brief !== "string" || !brief.trim()) return refusal("no advice", "empty brief", callWarnings, [doNext("Supply the exact task", `routr ${mode} --task-file <path>`)]);
   const out = { ok: true, warnings: callWarnings, next: [], id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length, unavailable: [] };
   const target = decisionTarget(config);
   let answered = false;
   let advice = { level: config.fallback_level, sure: false, facts: {}, notes: [] };
-  // Each source's newest reading, read while the decision model answers; a slow source (Cursor's screen) is a snapshot refreshed in the background.
+  // Each source's newest reading, read while the decision model answers; a slow source (Cursor's screen) is served from
+  // what routr keeps and refreshed in the background.
   const names = enabledSubscriptions(config);
-  const usageP = mode === "dispatch" ? Promise.resolve().then(() => usageSpans((observe) => read(names, given, { observe })))
+  const usageP = mode === "dispatch" ? Promise.resolve().then(() => usageSpans((observe) => read(names, given, { observe }))).then(rowsOf)
     .catch(() => names.map((name) => failedUsage(name, SOURCES[name]?.source ?? name))) : null;
   try {
     const r = await decisionSpan(config, () => askFn({ task: { brief } }, questions, { config }));
@@ -207,7 +215,11 @@ export function shareCommand({ ledger = LEDGER_PATH(), out }, config = null, { e
 // `routr usage [<subscription>]`: what routr sees of each subscription's usage and how dispatch would rank it, with no
 // brief. Named, a harness with a `check` (Cursor) prints its raw reading instead, for a person to verify. Fails open.
 const hasCandidates = (r) => r && [...r.candidates.normal, ...r.candidates.fallback].length > 0;
-async function usageCommandBody(words, config, given = {}, { read = readUsage, sources = SOURCES, warnings = [] } = {}) {
+// `readings`: the usage-readings module (its named read and background job), reading `sources`; `read` as for
+// dispatch, with `mayRefresh`.
+async function usageCommandBody(words, config, given = {}, { sources = SOURCES, readings, read, warnings = [], otel } = {}) {
+  readings ??= usageReadings({ configPath: otel?.configPath ?? null, readers: usageReaders(sources) });
+  read ??= (names, g, o) => readings.live(names, { given: g, ...o });
   words = [...words];
   const at = words.indexOf("--level"), explicit = at !== -1;
   let level = "basic";
@@ -217,17 +229,23 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
       return refuse(`usage: --level takes one of ${LEVELS.join(", ")}, given once; eligibility was not refreshed`);
     level = words[at + 1]; words.splice(at, 2);
   }
-  // The background refresh's lock token, handed over by the call that took the lock (snapshot.mjs).
-  const tokenAt = words.indexOf("--lock-token"), token = tokenAt === -1 ? undefined : words[tokenAt + 1];
-  if (tokenAt !== -1) {
-    if (!words.includes("--background") || words.lastIndexOf("--lock-token") !== tokenAt || !token || token.startsWith("-")) return refuse("usage: --lock-token is routr's own, for its background refresh only");
-    words.splice(tokenAt, 2);
+  // The background refresh's claim, handed over by the call that claimed the keys it reads (usage-readings.mjs).
+  const claimAt = words.indexOf("--claim"), token = claimAt === -1 ? undefined : words[claimAt + 1];
+  if (claimAt !== -1) {
+    if (!words.includes("--background") || words.lastIndexOf("--claim") !== claimAt || !token || token.startsWith("-")) return refuse("usage: --claim is routr's own, for its background refresh only");
+    words.splice(claimAt, 2);
   }
   const flags = words.filter((w) => w.startsWith("-")), configured = Object.keys(config.subscriptions);
   const [name, ...extra] = words.filter((w) => !w.startsWith("-"));
   const unknown = flags.filter((f) => f !== "--json" && f !== "--background");
   if (extra.length || unknown.length) return refuse(`usage: routr usage [--config <path>] [--headroom <subscription>=<share, 0.9 or 90%>]... [<subscription> | --level <${LEVELS.join("|")}>]${unknown.length ? ` (unknown: ${unknown.join(" ")})` : ""}`);
   if (explicit && (name || flags.includes("--background"))) return refuse("usage: --level is for unnamed usage only; omit the subscription and --background. Eligibility was not refreshed");
+  // routr's own refresh job: reads what its claim holds and keeps it. No one reads its answer.
+  if (flags.includes("--background")) {
+    if (name) return refuse("usage: --background is routr's own refresh job and takes no subscription");
+    try { await readings.refreshClaimed(token); } catch {}
+    return answer({ ok: true, headline: "routr: background usage refresh done", warnings: [...warnings], next: [], unavailable: [], level });
+  }
   const fresh = name && Object.hasOwn(sources, name) && sources[name]?.check;
   // What the answer keeps and says of a fresh reading is the harness's own (its registry entry), whoever reads it.
   const reader = fresh ? { label: HARNESSES[name].label, ...HARNESSES[name].usage } : null;
@@ -236,7 +254,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
   try {
     let reading = null; const readingStart = spanClock();
     if (fresh) {
-      try { reading = await fresh({ background: flags.includes("--background"), ...(token ? { token } : {}) }); } catch { reading = { ok: false, ...usageFailure("read_failed") }; }
+      try { reading = await readings.readNow(name); } catch { reading = { ok: false, ...usageFailure("read_failed") }; }
       out.ok = reading?.ok === true;
       if (reading?.note && reader.left) { out.warnings.push(reader.left.warning()); out.next.push(doNext(reader.left.next)); }
       if (out.ok) out.reading = Object.fromEntries(reader.fields.filter((k) => Object.hasOwn(reading, k)).map((k) => [k, reading[k]]));
@@ -246,7 +264,7 @@ async function usageCommandBody(words, config, given = {}, { read = readUsage, s
     const subs = Object.fromEntries(names.map((n) => [n, config.subscriptions[n]]));
     const viewConfig = { ...config, subscriptions: subs };
     const readingNames = fresh && !configured.includes(name) ? [name] : names.filter((n) => subs[n].enabled !== false);
-    const rows = reading?.excluded ? [{ pool: name, signedIn: false, note: reading.why }] : await usageSpans((observe) => read(readingNames, given, { sources, background: fresh ? [] : names, observe }), fresh ? { since: readingStart } : {});
+    const rows = rowsOf(reading?.excluded ? [{ pool: name, signedIn: false, note: reading.why }] : await usageSpans((observe) => read(readingNames, given, { mayRefresh: fresh ? [] : names, observe }), fresh ? { since: readingStart } : {}));
     const additionalUnavailable = [];
     if (fresh && !reading?.ok && !reading?.excluded) {
       const kept = rows.find((r) => r.pool === name && r.headroom != null);
