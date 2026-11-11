@@ -7,12 +7,10 @@ import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { HARNESSES, KINDS, privateConfigCopy, SOURCES } from "../src/lib/harnesses.mjs";
 import { claudeSnapshot, codexSnapshot, readAgy } from "../src/lib/usage.mjs";
-import { readCursor, refreshCursor } from "../src/lib/cursor-usage.mjs";
-import { readKiro, refreshKiro } from "../src/lib/kiro-usage.mjs";
+import { memoryStore, usageReadings } from "../src/lib/usage-readings.mjs";
 import { ADAPTERS } from "../src/lib/headless.mjs";
 import { SUBSCRIPTIONS, USAGE_WINDOWS } from "../src/lib/otel-schema.mjs";
 import { OWN_SKILL_FOLDERS } from "../src/lib/help.mjs";
-import { scratch } from "./helpers.mjs";
 
 const str = (v) => typeof v === "string" && v.length > 0;
 const strs = (v) => Array.isArray(v) && v.every(str);
@@ -32,10 +30,10 @@ const strict = (spec, required = []) => (o) => {
 };
 const PLATFORMS = ["aix", "darwin", "freebsd", "linux", "openbsd", "sunos", "win32"];
 const USAGE = strict({ source: plain(str), read: plain(fn), byHand: plain(str), windows: plain((v) => strs(v) && v.length > 0),
-  check: plain(fn), fields: plain(strs), used: plain(fn), checkHelp: plain(str), readHelp: plain(str),
+  check: plain(fn), reading: plain(fn), fields: plain(strs), used: plain(fn), checkHelp: plain(str), readHelp: plain(str),
   // What `routr usage <name>` says when a fresh read leaves something behind: its warning, and the step for it.
   left: strict({ warning: plain(fn), next: plain(str) }, ["warning", "next"]),
-  needsHerdrOn: plain((v) => strs(v) && v.every((p) => PLATFORMS.includes(p))), unexplainedNoWindows: plain(bool) }, ["source", "read", "byHand", "windows"]);
+  needsHerdrOn: plain((v) => strs(v) && v.every((p) => PLATFORMS.includes(p))), unexplainedNoWindows: plain(bool) }, ["source", "byHand", "windows"]);
 const FIELDS = {
   label: [true, plain(str)], executable: [true, plain(str)], app: [true, plain(str)], installAs: [true, plain(str)], shortLabel: [true, plain(str)],
   otelProvider: [true, plain(str)], permissions: [true, plain(strs)], model: [true, plain(str)], models: [true, plain(fn)],
@@ -63,7 +61,9 @@ function problems(h) {
     out.push(...shape(h[field]).map((p) => (p ? `${field}.${p}` : field)));
   }
   out.push(...Object.keys(h).filter((k) => !Object.hasOwn(FIELDS, k)));
-  if (obj(h.usage) && h.usage.check) out.push(...need(h.usage, ["fields", "used", "checkHelp"]).map((k) => `usage.${k}`));
+  // A source is read in the call (`read`) or too slow for it (`check`, and `reading` to keep what it read): one of them.
+  if (obj(h.usage) && h.usage.check) out.push(...need(h.usage, ["reading", "fields", "used", "checkHelp"]).map((k) => `usage.${k}`));
+  if (obj(h.usage) && !h.usage.read === !h.usage.check) out.push("usage.read");
   if (h.autoEffort && !h.autoEffortMeans) out.push("autoEffortMeans");
   if (h.remembersEffort && !h.effort) out.push("effort");
   if (!h.effort && !h.noEffort) out.push("noEffort");
@@ -128,14 +128,15 @@ test("each usage reader names only the windows its harness declares", async () =
   const groups = [{ name: "Gemini", buckets: ["5h", "weekly"].map((window) => ({ window, remaining_fraction: 0.5, reset_time: new Date((now + 600) * 1000).toISOString() })) }];
   const agy = await readAgy({ exec: async () => JSON.stringify({ command: { data: { groups } } }) });
   expect(names(agy)).toEqual(["5h", "weekly"]); declared("agy", names(agy));
-  const dir = scratch("registry-windows");
-  const cursorFile = join(dir, "cursor.json"), kiroFile = join(dir, "kiro.json");
-  await refreshCursor({ file: cursorFile, nowSec: now, read: async () => ({ ok: true, subscription: "cursor", plan: "Pro", included_used_pct: 10, auto_used_pct: null, api_used_pct: null, headroom: 0.9 }) });
-  const cursor = readCursor({ file: cursorFile, nowSec: now, off: true });
-  expect(cursor.windows.length).toBeGreaterThan(0); declared("cursor", names(cursor));
-  await refreshKiro({ file: kiroFile, nowSec: now, read: async () => ({ ok: true, subscription: "kiro", plan: "KIRO FREE", credits_used: 5, credits_limit: 50, used_pct: 10, resets_at: now + 86400, unrecognized_lines: 0, headroom: 0.9 }) });
-  const kiro = readKiro({ file: kiroFile, nowSec: now, off: true });
-  expect(kiro.windows.length).toBeGreaterThan(0); declared("kiro", names(kiro));
+  // A slow source: its raw reading, kept by its own `reading`, and served as every command sees it.
+  const raws = { cursor: { ok: true, subscription: "cursor", plan: "Pro", included_used_pct: 10, auto_used_pct: null, api_used_pct: null, headroom: 0.9 },
+    kiro: { ok: true, subscription: "kiro", plan: "KIRO FREE", credits_used: 5, credits_limit: 50, used_pct: 10, resets_at: now + 86400, unrecognized_lines: 0, headroom: 0.9 } };
+  for (const kind of ["cursor", "kiro"]) {
+    const reading = await HARNESSES[kind].usage.reading(raws[kind], now);
+    const [row] = usageReadings({ configPath: null, store: memoryStore({ entries: { [kind]: { reading } } }), clock: { now: () => now }, signIn: { kept: () => null, why: () => "" } })
+      .kept([kind], { mayRefresh: [] }).served.map((s) => s.row);
+    expect(row.windows.length).toBeGreaterThan(0); declared(kind, names(row));
+  }
 });
 
 test("a private config copy that fails throws its own error, even when its folder cannot be removed after", () => {

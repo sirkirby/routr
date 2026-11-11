@@ -42,7 +42,7 @@
 //     `billing(out, code)`, optional: what that same answer says about billing: `{ billing: "metered", why }` when
 //     it states per-token billing, else null (the usage windows decide, as before). No further call: it is read from
 //     the answer routr already asks for, kept with the sign-in answer (signin.mjs), and it settles a reading that
-//     brought no windows, never one that did, nor the user's own `billing` (readUsage below, pick.mjs). Only Claude
+//     brought no windows, never one that did, nor the user's own `billing` (withBilling below, pick.mjs). Only Claude
 //     has one: Codex's metered seat already shows in its usage shape (usage.mjs), and the other status answers say
 //     nothing about billing (measured 2026-09-26).
 //   quiet: the harness's own arguments that keep the user's lifecycle hooks (and MCP servers) out of routr's own read
@@ -58,23 +58,24 @@
 //   promptFlag: the flag before a first message given as an argument, where it is not a plain
 //     positional (Antigravity's `-i`; measured 2026-11-03 for all five).
 //   noStatus: it reports no status to herdr-core (Cursor 2026.10.22, measured), so only its own `hc send` says it finished.
-//   suggested: the settings setup offers for it. usage: `source` names its reader; `read` runs on every call and must be
-//     fast; `check` takes a fresh reading now and prints it raw (`routr usage <name>`). `byHand`: how a person reads its
+//   suggested: the settings setup offers for it. usage: `source` names its reader. `read` runs on every call and must be
+//     fast (it returns a row, usage.mjs). A source too slow for that has `check` instead: it takes a fresh reading now
+//     and answers it raw (`routr usage <name>`, and the background refresh), and `reading(raw, at)` turns that raw
+//     answer into the reading routr keeps (usage-readings.mjs keeps it and refreshes it in the background). `byHand`: how a person reads its
 //     usage when routr cannot (said with a failed read, and as a next step). `windows`: the names of the windows its
 //     reader produces, the only ones OpenTelemetry export sends. `readHelp`, `checkHelp`: what help says of how it is
 //     read, and of what `check` does. `needsHerdrOn`: the platforms where its reader needs herdr, which doctor asks for.
 //     `unexplainedNoWindows`: its reader can answer with no windows for a reason routr cannot tell (a seat with no quota,
-//     or a plan routr has not seen send them), so doctor asks the person to say how it bills. Cursor's and Kiro's readers bring herdr's terminal and
-//     their snapshot rules with them, so they load when first read: help, --version, and every command that reads no
+//     or a plan routr has not seen send them), so doctor asks the person to say how it bills. Cursor's and Kiro's readers bring herdr's terminal
+//     with them, so they load when first read: help, --version, and every command that reads no
 //     usage stay light. (Literal import paths, so the compiled binary still bundles them.)
 import { warning } from "./warnings.mjs";
 import { chmodSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { home } from "./state-files.mjs";
 import { run } from "./processes.mjs";
-import { billingFromSignIn, keptSignIn, signInHint, signInState } from "./signin.mjs";
-import { cachedReadings, keepReadings } from "./usage-cache.mjs";
-import { NO_WINDOWS_AFTER_ANSWER, readAgy, readClaude, readCodexLive, summarize, failedUsage, usageReadingTime, withUsageReadingTime } from "./usage.mjs";
+import { signInHint, signInState } from "./signin.mjs";
+import { NO_WINDOWS_AFTER_ANSWER, readAgy, readClaude, readCodexLive } from "./usage.mjs";
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // JSON's string escapes are TOML basic-string escapes too, except JSON permits a literal DEL and TOML does not.
 const tomlString = (s) => JSON.stringify(s).replaceAll("\x7f", "\\u007f");
@@ -220,7 +221,7 @@ export const HARNESSES = {
     models: () => lines("cursor-agent", ["models"], /^\s*([a-z0-9][\w.-]+) - /i),
     suggested: { hardest_work: "standard", reserve: 0.1 },
     // `check`: `routr usage cursor` reads it now; `fields` are what that answer's `reading` keeps, `used` its headline.
-    usage: { source: "cursor /usage", read: async (o) => (await import("./cursor-usage.mjs")).readCursor(o), check: async (o) => (await import("./cursor-usage.mjs")).refreshCursor({ ...o, ready: ready("cursor") }),
+    usage: { source: "cursor /usage", check: gated("cursor", async (o) => (await import("./cursor-usage.mjs")).cursorUsage(o)), reading: async (raw, at) => (await import("./cursor-usage.mjs")).cursorReading(raw, at),
       fields: ["plan", "included_used_pct", "auto_used_pct", "api_used_pct", "headroom"], used: (r) => `Included ${r.included_used_pct}% used`, windows: ["included"],
       byHand: 'run `cursor-agent`, type /usage, read "Included N% used", and pass --headroom cursor=<1 - N/100>',
       checkHelp: "takes a fresh reading of Cursor's own /usage screen now, in a private herdr session",
@@ -279,19 +280,21 @@ export const HARNESSES = {
     // `auto` passes no --effort, which Kiro would otherwise remember as the user's default for that model.
     suggested: { hardest_work: "standard", reserve: 0.1, default_model: "auto", default_effort: "auto" },
     // A read that leaves its usage session behind says so in `note`: `left` is the warning and the step for it.
-    usage: { source: "kiro /usage", read: async (o) => (await import("./kiro-usage.mjs")).readKiro(o), check: async (o) => (await import("./kiro-usage.mjs")).refreshKiro({ ...o, ready: ready("kiro") }),
+    usage: { source: "kiro /usage", check: gated("kiro", async (o) => (await import("./kiro-usage.mjs")).kiroUsage(o)), reading: async (raw, at) => (await import("./kiro-usage.mjs")).kiroReading(raw, at),
       fields: ["plan", "credits_used", "credits_limit", "used_pct", "resets_at", "unrecognized_lines", "headroom"], used: (r) => `${r.used_pct}% used`, windows: ["monthly_credits"],
       byHand: 'run `kiro-cli chat --no-interactive /usage`, read "Credits (X of Y covered in plan)", and pass --headroom kiro=<1 - X/Y>',
       checkHelp: "runs Kiro's /usage now and deletes the empty session it leaves",
       left: { warning: () => warning("kiro_session_left", "Kiro kept an empty usage session"), next: "Inspect Kiro's saved sessions to remove the empty usage session" } } },
 };
 export const KINDS = Object.keys(HARNESSES);
-// Is this harness signed in: "yes", "no", or "no answer"? Kept in the cache between calls (signin.mjs); `fresh` checks
-// again now. `notReady` says why a harness gets no work, or null when it is signed in.
+// Is this harness signed in: `{ state, billing }`, the state "yes", "no", or "no answer", and what the same answer said
+// about billing. Kept in the cache between calls (signin.mjs); `fresh` checks again now. `notReady` says why a harness
+// gets no work, or null when it is signed in.
 export const signIn = (name, o) => signInState(name, HARNESSES[name], o);
-export const notReady = async (name, o) => { const state = await signIn(name, o); return state === "yes" ? null : signInHint(HARNESSES[name], state); };
-// A refresh's gate: a harness's own reading must never start its sign-in.
-const ready = (name) => () => notReady(name);
+export const notReady = async (name, o) => { const { state } = await signIn(name, o); return state === "yes" ? null : signInHint(HARNESSES[name], state); };
+// A slow source's `check` (a person's read now, or the background refresh): a harness's own reading must never start
+// its sign-in, so one that is not signed in is not read, and says why. (A function declaration: the entries above use it.)
+function gated(name, read) { return async (o) => { const why = await notReady(name); return why ? { ok: false, excluded: true, why } : read(o); }; }
 const KIND_ERROR = `--kind must be ${KINDS.slice(0, -1).join(", ")}, or ${KINDS.at(-1)}`;
 export const kindError = () => new Error(KIND_ERROR);
 // The harnesses that take a reasoning effort of their own; Cursor and Antigravity model ids carry it.
@@ -355,71 +358,6 @@ export const terminalPlan = (o, firstMessage) => {
 // Each harness's usage reader, by name, so doctor, dispatch, and `routr usage` read the same way.
 export const SOURCES = Object.fromEntries(KINDS.map((n) => [n, HARNESSES[n].usage]));
 
-// One unreadable source must not take the others (or the routing advice) down with it. Readers run in parallel.
-// `given` holds headroom the caller read itself (0..1); it wins over any reading.
-// `background` names the subscriptions whose reader may start a background refresh (default: all asked for).
-// `why(name)`: null when it is signed in, or why not. One that is not is never read (its reading could open a sign-in),
-// and dispatch leaves it out (pick.mjs). `billing(name, { fresh })`: `{ billing, not }`, what its sign-in answer said
-// about billing (signin.mjs, kept beside `why`'s answer) or null, and, when it was asked again, why it is not signed
-// in now (null when it is).
-export async function readUsage(names, given = {}, { sources = SOURCES, background = names, why = (n) => (HARNESSES[n] ? notReady(n) : null), billing = billingFor, observe = (read) => read(), keep = keepReadings } = {}) {
-  // What its sources read, before billing settles it, is kept for the reads that must not wait (cachedUsage, below):
-  // they settle billing again from the kept sign-in answer, as this does.
-  const read = [], rows = await readEach(names, given, { sources, background, why, billing, observe, read });
-  keep(read);
-  return rows;
-}
-const signedOut = (name, note) => ({ ...summarize({ pool: name, source: "sign-in check", note }), signedIn: false });
-function readEach(names, given, { sources, background, why, billing, observe, read = [] }) {
-  return Promise.all(names.map((name) => observe(async () => {
-    const src = sources[name], source = src?.source ?? name;
-    try {
-      // Signed in first: a number the caller read cannot put work on a harness that cannot take it (launch refuses it).
-      const not = await why(name);
-      if (not) return signedOut(name, not);
-      if (typeof given[name] === "number") return { pool: name, source: "given by caller", given: true, ageSec: 0, windows: [], headroom: Math.min(1, Math.max(0, given[name])) };
-      let u;
-      if (!src?.read) u = failedUsage(name, source, "source_missing");
-      else try { u = await src.read({ background: background.includes(name) }); } catch { u = failedUsage(name, source); }
-      read.push(u);
-      // The billing reading settles only a reading without windows, and then it must be today's: a sign-in kept for 6
-      // hours can predate a switch between a subscription and an API key (a switch an hour in still ranked the
-      // old way). So in exactly that case the status check runs again now. With windows there is no call. That
-      // check is a sign-in check too: unless it answers signed in, this call leaves the harness out, as any
-      // signed-out one (a fresh "loggedIn": false still left it a candidate with unknown room).
-      const b = await billing(name, { fresh: u?.headroom == null });
-      if (b?.not) return signedOut(name, b.not);
-      return withBilling(name, u, b?.billing);
-    } catch { return failedUsage(name, source); }
-  })));
-}
-
-// Usage that must not wait: each subscription's last kept reading (usage-cache.mjs), aged to now, with no harness
-// called, no status check run. A harness whose kept sign-in answer says it is not signed in is out, as in readUsage;
-// one with no kept reading is unknown (`not_read_yet`) while a detached `routr usage` (with `configPath`, the caller's
-// `--config`) reads it. Billing is settled from the kept sign-in answer, as readUsage settles it from the same answer
-// (without asking again: nothing here waits). `refreshing` says a read was started.
-export function cachedUsage(names, { cache = cachedReadings, signIn = keptSignIn, configPath } = {}) {
-  const { rows, refreshing } = cache(names, { configPath });
-  return { refreshing, rows: names.map((name) => {
-    const { state, billing } = signIn(name) ?? {};
-    if (HARNESSES[name] && state && state !== "yes") return signedOut(name, signInHint(HARNESSES[name], state));
-    return withBilling(name, rows.find((r) => r.pool === name) ?? failedUsage(name, SOURCES[name]?.source ?? name, "not_read_yet"), billing);
-  }) };
-}
-
-// What the harness's sign-in status says about billing: the kept answer, or with `fresh` its status check run again
-// now, bypassing the cache and updating it (signin.mjs, the same probe and timeout). Only a harness with an
-// `auth.billing` reader is asked again; when that answer is not "signed in", `not` says why (signInHint) and there is
-// no billing reading. `harness` and the rest are signin.mjs's seams, for tests.
-export async function billingFor(name, { fresh = false, harness = HARNESSES[name], ...o } = {}) {
-  if (fresh && harness?.auth?.billing) {
-    const state = await signInState(name, harness, { ...o, fresh: true });
-    if (state !== "yes") return { billing: null, not: signInHint(harness, state) };
-  }
-  return { billing: billingFromSignIn(name), not: null };
-}
-
 // A reading, settled by what the harness's own status said about billing (`auth.billing`). With no windows it is that
 // class, the status command its source, and the reason its note: an API-key Claude is `metered` instead of "no
 // windows, set billing yourself" (measured 2026-10-07: its /usage cannot tell). Windows that did arrive are kept, and
@@ -430,7 +368,7 @@ export function withBilling(name, u, b) {
   // read that failed, as they are: a failed read can carry the reason from an old snapshot, and is still a failure.
   if (b.when === "no_windows" && (u.reason !== NO_WINDOWS_AFTER_ANSWER || u.failure)) return u;
   const from = HARNESSES[name] ? `${HARNESSES[name].executable} ${HARNESSES[name].auth.check.join(" ")}` : "sign-in check";
-  if (u.headroom != null) return withUsageReadingTime({ ...u, note: [u.note, `\`${from}\` says ${b.why}, yet usage windows arrived: ranked on the windows`].filter(Boolean).join("; ") }, usageReadingTime(u));
+  if (u.headroom != null) return { ...u, note: [u.note, `\`${from}\` says ${b.why}, yet usage windows arrived: ranked on the windows`].filter(Boolean).join("; ") };
   const rest = { ...u };
   delete rest.reason; // the "no windows" reason asks the user to set billing, which is now known
   return { ...rest, source: from, class: "metered", billing: { billing: "metered", why: b.why, source: from }, note: `metered: ${b.why}` };

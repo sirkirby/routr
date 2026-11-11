@@ -1,7 +1,7 @@
 // `routr board`: what only routr knows, for a folder's project, in one answer `routr top` draws for a person (and any
 // agent can read). The room each account has (as `usage` ranks it, from kept readings: no harness is called), each
 // launch's decision (the launch history) joined to how it turned out (the ledger), and a 7-day count. Reads only:
-// it changes nothing of the user's and writes nothing but the usage cache's refresh mark (usage-cache.mjs). Fails open:
+// it changes nothing of the user's and writes nothing but a usage refresh's mark (usage-readings.mjs). Fails open:
 // a part it cannot read is said in `unavailable` and its numbers are null, never zero. Every field is projected here,
 // field by field: a ledger note (the recorder's text) never reaches its output.
 import { statSync } from "node:fs";
@@ -9,7 +9,7 @@ import { resolve } from "node:path";
 import { answer, refusal } from "./output.mjs";
 import { firstTime, LEDGER_PATH, latestRuns, projectAdvised, projectChose, projectName, read } from "./ledger.mjs";
 import { HISTORY_DAYS, readHistory } from "./launch-history.mjs";
-import { cachedUsage } from "./harnesses.mjs";
+import { usageReadings } from "./usage-readings.mjs";
 import { recentLaunches } from "./shares.mjs";
 import { capacityFailure, capacityView } from "./capacity.mjs";
 
@@ -82,20 +82,25 @@ function outcomesOf(launches, rows, now, inScope) {
   };
 }
 
-// `usage` is cachedUsage's seam; `ledger`, `history` and `now` are tests'. `configPath`, the `--config` given, goes to
-// the background refresh, so it reads the subscriptions this config names.
-export async function boardCommand(words, config, { usage = cachedUsage, ledger = LEDGER_PATH(), history = readHistory, now = Date.now(), warnings = [], configPath } = {}) {
+// What is kept for `names` (usage-readings.mjs), as rows: no harness is called. `configPath`, the `--config` given, goes
+// to the background refresh, so it reads the subscriptions this config names.
+const keptUsage = (names, { configPath }) => {
+  const { served, refreshing } = usageReadings({ configPath }).kept(names);
+  return { rows: served.map((s) => s.row), refreshing };
+};
+// `usage` is keptUsage's seam; `ledger`, `history` and `now` are tests'.
+export async function boardCommand(words, config, { usage = keptUsage, ledger = LEDGER_PATH(), history = readHistory, now = Date.now(), warnings = [], configPath } = {}) {
   let o;
   try { o = parse(words); } catch (e) { return refusal("no board", e.message, warnings); }
   const project = o.cwd ? projectName(o.cwd) : null, inScope = (x) => project == null || x.project === project;
   // `level`: the work the room is ranked for, as in usage: plain work, so no account is left out for its hardest_work.
   const out = { ok: true, headline: "", unavailable: [], warnings: [...warnings], next: [], project, level: "basic" };
   // Room: every configured account that is on, as `usage` ranks it for plain work, from kept readings.
-  // Kept readings keep no failed read (usage-cache), so no reader reads as stopped here: `stale` is usage's to say.
+  // Kept readings keep no failed read (usage-readings), so no reader reads as stopped here: `stale` is usage's to say.
   // When ranking fails, board says so in `unavailable` and leaves `next` alone.
   try {
     const names = Object.keys(config.subscriptions ?? {}).filter((n) => config.subscriptions[n]?.enabled !== false);
-    const { rows } = usage(names, { configPath: configPath ? resolve(configPath) : undefined });
+    const { rows } = usage(names, { configPath: configPath ? resolve(configPath) : null });
     const capacity = capacityView(out.level, rows, config, recentLaunches());
     out.subscriptions = capacity.subscriptions;
     out.unavailable.push(...capacity.unavailable);

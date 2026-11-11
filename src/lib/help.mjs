@@ -256,7 +256,7 @@ export const COMMANDS = {
   board: {
     name: "board",
     contract: { fields: ["project", "level", "subscriptions", "decisions", "outcomes"] },
-    description: "what only routr knows, for a folder's project: each account's room as usage ranks it (from routr's kept readings: no harness is called, and a detached usage read is started when they are over 10 minutes old), each launch's decision joined to its recorded outcome, and the last 7 days' counts. Never the ledger's notes; changes nothing of yours. `routr top` draws it for a person",
+    description: "what only routr knows, for a folder's project: each account's room as usage ranks it (from routr's kept readings: no harness is called, and a detached usage read is started for those that are due: over 10 minutes old, 4 hours for Cursor and Kiro), each launch's decision joined to its recorded outcome, and the last 7 days' counts. Never the ledger's notes; changes nothing of yours. `routr top` draws it for a person",
     flags: [
       { name: "--cwd", arg: "<folder>", description: "the project to show, by the git repository that folder is in (a worktree counts as its repository); omitted, every project on this machine", required: false },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },

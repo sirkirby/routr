@@ -1,104 +1,36 @@
-// `routr board` and the usage cache under it: readings kept by live reads and served aged without a harness call, the
-// join of launches to recorded runs, scope by a folder's project, counts by the ledger's rules, and what fails open.
+// `routr board`: the room each account has from what routr keeps, served without a harness call, the join of launches
+// to recorded runs, scope by a folder's project, counts by the ledger's rules, and what fails open.
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { cachedReadings, keepReadings, STALE_SEC } from "../src/lib/usage-cache.mjs";
-import { cachedUsage, readUsage } from "../src/lib/harnesses.mjs";
-import { codexSnapshot, summarize, failedUsage } from "../src/lib/usage.mjs";
-import { releaseFileLock, takeLock } from "../src/lib/state-files.mjs";
+import { fileStore } from "../src/lib/usage-readings.mjs";
+import { summarize } from "../src/lib/usage.mjs";
+import { CACHE_DIR } from "../src/lib/state-files.mjs";
 import { cliEnv, SCRIPT } from "./helpers.mjs";
 import { boardCommand, DECISIONS_MAX, joinDecisions } from "../src/lib/board.mjs";
 import { projectName } from "../src/lib/ledger.mjs";
 import { cfg, scratch } from "./helpers.mjs";
 
 const NOW = 1_800_000_000; // seconds
-// The test setup turns background refreshes off (ROUTR_NO_REFRESH); the cache's own tests turn them on for a moment.
-const withRefresh = (fn) => { const was = process.env.ROUTR_NO_REFRESH; delete process.env.ROUTR_NO_REFRESH; try { return fn(); } finally { process.env.ROUTR_NO_REFRESH = was; } };
 
-test("a live read keeps each good reading as it was read; a given number, a failure or a signed-out harness keeps nothing", () => withRefresh(() => {
-  const file = join(scratch("cache"), "usage-readings.json");
-  const good = summarize({ pool: "claude", source: "claude /usage", ts: NOW - 60, windows: [{ name: "five_hour", usedPct: 40, windowMin: 300, resetsAt: NOW + 3600 }], nowSec: NOW });
-  keepReadings([good, { pool: "codex", given: true, headroom: 0.5 }, failedUsage("agy", "agy /usage"), { ...summarize({ pool: "kiro", source: "x" }), signedIn: false }], { file });
-  const kept = JSON.parse(readFileSync(file, "utf8")).readings;
-  expect(Object.keys(kept)).toEqual(["claude"]);
-  expect(kept.claude).toMatchObject({ pool: "claude", source: "claude /usage", ts: NOW - 60, windows: [{ name: "five_hour", usedPct: 40, windowMin: 300, resetsAt: NOW + 3600 }] });
-  // A later failed read keeps the last good one, and an older reading (a refresh that ran long) does not replace it.
-  keepReadings([failedUsage("claude", "claude /usage")], { file });
-  keepReadings([summarize({ pool: "claude", source: "claude /usage", ts: NOW - 120, windows: [{ name: "five_hour", usedPct: 99 }], nowSec: NOW })], { file });
-  expect(JSON.parse(readFileSync(file, "utf8")).readings.claude).toMatchObject({ ts: NOW - 60, windows: [{ usedPct: 40 }] });
-}));
-
-const cacheFiles = (name) => { const d = scratch(name); return { file: join(d, "usage-readings.json"), mark: join(d, "usage-refresh.json") }; };
-
-test("a cached read serves kept readings aged to now, a window reset since rolled, and starts at most one detached read when they are stale", () => withRefresh(() => {
-  const { file, mark } = cacheFiles("cache-read");
-  keepReadings([summarize({ pool: "claude", source: "claude /usage", ts: NOW - 60, windows: [{ name: "five_hour", usedPct: 90, windowMin: 300, resetsAt: NOW + 600 }], nowSec: NOW })], { file });
-  let started = 0; const refresh = () => ++started;
-  // Fresh, nothing missing: no refresh.
-  const fresh = cachedReadings(["claude"], { file, mark, now: NOW, refresh });
-  expect([fresh.rows[0].ageSec, fresh.rows[0].headroom, fresh.missing, started]).toEqual([60, expect.closeTo(0.1, 5), [], 0]);
-  // An hour later the window has reset: room is back, the age says how old the reading is, and one refresh starts.
-  const later = cachedReadings(["claude", "codex"], { file, mark, now: NOW + 3600, refresh });
-  expect([later.rows[0].ageSec, later.rows[0].headroom, later.missing, later.refreshing, started]).toEqual([3660, 1, ["codex"], true, 1]);
-  // Within STALE_SEC of that try, no second one; the mark is its own file, and the readings are untouched by it.
-  cachedReadings(["claude", "codex"], { file, mark, now: NOW + 3600 + STALE_SEC - 1, refresh });
-  expect([started, JSON.parse(readFileSync(mark, "utf8")).tried, Object.keys(JSON.parse(readFileSync(file, "utf8")))]).toEqual([1, NOW + 3600, ["readings"]]);
-}));
-
-test("callers at the same moment start one refresh between them: the mark is checked and set under a lock", () => withRefresh(() => {
-  const { file, mark } = cacheFiles("cache-lock"), lock = `${mark}.lock`;
-  let started = 0; const refresh = () => ++started;
-  // A caller holding the lock (alive, just taken): this one starts nothing and marks nothing.
-  expect(takeLock(lock, () => false)).toBe(true);
-  expect([cachedReadings(["codex"], { file, mark, lock, now: NOW, refresh }).refreshing, started, existsSync(mark)]).toEqual([false, 0, false]);
-  releaseFileLock(lock);
-  // Once it is free, one starts, and the lock is released after the mark.
-  expect([cachedReadings(["codex"], { file, mark, lock, now: NOW, refresh }).refreshing, started, existsSync(lock)]).toEqual([true, 1, false]);
-  // The refresh is the caller's config: it reads the subscriptions that config names.
-  const argv = [];
-  cachedReadings(["codex"], { ...cacheFiles("cache-config"), now: NOW, configPath: "/x/routr.json", spawn: (a) => argv.push(a) });
-  cachedReadings(["codex"], { ...cacheFiles("cache-default"), now: NOW, spawn: (a) => argv.push(a) });
-  expect(argv).toEqual([["usage", "--config", "/x/routr.json"], ["usage"]]);
-}));
-
-test("a kept reading obeys its source's own limit: a resetless Codex stop for 5 minutes, a Cursor or Kiro snapshot for a day", () => withRefresh(() => {
-  const { file, mark } = cacheFiles("cache-trust");
-  const stop = codexSnapshot({ spendControlReached: true, primary: { usedPercent: 10, windowDurationMins: 300 } }, "app-server", NOW, NOW);
-  const snap = summarize({ pool: "cursor", source: "cursor /usage", ts: NOW, windows: [{ name: "included", usedPct: 20 }], until: NOW + 86400, nowSec: NOW });
-  expect([stop.headroom, snap.headroom]).toEqual([0, 0.8]);
-  keepReadings([stop, snap], { file });
-  const at = (now) => cachedReadings(["codex", "cursor"], { file, mark, now, refresh: () => true }).rows.map((r) => [r.pool, r.headroom, r.class]);
-  expect(at(NOW + 299)).toEqual([["codex", 0, "metered"], ["cursor", 0.8, "included"]]);
-  expect(at(NOW + 301)).toEqual([["codex", null, "unknown"], ["cursor", 0.8, "included"]]);
-  expect(at(NOW + 86401)).toEqual([["codex", null, "unknown"], ["cursor", null, "unknown"]]);
-  // Nor before it was read: a clock set back, as the live snapshot reader refuses a reading from the future.
-  expect(at(NOW - 60)).toEqual([["codex", null, "unknown"], ["cursor", null, "unknown"]]);
-}));
-
-test("a new machine, with no cache folder yet, starts its first refresh", () => withRefresh(() => {
-  const d = join(scratch("cache-cold"), "not", "made"); let started = 0;
-  const r = cachedReadings(["claude"], { file: join(d, "usage-readings.json"), mark: join(d, "usage-refresh.json"), now: NOW, refresh: () => ++started });
-  expect([r.refreshing, started, existsSync(join(d, "usage-refresh.json"))]).toEqual([true, 1, true]);
-}));
-
-test("cachedUsage calls no harness: a kept 'not signed in' answer leaves one out, a missing reading is not_read_yet, kept billing settles the class", () => {
-  const rows = cachedUsage(["claude", "codex", "agy"], {
-    cache: () => ({ rows: [summarize({ pool: "claude", source: "claude /usage", ts: NOW, windows: [{ name: "five_hour", usedPct: 10 }], nowSec: NOW })], refreshing: false }),
-    signIn: (n) => (n === "codex" ? { state: "no", billing: null } : null) }).rows;
-  expect(rows.map((r) => [r.pool, r.signedIn ?? true, r.failure?.code ?? null])).toEqual([["claude", true, null], ["codex", false, null], ["agy", true, "not_read_yet"]]);
-  // An API-key Claude, kept as signed in and metered, with no reading yet: metered, as a live read with no windows says.
-  const [claude] = cachedUsage(["claude"], { cache: () => ({ rows: [], refreshing: false }), signIn: () => ({ state: "yes", billing: { billing: "metered", why: "an API key is billed per token" } }) }).rows;
-  expect([claude.class, claude.billing?.billing]).toEqual(["metered", "metered"]);
+// Board's own wiring: what routr keeps (usage-readings.mjs, whose tests cover keeping, claiming and serving), as rows.
+test("board ranks what routr keeps, with no harness called: a kept 'not signed in' answer leaves one out, a missing reading is not_read_yet", async () => {
+  const was = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = process.env.USERPROFILE = scratch("board-home"); // its own sign-in answers, read by no other test
+  try { await boardKept(); } finally { for (const [k, v] of Object.entries(was)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
 });
-
-test("readUsage keeps what its sources read, before billing settles it", async () => {
-  let kept = null;
-  const sources = { claude: { source: "claude /usage", read: async () => summarize({ pool: "claude", source: "claude /usage", ts: NOW, nowSec: NOW }) } };
-  const rows = await readUsage(["claude"], {}, { sources, why: async () => null, billing: async () => ({ billing: { billing: "metered", why: "an API key" } }), keep: (r) => { kept = r; } });
-  expect([rows[0].class, kept.map((r) => [r.pool, r.class, r.source])]).toEqual(["metered", [["claude", "unknown", "claude /usage"]]]);
-});
+async function boardKept() {
+  const store = fileStore(), now = Date.now() / 1000;
+  store.put("claude", { source: "claude /usage", takenAt: now - 60, windows: [{ name: "seven_day", usedPct: 40, windowMin: 10080, resetsAt: now + 86400 }] }, undefined);
+  mkdirSync(CACHE_DIR(), { recursive: true });
+  writeFileSync(join(CACHE_DIR(), "signed-in.json"), JSON.stringify({ codex: { ts: now, state: "no" } }));
+  const config = cfg({ subscriptions: { claude: { reserve: 0, hardest_work: "strong" }, codex: { reserve: 0, hardest_work: "strong" }, agy: { reserve: 0, hardest_work: "strong" } } });
+  const b = await boardCommand([], config, { ledger: join(scratch("board-kept"), "none.jsonl"), history: () => ({ records: [] }) });
+  expect(b.subscriptions.ranked.map((r) => [r.subscription, r.usage, r.age_sec >= 60])).toEqual([["claude", "live", true], ["agy", "unknown", false]]);
+  expect(b.subscriptions.excluded).toEqual([{ subscription: "codex", why: expect.stringContaining("not signed in") }]);
+  expect(b.unavailable.map((u) => [u.subscription, u.code])).toEqual([["agy", "not_read_yet"]]);
+}
 
 // ---- the join ---------------------------------------------------------------------------------------------------------
 const launch = (over) => ({ launch_id: randomUUID(), at: Date.parse("2026-11-04T10:00:00Z"), subscription: "codex", model: "m", effort: "high", id: "ab12cd34",

@@ -5,8 +5,9 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { inCore } from "./backends.mjs";
 import { delimiter, join, win32 } from "node:path";
 import { CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
-import { HARNESSES, KINDS, readUsage, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
-import { billingFromSignIn, signInHint } from "./signin.mjs";
+import { HARNESSES, KINDS, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
+import { signInHint } from "./signin.mjs";
+import { usageReadings } from "./usage-readings.mjs";
 import { failureMessage, ping, secretsFor } from "./systemone.mjs";
 import { DecisionError, decisionTargets, DEFAULT_PROVIDER, ollamaHost, PROVIDERS, SECRETS_FILE } from "./providers.mjs";
 import { NO_WINDOWS_AFTER_ANSWER } from "./usage.mjs";
@@ -92,7 +93,7 @@ export function nextSteps(r, { platform = process.platform } = {}) {
   // A harness whose reader answered with no windows for a reason routr cannot tell (its `usage.unexplainedNoWindows`:
   // Claude's /usage, or its statusline after a prompt): a seat with no quota, or a plan routr has not seen send them.
   // routr does not guess which; the user says, either way, and the step clears. Nor is there anything to ask when its
-  // sign-in status already said how it bills (an API key login: `usage_billing`, readUsage).
+  // sign-in status already said how it bills (an API key login: `usage_billing`, usage-readings.mjs).
   for (const n of KINDS.filter((k) => HARNESSES[k].usage.unexplainedNoWindows)) {
     const h = r.harnesses[n];
     if (h?.installed && h.usage_reason === NO_WINDOWS_AFTER_ANSWER && !h.usage_billing && !r.config.billing?.[n])
@@ -147,14 +148,17 @@ export async function inspect({ configPath, quiet } = {}) {
   };
   // Installed is not enough: each harness is asked whether it is signed in, afresh, before anything else is asked of it.
   // One that is not gets no model list and no usage read, since either could open its sign-in in the browser.
-  const statesP = Promise.all(found.map((n) => step(`${n}'s sign-in`, signIn(n, { fresh: true })))).then((s) => Object.fromEntries(found.map((n, i) => [n, s[i]])));
-  const whyNot = (states) => (n) => (states[n] === "yes" ? null : signInHint(HARNESSES[n], states[n]));
+  // Each answer is `{ state, billing }`: its billing is today's, read from the same answer.
+  const answersP = Promise.all(found.map((n) => step(`${n}'s sign-in`, signIn(n, { fresh: true })))).then((s) => Object.fromEntries(found.map((n, i) => [n, s[i]])));
+  const statesP = answersP.then((a) => Object.fromEntries(found.map((n) => [n, a[n].state])));
   // No release lookup here: doctor is an advice command, and a command never makes the updater's network call. Whether a
   // newer release is waiting comes from what the daily job saw (autoUpdateStatus, below); `routr update --check` asks.
   const [usage, , states, ...models] = await Promise.all([
-    // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading).
-    // Its sign-in answers were just asked afresh, so their billing readings are today's: no second status check.
-    step("usage", statesP.then((st) => readUsage(found, {}, { background: enabledSubscriptions(config), why: whyNot(st), billing: (n) => ({ billing: billingFromSignIn(n), not: null }) }))), // a turned-off one is never refreshed
+    // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading),
+    // with this doctor's --config. Its sign-in answers were just asked afresh, so their billing is today's: no second
+    // status check.
+    step("usage", answersP.then((signIns) => usageReadings({ configPath: configPath ?? null }).live(found, { signIns, mayRefresh: enabledSubscriptions(config) }))
+      .then((served) => served.map((x) => x.row))), // a turned-off one is never refreshed
     step("the decision models", keyCheck()),
     statesP,
     ...found.map((n) => statesP.then((st) => (st[n] !== "yes" ? null : step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))))),

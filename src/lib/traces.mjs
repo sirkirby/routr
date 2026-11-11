@@ -14,7 +14,7 @@ import { HARNESSES, SOURCES } from "./harnesses.mjs";
 import { CHECKS, FACTS, LEVELS, questions } from "./questions.mjs";
 import { DECISION_CODES, decisionTarget, PROVIDER_NAMES, KNOWN_MODELS } from "./providers.mjs";
 import { OUTCOME_CAUSES } from "./ledger.mjs";
-import { usageReadingTime } from "./usage.mjs";
+import { servedRow } from "./usage.mjs";
 import { usageFailure, USAGE_FAILURES } from "./usage-failure.mjs";
 import { traceIdentity, pathHash } from "./trace-identity.mjs";
 import { LaunchIndex, launchContext } from "./launch-index.mjs";
@@ -141,21 +141,24 @@ export async function decisionSpan(config, run) {
   finally { try { span.endTimeUnixNano = spanNow(span); c.spans.push(span); } catch {} }
 }
 const usageState = (row) => row.signedIn === false ? "excluded" : row.kept ? "kept" : row.given ? "given" : row.ageSec != null ? "live" : "unknown";
-function usageObservations(row, observations) {
+// Each observation is stamped with its source's time (Served: when the reading was taken, or a window's reset since),
+// never with now: a kept reading is not a new one.
+function usageObservations({ row, takenAt, windowSince }, observations) {
   if (!subscriptions.includes(row?.pool) || usageState(row) !== "live" || !Number.isFinite(row.headroom)) return;
   // Metrics have their own consent, independent of trace sampling.
   for (const w of row.windows ?? []) {
     if (!Number.isFinite(w.usedPct)) continue;
-    const observation = headroomObservation({ subscription: row.pool, window: w.name, value: Math.min(1, Math.max(0, 1 - w.usedPct / 100)), time: usageReadingTime(row, w) });
+    const observation = headroomObservation({ subscription: row.pool, window: w.name, value: Math.min(1, Math.max(0, 1 - w.usedPct / 100)), time: windowSince?.[w.name] ?? takenAt });
     if (observation) observations.push(observation);
   }
 }
-function usageRow(row, startTimeUnixNano, endTimeUnixNano) {
+// `x`: one Served (usage-readings.mjs), or a reader's row (a test's bulk reader).
+function usageRow(x, startTimeUnixNano, endTimeUnixNano) {
   try {
-    const c = context.getStore(); if (!c || !subscriptions.includes(row?.pool)) return;
-    c.observed.add(row);
+    const c = context.getStore(), served = servedRow(x), row = served.row; if (!c || !subscriptions.includes(row?.pool)) return;
+    c.observed.add(x);
     const state = usageState(row);
-    usageObservations(row, c.observations);
+    usageObservations(served, c.observations);
     if (!c.span) return;
     const span = { name: `routr usage ${row.pool}`, kind: 1, traceId: c.span.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: c.span.spanId, flags: 1, startTimeUnixNano, endTimeUnixNano, attributes: { ...c.identity.attributes } };
     put(span, { "routr.subscription": row.pool, "routr.usage.state": state,

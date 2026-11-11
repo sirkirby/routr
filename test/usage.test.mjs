@@ -1,4 +1,4 @@
-// usage readers: Claude's statusline, Codex, Cursor's screen, Kiro's /usage, the background snapshots, and `routr usage`
+// usage readers: Claude's statusline, Codex, Cursor's screen, Kiro's /usage, billing from the sign-in answer, and `routr usage`
 import { expect, test } from "bun:test";
 import { basename, dirname, join } from "node:path";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
@@ -6,16 +6,25 @@ import { usageFailure } from "../src/lib/usage-failure.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
 import { tmpdir } from "node:os";
 import { claudeProjectFolders, claudeSnapshot, codexSnapshot, monthMinutes, NO_WINDOWS_AFTER_ANSWER, parseClaudeReset, parseClaudeUsage, readClaude, readCodex, summarize } from "../src/lib/usage.mjs";
-import { KIRO_BY_HAND, kiroUsage, parseKiroUsage, readKiro, refreshKiro } from "../src/lib/kiro-usage.mjs";
-import { HARNESSES, readUsage } from "../src/lib/harnesses.mjs";
+import { KIRO_BY_HAND, kiroReading, kiroUsage, parseKiroUsage } from "../src/lib/kiro-usage.mjs";
+import { HARNESSES } from "../src/lib/harnesses.mjs";
+import { memoryStore, usageReadings } from "../src/lib/usage-readings.mjs";
+import { signInHint } from "../src/lib/signin.mjs";
 import { olderThan, takeLock } from "../src/lib/state-files.mjs";
 import { usageCommand } from "./contract.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
-import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage, readCursor, refreshCursor } from "../src/lib/cursor-usage.mjs";
+import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage } from "../src/lib/cursor-usage.mjs";
 import { ownTerminal } from "../src/lib/terminal.mjs";
 import { cfg, cliEnv, fakeExecutable, herdrError, herdrOK, live, metered, none, NOW, scratch, SCRIPT, shellInfo, win } from "./helpers.mjs";
 // Recorded 2026-09-22 from `codex app-server` (`account/rateLimits/read`, CLI 0.155.1), identifiers removed: a ChatGPT
 // Enterprise seat on flexible pricing, and a Pro login. Member-limit replies were recorded on 2026-11-03 (0.166.0).
+// The usage-readings module over fake `readers` (by harness), every harness signed in unless `signIn` says otherwise.
+const signedInPort = { state: async () => ({ state: "yes", billing: null }), kept: () => null, why: (k, s) => `${k} is ${s}` };
+const readingsOf = (readers, signIn = signedInPort) => usageReadings({ configPath: null, store: memoryStore(), readers, signIn });
+const inline = (read, extra = {}) => ({ source: "claude /usage", speed: "inline", read, ...extra });
+const liveRows = async (readers, names, opts = {}, signIn) => (await readingsOf(readers, signIn).live(names, opts)).map((s) => s.row);
+// Billing from a sign-in answer just asked afresh (as doctor passes it): no second check.
+const answered = (billing, name = "claude") => ({ signIns: { [name]: { state: "yes", billing } } });
 const ENTERPRISE_SEAT = { limitId: "codex", limitName: null, normalModelSlug: null, primary: null, secondary: null, credits: { hasCredits: true, unlimited: true, balance: null }, individualLimit: null, spendControlReached: false, planType: "business", rateLimitReachedType: null };
 
 const PRO_LOGIN = { ...ENTERPRISE_SEAT, primary: { usedPercent: 60, windowDurationMins: 10080, resetsAt: NOW / 1000 + 3 * 86400 }, credits: { hasCredits: false, unlimited: false, balance: "0" }, planType: "pro" };
@@ -256,9 +265,9 @@ test("Claude's live read fails open: the old snapshot however old, else the unkn
 
 test("no model name from Claude's /usage reaches routr usage's output", async () => {
   const dir = scratch("claude-names");
-  const sources = { claude: { read: () => readClaude({ file: join(dir, "none.json"), exec: async () => claudeAnswer(CLAUDE_USAGE) }) } };
+  const readings = readingsOf({ claude: inline(() => readClaude({ file: join(dir, "none.json"), exec: async () => claudeAnswer(CLAUDE_USAGE) })) });
   const c = cfg({ subscriptions: { claude: cfg().subscriptions.claude } });
-  const out = await usageCommand([], c, {}, { read: (names, given, o) => readUsage(names, given, { ...o, why: async () => null }), sources });
+  const out = await usageCommand([], c, {}, { readings });
   expect(out.ok).toBe(true); expect(out.subscriptions.ranked[0]).toMatchObject({ subscription: "claude", usage: "live" });
   expect(JSON.stringify(out)).toContain("model-specific weekly limit");
   expect(JSON.stringify(out)).not.toContain("Fable");
@@ -500,7 +509,7 @@ test("usage cursor with no Cursor to ask says so, starts nothing, prints JSON an
   expect(res.exitCode).toBe(0);
   const out = JSON.parse(res.stdout.toString());
   expect(out).toMatchObject({ ok: false, subscriptions: { excluded: [{ subscription: "cursor", why: expect.stringContaining("`cursor-agent` did not answer its sign-in check (not installed, or it hung)") }] } });
-  expect(JSON.parse(readFileSync(join(home, ".cache/routr/cursor-usage.json"), "utf8"))).toMatchObject({ excluded: true });
+  expect(JSON.parse(readFileSync(join(home, ".cache/routr/usage/cursor.json"), "utf8"))).toMatchObject({ reading: null, attempt: { outcome: "excluded" } });
   expect(JSON.parse(readFileSync(join(home, ".cache/routr/signed-in.json"), "utf8")).cursor.state).toBe("no answer");
 });
 
@@ -527,151 +536,14 @@ test("kiroUsage runs /usage outside the user's project and deletes the session i
   expect(await kiroUsage({ exec: exec(0, stream.replace("covered in plan", "left")) })).toMatchObject({ ok: false, read_yourself: KIRO_BY_HAND });
 });
 
-test("Kiro is a snapshot like Cursor's, a monthly window that tapers the reserve toward its reset", async () => {
-  const dir = scratch("kiro"), file = join(dir, "kiro-usage.json"), T = Date.UTC(2026, 8, 26) / 1000;
-  const started = [];
-  expect(readKiro({ file, nowSec: T, refresh: () => started.push(T), off: false })).toMatchObject({ pool: "kiro", headroom: null });
-  expect(started).toHaveLength(1);
-  const reading = { ok: true, subscription: "kiro", ...parseKiroUsage(KIRO_USAGE.replace("0.00 of 50", "40.00 of 50")), headroom: 0.2 };
-  await refreshKiro({ file, nowSec: T + 20, read: async () => reading });
-  const got = readKiro({ file, nowSec: T + 60, refresh: () => started.push("again"), off: false });
+test("Kiro's kept reading is a monthly window that tapers the reserve toward its reset, and rolls over past it", async () => {
+  const T = Date.UTC(2026, 8, 26) / 1000, reading = kiroReading(parseKiroUsage(KIRO_USAGE.replace("0.00 of 50", "40.00 of 50")), T);
+  const served = (r, nowSec) => usageReadings({ configPath: null, store: memoryStore({ entries: { kiro: { reading: r } } }), clock: { now: () => nowSec }, signIn: { kept: () => null, why: () => "" } })
+    .kept(["kiro"], { mayRefresh: [] }).served[0].row;
+  const got = served(reading, T + 60);
   expect(got.headroom).toBeCloseTo(0.2, 9);
   expect(got).toMatchObject({ class: "included", note: "KIRO FREE: 40 of 50 credits used", windows: [{ name: "monthly_credits", windowMin: 30 * 24 * 60 }] });
-  expect(started).toHaveLength(1);
-  await refreshKiro({ file, nowSec: T + 80, read: async () => ({ ...reading, resets_at: T + 3600 }) });
-  expect(readKiro({ file, nowSec: T + 7200 }).headroom).toBe(1); // past the reset: a new month, whatever the reading said
-  await refreshKiro({ file, nowSec: T + 100, read: async () => ({ ok: false, ...usageFailure("no_response"), read_yourself: KIRO_BY_HAND }) });
-  expect(readKiro({ file, nowSec: T + 101 }).note).toContain("the last try failed: The usage source did not answer.");
-});
-
-test("a try an older routr made that got no reading does not hold back the next one: after an upgrade, the background reading starts at once", async () => {
-  // 2026-10-23: v0.7.0 failed every Cursor read (herdr 0.9.5); after the upgrade, routr usage kept that failure for
-  // hours because the failed try was under 4 hours old.
-  const T = 1_800_000_000;
-  // A reading each harness keeps (one shape for both left Kiro's unreadable).
-  const readings = { cursor: { plan: "Team", included_used_pct: 20, auto_used_pct: 24, api_used_pct: 0 }, kiro: { plan: "Free", credits_used: 10, credits_limit: 50, used_pct: 20, resets_at: T + 10 * 86400 } };
-  for (const [name, read, refresh] of [["cursor", readCursor, refreshCursor], ["kiro", readKiro, refreshKiro]]) {
-    const good = readings[name];
-    const dir = scratch(`upgrade-${name}`), failed = { ts: null, tried: T - 600, reading: null, failure: { code: "read_failed" } };
-    let token;
-    const starts = (file, version, at = T) => { const s = []; read({ file, nowSec: at, refresh: (t) => s.push(token = t), off: false, version }); return s.length; };
-    for (const [label, snap, n] of [
-      ["no version (0.8.0 and before)", failed, 1], ["an older version", { ...failed, by: "0.7.0" }, 1], ["a version it cannot read", { ...failed, by: "garbage" }, 1],
-      ["a version that only looks newer", { ...failed, by: "0.9.invalid" }, 1], ["a version with a fourth number", { ...failed, by: "0.8.1.0" }, 1],
-      ["a pre-release number with a leading zero", { ...failed, by: "0.9.0-beta.01" }, 1], ["a newer pre-release", { ...failed, by: "0.9.0-beta.1" }, 0],
-      ["this version", { ...failed, by: "0.8.1" }, 0], ["a newer version", { ...failed, by: "0.9.0" }, 0],
-      ["an older version that got a reading", { ts: T - 600, tried: T - 600, by: "0.7.0", reading: good }, 0]]) {
-      const file = join(dir, `${label}.json`);
-      writeFileSync(file, JSON.stringify(snap));
-      expect([name, label, starts(file, "0.8.1")]).toEqual([name, label, n]);
-      // Once this version has tried, the 4-hour rule holds again.
-      expect([name, label, starts(file, "0.8.1", T + 60)]).toEqual([name, label, 0]);
-    }
-    // The older version's good reading is used as it is.
-    const kept = join(dir, "an older version that got a reading.json");
-    expect(read({ file: kept, nowSec: T + 120, off: true, version: "0.8.1" }).headroom).toBeCloseTo(0.8, 9);
-    // The background reading it starts fails too: that failure is this version's, so it holds back the next for 4 hours.
-    const file = join(dir, "fails-again.json");
-    writeFileSync(file, JSON.stringify(failed));
-    expect(starts(file, "0.8.1")).toBe(1);
-    await refresh({ file, nowSec: T + 5, version: "0.8.1", background: true, token, read: async () => ({ ok: false, ...usageFailure("read_failed") }) });
-    expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ by: "0.8.1", tried: T + 5, failure: { code: "read_failed" } });
-    expect(existsSync(`${file}.lock`)).toBe(false);
-    expect([starts(file, "0.8.1", T + 60), starts(file, "0.8.1", T + 5 + 4 * 3600 + 1)]).toEqual([0, 1]);
-    // A source checkout and an installed binary sharing the cache, both failing: the newer retries once, the older never.
-    const shared = join(dir, "shared.json");
-    writeFileSync(shared, JSON.stringify({ ...failed, by: "0.0.0-dev" }));
-    const seen = [];
-    for (let k = 0; k < 4; k++) {
-      const version = k % 2 ? "0.0.0-dev" : "0.8.1", at = T + k * 60;
-      const n = starts(shared, version, at);
-      seen.push(n);
-      if (n) await refresh({ file: shared, nowSec: at + 5, version, background: true, token, read: async () => ({ ok: false, ...usageFailure("read_failed") }) });
-    }
-    expect([name, seen]).toEqual([name, [1, 0, 0, 0]]);
-    // A reading taken now records the version that took it.
-    const taken = join(dir, "taken.json");
-    await refresh({ file: taken, nowSec: T, version: "0.8.1", read: async () => ({ ok: true, ...good }) });
-    expect(JSON.parse(readFileSync(taken, "utf8"))).toMatchObject({ by: "0.8.1", tried: T });
-  }
-});
-
-test("Cursor is a snapshot every call reads at once, refreshed in the background about once a session", async () => {
-  const dir = scratch("cursor"), file = join(dir, "cursor-usage.json"), T = 1_800_000_000;
-  const started = [];
-  const read = (nowSec) => readCursor({ file, nowSec, refresh: () => started.push(nowSec), off: false });
-  // A new install: nothing yet. The call answers at once, room unknown, and starts one background reading.
-  const first = read(T);
-  expect(first).toMatchObject({ pool: "cursor", headroom: null });
-  expect(first.note).toContain("being taken in the background");
-  expect(read(T + 1).headroom).toBeNull();
-  expect(started).toEqual([T]); // a burst of calls starts one reading, not one each
-  // The background reading lands (what `routr usage cursor` does).
-  const screen = { ok: true, plan: "Team", included_used_pct: 66, auto_used_pct: 61, api_used_pct: 93, headroom: 0.34 };
-  expect(await refreshCursor({ file, nowSec: T + 5, read: async () => screen })).toEqual(screen);
-  const got = read(T + 600);
-  expect(got.headroom).toBeCloseTo(0.34, 9);
-  expect(got).toMatchObject({ ageSec: 595, class: "included", note: "Included 66% used (Auto 61%, API 93%)" });
-  const row = rankSubscriptions("standard", [got], cfg()).ranked.find((x) => x.subscription === "cursor");
-  expect(row).toMatchObject({ usage: "live", usable: 0.24, age_sec: 595 });
-  expect(started).toEqual([T]);
-  // Hours later (a new session): the old reading still answers, and a fresh one is started behind it.
-  const later = read(T + 5 + 4 * 3600 + 1);
-  expect(later.headroom).toBeCloseTo(0.34, 9);
-  expect(later.note).toContain("a fresh reading is being taken");
-  expect(started).toHaveLength(2);
-  // A failed reading keeps the last good one and says why.
-  await refreshCursor({ file, nowSec: T + 20000, read: async () => ({ ok: false, ...usageFailure("read_failed"), read_yourself: CURSOR_BY_HAND }) });
-  const kept = read(T + 20001);
-  expect(kept.headroom).toBeCloseTo(0.34, 9);
-  expect(kept.note).toContain("the last try failed: routr could not read this usage source.");
-  // Only the background reading releases the lock, and only with the token it was handed: one asked for by hand, or
-  // one handed no token, must not free a lock it does not hold. One handed no token reads and writes nothing.
-  const byHand = join(dir, "byhand.json"), held = `${byHand}.lock`;
-  writeFileSync(held, "");
-  await refreshCursor({ file: byHand, nowSec: T, read: async () => screen });
-  expect(existsSync(held)).toBe(true); rmSync(byHand);
-  let reads = 0;
-  await refreshCursor({ file: byHand, nowSec: T, read: async () => { reads++; return screen; }, background: true });
-  expect([existsSync(held), existsSync(byHand), reads]).toEqual([true, false, 0]);
-  rmSync(held); const handed = [];
-  readCursor({ file: byHand, nowSec: T, refresh: (token) => handed.push(token), off: false });
-  expect(handed).toEqual([JSON.parse(readFileSync(held, "utf8")).token]);
-  await refreshCursor({ file: byHand, nowSec: T, read: async () => screen, background: true, token: handed[0] });
-  expect([existsSync(held), JSON.parse(readFileSync(byHand, "utf8")).reading.included_used_pct]).toEqual([false, 66]);
-  // Never read, and the try failed: room unknown, with how to read it by hand.
-  const never = join(dir, "never.json");
-  await refreshCursor({ file: never, nowSec: T, read: async () => ({ ok: false, ...usageFailure("read_failed"), read_yourself: CURSOR_BY_HAND }) });
-  expect(readCursor({ file: never, nowSec: T + 1, refresh: () => {}, off: false }).note).not.toContain(CURSOR_BY_HAND);
-  // Turned off (tests), a call neither starts a reading nor writes the stamp.
-  const quiet = join(dir, "quiet.json");
-  expect(readCursor({ file: quiet, nowSec: T, refresh: () => started.push("quiet") }).headroom).toBeNull();
-  expect(existsSync(quiet)).toBe(false);
-  // A day without a good reading: too old to use (the plan may have reset), so room unknown, and it says so.
-  const stale = readCursor({ file, nowSec: T + 5 + 25 * 3600, refresh: () => true, off: false });
-  expect(stale.headroom).toBeNull();
-  expect(stale.note).toContain("25 h old, too old to use");
-  // Doctor, for a harness installed but not configured: reads, never starts a refresh.
-  const before = started.length;
-  readCursor({ file, nowSec: T + 40 * 3600, refresh: () => started.push("doctor"), background: false, off: false });
-  expect(started).toHaveLength(before);
-  // A refresh that cannot start gives the lock back and the reading still answers.
-  const lockFile = join(dir, "spawnfail.json.lock");
-  writeFileSync(join(dir, "spawnfail.json"), JSON.stringify({ ts: T, tried: T, reading: { included_used_pct: 50 } }));
-  expect(readCursor({ file: join(dir, "spawnfail.json"), nowSec: T + 5 * 3600, refresh: () => false, off: false }).headroom).toBe(0.5);
-  expect(existsSync(lockFile)).toBe(false);
-  // An unwritable cache starts nothing: no lock, no refresh, not one per call.
-  const blocked = join(dir, "not-a-dir");
-  writeFileSync(blocked, "");
-  const tries = [];
-  for (let k = 0; k < 3; k++) readCursor({ file: join(blocked, "cursor-usage.json"), nowSec: T, refresh: () => tries.push(k), off: false });
-  expect(tries).toEqual([]);
-  // What the caller passes still wins, and the snapshot is not consulted for it.
-  const [given] = await readUsage(["cursor"], { cursor: 0.9 }, { sources: { cursor: { read: () => { throw new Error("read"); } } }, why: async () => null });
-  expect(given).toMatchObject({ source: "given by caller", headroom: 0.9 });
-  // …but not for a harness that is not signed in: launch would refuse it, so dispatch must not rank it.
-  const [signedOut] = await readUsage(["cursor"], { cursor: 0.9 }, { sources: {}, why: async () => "not signed in: run `cursor-agent login`" });
-  expect(signedOut).toMatchObject({ signedIn: false, headroom: null });
+  expect(served({ ...reading, windows: [{ ...reading.windows[0], resetsAt: T + 3600 }] }, T + 7200).headroom).toBe(1); // past the reset: a new month
 });
 
 test("the refresh lock lets one caller in at a time and gives up a lock left by a dead refresh", () => {
@@ -684,43 +556,16 @@ test("the refresh lock lets one caller in at a time and gives up a lock left by 
   expect(takeLock(join(dir, "missing", "x.lock"), stale())).toBe(false); // cannot write: no lock, so no refresh
 });
 
-test("a background refresh that resumes after another took its lock over publishes nothing and keeps the newer lock", async () => {
-  const T = 1_800_000_000, later = T + 4 * 3600 + 200;
-  const screens = { cursor: (pct) => ({ ok: true, plan: "Team", included_used_pct: pct, auto_used_pct: 0, api_used_pct: 0 }),
-    kiro: (pct) => ({ ok: true, plan: "Free", credits_used: pct, credits_limit: 100, used_pct: pct, resets_at: T + 86400 }) };
-  for (const [name, read, refresh] of [["cursor", readCursor, refreshCursor], ["kiro", readKiro, refreshKiro]]) {
-    const dir = scratch("refresh-takeover"), file = join(dir, "usage.json"), lock = `${file}.lock`, handed = [];
-    const start = (nowSec) => read({ file, nowSec, refresh: (token) => handed.push(token), off: false });
-    const used = () => JSON.stringify(JSON.parse(readFileSync(file, "utf8")).reading);
-    start(T);
-    // The first refresh is slow: past the lock's age, another call takes the lock over and starts its own.
-    await refresh({ file, nowSec: T + 5, background: true, token: handed[0], read: async () => { start(later); return screens[name](10); } });
-    expect(handed).toHaveLength(2);
-    expect(JSON.parse(readFileSync(file, "utf8")).tried).toBe(later); // the newer mark stands
-    expect(used()).not.toContain("10");
-    expect(JSON.parse(readFileSync(lock, "utf8")).token).toBe(handed[1]); // the newer refresh's lock stays
-    await refresh({ file, nowSec: later + 5, background: true, token: handed[1], read: async () => screens[name](70) });
-    expect(used()).toContain("70"); expect(existsSync(lock)).toBe(false);
+test("the background refresh job takes its claim from the command line, and nothing else", async () => {
+  const c = cfg(), seen = [];
+  const readings = { refreshClaimed: async (token) => { seen.push(token); }, readNow: async () => { throw new Error("must not read"); } };
+  const r = await usageCommand(["--background", "--claim", "fixture-token"], c, {}, { readings, read: async () => { throw new Error("must not rank"); } });
+  expect([r.ok, seen]).toEqual([true, ["fixture-token"]]);
+  for (const [words, why] of [[["--claim", "fixture-token"], "--claim"], [["cursor", "--background", "--claim", "x"], "takes no subscription"], [["--background", "--claim"], "--claim"]]) {
+    const refused = await usageCommand(words, c, {}, { readings });
+    expect([refused.ok, refused.error]).toEqual([false, expect.stringContaining(why)]);
   }
-});
-
-test("a refresh starter that lost its lock before its mark leaves the newer refresh's snapshot and starts nothing", async () => {
-  const dir = scratch("starter-mark");
-  const p = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/lock-pauses.mjs"), "mark", dir], { stdout: "pipe", stderr: "pipe" });
-  expect(await p.exited, await new Response(p.stderr).text()).toBe(0);
-  const r = JSON.parse(await new Response(p.stdout).text());
-  expect(r.taken).toBe(true);
-  expect(r.snapshot).toMatchObject({ tried: 1_800_000_100, reading: { included_used_pct: 70 } });
-  expect(r.started).toBe(0);
-});
-
-test("a background usage refresh gets its lock token from the command line", async () => {
-  const c = cfg(); let seen;
-  const sources = { cursor: { source: "cursor /usage", check: async (o) => { seen = o; return { ok: false, ...usageFailure("read_failed") }; } } };
-  await usageCommand(["cursor", "--background", "--lock-token", "fixture-token"], c, {}, { sources, read: async () => [] });
-  expect(seen).toMatchObject({ background: true, token: "fixture-token" });
-  const r = await usageCommand(["cursor", "--lock-token", "fixture-token"], c, {}, { sources, read: async () => [] });
-  expect(r.ok).toBe(false); expect(r.error).toContain("--lock-token");
+  expect(seen).toEqual(["fixture-token"]);
 });
 
 test("routr usage ranks what it sees without a brief, and a name narrows it or opens the harness's screen", async () => {
@@ -764,13 +609,14 @@ test("the sign-in answer is kept: signed in for hours, signed out for minutes, a
   const asked = [];
   const ask = (answer) => async (cmd, args) => { asked.push([cmd, ...args]); return answer; };
   const kiro = HARNESSES.kiro, o = (answer, nowSec, extra = {}) => ({ file, nowSec, ask: ask(answer), ...extra });
-  expect(await signInState("kiro", kiro, o({ out: STATUS.kiro.yes[0], code: 0 }, T))).toBe("yes");
+  const state = async (...a) => (await signInState(...a)).state;
+  expect(await state("kiro", kiro, o({ out: STATUS.kiro.yes[0], code: 0 }, T))).toBe("yes");
   expect(asked).toEqual([["kiro-cli", "whoami", "--format", "json"]]);
-  expect(await signInState("kiro", kiro, o(null, T + 5 * 3600))).toBe("yes"); // kept: not asked again
+  expect(await state("kiro", kiro, o(null, T + 5 * 3600))).toBe("yes"); // kept: not asked again
   expect(asked).toHaveLength(1);
-  expect(await signInState("kiro", kiro, o({ out: STATUS.kiro.no[0], code: 1 }, T + 7 * 3600))).toBe("no"); // past 6 h: asked
-  expect(await signInState("kiro", kiro, o({ out: STATUS.kiro.yes[0], code: 0 }, T + 7 * 3600 + 11 * 60))).toBe("yes"); // "no" lasts 10 min
-  expect(await signInState("kiro", kiro, o(null, T + 7 * 3600 + 12 * 60, { fresh: true }))).toBe("no answer"); // fresh always asks
+  expect(await state("kiro", kiro, o({ out: STATUS.kiro.no[0], code: 1 }, T + 7 * 3600))).toBe("no"); // past 6 h: asked
+  expect(await state("kiro", kiro, o({ out: STATUS.kiro.yes[0], code: 0 }, T + 7 * 3600 + 11 * 60))).toBe("yes"); // "no" lasts 10 min
+  expect(await signInState("kiro", kiro, o(null, T + 7 * 3600 + 12 * 60, { fresh: true }))).toEqual({ state: "no answer", billing: null }); // fresh always asks
   expect(asked).toHaveLength(4);
 });
 // `claude auth status`, measured 2026-10-07 (macOS): an API key login and a Max login. The email, organisation and ids
@@ -809,31 +655,28 @@ test("Claude's sign-in status says how it bills: an API key is metered, a subscr
   // Every other harness: none, so nothing changes for them.
   expect(Object.keys(HARNESSES).filter((n) => HARNESSES[n].auth.billing)).toEqual(["claude"]);
 });
-test("the billing reading is kept with the sign-in answer, the same lifetime, and only its class and reason", async () => {
-  const { billingFromSignIn, signInState } = await import("../src/lib/signin.mjs");
+test("the billing reading travels with the sign-in answer, kept with it for the same lifetime, and only its class and reason", async () => {
+  const { signInState } = await import("../src/lib/signin.mjs");
   const file = join(scratch("signin-billing"), "signed-in.json"), T = 1_800_000_000, name = "claude-fixture"; // not "claude": other tests read that name
   const o = (out, nowSec, extra = {}) => ({ file, nowSec, ask: async () => (out == null ? null : { out, code: 0 }), ...extra });
-  expect(await signInState(name, HARNESSES.claude, o(AUTH_API_KEY, T))).toBe("yes");
-  expect(billingFromSignIn(name)).toMatchObject({ billing: "metered" });
-  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: T, state: "yes", billing: { billing: "metered", why: billingFromSignIn(name).why } });
-  expect(await signInState(name, HARNESSES.claude, o(null, T + 5 * 3600))).toBe("yes"); // kept: not asked, still metered
-  expect(billingFromSignIn(name)).toMatchObject({ billing: "metered" });
+  const key = await signInState(name, HARNESSES.claude, o(AUTH_API_KEY, T));
+  expect(key).toMatchObject({ state: "yes", billing: { billing: "metered" } });
+  expect(JSON.parse(readFileSync(file, "utf8"))[name]).toEqual({ ts: T, state: "yes", billing: { billing: "metered", why: key.billing.why } });
+  expect(await signInState(name, HARNESSES.claude, o(null, T + 5 * 3600))).toEqual(key); // kept: not asked, still metered
   // A subscription login: no reading, and none of what the status printed about the account is kept.
-  expect(await signInState(name, HARNESSES.claude, o(AUTH_MAX, T + 7 * 3600))).toBe("yes");
-  expect(billingFromSignIn(name)).toBeNull();
+  expect(await signInState(name, HARNESSES.claude, o(AUTH_MAX, T + 7 * 3600))).toEqual({ state: "yes", billing: null });
   const kept = readFileSync(file, "utf8");
   expect(JSON.parse(kept)[name]).toEqual({ ts: T + 7 * 3600, state: "yes" });
   for (const leak of ["someone@example.com", "Example Org", "00000000-0000", "max", "orgId", "email"]) expect(kept).not.toContain(leak);
   // A reader that throws is no reading, never a failed sign-in check.
-  expect(await signInState(name, { ...HARNESSES.claude, auth: { ...HARNESSES.claude.auth, billing: () => { throw new Error("x"); } } }, o(AUTH_API_KEY, T, { fresh: true }))).toBe("yes");
-  expect(billingFromSignIn(name)).toBeNull();
+  expect(await signInState(name, { ...HARNESSES.claude, auth: { ...HARNESSES.claude.auth, billing: () => { throw new Error("x"); } } }, o(AUTH_API_KEY, T, { fresh: true }))).toEqual({ state: "yes", billing: null });
 });
 test("an API-key Claude with no windows ranks as metered, with no doctor step asking for billing; the user's billing still wins", async () => {
   const dir = scratch("claude-apikey");
   // What the API key's /usage printed (2026-10-07): a cost summary, no windows.
   const costOnly = claudeAnswer("Total cost: $0.0000\nTotal duration (API): 0s\nUsage: 0 input, 0 output, 0 cache read, 0 cache write");
-  const sources = { claude: { read: () => readClaude({ file: join(dir, "none.json"), nowSec: OCT5, exec: async () => costOnly }) } };
-  const read = (b) => readUsage(["claude"], {}, { sources, why: async () => null, billing: () => ({ billing: b, not: null }) });
+  const readers = { claude: inline(() => readClaude({ file: join(dir, "none.json"), nowSec: OCT5, exec: async () => costOnly })) };
+  const read = (b) => liveRows(readers, ["claude"], answered(b));
   const [plain] = await read(null);
   expect(plain).toMatchObject({ class: "unknown", reason: NO_WINDOWS_AFTER_ANSWER }); // without the auth reading: as before
   const [u] = await read(HARNESSES.claude.auth.billing(AUTH_API_KEY, 0));
@@ -855,8 +698,7 @@ test("an API-key Claude with no windows ranks as metered, with no doctor step as
   expect(nextSteps(r(u))).toEqual([]);
 });
 test("windows that arrive while the sign-in status says metered are kept, and the disagreement is noted", async () => {
-  const sources = { claude: { read: async () => live("claude", 0.6) } };
-  const [u] = await readUsage(["claude"], {}, { sources, why: async () => null, billing: () => ({ billing: HARNESSES.claude.auth.billing(AUTH_API_KEY, 0), not: null }) });
+  const [u] = await liveRows({ claude: inline(async () => live("claude", 0.6)) }, ["claude"], answered(HARNESSES.claude.auth.billing(AUTH_API_KEY, 0)));
   expect(u).toMatchObject({ headroom: 0.6 }); expect(u.class).not.toBe("metered"); expect(u.billing).toBeUndefined();
   expect(u.note).toContain("yet usage windows arrived: ranked on the windows");
   expect(rankSubscriptions("standard", [u], cfg()).ranked.find((x) => x.subscription === "claude")).toMatchObject({ usage: "live", class: "included" });
@@ -874,8 +716,8 @@ test("an Enterprise login is metered only when its /usage answered with no windo
   expect(billing(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", subscriptionType: "enterprise" }), 0)).toMatchObject({ when: "no_windows" }); // absent provider is first-party
   for (const p of ["gateway", "bedrock", null])
     expect([p, billing(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", apiProvider: p, subscriptionType: "enterprise" }), 0)]).toEqual([p, null]);
-  const ent = { billing: billing(AUTH_ENTERPRISE, 0), not: null };
-  const read = (exec) => readUsage(["claude"], {}, { sources: { claude: { read: () => readClaude({ file: join(scratch("claude-enterprise"), "none.json"), nowSec: OCT5, exec }) } }, why: async () => null, billing: () => ent });
+  const ent = answered(billing(AUTH_ENTERPRISE, 0));
+  const read = (exec) => liveRows({ claude: inline(() => readClaude({ file: join(scratch("claude-enterprise"), "none.json"), nowSec: OCT5, exec })) }, ["claude"], ent);
   // No windows after an answer: metered, and doctor no longer asks for `billing`.
   const [u] = await read(async () => claudeAnswer("Total cost: $0.0000\nUsage: 0 input, 0 output, 0 cache read, 0 cache write"));
   expect(u).toMatchObject({ class: "metered", headroom: null, source: "claude auth status", billing: { billing: "metered", source: "claude auth status" } });
@@ -896,34 +738,34 @@ test("an Enterprise login is metered only when its /usage answered with no windo
   // Nor when an old snapshot said Claude answered with no windows: the failed read keeps that reason, and is still a failure.
   for (const [exec, age] of [[async () => null, 60], [async () => { throw new Error("hung"); }, 30 * 86400], [async () => "not json", 60]]) {
     const file = join(scratch("claude-enterprise-snap"), "snap.json"); writeFileSync(file, JSON.stringify({ ts: OCT5 - age, answered: true }));
-    const [kept] = await readUsage(["claude"], {}, { sources: { claude: { read: () => readClaude({ file, nowSec: OCT5, exec }) } }, why: async () => null, billing: () => ent });
+    const [kept] = await liveRows({ claude: inline(() => readClaude({ file, nowSec: OCT5, exec })) }, ["claude"], ent);
     expect([kept.reason, kept.class, kept.billing, Boolean(kept.failure)]).toEqual(["no_windows_after_answer", "unknown", undefined, true]);
   }
   // An Enterprise seat with a quota shows windows: ranked on them, with no disagreement noted.
-  const [quota] = await readUsage(["claude"], {}, { sources: { claude: { read: async () => live("claude", 0.6) } }, why: async () => null, billing: () => ent });
+  const [quota] = await liveRows({ claude: inline(async () => live("claude", 0.6)) }, ["claude"], ent);
   expect(quota).toMatchObject({ headroom: 0.6 }); expect(quota.class).not.toBe("metered"); expect(String(quota.note ?? "")).not.toContain("yet usage windows arrived");
   // The user's `billing: "included"` still wins.
   expect(rankSubscriptions("standard", [u], cfg({ subscriptions: { claude: { ...cfg().subscriptions.claude, billing: "included" } } })).ranked.find((x) => x.subscription === "claude")).toMatchObject({ class: "included", usage: "unknown" });
 });
 test("the Enterprise reading is kept with its condition, and nothing the status printed about the account", async () => {
-  const { billingFromSignIn, signInState } = await import("../src/lib/signin.mjs");
+  const { signInState } = await import("../src/lib/signin.mjs");
   const file = join(scratch("signin-enterprise"), "signed-in.json"), name = "claude-enterprise-fixture"; // not "claude": other tests read that name
-  expect(await signInState(name, HARNESSES.claude, { file, nowSec: 1_800_000_000, ask: async () => ({ out: AUTH_ENTERPRISE, code: 0 }) })).toBe("yes");
-  expect(billingFromSignIn(name)).toMatchObject({ billing: "metered", when: "no_windows" });
+  const answer = await signInState(name, HARNESSES.claude, { file, nowSec: 1_800_000_000, ask: async () => ({ out: AUTH_ENTERPRISE, code: 0 }) });
+  expect(answer).toMatchObject({ state: "yes", billing: { billing: "metered", when: "no_windows" } });
   const kept = readFileSync(file, "utf8");
-  expect(JSON.parse(kept)[name].billing).toEqual(billingFromSignIn(name));
+  expect(JSON.parse(kept)[name].billing).toEqual(answer.billing);
   for (const leak of ["someone@example.com", "Example Org", "00000000-0000", "orgId", "email", "subscriptionType"]) expect(kept).not.toContain(leak);
 });
 test("a login switched within the sign-in cache's 6 hours: a reading without windows asks the status again, one with windows does not", async () => {
   const { signInState } = await import("../src/lib/signin.mjs");
-  const { billingFor } = await import("../src/lib/harnesses.mjs");
   const file = join(scratch("signin-switch"), "signed-in.json"), T = 1_800_000_000, name = "claude-switch"; // not "claude": other tests read that name
   const asked = [];
   const ask = (out) => async (cmd, args) => { asked.push([cmd, ...args]); return { out, code: 0 }; };
-  const seams = (out, nowSec) => ({ harness: HARNESSES.claude, file, nowSec, ask: ask(out) });
-  const noWindows = { [name]: { read: async () => summarize({ pool: name, source: "claude /usage", reason: NO_WINDOWS_AFTER_ANSWER, note: "no windows" }) } };
-  const withWindows = { [name]: { read: async () => live(name, 0.6) } };
-  const read = (sources, out, nowSec) => readUsage([name], {}, { sources, why: async () => null, billing: (n, o) => billingFor(n, { ...o, ...seams(out, nowSec) }) });
+  // Claude's own sign-in check, its answer kept in `file`, asked `out` at `nowSec`.
+  const port = (out, nowSec, harness = HARNESSES.claude) => ({ state: (k, o) => signInState(k, harness, { ...o, file, nowSec, ask: ask(out) }), kept: () => null, why: (k, st) => signInHint(harness, st) });
+  const noWindows = { [name]: inline(async () => summarize({ pool: name, source: "claude /usage", reason: NO_WINDOWS_AFTER_ANSWER, note: "no windows" }), { billsBySignIn: true }) };
+  const withWindows = { [name]: inline(async () => live(name, 0.6), { billsBySignIn: true }) };
+  const read = (readers, out, nowSec) => liveRows(readers, [name], {}, port(out, nowSec));
   // Signed in with a subscription and kept; an hour later the login is an API key, and /usage shows no windows.
   await signInState(name, HARNESSES.claude, { file, nowSec: T, ask: ask(AUTH_MAX) });
   asked.length = 0;
@@ -939,19 +781,19 @@ test("a login switched within the sign-in cache's 6 hours: a reading without win
   asked.length = 0;
   const [w] = await read(withWindows, AUTH_API_KEY, T + 7300);
   expect(asked).toEqual([]); expect(w).toMatchObject({ headroom: 0.6 }); expect(w.class).not.toBe("metered");
-  // A harness without a billing reader is never asked again either.
-  expect(await billingFor("codex-switch", { fresh: true, harness: HARNESSES.codex, file, nowSec: T, ask: ask("Logged in using ChatGPT\n") })).toEqual({ billing: null, not: null });
-  expect(asked).toEqual([]);
+  // A harness without a billing reader is never asked again either: only its sign-in gate asks.
+  const [codex] = await liveRows({ "codex-switch": { source: "app-server", speed: "inline", read: async () => summarize({ pool: "codex-switch", source: "app-server" }) } }, ["codex-switch"], {}, port("Logged in using ChatGPT\n", T, HARNESSES.codex));
+  expect([codex.class, asked]).toEqual(["unknown", [["codex", "login", "status"]]]);
 });
 test("the fresh status check is a sign-in check: signed out or no answer now leaves the harness out of this call", async () => {
   const { signInState } = await import("../src/lib/signin.mjs");
-  const { billingFor } = await import("../src/lib/harnesses.mjs");
   const file = join(scratch("signin-out"), "signed-in.json"), T = 1_800_000_000, name = "claude-out";
-  const noWindows = { [name]: { read: async () => summarize({ pool: name, source: "claude /usage", reason: NO_WINDOWS_AFTER_ANSWER, note: "no windows" }) } };
+  const noWindows = { [name]: inline(async () => summarize({ pool: name, source: "claude /usage", reason: NO_WINDOWS_AFTER_ANSWER, note: "no windows" }), { billsBySignIn: true }) };
   const c = cfg({ subscriptions: { [name]: cfg().subscriptions.claude } });
   for (const [answer, hint] of [[{ out: '{\n  "loggedIn": false,\n  "authMethod": "none"\n}', code: 1 }, "not signed in: run `claude auth login`"], [null, "did not answer its sign-in check"]]) {
-    await signInState(name, HARNESSES.claude, { file, nowSec: T, ask: async () => ({ out: AUTH_MAX, code: 0 }) }); // kept: signed in
-    const [u] = await readUsage([name], {}, { sources: noWindows, why: async () => null, billing: (n, o) => billingFor(n, { ...o, harness: HARNESSES.claude, file, nowSec: T + 3600, ask: async () => answer }) });
+    await signInState(name, HARNESSES.claude, { file, nowSec: T, fresh: true, ask: async () => ({ out: AUTH_MAX, code: 0 }) }); // kept: signed in
+    const port = { state: (k, o) => signInState(k, HARNESSES.claude, { ...o, file, nowSec: T + 3600, ask: async () => answer }), kept: () => null, why: (k, st) => signInHint(HARNESSES.claude, st) };
+    const [u] = await liveRows(noWindows, [name], {}, port);
     expect(u).toMatchObject({ signedIn: false, headroom: null }); expect(u.note).toContain(hint);
     const r = rankSubscriptions("standard", [u], c);
     expect(r.ranked).toEqual([]); expect(r.excluded).toEqual([{ subscription: name, why: u.note }]);
@@ -960,24 +802,15 @@ test("the fresh status check is a sign-in check: signed out or no answer now lea
 });
 test("a harness that is not signed in is never read, and dispatch leaves it out and says how to sign in", async () => {
   const reads = [];
-  const sources = { codex: { read: async () => { reads.push("codex"); return live("codex", 0.8); } }, cursor: { read: async () => { reads.push("cursor"); return live("cursor", 0.9); } } };
-  const usage = await readUsage(["codex", "cursor"], {}, { sources, why: (n) => (n === "cursor" ? "not signed in: cursor-agent login" : null) });
+  const readers = { codex: inline(async () => { reads.push("codex"); return live("codex", 0.8); }), cursor: inline(async () => { reads.push("cursor"); return live("cursor", 0.9); }) };
+  const signIn = { ...signedInPort, state: async (k) => ({ state: k === "cursor" ? "no" : "yes", billing: null }), why: () => "not signed in: cursor-agent login" };
+  const usage = await liveRows(readers, ["codex", "cursor"], {}, signIn);
   expect(reads).toEqual(["codex"]);
   expect(usage.find((u) => u.pool === "cursor")).toMatchObject({ signedIn: false, headroom: null, note: "not signed in: cursor-agent login" });
   const r = rankSubscriptions("basic", usage, cfg());
   expect(r.ranked.map((x) => x.subscription)).not.toContain("cursor");
   expect(r.excluded).toContainEqual({ subscription: "cursor", why: "not signed in: cursor-agent login" });
 });
-test("a background reading of a harness that is not signed in never starts it, keeps why, and gives the lock back", async () => {
-  const dir = scratch("gate"), file = join(dir, "kiro-usage.json"), lock = `${file}.lock`;
-  expect(takeLock(lock, () => false, { token: "handed-token" })).toBe(true);
-  const r = await refreshKiro({ file, background: true, token: "handed-token", ready: async () => "not signed in: kiro-cli login", read: async () => { throw new Error("must not read"); } });
-  expect(r).toMatchObject({ ok: false, excluded: true, why: "not signed in: kiro-cli login" });
-  expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ excluded: true });
-  expect(JSON.parse(readFileSync(file, "utf8")).failure).toBeUndefined();
-  expect(existsSync(lock)).toBe(false);
-});
-
 test("routr usage leaves a turned-off subscription out, says how to turn it on, and never reads it", async () => {
   const read = [];
   const config = cfg({ subscriptions: { codex: { enabled: true, hardest_work: "strong", reserve: 0.2 }, cursor: { enabled: false, hardest_work: "standard", reserve: 0.1 } } });

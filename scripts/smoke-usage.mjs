@@ -8,7 +8,8 @@
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig } from "../src/lib/config.mjs";
-import { billingFor, HARNESSES, notReady, withBilling } from "../src/lib/harnesses.mjs";
+import { HARNESSES, notReady, signIn, withBilling } from "../src/lib/harnesses.mjs";
+import { signInHint } from "../src/lib/signin.mjs";
 import { readAgy, readClaude, readCodexLive } from "../src/lib/usage.mjs";
 import { cursorUsage } from "../src/lib/cursor-usage.mjs";
 import { kiroUsage } from "../src/lib/kiro-usage.mjs";
@@ -26,8 +27,14 @@ const LIVE = {
 const said = (r, billing) => (!r ? "FAILED (no reading)" : r.ok === false ? `FAILED (${r.code})` : r.failure ? `FAILED (${r.failure.code})`
   : r.ok === true && r.note ? `FAILED (cleanup: ${r.note})`
   : r.headroom != null ? `ok: ${Math.round(r.headroom * 100)}% left` : r.class === "metered" || billing === "metered" ? "ok: metered" : "FAILED (no reading)");
+// What the harness's sign-in status says about billing: `{ billing, not }`, from the answer `ready` has just asked
+// afresh (one answer carries both), and `not` saying why it is not signed in now.
+const signInBilling = async (name) => {
+  const { state, billing } = await signIn(name);
+  return state === "yes" ? { billing, not: null } : { billing: null, not: signInHint(HARNESSES[name], state) };
+};
 // The check itself, its seams given (the tests give fakes): one line per subscription, and how many could not read.
-export async function smokeUsage({ config = loadConfig().config, live = LIVE, ready = notReady, billing = billingFor, log = console.log } = {}) {
+export async function smokeUsage({ config = loadConfig().config, live = LIVE, ready = notReady, billing = signInBilling, log = console.log } = {}) {
   let failed = 0;
   for (const name of Object.keys(live)) {
     const s = config.subscriptions?.[name];
