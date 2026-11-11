@@ -1,7 +1,7 @@
 // The terminal backend: a worker run interactively by its harness in a herdr-core terminal, a tab in the Herdr app, so the
-// person sees the real harness and the lead follows it with hc, as it follows a pane with herdr. routr starts it (`launch`)
-// and ends it (`cleanup --worker`); what a finished turn is, and where its report is, stay the lead's (design, step 2). Its
-// adapter for the worker module says so: each worker command it does not do is `follows(op)`, why and what to do instead.
+// person sees the real harness and the lead reads it with hc, as it reads a pane with herdr. routr starts it (`launch`),
+// follows it through hc (`wait`, `send`, `stop`) and ends it (`cleanup --worker`); its report stays on the terminal. Its
+// adapter for the worker module owns those operations; `follows(op)` keeps watch, and Cursor wait, on the terminal.
 // hc runs routr's own runner in the terminal, never the harness: core gives a terminal its server's environment, not
 // its caller's (measured 2026-11-03), so the runner is what gives the harness the environment launch decided on.
 import { warning } from "./warnings.mjs";
@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:os";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { sentAs } from "./backend-headless.mjs";
 import { amend, newRecord, readRecordAt, recordStore, runDir, WORKER_LABEL } from "./worker-record.mjs";
 import { planWorktree } from "./worktree.mjs";
 import { makePrivateConfig, refuseInputs, refuseSandbox, refuseSettings, refuseTaken, takeRun, worktreeRecord } from "./worker-start.mjs";
@@ -22,7 +23,7 @@ import { configLocations, FORWARDED, launchCarrierWarnings, terminalEnv } from "
 import { processAlive, readJsonFile, writeJsonAtomic } from "./state-files.mjs";
 import { start } from "./processes.mjs";
 
-const PROMPT_FILE = "prompt.md", RUN_FILE = "run.json";
+const PROMPT_FILE = "prompt.md", RUN_FILE = "run.json", MESSAGE_FILE = "message";
 const pausing = (ms) => new Promise((r) => setTimeout(r, ms));
 const POLL_MS = 250;
 // A harness that has run this long and sent core no report at all is taken to be at a question it reports nothing for,
@@ -32,6 +33,7 @@ const SILENT_MS = 20000;
 const WHERE = { where: "in a herdr-core terminal", runs: "runs in a terminal of its own" };
 // The first message: where the task is, never the task. hc keeps a terminal's argv and `ps` shows a harness's (p50).
 export const firstMessage = (file) => `Your task is in ${file}. Read that whole file now and do what it says.`;
+const nextMessage = (file) => `Your message is in ${file}. Read that whole file now and do what it says.`;
 // For a harness that reports no status: core's own convention, and the only way such a worker can say it finished
 // (measured with Cursor, 3 of 3 within 14 s; what the lead reads is the text typed into its terminal).
 export const reportToLead = (lead) => `When you are done, or stuck, send your whole report to the lead by running this shell command, with your report in place of the placeholder: hc send ${lead} "<your report>". The lead cannot see how you are doing in any other way.`;
@@ -41,7 +43,6 @@ const HC_WHY = { not_available: "hc did not answer", refused: "hc refused", not_
 // What launch, and every worker command, tells a lead to do with hc.
 const hcFor = (word, w) => ["hc", word, addressOf(w)];
 const messageStep = (w) => doNext("Send it a message with hc; end a correction by asking again for the report block.", templateCommand([...hcFor("send", w), "<message>"]));
-const stopStep = (w) => runNext("End its program with hc.", hcFor("kill", w));
 const readStep = (w) => runNext("Read what its terminal shows.", [...hcFor("read", w), "--lines", "200"]);
 const followSteps = (w) => (HARNESSES[w.kind]?.noStatus
   ? [doNext(`${HARNESSES[w.kind].label} reports no status, so hc wait says nothing of it: it sends you its report with hc send when it is done or stuck, typed into your terminal.`), readStep(w), messageStep(w)]
@@ -71,6 +72,27 @@ async function observeTerminal(w, dir, { hc = client, ms } = {}) {
   // Addresses last on one core only, and a name can be used again: the id launch labelled it with is what makes it this worker's.
   if (t.labels?.[WORKER_LABEL] !== w.id) return { state: "unknown", foreign: true, why: `terminal ${ref} does not carry ${w.name}'s id, so it is not this worker's, or not on this core`, next: doNext(`Look at ${ref} with hc. Run cleanup from the core that started ${w.name}; if that core has gone, make sure nothing of it runs, then remove ${dir} and its worktree yourself.`) };
   return { state: isFinished(t) ? "finished" : "in_terminal", terminal: t };
+}
+
+// An action follows the terminal that `observeTerminal` checked, never its reusable name. The record is checked too:
+// replacing a worker between that look and the action does not let the old action reach the new worker.
+const checkedTarget = (me, t) => {
+  const same = me.still();
+  if (same !== "same") return { why: same?.unreadable ? `${me.name}'s worker record could not be read just now` : `${me.name} was cleaned up and launched again meanwhile` };
+  return { target: isAddress(t.address) ? t.address : addressOf(me.record) };
+};
+const lookAgain = (name) => [runNext("Look again in a moment.", ["routr", "workers", "--name", name])];
+
+// hc's JSON error kind is an outside boundary. Only `blocked` is meaningful here: hc deliberately refuses to paste
+// into a program at a question. Every other failure is the same unknown result, and none of hc's text leaves this file.
+async function sendToTerminal(target, pointer, hc) {
+  const r = await hc("hc", ["send", target, pointer, "--json"], 15000);
+  if (r == null) return { code: "unknown" };
+  let body;
+  try { body = JSON.parse(r.out); } catch { return { code: "unknown" }; }
+  if (r.code === 0 && body && typeof body === "object" && Number.isSafeInteger(body.turn) && body.turn >= 0) return { code: "handed_to_harness" };
+  if (r.code !== 0 && body?.error?.kind === "blocked") return { code: "refused", why: "refused" };
+  return { code: "unknown" };
 }
 
 // The harness has the pointer to its task from the moment it starts, so as in a pane once a task is sent, launch reads no
@@ -243,17 +265,35 @@ async function endTerminal(w, dir, { dryRun = false, out, assertOwned = () => {}
 }
 
 // ---- the adapter: what the worker commands do to a terminal worker ---------------------------------------------------
-// `me` and `ctx` as the worker module gives them (backend-headless.mjs says what each holds). The lead follows a terminal
-// worker with hc: wait, send, stop and watch say so, with the hc commands that do each, and do nothing.
-const FOLLOWED = { wait: followSteps, send: (w) => [messageStep(w)], stop: (w) => [stopStep(w), runNext("Then finish it.", ["routr", "cleanup", "--worker", w.name])], watch: () => [] };
+// `me` and `ctx` as the worker module gives them (backend-headless.mjs says what each holds). Only watch stays on the
+// worker's own terminal. Cursor also stays there for wait because it reports no status; send and stop need none.
+const FOLLOWED = { watch: () => [] };
 export const terminal = {
   // The runner's record in the run folder: what decides where a worker whose record cannot be read runs.
   owns: (dir) => existsSync(join(dir, RUN_FILE)),
-  follows: (me, op) => (me.record && FOLLOWED[op] ? { why: TERMINAL_FOLLOWED(me.record), next: FOLLOWED[op](me.record) } : null),
+  follows: (me, op) => {
+    const w = me.record;
+    if (!w) return null;
+    if (op === "wait" && HARNESSES[w.kind]?.noStatus) return { why: TERMINAL_FOLLOWED(w), next: followSteps(w) };
+    return FOLLOWED[op] ? { why: TERMINAL_FOLLOWED(w), next: FOLLOWED[op](w) } : null;
+  },
   // In `workers`: its record, and where its terminal is (observeTerminal). A finished or gone one is finished with
   // cleanup --worker, never by removing its worktree: its record would stay, and so would its row there.
   async look(me, { ms } = {}, { hc } = {}) {
     const w = me.record, seen = await observeTerminal(w, me.dir, { ...(hc ? { hc } : {}), ms }), status = seen.terminal ? statusWord(seen.terminal) : null;
+    // `workers` supplies a bound for its hc read and keeps its existing terminal row. Wait has no bound here: give it
+    // the same shape as a headless view, with one report-less turn for each turn hc counted. A question is idle rather
+    // than pending; the fixed status word still says blocked. Terminal end and disappearance use existing notices.
+    if (ms == null) {
+      const turn = seen.terminal ? turnOf(seen.terminal) : 0;
+      const state = seen.state === "unknown" ? "unreachable" : seen.state === "gone" ? "lost" : seen.state === "finished" ? "stopped"
+        : status === "working" ? "working" : status === "error" ? "failed" : "idle";
+      return { view: { name: w.name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, state, gen: 0, turn,
+        seconds_since_event: null, last_tool: null, tasks: 0, queued: 0, session: null, report: null,
+        ...(seen.state === "in_terminal" ? { status } : {}), ...(seen.why ? { why: seen.why } : {}),
+        turns: Array.from({ length: turn }, (_, i) => ({ turn: i + 1, outcome: "finished", report: null, delivered: 0 })) },
+      next: [readStep(w)] };
+    }
     const view = { name: w.name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, backend: "terminal", terminal: w.terminal ?? null, state: seen.state,
       ...(seen.state === "in_terminal" ? { status } : {}), ...(seen.why ? { why: seen.why } : {}) };
     const next = seen.state === "in_terminal" ? followSteps(w)
@@ -261,8 +301,29 @@ export const terminal = {
       : [runNext(`${w.name}'s terminal ${seen.state === "gone" ? "is gone" : "has finished"}: finish the worker, which removes its worktree through its checks and then its record.`, ["routr", "cleanup", "--worker", w.name])];
     return { view, next };
   },
-  // An unnamed wait does not watch it: the lead waits on it with hc.
-  pending: () => false,
+  // A status-reporting terminal may be working or have an unseen hc turn; look decides which. Cursor cannot be asked.
+  pending: (me) => !HARNESSES[me.record?.kind]?.noStatus,
+  async send(me, message, { hc = client } = {}) {
+    const w = me.record, seen = await observeTerminal(w, me.dir, { hc });
+    if (seen.state !== "in_terminal") return sentAs(w.name, w.kind, seen.state === "finished" || seen.state === "gone"
+      ? { code: "refused", why: "ended" } : { code: "unknown" });
+    const checked = checkedTarget(me, seen.terminal);
+    if (!checked.target) return sentAs(w.name, w.kind, { code: "unknown" });
+    const file = join(me.dir, `${MESSAGE_FILE}-${randomUUID().replace(/-/g, "")}.md`);
+    writeFileSync(file, message, { flag: "wx", mode: 0o600 });
+    return sentAs(w.name, w.kind, await sendToTerminal(checked.target, nextMessage(file), hc));
+  },
+  async stop(me, { hc = client } = {}) {
+    const w = me.record, seen = await observeTerminal(w, me.dir, { hc }), base = { warnings: [], next: [] };
+    if (["finished", "gone"].includes(seen.state)) return { state: "absent", ok: true, said: `${w.name} is not running`, ...base };
+    if (seen.state === "unknown") return { state: "unknown", ok: false, said: `whether ${w.name}'s terminal runs is not known`, warnings: [], next: [seen.next] };
+    const checked = checkedTarget(me, seen.terminal);
+    if (!checked.target) return { state: "unknown", ok: false, said: `${checked.why}; nothing was stopped`, warnings: [], next: lookAgain(w.name) };
+    const killed = await actHc(["kill", checked.target], hc, 15000);
+    if (killed.ok) return { state: "stopped", ok: true, said: `stopped ${w.name}`, ...base };
+    if (killed.code === "not_found") return { state: "absent", ok: true, said: `${w.name} is not running`, ...base };
+    return { state: "unknown", ok: false, said: `${w.name} was told to stop and has not finished exiting`, warnings: [], next: lookAgain(w.name) };
+  },
   end: (me, opts, { hc } = {}) => endTerminal(me.record, me.dir, { ...opts, ...(hc ? { hc } : {}) }),
   // Nothing of a terminal worker outlives its terminal but its run folder.
   release: () => {},

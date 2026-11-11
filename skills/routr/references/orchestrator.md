@@ -382,7 +382,8 @@ In the Herdr app, or any herdr-core terminal (`HC_TERMINAL_ID` is set and `HERDR
 harness itself, interactively, in a terminal of its own: a tab in your space, named for the worker, so the user sees the
 real harness at work. Use `hc` for these workers as you use herdr's skill for panes (`hc --skill` is core's own guide).
 `routr launch` and `routr cleanup --worker` are routr's; `routr workers` says where each one's terminal is (asking `hc`);
-`routr wait`, `send`, `stop` and `watch` say to use `hc` and do nothing else. Dispatch, the task file, `--advice`, the model and effort choice, `check` and `record` are as in herdr. What
+`routr wait`, `routr send` and `routr stop` follow it through `hc`; `routr watch` still says to use its terminal and
+does nothing else. Dispatch, the task file, `--advice`, the model and effort choice, `check` and `record` are as in herdr. What
 differs:
 
 - **It starts with its task.** Launch needs `--task-file` (or `--task`) and `--advice`, and refuses `--pane` and
@@ -398,20 +399,24 @@ differs:
   rule in step 3 with `hc keys <t> <keys>`, and ask the user for Kiro's trust-all-tools question: `needs_input.note`
   says what it is. The worker has its
   task and goes on by itself once answered: do not launch it again.
-- **Wait with `hc wait <t> --timeout <seconds>`,** then look at `turn`, not at the word: `turn` above 0 means a turn has
-  ended. `hc wait` right after the start returns at once with `idle` and turn 0, which only means it has not started yet.
-  A later `blocked` is a question for you, as in a pane: read it with `hc read <t>` and answer with `hc keys`. A
-  timeout is a check-in, not a failure. Keep a foreground wait under your own shell tool's command limit.
-- **Cursor reports no status.** `hc wait` says nothing of it. Its prompt tells it to send its report to your terminal with
+- **Wait with `routr wait --name <name>`.** It asks hc for status and returns when the worker's status leaves
+  `working`, when hc's turn counter goes up, or when its terminal finishes, disappears or cannot be read. A turn has no
+  report file: follow `next` and read it with `hc read <t> --lines 200`. A later `blocked` is a question for you, as in
+  a pane: read it there and answer with `hc keys`. A timeout is a check-in, not a failure. Keep a foreground wait under
+  your own shell tool's command limit.
+- **Cursor reports no status.** `routr wait` says to follow it with hc, because hc cannot see its turns. Its prompt tells it to send its report to your terminal with
   `hc send`, which arrives typed in as a message to you and ends a `hc wait` you are in. If nothing has come after far
   longer than the task should take, read its terminal.
 - **Read the report with `hc read <t> --lines <n>`,** save all of it, and run `routr check --brief <file> --report <file>`.
-- **Send back with `hc send <t> "<message>"`,** ending with the report reminder: it does not add one for you. A short
-  message is best: point at a file for anything long. hc refuses to paste into a program at a question.
+- **Send back with `routr send`.** It adds the report reminder, writes the message to an owner-only file in the
+  worker's run folder, and gives hc only a pointer to it, so the text does not appear in hc's argv. hc refuses to paste
+  into a program at a question; read and answer that question first, then send again.
+- **Stop with `routr stop --name <name>`.** It checks the terminal's worker id and ends its program with hc, leaving the
+  terminal and run folder for cleanup.
 - **Finish with `routr cleanup --worker <name> [--delete-branch]`,** the step in launch's `next`. It refuses while hc says
   the worker is `working` or `blocked`. Otherwise it ends the terminal (`hc kill`, then `hc rm`), then removes the worktree
   with the checks of step 6, and keeps it and the run folder when one fails. To give up on a working worker, run
-  `hc kill <t>` first. Cursor reports no status, so cleanup cannot see it working and ends it: be sure it has reported first.
+  `routr stop --name <name>` first. Cursor reports no status, so cleanup cannot see it working and ends it: be sure it has reported first.
 - **A tab that has gone is still finished with `cleanup --worker`.** When its tab was closed, its harness exited, or a
   core restart lost it, `routr workers` says `finished` or `gone` and gives that step: cleanup then removes the worktree
   through its checks and the worker's record. Never remove such a worker's worktree yourself: its record stays, and

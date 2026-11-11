@@ -16,6 +16,7 @@ import { briefSha } from "../src/lib/ledger.mjs";
 import { LaunchIndex } from "../src/lib/launch-index.mjs";
 import { runDir } from "../src/lib/worker-record.mjs";
 import { start as processStart, startOptions } from "../src/lib/processes.mjs";
+import { CLOSING } from "../src/lib/wording.mjs";
 import { cfg, cliEnv, fakeExecutable, scratch, SCRIPT } from "./helpers.mjs";
 
 // bun test runs every file in one process, in an order that differs by platform, so a test here has a home of its own:
@@ -582,30 +583,93 @@ test("workers asks hc where a terminal worker's terminal is: a finished or gone 
   expect(calls.calls.filter((c) => c.args[0] === "get").map((c) => c.ms)).toEqual([3000]);
 });
 
-test("workers, wait, send, stop and watch each say a terminal worker is followed with hc, and none fails on its record", async () => {
+test("workers and watch keep their terminal behavior while wait follows hc turns through the worker module", async () => {
   await launched();
   const shown = await workersCommand(["--name", "w1"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "working" }, turn: 0 }] }).run });
   expect([shown.ok, shown.workers]).toEqual([true, [{ name: "w1", kind: "claude", model: "m", effort: null, cwd: expect.any(String), backend: "terminal", terminal: "t9", state: "in_terminal", status: "working" }]]);
   expect(noted(shown)).toContain("hc wait t9");
   expect(shown.headline).toBe("routr: w1 in_terminal");
-  const waited = await waitCommand(["--name", "w1"], { settings: () => cfg(), env: {} });
-  expect([waited.ok, waited.state, waited.workers]).toEqual([true, "none", []]);
-  expect(waited.headline).toBe("routr: w1 runs in terminal t9: follow it with hc");
-  expect(noted(waited)).toContain("hc wait t9");
-  // Unnamed, it is not waited on: there is nothing of its to read here.
-  expect((await waitCommand([], { settings: () => cfg(), env: {} })).state).toBe("none");
-  const sent = await sendCommand(["--name", "w1", "--task", "more"], { settings: () => cfg(), env: {} });
-  expect([sent.ok, sent.state, sent.error]).toEqual([false, "refused", undefined]);
-  expect(sent.headline).toBe("routr: w1 runs in terminal t9: follow it with hc; nothing was sent");
-  expect(noted(sent)).toContain("hc send t9 <message>");
-  const stopped = await stopCommand(["--name", "w1"], { settings: () => cfg(), env: {} });
-  expect([stopped.ok, stopped.state, stopped.error]).toEqual([false, "refused", undefined]);
-  expect(stopped.headline).toBe("routr: w1 runs in terminal t9: follow it with hc; nothing was stopped");
-  expect(stopped.next[0].argv).toEqual(["hc", "kill", "t9"]);
+  let now = 0;
+  const hc = fakeHc({ sees: [{ status: { state: "working" }, turn: 0 }, { status: { state: "done" }, turn: 1 }] });
+  const waited = await waitCommand(["--name", "w1", "--timeout", "1000"], { settings: () => cfg(), env: {}, hc: hc.run, now: () => now, pause: async () => { now = 1001; } });
+  expect([waited.ok, waited.state, waited.headline]).toEqual([true, "finished", "routr: w1 finished a turn"]);
+  expect(waited.workers[0]).toMatchObject({ name: "w1", state: "idle", status: "done", turn: 1, turns: [{ turn: 1, outcome: "finished", report: null, delivered: 0 }] });
+  expect(waited.next[0].argv).toEqual(["hc", "read", "t9", "--lines", "200"]);
+  expect(hc.calls.filter((c) => c.args[0] === "get").map((c) => c.args)).toEqual([["get", "t9", "--json"], ["get", "t9", "--json"]]);
   await expect(watchCommand(["--name", "w1"], { write: () => {} })).rejects.toThrow("w1 runs in terminal t9: follow it with hc; its terminal shows it");
   // A holder never takes one on.
   await hold("w1", { run: () => { throw new Error("a holder started a harness"); } });
   expect(existsSync(join(runDir("w1"), "state.json"))).toBe(false);
+});
+
+test("wait returns at a terminal question and notices a terminal that is gone, without reading its screen", async () => {
+  await launched();
+  const blocked = fakeHc({ sees: [{ status: { state: "blocked", kind: "question" }, turn: 0 }], over: { read: { code: 0, out: SECRET } } });
+  const b = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {}, hc: blocked.run });
+  expect([b.ok, b.state, b.workers[0].state, b.workers[0].status]).toEqual([true, "idle", "idle", "blocked"]);
+  expect(blocked.words()).toEqual(["get"]);
+  expect(JSON.stringify(b)).not.toContain(SECRET);
+  const gone = fakeHc({ over: { get: { code: 1, out: "", err: "no terminal t9" }, read: { code: 0, out: SECRET } } });
+  const g = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {}, hc: gone.run });
+  expect([g.ok, g.state, g.workers[0].state, g.headline]).toEqual([true, "finished", "lost", "routr: w1 lost"]);
+  expect(gone.words()).toEqual(["get"]);
+  expect(JSON.stringify(g)).not.toContain(SECRET);
+});
+
+test("send writes an owner-only message file and gives hc only its pointer, classifying handed, blocked and unknown answers", async () => {
+  const cases = [
+    [{ code: 0, out: JSON.stringify({ turn: 1, status: "working", wait: null }) }, true, "delivered", { code: "handed_to_harness" }],
+    [{ code: 3, out: JSON.stringify({ error: { kind: "blocked", message: SECRET } }) }, false, "refused", { code: "refused", why: "refused" }],
+    [{ code: 0, out: SECRET }, false, "unknown", { code: "unknown" }],
+  ];
+  for (const [answer, ok, state, message] of cases) {
+    await launched();
+    const hc = fakeHc({ over: { send: answer } });
+    const r = await sendCommand(["--name", "w1", "--task", SECRET], { settings: () => cfg(), env: {}, hc: hc.run });
+    expect([r.ok, r.state, r.message]).toEqual([ok, state, message]);
+    const calls = hc.calls.filter((c) => c.cmd === "hc");
+    expect(calls.map((c) => c.args[0])).toEqual(["get", "send"]);
+    expect(calls[0].args).toEqual(["get", "t9", "--json"]);
+    const pointer = calls[1].args[2], match = /^Your message is in (.+)\. Read that whole file now and do what it says\.$/.exec(pointer);
+    expect(calls[1].args).toEqual(["send", "t9", pointer, "--json"]);
+    expect(match).not.toBeNull();
+    expect(pointer).not.toContain(SECRET);
+    expect(readFileSync(match[1], "utf8")).toBe(`${SECRET}\n\n${CLOSING}`);
+    if (process.platform !== "win32") expect(statSync(match[1]).mode & 0o777).toBe(0o600);
+    expect(JSON.stringify(r)).not.toContain(SECRET);
+    rmSync(runDir("w1"), { recursive: true, force: true });
+  }
+});
+
+test("stop kills only the live terminal carrying this worker's id, and leaves finished and foreign terminals alone", async () => {
+  const cases = [
+    [fakeHc({ sees: [{ status: { state: "working" }, turn: 0 }] }), true, "stopped", ["get", "kill"]],
+    [fakeHc({ sees: [{ state: "finished", status: null, exit_code: 0 }] }), true, "absent", ["get"]],
+    [fakeHc({ sees: [{ status: { state: "done" }, turn: 1, labels: { "routr.worker": "f".repeat(32) } }] }), false, "unknown", ["get"]],
+  ];
+  for (const [hc, ok, state, words] of cases) {
+    await launched();
+    const r = await stopCommand(["--name", "w1"], { settings: () => cfg(), env: {}, hc: hc.run });
+    expect([r.ok, r.state, r.error]).toEqual([ok, state, undefined]);
+    expect(hc.words()).toEqual(words);
+    if (words.includes("kill")) expect(hc.calls.find((c) => c.args[0] === "kill").args).toEqual(["kill", "t9"]);
+    expect(existsSync(runDir("w1"))).toBe(true);
+    rmSync(runDir("w1"), { recursive: true, force: true });
+  }
+});
+
+test("Cursor keeps wait's status refusal, while terminal send and stop still act by id", async () => {
+  cursorHome();
+  await fixture("cursor", { hc: fakeHc({ sees: [{ status: null, turn: 1 }] }) }).go();
+  const waited = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {} });
+  expect([waited.ok, waited.state, waited.workers]).toEqual([true, "none", []]);
+  expect(waited.headline).toBe("routr: w1 runs in terminal t9: follow it with hc");
+  const sentHc = fakeHc({ sees: [{ status: null, turn: 1 }], over: { send: { code: 0, out: JSON.stringify({ turn: 1 }) } } });
+  const sent = await sendCommand(["--name", "w1", "--task", "more"], { settings: () => cfg(), env: {}, hc: sentHc.run });
+  expect([sent.ok, sent.state, sentHc.words()]).toEqual([true, "delivered", ["get", "send"]]);
+  const stopHc = fakeHc({ sees: [{ status: null, turn: 1 }] });
+  const stopped = await stopCommand(["--name", "w1"], { settings: () => cfg(), env: {}, hc: stopHc.run });
+  expect([stopped.ok, stopped.state, stopHc.words()]).toEqual([true, "stopped", ["get", "kill"]]);
 });
 
 test("the launch index keeps a terminal worker's launch", () => {

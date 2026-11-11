@@ -8,6 +8,7 @@ A short history of what changed in each routr release, one line per change. Each
 - A background refresh of Cursor's or Kiro's usage now reads the subscriptions of the `--config` its caller was given, not the default config. (#171)
 - `routr board` no longer repeats a note such as "a fresh reading is being taken in the background" long after it was true: it says so only when that call started one. (#171)
 - After upgrading, Cursor and Kiro read "no reading yet" until their first background refresh lands: readings kept by earlier versions are not carried over. (#171)
+- `routr wait`, `routr send` and `routr stop` now follow terminal workers in the Herdr app, while their finished reports remain in their tabs to read with `hc`. (#TBD)
 - `routr watch` in a herdr pane no longer sends the Herdr app's status codes or a terminal title when that pane's session was started from an app terminal. (#165)
 - `routr cleanup --worker` keeps a worker launched again under the same name while it waited, and says its record changed, instead of finishing the new worker. (#170)
 
