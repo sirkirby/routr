@@ -9,7 +9,7 @@ import { HARNESSES } from "./harnesses.mjs";
 import { LEVELS } from "./questions.mjs";
 import { DATA_DIR, ensureParent } from "./state-files.mjs";
 import { EFFORTS } from "./shaped.mjs";
-import { LAUNCH_ID } from "./launch-history.mjs";
+import { isLaunchId } from "./launch-identity.mjs";
 
 // The ledger is one file per user, shared by every project on the machine. Each row is labelled with its project so
 // `assess` can tell them apart: the folder name of the git repository the work happened in. A worktree counts as its
@@ -139,7 +139,7 @@ export const OUTCOME_CAUSES = ["execution", "brief", "scope", "review", "launch"
 const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export class RunIdError extends Error {}
 export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, causes, run_id, note, subagents, project, launch_id }, config = null) {
-  if (launch_id != null && !LAUNCH_ID.test(launch_id)) throw new Error("--launch takes the launch_id field from launch's answer (its record template carries it)");
+  if (launch_id != null && !isLaunchId(launch_id)) throw new Error("--launch takes the launch_id field from launch's answer (its record template carries it)");
   if (run_id != null && !RUN_ID.test(run_id)) throw new RunIdError("--run-id takes the run_id field from record's earlier output, not id; it must name an existing run in this ledger");
   if (attempts != null && (!/^[1-9]\d*$/.test(String(attempts)) || !Number.isSafeInteger(+attempts))) throw new Error("--attempts must be a positive whole number; omit it when unknown");
   if (seconds != null && (String(seconds).trim() === "" || !Number.isFinite(+seconds) || +seconds < 0)) throw new Error("--seconds must be a nonnegative duration; omit it when unknown");

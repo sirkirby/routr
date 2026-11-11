@@ -20,7 +20,8 @@ import { standalone } from "./processes.mjs";
 import { CHECK_VERSION, checkQuestions, LEVELS, MEANING, questions, VERSION } from "./questions.mjs";
 import { ADVICE_STEPS, count } from "./wording.mjs";
 import { recentLaunches } from "./shares.mjs";
-import { findLaunch, LAUNCH_ID } from "./launch-history.mjs";
+import { findLaunch } from "./launch-history.mjs";
+import { isLaunchId } from "./launch-identity.mjs";
 import { enabledSubscriptions } from "./config.mjs";
 import { HARNESSES, SOURCES } from "./harnesses.mjs";
 import { failedUsage, servedRow } from "./usage.mjs";
@@ -144,7 +145,7 @@ function rowIdentity(o, advice, ledger, warnings) {
   const launch_id = o.launch ?? null;
   const prior = o.run_id ? read(ledger).findLast((e) => e.run_id === o.run_id) : null;
   let project = o.project ?? prior?.project;
-  if (launch_id != null && LAUNCH_ID.test(launch_id)) {
+  if (isLaunchId(launch_id)) {
     const found = findLaunch(launch_id);
     if (found.record?.id && found.record.id !== advice.id) throw new Error(`--launch ${launch_id} was made with other advice (${found.record.id}); give the launch this advice was used for`);
     if (project == null) {

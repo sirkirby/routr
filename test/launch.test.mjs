@@ -7,6 +7,7 @@ import { headlessArgv } from "../src/lib/headless.mjs";
 import { composePrompt, launch as rawLaunch, parseLaunchArgs, WORKER_GUIDE } from "./contract.mjs";
 import { paneText, promptSettled, quote, runHerdr, shellPrompt } from "../src/lib/herdr.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
+import { isLaunchId } from "../src/lib/launch-identity.mjs";
 import { displayCommand, templateCommand } from "../src/lib/next.mjs";
 import { EventEmitter } from "node:events";
 import { herdrError, herdrOK, SCRATCH, scratch, SCRIPT, shellInfo } from "./helpers.mjs";
@@ -418,7 +419,7 @@ test("a launch that took its task gets one id: its answer, its history record an
   const inRepo = fakeHerdr({ reply: (a) => (a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, cwd: join(repo, "sub") }] } }) : undefined) });
   const r = await launch([...launchArgs, "--cwd", join(repo, "sub"), "--task", brief, "--advice", advice], { ...inRepo.deps, home });
   expect(r.state).toBe("prompted");
-  expect(r.launch_id).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+  expect(isLaunchId(r.launch_id)).toBe(true);
   const { records } = readHistory({ home });
   expect(records).toEqual([{ launch_id: r.launch_id, at: expect.any(Number), subscription: "claude", model: "sonnet", effort: null, id: "ab12cd34",
     advised: { level: "standard", sure: false, between: ["basic", "standard"], work_type: "refactor", high_risk: false, fallback: false, facts: {} },

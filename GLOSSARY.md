@@ -80,3 +80,20 @@ through one table: what a command looks at follows the name (the record there no
 identity (the record it started with, whose id is checked where it acts). Nothing else after launch asks which backend a
 worker has.
 _Avoid_: headless adapter for the headless backend's (a headless adapter is a harness's protocol work under the holder)
+
+## What a launch leaves
+
+**Launch identity**:
+The one id each launch is made with, and the two rules that decide what a launch is from how it ended. It counts
+toward the user's launch share (a worker that took its task or was left ready, or a terminal worker stopped at a
+question): only then does its answer carry `launch_id` and the launch history keep it. A later `--pane` rerun can find
+it (any started worker that took its task, was left ready or stopped at a question): only then does the launch index
+keep it. A pane worker stopped at a question is findable and not counted; the rerun that finishes it is what counts.
+
+**Launch history**:
+routr's record of each counted launch, under its launch id, kept 7 days: the launch share's input, and the project a
+later `record --launch` gives a row. Checked fields only, never the task.
+
+**Launch index**:
+The OpenTelemetry export's record of each findable launch, under its launch id with its trace's span, kept 30 days and
+written only when export is on: how a `--pane` rerun, cleanup and record link to the launch's span.

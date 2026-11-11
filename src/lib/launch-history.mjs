@@ -5,9 +5,10 @@
 // worker runs and its name. Field names are the ledger's: `id` is the advice's, as in advice and ledger rows.
 // No brief, no task, no path, no note. Kept 7 days (the share window). Best effort: a write that fails never fails the
 // launch, and history that cannot be read is said, never read as empty.
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { home as userHome, STATE_DIR, UNINSTALL_LOCK, writeJsonAtomic } from "./state-files.mjs";
+import { home as userHome, STATE_DIR, writeJsonAtomic } from "./state-files.mjs";
+import { isLaunchId, launchIdOfFile, sweepLaunches, uninstalling } from "./launch-identity.mjs";
 import { WORKER_NAME } from "./worker-record.mjs";
 import { LEVELS } from "./questions.mjs";
 
@@ -17,8 +18,6 @@ const WINDOW_MS = HISTORY_DAYS * 86400000;
 const SKEW_MS = 60000;
 // The folder keeps its first name (it held only counts): records written before the decision fields still count.
 export const LAUNCH_HISTORY_DIR = (h = userHome()) => join(STATE_DIR(h), "launch-counts");
-export const LAUNCH_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const OWN = /^([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})\.json$/;
 const SUBSCRIPTION = /^[a-z][a-z0-9_-]{0,31}$/;
 const ADVICE_ID = /^[a-f0-9]{8}$/;
 const BACKENDS = ["pane", "terminal", "headless"];
@@ -59,8 +58,8 @@ export function launchRecord(fields) {
 // launch meanwhile); UNREADABLE when it is there and cannot be read, since skipping it would skew the counts.
 const UNREADABLE = Symbol("unreadable");
 function readRecord(dir, name, now) {
-  const m = OWN.exec(name);
-  if (!m) return null;
+  const launchId = launchIdOfFile(name);
+  if (!launchId) return null;
   let raw;
   try {
     const file = join(dir, name);
@@ -71,7 +70,7 @@ function readRecord(dir, name, now) {
     const v = JSON.parse(raw), at = Date.parse(v?.at);
     if (!v || typeof v.subscription !== "string" || !SUBSCRIPTION.test(v.subscription) || !Number.isFinite(at) || at > now + SKEW_MS) return null;
     // A record from before the decision fields holds only the account and the time: it still counts.
-    return { launch_id: m[1], at, ...launchRecord(v), subscription: v.subscription };
+    return { launch_id: launchId, at, ...launchRecord(v), subscription: v.subscription };
   } catch { return null; }
 }
 
@@ -104,18 +103,15 @@ export function readHistory({ home = userHome(), now = Date.now() } = {}) {
 export function recordLaunch(launchId, fields, { home = userHome(), now = Date.now() } = {}) {
   try {
     const record = launchRecord(fields);
-    if (!LAUNCH_ID.test(launchId ?? "") || !record.subscription || existsSync(UNINSTALL_LOCK(home))) return false;
+    if (!isLaunchId(launchId) || !record.subscription || uninstalling(home)) return false;
     const dir = LAUNCH_HISTORY_DIR(home);
     // Each folder is checked before anything is made in it, and again once made.
     for (const f of [STATE_DIR(home), dir]) {
       if (folder(f) === "absent") mkdirSync(f, { recursive: true, mode: 0o700 });
-      if (folder(f) !== "yes" || existsSync(UNINSTALL_LOCK(home))) return false;
+      if (folder(f) !== "yes" || uninstalling(home)) return false;
     }
     writeJsonAtomic(join(dir, `${launchId}.json`), { at: new Date(now).toISOString(), ...record }, { mkdir: false, mode: 0o600 });
-    for (const n of readdirSync(dir)) {
-      const r = readRecord(dir, n, now);
-      if (r && r !== UNREADABLE && r.at < now - WINDOW_MS) try { unlinkSync(join(dir, n)); } catch {}
-    }
+    sweepLaunches(dir, home, (n) => { const r = readRecord(dir, n, now); return Boolean(r) && r !== UNREADABLE && r.at < now - WINDOW_MS; });
     return true;
   } catch { return false; }
 }

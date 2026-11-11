@@ -13,6 +13,7 @@ import { CLOSING } from "./wording.mjs";
 import { BRANCH, runHerdr, SHELLS, splitArgs, worktreeArgs } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { recordLaunch } from "./launch-history.mjs";
+import { countsTowardShare, newLaunchId } from "./launch-identity.mjs";
 import { projectName } from "./ledger.mjs";
 import { fallbackAdvice } from "./output.mjs";
 import { executionFor } from "./backends.mjs";
@@ -195,17 +196,16 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
   return done();
 }
 
-// One identity per launch, made here, whether or not anything is exported: its trace's `routr.launch.id` (a `--pane`
-// recovery rerun links to the launch it finishes, with its own id), its history record, its answer's `launch_id` and its
-// record template's `--launch`.
+// One identity per launch (launch-identity.mjs), made here, whether or not anything is exported: its history record, its
+// answer's `launch_id`, its record template's `--launch`, and its trace's `routr.launch.id` when launch starts its own
+// trace (a `--pane` recovery rerun links to the launch it finishes, with its own id). From the CLI the trace is started
+// before launch runs and has an id of its own (commandTrace).
 export function launch(args, opts = {}) {
   const lead = takeLeadSession(args); args = [...lead.args, ...(lead.lead ? ["--lead-session", lead.lead] : [])];
-  const settings = oneReading(opts.settings), made = randomUUID();
+  const settings = oneReading(opts.settings), made = newLaunchId();
   return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead, launchId: made }), async () => { const { out: r, backend, finish, adopted, advised } = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings);
-    // A worker that took its task, or was left ready for one, counts toward the user's launch share (shares.mjs). A dry
-    // run, a refusal and a failed start count nothing; a --pane rerun that finishes a failed launch counts once. A terminal
-    // worker stopped at a question has its task and goes on once answered: no rerun will count it later.
-    const took = r.state === "prompted" || r.state === "ready" || (r.state === "needs_input" && r.worker?.backend === "terminal");
+    // Whether it counts toward the user's launch share, and so gets its launch_id and history record (launch-identity.mjs).
+    const took = countsTowardShare({ state: r.state, backend });
     try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane"), backend }); } catch {}
     // Its history record: the decision as checked fields, never the task. An adopted pane's agent kept its own model and
     // effort, which launch cannot know. The project is the repository the worker's folder is in (its worktree's).
