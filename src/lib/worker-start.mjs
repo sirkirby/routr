@@ -2,9 +2,12 @@
 // written yet, and then its run folder and worktree, taken back whole if the start stops before anything ran. Each backend
 // adds what it runs and how; `where` says, in its refusals, where this lead is.
 import { warning } from "./warnings.mjs";
-import { existsSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ownedBy, reserve, runDir } from "./worker-record.mjs";
+import { privateDir } from "./channel.mjs";
+import { recordStore, runDir } from "./worker-record.mjs";
+import { lockIsStale, UNINSTALL_LOCK } from "./state-files.mjs";
 import { copyInto, makeWorktree, newWorktree, unmakeWorktree } from "./worktree.mjs";
 import { HARNESSES, privateConfigCopy, privateConfigDir } from "./harnesses.mjs";
 import { configOf } from "./config.mjs";
@@ -35,6 +38,38 @@ export async function refuseSettings(o, out, { settings, ready, checkListed = as
   if (signedOut) throw new Error(`${HARNESSES[o.kind].label} cannot take work: ${signedOut}`);
   await checkListed();
   return config;
+}
+
+// The run folder of a new worker, reserved by its name: made whole, owner-only, or refused when one exists.
+// Made first, then the uninstall lock looked at: uninstall takes its lock first, then looks for run folders, so
+// one of the two always sees the other. Each reservation writes its own random token into its folder,
+// exclusively, before anything else, and only the launch whose token is there removes that folder (takeRun's
+// unreserve, below). An uninstall releases its lock only once everything else in its state folder is gone, so
+// when this call finds no lock, any earlier uninstall has finished removing: the token still being there then
+// means the folder is this call's for good (a later uninstall takes its lock first and sees it). Found held, it
+// backs out by removing nothing: the uninstall running removes the folder, or, if it came after that
+// uninstall's sweep, keeps its own state folder and says so. (an identity by device, inode and birth time, and
+// a token checked and then acted on by path, each left a moment where another launch's folder could be taken
+// for this one's.)
+export const OWNER = ".reserved-by";
+export const ownedBy = (dir, token) => { try { return readFileSync(join(dir, OWNER), "utf8") === token; } catch { return false; } };
+export function reserve(name, { beforeOwn = () => {}, afterOwn = () => {}, beforeBackout = () => {} } = {}) {
+  const store = recordStore();
+  privateDir(store.dir);
+  const dir = store.runDir(name), token = randomUUID().replace(/-/g, "");
+  mkdirSync(dir, { mode: 0o700 }); // not recursive: EEXIST when that name is taken
+  beforeOwn(); // a test acts here: as if this call paused while uninstall and another launch ran
+  try { writeFileSync(join(dir, OWNER), token, { flag: "wx", mode: 0o600 }); } // EEXIST: another reservation's folder
+  catch (e) { if (e?.code === "ENOENT") throw new Error(`${name}'s run folder was removed while launch was making it; run launch again`); throw e; }
+  afterOwn(); // and here
+  let held = false;
+  try { held = existsSync(UNINSTALL_LOCK()) && !lockIsStale(UNINSTALL_LOCK()); } catch { held = existsSync(UNINSTALL_LOCK()); }
+  if (held) {
+    beforeBackout(); // and here
+    throw new Error("routr is being uninstalled on this machine: no worker can start now");
+  }
+  if (!ownedBy(dir, token)) throw Object.assign(new Error(`a worker named ${name} exists`), { code: "EEXIST" });
+  return { dir, token };
 }
 
 // The name reserved and the worktree made, its copies in: `{ dir, wt, unreserve }`. `unreserve` takes back what this

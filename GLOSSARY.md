@@ -55,3 +55,11 @@ worker's reports.
 
 **Worker record**:
 What routr saved about a headless or terminal worker when it launched: its name, harness, model, backend and folder.
+
+**Backend adapter**:
+What the worker commands (`workers`, `wait`, `send`, `stop`, `watch`, `cleanup --worker`) do to a worker for one
+backend: look at it, send to it, stop it, end it, or say it is followed elsewhere. Picked from the worker's record
+through one table: what a command looks at follows the name (the record there now), and what it does follows the
+identity (the record it started with, whose id is checked where it acts). Nothing else after launch asks which backend a
+worker has.
+_Avoid_: headless adapter for the headless backend's (a headless adapter is a harness's protocol work under the holder)

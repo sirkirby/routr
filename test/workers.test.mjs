@@ -9,7 +9,8 @@ import { claim, connect, endpointFor, generations, ownEndpoint, probe, serve, SO
 import { prepareOtel } from "../src/lib/otel.mjs";
 import { TRACE_ATTRIBUTES } from "../src/lib/traces.mjs";
 import { ADAPTERS, agyReader, codexReader, cursorReader, groupAlive, groupGone, kiroReader, listGroup, readEvent } from "../src/lib/headless.mjs";
-import { view } from "../src/lib/backend-headless.mjs";
+import { workers } from "../src/lib/worker.mjs";
+import { newRecord, recordStore } from "../src/lib/worker-record.mjs";
 import { unmakeWorktree } from "../src/lib/worktree.mjs";
 import { EventEmitter } from "node:events";
 import { Writable } from "node:stream";
@@ -1289,12 +1290,11 @@ test("the channel: one claimant per generation, and nothing for a peer that has 
 });
 
 test("a worker is lost only when its channel and its state are of one generation", async () => {
-  const home = shortHome(), saved = [process.env.HOME, process.env.USERPROFILE];
-  process.env.HOME = process.env.USERPROFILE = home;
-  try {
-    const dir = join(home, ".local", "state", "routr", "workers", "v1");
+  const home = shortHome(), root = join(home, "state"), store = recordStore(root), dir = store.runDir("v1");
+  {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    writeFileSync(join(dir, "worker.json"), JSON.stringify({ format: 1, id: "abcdef0123456789", name: "v1", kind: "claude", model: "m", cwd: home }));
+    store.write(dir, newRecord({ name: "v1", kind: "claude", model: "m", cwd: home }, { backend: "headless" }));
+    const view = async (name) => (await workers({ root }).one(name).look()).view;
     const gone = Bun.spawnSync([process.execPath, "-e", ""]).pid; // a process that has exited
     const state = (gen) => writeFileSync(join(dir, "state.json"), JSON.stringify({ gen, state: "working", turn: 1, turns: [{ turn: 1 }] }));
     // The state is generation 2's; the channel only shows generation 1, released: the two never agree, so nothing is
@@ -1310,7 +1310,7 @@ test("a worker is lost only when its channel and its state are of one generation
     // One generation, claimed by a process that is gone and never bound: lost.
     writeFileSync(join(dir, "gen-2.claim"), JSON.stringify({ pid: gone, at: 0 }));
     expect((await view("v1")).state).toBe("lost");
-  } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
+  }
 });
 
 test("every headless adapter removes every lead session name on its initial and resumed turns, keeping sign-in and config", async () => {

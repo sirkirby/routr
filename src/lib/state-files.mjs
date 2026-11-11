@@ -26,7 +26,7 @@ export const worktreeFolder = (branch) => branch.replace(/[\\/]/g, "-");
 // reads the path itself, not what a link there points at.
 export const folderId = (path, { link = false } = {}) => { try { const st = (link ? lstatSync : statSync)(path, { bigint: true }); return st.isSymbolicLink() ? null : `${st.dev}:${st.ino}:${st.birthtimeNs}`; } catch { return null; } };
 // Held by `routr uninstall` from its last check through its removal (its pid inside); a headless launch that reserves
-// a run folder while it is held backs out (worker-record.mjs reserve), so neither misses the other.
+// a run folder while it is held backs out (worker-start.mjs reserve), so neither misses the other.
 export const UNINSTALL_LOCK = (h = home()) => join(STATE_DIR(h), "uninstalling");
 export const UPDATE_STAMP = () => join(CACHE_DIR(), "update-check");
 export const TELEMETRY_LOG = () => join(CACHE_DIR(), "telemetry.log");
@@ -37,8 +37,6 @@ export const CLAUDE_SNAPSHOT = () => join(CACHE_DIR(), "claude-usage.json");
 export const CURSOR_SNAPSHOT = () => join(CACHE_DIR(), "cursor-usage.json");
 // Written by `routr usage kiro` the same way, read by the usage reader.
 export const KIRO_SNAPSHOT = () => join(CACHE_DIR(), "kiro-usage.json");
-// A worker's name (launch --name), which cleanup --worker, the worker commands and a span's agent name take.
-export const NAME_RULE = "[a-z][a-z0-9_-]{0,31}", WORKER_NAME = new RegExp(`^${NAME_RULE}$`);
 
 // A path as the file system names it, for comparing two paths. The native call: on Windows it also expands 8.3 short
 // names and folds case, which the JS one leaves as written (measured 2026-10-22, Bun 1.4.3 on Windows 11 x64:

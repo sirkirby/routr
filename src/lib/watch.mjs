@@ -1,9 +1,7 @@
 // `routr watch`: one headless worker's progress, followed in a terminal until it is cleaned up. It reads what the holder
 // wrote and changes nothing, so closing it stops nothing. Fixed words only: tool names, states and report paths, never
 // the worker's text. In a herdr-core terminal it also reports status over OSC 7501, the only way core takes one.
-import { view } from "./backend-headless.mjs";
-import { TERMINAL_FOLLOWED } from "./backend-terminal.mjs";
-import { workerOf } from "./worker-record.mjs";
+import { workers } from "./worker.mjs";
 import { inCore } from "./backends.mjs";
 import { HARNESSES } from "./harnesses.mjs";
 import { parseNamed } from "./workers.mjs";
@@ -34,21 +32,21 @@ export function changes(v, seen, at = "") {
 }
 const clock = (t) => new Date(t).toTimeString().slice(0, 8);
 
-export async function watchCommand(args, { env = process.env, write = (s) => process.stdout.write(s), pause = sleep, now = () => Date.now() } = {}) {
+export async function watchCommand(args, { env = process.env, write = (s) => process.stdout.write(s), pause = sleep, now = () => Date.now(), workers: ws = workers({ env }) } = {}) {
   const o = parseNamed(args, "watch", ["name"]);
   if (o.names.length !== 1) throw new Error("watch takes one --name");
-  const name = o.names[0], rec = workerOf(name);
-  if (!rec.worker) throw new Error(`no headless worker named ${name}; routr workers lists them`);
-  if (rec.worker.backend === "terminal") throw new Error(`${TERMINAL_FOLLOWED(rec.worker)}; its terminal shows it`);
-  const w = rec.worker, status = inCore(env), seen = { turns: new Set(), state: null, turn: null, tool: null };
+  const name = o.names[0], it = ws.one(name), off = it.follows("watch");
+  // One whose record cannot be read is not followed: what it is is not known.
+  if (!it.record) throw new Error(`no headless worker named ${name}; routr workers lists them`);
+  if (off) throw new Error(`${off.why}; its terminal shows it`);
+  const w = it.record, status = inCore(env), seen = { turns: new Set(), state: null, turn: null, tool: null };
   write(`${status ? `\x1b]2;${name}\x07` : ""}routr worker ${name}: ${HARNESSES[w.kind]?.label ?? w.kind}, ${w.model}${w.effort ? ` at ${w.effort}` : ""}\nin ${w.cwd}\nClosing this does not stop the worker. Ends when the worker is cleaned up.\n\n`);
   let last = null;
   for (;;) {
     // Gone, or another worker launched under this name since: this one is over. A record it cannot read just now is
     // neither: view shows it as `unreadable`, and it is looked at again. Every look asks the holder, so a lost worker
     // stays lost: without that, its saved state would read `working` again between checks.
-    const latest = workerOf(name), over = !latest.unreadable && latest.worker?.id !== w.id;
-    const v = over ? null : await view(name);
+    const id = it.still(), v = id === "same" || id.unreadable ? (await it.look())?.view : null;
     if (!v) { write(`${clock(now())}  cleaned up\n`); return 0; }
     for (const l of changes(v, seen, clock(now()))) write(`${l}\n`);
     const report = status ? statusReport(v) : null;

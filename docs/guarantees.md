@@ -66,7 +66,9 @@ a failure.
   only if unchanged, so a commit made, or a worker started, after cleanup's last check is not seen.
 - `cleanup --worker` removes a headless worker's worktree, when launch made one, with the same checks as `cleanup
   --worktree` (and keeps everything when one fails), then its run folder, its reports included, once its own process
-  has ended and no process group it recorded still has members, under the lock a new holder is started under. A state
+  has ended and no process group it recorded still has members, under the lock a new holder is started under, and only
+  while its record is still the one cleanup first read: a worker launched again under that name while cleanup waited
+  for the lock is kept, and cleanup says its record changed. A state
   or record it cannot read is not taken as one recording no group: cleanup keeps the worker and says to try again,
   and what to do if the file stays unreadable. A
   worker launched without a worktree worked in your folder: cleanup does not inspect or touch it. What it cannot see

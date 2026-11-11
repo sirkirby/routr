@@ -19,7 +19,8 @@ import { executionFor } from "./backends.mjs";
 import { launchFailed } from "./launch-answer.mjs";
 import { command, launchPane, paneConfigEnvArgs, paneEnvOf, panePromptArgs, paneStartArgs, promptForLog, usualShell } from "./backend-pane.mjs";
 import { client } from "./hc.mjs";
-import { home, NAME_RULE, WORKER_NAME } from "./state-files.mjs";
+import { home } from "./state-files.mjs";
+import { NAME_RULE, WORKER_NAME } from "./worker-record.mjs";
 import { selfCommand, spawnSelf } from "./processes.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files

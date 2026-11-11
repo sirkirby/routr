@@ -24,9 +24,9 @@ import { count } from "./wording.mjs";
 import { answer } from "./output.mjs";
 import { callHerdr, callGit, processError, processSteps } from "./process-boundary.mjs";
 import { probe } from "./processes.mjs";
-import { realOr, realPath, WORKER_NAME, WORKTREES_DIR, worktreeFolder } from "./state-files.mjs";
+import { realOr, realPath, WORKTREES_DIR, worktreeFolder } from "./state-files.mjs";
 import { callHc, client, getTerminal, isAddress } from "./hc.mjs";
-import { readWorker, WORKER_LABEL, workerNames } from "./worker-record.mjs";
+import { recordStore, WORKER_LABEL, WORKER_NAME } from "./worker-record.mjs";
 import { inCore } from "./backends.mjs";
 
 const herdrLine = (args) => displayCommand(["herdr", ...args]);
@@ -190,7 +190,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
       if (unknown && !inside(t.cwd)) { missing("terminal", path); return { why: `hc ${got.ok ? "did not say where terminal " + t.address + "'s program is" : `could not read terminal ${t.address} (${unknown})`}, so whether it runs in ${path} is not known`, next: inspect("Look at that terminal.", ["hc", "get", t.address]) }; }
       if (![t.cwd, d?.cwd, d?.foreground?.cwd].some(inside)) continue;
       if (t.address === env.HC_TERMINAL_ID) return { why: `your own terminal ${t.address} is in ${path}`, next: doNext("Run cleanup from outside the worktree you are removing") };
-      const id = d?.labels?.[WORKER_LABEL], name = id ? workerNames().find((n) => readWorker(n)?.id === id) : null;
+      const id = d?.labels?.[WORKER_LABEL], store = recordStore(), name = id ? store.names().find((n) => store.read(n).worker?.id === id) : null;
       const label = `terminal ${t.address}${typeof d?.name === "string" && WORKER_NAME.test(d.name) ? ` (${d.name})` : ""}`;
       if (id) return { why: `${label}, a routr worker's, runs in ${path}`, next: name ? runNext("Finish that worker with cleanup --worker, which ends its terminal first and then removes its worktree.", ["routr", "cleanup", "--worker", name]) : doNext(`Finish that worker with routr cleanup --worker <name> from the core that started it (routr workers lists its workers), or look at it with hc read ${t.address}.`) };
       return { why: `${label} runs in ${path}`, next: [runNext("Read the terminal before deciding whether to let it finish or end it.", ["hc", "read", t.address, "--lines", "200"]), doNext("Let it finish, or decide whether it is within scope to end it with hc kill, then run cleanup again.")] };
@@ -257,7 +257,7 @@ async function cleanupBody(args, { run = runHerdr, git = gitIn, env = process.en
     const o = parseCleanupArgs(args);
     await cleanupLink(o, run);
     target = o.worktree ?? o.path;
-    if (o.worker != null) return await (await import("./backend-headless.mjs")).cleanupWorker(o.worker, o, out, { hc, env });
+    if (o.worker != null) return await (await import("./worker.mjs")).workers({ env, ...(hc ? { hc } : {}) }).finish(o.worker, o, out);
     if (o.pane != null) {
       out.pane = o.pane;
       const panes = await paneList([]);
