@@ -5,6 +5,10 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.14.0 — 2026-11-11
+
+[Full notes](docs/releases/v0.14.0.md)
+
 - With OpenTelemetry export on, `routr record --launch <launch_id>` links the run to its launch again: a launch from the command line now carries one id in its answer, its trace and its worker's record. (#174)
 - A background refresh of Cursor's or Kiro's usage now reads the subscriptions of the `--config` its caller was given, not the default config. (#171)
 - `routr board` no longer repeats a note such as "a fresh reading is being taken in the background" long after it was true: it says so only when that call started one. (#171)
