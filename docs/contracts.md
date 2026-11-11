@@ -705,7 +705,8 @@ Inputs:
   revision keeps its run's launch, none included: `--launch` naming another, or given to a run recorded without one,
   is refused.
 - The row's `project`: `--project` when given; on a revision, the run's own; else the project of the launch `--launch`
-  names, from routr's launch history; else the git repository's folder name of the folder record runs in. A launch
+  names, from routr's launch history; else the project of the folder record runs in (its git repository's name, or
+  the folder's own name outside a repository). A launch
   the history no longer has (it keeps 7 days) or history it cannot read only warns (`launch_not_found`,
   `launch_history_unreadable`) and falls back to the folder.
 
@@ -870,7 +871,9 @@ pending too. Any other status returns. Its `turn` is hc's turn counter and each 
 text never enters output or a report file. Its wait row includes `backend: "terminal"` and the saved `terminal`
 address, beside the common worker fields. Status `error` is state `failed` and is a notice. A terminal at a question
 returns with `status: "blocked"` and state `idle`; because entering the question can advance hc's counter, the same
-answer can report a finished turn. Its program finishing is the existing `stopped` notice; its terminal disappearing
+answer can report a finished turn. At turn 0 with no send, status `idle` or none is state `starting`, which is
+pending: once a startup question is answered, hc reports idle at turn 0 until the harness takes up its prompt. A wait
+that times out on it says the worker has not started its task yet. Its program finishing is the existing `stopped` notice; its terminal disappearing
 is the existing `lost` notice, with `routr cleanup --worker <name>` in `next`; an unknown hc reading is `unreachable`.
 Each notice is reported once. An unnamed wait includes every terminal worker whose harness reports status, including an
 idle one, because its current status and turn are known only after the hc look. `workers` keeps its terminal row and
@@ -1077,7 +1080,8 @@ What only routr knows, for one project, in one answer: `routr top` draws it for 
 it. A reading command: it changes nothing of the user's, calls no harness, and answers within milliseconds.
 
 - Used when given: `--cwd <folder>`: the project, by the git repository that folder is in (a worktree counts as its
-  repository; routr's rule for a ledger row's project); omitted, every project on this machine. `--config`. Refused
+  repository), or the folder's own name outside one: routr's rule for a ledger row's project; omitted, every project on
+  this machine. `--config`. Refused
   (`ok: false`, `error`): `--cwd` with no value, given twice, or not a folder; any other flag or argument. A given
   `--headroom` is not used, and a `headroom_unused` warning says so.
 - `project`: that name, or null. `level`: `basic`, the work the room is ranked for, so no account is left out for its
@@ -1115,8 +1119,8 @@ it. A reading command: it changes nothing of the user's, calls no harness, and a
 `routr top [--cwd <folder>]`: board for a person, as text and not JSON, kept current until they quit. It shows
 board's answer and nothing else, so never a ledger note, a brief, or a nested value.
 
-- Used when given: `--cwd <folder>` (default: the current folder): the project, by board's rule. A folder outside any
-  git repository shows every project, and says so. `--config`. Refused, with a line on stderr and exit 2: `--cwd` with
+- Used when given: `--cwd <folder>` (default: the current folder): the project, by board's rule (outside a git repository,
+  the folder's name). At a filesystem root, which has no name, it shows every project, and says so. `--config`. Refused, with a line on stderr and exit 2: `--cwd` with
   no value, given twice, not a folder, or taken as the value of `--config` or `--headroom`; any other flag or
   argument. A given `--headroom` is not used, and says so as board does.
 - In a terminal: the alternate screen, board read again every 5 seconds and drawn to the terminal's size: Room and
@@ -1138,9 +1142,8 @@ It does not judge: no cost, no score, no recommendation. Model names appear only
 harness and makes no network call. It changes nothing but the file it writes. Exit 0, including a refusal: the answer
 says so.
 
-- Used when given: `--cwd <folder>` (default: the current folder): the project filter, by the git repository that
-  folder is in (a worktree counts as its repository), the same rule as `top`. Outside a repository the page shows
-  every project and says so. The file holds every project's rows either way. `--out <file>`: where to write (default:
+- Used when given: `--cwd <folder>` (default: the current folder): the project filter, by board's rule, as `top`
+  (outside a git repository, the folder's name; at a filesystem root, every project, and the page says so). The file holds every project's rows either way. `--out <file>`: where to write (default:
   `dash.html` in routr's cache folder, owner-only on macOS and Linux). `--no-open`: write the file and do not open
   it. A global `--config` is accepted and not read. Refused (`ok: false`, `error`): `--cwd` or `--out` with no value,
   given twice, `--cwd` not a folder, `--out` a folder, `--out` a file that exists and is not a page `routr dash` wrote
@@ -1154,7 +1157,7 @@ says so.
   through a shell: `open` on macOS, `xdg-open` on Linux, `rundll32 url.dll,FileProtocolHandler` on Windows. A failed
   open is still `ok: true`: it says it could not open, and gives the path.
 - `file`: the path written. `opened`: whether the browser was opened. `runs`: how many runs the page holds, or null
-  when the ledger could not be read. `project`: the repository's name, or null outside one. Absent on a refusal,
+  when the ledger could not be read. `project`: the project's name by board's rule, or null at a filesystem root. Absent on a refusal,
   which writes nothing.
 - The page is self-contained. Its content security policy is `default-src 'none'`. Rows are embedded as JSON with
   `<` escaped and drawn with `textContent`. A row is projected field by field: time, project, advised level, whether
@@ -1162,6 +1165,8 @@ says so.
   done first time, attempts, whether the check failed, causes, and the usable room each account showed. The advised
   and chosen fields are the scalars `board` shows: a level, a short string, a boolean or a number, or null. Never a
   nested value, a note, a brief's hash or length, an advice id, a run id or a path.
+- The page counts done first time as `routr assess` and `board` do: done, check pass, one attempt and no cause, out of
+  every recorded run. A run that recorded no attempts is not done first time; mean attempts leaves it out.
 - `unavailable`: `{ part: "ledger", code: "unreadable", why }` when the ledger cannot be read, and then `runs` is
   null, never zero. The page says so. A ledger that is missing or empty is readable: `runs` is 0. A line that is not
   a JSON object is skipped.

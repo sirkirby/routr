@@ -12,7 +12,7 @@ import { boardCommand } from "./board.mjs";
 import { readFlags } from "./command-line.mjs";
 import { loadConfig } from "./config.mjs";
 import { HARNESSES } from "./harnesses.mjs";
-import { repositoryName } from "./ledger.mjs";
+import { projectName } from "./ledger.mjs";
 import { spawnSelf } from "./processes.mjs";
 import { accessibleOk, colourOk, glyphsFor, styler, wrap } from "./tui.mjs";
 
@@ -177,7 +177,7 @@ export function renderTop(b, o) {
   const where = o.scope === "project" && o.project ? t(o.project) : "all projects";
   const right = `${o.note ? `${t(o.note)}  ` : ""}${snapshot ? "" : clock(v.now)}`;
   const top = [fit([["routr top", c.bold], [`${g.sep}${where}`], [" ".repeat(Math.max(1, width - 9 - columns(g.sep) - columns(where) - columns(right)))], [right, c.dim]], width, g.more)];
-  if (!o.project) top.push(fit([[" not in a git repository: every project", c.dim]], width, g.more));
+  if (!o.project) top.push(fit([[" no project here: every project", c.dim]], width, g.more));
   if (!b) return [...top, fit([[" reading routr's board…", c.dim]], width, g.more)].slice(0, height);
   const notices = noticeLines(b, v), foot = footerLines(b, v), keys = snapshot ? [] : [help(v)];
   const ds = b.decisions ?? [], sel = Math.min(Math.max(0, o.selected ?? 0), Math.max(0, ds.length - 1));
@@ -243,7 +243,8 @@ export async function topCommand(words, { configPath, warnings = [], input = pro
   platform = process.platform, cwd = process.cwd(), board = boardCommand, load = loadConfig, spawn = spawnSelf, every = REFRESH_MS, now = () => Date.now() } = {}) {
   let o;
   try { o = parse(words); } catch (e) { errors.write(`routr: ${e.message}\n`); return 2; }
-  const folder = o.cwd ?? resolve(cwd), project = repositoryName(folder);
+  // The project is board's and the ledger's: the repository's name, else the folder's (null only at a filesystem root).
+  const folder = o.cwd ?? resolve(cwd), project = projectName(folder) || null;
   const g = glyphsFor(env, platform), write = (s) => output.write(s);
   let scope = project ? "project" : "all";
   const read = async () => {

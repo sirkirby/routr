@@ -2,8 +2,9 @@
 // and when a browser is started. No model and no harness.
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { DASH_PAGE, dashCommand, dashRows } from "../src/lib/dash.mjs";
+import { projectName } from "../src/lib/ledger.mjs";
 import { browserArgv, openInBrowser } from "../src/lib/processes.mjs";
 import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 
@@ -108,7 +109,7 @@ test("non-object lines are skipped, an empty ledger is empty, and an unreadable 
   expect([r.ok, r.runs, r.unavailable]).toEqual([true, null, [{ part: "ledger", code: "unreadable", why }]]);
   expect(r.headline).toBe(`routr: the ledger could not be read; wrote ${r.file}`);
   expect(embedded(htmlOf(r)).unavailable).toBe(why);
-  expect(htmlOf(r)).toContain("Not in a git repository: every project.");
+  expect(r.project).toBe(basename(badHome)); // outside a repository: the folder's name, as board and launch give it
 });
 
 test("bad input is refused and nothing is written", () => {
@@ -130,7 +131,7 @@ test("bad input is refused and nothing is written", () => {
   expect(existsSync(join(home, ".cache/routr/dash.html"))).toBe(false);
 });
 
-test("the project filter is the repository, and the file still holds every project", () => {
+test("the project filter is board's project (the repository, else the folder), and the file still holds every project", () => {
   const home = scratch("dash-scope"), repo = join(home, "my-app"), ledger = join(home, "ledger.jsonl");
   mkdirSync(join(repo, ".git"), { recursive: true });
   writeFileSync(ledger, [entry({ project: "my-app" }), entry({ run_id: "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee", project: "other" })].map((e) => JSON.stringify(e)).join("\n") + "\n");
@@ -138,9 +139,9 @@ test("the project filter is the repository, and the file still holds every proje
   expect(inside.project).toBe("my-app");
   expect(embedded(htmlOf(inside)).rows.map((r) => r.p).sort()).toEqual(["my-app", "other"]);
   const outside = go(["--cwd", home, "--no-open"], { home, ledger });
-  expect(outside.project).toBeNull();
-  expect(embedded(htmlOf(outside)).project).toBeNull();
-  expect(htmlOf(outside)).toContain("Not in a git repository: every project.");
+  expect(outside.project).toBe(basename(home));
+  expect(embedded(htmlOf(outside)).project).toBe(basename(home));
+  expect([outside.project, inside.project]).toEqual([projectName(home), projectName(repo)]);
 });
 
 test("a pipe or --no-open never opens anything; a terminal does, and a failed open still gives the path", () => {

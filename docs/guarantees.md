@@ -186,7 +186,7 @@ writes only:
   effort chosen (none for an agent a `--pane` launch adopted, whose own launch launch cannot see), the advice's `id` and
   its reading as the ledger keeps it (`advised`: `level`, `sure`, `between`, `work_type`, `high_risk`, `fallback` and each
   fact's probability), the project (the git repository's
-  folder name of the worker's folder), where the worker runs, and its name. Each field is checked for its shape
+  name of the worker's folder, or the folder's own name outside a repository), where the worker runs, and its name. Each field is checked for its shape
   before it is written, and never holds the task, the brief, a path, a note or a key. It counts the launch share and
   gives `record --launch` the row's project. The file stays on this machine: telemetry sends none of it, and
   OpenTelemetry export, when you turn it on, sends only the launch span's documented attributes (its launch id, the

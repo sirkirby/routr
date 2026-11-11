@@ -33,6 +33,9 @@ import { NAME_RULE } from "./worker-record.mjs";
 const having = (test) => KINDS.filter((n) => test(HARNESSES[n]));
 const labels = (kinds, key = "label") => kinds.map((n) => HARNESSES[n][key]);
 const FRESH = having((h) => h.usage.check);
+// Help is one text for every platform, so a reader that needs herdr names the platforms where it does.
+const PLATFORMS = { win32: "Windows", darwin: "macOS", linux: "Linux" };
+const NEEDS_HERDR = having((h) => h.usage.needsHerdrOn?.length).map((n) => `${n} needs herdr installed on ${list(HARNESSES[n].usage.needsHerdrOn.map((p) => PLATFORMS[p] ?? p), "and")}`).join("; ");
 // The harnesses with a skills folder of their own, in the order help has always named them (a test holds it to the registry).
 export const OWN_SKILL_FOLDERS = "Claude Code, Kiro, Antigravity";
 const SUBAGENT_DEFAULTS = list(labels(having((h) => h.subagents)), "or");
@@ -78,7 +81,7 @@ export const COMMANDS = {
     name: "usage",
     contract: { fields: ["level", "subscriptions", "subscription", "reading"] },
     description: `what routr sees of each subscription's usage and how dispatch ranks it; most_room prefers a normal account with a positive number, otherwise the largest positive number; changes nothing of yours. ${USAGE_HELP}`,
-    args: [{ name: "[<subscription>]", description: `only this one; for ${list(FRESH, "or")}, read its /usage now (${list(having((h) => h.usage.needsHerdrOn), "and")} needs herdr installed)`, required: false }],
+    args: [{ name: "[<subscription>]", description: `only this one; for ${list(FRESH, "or")}, read its /usage now${NEEDS_HERDR ? ` (${NEEDS_HERDR})` : ""}`, required: false }],
     flags: [
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--headroom", arg: "<subscription>=<share>", description: "usage you read yourself, as for dispatch (0.9 or 90%)", required: false, repeatable: true },

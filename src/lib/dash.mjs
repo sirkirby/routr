@@ -5,7 +5,7 @@
 import page from "./dash.html" with { type: "text" };
 import { chmodSync, lstatSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { firstTime, LEDGER_PATH, latestRuns, projectAdvised, projectChose, read, repositoryName } from "./ledger.mjs";
+import { firstTime, LEDGER_PATH, latestRuns, projectAdvised, projectChose, projectName, read } from "./ledger.mjs";
 import { doNext } from "./next.mjs";
 import { answer, refusal } from "./output.mjs";
 import { readFlags } from "./command-line.mjs";
@@ -63,7 +63,7 @@ function writePage(file, html) {
 export function dashCommand(words, { warnings = [], ledger = LEDGER_PATH(), home: homeDir = home(), cwd = process.cwd(), output = process.stdout, open = openInBrowser, now = () => new Date().toISOString() } = {}) {
   let o;
   try { o = parse(words); } catch (e) { return refusal("no dash", e.message, warnings); }
-  const folder = o.cwd ?? resolve(cwd), project = repositoryName(folder), file = o.out ?? join(CACHE_DIR(homeDir), "dash.html");
+  const folder = o.cwd ?? resolve(cwd), project = projectName(folder) || null, file = o.out ?? join(CACHE_DIR(homeDir), "dash.html");
   if (o.out) {
     const own = dashPage(file);
     if (own === false) return refusal("no dash", `dash: ${file} is not a page routr dash wrote; choose another`, warnings);
