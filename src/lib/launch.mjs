@@ -10,7 +10,7 @@ import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesse
 import { dispatchAdvice, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
 import { doNext, launchNext, runNext } from "./next.mjs";
 import { CLOSING } from "./wording.mjs";
-import { BRANCH, runHerdr, SHELLS, splitArgs, worktreeArgs } from "./herdr.mjs";
+import { BRANCH, runHerdr } from "./herdr.mjs";
 import { answer } from "./output.mjs";
 import { recordLaunch } from "./launch-history.mjs";
 import { countsTowardShare, newLaunchId } from "./launch-identity.mjs";
@@ -18,7 +18,7 @@ import { projectName } from "./ledger.mjs";
 import { fallbackAdvice } from "./output.mjs";
 import { executionFor } from "./backends.mjs";
 import { launchFailed } from "./launch-answer.mjs";
-import { command, launchPane, paneConfigEnvArgs, paneEnvOf, panePromptArgs, paneStartArgs, promptForLog, usualShell } from "./backend-pane.mjs";
+import { launchPane, paneDryRunPlan } from "./backend-pane.mjs";
 import { client } from "./hc.mjs";
 import { home } from "./state-files.mjs";
 import { NAME_RULE, WORKER_NAME } from "./worker-record.mjs";
@@ -138,25 +138,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
       }
     }
     if (o.dryRun) {
-      const shell = usualShell();
-      const startArgs = (pane, timeout) => paneStartArgs(o, shell, p, privateDir, pane, timeout), promptArgs = (pane, timeout) => panePromptArgs(prompt, pane, timeout);
-      const pane = o.pane ?? "<new-pane>", { carried, extraEnv } = paneEnvOf(o, out, env, p, privateDir);
-      out.would_run = [
-        ...(o.worktree ? [command(worktreeArgs(out.cwd, o.worktree, o.base)), command(splitArgs("right", "<worktree-path>", carried, { pane: "<root-pane>", shown: true, env: extraEnv })), command(["pane", "close", "<root-pane>"])] : []),
-        ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true, env: extraEnv }))] : []),
-        command(["pane", "read", pane, "--source", "visible"]),
-        command(["pane", "process-info", "--pane", pane]),
-        ...(o.pane ? [command(["pane", "run", pane, SHELLS[shell].cd(out.cwd)]),
-          command(["pane", "read", pane, "--source", "visible"]), command(["pane", "process-info", "--pane", pane])] : []),
-        ...(paneConfigEnvArgs(o, shell, privateDir, pane) ? [command(paneConfigEnvArgs(o, shell, privateDir, pane))] : []),
-        command(startArgs(pane, Math.min(o.timeout, 30000))),
-        command(["pane", "read", pane, "--source", "visible"]),
-        command(["agent", "wait", pane, "--timeout", String(Math.min(1000, o.timeout))]),
-        command(["pane", "read", pane, "--source", "visible"]),
-        command(["agent", "get", pane]),
-        ...(HARNESSES[o.kind].privateConfig ? [command(["agent", "rename", pane, o.name])] : []),
-        ...(prompt ? [promptForLog(promptArgs(pane, Math.max(1, Math.min(Math.floor(o.timeout / 2), 30000)))), command(["agent", "get", pane])] : []),
-      ];
+      out.would_run = paneDryRunPlan(o, out, { env, p, privateDir, prompt });
       step("plan", true, "No worker commands executed or worker files written. Pane ids, geometry, polling, timeouts and shell questions are resolved at launch. Environment, subscription settings and sign-in are not checked.");
       const problems = [!o.model && MODEL_REQUIRED, adviceProblem].filter(Boolean);
       planned = true; out.ok = !problems.length; out.state = "planned";
