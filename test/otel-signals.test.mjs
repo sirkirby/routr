@@ -112,7 +112,8 @@ test("holder transitions are INFO events on the finished turn, with fresh consen
 });
 
 import { existsSync, rmSync } from "node:fs";
-import { cliEnv, SCRIPT } from "./helpers.mjs";
+import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
+import { COMMANDS } from "../src/lib/command-table.mjs";
 test("logs and gauge claims recover a killed sender before POST and after acknowledgement", async () => {
   await receiver(async (endpoint, requests) => {
     for (const signal of ["logs", "metrics"]) {
@@ -226,17 +227,29 @@ test("summarized window resets are newer points at the reset, with other windows
 });
 
 test("CLI input notes become warning records once, for every accepting command and brief form", () => {
-  for (const command of ["check", "usage", "dispatch", "subagent"]) for (const form of ["inline", "file"]) {
-    if (!["dispatch", "subagent"].includes(command) && form === "file") continue;
+  // Every traced command reached after the global flags carries the line's input notes (a malformed --headroom) in its
+  // answer, with a line here to drive it: the table's set, so a new one without a line fails.
+  const accepting = Object.keys(COMMANDS).filter((n) => ["globals", "brief"].includes(COMMANDS[n].reach) && COMMANDS[n].trace);
+  const plain = scratch("notes-advice"), advice = join(plain, "advice.json"); // advice to record, made with export off
+  const made = Bun.spawnSync([process.execPath, SCRIPT, "dispatch", "safe task"], { env: cliEnv(plain, { PATH: plain, ROUTR_NO_UPDATE: "1" }), stdin: "ignore" });
+  expect(made.exitCode).toBe(0); writeFileSync(advice, made.stdout.toString());
+  const lines = { check: () => [], usage: () => [], dispatch: (form, file) => (form === "file" ? ["--task-file", file, "--lead-session", "invalid"] : ["safe task", "--json"]),
+    record: (_, __, home) => ["--advice", advice, "--subscription", "codex", "--model", "worker", "--effort", "default", "--verdict", "done", "--check", "pass", "--ledger", join(home, "ledger.jsonl")] };
+  lines.subagent = lines.dispatch;
+  expect(Object.keys(lines).sort()).toEqual([...accepting].sort());
+  for (const command of accepting) for (const form of ["inline", "file"]) {
+    const briefed = COMMANDS[command].reach === "brief";
+    if (!briefed && form === "file") continue;
     const f = install("http://127.0.0.1:4318"), home = f.opts.home, file = join(home, "task.txt");
     mkdirSync(join(home, ".config/routr"), { recursive: true }); writeFileSync(join(home, ".config/routr/config.json"), JSON.stringify({ ...f.config, subscriptions: {}, auto_update: false }));
     writeFileSync(join(f.root, "sender.lock"), JSON.stringify({ pid: process.pid, token: "fixture" })); writeFileSync(file, "safe task");
-    const brief = ["dispatch", "subagent"].includes(command) ? form === "file" ? ["--task-file", file, "--lead-session", "invalid"] : ["safe task", "--json"] : [];
+    const brief = lines[command](form, file, home);
     const child = Bun.spawnSync([process.execPath, SCRIPT, command, "--headroom", "bad", ...brief], { env: cliEnv(home, { PATH: home, ROUTR_OTEL: "1", OTEL_SDK_DISABLED: "false", ROUTR_NO_UPDATE: "1" }), stdin: "ignore" });
     expect(child.exitCode).toBe(0);
     const output = JSON.parse(child.stdout.toString()), codes = logsIn(f).filter((l) => l.eventName === "routr.warning").map((l) => attrs(l)["routr.warning.code"]);
     expect(codes).toContain("headroom_ignored");
-    if (brief.length) expect(codes).toContain(form === "file" ? "lead_session_ignored" : "brief_flag");
+    if (briefed) expect(codes).toContain(form === "file" ? "lead_session_ignored" : "brief_flag");
+    if (command === "record") expect(output.run_id).toBeString(); // a row recorded, not a refusal
     expect(codes).toHaveLength(output.warnings.length);
   }
 });

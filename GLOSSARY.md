@@ -28,6 +28,16 @@ worker must not inherit and the config locations it keeps (worker environment), 
 (trace context), and the sandboxes a worker cannot start from (worker start). A harness's own protocol work (its
 headless adapter, the parsing inside its usage reader) sits beside the registry too.
 
+## routr's commands
+
+**Command table**:
+The one place routr knows a command: one entry each, with its help (flags, arguments, description) and output
+contract, and the rules every entry writes out: how a command line reaches it, its exit rule, whether it is traced
+and with what, whether it starts the daily updater, whether it calls a decision model, and whether it is an advice
+command. Help, dispatch, tracing and the tests that walk every command all read it. A flag a global flag could take as
+its value is marked guarded beside its help line.
+_Avoid_: help table (help is one of its readers)
+
 ## What routr knows of usage
 
 **Usage reading**:

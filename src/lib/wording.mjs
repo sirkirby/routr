@@ -59,3 +59,5 @@ export const ADVICE_STEPS = {
 export const CLOSING = "Finish with the report block from the worker guide, starting with the line `VERDICT: done | partial | blocked`.";
 
 export const count = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
+// Words joined for a sentence: "a, b and c" (`last` is the final joining word).
+export const list = (xs, last) => (xs.length > 1 ? `${xs.slice(0, -1).join(", ")} ${last} ${xs.at(-1)}` : xs[0] ?? "");

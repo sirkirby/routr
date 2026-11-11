@@ -20,8 +20,12 @@ import { traceIdentity, pathHash } from "./trace-identity.mjs";
 import { LaunchIndex, launchContext } from "./launch-index.mjs";
 import { findableByRerun, newLaunchId, takesOver } from "./launch-identity.mjs";
 import { callHerdr, herdrId } from "./process-boundary.mjs";
+import { COMMANDS } from "./command-table.mjs";
 
 const context = new AsyncLocalStorage(), nanos = () => BigInt(Date.now()) * 1000000n;
+// What the command table says a command's trace carries, and which decision-model reading its answer holds.
+const traceOf = (command) => (Object.hasOwn(COMMANDS, command) ? COMMANDS[command].trace || {} : {});
+const readingOf = (command) => (Object.hasOwn(COMMANDS, command) ? COMMANDS[command].decisionModel : null);
 // A span's times: its start read from the wall clock once, every later time (its end, the logs taken from it) as that
 // start plus monotonic time since, so a clock change during a command or a long turn cannot make a duration negative
 // or inflate it.
@@ -76,7 +80,7 @@ export function currentLaunch(config, env = process.env) {
   // Off is no sampling decision. Retain an enabled launch's unsampled parent even when a later holder opts in.
   return otelSwitch(config, env).on && parseTraceparent(carriersFrom(env).carriers.TRACEPARENT)?.sampled === false ? { sampled: false } : null;
 }
-export function linkWorker(worker) { try { const c = context.getStore(); if (c && ["send", "wait", "workers", "stop", "cleanup"].includes(c.command)) link(worker.launch); } catch {} }
+export function linkWorker(worker) { try { const c = context.getStore(); if (c && traceOf(c.command).links) link(worker.launch); } catch {} }
 export function adviceForLaunch(id) { const c = context.getStore(); if (c?.command === "launch" && /^[a-f0-9]{8}$/.test(id)) c.adviceId = id; }
 async function paneFacts(pane, run) {
   try { const r = await callHerdr(run, ["pane", "get", pane], 1000); return r.ok ? r.data?.result?.pane : null; } catch { return null; }
@@ -186,9 +190,9 @@ export async function usageSpans(run, { since } = {}) {
 }
 function resultAttributes(command, span, r) {
   if (!r) return;
-  if (["dispatch", "subagent", "check"].includes(command)) {
+  if (["assessment", "check"].includes(readingOf(command))) {
     put(span, { "routr.question_set.version": questionSet(r.question_set), "routr.unavailable": r.unavailable?.map((u) => pick(u.code, ERROR_CODES)) });
-    if (command === "check") {
+    if (readingOf(command) === "check") {
       for (const key of Object.keys(CHECKS)) put(span, { [`routr.check.${key}`]: probability(r.checks?.[key]?.p) });
       put(span, { "routr.check.flags": [...Object.entries(CHECKS).filter(([k, v]) => r.checks?.[k]?.reading === v.flag).map(([k]) => k), ...(["partial", "blocked", "unstated"].includes(r.claimed) ? [`verdict_${r.claimed}`] : [])] });
     } else {
@@ -198,7 +202,7 @@ function resultAttributes(command, span, r) {
     }
   }
   if (command === "usage" && context.getStore()?.explicitLevel) put(span, { "routr.level": pick(r.level, LEVELS) });
-  if (["launch", "send", "wait", "workers", "stop", "cleanup", "record"].includes(command)) put(span, { [`routr.${command}.state`]: pick(r.state ?? (r.ok ? "done" : "failed"), ["planned", "ready", "prompted", "needs_input", "failed", "refused", "none", "finished", "running", "idle", "resumed", "queued", "delivered", "unknown", "stopped", "absent", "listed", "closed", "removed", "done"]) });
+  if (traceOf(command).state) put(span, { [`routr.${command}.state`]: pick(r.state ?? (r.ok ? "done" : "failed"), ["planned", "ready", "prompted", "needs_input", "failed", "refused", "none", "finished", "running", "idle", "resumed", "queued", "delivered", "unknown", "stopped", "absent", "listed", "closed", "removed", "done"]) });
   if (r.ok === false) error(span, ["refused", "failed"].includes(r.state) ? r.state : r.unavailable?.at(-1)?.code);
 }
 const spanCarriers = (saved, span, inherited) => {
@@ -275,7 +279,7 @@ export function commandTrace(command, setup = {}, run) {
     if (session.on && inherited?.sampled !== false) {
       span = started({ name: `routr ${command}`, kind: 1, traceId: inherited?.traceId ?? randomBytes(16).toString("hex"), spanId: randomBytes(8).toString("hex"),
         ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, attributes: {} });
-      const id = leadSession(env, lead); if (id && ["dispatch", "subagent", "launch"].includes(command)) put(span, { "routr.lead.session_id": id });
+      const id = leadSession(env, lead); if (id && traceOf(command).lead) put(span, { "routr.lead.session_id": id });
       const identity = traceIdentity(cwd); put(span, identity.attributes);
       // A launch's id (launch-identity.mjs). The CLI opens a launch's trace before launch runs (routr.mjs), so the id is
       // made here, and launch takes it (openLaunchId): one id in its answer, history, worker record, span and index.

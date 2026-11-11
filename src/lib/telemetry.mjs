@@ -46,7 +46,8 @@ export function lastTelemetrySend() {
   } catch { return null; }
 }
 
-// The commands that may start the daily job (src/routr.mjs); `telemetry status` is not one of them.
+// The commands that may start the daily job, in the order `telemetry status` has always named them: the command table's
+// `autoUpdate` entries (a test holds them equal). `telemetry status` is not one of them.
 export const DAILY_STARTERS = ["subagent", "dispatch", "check", "record", "assess", "share", "doctor", "usage"];
 // Whether the daily send can run here, and whether its last run left a result: one judgement, which `telemetry status`
 // and doctor both show. The job stamps first and logs its send after it, so a stamp newer than the last logged send,

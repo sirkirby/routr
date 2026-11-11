@@ -5,7 +5,8 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, rmSync, writ
 import { loadConfig } from "../src/lib/config.mjs";
 import { claudeSnapshot } from "../src/lib/usage.mjs";
 import { HARDEST, LEVEL_MEANING, RESERVE } from "../src/lib/wording.mjs";
-import { COMMANDS, formatCommandHelp } from "../src/lib/help.mjs";
+import { COMMANDS } from "../src/lib/command-table.mjs";
+import { formatCommandHelp } from "../src/lib/help.mjs";
 import { cliEnv, NOW, row, scratch, SCRIPT } from "./helpers.mjs";
 
 test("doctor reports opted-in telemetry sends in text and JSON and flags failures or stale pending rows", () => {

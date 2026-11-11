@@ -3,11 +3,12 @@
 // the way the guides are, so a compiled binary writes it with no checkout beside it. Each row is projected field by
 // field: never a note, a brief's hash or length, an advice id, a run id or a path.
 import page from "./dash.html" with { type: "text" };
-import { chmodSync, lstatSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, lstatSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { firstTime, LEDGER_PATH, latestRuns, projectAdvised, projectChose, read, repositoryName } from "./ledger.mjs";
 import { doNext } from "./next.mjs";
 import { answer, refusal } from "./output.mjs";
+import { readFlags } from "./command-line.mjs";
 import { CACHE_DIR, home, writeTextAtomic } from "./state-files.mjs";
 import { openInBrowser } from "./processes.mjs";
 import { HARNESSES, KINDS } from "./harnesses.mjs";
@@ -40,32 +41,8 @@ export function dashHtml({ rows, at, project, unavailable = null }) {
   return page.replace("/*DATA*/", () => json);
 }
 
-function parse(words) {
-  const o = { noOpen: false }, rest = [...words];
-  while (rest.length) {
-    const w = rest.shift();
-    if (w === "--no-open") {
-      if (o.noOpen) throw new Error("dash: --no-open was given more than once");
-      o.noOpen = true; continue;
-    }
-    if (w !== "--cwd" && w !== "--out") throw new Error(`dash: unknown ${w.startsWith("-") ? "flag" : "argument"} ${w}; routr dash [--cwd <folder>] [--out <file>] [--no-open]`);
-    const key = w === "--cwd" ? "cwd" : "out";
-    if (o[key] != null) throw new Error(`dash: ${w} was given more than once`);
-    const v = rest.shift();
-    if (!v || v.startsWith("--")) throw new Error(`dash: ${w} takes ${w === "--cwd" ? "a folder" : "a file"}`);
-    if (w === "--cwd") {
-      let dir; try { dir = statSync(resolve(v)).isDirectory(); } catch { dir = false; }
-      if (!dir) throw new Error(`dash: --cwd ${v} is not a folder`);
-      o.cwd = resolve(v);
-    } else {
-      const file = resolve(v);
-      let dir = false; try { dir = statSync(file).isDirectory(); } catch {}
-      if (dir) throw new Error(`dash: --out ${v} is a folder`);
-      o.out = file;
-    }
-  }
-  return o;
-}
+// Each once: `--cwd` an existing folder, `--out` a file that is not a folder, `--no-open`.
+const parse = (words) => readFlags("dash", words, { "--cwd": "folder", "--out": "file", "--no-open": "switch" });
 
 // null: nothing is there to replace (including a parent that is a file). false: something is there and it is not a
 // page this command wrote, so `--out` refuses. A symlink is read for that check and, when it is a page, replaced.

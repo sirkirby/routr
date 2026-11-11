@@ -1,6 +1,7 @@
 // All signals share this typed allow-list. Values are classified at their origin before projection; no text catch-all.
 import { FACTS, CHECKS } from "./questions.mjs";
 import { HARNESSES, KINDS } from "./harnesses.mjs";
+import { COMMANDS } from "./command-table.mjs";
 // The semantic conventions every batch follows (docs/opentelemetry.md), named once so a bump moves every signal.
 export const SCHEMA_URL = "https://opentelemetry.io/schemas/1.44.0";
 // The GenAI token counts a span may carry, as gen_ai.usage.<key>. A dotted one (a part of another) is sent only when above 0.
@@ -14,7 +15,7 @@ export const TRACE_ATTRIBUTES = Object.freeze({ "routr.lead.session_id": "string
   ...Object.fromEntries(TOKEN_USAGE.map((k) => [`gen_ai.usage.${k}`, "int"])),
   "routr.turn": "int", "routr.turn.outcome": "string", "routr.turn.messages": "int",
   "routr.usage.state": "string", "routr.usage.source": "string",
-  ...Object.fromEntries(["launch", "send", "wait", "workers", "stop", "cleanup", "record"].map((k) => [`routr.${k}.state`, "string"])),
+  ...Object.fromEntries(Object.values(COMMANDS).filter((c) => c.trace?.state).map((c) => [`routr.${c.name}.state`, "string"])), // the command table's
   "routr.verdict": "string", "routr.check": "string", "routr.level": "string", "routr.attempts": "int", "routr.seconds": "double", "routr.causes": "string[]", "routr.subscription": "string", "routr.effort": "string", "routr.effort_from": "string", "routr.advice.id": "string", "error.type": "string" });
 export const typed = (value, type) => type === "string" ? typeof value === "string" : type === "boolean" ? typeof value === "boolean" : type === "string[]" ? Array.isArray(value) && value.every((v) => typeof v === "string") : type === "int" ? Number.isSafeInteger(value) && value >= 0 : typeof value === "number" && Number.isFinite(value);
 // The pinned log semantic conventions define structured events: use eventName, with no body or event.name

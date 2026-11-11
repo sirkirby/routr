@@ -10,7 +10,7 @@ import { claudeSnapshot, codexSnapshot, readAgy } from "../src/lib/usage.mjs";
 import { memoryStore, usageReadings } from "../src/lib/usage-readings.mjs";
 import { ADAPTERS } from "../src/lib/headless.mjs";
 import { SUBSCRIPTIONS, USAGE_WINDOWS } from "../src/lib/otel-schema.mjs";
-import { OWN_SKILL_FOLDERS } from "../src/lib/help.mjs";
+import { OWN_SKILL_FOLDERS } from "../src/lib/command-table.mjs";
 
 const str = (v) => typeof v === "string" && v.length > 0;
 const strs = (v) => Array.isArray(v) && v.every(str);

@@ -4,14 +4,16 @@ import { dirname, join } from "node:path";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 
 
-import { COMMANDS, DESCRIPTION, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "../src/lib/help.mjs";
+import { COMMANDS } from "../src/lib/command-table.mjs";
+import { DESCRIPTION, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage } from "../src/lib/help.mjs";
+import { guardRefusal, route } from "../src/lib/command-line.mjs";
 import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
-test("help table covers every command the CLI dispatches", () => {
-  const dispatched = ["subagent", "dispatch", "launch", "cleanup", "wait", "send", "workers", "stop", "watch", "usage", "doctor", "setup", "uninstall", "check", "record", "assess", "share", "update", "statusline", "skill", "key", "telemetry", "feedback", "board", "top", "dash"];
-  expect(Object.keys(COMMANDS).sort()).toEqual(dispatched.sort());
-
-  // Every command has a valid description, non-empty synopsis, and flags/args
-  for (const name of dispatched) {
+// Every entry writes out each dispatch rule, false or null being a decision: a new command cannot skip one by leaving it out.
+const RULES = { reach: ["first", "globals", "brief", "early"], exit: ["zero", "natural", "ok", "own"], autoUpdate: [true, false], decisionModel: [null, "assessment", "check", "probe"], advice: [true, false] };
+test("the command table gives every command its help and writes out every dispatch rule", () => {
+  const names = Object.keys(COMMANDS);
+  expect(names.length).toBeGreaterThan(20);
+  for (const name of names) {
     const cmd = COMMANDS[name];
     expect(cmd.name).toBe(name);
     expect(typeof cmd.description).toBe("string");
@@ -24,9 +26,26 @@ test("help table covers every command the CLI dispatches", () => {
         expect(flag.name.startsWith("--")).toBe(true);
         expect(typeof flag.description).toBe("string");
         expect(help).toContain(flag.name);
+        expect([undefined, true, "joined"]).toContain(flag.guard);
       }
     }
+    for (const [rule, values] of Object.entries(RULES)) { expect([name, rule, Object.hasOwn(cmd, rule)]).toEqual([name, rule, true]); expect(values).toContain(cmd[rule]); }
+    expect(Object.hasOwn(cmd, "trace") && Object.hasOwn(cmd, "run")).toBe(true);
+    if (cmd.trace !== false) for (const part of ["state", "lead", "links"]) expect([name, part, typeof cmd.trace[part]]).toEqual([name, part, "boolean"]);
+    expect([name, typeof cmd.run]).toEqual([name, cmd.reach === "early" ? "object" : "function"]); // early: run is null
+    if (cmd.reach === "early") expect(cmd.run).toBeNull();
+    // A word a command acts only with is its first argument in help; a command is reached first to take one.
+    if (cmd.word !== undefined) expect([cmd.reach, cmd.args[0].name]).toEqual(["first", cmd.word]);
+    // A guarded flag needs the refusal it gives; a command reached first gets its words as typed, so has no guard.
+    const guarded = (cmd.flags ?? []).some((f) => f.guard);
+    expect([name, guarded]).toEqual([name, Object.hasOwn(cmd, "refusal")]);
+    if (guarded) expect(cmd.reach).not.toBe("first");
+    // An advice command changes nothing and fails open: it exits 0 whatever it says.
+    if (cmd.advice) expect([name, ["zero", "natural"].includes(cmd.exit)]).toEqual([name, true]);
   }
+  // Only statusline is early, and it is what routr.mjs answers before the table loads.
+  expect(names.filter((n) => COMMANDS[n].reach === "early")).toEqual(["statusline"]);
+  expect(readFileSync(join(import.meta.dir, "../src/routr.mjs"), "utf8")).toContain('if (argv[0] === "statusline" && !asksHelp(argv))');
 
   // launch flags match parseLaunchArgs options
   const launchFlags = COMMANDS.launch.flags.map((f) => f.name.replace(/^--/, ""));
@@ -37,7 +56,7 @@ test("help table covers every command the CLI dispatches", () => {
 
   // Unknown usage string contains every command
   const unknownUsage = formatUnknownUsage();
-  for (const name of dispatched) {
+  for (const name of names) {
     expect(unknownUsage).toContain(`routr ${name}`);
   }
 
@@ -45,7 +64,7 @@ test("help table covers every command the CLI dispatches", () => {
   const topHelp = formatTopLevelHelp();
   expect(topHelp).toContain(DESCRIPTION);
   expect(topHelp).toContain("--version");
-  for (const name of dispatched) {
+  for (const name of names) {
     expect(topHelp).toContain(name);
   }
 });
@@ -71,6 +90,62 @@ test("the commands docs/contracts.md covers are the table's commands with a cont
   const covered = after.slice(0, after.indexOf(".")).match(/`([a-z]+)`/g).map((w) => w.slice(1, -1));
   expect([...new Set(covered)].sort()).toEqual(Object.keys(COMMANDS).filter((n) => COMMANDS[n].contract).sort());
   for (const [name, { contract }] of Object.entries(COMMANDS)) if (contract) expect([name, Boolean(contract.text) !== Boolean(contract.fields?.length)]).toEqual([name, true]);
+});
+
+test("the advice commands docs/guarantees.md names are the table's advice commands", () => {
+  const page = readFileSync(join(import.meta.dir, "../docs/guarantees.md"), "utf8");
+  // The list is the parenthesis after "The advice commands", each a command name with any words after it ("usage with no name").
+  const named = page.slice(page.indexOf("The advice commands (") + "The advice commands (".length).split(")")[0].match(/`[a-z]+[^`]*`/g).map((w) => w.slice(1, -1).split(" ")[0]);
+  expect([...new Set(named)].sort()).toEqual(Object.keys(COMMANDS).filter((n) => COMMANDS[n].advice).sort());
+});
+
+test("which commands start the daily updater is pinned", () => {
+  expect(Object.keys(COMMANDS).filter((n) => COMMANDS[n].autoUpdate).sort()).toEqual(["assess", "check", "dispatch", "doctor", "record", "share", "subagent", "usage"]);
+});
+
+test("a command line reaches the entry its reach says, by own names only, and nothing else", () => {
+  const ran = (argv) => { const w = route(argv, COMMANDS); return w.to === "run" ? w.entry.name : w.to; };
+  for (const [name, cmd] of Object.entries(COMMANDS)) {
+    const own = cmd.word ? [name, cmd.word] : [name];
+    if (cmd.reach === "early") { expect(ran(own)).toBe("unknown"); continue; } // routr.mjs answers it before the table
+    expect([own, ran(own)]).toEqual([own, name]);
+    // After a global flag: only a command reached after the globals; one reached first is unknown usage there.
+    expect([name, ran(["--config", "c.json", "--headroom", "claude=0.5", ...own])]).toEqual([name, cmd.reach === "first" ? "unknown" : name]);
+    if (cmd.word) expect(ran([name])).toBe("unknown");
+    expect(route([name, "--help"], COMMANDS)).toEqual({ to: "help", entry: cmd });
+    expect(ran([...own, "--version"])).toBe(name === "launch" ? "launch" : "version");
+  }
+  expect(route(["dispatch", "fix it", "--help"], COMMANDS).to).toBe("run"); // a brief may say --help
+  expect(route(["doctor", "--yes", "--fix"], COMMANDS)).toEqual({ to: "run", entry: COMMANDS.setup, args: ["--yes", "--fix"] });
+  expect(ran(["--config", "c.json", "doctor", "--fix"])).toBe("doctor");
+  expect(ran(["--config", "a", "--config", "b", "dispatch", "x"])).toBe("unknown"); // the second --config is the first word left
+  for (const inherited of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+    expect(ran([inherited])).toBe("unknown"); expect(ran([inherited, "--help"])).toBe("unknown"); expect(route(["help", inherited], COMMANDS)).toEqual({ to: "help", entry: null });
+  }
+});
+
+test("a guarded flag a global flag took as its value is refused with the entry's refusal, from the table", () => {
+  const home = scratch("guards"), env = cliEnv(home, { PATH: home, ROUTR_NO_UPDATE: "1" });
+  let checked = 0;
+  for (const [name, cmd] of Object.entries(COMMANDS)) for (const flag of (cmd.flags ?? []).filter((f) => f.guard)) {
+    const argv = [name, "--config", flag.name, "x"], message = guardRefusal(cmd, argv, ["x"]); // --config took the flag: "x" is left
+    expect(message).toStartWith(`${name}: `);
+    const r = Bun.spawnSync([process.execPath, SCRIPT, ...argv], { env, cwd: home, stdin: "ignore" });
+    if (cmd.refusal === "screen") {
+      expect([argv, r.exitCode, r.stdout.toString(), r.stderr.toString()]).toEqual([argv, 2, "", `routr: ${message}\n`]);
+    } else {
+      expect([argv, r.exitCode]).toEqual([argv, 0]);
+      const out = JSON.parse(r.stdout.toString());
+      expect(out).toMatchObject({ ok: false, headline: `routr: ${cmd.refusal.headline}: ${message}`, error: message, ...cmd.refusal.extra });
+      expect(r.stdout.toString()).toBe(`${JSON.stringify(out, null, cmd.refusal.indent)}\n`);
+    }
+    checked++;
+  }
+  expect(checked).toBe(Object.values(COMMANDS).flatMap((c) => (c.flags ?? []).filter((f) => f.guard)).length);
+  expect(checked).toBeGreaterThan(0);
+  // A joined guard counts `--flag=<value>` too; a plain one does not.
+  expect(guardRefusal(COMMANDS.usage, ["usage", "--config", "--level=basic"], [])).toBe("usage: --level cannot be a value for --config or --headroom; eligibility was not refreshed");
+  expect(guardRefusal(COMMANDS.board, ["board", "--config", "--cwd=x"], [])).toBeNull();
 });
 
 test("command help prints usage for each command and exits 0", () => {
@@ -105,6 +180,24 @@ test("command help prints usage for each command and exits 0", () => {
   expect(recordRes.stdout.toString()).toContain("--subscription <name>");
 });
 
+test("a command whose exit rule is natural ends by itself once it has advised; its refusal and every other advice command exit 0", () => {
+  const home = scratch("exit-seam"), env = cliEnv(home, { PATH: home, ROUTR_NO_UPDATE: "1" });
+  const run = (...a) => Bun.spawnSync([process.execPath, "--preload", join(import.meta.dir, "fixtures/exit-seam.mjs"), SCRIPT, ...a], { env, cwd: home, stdin: "ignore" });
+  const natural = Object.keys(COMMANDS).filter((n) => COMMANDS[n].exit === "natural");
+  expect(natural.sort()).toEqual(["dispatch", "subagent"]);
+  for (const name of natural) {
+    const advised = run(name, "Fix the typo in README.md");
+    expect([name, advised.exitCode, JSON.parse(advised.stdout.toString()).ok]).toEqual([name, 0, true]);
+    expect(advised.stderr.toString()).not.toContain("[process.exit");
+    const refused = run(name); // no brief: a refusal, which exits 0 at once
+    expect([name, refused.exitCode, JSON.parse(refused.stdout.toString()).ok]).toEqual([name, 0, false]);
+    expect(refused.stderr.toString()).toContain("[process.exit 0]");
+  }
+  // The seam sees a forced exit: check, an advice command whose rule is zero, exits 0 through it.
+  const checked = run("check", "--brief", "none", "--report", "none");
+  expect([checked.exitCode, checked.stderr.toString()]).toEqual([0, "[process.exit 0]\n"]);
+});
+
 test("a brief containing --help as a separate word is routed as a brief, not as help", () => {
   for (const cmd of ["subagent", "dispatch"]) {
     // A throwaway HOME with no key and no config: the command falls back at once instead of calling the network,
@@ -120,11 +213,13 @@ test("a brief containing --help as a separate word is routed as a brief, not as 
 });
 
 test("unrecognized mode prints usage from table to stderr and exits 2", () => {
-  for (const args of [["unknown-mode"], []]) {
+  // An inherited name ("constructor") is no command, asked for help or not: it once reached Object and exited 0 silently.
+  for (const args of [["unknown-mode"], [], ["constructor"], ["toString"], ["__proto__"], ["constructor", "--help"], ["hasOwnProperty", "-h"], ["--config", "x", "constructor"]]) {
     const res = Bun.spawnSync(["bun", SCRIPT, ...args]);
-    expect(res.exitCode).toBe(2);
+    expect([args, res.exitCode]).toEqual([args, 2]);
     expect(res.stdout.toString()).toBe("");
     const stderr = res.stderr.toString();
+    expect(stderr).toBe(`${formatUnknownUsage()}\n`);
     expect(stderr).toContain("usage: routr subagent");
     for (const cmd of ["dispatch", "launch", "doctor", "check", "record", "assess"]) {
       expect(stderr).toContain(`routr ${cmd}`);
@@ -509,7 +604,7 @@ test("the file-and-ledger commands answer instead of failing", async () => {
   expect(out.ms).toBe(12);
 });
 
-test("help, --version and statusline load none of the harness drivers: those load only when a command reads usage", () => {
+test("help, --version, the command table and statusline load none of the harness drivers: those load only when a command reads usage", () => {
   // Static imports only: `await import()` is how the drivers are reached on demand, and is exactly what stays out.
   const root = join(import.meta.dir, "../src");
   const reach = (file, seen = new Set()) => {
@@ -519,11 +614,14 @@ test("help, --version and statusline load none of the harness drivers: those loa
     return seen;
   };
   const heavy = ["cursor-usage.mjs", "kiro-usage.mjs", "terminal.mjs", "herdr.mjs", "launch.mjs", "usage-readings.mjs"];
-  for (const start of ["lib/help.mjs", "lib/statusline.mjs", "lib/harnesses.mjs"]) {
+  for (const start of ["lib/help.mjs", "lib/command-table.mjs", "lib/command-line.mjs", "lib/statusline.mjs", "lib/harnesses.mjs"]) {
     const loaded = [...reach(join(root, start))].map((f) => f.split(/[\\/]/).at(-1));
     expect(loaded.filter((f) => heavy.includes(f))).toEqual([]);
   }
   expect(readFileSync(join(root, "routr.mjs"), "utf8")).not.toMatch(/^import /m); // the entry point imports nothing up front
+  // statusline reaches only the state files, and the line reader only wording: neither loads the table.
+  expect([...reach(join(root, "lib/statusline.mjs"))].map((f) => f.split(/[\\/]/).at(-1)).sort()).toEqual(["state-files.mjs", "statusline.mjs"]);
+  expect([...reach(join(root, "lib/command-line.mjs"))].map((f) => f.split(/[\\/]/).at(-1)).sort()).toEqual(["command-line.mjs", "wording.mjs"]);
 });
 
 test("routr's own code in the test process sees the scratch home, not the maintainer's (Bun's os.homedir ignores a changed HOME)", async () => {
