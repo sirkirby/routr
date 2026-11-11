@@ -242,3 +242,42 @@ test("a global flag cannot take --cwd, --out or --no-open as its value", () => {
     expect([cli.stderr.toString(), out.ok, out.error]).toEqual(["", false, expect.stringContaining("cannot be a value")]);
   }
 });
+
+// The page's own script, run against a minimal DOM: what a person reads on it, not how it is built.
+class FakeNode {
+  constructor(tag) { this.tag = tag; this.kids = []; this.attrs = {}; this.style = {}; this.own = ""; this.value = ""; this.clientWidth = 600; }
+  get textContent() { return this.own + this.kids.map((k) => (typeof k === "string" ? k : k.textContent)).join(""); }
+  set textContent(v) { this.own = String(v); this.kids = []; }
+  get options() { return this.kids.filter((k) => k.tag === "option"); }
+  setAttribute(k, v) { this.attrs[k] = String(v); if (k === "value") this.value = String(v); }
+  append(...ks) { this.kids.push(...ks); }
+  replaceChildren(...ks) { this.kids = ks; this.own = ""; }
+  addEventListener() {}
+  getBoundingClientRect() { return { x: 0, y: 0 }; }
+  all(tag) { return this.kids.flatMap((k) => (typeof k === "string" ? [] : [...(k.tag === tag ? [k] : []), ...k.all(tag)])); }
+}
+function drawPage(html) {
+  const ids = new Map(), data = new FakeNode("script");
+  data.textContent = html.match(/<script type="application\/json" id="data">([\s\S]*?)<\/script>/)[1];
+  const document = {
+    getElementById: (id) => (id === "data" ? data : ids.get(id) ?? (ids.set(id, new FakeNode("div")), ids.get(id))),
+    createElement: (t) => new FakeNode(t), createElementNS: (_ns, t) => new FakeNode(t), querySelector: () => new FakeNode("div"),
+  };
+  const code = html.match(/<script>([\s\S]*?)<\/script>/)[1];
+  new Function("document", "Node", "addEventListener", "innerWidth", code)(document, FakeNode, () => {}, 1024);
+  return (id) => document.getElementById(id);
+}
+const rowsOf = (node) => node.all("tr").map((tr) => tr.all("td").map((td) => td.textContent)).filter((r) => r.length);
+
+test("the page counts done first time out of every recorded run; mean attempts only from runs that recorded them", () => {
+  const home = scratch("dash-first"), ledger = join(home, "ledger.jsonl"), at = "2026-10-01T00:00:00.000Z";
+  writeFileSync(ledger, [entry({ ts: at }), entry({ ts: at, run_id: "bbbbbbbb-bbbb-4ccc-8ddd-eeeeeeeeeeee", outcome: { verdict: "done", check: "pass" } })].map((e) => JSON.stringify(e)).join("\n") + "\n");
+  mkdirSync(join(home, "alpha")); // outside a repository the folder is the project, so the page opens on alpha's runs
+  const $ = drawPage(htmlOf(go(["--no-open"], { home, ledger, cwd: join(home, "alpha"), now: () => "2026-10-02T00:00:00.000Z" })));
+  expect($("project").value).toBe("alpha");
+  const tiles = $("tiles").kids.map((t) => t.textContent);
+  expect(tiles).toContain("50%done first time (1 of 2)");
+  expect(rowsOf($("direction"))[0]).toEqual(["Followed", "2", "50% (1)", "1.0"]);
+  expect(rowsOf($("choices"))[0].at(-1)).toBe("50% of 2");
+  expect($("gaps").textContent).toContain("1 runs recorded no attempts: they are not done first time, and mean attempts leaves them out.");
+});
