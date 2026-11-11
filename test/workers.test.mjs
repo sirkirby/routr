@@ -19,6 +19,8 @@ import { besidesHelper, callGit, groupMembers } from "../src/lib/process-boundar
 import { HARNESSES } from "../src/lib/harnesses.mjs";
 import { COMMANDS } from "../src/lib/help.mjs";
 import { launch } from "../src/lib/launch.mjs";
+import { isLaunchId } from "../src/lib/launch-identity.mjs";
+import { readHistory } from "../src/lib/launch-history.mjs";
 import { CARRIERS } from "../src/lib/worker-env.mjs";
 import { installedAt, start, stop } from "../src/lib/processes.mjs";
 import { cfg, cliEnv, CONFIG_ENV, fakeExecutable, LEAD_ENV, scratch, SCRIPT } from "./helpers.mjs";
@@ -434,6 +436,10 @@ test("a headless Claude worker: launch, a message mid-turn, wait, a follow-up th
   const l = w.launch("w1", file);
   expect([l.ok, l.state, l.headline]).toEqual([true, "prompted", "routr: w1 (claude) took its task, running headless"]);
   expect(l.worker).toEqual({ name: "w1", backend: "headless", run: w.runDir("w1"), session: "11111111-2222-3333-4444-555555555555" });
+  // It counts toward the share: its own launch id in its answer, its record template and its history record.
+  expect(isLaunchId(l.launch_id)).toBe(true);
+  expect(l.next.find((n) => n.template?.startsWith("routr record")).template).toContain(`--launch ${l.launch_id}`);
+  expect(readHistory({ home: w.home }).records.map((h) => [h.launch_id, h.backend, h.name])).toEqual([[l.launch_id, "headless", "w1"]]);
   expect(l.start.argv.slice(0, 6)).toEqual(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]);
   expect(l.next.map((n) => n.argv ?? n.template)).toEqual([["routr", "wait", "--name", "w1"], expect.stringContaining("routr record --advice"), ["routr", "cleanup", "--worker", "w1"]]);
   // The turn is held open: the message goes into it, and a short wait times out with it still running.

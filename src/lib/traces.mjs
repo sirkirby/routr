@@ -3,7 +3,7 @@ import { IDENTITY_ATTRIBUTES, LOG_EVENTS, NEEDS_INPUT_CODES, OTEL_ATTRIBUTES, SC
 export { LOG_EVENTS, NEEDS_INPUT_CODES, OTEL_ATTRIBUTES, TRACE_ATTRIBUTES } from "./otel-schema.mjs";
 import { warningCode } from "./warnings.mjs";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { encodeTraces, encodeLogs, headroomObservation, otelSession, otelSwitch } from "./otel.mjs";
 import { loadConfig } from "./config.mjs";
 import { CARRIERS, carriersFrom, savedCarriers } from "./worker-env.mjs";
@@ -18,6 +18,7 @@ import { servedRow } from "./usage.mjs";
 import { usageFailure, USAGE_FAILURES } from "./usage-failure.mjs";
 import { traceIdentity, pathHash } from "./trace-identity.mjs";
 import { LaunchIndex, launchContext } from "./launch-index.mjs";
+import { findableByRerun, newLaunchId, takesOver } from "./launch-identity.mjs";
 import { callHerdr, herdrId } from "./process-boundary.mjs";
 
 const context = new AsyncLocalStorage(), nanos = () => BigInt(Date.now()) * 1000000n;
@@ -100,15 +101,15 @@ export async function completeLaunch(r, run, { rerun = false, backend } = {}) {
   put(c.span, identity.attributes); conversation(facts);
   const reused = rerun && c.adviceId && facts?.terminal_id ? c.index.recovery({ advice_id: c.adviceId, pane_id: r.pane, terminal_id: facts.terminal_id }) : null;
   // A recovery rerun is its own launch, with its own id (launch's, as its history record has it whether or not anything is
-  // exported), linked to the launch it finishes.
-  // Only a rerun that delivered its task takes the pane over; one turned away (the worker busy) leaves the original as it was.
-  const tookOver = reused && ["ready", "prompted"].includes(r.state);
+  // exported), linked to the launch it finishes. Whether it takes the pane over, and whether this launch is indexed,
+  // are a launch's identity's rules (launch-identity.mjs).
+  const finishes = Boolean(reused), tookOver = takesOver({ state: r.state, finishes });
   if (reused) link(reused);
   if (tookOver) c.replaces = reused.launch_id;
   put(c.span, { "routr.kind": pick(r.kind, subscriptions), "routr.backend": backend, "routr.launch.id": c.launchId,
     "gen_ai.agent.name": WORKER_NAME.test(r.name) ? r.name : null, "routr.model": modelName(r.model), "routr.effort": pick(r.effort, EFFORTS),
     "routr.advice.matched": typeof r.advice?.matches === "boolean" ? r.advice.matches : null, "routr.carriers.forwarded": CARRIERS.filter((n) => r.start?.env?.[n] === "<forwarded>") });
-  if ((!reused || tookOver) && (herdrId(r.pane) || r.worker) && ["ready", "prompted", "needs_input"].includes(r.state)) c.entry = { launch_id: c.launchId, advice_id: c.adviceId ?? null, backend, repository: identity.attributes["vcs.repository.url.full"] ?? null,
+  if (findableByRerun({ state: r.state, started: Boolean(herdrId(r.pane) || r.worker), finishes })) c.entry = { launch_id: c.launchId, advice_id: c.adviceId ?? null, backend, repository: identity.attributes["vcs.repository.url.full"] ?? null,
     project_hash: identity.project_hash ?? null, path_hash: identity.path_hash ?? null, branch: identity.attributes["vcs.ref.head.name"] ?? null,
     pane_id: herdrId(r.pane) ? r.pane : null, terminal_id: typeof facts?.terminal_id === "string" ? facts.terminal_id : null,
     traceId: c.span.traceId, spanId: c.span.spanId, created_at: new Date().toISOString() };
@@ -273,7 +274,10 @@ export function commandTrace(command, setup = {}, run) {
         ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, attributes: {} });
       const id = leadSession(env, lead); if (id && ["dispatch", "subagent", "launch"].includes(command)) put(span, { "routr.lead.session_id": id });
       const identity = traceIdentity(cwd); put(span, identity.attributes);
-      batch = { ...batch, span, spans: [span], logs: [], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: launchId ?? randomUUID(), matched: new Set(), observed: new Set() };
+      // A launch's id is launch's (launch-identity.mjs). The CLI starts a launch's trace before launch runs (routr.mjs), so
+      // launch's own id never reaches it and the trace makes one here: from the CLI a launch's `routr.launch.id` (and its
+      // index entry and worker record) is not its answer's `launch_id`. Kept as found; making them one changes behaviour.
+      batch = { ...batch, span, spans: [span], logs: [], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: launchId ?? (command === "launch" ? newLaunchId() : null), matched: new Set(), observed: new Set() };
     }
   } catch {} // Setup is optional too: a bad config or identity lookup cannot refuse a command.
   if (!batch) return run();

@@ -1,28 +1,34 @@
 // Doubtful lineage is absent lineage. Local hashes distinguish repositories/paths without exporting native
-// paths.
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+// paths. Written only when OpenTelemetry export is on; its launch ids, uninstall check and sweep are a launch's
+// identity's (launch-identity.mjs), shared with the launch history.
+import { lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { home as userHome, STATE_DIR, UNINSTALL_LOCK, writeJsonAtomic } from "./state-files.mjs";
+import { home as userHome, STATE_DIR, writeJsonAtomic } from "./state-files.mjs";
+import { isLaunchId, launchIdOfFile, storeWritable, sweepLaunches } from "./launch-identity.mjs";
 
-const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
-const OWN = /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\.json$/;
+// Kept 30 days, for a cleanup or a record long after its launch; a finished entry stays for `record` until then.
+const INDEX_MS = 30 * 86400000;
 const hash = (v) => typeof v === "string" && /^[a-f0-9]{64}$/.test(v);
 const id = (v, len) => typeof v === "string" && new RegExp(`^[a-f0-9]{${len}}$`).test(v) && !/^0+$/.test(v);
-export const launchContext = (v) => v && UUID.test(v.launch_id) && id(v.traceId, 32) && id(v.spanId, 16) ? { launch_id: v.launch_id, traceId: v.traceId, spanId: v.spanId } : null;
+// A launch's span context, as an index entry and a worker record's `launch` field keep it; null when any part is doubtful.
+export const launchContext = (v) => v && isLaunchId(v.launch_id) && id(v.traceId, 32) && id(v.spanId, 16) ? { launch_id: v.launch_id, traceId: v.traceId, spanId: v.spanId } : null;
 export class LaunchIndex {
   constructor({ home = userHome(), now = Date.now } = {}) { this.home = home; this.now = now; this.dir = join(STATE_DIR(home), "launches"); }
-  permitted() { try { return !existsSync(UNINSTALL_LOCK(this.home)) && lstatSync(STATE_DIR(this.home)).isDirectory(); } catch { return false; } }
+  permitted() { return storeWritable(this.home); }
+  // One entry by its file name: null unless the file is a real file named for the launch it holds, a whole entry, from
+  // no later than now, and (unless `expired`) within the 30 days.
+  read(n, { expired = false } = {}) {
+    try {
+      const file = join(this.dir, n); if (!launchIdOfFile(n) || !lstatSync(file).isFile()) return null;
+      const v = JSON.parse(readFileSync(file, "utf8")), age = this.now() - Date.parse(v.created_at);
+      if (launchIdOfFile(n) !== v.launch_id || !launchContext(v) || !["pane", "headless", "terminal"].includes(v.backend) || !Number.isFinite(age) || age < 0 || (!expired && age >= INDEX_MS)) return null;
+      return v;
+    } catch { return null; }
+  }
   entries({ expired = false } = {}) {
     try {
       if (!lstatSync(this.dir).isDirectory()) return [];
-      return readdirSync(this.dir).filter((n) => OWN.test(n)).flatMap((n) => {
-        try {
-          const file = join(this.dir, n); if (!lstatSync(file).isFile()) return [];
-          const v = JSON.parse(readFileSync(file, "utf8")), age = this.now() - Date.parse(v.created_at);
-          if (n !== `${v.launch_id}.json` || !launchContext(v) || !["pane", "headless", "terminal"].includes(v.backend) || !Number.isFinite(age) || age < 0 || (!expired && age >= 30 * 86400000)) return [];
-          return [v];
-        } catch { return []; }
-      });
+      return readdirSync(this.dir).flatMap((n) => { const v = this.read(n, { expired }); return v ? [v] : []; });
     } catch { return []; }
   }
   add(entry) {
@@ -53,10 +59,5 @@ export class LaunchIndex {
       writeJsonAtomic(join(this.dir, `${launchId}.json`), { ...v, finished_at: new Date(this.now()).toISOString() }, { mkdir: false, mode: 0o600, preserveOnError: true });
     } catch {} // Tombstone failure cannot turn a completed cleanup into a failure.
   }
-  sweep() {
-    if (!this.permitted()) return;
-    for (const v of this.entries({ expired: true })) if (this.now() - Date.parse(v.created_at) >= 30 * 86400000) {
-      try { if (this.permitted() && lstatSync(join(this.dir, `${v.launch_id}.json`)).isFile()) unlinkSync(join(this.dir, `${v.launch_id}.json`)); } catch {}
-    }
-  }
+  sweep() { sweepLaunches(this.dir, this.home, (n) => { const v = this.read(n, { expired: true }); return Boolean(v) && this.now() - Date.parse(v.created_at) >= INDEX_MS; }); }
 }

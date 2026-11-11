@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { scratch } from "./helpers.mjs";
 import { LaunchIndex } from "../src/lib/launch-index.mjs";
@@ -31,17 +31,18 @@ test("launch index links only a unique match, fences pane reuse, and retains imm
   expect(index.recovery({ advice_id: first.advice_id, pane_id: "pane-1", terminal_id: "terminal-1" })).toBeNull(); // finished entries never revive
 });
 
-test("the 30-day sweep removes only owned file names, ignores malformed or linked entries and respects uninstall", () => {
+// Which files a sweep may remove, and uninstall during one, are the shared sweep's (launch-identity.test.mjs).
+test("an entry is read for 30 days and swept after them, and nothing is added during uninstall", () => {
   const home = scratch("index-sweep"), state = join(home, ".local/state/routr"), index = new LaunchIndex({ home, now: () => Date.parse(first.created_at) });
   mkdirSync(state, { recursive: true }); index.add(first);
-  const foreign = join(state, "launches/keep.json"); writeFileSync(foreign, JSON.stringify(first));
+  const almost = new LaunchIndex({ home, now: () => Date.parse(first.created_at) + 30 * 86400000 - 1 });
+  almost.sweep();
+  expect(almost.match({ advice_id: first.advice_id })).toMatchObject(first);
   const old = new LaunchIndex({ home, now: () => Date.parse(first.created_at) + 30 * 86400000 });
   expect(old.match({ advice_id: first.advice_id })).toBeNull(); old.sweep();
-  expect(existsSync(foreign)).toBe(true);
   expect(existsSync(join(state, "launches", first.launch_id + ".json"))).toBe(false);
   writeFileSync(join(state, "uninstalling"), "{}");
   expect(index.add(first)).toBe(false);
-  expect(readFileSync(foreign, "utf8")).toBe(JSON.stringify(first));
 });
 
 test("cleanup matches a relaunched branch, path and pane among unfinished entries, while record retains tombstones", () => {
