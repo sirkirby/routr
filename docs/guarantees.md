@@ -12,9 +12,11 @@ yours (`doctor --fix` is `setup` under another name). What they do besides answe
 - keep routr's own bookkeeping under `~/.cache/routr` (which harnesses are signed in, and in `usage/`, one file per
   subscription, its last good usage reading and its last try: windows, class and note, as the harness reported them,
   when it was tried, and a failure's code, never a brief). Once one of these is written, routr removes the files
-  earlier versions kept there (`cursor-usage.json`, `kiro-usage.json`, `usage-readings.json`, `usage-refresh.json` and
-  their locks), each only with its lock taken: one an older routr still holds is left, with its file, for a later
-  write. Nothing in them is carried over;
+  earlier versions kept there (`cursor-usage.json`, `kiro-usage.json`, `usage-readings.json`, `usage-refresh.json`),
+  each only when no older routr can be using it: its last change more than 24 hours ago, and its lock, where it has
+  one, absent or abandoned. A stale lock is removed only together with its file. While an older routr is in use it
+  rewrites its files, so they never reach that age; once nothing old runs, they age out and a later write removes
+  them. Nothing in them is carried over;
 - start one of routr's detached jobs and carry on: the updater, a usage refresh (`routr usage --background`) for
   the subscriptions a call found due, or the `routr usage` that `routr top` starts when you press `u`, or the
   OpenTelemetry sender when export is configured.

@@ -400,29 +400,56 @@ test("the file store's entries are owner-only, and unreadable ones are said with
 // ---- routr's old files ----------------------------------------------------------------------------------------------
 const LEGACY_FILES = ["cursor-usage.json", "kiro-usage.json", "usage-readings.json", "usage-refresh.json"];
 const ageFile = (file, sec) => { const t = new Date(Date.now() - sec * 1000); utimesSync(file, t, t); };
-test("routr's old files go after the new store's first write, never one an older routr is using: a held lock keeps its file until a later write", async () => {
-  const cache = join(scratch("legacy"), ".cache/routr"), dir = join(cache, "usage");
+test("routr's old files go only once no older routr can be using them: over a day unchanged, with their lock absent or abandoned", async () => {
+  const cache = join(scratch("legacy"), ".cache/routr"), dir = join(cache, "usage"), DAY = 24 * 3600;
   mkdirSync(cache, { recursive: true });
   for (const f of [...LEGACY_FILES, "claude-usage.json", "signed-in.json"]) writeFileSync(join(cache, f), "{}");
-  // An older routr refreshing Cursor right now holds its lock (taken a minute ago, under its 120 s rule); Kiro's lock
-  // was left by a refresh that died long ago; the cache mark's lock is held by a dead process.
-  const cursorLock = join(cache, "cursor-usage.json.lock"), kiroLock = join(cache, "kiro-usage.json.lock"), markLock = join(cache, "usage-refresh.json.lock");
+  // Cursor's snapshot is two days old, but an older routr refreshing it right now holds its lock (taken a minute ago,
+  // under its 120 s rule). Kiro's is two days old, with a lock a refresh that died long ago left. The kept readings,
+  // written with no lock, are two days old. The cache mark was written a minute ago: an older routr is still running.
+  const cursorLock = join(cache, "cursor-usage.json.lock"), kiroLock = join(cache, "kiro-usage.json.lock");
+  for (const f of ["cursor-usage.json", "kiro-usage.json", "usage-readings.json"]) ageFile(join(cache, f), 2 * DAY);
+  ageFile(join(cache, "usage-refresh.json"), 60);
   writeFileSync(cursorLock, JSON.stringify({ pid: process.pid, token: "older-routr" })); ageFile(cursorLock, 60);
   writeFileSync(kiroLock, JSON.stringify({ pid: process.pid, token: "dead" })); ageFile(kiroLock, 3600);
-  writeFileSync(markLock, JSON.stringify({ pid: 999999999, token: "dead" }));
   const store = fileStore(dir, { legacy: cache });
   // Reading removes nothing, and neither does a write that cannot land.
   store.get("cursor");
   const blocked = fileStore(join(cache, "signed-in.json", "usage"), { legacy: cache });
   expect(blocked.put("claude", { source: "claude /usage", takenAt: T, windows: [] }, undefined)).toBe(false);
   expect(LEGACY_FILES.every((f) => existsSync(join(cache, f)))).toBe(true);
+  // The first write: the old unlocked file goes, and Kiro's with its abandoned lock; a fresh one stays, and a held lock
+  // keeps its file.
   store.put("claude", { source: "claude /usage", takenAt: T, windows: [] }, undefined);
-  expect(readdirSync(cache).sort()).toEqual(["claude-usage.json", "cursor-usage.json", "cursor-usage.json.lock", "signed-in.json", "usage"]);
+  expect(readdirSync(cache).sort()).toEqual(["claude-usage.json", "cursor-usage.json", "cursor-usage.json.lock", "signed-in.json", "usage", "usage-refresh.json"]);
   expect(JSON.parse(readFileSync(cursorLock, "utf8")).token).toBe("older-routr"); // never removed or taken over while held
-  // Once that lock is abandoned (past its old owner's 120 s), a later write removes both.
+  // That older routr stops: its lock is abandoned (past 120 s) and the mark ages out; a later write removes them.
   ageFile(cursorLock, 121);
   store.put("claude", { source: "claude /usage", takenAt: T + 1, windows: [] }, undefined);
+  expect(readdirSync(cache).sort()).toEqual(["claude-usage.json", "signed-in.json", "usage", "usage-refresh.json"]);
+  ageFile(join(cache, "usage-refresh.json"), DAY + 60);
+  store.put("claude", { source: "claude /usage", takenAt: T + 2, windows: [] }, undefined);
   expect(readdirSync(cache).sort()).toEqual(["claude-usage.json", "signed-in.json", "usage"]);
+});
+
+// ---- a person's read during a refresh -------------------------------------------------------------------------------
+test("a person's failed named read during a background refresh is recorded beside its claim: the refresh's reading still lands", async () => {
+  for (const kind of ["memory", "file"]) {
+    let releaseA;
+    const heldA = new Promise((r) => { releaseA = r; });
+    const store = kind === "memory" ? memoryStore() : fileStore(scratch("named-during-refresh"), { legacy: null });
+    const { r, starter, clock } = make({ store, readers: { cursor: slow([() => heldA.then(() => cursorScreen(25)), { ok: false, code: "no_response" }]) } });
+    r.kept(["cursor"]);
+    const token = tokenOf(starter.calls[0]);
+    const a = r.refreshClaimed(token); // refresh A: holding its reader
+    await Bun.sleep(5);
+    clock.advance(30);
+    expect(await r.readNow("cursor")).toEqual({ ok: false, ...usageFailure("no_response") });
+    expect(store.get("cursor").entry.attempt).toEqual({ at: T + 30, by: V, outcome: "failed", code: "no_response", pending: true, token });
+    clock.advance(30); releaseA(); await a;
+    expect([kind, store.get("cursor").entry]).toEqual([kind, { reading: expect.objectContaining({ takenAt: T + 60, windows: [expect.objectContaining({ usedPct: 25 })] }), attempt: { at: T + 60, by: V, outcome: "ok" } }]);
+    expect([kind, rowsOf(r.kept(["cursor"], { mayRefresh: [] }).served)[0].headroom]).toEqual([kind, 0.75]);
+  }
 });
 
 // ---- a refresh that lost its claim ----------------------------------------------------------------------------------

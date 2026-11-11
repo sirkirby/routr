@@ -16,7 +16,7 @@
 //
 // A key is a source key: today the harness's name, so a later change can key a harness's logins apart ("codex~work").
 import { randomUUID } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CACHE_DIR, ensureParent, lockIsStale, lockToken, olderThan, releaseFileLock, takeLock, whileLockOwned, writeJsonAtomic } from "./state-files.mjs";
 import { spawnSelf } from "./processes.mjs";
@@ -79,13 +79,18 @@ const cleanEntry = (e) => {
 const got = (entry) => (entry.unreadable ? { entry, failure: entry.unreadable } : { entry });
 // A put: the reading replaces the kept one only when newer, and both it and the attempt only while the claim `token`
 // given is still the key's (a refresh that lost its claim publishes nothing); no token is a person's read, or a live
-// read's reading. What to write, or null for nothing. Any write ends what `unreadable` said.
+// read's reading. Recording a try never removes or replaces another claim's pending token: only that claim's own
+// completion, or a newer claim, does. A person's try during a refresh is recorded beside it, as its outcome and time,
+// and the refresh's later reading still lands. What to write, or null for nothing. Any write ends what `unreadable`
+// said.
 function putting(was, reading, attempt, token) {
   was ??= { reading: null, attempt: null };
-  const held = !token || (was.attempt?.pending === true && was.attempt.token === token);
+  const pending = was.attempt?.pending === true ? was.attempt.token : null;
+  const held = !token || pending === token;
   const ours = held && attempt !== undefined;
   const keep = held && reading && replaces(reading, was.reading) ? reading : was.reading;
-  return keep === was.reading && !ours ? null : { reading: keep, attempt: ours ? attempt : was.attempt };
+  const tried = ours && pending && !token ? { ...attempt, pending: true, token: pending } : attempt;
+  return keep === was.reading && !ours ? null : { reading: keep, attempt: ours ? tried : was.attempt };
 }
 // A claim's mark: the try under way, with the last try's outcome kept for the version rule, beside what was there.
 const marking = (found, mark, token) => {
@@ -126,24 +131,31 @@ export function due(entry, periodSec, nowSec, version = ROUTR_VERSION, { slow = 
 
 // routr's own files from before this store, under its cache folder, each with the rule its old owner used to call its
 // lock abandoned (the snapshot's 120 s; the cache mark's 30 s, or a dead owner), or none (never locked). No reading is
-// carried over: Cursor and Kiro read "no reading yet" until the first refresh lands.
+// carried over: Cursor and Kiro read "no reading yet" until the first refresh lands. An older routr writes some of them
+// with no lock at all (the kept readings, a foreground snapshot read), so a lock alone cannot say one is unused: only a
+// file unchanged for LEGACY_IDLE_MS is. While an older routr is in use it rewrites its files, and they never get that
+// old; once nothing old runs, they age out and a later write removes them.
 const LEGACY = [
   { file: "cursor-usage.json", stale: (f) => olderThan(120_000)(f) }, { file: "kiro-usage.json", stale: (f) => olderThan(120_000)(f) },
   { file: "usage-refresh.json", stale: (f) => olderThan(30_000)(f) || lockIsStale(f) }, { file: "usage-readings.json" },
 ];
+const LEGACY_IDLE_MS = 24 * 3600 * 1000;
 const pause = new Int32Array(new SharedArrayBuffer(4));
-// Removes what of LEGACY no older routr is using: a locked file only with its lock taken (absent, or abandoned by its
-// old rule), so an older routr mid-refresh keeps both; true when nothing is left to try.
+// Removes what of LEGACY no older routr can be using: a file only once it is over a day unchanged and its lock (where it
+// has one) is absent or abandoned, taken while the file goes, so a stale lock goes only with its file; a held lock
+// keeps both. True when nothing is left to try.
 function sweepLegacy(dir) {
   let done = true;
   for (const { file, stale } of LEGACY) {
     const data = join(dir, file), lock = `${data}.lock`;
     try {
+      if (!existsSync(data)) continue;
+      const idle = () => Date.now() - statSync(data).mtimeMs > LEGACY_IDLE_MS;
+      if (!idle()) { done = false; continue; }
       if (!stale) { rmSync(data, { force: true }); continue; }
-      if (!existsSync(data) && !existsSync(lock)) continue;
       if (!takeLock(lock, stale)) { done = false; continue; }
       const token = lockToken(lock);
-      try { if (!whileLockOwned(lock, token, () => rmSync(data, { force: true }))) done = false; } finally { releaseFileLock(lock, token); }
+      try { if (!whileLockOwned(lock, token, () => { if (idle()) rmSync(data, { force: true }); else done = false; })) done = false; } finally { releaseFileLock(lock, token); }
     } catch { done = false; }
   }
   return done;
