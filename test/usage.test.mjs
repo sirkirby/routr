@@ -823,11 +823,11 @@ test("routr usage leaves a turned-off subscription out, says how to turn it on, 
 // From the herdr 0.9.5 change of 2026-10-22: Cursor's reader failed on every try for 89 h, and ranking quietly ran on the
 // unknown capacity. A reader that worked once and has failed for over a day is now said in `warnings`.
 test("a reader whose last reading is over a day old and whose last try failed is a warning; a fresh, never-read or signed-out one is not", async () => {
-  const { staleReaders, STALE_SEC } = await import("../src/lib/usage-failure.mjs");
+  const { staleReaders, READER_STOPPED_SEC } = await import("../src/lib/usage-failure.mjs");
   const row = (pool, ageH, over = {}) => ({ ...summarize({ pool, source: `${pool} /usage`, ts: ageH == null ? null : NOW - ageH * 3600, nowSec: NOW, failure: usageFailure("read_failed") }), ...over });
   const warned = staleReaders([row("cursor", 89), row("kiro", 2), row("claude", null), row("agy", 30, { signedIn: false }), row("codex", 30, { failure: undefined })]);
   expect(warned).toEqual([{ pool: "cursor", warning: "cursor's usage has not been read for 89 h, and its last try failed (read_failed), so remaining capacity is unknown: an update of cursor or herdr may have changed what routr reads" }]);
-  expect(STALE_SEC).toBe(86400);
+  expect(READER_STOPPED_SEC).toBe(86400);
   // In a command's output; how to read it by hand stays in `next`.
   const config = cfg({ subscriptions: { cursor: {}, kiro: {} } });
   const r = await usageCommand([], config, {}, { read: async () => [row("cursor", 89), row("kiro", 2)] });

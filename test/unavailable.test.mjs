@@ -246,6 +246,29 @@ test("kept entries that cannot be read have codes too; a missing first reading i
   }
 });
 
+test("a signed-in Cursor whose kept entry cannot be read says invalid_response, with its recovery step, on every path that may refresh it", async () => {
+  const was = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }, home = scratch("unreadable-paths");
+  process.env.HOME = process.env.USERPROFILE = home;
+  try {
+    const cache = join(home, ".cache/routr");
+    mkdirSync(join(cache, "usage"), { recursive: true });
+    writeFileSync(join(cache, "signed-in.json"), JSON.stringify({ cursor: { ts: Date.now() / 1000, state: "yes" } }));
+    writeFileSync(join(cache, "usage/cursor.json"), `{ ${marker}`);
+    const config = cfg({ subscriptions: { cursor: { hardest_work: "strong", reserve: 0 } } });
+    const entry = { part: "usage", subscription: "cursor", source: "cursor /usage", ...usageFailure("invalid_response"), reading: "unknown" };
+    // Each may claim a refresh (its mark lands beside the entry); each, and the next after it, still says why.
+    for (const [path, run] of [["usage", () => usageCommand([], config)], ["usage --level", () => usageCommand(["--level", "basic"], config)],
+      ["dispatch", () => adviseCommand("dispatch", marker, { config }, {}, { askFn: reading })]]) {
+      for (let i = 0; i < 2; i++) {
+        const r = await run();
+        expect([path, i, r.unavailable]).toEqual([path, i, [entry]]);
+        expect([path, i, r.next.some((n) => n.template === "--headroom cursor=<share left>")]).toEqual([path, i, true]);
+        clean(r);
+      }
+    }
+  } finally { for (const [k, v] of Object.entries(was)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; } }
+});
+
 test("live usage readers classify failed reads and never reflect harness output", async () => {
   const exec = async () => marker;
   const rows = [await readClaude({ file: join(scratch("usage-live"), "none"), exec }),

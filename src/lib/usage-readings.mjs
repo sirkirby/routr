@@ -16,7 +16,7 @@
 //
 // A key is a source key: today the harness's name, so a later change can key a harness's logins apart ("codex~work").
 import { randomUUID } from "node:crypto";
-import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CACHE_DIR, ensureParent, lockIsStale, lockToken, olderThan, releaseFileLock, takeLock, whileLockOwned, writeJsonAtomic } from "./state-files.mjs";
 import { spawnSelf } from "./processes.mjs";
@@ -68,9 +68,29 @@ function cleanAttempt(a) {
   return { at: num(a.at), by: isVersion(a.by) ? a.by : null, ...(outcome ? { outcome } : {}), ...(outcome === "failed" ? { code: usageFailure(a.code).code } : {}),
     ...(a.pending === true && typeof a.token === "string" && a.token ? { pending: true, token: a.token } : {}) };
 }
+// `unreadable`: the entry a claim found and could not read, said (as invalid_response or read_failed) until a try
+// completes: a claim records its mark beside it, never in place of what is served.
+const UNREADABLE = ["invalid_response", "read_failed"];
 const cleanEntry = (e) => {
   if (!e || typeof e !== "object" || Array.isArray(e)) throw new SyntaxError("not an entry");
-  return { reading: cleanReading(e.reading), attempt: cleanAttempt(e.attempt) };
+  return { reading: cleanReading(e.reading), attempt: cleanAttempt(e.attempt), ...(UNREADABLE.includes(e.unreadable) ? { unreadable: e.unreadable } : {}) };
+};
+// What a store's get answers for an entry it read: one marked unreadable is still that failure.
+const got = (entry) => (entry.unreadable ? { entry, failure: entry.unreadable } : { entry });
+// A put: the reading replaces the kept one only when newer, and both it and the attempt only while the claim `token`
+// given is still the key's (a refresh that lost its claim publishes nothing); no token is a person's read, or a live
+// read's reading. What to write, or null for nothing. Any write ends what `unreadable` said.
+function putting(was, reading, attempt, token) {
+  was ??= { reading: null, attempt: null };
+  const held = !token || (was.attempt?.pending === true && was.attempt.token === token);
+  const ours = held && attempt !== undefined;
+  const keep = held && reading && replaces(reading, was.reading) ? reading : was.reading;
+  return keep === was.reading && !ours ? null : { reading: keep, attempt: ours ? attempt : was.attempt };
+}
+// A claim's mark: the try under way, with the last try's outcome kept for the version rule, beside what was there.
+const marking = (found, mark, token) => {
+  const was = found.entry ?? { reading: null, attempt: null }, unreadable = found.failure ?? was.unreadable;
+  return { reading: was.reading, attempt: { ...(was.attempt ?? {}), ...mark, pending: true, token }, ...(unreadable ? { unreadable } : {}) };
 };
 // Only a reading the harness gave: not a number the caller passed, not a sign-in refusal, not a failed read (even one
 // carrying an older reading, as a fallback does). Kept before billing settles it: billing settles again when served.
@@ -85,9 +105,12 @@ const replaces = (next, was) => !(Number.isFinite(was?.takenAt) && Number.isFini
 // failed try was under 4 hours old). Only an older one's: a source checkout (0.0.0-dev) and an installed binary sharing
 // the cache would otherwise each start a reading whenever the other had tried; this way the newer retries once and the
 // older never does. A `by` that is not a version counts as none ("0.9.invalid" ordered above 0.8.1 and held it back).
-export function due(entry, periodSec, nowSec, version = ROUTR_VERSION) {
+// A source read in the call is kept by every live read, so it is also not due while its reading is fresh; a slow one is
+// due by its last try alone, so the try an older routr failed is made again at once after an update even beside a
+// fresh reading (v0.8.1, #101).
+export function due(entry, periodSec, nowSec, version = ROUTR_VERSION, { slow = false } = {}) {
   const r = entry?.reading, a = entry?.attempt;
-  if (r && Number.isFinite(r.takenAt) && nowSec - r.takenAt < periodSec) return false;
+  if (!slow && r && Number.isFinite(r.takenAt) && nowSec - r.takenAt < periodSec) return false;
   if (!a || !Number.isFinite(a.at)) return true;
   const gotNone = !r || a.outcome === "failed" || a.outcome === "excluded";
   if (gotNone && (a.by == null || newer(version, a.by))) return true;
@@ -95,16 +118,36 @@ export function due(entry, periodSec, nowSec, version = ROUTR_VERSION) {
 }
 
 // ---- stores ----------------------------------------------------------------------------------------------------------
-// Every store: `get(key)` → `{ entry }`, `{}` (none kept) or `{ failure: code }` (there and unreadable); `put(key,
-// reading, attempt, { token, wait })`: the reading (null: none) replaces the kept one only when newer, and the attempt
-// (undefined: left as it is) is written only while the claim `token` given is still the key's; `claim(key, token,
-// isDue, mark)`: under the key's lock, checks `isDue(entry)` again and marks the try with the token, true once marked;
-// `claimed(token)`: the keys a claim still holds.
+// Every store: `get(key)` → `{ entry }`, `{}` (none kept) or `{ failure: code }` (unreadable, with `entry` when a claim
+// marked it); `put(key, reading, attempt, { token, wait })` as `putting` says (attempt undefined: left as it is);
+// `claim(keys, token, isDue, mark, start)`: each key `isDue(key, entry)`, checked again under its lock and marked with
+// the token, keeps its lock; then `start(keys)` runs only while every one of those locks is still this caller's, and
+// the locks are released. `{ claimed, started }`. `claimed(token)`: the keys a claim still holds.
 
-// routr's own files from before this store, under its cache folder: removed when this store first writes. No reading
-// is carried over: Cursor and Kiro read "no reading yet" until the first refresh lands.
-const LEGACY = ["cursor-usage.json", "kiro-usage.json", "usage-readings.json", "usage-refresh.json"];
+// routr's own files from before this store, under its cache folder, each with the rule its old owner used to call its
+// lock abandoned (the snapshot's 120 s; the cache mark's 30 s, or a dead owner), or none (never locked). No reading is
+// carried over: Cursor and Kiro read "no reading yet" until the first refresh lands.
+const LEGACY = [
+  { file: "cursor-usage.json", stale: (f) => olderThan(120_000)(f) }, { file: "kiro-usage.json", stale: (f) => olderThan(120_000)(f) },
+  { file: "usage-refresh.json", stale: (f) => olderThan(30_000)(f) || lockIsStale(f) }, { file: "usage-readings.json" },
+];
 const pause = new Int32Array(new SharedArrayBuffer(4));
+// Removes what of LEGACY no older routr is using: a locked file only with its lock taken (absent, or abandoned by its
+// old rule), so an older routr mid-refresh keeps both; true when nothing is left to try.
+function sweepLegacy(dir) {
+  let done = true;
+  for (const { file, stale } of LEGACY) {
+    const data = join(dir, file), lock = `${data}.lock`;
+    try {
+      if (!stale) { rmSync(data, { force: true }); continue; }
+      if (!existsSync(data) && !existsSync(lock)) continue;
+      if (!takeLock(lock, stale)) { done = false; continue; }
+      const token = lockToken(lock);
+      try { if (!whileLockOwned(lock, token, () => rmSync(data, { force: true }))) done = false; } finally { releaseFileLock(lock, token); }
+    } catch { done = false; }
+  }
+  return done;
+}
 
 // One file per key, `<dir>/<key>.json` (owner-only), each with its own lock, so a 90 s Cursor refresh never writes over
 // a dispatch's Claude reading. The lock protocol is state-files': the folder made first (on a new machine there is none,
@@ -114,41 +157,58 @@ const pause = new Int32Array(new SharedArrayBuffer(4));
 export function fileStore(dir = join(CACHE_DIR(), "usage"), { legacy = CACHE_DIR(), lockAgeSec = CLOCKS.claimLockSec } = {}) {
   const fileOf = (key) => join(dir, `${encodeURIComponent(key)}.json`);
   const read = (file) => {
-    try { return { entry: cleanEntry(JSON.parse(readFileSync(file, "utf8"))) }; }
+    try { return got(cleanEntry(JSON.parse(readFileSync(file, "utf8")))); }
     catch (e) { return e?.code === "ENOENT" ? {} : { failure: e instanceof SyntaxError ? "invalid_response" : "read_failed" }; }
   };
   let swept = !legacy;
+  // The old files go only after this store's own write has landed, and are tried again on later writes until gone.
   const write = (file, entry) => {
-    if (!swept) { swept = true; for (const f of LEGACY) for (const p of [f, `${f}.lock`]) try { rmSync(join(legacy, p), { force: true }); } catch {} }
     writeJsonAtomic(file, entry, { mode: 0o600 });
+    if (!swept) swept = sweepLegacy(legacy);
+  };
+  // The key's lock, taken (`{ file, lock, token }`) or null: its folder made first, so a new machine can take one.
+  const hold = (key, wait) => {
+    const file = fileOf(key), lock = `${file}.lock`;
+    try { ensureParent(lock); } catch { return null; }
+    const stale = (f) => olderThan(lockAgeSec * 1000)(f) || lockIsStale(f);
+    let taken = takeLock(lock, stale);
+    for (let i = 0; !taken && wait && i < 100; i++) { Atomics.wait(pause, 0, 0, 10); taken = takeLock(lock, stale); }
+    return taken ? { key, file, lock, token: lockToken(lock) } : null;
   };
   const locked = (key, fn, { wait = false } = {}) => {
-    const file = fileOf(key), lock = `${file}.lock`;
-    try { ensureParent(lock); } catch { return false; }
-    const stale = (f) => olderThan(lockAgeSec * 1000)(f) || lockIsStale(f);
-    let got = takeLock(lock, stale);
-    for (let i = 0; !got && wait && i < 100; i++) { Atomics.wait(pause, 0, 0, 10); got = takeLock(lock, stale); }
-    if (!got) return false;
-    const token = lockToken(lock);
+    const h = hold(key, wait);
+    if (!h) return false;
     let done = false;
-    try { whileLockOwned(lock, token, () => { done = fn(file) !== false; }, { wait }); } catch { done = false; }
-    finally { releaseFileLock(lock, token); }
+    try { whileLockOwned(h.lock, h.token, () => { done = fn(h.file) !== false; }, { wait }); } catch { done = false; }
+    finally { releaseFileLock(h.lock, h.token); }
     return done;
   };
   return {
     get: (key) => read(fileOf(key)),
     put: (key, reading, attempt, { token, wait = false } = {}) => locked(key, (file) => {
-      const was = read(file).entry ?? { reading: null, attempt: null };
-      const ours = attempt !== undefined && (!token || (was.attempt?.pending && was.attempt.token === token));
-      const keep = reading && replaces(reading, was.reading) ? reading : was.reading;
-      if (keep === was.reading && !ours) return false;
-      write(file, { reading: keep, attempt: ours ? attempt : was.attempt });
+      const next = putting(read(file).entry, reading, attempt, token);
+      if (!next) return false;
+      write(file, next);
     }, { wait }),
-    claim: (key, token, isDue, mark) => locked(key, (file) => {
-      const got = read(file), was = got.entry ?? { reading: null, attempt: null };
-      if (!isDue(got.entry ?? null)) return false;
-      write(file, { reading: was.reading, attempt: { ...(was.attempt ?? {}), ...mark, pending: true, token } });
-    }),
+    claim: (keys, token, isDue, mark, start) => {
+      const held = [];
+      let started = false;
+      try {
+        for (const key of keys) {
+          if (!isDue(key, read(fileOf(key)).entry ?? null)) continue;
+          const h = hold(key, false);
+          if (!h) continue;
+          let marked = false;
+          try { whileLockOwned(h.lock, h.token, () => { const found = read(h.file); if (isDue(key, found.entry ?? null)) { write(h.file, marking(found, mark, token)); marked = true; } }); } catch {}
+          if (marked) held.push(h); else releaseFileLock(h.lock, h.token);
+        }
+        // Started only while every lock it marked under is still its own: a caller paused past the lock's age has
+        // lost one to another caller, which may have claimed that key itself.
+        const within = (i) => (i === held.length ? (started = Boolean(start(held.map((h) => h.key)))) : whileLockOwned(held[i].lock, held[i].token, () => within(i + 1)));
+        if (held.length) try { within(0); } catch {}
+      } finally { for (const h of held) releaseFileLock(h.lock, h.token); }
+      return { claimed: held.map((h) => h.key), started };
+    },
     claimed: (token) => {
       let names = []; try { names = readdirSync(dir).filter((f) => f.endsWith(".json")); } catch {}
       return names.map((f) => { try { return decodeURIComponent(f.slice(0, -5)); } catch { return null; } })
@@ -166,25 +226,32 @@ export function memoryStore({ entries = {}, pause: between = () => {} } = {}) {
     if (!kept.has(key)) return {};
     const v = kept.get(key);
     if (v && typeof v === "object" && typeof v.failure === "string" && !("reading" in v)) return { failure: v.failure };
-    try { return { entry: cleanEntry(structuredClone(v)) }; } catch { return { failure: "invalid_response" }; }
+    try { return got(cleanEntry(structuredClone(v))); } catch { return { failure: "invalid_response" }; }
   };
   const locked = (key, fn) => { if (held.has(key)) return false; held.add(key); try { return fn() !== false; } finally { held.delete(key); } };
   return {
     entries: kept,
     get: read,
     put: (key, reading, attempt, { token } = {}) => locked(key, () => {
-      const was = read(key).entry ?? { reading: null, attempt: null };
-      const ours = attempt !== undefined && (!token || (was.attempt?.pending && was.attempt.token === token));
-      const keep = reading && replaces(reading, was.reading) ? reading : was.reading;
-      if (keep === was.reading && !ours) return false;
-      kept.set(key, structuredClone({ reading: keep, attempt: ours ? attempt : was.attempt }));
+      const next = putting(read(key).entry, reading, attempt, token);
+      if (!next) return false;
+      kept.set(key, structuredClone(next));
     }),
-    claim: (key, token, isDue, mark) => locked(key, () => {
-      const got = read(key), was = got.entry ?? { reading: null, attempt: null };
-      if (!isDue(got.entry ?? null)) return false;
-      between(key);
-      kept.set(key, structuredClone({ reading: was.reading, attempt: { ...(was.attempt ?? {}), ...mark, pending: true, token } }));
-    }),
+    claim: (keys, token, isDue, mark, start) => {
+      const marked = [];
+      let started = false;
+      try {
+        for (const key of keys) {
+          if (held.has(key) || !isDue(key, read(key).entry ?? null)) continue;
+          held.add(key);
+          between(key);
+          const found = read(key);
+          if (isDue(key, found.entry ?? null)) { kept.set(key, structuredClone(marking(found, mark, token))); marked.push(key); } else held.delete(key);
+        }
+        if (marked.length) started = Boolean(start(marked));
+      } finally { for (const k of marked) held.delete(k); }
+      return { claimed: marked, started };
+    },
     claimed: (token) => [...kept.keys()].filter((k) => { const a = read(k).entry?.attempt; return a?.pending === true && a.token === token; }),
   };
 }
@@ -227,19 +294,16 @@ export function usageReadings({ configPath, store, clock, starter, readers, sign
   const record = (key, o, token) => put(key, o.reading ?? null, { at: now(), by: version, ...(o.excluded ? { outcome: "excluded" } : o.reading ? { outcome: "ok" }
     : { outcome: "failed", code: o.ok ? "invalid_response" : o.code }) }, { token, wait: true });
 
-  // Claims every key in `keys` that is due, under one token, and starts one refresh for them all: marked first, so a
-  // caller at the same moment finds it not due; a mark that cannot be written claims nothing, and a start that fails
-  // leaves the mark, so a failing start is not tried on every call. The keys whose refresh started, or none.
+  // Claims every key in `keys` that is due, under one token, and starts one refresh for them all, inside the claim's
+  // locks: marked first, so a caller at the same moment finds it not due; a mark that cannot be written claims nothing,
+  // and a start that fails leaves the mark, so a failing start is not tried on every call. The keys whose refresh
+  // started, or none.
   const claimDue = (keys) => {
-    const at = now(), token = randomUUID(), claimed = new Set();
-    for (const key of keys) {
-      const isDue = (entry) => due(entry, background(key) ? CLOCKS.backgroundRefreshSec : CLOCKS.inlineRefreshSec, at, version);
-      try { if (isDue(store.get(key).entry ?? null) && store.claim(key, token, isDue, { at, by: version })) claimed.add(key); } catch {}
-    }
-    if (!claimed.size) return claimed;
-    let started = false;
-    try { started = Boolean(starter.start(["usage", "--background", "--claim", token, ...(config ? ["--config", config] : [])])); } catch {}
-    return started ? claimed : new Set();
+    if (!keys.length) return new Set();
+    const at = now(), token = randomUUID();
+    const isDue = (key, entry) => due(entry, background(key) ? CLOCKS.backgroundRefreshSec : CLOCKS.inlineRefreshSec, at, version, { slow: background(key) });
+    const start = () => { try { return starter.start(["usage", "--background", "--claim", token, ...(config ? ["--config", config] : [])]); } catch { return false; } };
+    try { const r = store.claim(keys, token, isDue, { at, by: version }, start); return r.started ? new Set(r.claimed) : new Set(); } catch { return new Set(); }
   };
 
   // A slow source served live from what is kept, as `routr usage` has always said it: its age, the try under way, and

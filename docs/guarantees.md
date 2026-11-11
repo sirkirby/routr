@@ -11,9 +11,10 @@ yours (`doctor --fix` is `setup` under another name). What they do besides answe
 - read your harnesses in the foreground, through each harness's own CLI (its status command, Claude's `/usage`);
 - keep routr's own bookkeeping under `~/.cache/routr` (which harnesses are signed in, and in `usage/`, one file per
   subscription, its last good usage reading and its last try: windows, class and note, as the harness reported them,
-  when it was tried, and a failure's code, never a brief). The first of these written removes the files earlier routr
-  versions kept there (`cursor-usage.json`, `kiro-usage.json`, `usage-readings.json`, `usage-refresh.json` and their
-  locks); nothing in them is carried over;
+  when it was tried, and a failure's code, never a brief). Once one of these is written, routr removes the files
+  earlier versions kept there (`cursor-usage.json`, `kiro-usage.json`, `usage-readings.json`, `usage-refresh.json` and
+  their locks), each only with its lock taken: one an older routr still holds is left, with its file, for a later
+  write. Nothing in them is carried over;
 - start one of routr's detached jobs and carry on: the updater, a usage refresh (`routr usage --background`) for
   the subscriptions a call found due, or the `routr usage` that `routr top` starts when you press `u`, or the
   OpenTelemetry sender when export is configured.
@@ -112,8 +113,8 @@ routr never has to own a harness feature (a statusline slot, a hook) to get its 
   would repeat it. Only those named locations are checked; plugin and managed skills are not measured.
 - Claude, Codex and Antigravity are read in the call (1 to 9 s, beside the decision model).
 - Cursor's own screen takes seconds more and starts Cursor, and Kiro's `/usage` takes about 10 s plus its cleanup, so
-  their readings are kept: when the kept reading and the last try are over 4 hours old, or an older routr made the
-  last try and got no reading (an update reads again at once), a call claims it, starts a detached `routr usage
+  their readings are kept: when the last try is over 4 hours old, or an older routr made it and got no reading (an
+  update reads again at once, even beside a fresh reading), a call claims it, starts a detached `routr usage
   --background` with its own `--config` to refresh it, says a fresh reading is being taken, and carries on without
   waiting (unlike the updater, also from a source checkout: it swaps nothing). Callers at the same moment claim each
   subscription once between them.

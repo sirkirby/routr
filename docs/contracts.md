@@ -1054,8 +1054,8 @@ it. A reading command: it changes nothing of the user's, calls no harness, and a
   (`dispatch`, `usage`, `doctor`, `setup`), aged to now: `age_sec` says how old, and a window that has reset since
   counts as reset. A kept "not signed in" answer leaves a harness out, as in `usage`; no status check is run. A
   subscription with no kept reading has a `usage` entry in `unavailable` with code `not_read_yet`. When a
-  subscription's kept reading is due (missing, or over 10 minutes old, 4 hours for Cursor and Kiro, with no try in that
-  time), board claims it and starts one detached `routr usage --background` for all it claimed (at most one per
+  subscription is due (Claude, Codex, Antigravity: its kept reading missing or over 10 minutes old, with no try in that
+  time; Cursor and Kiro: no try in 4 hours, or the last an older routr's that got no reading), board claims it and starts one detached `routr usage --background` for all it claimed (at most one per
   subscription per period, however many callers) and does not wait. A note says a fresh reading is being taken only
   when this call started it. Null, with an `internal_error` usage entry, when routr could not rank.
 - `decisions`: newest first, at most 50: each launch in routr's launch history (7 days) and each recorded run in

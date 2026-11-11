@@ -1,6 +1,7 @@
 // A lock holder paused at one file operation while others act, through node:fs itself, so a test reaches the same
 // point whatever the lock code's own seams are. Modes: lock, guard and claim (paused as each is published),
-// release (paused between an owner's check and its delete), mark (a refresh claimer paused before its mark).
+// release (paused between an owner's check and its delete), mark (a refresh claimer paused before its mark), spawn (a
+// refresh claimer paused after its mark has landed, before it starts the refresh).
 import { mock } from "bun:test";
 import fs from "node:fs";
 import { join } from "node:path";
@@ -15,6 +16,7 @@ mock.module("node:fs", () => ({
   writeFileSync: (target, ...rest) => { fire("write", typeof target === "number" ? fds.get(target) : target); return fs.writeFileSync(target, ...rest); },
   linkSync: (from, to) => { fire("link", to); return fs.linkSync(from, to); },
   unlinkSync: (path) => { fire("unlink", path); return fs.unlinkSync(path); },
+  renameSync: (from, to) => { const r = fs.renameSync(from, to); fire("renamed", to); return r; },
 }));
 const { lockToken, releaseFileLock, takeLock } = await import("../../src/lib/state-files.mjs");
 const file = join(dir, "job.lock"), guard = `${file}.takeover`, out = {};
@@ -60,5 +62,16 @@ if (mode === "guard" || mode === "claim") {
   const readers = { cursor: { source: "cursor /usage", speed: "background", check: async () => ({ ok: false }), reading: () => null } };
   usageReadings({ configPath: null, store: fileStore(dir, { legacy: null }), clock: { now: () => T }, starter: { start: () => { started++; return true; } }, readers, signIn: { kept: () => null, why: () => "" } }).kept(["cursor"]);
   out.started = started; out.entry = record(entry);
+} else if (mode === "spawn") {
+  const { fileStore, usageReadings } = await import("../../src/lib/usage-readings.mjs");
+  const entry = join(dir, "cursor.json"), lock = `${entry}.lock`, T = 1_800_000_000;
+  // Its mark has landed and the mark's guard is gone: as it goes to start the refresh (publishing the guard again),
+  // paused past the lock's age, another caller takes the lock over.
+  hook((op, p) => op === "renamed" && p === entry, () => { out.marked = record(entry)?.attempt?.pending === true; });
+  hook((op, p) => out.marked && (op === "write" || op === "link") && p.startsWith(`${lock}.takeover`), () => { out.taken = takeLock(lock, () => true); });
+  let started = 0;
+  const readers = { cursor: { source: "cursor /usage", speed: "background", check: async () => ({ ok: false }), reading: () => null } };
+  const kept = usageReadings({ configPath: null, store: fileStore(dir, { legacy: null }), clock: { now: () => T }, starter: { start: () => { started++; return true; } }, readers, signIn: { kept: () => null, why: () => "" } }).kept(["cursor"]);
+  out.started = started; out.refreshing = kept.refreshing; out.note = kept.served[0].row.note;
 }
 console.log(JSON.stringify(out));

@@ -2,7 +2,7 @@
 // answers. Nothing is detached and no harness is called. Lock and claim races run against the real file store in a
 // scratch folder.
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CLOCKS, due, fileStore, memoryStore, usageReadings } from "../src/lib/usage-readings.mjs";
 import { codexSnapshot, summarize } from "../src/lib/usage.mjs";
@@ -141,17 +141,24 @@ test("a slow source's background refresh carries the caller's --config, on a new
 // The fix of 2026-11: `routr board` could repeat a kept note such as "a fresh reading is being taken in the background"
 // long after it was true. Notes are worded when a reading is served.
 test("a kept reading's note says a reading is being taken only when this call started one", async () => {
-  const { r, starter, clock } = make({ readers: { cursor: slow([cursorScreen(40)]) } });
-  const [first] = await r.live(["cursor"]);
-  expect(first.row.note).toContain("a fresh reading is being taken in the background");
+  // 1. A good slow reading.
+  const store = fileStore(scratch("note"), { legacy: null });
+  const { r, starter, clock } = make({ store, readers: { cursor: slow([cursorScreen(40), cursorScreen(30)]) } });
+  r.kept(["cursor"]);
   await r.refreshClaimed(tokenOf(starter.calls[0]));
+  // 2. Aged until a live call starts a refresh, which serves the old reading and says so.
+  clock.advance(CLOCKS.backgroundRefreshSec + 60);
+  const [live] = rowsOf(await r.live(["cursor"]));
+  expect([live.note, live.headroom]).toEqual(["Included 40% used (Auto 1%, API 0%); a fresh reading is being taken in the background", 0.6]);
+  // 3. The refresh completes. 4. Read with no further live call: no suffix.
+  await r.refreshClaimed(tokenOf(starter.calls[1]));
   clock.advance(60);
-  const quiet = r.kept(["cursor"]);
-  expect([quiet.refreshing, quiet.served[0].row.note, quiet.served[0].row.headroom]).toEqual([false, "Included 40% used (Auto 1%, API 0%)", 0.6]);
-  // Four hours on, this call starts one, and says so once; the next call, with that one under way, does not.
+  const kept = r.kept(["cursor"]);
+  expect([kept.refreshing, kept.served[0].row.note, kept.served[0].row.headroom]).toEqual([false, "Included 30% used (Auto 1%, API 0%)", 0.7]);
+  // Four hours on, a kept read that starts one itself says so once; the next, with that one under way, does not.
   clock.advance(CLOCKS.backgroundRefreshSec);
-  expect(r.kept(["cursor"]).served[0].row.note).toBe("Included 40% used (Auto 1%, API 0%); a fresh reading is being taken in the background");
-  expect(r.kept(["cursor"]).served[0].row.note).toBe("Included 40% used (Auto 1%, API 0%)");
+  expect(r.kept(["cursor"]).served[0].row.note).toBe("Included 30% used (Auto 1%, API 0%); a fresh reading is being taken in the background");
+  expect(r.kept(["cursor"]).served[0].row.note).toBe("Included 30% used (Auto 1%, API 0%)");
 });
 
 // ---- validity at both bounds ----------------------------------------------------------------------------------------
@@ -371,20 +378,14 @@ test("source keys of one harness are stored, claimed and billed apart", async ()
 });
 
 // ---- the file store -------------------------------------------------------------------------------------------------
-test("the file store's entries are owner-only, unreadable ones are said with a code, and routr's old files go at its first write", async () => {
-  const home = scratch("legacy"), cache = join(home, ".cache/routr"), dir = join(cache, "usage");
+test("the file store's entries are owner-only, and unreadable ones are said with a code", async () => {
+  const dir = join(scratch("unreadable"), "usage");
   mkdirSync(dir, { recursive: true });
-  const old = ["cursor-usage.json", "cursor-usage.json.lock", "kiro-usage.json", "kiro-usage.json.lock", "usage-readings.json", "usage-refresh.json", "usage-refresh.json.lock"];
-  for (const f of [...old, "claude-usage.json", "signed-in.json"]) writeFileSync(join(cache, f), "{}");
   writeFileSync(join(dir, "cursor.json"), "{ not json");
-  const store = fileStore(dir, { legacy: cache });
+  const store = fileStore(dir, { legacy: null });
   expect(store.get("cursor")).toEqual({ failure: "invalid_response" });
-  expect(readdirSync(cache).filter((f) => old.includes(f)).sort()).toEqual(old.sort()); // reading removes nothing
   const r = usageReadings({ configPath: null, store, clock: clockAt(), starter: recorder(), readers: { cursor: slow([]) }, signIn: answers() });
-  const [row] = rowsOf(await r.live(["cursor"], { mayRefresh: [] }));
-  expect(row).toMatchObject({ headroom: null, failure: usageFailure("invalid_response") });
-  r.kept(["cursor"]); // claims: the first write
-  expect(readdirSync(cache).sort()).toEqual(["claude-usage.json", "signed-in.json", "usage"]);
+  r.kept(["cursor"]); // claims: a write
   if (process.platform !== "win32") expect(statSync(join(dir, "cursor.json")).mode & 0o777).toBe(0o600);
   // A folder where an entry should be: read_failed. A kept reading with no number: it cannot be read.
   mkdirSync(join(dir, "kiro.json"));
@@ -394,4 +395,98 @@ test("the file store's entries are owner-only, unreadable ones are said with a c
   const bad = usageReadings({ configPath: null, store, clock: clockAt(T + 1), starter: recorder(), readers: { agy: slow([]) }, signIn: answers() });
   const [unreadable] = rowsOf(await bad.live(["agy"], { mayRefresh: [] }));
   expect([unreadable.headroom, unreadable.note]).toEqual([null, "the saved reading cannot be read; the last try failed: routr could not read this usage source.; remaining capacity is unknown."]);
+});
+
+// ---- routr's old files ----------------------------------------------------------------------------------------------
+const LEGACY_FILES = ["cursor-usage.json", "kiro-usage.json", "usage-readings.json", "usage-refresh.json"];
+const ageFile = (file, sec) => { const t = new Date(Date.now() - sec * 1000); utimesSync(file, t, t); };
+test("routr's old files go after the new store's first write, never one an older routr is using: a held lock keeps its file until a later write", async () => {
+  const cache = join(scratch("legacy"), ".cache/routr"), dir = join(cache, "usage");
+  mkdirSync(cache, { recursive: true });
+  for (const f of [...LEGACY_FILES, "claude-usage.json", "signed-in.json"]) writeFileSync(join(cache, f), "{}");
+  // An older routr refreshing Cursor right now holds its lock (taken a minute ago, under its 120 s rule); Kiro's lock
+  // was left by a refresh that died long ago; the cache mark's lock is held by a dead process.
+  const cursorLock = join(cache, "cursor-usage.json.lock"), kiroLock = join(cache, "kiro-usage.json.lock"), markLock = join(cache, "usage-refresh.json.lock");
+  writeFileSync(cursorLock, JSON.stringify({ pid: process.pid, token: "older-routr" })); ageFile(cursorLock, 60);
+  writeFileSync(kiroLock, JSON.stringify({ pid: process.pid, token: "dead" })); ageFile(kiroLock, 3600);
+  writeFileSync(markLock, JSON.stringify({ pid: 999999999, token: "dead" }));
+  const store = fileStore(dir, { legacy: cache });
+  // Reading removes nothing, and neither does a write that cannot land.
+  store.get("cursor");
+  const blocked = fileStore(join(cache, "signed-in.json", "usage"), { legacy: cache });
+  expect(blocked.put("claude", { source: "claude /usage", takenAt: T, windows: [] }, undefined)).toBe(false);
+  expect(LEGACY_FILES.every((f) => existsSync(join(cache, f)))).toBe(true);
+  store.put("claude", { source: "claude /usage", takenAt: T, windows: [] }, undefined);
+  expect(readdirSync(cache).sort()).toEqual(["claude-usage.json", "cursor-usage.json", "cursor-usage.json.lock", "signed-in.json", "usage"]);
+  expect(JSON.parse(readFileSync(cursorLock, "utf8")).token).toBe("older-routr"); // never removed or taken over while held
+  // Once that lock is abandoned (past its old owner's 120 s), a later write removes both.
+  ageFile(cursorLock, 121);
+  store.put("claude", { source: "claude /usage", takenAt: T + 1, windows: [] }, undefined);
+  expect(readdirSync(cache).sort()).toEqual(["claude-usage.json", "signed-in.json", "usage"]);
+});
+
+// ---- a refresh that lost its claim ----------------------------------------------------------------------------------
+test("a refresh that lost its claim while it read publishes nothing: the refresh that took the key over keeps its reading", async () => {
+  for (const kind of ["memory", "file"]) {
+    let releaseA;
+    const heldA = new Promise((r) => { releaseA = r; });
+    const reads = [() => heldA.then(() => cursorScreen(10)), cursorScreen(70)];
+    const store = kind === "memory" ? memoryStore() : fileStore(scratch("lost-claim"), { legacy: null });
+    const { r, starter, clock } = make({ store, readers: { cursor: slow(reads) } });
+    r.kept(["cursor"]);
+    const a = r.refreshClaimed(tokenOf(starter.calls[0])); // refresh A: held inside its reader
+    await Bun.sleep(5);
+    clock.advance(CLOCKS.backgroundRefreshSec + 1); // past the period, refresh B claims the key and finishes
+    r.kept(["cursor"]);
+    expect(starter.calls).toHaveLength(2);
+    await r.refreshClaimed(tokenOf(starter.calls[1]));
+    expect(store.get("cursor").entry.reading.windows[0].usedPct).toBe(70);
+    clock.advance(60); releaseA(); await a; // A lands later, with a newer time: still not published
+    expect([kind, store.get("cursor").entry.reading.windows[0].usedPct, store.get("cursor").entry.attempt.outcome]).toEqual([kind, 70, "ok"]);
+  }
+});
+
+// ---- the start happens inside the claim's locks ---------------------------------------------------------------------
+test("a claimer paused after its mark and overtaken starts nothing and does not say a reading is being taken", async () => {
+  const dir = scratch("claim-spawn");
+  const p = Bun.spawn([process.execPath, join(import.meta.dir, "fixtures/lock-pauses.mjs"), "spawn", dir], { stdout: "pipe", stderr: "pipe" });
+  expect(await p.exited, await new Response(p.stderr).text()).toBe(0);
+  const out = JSON.parse(await new Response(p.stdout).text());
+  expect(out).toMatchObject({ marked: true, taken: true, started: 0, refreshing: false });
+  expect(out.note).not.toContain("being taken");
+});
+
+// ---- after an update ------------------------------------------------------------------------------------------------
+test("after an update, a slow source whose last try an older routr failed is read again at once, even beside a fresh reading", async () => {
+  const fresh = { ...cursorReading(cursorScreen(20), T - 600), trustedUntil: T - 600 + CLOCKS.backgroundTrustSec };
+  for (const [by, starts] of [["0.7.0", 1], [null, 1], [V, 0]]) {
+    const store = memoryStore({ entries: { cursor: { reading: fresh, attempt: { at: T - 300, by, outcome: "failed", code: "read_failed" } } } });
+    const { r, starter } = make({ store, readers: { cursor: slow([]) } });
+    const [row] = rowsOf(await r.live(["cursor"]));
+    expect([by, starter.calls.length]).toEqual([by, starts]);
+    if (starts) expect(row.note).toBe("Included 20% used (Auto 1%, API 0%); a fresh reading is being taken in the background; the last try failed: routr could not read this usage source.");
+    expect(row.headroom).toBe(0.8);
+  }
+  // A good try this version made waits out the period, fresh reading or not.
+  const ok = memoryStore({ entries: { cursor: { reading: fresh, attempt: { at: T - 300, by: V, outcome: "ok" } } } });
+  const quiet = make({ store: ok, readers: { cursor: slow([]) } });
+  await quiet.r.live(["cursor"]);
+  expect(quiet.starter.calls).toEqual([]);
+});
+
+// ---- an unreadable entry keeps saying so ----------------------------------------------------------------------------
+test("a claim records its try beside an unreadable entry: doctor's read keeps saying invalid_response until a try completes", async () => {
+  const dir = scratch("unreadable-claim");
+  writeFileSync(join(dir, "cursor.json"), "{ not json");
+  const store = fileStore(dir, { legacy: null });
+  const doctorRead = async (r) => rowsOf(await r.live(["cursor"], { signIns: { cursor: { state: "yes", billing: null } }, mayRefresh: ["cursor"] }))[0];
+  const { r, starter } = make({ store, readers: { cursor: slow([{ ok: false, code: "no_response" }]) } });
+  for (let i = 0; i < 2; i++) {
+    const row = await doctorRead(r);
+    expect([i, row.failure, row.headroom]).toEqual([i, usageFailure("invalid_response"), null]);
+  }
+  expect(starter.calls).toHaveLength(1);
+  // The refresh's own try replaces what the unreadable entry said.
+  await r.refreshClaimed(tokenOf(starter.calls[0]));
+  expect((await doctorRead(r)).failure).toEqual(usageFailure("no_response"));
 });
