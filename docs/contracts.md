@@ -678,9 +678,10 @@ launch as before.
   the failure as for a pane launch.
 - Own fields as a pane launch, with `pane: null` and `worker` `{ name, backend: "terminal", run, terminal }` (`run`: the run
   folder; `terminal`: its address). `steps`: `reserve`, `terminal`, `prompt` (Kiro: `model` first, when its list was read).
-- `next`: `hc wait <t> --timeout 90 --json` (run), saying a turn above 0 means it is done; `hc read <t> --lines 200` (run);
-  `hc send <t> <message>` (a template); the record template; `routr cleanup --worker <name>` (run). A harness that reports
-  no status gets, instead of the wait, a step saying it sends its report with `hc send`.
+- `next`: `routr wait --name <name>` (run); `hc read <t> --lines 200` (run);
+  `routr send --name <name> --task-file <file>` (a template); the record template; `routr cleanup --worker <name>`
+  (run). A harness that reports no status gets, instead of the routr wait, a step saying it sends its report to the
+  lead with `hc send`; read and send remain.
 - The prompt file holds launch's composed prompt, and for a harness that reports no status also, after the closing line,
   the instruction to send its report to the lead's terminal with `hc send`. `prompt_chars` is its length.
 
@@ -789,7 +790,7 @@ Inputs:
   without a worktree it removes only the run folder and its reports, inspects no repository, and warns that the
   worker's changes in its folder are the lead's to check. Own field: `name`.
 - `--worker` on a terminal worker has no holder to check. Instead it refuses while `hc get` says status `working` or
-  `blocked` (`next`: `hc wait`, and that `hc kill` gives up its work), when `hc` does not answer, refuses for any reason
+  `blocked` (`next`: `routr wait`, and that `routr stop` gives up its work), when `hc` does not answer, refuses for any reason
   but "no such terminal", or answers what routr cannot read, when the terminal at that address does not carry the record's id in its `routr.worker` label (launch sets it; it keeps everything then, as an address and a name can be another terminal's on another core), when `hc kill` fails, and when `hc` does not find the
   terminal while `run.json` records no end and its process id is alive, or `run.json` cannot be read. Otherwise it ends the terminal with `hc kill`,
   then removes it with `hc rm` (tried again for about two seconds; one that stays is a `terminal_left` warning, with the
@@ -850,7 +851,7 @@ names it with `(its state could not be read)`.
 
 `ok`: true unless refused. `headline`: `routr: <name> finished a turn` (or `finished N turns`, or `<name> <state>` for
 a notice), joined with `; `; `routr: still running: <names>`; `routr: nothing running: <name> <state>, …`; `routr: no
-headless worker to wait on`.
+worker to wait on`.
 
 Own fields: `state`, `workers` (each as `workers` prints it, plus `gen`, the holder generation, and `turns` holding
 only the turns reported now: `{ turn, outcome, report, delivered }`; `outcome` is `finished`, `failed`, `no_finish`
@@ -863,12 +864,17 @@ process group left; a step saying background commands may start another turn; `r
 workers still running. Inside a sandbox it can see, `warnings` says the sandbox may hide a worker's channel.
 
 For a worker in a herdr-core terminal whose harness reports status, routr asks `hc get <t> --json` on each look. Status
-`working` is pending; any other status returns. Its `turn` is hc's turn counter and each newly counted turn has
+`working` is pending; after a successful send, an idle reading at or before the turn hc said that send started is
+pending too. Any other status returns. Its `turn` is hc's turn counter and each newly counted turn has
 `outcome: "finished"`, `report: null` and `delivered: 0`. `next` for it is `hc read <t> --lines 200` (run): terminal
-text never enters output or a report file. A terminal at a question returns with `status: "blocked"` and state `idle`.
-Its program finishing is the existing `stopped` notice; its terminal disappearing is the existing `lost` notice; an
-unknown hc reading is `unreachable`. Each is reported once as for a headless notice. `workers` keeps its terminal row
-and states unchanged.
+text never enters output or a report file. Its wait row includes `backend: "terminal"` and the saved `terminal`
+address, beside the common worker fields. Status `error` is state `failed` and is a notice. A terminal at a question
+returns with `status: "blocked"` and state `idle`; because entering the question can advance hc's counter, the same
+answer can report a finished turn. Its program finishing is the existing `stopped` notice; its terminal disappearing
+is the existing `lost` notice, with `routr cleanup --worker <name>` in `next`; an unknown hc reading is `unreachable`.
+Each notice is reported once. An unnamed wait includes every terminal worker whose harness reports status, including an
+idle one, because its current status and turn are known only after the hc look. `workers` keeps its terminal row and
+states unchanged.
 
 A harness that reports no status (Cursor) cannot be waited on: a `terminal_followed` warning says so and `next` has
 the existing hc steps. With nothing else to wait on, `state` is `none`, and `headline` is
@@ -913,10 +919,13 @@ withholds it. `next`:
 For a worker in a herdr-core terminal, routr first asks `hc get <t> --json` and checks the terminal's
 `routr.worker` label against the record's id. It writes the whole message to an owner-only file in the run folder, then
 runs `hc send <checked address> "<pointer to that file>" --json`; neither the message nor terminal text is in argv or
-output. A successful hc answer is `state: "delivered"`, `message.code: "handed_to_harness"`. hc refusing because the
-program is at a question is `state: "refused"`, `message: { code: "refused", why: "refused" }`. No answer, an unreadable
-answer, any other hc failure or an identity that cannot be confirmed is `state: "unknown"`, `message.code: "unknown"`.
-A finished or gone terminal is refused with the existing `ended` reason.
+output. The hc turn in a successful answer is kept in owner-only `send.json`, so wait follows the turn the send started.
+The message files and `send.json` remain in the run folder until `cleanup --worker` removes it.
+Success is `state: "delivered"`, `message.code: "handed_to_harness"`. hc refusing because the program is at a question
+is `state: "refused"`, `message: { code: "refused", why: "refused" }`; `next` says to read and answer the question with
+hc. No answer or an unreadable answer from the send itself is `state: "unknown"`, `message.code: "unknown"`: whether hc
+took the pointer is not known. If the lookup failed, the identity did not match, the record was replaced, or the
+terminal was finished or gone, hc send was not called: `state` is `refused` and the headline says nothing was sent.
 
 ## workers
 
@@ -980,8 +989,9 @@ how many. `next`: `routr cleanup --worker <name>` (run).
 
 For a worker in a herdr-core terminal, routr asks `hc get <t> --json`, checks the terminal's `routr.worker` label
 against the record's id, then runs `hc kill <checked address>`. Success is `stopped`; a terminal already finished or
-gone, or gone by the kill, is `absent`; an unreadable hc answer, another worker's label or another failure is
-`unknown`, and nothing is killed without the identity check. The terminal is left for `cleanup --worker`, which remains
+gone, or gone by the kill, is `absent`; an unreadable lookup, another worker's label, a replaced record or another
+failure is `unknown`, and nothing is killed without the identity check. A refused kill says nothing was stopped; no
+answer says whether hc received the request is not known. The terminal is left for `cleanup --worker`, which remains
 the final `next` step.
 
 ## watch

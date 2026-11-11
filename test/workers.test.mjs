@@ -1145,7 +1145,7 @@ test("a harness that ends before its session leaves a failed worker that send wi
   await w.settled("c1");
   expect(w.state("c1")).toMatchObject({ state: "failed", session_id: null, turns: [expect.objectContaining({ outcome: "no_finish" })] });
   expect(w.run(["send", "--name", "c1", "--task", "again"]).error).toBe("c1 has no session to resume; launch the work again");
-  expect(w.run(["send", "--name", "nobody", "--task", "x"]).error).toBe("no headless worker named nobody; routr workers lists them");
+  expect(w.run(["send", "--name", "nobody", "--task", "x"]).error).toBe("no worker named nobody; routr workers lists them");
   w.run(["cleanup", "--worker", "c1"]);
 }, 60000);
 
@@ -1926,7 +1926,7 @@ test("watch follows a worker until it is cleaned up, with status only in a core 
   expect(b).toContain("\x1b]7501;state=done:app=claude-code:");
   const none = Bun.spawnSync([process.execPath, SCRIPT, "watch", "--name", "nobody"], { env: w.env });
   expect(none.exitCode).toBe(1);
-  expect(none.stderr.toString()).toContain("no headless worker named nobody");
+  expect(none.stderr.toString()).toContain("no worker named nobody");
 }, 60000);
 
 const FOLLOW = (w, name, extra = {}) => Bun.spawn([process.execPath, SCRIPT, "watch", "--name", name], { env: { ...w.env, ...extra }, stdout: "pipe", stderr: "pipe" });

@@ -37,7 +37,7 @@ export async function watchCommand(args, { env = process.env, write = (s) => pro
   if (o.names.length !== 1) throw new Error("watch takes one --name");
   const name = o.names[0], it = ws.one(name), off = it.follows("watch");
   // One whose record cannot be read is not followed: what it is is not known.
-  if (!it.record) throw new Error(`no headless worker named ${name}; routr workers lists them`);
+  if (!it.record) throw new Error(`no worker named ${name}; routr workers lists them`);
   if (off) throw new Error(`${off.why}; its terminal shows it`);
   const w = it.record, status = inCore(env), seen = { turns: new Set(), state: null, turn: null, tool: null };
   write(`${status ? `\x1b]2;${name}\x07` : ""}routr worker ${name}: ${HARNESSES[w.kind]?.label ?? w.kind}, ${w.model}${w.effort ? ` at ${w.effort}` : ""}\nin ${w.cwd}\nClosing this does not stop the worker. Ends when the worker is cleaned up.\n\n`);

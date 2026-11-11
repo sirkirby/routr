@@ -7,7 +7,8 @@ this file covers only what herdr does not know.
 
 Check first: `test "${HERDR_ENV:-}" = 1`. Outside herdr there are no panes. In the Herdr app, or any herdr-core
 terminal (`HC_TERMINAL_ID` is set), `routr launch` starts each worker's real harness in a tab of its own, and you follow
-it with `hc`, as you follow a pane with herdr's skill: read "In the Herdr app: terminal workers" (after step 6).
+it with `routr wait`, `routr send` and `routr stop`, reading its tab with `hc`: read "In the Herdr app: terminal
+workers" (after step 6).
 Anywhere else, `routr launch` starts Claude Code, Codex, Cursor, Antigravity and Kiro workers headless, and you follow
 them with `routr wait`: read "Outside herdr: headless workers" (after step 6). Everything else here applies as written.
 
@@ -401,7 +402,8 @@ differs:
   task and goes on by itself once answered: do not launch it again.
 - **Wait with `routr wait --name <name>`.** It asks hc for status and returns when the worker's status leaves
   `working`, when hc's turn counter goes up, or when its terminal finishes, disappears or cannot be read. A turn has no
-  report file: follow `next` and read it with `hc read <t> --lines 200`. A later `blocked` is a question for you, as in
+  report file: follow `next` and read it with `hc read <t> --lines 200`. Right after `routr send`, wait keeps waiting
+  through an idle reading for the turn that send started. A later `blocked` is a question for you, as in
   a pane: read it there and answer with `hc keys`. A timeout is a check-in, not a failure. Keep a foreground wait under
   your own shell tool's command limit.
 - **Cursor reports no status.** `routr wait` says to follow it with hc, because hc cannot see its turns. Its prompt tells it to send its report to your terminal with

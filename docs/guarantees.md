@@ -388,15 +388,18 @@ instead (next section). What a headless worker means on your machine:
 ## Workers in a herdr-core terminal
 
 In the Herdr app, or with `HC_TERMINAL_ID` set and `HERDR_ENV` not `1`, `routr launch` runs the harness interactively in a
-terminal of herdr-core. The lead follows it with `hc`; routr only starts it and ends it. Through routr's runner this has
-not yet been run with a real harness; what it relies on was measured with a stand-in (`references/harnesses.md`). Windows
-is not measured. What that means on your machine:
+terminal of herdr-core. The lead follows it with `routr wait`, `routr send` and `routr stop`, which use `hc`; reports
+and questions are still read from the terminal with `hc read`. This path has been run with a real harness on macOS;
+Windows is not measured. What that means on your machine:
 
 - **What it asks of `hc` and `herdr-app`.** `hc get` of your terminal, for its address and its app space; `hc run --bg
   --json` with `--name`, `--cwd`, `--outlive-parent` and `--no-notify`, and, when your terminal has a `herdr.space` label,
   that label and a `herdr.tab` label, and always a `routr.worker` label holding the id of the worker's record;
   `herdr-app do tab.rename` to name the tab for the worker; `hc get` while it starts; and at cleanup `hc get`, `hc kill`
-  and `hc rm`. Their answers are checked against core's schema, and never reach output as text. If `hc` refuses your terminal, nothing is written; if it refuses the
+  and `hc rm`. `workers`, and each look by `wait`, `send` and `stop`, use `hc get <terminal> --json`; send then uses
+  `hc send <checked address> <message-file pointer> --json`, and stop uses `hc kill <checked address>`. The address is
+  used only after the terminal's `routr.worker` label matches the worker record's id. Their answers are checked against
+  core's schema, and never reach output as text. If `hc` refuses your terminal, nothing is written; if it refuses the
   new terminal, launch removes what it made. If it does not answer then, a terminal may be there, so launch keeps what it
   made, and `cleanup --worker` finishes it.
 - **Its run folder and worktree.** As a headless worker's ("Headless workers", above), under the same names, and with
@@ -405,10 +408,15 @@ is not measured. What that means on your machine:
 - **The prompt file.** The whole prompt (launch's opening, your task and rules, the closing line) is written to
   `prompt.md` in the run folder, 0600 on macOS and Linux in a 0700 folder (on Windows it takes the access your home folder
   gives), for the worker to read. It is never in a process's arguments: the first message says only where the file is.
-  `hc` keeps a terminal's arguments, and those it keeps are `routr workers --run <run folder> --id <id>`. `cleanup --worker` removes the
+  The terminal arguments hc keeps are `routr workers --run <run folder> --id <id>`. `cleanup --worker` removes the
   file with the run folder, and a stopped launch that removes its folder removes it. It stays there while the worker's
   record does. A harness keeps its own session history as it always does, which holds what the worker read. `prompt_chars`
   counts it; no command prints it.
+- **Message files.** Each successful attempt to send a correction writes the whole message, including routr's report
+  reminder, to a new `message-<id>.md` in the run folder, 0600 on macOS and Linux in its 0700 folder. hc receives only
+  the path in a fixed pointer sentence, never the message. The file remains beside the worker record until
+  `cleanup --worker` removes the run folder. `send.json`, under the same permissions, keeps the hc turn the latest
+  accepted send started so an immediate `routr wait` does not return before that turn begins.
 - **No screen.** The harness has the pointer to its task from the moment it starts, so as in a pane once a task is sent,
   launch reads no screen and returns none: `screen` is a fixed sentence saying it is withheld, whether the worker stopped
   at a question or ended. The lead reads the terminal with `hc read`. routr answers no question.

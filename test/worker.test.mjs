@@ -53,10 +53,10 @@ test("wait answers from what an adapter sees: a turn ended once, said once, and 
   expect([again.state, again.headline]).toEqual(["idle", "routr: nothing running: w1 idle"]);
   // Unnamed, the adapter says which it watches, from what was reported.
   const unnamed = await waitCommand(["--timeout", "0"], opts(workers({ root, adapters: { headless: { ...f.adapter, pending: (me, reported) => (f.calls.push(["pending", me.name, reported]), false) } } })));
-  expect([unnamed.state, unnamed.headline]).toEqual(["none", "routr: no headless worker to wait on"]);
+  expect([unnamed.state, unnamed.headline]).toEqual(["none", "routr: no worker to wait on"]);
   expect(f.calls.filter((c) => c[0] === "pending")).toEqual([["pending", "w1", 1]]);
   const missing = await waitCommand(["--name", "nobody", "--timeout", "0"], opts(ws));
-  expect([missing.ok, missing.error]).toEqual([false, "no headless worker named nobody; routr workers lists them"]);
+  expect([missing.ok, missing.error]).toEqual([false, "no worker named nobody; routr workers lists them"]);
 });
 
 test("a worker another backend follows is said, with that backend's steps, by wait, send, stop and watch, and none acts on it", async () => {
@@ -120,7 +120,7 @@ test("workers lists every worker of routr's, without what only a wait follows, a
   expect([r.ok, r.headline, r.workers.map((w) => w.name)]).toEqual([true, "routr: a1 working, b2 working", ["a1", "b2"]]);
   for (const w of r.workers) { expect(w).not.toHaveProperty("gen"); expect(w).not.toHaveProperty("turns"); }
   const missing = await workersCommand(["--name", "c3"], opts(ws));
-  expect([missing.ok, missing.error]).toEqual([false, "no headless worker named c3"]);
+  expect([missing.ok, missing.error]).toEqual([false, "no worker named c3"]);
 });
 
 test("a record that cannot be read is shown by every command, never acted on, and stopped only where its run folder says what runs it", async () => {
@@ -141,7 +141,7 @@ test("a record that cannot be read is shown by every command, never acted on, an
   const owner = fake({ stopped: { state: "stopped", ok: true, said: "stopped w1", warnings: [], next: [] } });
   const owned = await stopCommand(["--name", "w1"], opts(workers({ root, adapters: { headless: { ...owner.adapter, owns: () => true } } })));
   expect([owned.ok, owned.state]).toEqual([true, "stopped"]);
-  await expect(watchCommand(["--name", "w1"], { workers: ws, write: () => {} })).rejects.toThrow("no headless worker named w1");
+  await expect(watchCommand(["--name", "w1"], { workers: ws, write: () => {} })).rejects.toThrow("no worker named w1");
   expect(f.calls).toEqual([]);
 });
 
@@ -265,7 +265,7 @@ test("workers --name refuses a worker cleaned up or replaced by another's folder
     const { dir } = worker(root), real = workers({ root, adapters: { headless: f.adapter } });
     const ws = { ...real, find: (n) => { const h = real.find(n); replace(dir); return h; }, all: () => { const hs = real.all(); replace(dir); return hs; } };
     const named = await workersCommand(["--name", "w1"], opts(ws));
-    expect([named.ok, named.error]).toEqual([false, "no headless worker named w1"]);
+    expect([named.ok, named.error]).toEqual([false, "no worker named w1"]);
     rmSync(dir, { recursive: true, force: true }); worker(root);
     const unnamed = await workersCommand([], opts(ws));
     expect([unnamed.ok, unnamed.workers]).toEqual([true, []]);
@@ -280,11 +280,11 @@ test("an unnamed wait that finds a running folder whose record is not routr's fa
   writeFileSync(join(dir, "state.json"), JSON.stringify({ state: "working", turn: 1, turns: [{ turn: 1 }] }));
   // The real adapters: whether a folder runs is read from its holder's state, as a headless worker's is.
   const r = await waitCommand(["--timeout", "0"], opts(workers({ root })));
-  expect([r.ok, r.state, r.error]).toEqual([false, "failed", "no headless worker named w1; routr workers lists them"]);
+  expect([r.ok, r.state, r.error]).toEqual([false, "failed", "no worker named w1; routr workers lists them"]);
   writeFileSync(join(dir, "state.json"), JSON.stringify({ state: "idle", turn: 1, turns: [{ turn: 1, outcome: "finished" }] }));
   writeFileSync(join(dir, "seen.json"), JSON.stringify({ turn: 1, notice: null }));
   const atRest = await waitCommand(["--timeout", "0"], opts(workers({ root })));
-  expect([atRest.ok, atRest.state, atRest.headline]).toEqual([true, "none", "routr: no headless worker to wait on"]);
+  expect([atRest.ok, atRest.state, atRest.headline]).toEqual([true, "none", "routr: no worker to wait on"]);
 });
 
 test("an action's identity is the record's id as written: different ids are different workers, whatever their kind", async () => {

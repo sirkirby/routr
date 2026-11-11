@@ -67,7 +67,7 @@ export function workers({ root = STATE_DIR(), adapters = ADAPTERS, env = process
   // An action reads the worker again where it starts, as the commands always have: never from what an earlier read found.
   const actorNow = (name) => {
     const act = actor(name, read(name));
-    if (!act.record && !act.unreadable) throw new Refused(`no headless worker named ${name}; routr workers lists them`);
+    if (!act.record && !act.unreadable) throw new Refused(`no worker named ${name}; routr workers lists them`);
     return act;
   };
 
@@ -89,11 +89,11 @@ export function workers({ root = STATE_DIR(), adapters = ADAPTERS, env = process
       // What it looks like now: { view, next }, or null when no record of routr's is there (cleaned up). One whose record
       // cannot be read is shown, as `unreadable`, never left out as no worker. `kept`: through the adapter chosen when
       // this handle was made, as a wait does for what it watches; otherwise through the one the record now picks.
-      async look({ check = true, ms, kept: keep = false } = {}) {
+      async look({ check = true, ms, kept: keep = false, wait = false } = {}) {
         const now = read(name);
         if (now.unreadable) return { view: unreadableView(name), next: [] };
         if (!now.worker) return null;
-        return (keep ? kept : adapterFor(adapters, now.worker)).look(meFor(now.worker), { check, ms }, ctx);
+        return (keep ? kept : adapterFor(adapters, now.worker)).look(meFor(now.worker), { check, ms, wait }, ctx);
       },
       // Whether a wait with no names watches it, from what is there now. One whose record cannot be read is: it may be
       // running. A folder with no record of routr's is asked as a headless worker's would be, and the wait refuses it
@@ -139,7 +139,7 @@ export function workers({ root = STATE_DIR(), adapters = ADAPTERS, env = process
 
   return {
     // The worker of this name, or Refused when there is none of routr's (one whose record cannot be read is one).
-    one: (name) => found(name) ?? (() => { throw new Refused(`no headless worker named ${name}; routr workers lists them`); })(),
+    one: (name) => found(name) ?? (() => { throw new Refused(`no worker named ${name}; routr workers lists them`); })(),
     find: found,
     // Every worker in the store, in name order: an unreadable one kept, and a folder that is not one of routr's left out,
     // or, with `strangers`, kept with no record (for an unnamed wait, which says it is not a worker when it runs).

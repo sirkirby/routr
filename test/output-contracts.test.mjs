@@ -9,6 +9,9 @@ import { telemetryRows } from "../src/lib/telemetry.mjs";
 import { callGit, callHerdr } from "../src/lib/process-boundary.mjs";
 import { usageFailure } from "../src/lib/usage-failure.mjs";
 import { COMMANDS } from "../src/lib/help.mjs";
+import { sendCommand, stopCommand, waitCommand, workersCommand } from "../src/lib/workers.mjs";
+import { workers as workersOf } from "../src/lib/worker.mjs";
+import { newRecord, recordStore } from "../src/lib/worker-record.mjs";
 
 const MARK = "OUTSIDE_TEXT_MARKER_9c61";
 // Trace-context carriers in routr's environment: handed on, never shown, logged or stored (docs/guarantees.md).
@@ -39,6 +42,26 @@ test("process failures and malformed answers have fixed codes, never outside pro
       const r = await callGit(async () => result, "/repo", args); expect(r.ok).toBe(false); expect(r.code).toMatch(/^git_(unreachable|refused|invalid_response)$/); expect(JSON.stringify(r)).not.toContain(MARK);
     }
   }
+});
+
+test("whole worker-command outputs discard terminal text and hc prose", async () => {
+  const root = scratch("terminal-output-contract"), store = recordStore(root), dir = store.runDir("worker"), id = "a".repeat(32);
+  mkdirSync(dir, { recursive: true });
+  store.write(dir, newRecord({ id, name: "worker", kind: "claude", model: "model", cwd: root }, { backend: "terminal", terminal: "t9", terminal_name: "worker", config: {} }));
+  const hc = async (_cmd, args) => {
+    if (args[0] === "get") return { code: 0, out: JSON.stringify({ address: "t9", name: "worker", state: "live", labels: { "routr.worker": id, outside: MARK }, status: { state: "idle", outside: MARK }, turn: 0, outside: MARK }) };
+    if (args[0] === "send") return { code: 0, out: JSON.stringify({ turn: 0, outside: MARK }), err: MARK };
+    if (args[0] === "kill") return { code: 0, out: MARK, err: MARK };
+    throw new Error(MARK);
+  };
+  const workers = workersOf({ root, hc }), opts = { workers, env: {}, settings: () => cfg() };
+  const outputs = [
+    await workersCommand(["--name", "worker"], opts),
+    await waitCommand(["--name", "worker", "--timeout", "0"], opts),
+    await sendCommand(["--name", "worker", "--task", MARK], opts),
+    await stopCommand(["--name", "worker"], opts),
+  ];
+  for (const output of outputs) expect(JSON.stringify(output)).not.toContain(MARK);
 });
 
 test("known herdr error codes stay out of whole launch, cleanup and cursor usage outputs", () => {

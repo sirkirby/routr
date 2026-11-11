@@ -2,13 +2,14 @@
 // cleanup and the worker commands do with such a worker. Fakes only: no hc, no herdr-app and no harness runs here.
 import { afterAll, beforeEach, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, dirname, join } from "node:path";
 import { launch } from "../src/lib/launch.mjs";
 import { cleanup } from "../src/lib/cleanup.mjs";
 import { sendCommand, stopCommand, waitCommand, workersCommand } from "../src/lib/workers.mjs";
 import { watchCommand } from "../src/lib/watch.mjs";
 import { hold } from "../src/lib/headless.mjs";
+import { workers as workerSet } from "../src/lib/worker.mjs";
 import { firstMessage, reportToLead, runRecord, runWorker as runner } from "../src/lib/backend-terminal.mjs";
 import { ADAPTERS } from "../src/lib/headless.mjs";
 import { HARNESSES, KINDS, plan, terminalPlan } from "../src/lib/harnesses.mjs";
@@ -120,10 +121,9 @@ test("in the app a worker gets a tab of its own, running routr's runner, with it
   for (const text of [JSON.stringify(r), JSON.stringify(f.hc.calls), readFileSync(join(runDir("w1"), "worker.json"), "utf8")]) expect(text).not.toContain("brief only the worker");
   // A person follows it by its tab, the lead with hc, and it ends with routr.
   const steps = noted(r);
-  expect(steps).toContain("hc wait t9");
-  expect(steps).toContain("A turn above 0");
+  expect(steps).toContain("routr wait --name w1");
   expect(steps).toContain("hc read t9");
-  expect(steps).toContain("hc send t9");
+  expect(steps).toContain("routr send --name w1 --task-file <file>");
   expect(r.next.find((n) => n.argv?.[1] === "cleanup").argv).toEqual(["routr", "cleanup", "--worker", "w1"]);
   expect(r.steps.map((s) => s.step)).toEqual(["reserve", "terminal", "prompt"]);
 });
@@ -201,6 +201,7 @@ test("a harness that reports no status counts once its process runs, and is told
   expect(prompt).toContain("hc send t3");
   expect(noted(r)).toContain("reports no status");
   expect(r.next.filter((n) => n.argv?.[1] === "wait")).toEqual([]);
+  expect(noted(r)).toContain("routr send --name w1 --task-file <file>");
   // Its private config is the run folder's.
   expect(existsSync(join(runDir("w1"), "cursor-config", "cli-config.json"))).toBe(true);
   rmSync(runDir("w1"), { recursive: true, force: true });
@@ -223,6 +224,8 @@ test("a blocked start comes back as needs_input, with the screen withheld as the
   expect(noted(r)).toContain("hc keys t9 <keys>");
   expect(noted(r)).toContain("default answer can be");
   expect(noted(r)).toContain("do not launch it again");
+  expect(noted(r)).toContain("routr wait --name w1");
+  expect(noted(r)).toContain("routr send --name w1 --task-file <file>");
   expect(r.worker.terminal).toBe("t9");
   expect(r.next.find((n) => n.argv?.[1] === "cleanup").argv).toEqual(["routr", "cleanup", "--worker", "w1"]);
 });
@@ -477,7 +480,7 @@ test("cleanup refuses a worker still working or at a question, and ends nothing"
     expect([r.ok, r.state]).toEqual([false, "refused"]);
     expect(r.headline).toContain(says);
     expect(hc.words()).toEqual(["get"]);
-    expect(noted(r)).toContain("hc kill t9");
+    expect(noted(r)).toContain("routr stop --name w1");
     expect(existsSync(runDir("w1"))).toBe(true);
   }
 });
@@ -587,8 +590,9 @@ test("workers and watch keep their terminal behavior while wait follows hc turns
   await launched();
   const shown = await workersCommand(["--name", "w1"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "working" }, turn: 0 }] }).run });
   expect([shown.ok, shown.workers]).toEqual([true, [{ name: "w1", kind: "claude", model: "m", effort: null, cwd: expect.any(String), backend: "terminal", terminal: "t9", state: "in_terminal", status: "working" }]]);
-  expect(noted(shown)).toContain("hc wait t9");
+  expect(noted(shown)).toContain("routr wait --name w1");
   expect(shown.headline).toBe("routr: w1 in_terminal");
+  expect((await workerSet({ hc: fakeHc({ sees: [{ status: { state: "working" }, turn: 0 }] }).run }).one("w1").look()).view.state).toBe("in_terminal");
   let now = 0;
   const hc = fakeHc({ sees: [{ status: { state: "working" }, turn: 0 }, { status: { state: "done" }, turn: 1 }] });
   const waited = await waitCommand(["--name", "w1", "--timeout", "1000"], { settings: () => cfg(), env: {}, hc: hc.run, now: () => now, pause: async () => { now = 1001; } });
@@ -609,9 +613,13 @@ test("wait returns at a terminal question and notices a terminal that is gone, w
   expect([b.ok, b.state, b.workers[0].state, b.workers[0].status]).toEqual([true, "idle", "idle", "blocked"]);
   expect(blocked.words()).toEqual(["get"]);
   expect(JSON.stringify(b)).not.toContain(SECRET);
+  const questionTurn = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "blocked" }, turn: 1 }] }).run });
+  expect([questionTurn.state, questionTurn.headline, questionTurn.workers[0].status]).toEqual(["finished", "routr: w1 finished a turn", "blocked"]);
   const gone = fakeHc({ over: { get: { code: 1, out: "", err: "no terminal t9" }, read: { code: 0, out: SECRET } } });
   const g = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {}, hc: gone.run });
   expect([g.ok, g.state, g.workers[0].state, g.headline]).toEqual([true, "finished", "lost", "routr: w1 lost"]);
+  expect(g.next.map((n) => n.argv)).toEqual([["routr", "cleanup", "--worker", "w1"]]);
+  expect(JSON.stringify(g)).not.toContain("process ended without settling");
   expect(gone.words()).toEqual(["get"]);
   expect(JSON.stringify(g)).not.toContain(SECRET);
 });
@@ -621,6 +629,7 @@ test("send writes an owner-only message file and gives hc only its pointer, clas
     [{ code: 0, out: JSON.stringify({ turn: 1, status: "working", wait: null }) }, true, "delivered", { code: "handed_to_harness" }],
     [{ code: 3, out: JSON.stringify({ error: { kind: "blocked", message: SECRET } }) }, false, "refused", { code: "refused", why: "refused" }],
     [{ code: 0, out: SECRET }, false, "unknown", { code: "unknown" }],
+    [null, false, "unknown", { code: "unknown" }],
   ];
   for (const [answer, ok, state, message] of cases) {
     await launched();
@@ -637,6 +646,66 @@ test("send writes an owner-only message file and gives hc only its pointer, clas
     expect(readFileSync(match[1], "utf8")).toBe(`${SECRET}\n\n${CLOSING}`);
     if (process.platform !== "win32") expect(statSync(match[1]).mode & 0o777).toBe(0o600);
     expect(JSON.stringify(r)).not.toContain(SECRET);
+    if (state === "refused") {
+      expect(r.next[0].argv).toEqual(["hc", "read", "t9", "--lines", "200"]);
+      expect(r.next[1].template).toBe("hc keys t9 <keys>");
+    }
+    rmSync(runDir("w1"), { recursive: true, force: true });
+  }
+});
+
+test("wait after send stays pending at the old idle turn until hc advances the turn", async () => {
+  await launched();
+  const sentHc = fakeHc({ sees: [{ status: { state: "idle" }, turn: 0 }], over: { send: { code: 0, out: JSON.stringify({ turn: 0 }) } } });
+  expect((await sendCommand(["--name", "w1", "--task", "more"], { settings: () => cfg(), env: {}, hc: sentHc.run })).state).toBe("delivered");
+  const marker = join(runDir("w1"), "send.json");
+  expect(JSON.parse(readFileSync(marker, "utf8"))).toEqual({ turn: 0 });
+  if (process.platform !== "win32") expect(statSync(marker).mode & 0o777).toBe(0o600);
+  let now = 0, pauses = 0;
+  const waitedHc = fakeHc({ sees: [{ status: { state: "idle" }, turn: 0 }, { status: { state: "done" }, turn: 1 }] });
+  const r = await waitCommand(["--name", "w1", "--timeout", "1000"], { settings: () => cfg(), env: {}, hc: waitedHc.run, now: () => now,
+    pause: async () => { pauses++; now += 500; } });
+  expect([r.state, pauses, waitedHc.words()]).toEqual(["finished", 1, ["get", "get"]]);
+  expect(r.workers[0]).toMatchObject({ state: "idle", turn: 1, turns: [{ turn: 1, report: null }] });
+});
+
+test("send says nothing was sent when lookup or identity stops it before hc send", async () => {
+  const cases = [
+    fakeHc({ sees: [{ status: { state: "done" }, turn: 1, labels: { "routr.worker": "f".repeat(32) } }] }),
+    fakeHc({ sees: [{ state: "finished", status: null, turn: 1 }] }),
+    fakeHc({ over: { get: { code: 1, out: "", err: "no terminal t9" } } }),
+    fakeHc({ over: { get: null } }),
+    fakeHc({ over: { get: { code: 0, out: SECRET } } }),
+    fakeHc({ sees: [{ address: "not an address", status: { state: "working" }, turn: 0 }] }),
+  ];
+  for (const hc of cases) {
+    await launched();
+    const r = await sendCommand(["--name", "w1", "--task", SECRET], { settings: () => cfg(), env: {}, hc: hc.run });
+    expect([r.ok, r.state, r.headline.includes("nothing was sent"), hc.words()]).toEqual([false, "refused", true, ["get"]]);
+    expect(readdirSync(runDir("w1")).filter((n) => n.startsWith("message-"))).toEqual([]);
+    expect(JSON.stringify(r)).not.toContain(SECRET);
+    rmSync(runDir("w1"), { recursive: true, force: true });
+  }
+});
+
+test("send and stop act on nothing when the worker record is replaced after the terminal identity check", async () => {
+  for (const command of ["send", "stop"]) {
+    await launched();
+    const before = recordOf(), calls = [];
+    const hc = async (cmd, args, ms) => {
+      calls.push({ cmd, args, ms });
+      if (args[0] === "get") {
+        writeFileSync(join(runDir("w1"), "worker.json"), JSON.stringify({ ...before, id: "f".repeat(32) }));
+        return { code: 0, out: JSON.stringify({ address: "t9", name: "w1", state: "live", labels: { "routr.worker": before.id }, status: { state: "working" }, turn: 0 }) };
+      }
+      throw new Error("an action reached hc");
+    };
+    const r = command === "send"
+      ? await sendCommand(["--name", "w1", "--task", SECRET], { settings: () => cfg(), env: {}, hc })
+      : await stopCommand(["--name", "w1"], { settings: () => cfg(), env: {}, hc });
+    expect([r.ok, r.state, r.headline.includes(command === "send" ? "nothing was sent" : "nothing was stopped")]).toEqual([false, command === "send" ? "refused" : "unknown", true]);
+    expect(calls.map((c) => c.args[0])).toEqual(["get"]);
+    expect(readdirSync(runDir("w1")).filter((n) => n.startsWith("message-"))).toEqual([]);
     rmSync(runDir("w1"), { recursive: true, force: true });
   }
 });
@@ -656,6 +725,38 @@ test("stop kills only the live terminal carrying this worker's id, and leaves fi
     expect(existsSync(runDir("w1"))).toBe(true);
     rmSync(runDir("w1"), { recursive: true, force: true });
   }
+});
+
+test("stop classifies a terminal gone during kill, hc failures and an unreadable lookup without leaking hc text", async () => {
+  const cases = [
+    [fakeHc({ over: { kill: { code: 1, out: "", err: "no terminal t9" } } }), true, "absent", ["get", "kill"], "is not running"],
+    [fakeHc({ over: { kill: { code: 1, out: SECRET, err: "permission denied " + SECRET } } }), false, "unknown", ["get", "kill"], "nothing was stopped"],
+    [fakeHc({ over: { kill: null } }), false, "unknown", ["get", "kill"], "whether hc received"],
+    [fakeHc({ over: { get: { code: 0, out: SECRET } } }), false, "unknown", ["get"], "nothing was stopped"],
+  ];
+  for (const [hc, ok, state, words, headline] of cases) {
+    await launched();
+    const r = await stopCommand(["--name", "w1"], { settings: () => cfg(), env: {}, hc: hc.run });
+    expect([r.ok, r.state, hc.words(), r.headline.includes(headline)]).toEqual([ok, state, words, true]);
+    expect(JSON.stringify(r)).not.toContain(SECRET);
+    rmSync(runDir("w1"), { recursive: true, force: true });
+  }
+});
+
+test("wait notices finished and unreadable terminals and unnamed wait includes a status-reporting terminal", async () => {
+  await launched();
+  const finished = fakeHc({ sees: [{ state: "finished", status: null, turn: 0 }] });
+  const f = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {}, hc: finished.run });
+  expect([f.state, f.workers[0].state, f.workers[0].backend]).toEqual(["finished", "stopped", "terminal"]);
+  expect(f.next.map((n) => n.argv)).toEqual([["hc", "read", "t9", "--lines", "200"], ["routr", "cleanup", "--worker", "w1"]]);
+  rmSync(join(runDir("w1"), "seen.json"), { force: true });
+  const unreadable = fakeHc({ over: { get: { code: 0, out: SECRET } } });
+  const u = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {}, hc: unreadable.run });
+  expect([u.state, u.workers[0].state, u.next.map((n) => n.argv)]).toEqual(["finished", "unreachable", [["hc", "ls", "--all"], ["routr", "wait", "--name", "w1"]]]);
+  expect(JSON.stringify(u)).not.toContain(SECRET);
+  rmSync(join(runDir("w1"), "seen.json"), { force: true });
+  const unnamed = await waitCommand(["--timeout", "0"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "idle" }, turn: 0 }] }).run });
+  expect([unnamed.state, unnamed.workers.map((w) => w.name), unnamed.headline]).toEqual(["idle", ["w1"], "routr: nothing running: w1 idle"]);
 });
 
 test("Cursor keeps wait's status refusal, while terminal send and stop still act by id", async () => {
