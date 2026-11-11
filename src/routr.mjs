@@ -40,6 +40,7 @@ const headroomFor = Object.values(COMMANDS).filter((c) => c.flags?.some((f) => f
 function exited(entry, out) {
   if (entry.exit === "own") return out; // null: the holder keeps running until its worker is done, then exits by itself
   if (out !== undefined) print(out, entry.indent);
+  if (entry.exit === "natural" && out?.ok) return undefined; // ends when the work it started does
   return entry.exit === "ok" ? (out.ok ? 0 : 1) : 0;
 }
 

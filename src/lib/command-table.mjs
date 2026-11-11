@@ -9,8 +9,10 @@
 //          off too, and help is only the word right after it. "early": dispatched before this table loads (statusline,
 //          which runs on every Claude Code turn); its entry is its help.
 //   exit:  "zero": prints run's answer, if it returns one, and exits 0 whatever it says (an advice command fails open).
-//          "ok": prints run's answer and exits 0 when it is ok, else 1. "own": run prints, and returns its exit code
-//          (null: keep running, as the holder does).
+//          "natural": as zero, but an answer that is ok ends without forcing an exit, so work the command started
+//          finishes first (a usage read it is stopping: on Windows its taskkill must end, or the reader's tree is left
+//          running); a refusal exits 0. "ok": prints run's answer and exits 0 when it is ok, else 1. "own": run prints,
+//          and returns its exit code (null: keep running, as the holder does).
 //   trace: false, or { state, lead, links }: a span `routr <name>`, with `routr.<name>.state`, the lead's session id,
 //          links to a worker's launch. `untraced(line)`: routr's own forms of the command, as typed, never traced.
 //   autoUpdate: start the detached daily updater (at most once a day) before the command runs.
@@ -53,7 +55,7 @@ export const COMMANDS = {
       { name: "--task-file", arg: "<path>", description: "read the exact task from a file instead of inline text or stdin", required: false },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
     ],
-    reach: "brief", exit: "zero", trace: { state: false, lead: true, links: false }, autoUpdate: true, decisionModel: "assessment", advice: true,
+    reach: "brief", exit: "natural", trace: { state: false, lead: true, links: false }, autoUpdate: true, decisionModel: "assessment", advice: true,
     run: async (ctx) => (await import("./command-line.mjs")).adviseOnBrief(ctx),
   },
   dispatch: {
@@ -69,7 +71,7 @@ export const COMMANDS = {
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
       { name: "--headroom", arg: "<subscription>=<share>", description: "override a reading with usage you read yourself: the share left, 0.9 or 90% (not for a harness that is not signed in)", required: false, repeatable: true },
     ],
-    reach: "brief", exit: "zero", trace: { state: false, lead: true, links: false }, autoUpdate: true, decisionModel: "assessment", advice: true,
+    reach: "brief", exit: "natural", trace: { state: false, lead: true, links: false }, autoUpdate: true, decisionModel: "assessment", advice: true,
     run: async (ctx) => (await import("./command-line.mjs")).adviseOnBrief(ctx),
   },
   usage: {

@@ -9,7 +9,7 @@ import { DESCRIPTION, formatCommandHelp, formatTopLevelHelp, formatUnknownUsage 
 import { guardRefusal, route } from "../src/lib/command-line.mjs";
 import { cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 // Every entry writes out each dispatch rule, false or null being a decision: a new command cannot skip one by leaving it out.
-const RULES = { reach: ["first", "globals", "brief", "early"], exit: ["zero", "ok", "own"], autoUpdate: [true, false], decisionModel: [null, "assessment", "check", "probe"], advice: [true, false] };
+const RULES = { reach: ["first", "globals", "brief", "early"], exit: ["zero", "natural", "ok", "own"], autoUpdate: [true, false], decisionModel: [null, "assessment", "check", "probe"], advice: [true, false] };
 test("the command table gives every command its help and writes out every dispatch rule", () => {
   const names = Object.keys(COMMANDS);
   expect(names.length).toBeGreaterThan(20);
@@ -41,7 +41,7 @@ test("the command table gives every command its help and writes out every dispat
     expect([name, guarded]).toEqual([name, Object.hasOwn(cmd, "refusal")]);
     if (guarded) expect(cmd.reach).not.toBe("first");
     // An advice command changes nothing and fails open: it exits 0 whatever it says.
-    if (cmd.advice) expect([name, cmd.exit]).toEqual([name, "zero"]);
+    if (cmd.advice) expect([name, ["zero", "natural"].includes(cmd.exit)]).toEqual([name, true]);
   }
   // Only statusline is early, and it is what routr.mjs answers before the table loads.
   expect(names.filter((n) => COMMANDS[n].reach === "early")).toEqual(["statusline"]);
@@ -178,6 +178,24 @@ test("command help prints usage for each command and exits 0", () => {
   expect(recordRes.stderr.toString()).toBe("");
   expect(recordRes.stdout.toString()).toContain("routr record: append what you chose");
   expect(recordRes.stdout.toString()).toContain("--subscription <name>");
+});
+
+test("a command whose exit rule is natural ends by itself once it has advised; its refusal and every other advice command exit 0", () => {
+  const home = scratch("exit-seam"), env = cliEnv(home, { PATH: home, ROUTR_NO_UPDATE: "1" });
+  const run = (...a) => Bun.spawnSync([process.execPath, "--preload", join(import.meta.dir, "fixtures/exit-seam.mjs"), SCRIPT, ...a], { env, cwd: home, stdin: "ignore" });
+  const natural = Object.keys(COMMANDS).filter((n) => COMMANDS[n].exit === "natural");
+  expect(natural.sort()).toEqual(["dispatch", "subagent"]);
+  for (const name of natural) {
+    const advised = run(name, "Fix the typo in README.md");
+    expect([name, advised.exitCode, JSON.parse(advised.stdout.toString()).ok]).toEqual([name, 0, true]);
+    expect(advised.stderr.toString()).not.toContain("[process.exit");
+    const refused = run(name); // no brief: a refusal, which exits 0 at once
+    expect([name, refused.exitCode, JSON.parse(refused.stdout.toString()).ok]).toEqual([name, 0, false]);
+    expect(refused.stderr.toString()).toContain("[process.exit 0]");
+  }
+  // The seam sees a forced exit: check, an advice command whose rule is zero, exits 0 through it.
+  const checked = run("check", "--brief", "none", "--report", "none");
+  expect([checked.exitCode, checked.stderr.toString()]).toEqual([0, "[process.exit 0]\n"]);
 });
 
 test("a brief containing --help as a separate word is routed as a brief, not as help", () => {
