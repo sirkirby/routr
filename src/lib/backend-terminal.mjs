@@ -30,6 +30,10 @@ const POLL_MS = 250;
 // not still starting. Measured 2026-11-04 in core terminals, two starts each: Claude Code, Codex and Antigravity first
 // reported within 1 s, Kiro V3 with its folder trusted within 2 s; Kiro at its folder question sent nothing for 46 s.
 const SILENT_MS = 20000;
+// That rule, for launch and wait alike: the harness reports status, its runner has started it and it has not ended, and
+// core says it has reported nothing (`reported` is core's own, hc 0.1.17 schema; a core without it never says so).
+const unreported = (h, t, ran) => !h.noStatus && t.reported === false && Number.isInteger(ran?.harness_pid) && ran.ended_at == null;
+const silentWhy = (h) => `${h.label} has run for ${SILENT_MS / 1000} seconds without reporting any status: it is most likely waiting at a question it reports no status for.`;
 const WHERE = { where: "in a herdr-core terminal", runs: "runs in a terminal of its own" };
 // The first message: where the task is, never the task. hc keeps a terminal's argv and `ps` shows a harness's (p50).
 export const firstMessage = (file) => `Your task is in ${file}. Read that whole file now and do what it says.`;
@@ -195,10 +199,9 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
       if (word === "blocked") { const kind = statusKind(t); return needsInput("startup_question", `${h.label} is waiting at a question before it can start.`, { hc: { state: "blocked", ...(kind ? { kind } : {}) } }); }
       if (word === "error") return ended("it reported an error");
       if (h.noStatus && Number.isInteger(ran?.harness_pid) && ran.ended_at == null) return started(`${h.label} is running; it reports no status, so whether it read its task is not known`);
-      // `reported` is core's own (hc 0.1.17 schema); a core without it never ends the wait early.
-      if (!h.noStatus && t.reported === false && Number.isInteger(ran?.harness_pid) && ran.ended_at == null) {
+      if (unreported(h, t, ran)) {
         quietSince ??= now();
-        if (now() - quietSince >= SILENT_MS) return needsInput("start_unconfirmed", `${h.label} has run for ${SILENT_MS / 1000} seconds without reporting any status: it is most likely waiting at a question it reports no status for.`, { hc: { state: null, reported: false } });
+        if (now() - quietSince >= SILENT_MS) return needsInput("start_unconfirmed", silentWhy(h), { hc: { state: null, reported: false } });
       }
     } else if (got.code === "not_found") return ended("its terminal is gone");
     if (ran?.ended_at) return ended(ran.not_started ? `it could not start: ${ran.not_started}` : `exit code ${ran.exit_code}`);
@@ -294,24 +297,33 @@ export const terminal = {
   },
   // In `workers`: its record, and where its terminal is (observeTerminal). A finished or gone one is finished with
   // cleanup --worker, never by removing its worktree: its record would stay, and so would its row there.
-  async look(me, { ms, wait = false } = {}, { hc } = {}) {
+  async look(me, { ms, wait = false, at = Date.now() } = {}, { hc } = {}) {
     const w = me.record, seen = await observeTerminal(w, me.dir, { ...(hc ? { hc } : {}), ms }), status = seen.terminal ? statusWord(seen.terminal) : null;
     // Wait asks explicitly for a headless-shaped view, with one report-less turn for each turn hc counted. A successful
     // send records the turn it started: an idle reading at or before that turn stays pending until core advances it.
     if (wait) {
       const turn = seen.terminal ? turnOf(seen.terminal) : 0;
       const sent = readJsonFile(join(me.dir, SEND_FILE)).value, sentTurn = Number.isSafeInteger(sent?.turn) && sent.turn >= 0 ? sent.turn : null;
-      // At turn 0 with nothing sent, an idle or silent harness has not started its task: once a startup question is
-      // answered, hc reports idle at turn 0 until the harness takes up its prompt. It is waited on as starting, not
-      // reported idle. `blocked` (at a question) stays idle: the lead has to act.
+      // A question returns as needs_input, for the lead to answer: `blocked`, or launch's rule for one the harness reports
+      // nothing for, counted from when its runner started it (measured live 2026-11-11: Claude Code at its folder question
+      // gave status null, turn 0, reported false, and a wait read it as starting until its timeout). Before that, at turn
+      // 0 with nothing sent, an idle or silent harness has not started its task: once a startup question is answered, hc
+      // reports idle at turn 0 until the harness takes up its prompt. It is waited on as starting, not reported idle.
+      const live = seen.state === "in_terminal", h = HARNESSES[w.kind], ran = live ? runRecord(w.name, me.dir).value : null, since = Date.parse(ran?.started_at);
+      const asking = !live ? null : status === "blocked" ? `${h.label} is waiting at a question.`
+        : unreported(h, seen.terminal, ran) && at - since >= SILENT_MS ? silentWhy(h) : null;
       const state = seen.state === "unknown" ? "unreachable" : seen.state === "gone" ? "lost" : seen.state === "finished" ? "stopped"
-        : status === "working" || (sentTurn != null && turn <= sentTurn) ? "working" : status === "error" ? "failed"
+        : asking ? "needs_input" : status === "working" || (sentTurn != null && turn <= sentTurn) ? "working" : status === "error" ? "failed"
         : turn === 0 && sentTurn == null && (status === "idle" || status == null) ? "starting" : "idle";
+      const answerStep = turn === 0 && sentTurn == null
+        ? doNext(`${STARTUP_INPUT} Once it is answered the worker goes on by itself: do not launch it again.`, templateCommand(["hc", "keys", addressOf(w), "<keys>"]))
+        : doNext("Answer it within the task's scope, or ask the user and leave it waiting; ask the user for a secret or sign-in.", templateCommand(["hc", "keys", addressOf(w), "<keys>"]));
       const next = seen.state === "unknown" ? actionLook(w, "wait") : seen.state === "gone" ? [cleanupStep(w, "gone")]
-        : seen.state === "finished" ? [readStep(w), cleanupStep(w, "finished")] : [readStep(w)];
+        : seen.state === "finished" ? [readStep(w), cleanupStep(w, "finished")]
+        : asking ? [readStep(w), answerStep, runNext("Once it is answered, wait again.", ["routr", "wait", "--name", w.name])] : [readStep(w)];
       return { view: { name: w.name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, backend: "terminal", terminal: w.terminal ?? null, state, gen: 0, turn,
         seconds_since_event: null, last_tool: null, tasks: 0, queued: 0, session: null, report: null,
-        ...(seen.state === "in_terminal" ? { status } : {}), ...(seen.why ? { why: seen.why } : {}),
+        ...(seen.state === "in_terminal" ? { status } : {}), ...(seen.why ? { why: seen.why } : asking ? { why: asking } : {}),
         turns: Array.from({ length: turn }, (_, i) => ({ turn: i + 1, outcome: "finished", report: null, delivered: 0 })) },
       next };
     }

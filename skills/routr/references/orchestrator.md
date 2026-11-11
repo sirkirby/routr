@@ -403,10 +403,12 @@ differs:
 - **Wait with `routr wait --name <name>`.** It asks hc for status and returns when the worker's status leaves
   `working`, when hc's turn counter goes up, or when its terminal finishes, disappears or cannot be read. A turn has no
   report file: follow `next` and read it with `hc read <t> --lines 200`. Right after `routr send`, wait keeps waiting
-  through an idle reading for the turn that send started. Before its first turn (idle or silent at turn 0, as right
-  after you answer a startup question), the worker is `starting`: wait keeps waiting, and a timeout says it has not
-  started its task yet. A later `blocked` is a question for you, as in
-  a pane: read it there and answer with `hc keys`. A timeout is a check-in, not a failure. Keep a foreground wait under
+  through an idle reading for the turn that send started. A worker at a question, one hc reports `blocked` or one that
+  has reported no status for 20 seconds (Claude Code's folder question), comes back as `needs_input`, "needs input":
+  read it with `hc read`, answer it with `hc keys` (by the rule in step 3 before its first turn), and wait again.
+  Before its first turn (idle or silent at turn 0, as right after you answer a startup question), the worker is
+  `starting`: wait keeps waiting, and a timeout says it has not started its task yet. A timeout is a check-in, not a
+  failure. Keep a foreground wait under
   your own shell tool's command limit.
 - **Cursor reports no status.** `routr wait` says to follow it with hc, because hc cannot see its turns. Its prompt tells it to send its report to your terminal with
   `hc send`, which arrives typed in as a message to you and ends a `hc wait` you are in. If nothing has come after far

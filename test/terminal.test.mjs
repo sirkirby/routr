@@ -609,15 +609,23 @@ test("workers and watch keep their terminal behavior while wait follows hc turns
   expect(existsSync(join(runDir("w1"), "state.json"))).toBe(false);
 });
 
-test("wait returns at a terminal question and notices a terminal that is gone, without reading its screen", async () => {
+test("wait returns at a terminal question as needs input, with steps to read and answer it, without reading its screen", async () => {
   await launched();
   const blocked = fakeHc({ sees: [{ status: { state: "blocked", kind: "question" }, turn: 0 }], over: { read: { code: 0, out: SECRET } } });
-  const b = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {}, hc: blocked.run });
-  expect([b.ok, b.state, b.workers[0].state, b.workers[0].status]).toEqual([true, "idle", "idle", "blocked"]);
+  const b = await waitCommand(["--name", "w1", "--timeout", "60000"], { settings: () => cfg(), env: {}, hc: blocked.run });
+  expect([b.ok, b.state, b.headline, b.workers[0].state, b.workers[0].status, b.workers[0].why]).toEqual([true, "finished", "routr: w1 needs input", "needs_input", "blocked", "Claude Code is waiting at a question."]);
+  // Read it, answer it as at launch (before its first turn), then wait again.
+  expect(b.next.map((n) => n.argv ?? n.template)).toEqual([["hc", "read", "t9", "--lines", "200"], "hc keys t9 <keys>", ["routr", "wait", "--name", "w1"]]);
+  expect(b.next[1].why).toContain("Accept folder trust only");
   expect(blocked.words()).toEqual(["get"]);
   expect(JSON.stringify(b)).not.toContain(SECRET);
+  // Reported once as news; a wait while it still sits there returns at once and says it again, with the same steps.
+  const again = await waitCommand(["--name", "w1", "--timeout", "60000"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "blocked" }, turn: 0 }] }).run });
+  expect([again.state, again.headline, again.next.length]).toEqual(["idle", "routr: w1 needs input", 3]);
+  // After a turn, entering a question can advance hc's counter: the turn and the question are both said.
   const questionTurn = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "blocked" }, turn: 1 }] }).run });
-  expect([questionTurn.state, questionTurn.headline, questionTurn.workers[0].status]).toEqual(["finished", "routr: w1 finished a turn", "blocked"]);
+  expect([questionTurn.state, questionTurn.headline, questionTurn.workers[0].status]).toEqual(["finished", "routr: w1 finished a turn and needs input", "blocked"]);
+  expect(questionTurn.next[1].why).not.toContain("folder trust");
   const gone = fakeHc({ over: { get: { code: 1, out: "", err: "no terminal t9" }, read: { code: 0, out: SECRET } } });
   const g = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {}, hc: gone.run });
   expect([g.ok, g.state, g.workers[0].state, g.headline]).toEqual([true, "finished", "lost", "routr: w1 lost"]);
@@ -792,8 +800,8 @@ test("wait notices finished and unreadable terminals and unnamed wait includes a
   expect([u.state, u.workers[0].state, u.next.map((n) => n.argv)]).toEqual(["finished", "unreachable", [["hc", "ls", "--all"], ["routr", "wait", "--name", "w1"]]]);
   expect(JSON.stringify(u)).not.toContain(SECRET);
   rmSync(join(runDir("w1"), "seen.json"), { force: true });
-  const unnamed = await waitCommand(["--timeout", "0"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "blocked" }, turn: 0 }] }).run });
-  expect([unnamed.state, unnamed.workers.map((w) => w.name), unnamed.headline]).toEqual(["idle", ["w1"], "routr: nothing running: w1 idle"]);
+  const unnamed = await waitCommand(["--timeout", "0"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "idle" }, turn: 1 }] }).run });
+  expect([unnamed.state, unnamed.workers.map((w) => w.name), unnamed.headline]).toEqual(["finished", ["w1"], "routr: w1 finished a turn"]);
 });
 
 test("a terminal worker idle or silent at turn 0 has not started its task: wait holds out to its timeout and says so", async () => {
@@ -806,12 +814,32 @@ test("a terminal worker idle or silent at turn 0 has not started its task: wait 
     expect(t).toBe(3000); // it waited to the timeout, not out at the first idle reading
     expect(r.next.map((n) => n.argv)).toEqual([["routr", "wait", "--name", "w1"]]);
   }
-  // Once it has taken a turn, idle is idle; at a question it is idle too, for the lead to answer.
-  for (const [seen, said] of [[{ status: { state: "idle" }, turn: 1 }, "finished a turn"], [{ status: { state: "blocked" }, turn: 0 }, "nothing running: w1 idle"]]) {
+  // Once it has taken a turn, idle is idle.
+  rmSync(join(runDir("w1"), "seen.json"), { force: true });
+  const turned = await waitCommand(["--name", "w1", "--timeout", "3000"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "idle" }, turn: 1 }] }).run });
+  expect([turned.workers[0].state, turned.headline]).toEqual(["idle", "routr: w1 finished a turn"]);
+});
+
+test("a terminal worker that has reported no status for 20 seconds since its runner started it needs input, as at launch", async () => {
+  await launched();
+  // Claude Code at its folder question, measured live: status null, turn 0, core saying it has reported nothing.
+  writeFileSync(join(runDir("w1"), "run.json"), JSON.stringify({ pid: 1, harness_pid: 2, started_at: new Date(0).toISOString() }));
+  const silent = { status: null, turn: 0, reported: false };
+  let t = 5000;
+  const r = await waitCommand(["--name", "w1", "--timeout", "60000"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [silent] }).run, now: () => t, pause: async () => { t += 1000; } });
+  expect(t).toBe(20000); // starting until 20 seconds after the runner started it, then out
+  expect([r.state, r.headline, r.workers[0].state, r.workers[0].why]).toEqual(["finished", "routr: w1 needs input", "needs_input",
+    "Claude Code has run for 20 seconds without reporting any status: it is most likely waiting at a question it reports no status for."]);
+  expect(r.next.map((n) => n.argv ?? n.template)).toEqual([["hc", "read", "t9", "--lines", "200"], "hc keys t9 <keys>", ["routr", "wait", "--name", "w1"]]);
+  // Not when core does not say `reported`, when the runner has not started the harness, when it has ended, or when its
+  // start time cannot be read: then it is starting, as before, to the timeout.
+  for (const [seen, ran] of [[{ status: null, turn: 0 }, { pid: 1, harness_pid: 2, started_at: new Date(0).toISOString() }], [silent, { pid: 1, started_at: new Date(0).toISOString() }],
+    [silent, { pid: 1, harness_pid: 2, started_at: "x" }]]) {
     rmSync(join(runDir("w1"), "seen.json"), { force: true });
-    const r = await waitCommand(["--name", "w1", "--timeout", "3000"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [seen] }).run });
-    expect(r.workers[0].state).toBe("idle");
-    expect(r.headline).toContain(said);
+    writeFileSync(join(runDir("w1"), "run.json"), JSON.stringify(ran));
+    let at = 30000;
+    const s = await waitCommand(["--name", "w1", "--timeout", "2000"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [seen] }).run, now: () => at, pause: async () => { at += 1000; } });
+    expect([s.state, s.workers[0].state]).toEqual(["running", "starting"]);
   }
 });
 

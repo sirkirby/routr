@@ -845,13 +845,15 @@ reported), `--timeout <ms>` (default 90000; in a foreground call, keep it under 
 2 minutes by default in Claude Code). A name with no worker is refused (`error`).
 
 `state`: `finished` (a watched worker has a turn not reported before, or has newly `failed`, `stopped`, `lost`,
-`no_task` or become `unreachable`: each said once per holder generation), `running` (the timeout came first), `idle`
+`no_task` or become `unreachable`, or a terminal worker newly `needs_input`: each said once per holder generation), `running` (the timeout came first), `idle`
 (nothing watched is running and nothing is new), `none` (no worker to wait on), `failed` (refused). A worker whose
 state is `unreadable` is waited for as one running: unnamed, it is watched; at the timeout, `running`, and the headline
 names it with `(its state could not be read)`.
 
 `ok`: true unless refused. `headline`: `routr: <name> finished a turn` (or `finished N turns`, or `<name> <state>` for
-a notice), joined with `; `; `routr: still running: <names>`; `routr: nothing running: <name> <state>, …`; `routr: no
+a notice, `<name> needs input` for `needs_input`). A turn that did not finish is said by its outcome, never as finished:
+`<name>'s turn N failed` (`ended without finishing`, `did not start`, `was stopped`), after any finished ones
+(`<name> finished a turn, turn 2 failed`). Each is joined with `; `; `routr: still running: <names>`; `routr: nothing running: <name> <state>, …`; `routr: no
 worker to wait on`.
 
 Own fields: `state`, `workers` (each as `workers` prints it, plus `gen`, the holder generation, and `turns` holding
@@ -870,10 +872,17 @@ pending too. Any other status returns. Its `turn` is hc's turn counter and each 
 `outcome: "finished"`, `report: null` and `delivered: 0`. `next` for it is `hc read <t> --lines 200` (run): terminal
 text never enters output or a report file. Its wait row includes `backend: "terminal"` and the saved `terminal`
 address, beside the common worker fields. Status `error` is state `failed` and is a notice. A terminal at a question
-returns with `status: "blocked"` and state `idle`; because entering the question can advance hc's counter, the same
-answer can report a finished turn. At turn 0 with no send, status `idle` or none is state `starting`, which is
-pending: once a startup question is answered, hc reports idle at turn 0 until the harness takes up its prompt. A wait
-that times out on it says the worker has not started its task yet. Its program finishing is the existing `stopped` notice; its terminal disappearing
+is state `needs_input`, a notice, with `why`: status `blocked` ("<harness> is waiting at a question."), or launch's
+rule for a question the harness reports nothing for: hc's `reported` is false, the runner's `run.json` records the
+harness started and not ended, and 20 seconds have passed since its `started_at` (the same sentence as launch's
+`needs_input.why`). The headline says `<name> needs input`; because entering the question can advance hc's counter, the
+same answer can report a finished turn (`<name> finished a turn and needs input`). `next` is `hc read <t> --lines 200`
+(run), a `hc keys <t> <keys>` template (before its first turn and any send, with the orchestrator guide's startup-input
+rule, as at launch; later, to answer within the task's scope or ask the user), and `routr wait --name <name>` (run). A
+wait while it still sits at a question already reported returns at once with the same headline and steps. At turn 0
+with no send and no question, status `idle` or none is state `starting`, which is pending: once a startup question is
+answered, hc reports idle at turn 0 until the harness takes up its prompt. A wait that times out on it says the worker
+has not started its task yet. Its program finishing is the existing `stopped` notice; its terminal disappearing
 is the existing `lost` notice, with `routr cleanup --worker <name>` in `next`; an unknown hc reading is `unreachable`.
 Each notice is reported once. An unnamed wait includes every terminal worker whose harness reports status, including an
 idle one, because its current status and turn are known only after the hc look. `workers` keeps its terminal row and

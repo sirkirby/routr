@@ -142,7 +142,7 @@ export const COMMANDS = {
   wait: {
     name: "wait",
     contract: { fields: ["state", "workers"] },
-    description: "wait for headless workers and status-reporting terminal workers; returns when one finishes a turn, fails, stops or is lost, or at the timeout with the ones still running; a headless turn has its report's path, while a terminal turn says to read its tab with hc. Cursor reports no terminal status, so wait says to follow it with hc",
+    description: "wait for headless workers and status-reporting terminal workers; returns when one finishes a turn, fails, stops or is lost, when a terminal worker waits at a question (needs input), or at the timeout with the ones still running; a headless turn has its report's path, while a terminal turn says to read its tab with hc. Cursor reports no terminal status, so wait says to follow it with hc",
     flags: [
       { name: "--name", arg: "<name>", description: "a worker to wait on (repeatable)", required: false, default: "every worker still running or with a turn not yet reported", repeatable: true },
       { name: "--timeout", arg: "<ms>", description: "how long to wait; in a foreground call, keep it under your own shell tool's command limit (Claude Code's default is 2 minutes)", required: false, default: 90000 },
@@ -153,7 +153,7 @@ export const COMMANDS = {
   send: {
     name: "send",
     contract: { fields: ["state", "name", "message"] },
-    description: "a correction or follow-up for a worker: through a headless worker's holder, or through hc to a terminal worker using an owner-only message file; new work is a new launch with its own advice",
+    description: "a correction or follow-up for a worker: through a headless worker's holder, or through hc to a terminal worker using a message file in its run folder (owner-only on macOS and Linux); new work is a new launch with its own advice",
     flags: [
       { name: "--name", arg: "<name>", description: "the worker", required: true },
       { name: "--task", arg: "<text>", description: "the message (mutually exclusive with --task-file)", required: false },
@@ -402,7 +402,7 @@ export const COMMANDS = {
     contract: { text: true },
     description: "a person's view of routr board, kept current in a terminal (a pane or split beside the lead): each account's room, each launch's decision and outcome, and the last 7 days' counts, every 5 seconds. Keys: up/down pick a decision, Enter its detail, a this project or all, u read usage now (runs the harnesses' usage commands), q quit. Shows only what board does; changes nothing of yours. Piped: one plain snapshot; ACCESSIBLE=1: a plain snapshot per Enter",
     flags: [
-      { name: "--cwd", arg: "<folder>", description: "the project to show, by the git repository that folder is in (a worktree counts as its repository); outside a repository, every project", required: false, default: "the current folder", guard: true },
+      { name: "--cwd", arg: "<folder>", description: "the project to show, by the git repository that folder is in (a worktree counts as its repository), else by the folder's own name; at a filesystem root, every project", required: false, default: "the current folder", guard: true },
       { name: "--config", arg: "<path>", description: "path to config file", required: false, default: "~/.config/routr/config.json" },
     ],
     refusal: "screen",
@@ -415,7 +415,7 @@ export const COMMANDS = {
     contract: { fields: ["file", "opened", "runs", "project"] },
     description: "one page of this machine's ledger: what you asked routr, what you chose, and how it turned out, written to an HTML file and opened in your browser. It counts; it does not judge. No harness is called. Piped, or with --no-open, it only writes the file and prints its path",
     flags: [
-      { name: "--cwd", arg: "<folder>", description: "the project to preselect, by the git repository that folder is in (a worktree counts as its repository); outside a repository, every project", required: false, default: "the current folder", guard: true },
+      { name: "--cwd", arg: "<folder>", description: "the project to preselect, by the git repository that folder is in (a worktree counts as its repository), else by the folder's own name; at a filesystem root, every project", required: false, default: "the current folder", guard: true },
       { name: "--out", arg: "<file>", description: "where to write the page", required: false, default: "dash.html in routr's cache folder", guard: true },
       { name: "--no-open", description: "write the file and do not open it", required: false, guard: true },
     ],

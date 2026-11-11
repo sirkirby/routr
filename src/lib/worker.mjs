@@ -89,11 +89,11 @@ export function workers({ root = STATE_DIR(), adapters = ADAPTERS, env = process
       // What it looks like now: { view, next }, or null when no record of routr's is there (cleaned up). One whose record
       // cannot be read is shown, as `unreadable`, never left out as no worker. `kept`: through the adapter chosen when
       // this handle was made, as a wait does for what it watches; otherwise through the one the record now picks.
-      async look({ check = true, ms, kept: keep = false, wait = false } = {}) {
+      async look({ check = true, ms, kept: keep = false, wait = false, at } = {}) {
         const now = read(name);
         if (now.unreadable) return { view: unreadableView(name), next: [] };
         if (!now.worker) return null;
-        return (keep ? kept : adapterFor(adapters, now.worker)).look(meFor(now.worker), { check, ms, wait }, ctx);
+        return (keep ? kept : adapterFor(adapters, now.worker)).look(meFor(now.worker), { check, ms, wait, ...(at == null ? {} : { at }) }, ctx);
       },
       // Whether a wait with no names watches it, from what is there now. One whose record cannot be read is: it may be
       // running. A folder with no record of routr's is asked as a headless worker's would be, and the wait refuses it

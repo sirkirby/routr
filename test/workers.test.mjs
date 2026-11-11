@@ -1125,6 +1125,8 @@ test("after a failed turn, wait reports the failure once, then the turn a follow
   expect(w.launch("f1", w.task(`${BRIEF} FAIL`)).state).toBe("prompted");
   const first = w.run(["wait", "--name", "f1", "--timeout", "20000"]);
   expect(first.workers[0].turns).toMatchObject([{ turn: 1, outcome: "failed" }]);
+  // Caught before its holder settles, the turn is said as failed, never as finished.
+  expect(["routr: f1's turn 1 failed", "routr: f1 failed"]).toContain(first.headline);
   await w.settled("f1");
   // The worker's failed state is said once: with its turn, or by the next wait, never twice.
   const later = [w.run(["wait", "--name", "f1", "--timeout", "2000"]), w.run(["wait", "--name", "f1", "--timeout", "1000"])];
