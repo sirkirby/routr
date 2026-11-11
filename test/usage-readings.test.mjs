@@ -400,6 +400,16 @@ test("the file store's entries are owner-only, and unreadable ones are said with
 // ---- routr's old files ----------------------------------------------------------------------------------------------
 const LEGACY_FILES = ["cursor-usage.json", "kiro-usage.json", "usage-readings.json", "usage-refresh.json"];
 const ageFile = (file, sec) => { const t = new Date(Date.now() - sec * 1000); utimesSync(file, t, t); };
+test("an old lock whose file is already gone goes too once abandoned, never while held", async () => {
+  const cache = join(scratch("legacy-lock"), ".cache/routr"), dir = join(cache, "usage");
+  mkdirSync(cache, { recursive: true });
+  const kiroLock = join(cache, "kiro-usage.json.lock"), cursorLock = join(cache, "cursor-usage.json.lock");
+  writeFileSync(kiroLock, JSON.stringify({ pid: process.pid, token: "dead" })); ageFile(kiroLock, 3600); // abandoned
+  writeFileSync(cursorLock, JSON.stringify({ pid: process.pid, token: "older-routr" })); ageFile(cursorLock, 60); // held
+  fileStore(dir, { legacy: cache }).put("claude", { source: "claude /usage", takenAt: T, windows: [] }, undefined);
+  expect([existsSync(kiroLock), existsSync(cursorLock)]).toEqual([false, true]);
+});
+
 test("routr's old files go only once no older routr can be using them: over a day unchanged, with their lock absent or abandoned", async () => {
   const cache = join(scratch("legacy"), ".cache/routr"), dir = join(cache, "usage"), DAY = 24 * 3600;
   mkdirSync(cache, { recursive: true });

@@ -9,7 +9,7 @@ import { configOf } from "./config.mjs";
 import { configEnv, HARNESSES, privateConfigCopy } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { OFF } from "./wording.mjs";
-import { clean, CMD_PATH, cmdTypable, FISH_PATH, fishTypable, HERDR_PS_QUOTE, herdrTypable, deadline, paneText, paneView, promptReadArgs, SHELLS, shellFamily, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
+import { clean, CMD_PATH, cmdTypable, FISH_PATH, fishTypable, HERDR_PS_QUOTE, herdrTypable, deadline, paneText, paneView, promptReadArgs, SHELLS, shellFamily, splitArgs, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
 import { launchFailed, STARTUP_INPUT } from "./launch-answer.mjs";
 import { carrierValues, paneEnv, redactCarriers } from "./worker-env.mjs";
@@ -46,6 +46,29 @@ export const paneConfigEnvArgs = (o, shell, privateDir, pane) => (HARNESSES[o.ki
   ? ["pane", "run", pane, SHELLS[shell].privateEnv(HARNESSES[o.kind].privateConfig.variable, privateDir)] : null);
 export const panePromptArgs = (prompt, pane, timeout) => ["agent", "prompt", pane, prompt, "--wait", "--until", "working",
   "--until", "idle", "--until", "done", "--until", "blocked", "--timeout", String(timeout)];
+
+// The pane commands a dry run reports, built at the pane boundary beside the commands a real launch executes.
+export function paneDryRunPlan(o, out, { env, p, privateDir, prompt, shell = usualShell() }) {
+  const startArgs = (pane, timeout) => paneStartArgs(o, shell, p, privateDir, pane, timeout);
+  const promptArgs = (pane, timeout) => panePromptArgs(prompt, pane, timeout);
+  const pane = o.pane ?? "<new-pane>", { carried, extraEnv } = paneEnvOf(o, out, env, p, privateDir);
+  return [
+    ...(o.worktree ? [command(worktreeArgs(out.cwd, o.worktree, o.base)), command(splitArgs("right", "<worktree-path>", carried, { pane: "<root-pane>", shown: true, env: extraEnv })), command(["pane", "close", "<root-pane>"])] : []),
+    ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true, env: extraEnv }))] : []),
+    command(["pane", "read", pane, "--source", "visible"]),
+    command(["pane", "process-info", "--pane", pane]),
+    ...(o.pane ? [command(["pane", "run", pane, SHELLS[shell].cd(out.cwd)]),
+      command(["pane", "read", pane, "--source", "visible"]), command(["pane", "process-info", "--pane", pane])] : []),
+    ...(paneConfigEnvArgs(o, shell, privateDir, pane) ? [command(paneConfigEnvArgs(o, shell, privateDir, pane))] : []),
+    command(startArgs(pane, Math.min(o.timeout, 30000))),
+    command(["pane", "read", pane, "--source", "visible"]),
+    command(["agent", "wait", pane, "--timeout", String(Math.min(1000, o.timeout))]),
+    command(["pane", "read", pane, "--source", "visible"]),
+    command(["agent", "get", pane]),
+    ...(HARNESSES[o.kind].privateConfig ? [command(["agent", "rename", pane, o.name])] : []),
+    ...(prompt ? [promptForLog(promptArgs(pane, Math.max(1, Math.min(Math.floor(o.timeout / 2), 30000)))), command(["agent", "get", pane])] : []),
+  ];
+}
 
 // Fills `out`, launch's answer, in place; its failures end here. Answers what launch needs to say next: `attempted` (a start
 // or a prompt was tried), `submitted` (the prompt was), `adopted` (an agent already in the pane took it) and `cleanup` (how

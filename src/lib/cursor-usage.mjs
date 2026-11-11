@@ -1,5 +1,5 @@
 // Cursor has no local usage file: it shows usage only in its own /usage screen. This opens that screen in a throwaway
-// terminal (terminal.mjs: routr's own on macOS and Linux, a private herdr session on Windows) and reads Included N% used.
+// terminal (scratch-terminal.mjs: routr's own on macOS and Linux, a private herdr session on Windows) and reads Included N% used.
 // routr keeps the reading and refreshes it in the background (usage-readings.mjs); cursorReading, below, is what it keeps.
 // The footer context meter (e.g. "Grok 4.6 High · 8.7%") is not usage and must never be parsed as it.
 import { randomBytes } from "node:crypto";
@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { cmdTypable, deadline, runHerdr, SHELLS, shellAlone, shellFamily, waitForShell } from "./herdr.mjs";
-import { openTerminal, ownTerminal } from "./terminal.mjs";
+import { openTerminal, ownTerminal } from "./scratch-terminal.mjs";
 import { usageFailure } from "./usage-failure.mjs";
 import { configEnv, HARNESSES, privateConfigCopy } from "./harnesses.mjs";
 

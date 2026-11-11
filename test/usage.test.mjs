@@ -14,7 +14,7 @@ import { olderThan, takeLock } from "../src/lib/state-files.mjs";
 import { usageCommand } from "./contract.mjs";
 import { snapshotFrom } from "../src/lib/statusline.mjs";
 import { CURSOR_BY_HAND, parseCursorUsage, cursorUsage } from "../src/lib/cursor-usage.mjs";
-import { ownTerminal } from "../src/lib/terminal.mjs";
+import { ownTerminal } from "../src/lib/scratch-terminal.mjs";
 import { cfg, cliEnv, fakeExecutable, herdrError, herdrOK, live, metered, none, NOW, scratch, SCRIPT, shellInfo, win } from "./helpers.mjs";
 // Recorded 2026-09-22 from `codex app-server` (`account/rateLimits/read`, CLI 0.155.1), identifiers removed: a ChatGPT
 // Enterprise seat on flexible pricing, and a Pro login. Member-limit replies were recorded on 2026-11-03 (0.166.0).

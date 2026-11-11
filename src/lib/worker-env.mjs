@@ -13,7 +13,7 @@ export const envGet = (env, name) => { const k = Object.keys(env).find((key) => 
 // HERDR_PANE_ID, ...). A harness inherits them, and herdr's integration hooks in
 // that harness (e.g. ~/.claude/hooks/herdr-agent-state.sh, which acts only when all three are set) would report
 // routr's few-second read as an agent session in the user's pane. routr's own herdr calls (herdr.mjs runHerdr,
-// terminal.mjs clients) keep them: herdr needs them to find its session. Windows names are case-insensitive, hence /i.
+// scratch-terminal.mjs clients) keep them: herdr needs them to find its session. Windows names are case-insensitive, hence /i.
 // The lead's own session variables go too: CLAUDECODE and Claude Code's session and messaging ones make a Claude that
 // routr starts take itself for a child of the lead's session, and CODEX_THREAD_ID ties a Codex to the lead's thread
 // (measured 2026-10-21: a child otherwise inherited the lead identity). Herdr 0.9.5 binary strings list the eight pane

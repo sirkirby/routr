@@ -149,7 +149,9 @@ function sweepLegacy(dir) {
   for (const { file, stale } of LEGACY) {
     const data = join(dir, file), lock = `${data}.lock`;
     try {
-      if (!existsSync(data)) continue;
+      // A lock its file has outlived (the file went, the lock stayed): taken by its old rule when abandoned, then let go,
+      // which removes it; one still held is left for a later write.
+      if (!existsSync(data)) { if (stale && existsSync(lock)) { if (takeLock(lock, stale)) releaseFileLock(lock, lockToken(lock)); else done = false; } continue; }
       const idle = () => Date.now() - statSync(data).mtimeMs > LEGACY_IDLE_MS;
       if (!idle()) { done = false; continue; }
       if (!stale) { rmSync(data, { force: true }); continue; }
