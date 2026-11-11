@@ -54,7 +54,9 @@ const turnsSaid = (name, turns) => {
   const finished = good > 1 ? `finished ${good} turns` : good ? "finished a turn" : null, ended = bad.map((t) => `turn ${t.turn} ${OUTCOME_SAID[t.outcome] ?? t.outcome}`);
   return !ended.length ? `${name} ${finished}` : !finished ? `${name}'s ${ended.join(", ")}` : `${name} ${finished}, ${ended.join(", ")}`;
 };
-const noticeOf = (v) => (NOTICE.has(v.state) ? `${v.gen}:${v.state}` : null);
+// A question is news once for each turn it comes at (a terminal worker's generation stays 0): a later question, after the
+// first was answered, is news again.
+const noticeOf = (v) => (!NOTICE.has(v.state) ? null : v.state === "needs_input" ? `${v.gen}:${v.state}:${v.turn}` : `${v.gen}:${v.state}`);
 const fresh = (v, seen) => v.turns.filter((t) => t.turn > seen.turn && t.outcome !== "running");
 const isNews = (v, seen) => fresh(v, seen).length > 0 || (noticeOf(v) != null && noticeOf(v) !== seen.notice);
 // Still to wait for: running, or its state could not be read just now (it may be running).
@@ -105,7 +107,9 @@ async function waitCommandBody(args, { now = () => Date.now(), pause = sleep, en
     out.ok = true;
     const running = views.filter(pending);
     out.state = done.length ? "finished" : running.length ? "running" : "idle";
-    const said = [...done.map(({ v, turns, noticed }) => noticed ? `${v.name} ${stateWords(v.state)}` : `${turnsSaid(v.name, turns)}${v.state === "needs_input" ? " and needs input" : ""}`), ...asking.map(({ v }) => `${v.name} needs input`)];
+    // A question that came with turns says both: the turns before it would otherwise go unsaid.
+    const said = [...done.map(({ v, turns, noticed }) =>
+      v.state === "needs_input" && turns.length ? `${turnsSaid(v.name, turns)} and needs input` : noticed ? `${v.name} ${stateWords(v.state)}` : turnsSaid(v.name, turns)), ...asking.map(({ v }) => `${v.name} needs input`)];
     out.headline = said.length ? `routr: ${said.join("; ")}`
       : running.length ? `routr: still running: ${running.map((v) => `${v.name}${v.state === "unreadable" ? " (its state could not be read)" : v.state === "starting" && v.backend === "terminal" ? " (it has not started its task yet)" : ""}`).join(", ")}` : `routr: nothing running: ${views.map((v) => `${v.name} ${stateWords(v.state)}`).join(", ")}`;
     for (const { next } of asking) out.next.push(...next);

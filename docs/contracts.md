@@ -875,11 +875,13 @@ address, beside the common worker fields. Status `error` is state `failed` and i
 is state `needs_input`, a notice, with `why`: status `blocked` ("<harness> is waiting at a question."), or launch's
 rule for a question the harness reports nothing for: hc's `reported` is false, the runner's `run.json` records the
 harness started and not ended, and 20 seconds have passed since its `started_at` (the same sentence as launch's
-`needs_input.why`). The headline says `<name> needs input`; because entering the question can advance hc's counter, the
+`needs_input.why`; launch counts its 20 seconds from its own first look). It is news once for each turn it comes at. The headline says `<name> needs input`; because entering the question can advance hc's counter, the
 same answer can report a finished turn (`<name> finished a turn and needs input`). `next` is `hc read <t> --lines 200`
 (run), a `hc keys <t> <keys>` template (before its first turn and any send, with the orchestrator guide's startup-input
 rule, as at launch; later, to answer within the task's scope or ask the user), and `routr wait --name <name>` (run). A
-wait while it still sits at a question already reported returns at once with the same headline and steps. At turn 0
+later wait that watches nothing still running, while it still sits at a question already reported, returns at once
+with the same headline and steps; with a worker still running, it waits for that one and then says the question
+again. At turn 0
 with no send and no question, status `idle` or none is state `starting`, which is pending: once a startup question is
 answered, hc reports idle at turn 0 until the harness takes up its prompt. A wait that times out on it says the worker
 has not started its task yet. Its program finishing is the existing `stopped` notice; its terminal disappearing

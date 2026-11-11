@@ -1484,6 +1484,8 @@ test("the holder queues one safe invoke_agent span when a turn ends, before its 
     expect(w.run(["send", "--name", "traced", "--task", SENT]).ok).toBe(true);
     w.release();
     expect(await until(() => w.spans().some((s) => s.name === "invoke_agent traced"))).toBe(true);
+    // Logs are their own export and can land in a later batch than the span (seen on Windows CI, PR #179).
+    expect(await until(() => w.logs().some((l) => l.eventName === "routr.worker.state" && wireAttrs(l)["routr.worker.state.to"] === "waiting"))).toBe(true);
     expect(w.state("traced").harness_pid).toBeGreaterThan(0);
     const spans = w.spans(), launch = spans.find((s) => s.name === "routr launch"), turn = spans.find((s) => s.name === "invoke_agent traced");
     expect(turn).toMatchObject({ kind: 3, traceId: launch.traceId, parentSpanId: launch.spanId });

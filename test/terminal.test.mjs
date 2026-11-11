@@ -626,6 +626,11 @@ test("wait returns at a terminal question as needs input, with steps to read and
   const questionTurn = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "blocked" }, turn: 1 }] }).run });
   expect([questionTurn.state, questionTurn.headline, questionTurn.workers[0].status]).toEqual(["finished", "routr: w1 finished a turn and needs input", "blocked"]);
   expect(questionTurn.next[1].why).not.toContain("folder trust");
+  // A question at a later turn is news again, and a first wait that finds the turn and the question says both.
+  expect(JSON.parse(readFileSync(join(runDir("w1"), "seen.json"), "utf8"))).toEqual({ turn: 1, notice: "0:needs_input:1" });
+  rmSync(join(runDir("w1"), "seen.json"), { force: true });
+  const first = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "blocked" }, turn: 1 }] }).run });
+  expect([first.state, first.headline]).toEqual(["finished", "routr: w1 finished a turn and needs input"]);
   const gone = fakeHc({ over: { get: { code: 1, out: "", err: "no terminal t9" }, read: { code: 0, out: SECRET } } });
   const g = await waitCommand(["--name", "w1", "--timeout", "0"], { settings: () => cfg(), env: {}, hc: gone.run });
   expect([g.ok, g.state, g.workers[0].state, g.headline]).toEqual([true, "finished", "lost", "routr: w1 lost"]);
