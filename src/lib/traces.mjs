@@ -277,9 +277,8 @@ export function commandTrace(command, setup = {}, run) {
         ...(inherited ? { parentSpanId: inherited.spanId } : {}), flags: 1, attributes: {} });
       const id = leadSession(env, lead); if (id && ["dispatch", "subagent", "launch"].includes(command)) put(span, { "routr.lead.session_id": id });
       const identity = traceIdentity(cwd); put(span, identity.attributes);
-      // A launch's id is launch's (launch-identity.mjs). The CLI starts a launch's trace before launch runs (routr.mjs), so
-      // launch's own id never reaches it and the trace makes one here: from the CLI a launch's `routr.launch.id` (and its
-      // index entry and worker record) is not its answer's `launch_id`. Kept as found; making them one changes behaviour.
+      // A launch's id (launch-identity.mjs). The CLI opens a launch's trace before launch runs (routr.mjs), so the id is
+      // made here, and launch takes it (openLaunchId): one id in its answer, history, worker record, span and index.
       batch = { ...batch, span, spans: [span], logs: [], inherited, env, explicitLevel, identity, command, index: new LaunchIndex({ home: otel.home }), launchId: launchId ?? (command === "launch" ? newLaunchId() : null), matched: new Set(), observed: new Set() };
     }
   } catch {} // Setup is optional too: a bad config or identity lookup cannot refuse a command.

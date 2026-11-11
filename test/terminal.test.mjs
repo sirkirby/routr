@@ -825,7 +825,7 @@ test("a launch inside a trace the CLI opened has one id: its answer, history, re
   const span = readdirSync(join(home, ".cache/routr/otel/traces")).filter((n) => n.endsWith(".json")).flatMap((n) => JSON.parse(readFileSync(join(home, ".cache/routr/otel/traces", n), "utf8")).resourceSpans[0].scopeSpans[0].spans).find((x) => x.name === "routr launch");
   const traced = span.attributes.find((a) => a.key === "routr.launch.id").value.stringValue;
   expect([recordOf().launch.launch_id, traced]).toEqual([r.launch_id, r.launch_id]);
-  expect(findLaunch(r.launch_id, { home })).toBeTruthy();
+  expect(findLaunch(r.launch_id, { home }).record).not.toBeNull(); // its history record, under that id
   expect(new LaunchIndex({ home }).entries().map((e) => e.launch_id)).toContain(r.launch_id);
 });
 
