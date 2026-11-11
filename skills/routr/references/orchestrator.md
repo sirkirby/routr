@@ -143,6 +143,9 @@ object describing what it did.
         --cwd <repo> --worktree <branch> [--base <ref>] --model <id> [--effort <level>] --task-file <path> \
         [--rules-file <path>] --advice <file> [--dry-run]
 
+`--kind` also takes an extra account's name as dispatch ranks it (`claude-work`). Pass no `--pane` with one, except in
+routr's own rerun: an existing pane keeps its own shell's environment, so the worker would run on another account.
+
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
   `--effort` where the harness takes it separately. On Antigravity the model id already carries it, and routr says so
   instead of passing a flag Antigravity refuses when it disagrees with the id. On Kiro, `--effort auto` (its suggested default,

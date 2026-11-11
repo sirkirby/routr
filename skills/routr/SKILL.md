@@ -113,7 +113,9 @@ Ask about the exact text the worker will get, not a summary of it: for a launch,
   old to use has unknown room with its age in `age_sec`; age alone is not a read failure. A metered account with
   unknown capacity is a valid reading. Under `windows` it shows each usage window as the harness reports it: percent
   used and hours until it resets. The user's reserve shrinks as a window nears its reset, because unused capacity
-  expires then. `your_default` is the user's everyday model on that subscription. `excluded` lists subscriptions the
+  expires then. `your_default` is the user's everyday model on that subscription. A subscription named
+  `<harness>-<name>` is an extra account of that harness: choose from that harness's models, and launch it by its name
+  (`--kind claude-work`). `excluded` lists subscriptions the
   user does not give work this hard, any the user turned off, and any whose harness is not signed in (its `why`
   says what to run). Never spend a reserve: when everything is at its reserve, hold the work or ask
   the user. `class` says how the account is paid for: `included` (a plan), `metered` (pay per use),

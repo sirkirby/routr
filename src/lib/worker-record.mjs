@@ -21,6 +21,8 @@ export const RECORD_BACKENDS = ["headless", "terminal"];
 // trace-context carriers within routr's limits, which every load checks again (savedCarriers). A terminal worker's also
 // has `terminal` (its address, once hc gave one), `terminal_name` and `config` (where-is-my-config paths, checked again
 // by savedConfigLocations); its prompt is a file beside the record, never in it.
+// One launched on an extra account also has `subscription`, its name, and `config_dir`, its folder: the account is
+// made again from them at every start (harnesses' workerAccount).
 const str = (v) => typeof v === "string" && v !== "";
 const plain = (v) => v != null && typeof v === "object" && !Array.isArray(v);
 const SHAPE = {
@@ -28,13 +30,13 @@ const SHAPE = {
   backend: (v) => RECORD_BACKENDS.includes(v), kind: str, model: str, effort: (v) => v === null || str(v), cwd: str,
   created_at: (v) => typeof v === "string" && Number.isFinite(Date.parse(v)),
   carriers: (v) => plain(v) && Object.values(v).every((x) => typeof x === "string"),
-  subagent_model: str, subagent_effort: str, launch: plain,
+  subagent_model: str, subagent_effort: str, launch: plain, subscription: str, config_dir: str,
   worktree: (v) => plain(v) && ["branch", "path", "source"].every((k) => str(v[k])),
   terminal: str, terminal_name: str, config: (v) => plain(v) && Object.values(v).every((x) => typeof x === "string"),
 };
 const REQUIRED = { headless: ["format", "id", "name", "backend", "kind", "model", "effort", "cwd", "created_at", "carriers"] };
 REQUIRED.terminal = [...REQUIRED.headless, "terminal_name", "config"];
-const ONLY = { headless: new Set([...REQUIRED.headless, "subagent_model", "subagent_effort", "launch", "worktree"]) };
+const ONLY = { headless: new Set([...REQUIRED.headless, "subagent_model", "subagent_effort", "launch", "worktree", "subscription", "config_dir"]) };
 ONLY.terminal = new Set([...ONLY.headless, "terminal_name", "config", "terminal"]);
 // Strict: a field missing, of the wrong kind, or not of this backend is a mistake in routr, never the user's input.
 const built = (r) => {
@@ -47,9 +49,9 @@ const built = (r) => {
 const given = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v != null));
 // `common`: what every launch decides. `where`: { backend: "headless" } or { backend: "terminal", terminal_name, config }.
 // `id` is made here unless launch needed it first (a terminal's program carries it).
-export function newRecord({ id, name, kind, model, effort = null, cwd, carriers = {}, subagent_model, subagent_effort, launch, worktree }, { backend, ...where }) {
+export function newRecord({ id, name, kind, model, effort = null, cwd, carriers = {}, subscription, config_dir, subagent_model, subagent_effort, launch, worktree }, { backend, ...where }) {
   return built({ format: FORMAT, id: id ?? randomUUID().replace(/-/g, ""), name, backend, kind, model, effort: effort ?? null, cwd, created_at: new Date().toISOString(), carriers,
-    ...given({ subagent_model, subagent_effort }), ...given(where), ...given({ launch, worktree }) });
+    ...given({ subscription, config_dir, subagent_model, subagent_effort }), ...given(where), ...given({ launch, worktree }) });
 }
 // A record launch built, with what it learned since (a terminal's address and name), checked again as a whole.
 export const amend = (record, patch) => built({ ...record, ...patch });

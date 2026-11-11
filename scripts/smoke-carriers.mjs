@@ -5,6 +5,9 @@
 // 1. Splits a pane with routr's own split code, its carriers hostile but valid (`%` `"` `&` `!` `;` `,` `=` TAB and
 //    spaces, each value exactly at routr's limit), starts a small fixture in that pane's shell that writes its
 //    environment to a file, checks each value arrived byte for byte, and closes the pane.
+//    Then two panes for an extra account: one split as routr splits it for an account whose folder is hostile but
+//    valid, its folder checked byte for byte, and one split with the variable set, where the default folder's unset
+//    line leaves it absent.
 // 2. macOS and Linux: splits another pane, its carriers short markers, and `herdr agent start`s the installed Claude
 //    Code there with no task, reads that agent's own environment (`ps eww -o command= -p <pid>` on macOS,
 //    /proc/<pid>/environ on Linux), looks for each NAME=value whole, and closes the pane. There is no ordinary way to
@@ -33,11 +36,12 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, posix, win32 } from "node:path";
-import { deadline, paneView, quote, runHerdr, splitArgs, waitForShell, worktreeArgs, worktreePane } from "../src/lib/herdr.mjs";
+import { deadline, paneView, quote, runHerdr, SHELLS, splitArgs, waitForShell, worktreeArgs, worktreePane } from "../src/lib/herdr.mjs";
+import { accountAt, HARNESSES } from "../src/lib/harnesses.mjs";
 import { worktreesFromGit } from "../src/lib/cleanup.mjs";
 import { displayCommand } from "../src/lib/next.mjs";
 import { processError } from "../src/lib/process-boundary.mjs";
-import { CARRIERS, carriersFrom } from "../src/lib/worker-env.mjs";
+import { CARRIERS, carriersFrom, paneEnv } from "../src/lib/worker-env.mjs";
 import { installedAt, probe } from "../src/lib/processes.mjs";
 import { realOr } from "../src/lib/state-files.mjs";
 
@@ -110,19 +114,21 @@ export async function smokeCarriers({ herdr = runHerdr, git = gitIn, env = proce
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // Every pane this run made, from the moment herdr names it: all are closed at the end, however the run ended.
   const panes = [];
+  // The panes whose shell is fish, which has its own word for unset (the herdr module's SHELLS).
+  const fishPanes = new Set();
   let failed = 0;
   const say = (what, missing) => { if (missing.length) failed++; log(`${what}: ${missing.length ? `FAILED (${missing.join(", ")} did not arrive exactly)` : `ok (${CARRIERS.join(", ")} arrived exactly)`}`); };
   // `pane`'s shell at a prompt in `cwd`: its family.
   const shellOf = async (pane, cwd, what = "the pane's shell") => {
     let shell = "posix";
     const r = await waitForShell(paneView(call, pane), { sleep, now: () => performance.now(), remaining: deadline(30000, () => performance.now(), `${what} did not come to a prompt in 30 s`), cwd,
-      onShell: (name) => { shell = /^(pwsh|powershell)/i.test(name) ? "powershell" : /^cmd/i.test(name) ? "cmd" : "posix"; } });
+      onShell: (name) => { shell = /^(pwsh|powershell)/i.test(name) ? "powershell" : /^cmd/i.test(name) ? "cmd" : "posix"; if (/^fish(\.exe)?$/i.test(name)) fishPanes.add(pane); } });
     if (!r.ok) throw new Error(`${what}: ${r.why}`);
     return shell;
   };
   // A pane split with `carriers`, its shell at a prompt.
-  const split = async (carriers) => {
-    const pane = (await call(splitArgs("down", dir, carriers))).data.result.pane.pane_id;
+  const split = async (carriers, env = {}) => {
+    const pane = (await call(splitArgs("down", dir, carriers, { env }))).data.result.pane.pane_id;
     panes.push(pane);
     return { pane, shell: await shellOf(pane, dir) };
   };
@@ -155,6 +161,18 @@ export async function smokeCarriers({ herdr = runHerdr, git = gitIn, env = proce
       const { pane, shell } = await split(sent);
       const got = await envIn(pane, shell, "split");
       say(`split pane, ${shell} shell`, got ? missingIn(got, sent) : CARRIERS);
+    }
+    {
+      // An extra account's folder holds no TAB: routr takes no control character in one.
+      const v = HARNESSES.claude.folder.variable, folder = join(dir, HOSTILE.replace("\t", ""));
+      const account = (path) => paneEnv({ found: carriersFrom({}), plan: {}, account: accountAt("claude-smoke", "claude", path).env }, { warnings: [], start: { env: {} } });
+      const check = (what, ok) => { if (!ok) failed++; log(`${what}: ${ok ? "ok" : "FAILED"}`); };
+      let { pane, shell } = await split({}, account(folder).split.env);
+      check(`account pane, ${shell} shell, ${v} arrived exactly`, (await envIn(pane, shell, "account"))?.[v] === folder);
+      ({ pane, shell } = await split({}, { [v]: "routr-smoke-set" }));
+      for (const name of account("~/.claude").unset) await call(["pane", "run", pane, SHELLS[shell].unset(name, fishPanes.has(pane))]);
+      const got = await envIn(pane, shell, "unset");
+      check(`default-folder pane, ${shell} shell, ${v} removed`, got != null && !Object.hasOwn(got, v));
     }
     if (process.platform === "win32") log("agent: not checked on Windows (another process's environment cannot be read there)");
     else {

@@ -31,4 +31,4 @@ export const READER_STOPPED_SEC = 24 * 3600;
 export const staleReaders = (rows, config = {}) => rows
   .filter((r) => r.failure && r.signedIn !== false && r.headroom == null && r.class !== "metered" && config.subscriptions?.[r.pool]?.billing !== "metered"
     && r.ageSec != null && r.ageSec >= READER_STOPPED_SEC)
-  .map((r) => ({ pool: r.pool, warning: warning("usage_stale", `${r.pool}'s usage has not been read for ${Math.round(r.ageSec / 3600)} h, and its last try failed (${r.failure.code}), so remaining capacity is unknown: an update of ${r.pool} or herdr may have changed what routr reads`) }));
+  .map((r) => ({ pool: r.pool, warning: warning("usage_stale", `${r.pool}'s usage has not been read for ${Math.round(r.ageSec / 3600)} h, and its last try failed (${r.failure.code}), so remaining capacity is unknown: an update of ${config.subscriptions?.[r.pool]?.harness ?? r.pool} or herdr may have changed what routr reads`) }));

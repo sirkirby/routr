@@ -12,10 +12,10 @@ import { groupAlive, HEADLESS_KINDS, headlessArgv } from "./headless.mjs";
 import { newRecord, recordStore, unreadableWhy } from "./worker-record.mjs";
 import { planWorktree } from "./worktree.mjs";
 import { makePrivateConfig, refuseInputs, refuseSandbox, refuseSettings, refuseTaken, takeRun, worktreeRecord } from "./worker-start.mjs";
-import { HARNESSES, subagentDefaults } from "./harnesses.mjs";
+import { HARNESSES, savedAccount, subagentDefaults, workerAccount } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext } from "./next.mjs";
 import { launchFailed } from "./launch-answer.mjs";
-import { CARRIERS, carrierWithheld, FORWARDED, launchCarrierWarnings, savedCarriers } from "./worker-env.mjs";
+import { accountShownEnv, CARRIERS, carrierWithheld, FORWARDED, launchCarrierWarnings, savedCarriers } from "./worker-env.mjs";
 import { readJsonFile } from "./state-files.mjs";
 import { count } from "./wording.mjs";
 import { spawnSelf } from "./processes.mjs";
@@ -96,11 +96,12 @@ async function startWorker(o, out, { prompt, env, settings, ready, spawn, checkL
     // The trace-context carriers in launch's environment, within routr's limits, are saved with the worker: every turn
     // gets these, whoever starts its holder later (a `send` from another environment). Shown by name only;
     // CURSOR_CONFIG_DIR, the run folder's, is not listed.
+    // An extra account is saved with the worker too (savedAccount), and its variable shown: every turn runs on it.
     const found = launchCarriers(env), launchTrace = currentLaunch(config, env);
     out.warnings.push(...launchCarrierWarnings(found));
-    out.start = { executable: HARNESSES[o.kind].executable, argv, env: { ...subagents.env, ...Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) } };
+    out.start = { executable: HARNESSES[o.kind].executable, argv, env: { ...accountShownEnv(o.account?.env), ...subagents.env, ...Object.fromEntries(Object.keys(found.carriers).map((k) => [k, FORWARDED])) } };
     out.ran.push(displayCommand([HARNESSES[o.kind].executable, ...argv]));
-    recordStore().write(dir, newRecord({ name: o.name, kind: o.kind, model: o.model, effort: o.effort, cwd: out.cwd, carriers: found.carriers,
+    recordStore().write(dir, newRecord({ name: o.name, kind: o.kind, model: o.model, effort: o.effort, cwd: out.cwd, carriers: found.carriers, ...savedAccount(o.account),
       subagent_model: o["subagent-model"] || null, subagent_effort: o["subagent-effort"] || null, launch: launchTrace, worktree: worktreeRecord(wt).worktree }, { backend: "headless" }));
     writeSecret(dir);
     makePrivateConfig(o.kind, dir);
@@ -255,7 +256,7 @@ export const headless = {
       if (await groupAlive(st.harness_pgid, w.kind)) throw refusal(`${name}'s harness may still be running (process group ${st.harness_pgid}); stop what runs of it before sending`);
       refuseSandbox(env);
       if (!st.session_id) throw refusal(`${name} has no session to resume; launch the work again`);
-      const signedOut = await ready(w.kind);
+      const signedOut = await ready(workerAccount(w) ?? w.kind);
       if (signedOut) throw refusal(`${HARNESSES[w.kind].label} cannot take work: ${signedOut}`);
       // A holder that has just ended still answers for a moment: let it go first.
       for (let i = 0; i < 20 && p.state === "alive"; i++) { await sleep(150); p = await probe(dir); }

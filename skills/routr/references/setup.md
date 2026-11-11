@@ -141,6 +141,17 @@ the command that fixes it.
     the account below its target (`share_due`); the lead still chooses model and effort fit first. Guided setup asks
     for it (Launch share) when two or more enabled accounts read metered and are in normal use;
     a metered weight can be configured before room returns. Set it with `--share name=<1-99>`, remove it with `--share name=off`.
+  - `accounts`: more accounts of that harness, `{ "<name>": "<folder>" }`, written in the file by hand (setup keeps
+    it, `--force` too). Each is a subscription named `<harness>-<name>` (`claude-work`) with the harness's settings,
+    signed in from that folder: sign it in once with the tool itself (`CLAUDE_CONFIG_DIR=<folder> claude auth login`;
+    `CODEX_HOME=<folder> codex login`), since routr never signs in. Claude Code's own `~/.claude` is run with the
+    variable unset, which is how Claude Code finds that folder's sign-in. `accounts` takes Claude Code and Codex only.
+    An account routr cannot use (a folder that is not a full path or under `~/`, a name already taken) is left out with
+    a note saying why, which doctor shows, and launch refuses it. The harness's own entry runs on the folder the
+    environment names (Claude Code's `CLAUDE_CONFIG_DIR`, Codex's `CODEX_HOME`), so run routr, and start herdr, from a
+    shell that leaves that variable unset or on the folder you mean the harness's own entry to use. Measured with two
+    Claude Code accounts on macOS; a second Codex account has not been measured.
+    Example: `"claude": { "hardest_work": "strong", "reserve": 0.25, "accounts": { "work": "~/.claude-work" } }`.
 - `prefer`: the user's standing preference per kind of work (`implement`, `debug`, `refactor`, `review`, `research`,
   `test_writing`, `docs`), for example `"research": "strong"`. Shown to agents as advice, never forced.
 - `sure_at` (unset: the decision model's own measured bar; Jev 1.14's is 0.7), `risk_above` (0.75), `fallback_level`

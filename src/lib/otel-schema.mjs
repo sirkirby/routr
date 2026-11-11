@@ -30,7 +30,8 @@ export const NEEDS_INPUT_CODES = Object.freeze(["shell_not_ready", "startup_ques
 
 export const OTEL_ATTRIBUTES = Object.freeze({ ...TRACE_ATTRIBUTES, ...Object.assign({}, ...Object.values(LOG_EVENTS).map((v) => v.attributes)), "routr.usage.window": "string" });
 export const IDENTITY_ATTRIBUTES = Object.freeze(["vcs.repository.url.full", "vcs.ref.head.name", "routr.cwd", "routr.worktree", "routr.lead.session_id", "routr.kind", "routr.backend", "routr.launch.id", "gen_ai.agent.name", "gen_ai.conversation.id", "routr.turn"]);
-// routr keys a subscription by its harness; a window is one its usage reader names (the registry's `usage.windows`).
+// A subscription here is a harness's name; an extra account's is left out or sent as other. A window is one its usage
+// reader names (the registry's `usage.windows`).
 export const USAGE_WINDOWS = Object.freeze([...new Set(KINDS.flatMap((k) => HARNESSES[k].usage.windows))]);
 export const SUBSCRIPTIONS = Object.freeze([...KINDS]);
 export function signalAttributes(values, allowed = Object.keys(OTEL_ATTRIBUTES)) {

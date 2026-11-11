@@ -3,7 +3,7 @@
 import { doNext, runNext } from "./next.mjs";
 import { levelExcludedWhy, rankSubscriptions } from "./pick.mjs";
 import { staleReaders, usageFailure, usageUnavailable } from "./usage-failure.mjs";
-import { HARNESSES } from "./harnesses.mjs";
+import { accountOf, HARNESSES, withFolder } from "./harnesses.mjs";
 
 const hasCandidates = (r) => r && [...r.candidates.normal, ...r.candidates.fallback].length > 0;
 export const emptyRanking = (note) => ({ most_room: null, candidates: { normal: [], fallback: [] }, ranked: [], excluded: [], note });
@@ -20,7 +20,7 @@ export function capacityView(level, usage, config, launches = null, { named = nu
   const unavailable = usageUnavailable(usage).filter((u) => !subscriptions.excluded.some((e) => e.subscription === u.subscription));
   for (const u of extra) if (!unavailable.some((x) => x.subscription === u.subscription)) unavailable.push(u);
   const stale = staleReaders(usage, config).map((s) => ({ ...s, retry: runNext(`Try reading ${s.pool}'s usage again.`, ["routr", "usage", s.pool]) }));
-  return { subscriptions, unavailable, next: capacityNext(subscriptions, unavailable, level, configured, named), stale };
+  return { subscriptions, unavailable, next: capacityNext(subscriptions, unavailable, level, configured, named, config), stale };
 }
 
 // What a command says when ranking failed: its `unavailable` entry (with the command's own `why`, if it has one) and
@@ -29,7 +29,7 @@ export function capacityFailure(why = usageFailure("internal_error").why) {
   return { failure: { part: "usage", subscription: null, source: "routr", ...usageFailure("internal_error"), why }, next: doNext("Read capacity yourself before choosing an account") };
 }
 
-function capacityNext(r, unavailable, level, configured, named) {
+function capacityNext(r, unavailable, level, configured, named, config) {
   const steps = [];
   if (!configured) steps.push(doNext("Tell the user routr is not set up (routr setup), and ask which subscription to use meanwhile"));
   else if (!r.ranked.length) steps.push(doNext(level !== "basic" && !named && r.excluded.some((e) => e.why === levelExcludedWhy(level))
@@ -38,9 +38,11 @@ function capacityNext(r, unavailable, level, configured, named) {
   else if (!hasCandidates(r)) steps.push(doNext(`Hold the work or ask the user: every subscription that takes ${level} work is at its reserve`));
   for (const u of unavailable.filter((u) => u.part === "usage")) {
     // Each harness's own words for reading it by hand: shared by reader diagnostics and these steps, never tucked into a ranked row's note.
-    const byHand = Object.hasOwn(HARNESSES, u.subscription) ? HARNESSES[u.subscription].usage.byHand : null;
+    // An extra account's are its harness's, with its folder and its own name.
+    const a = accountOf(u.subscription, config), h = a?.kind ?? u.subscription;
+    const byHand = Object.hasOwn(HARNESSES, h) ? HARNESSES[h].usage.byHand.replace(`--headroom ${h}=`, `--headroom ${u.subscription}=`) : null;
     if (u.code === "command_shadowed") steps.push(doNext("Rename or remove your own usage skill or command, or pass --headroom from a number you already have", `--headroom ${u.subscription}=<share left>`));
-    else if (byHand) steps.push(doNext(`Read ${u.subscription}'s usage by hand: ${byHand}`, `--headroom ${u.subscription}=<share left>`));
+    else if (byHand) steps.push(doNext(`Read ${u.subscription}'s usage by hand${a ? ` ${withFolder(a)}` : ""}: ${byHand}`, `--headroom ${u.subscription}=<share left>`));
   }
   return steps;
 }

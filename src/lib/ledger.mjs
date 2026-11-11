@@ -100,7 +100,7 @@ export const briefSha = (text) => createHash("sha256").update(String(text).trim(
 // opted-in OpenTelemetry; not anonymous telemetry).
 const IN_ID = /-(minimal|low|medium|high|xhigh|max)(?:-[a-z0-9]+)?$/; // one qualifier may follow: cursor-grok-4.6-high-fast
 export function resolveEffort({ subscription, model, effort }, config = null) {
-  const h = HARNESSES[subscription], unset = effort == null || effort === "" || /^(none|default)$/i.test(effort);
+  const h = HARNESSES[config?.subscriptions?.[subscription]?.harness ?? subscription], unset = effort == null || effort === "" || /^(none|default)$/i.test(effort);
   if (h && !h.effort && unset) { const m = String(model ?? "").match(IN_ID); if (m) return { effort: m[1], effort_from: "model id" }; }
   const configured = config?.subscriptions?.[subscription]?.default_effort;
   if (h?.effort && (effort == null || effort === "" || /^default$/i.test(effort)) && configured) return { effort: configured, effort_from: "config default" };
@@ -268,7 +268,7 @@ export function assess(entries, config = null) {
       out.push(`  ${name.padEnd(8)} ${us[0]} → ${us.at(-1)} · ${Math.min(...us)}   (${entries.filter((e) => e.chose.subscription === name).length} pieces)`);
       const atReserve = us.filter((u) => u <= 0.02).length;
       if (seen.length >= MIN && atReserve / seen.length >= 0.3)
-        suggestions.push(`subscriptions.${name}.reserve: it was at its reserve in ${atReserve} of ${seen.length} dispatches, so routr kept work away from it. If you want it used more, lower the reserve.`);
+        suggestions.push(`subscriptions.${config?.subscriptions?.[name]?.harness ?? name}.reserve: it was at its reserve in ${atReserve} of ${seen.length} dispatches, so routr kept work away from it. If you want it used more, lower the reserve.`);
     }
   }
 

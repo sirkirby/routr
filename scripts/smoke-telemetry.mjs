@@ -10,9 +10,11 @@ import { pendingCount, telemetryRows, telemetryState, telemetryStatus } from "..
 const entries = read(LEDGER_PATH()), rows = telemetryRows(entries, "smoke");
 const lost = {};
 const valid = entries.filter((e) => e && e.advised && e.chose && e.outcome);
+// An extra account (`accounts` in the config) is sent as "other" by design (docs/telemetry.md): not data lost.
+const subscriptions = loadConfig().config.subscriptions, extra = (path, raw) => path === "chose.subscription" && Boolean(subscriptions[raw]?.harness);
 rows.forEach((r, i) => {
   const walk = (o, path, raw) => { for (const [k, v] of Object.entries(o ?? {})) {
-    if (v === "other") (lost[path + k] ??= new Set()).add(String(raw?.[k] ?? "?").slice(0, 40));
+    if (v === "other" && !extra(path + k, raw?.[k])) (lost[path + k] ??= new Set()).add(String(raw?.[k] ?? "?").slice(0, 40));
     else if (v && typeof v === "object") walk(v, `${path}${k}.`, raw?.[k]);
   } };
   const e = valid[i];

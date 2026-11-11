@@ -5,7 +5,7 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { inCore } from "./backends.mjs";
 import { delimiter, join, win32 } from "node:path";
 import { CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
-import { HARNESSES, KINDS, signIn, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
+import { accountOf, HARNESSES, KINDS, signIn, signInWhy, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
 import { signInHint } from "./signin.mjs";
 import { usageReadings } from "./usage-readings.mjs";
 import { failureMessage, ping, secretsFor } from "./systemone.mjs";
@@ -86,9 +86,10 @@ export function nextSteps(r, { platform = process.platform } = {}) {
   if (!r.config.exists) steps.push("Create your config (your defaults for each subscription found): routr setup");
   else if (r.config.problems?.length) steps.push(`Fix your settings: ${r.config.problems.join("; ")}`);
   else if (Object.entries(r.harnesses).some(([n, h]) => h.signed_in && !r.config.subscriptions.includes(n))) steps.push(`Add the harnesses found since the config was written (${Object.entries(r.harnesses).filter(([n, h]) => h.signed_in && !r.config.subscriptions.includes(n)).map(([n]) => n).join(", ")}): routr setup`);
-  for (const n of r.config.subscriptions ?? []) if (!r.config.off?.includes(n) && r.harnesses[n]?.usage_stale) steps.push(r.harnesses[n].usage_stale);
+  for (const n of r.config.subscriptions ?? []) if (!r.config.off?.includes(n) && (r.harnesses[n] ?? r.accounts?.[n])?.usage_stale) steps.push((r.harnesses[n] ?? r.accounts[n]).usage_stale);
   // A subscription the user set up whose harness is signed out gets no work until they sign in again.
   for (const n of r.config.subscriptions ?? []) if (!r.config.off?.includes(n) && r.harnesses[n]?.installed && !r.harnesses[n].signed_in) steps.push(`${HARNESSES[n].label} is set up in routr but gets no work: ${r.harnesses[n].sign_in}`);
+  for (const [n, a] of Object.entries(r.accounts ?? {})) if (!a.signed_in) steps.push(`${n} is set up in routr but gets no work: ${a.sign_in}`);
   if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push(`Install and log in to at least one harness: ${KINDS.slice(0, -1).map((n) => HARNESSES[n].installAs).join(", ")}, or ${HARNESSES[KINDS.at(-1)].installAs}`);
   // A harness whose reader answered with no windows for a reason routr cannot tell (its `usage.unexplainedNoWindows`:
   // Claude's /usage, or its statusline after a prompt): a seat with no quota, or a plan routr has not seen send them.
@@ -131,6 +132,9 @@ export async function inspect({ configPath, quiet } = {}) {
   const step = async (label, p) => { try { return await p; } finally { if (tty) process.stderr.write(`  checked ${label}\n`); } };
   const path = configPath ?? CONFIG_PATH();
   const { config, notes } = loadConfig(path); // read once: the usage step and the config report use the same reading
+  // An extra account of a harness found here, turned on, is asked and read as its harness is, with its folder: its
+  // harness signed in says nothing of it.
+  const accounts = enabledSubscriptions(config).filter((n) => found.includes(config.subscriptions[n].harness)), keys = [...found, ...accounts];
   const targets = decisionTargets(config);
   if (tty) process.stderr.write(`Checking ${["the decision models", ...found.map((n) => `\`${HARNESSES[n].executable}\``)].join(" and ")}${found.length ? " (a harness can take up to 20 s to answer)" : ""}…\n`);
   const keyCheck = async () => {
@@ -149,15 +153,15 @@ export async function inspect({ configPath, quiet } = {}) {
   // Installed is not enough: each harness is asked whether it is signed in, afresh, before anything else is asked of it.
   // One that is not gets no model list and no usage read, since either could open its sign-in in the browser.
   // Each answer is `{ state, billing }`: its billing is today's, read from the same answer.
-  const answersP = Promise.all(found.map((n) => step(`${n}'s sign-in`, signIn(n, { fresh: true })))).then((s) => Object.fromEntries(found.map((n, i) => [n, s[i]])));
-  const statesP = answersP.then((a) => Object.fromEntries(found.map((n) => [n, a[n].state])));
+  const answersP = Promise.all(keys.map((n) => step(`${n}'s sign-in`, signIn(accountOf(n, config) ?? n, { fresh: true })))).then((s) => Object.fromEntries(keys.map((n, i) => [n, s[i]])));
+  const statesP = answersP.then((a) => Object.fromEntries(keys.map((n) => [n, a[n].state])));
   // No release lookup here: doctor is an advice command, and a command never makes the updater's network call. Whether a
   // newer release is waiting comes from what the daily job saw (autoUpdateStatus, below); `routr update --check` asks.
   const [usage, , states, ...models] = await Promise.all([
     // Every installed harness is shown, but only a configured one may start a background refresh (Cursor's reading),
     // with this doctor's --config. Its sign-in answers were just asked afresh, so their billing is today's: no second
     // status check.
-    step("usage", answersP.then((signIns) => usageReadings({ configPath: configPath ?? null }).live(found, { signIns, mayRefresh: enabledSubscriptions(config) }))
+    step("usage", answersP.then((signIns) => usageReadings({ configPath: configPath ?? null, config }).live(keys, { signIns, mayRefresh: enabledSubscriptions(config) }))
       .then((served) => served.map((x) => x.row))), // a turned-off one is never refreshed
     step("the decision models", keyCheck()),
     statesP,
@@ -166,6 +170,8 @@ export async function inspect({ configPath, quiet } = {}) {
   // How a reading reads in one line: a number, a billed seat's note, or why there is none.
   const said = (u) => (u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left (${u.source}, ${u.ageSec}s old)`
     : u.class === "metered" ? `${u.note} (${u.source})` : `none: ${u.note} (${u.source})`);
+  // A reader that has failed for over a day, said as a step (usage-failure.mjs).
+  const stale = (n, u) => { const [s] = staleReaders([u], { subscriptions: config.subscriptions }); return s ? { usage_stale: `${s.warning}. Try reading ${n}'s usage again: routr usage ${n}` } : {}; };
   for (const n of KINDS) {
     const command = HARNESSES[n].executable;
     if (!found.includes(n)) { r.harnesses[n] = { command, installed: false, off_path: offPath(command), usage: null }; continue; }
@@ -174,9 +180,12 @@ export async function inspect({ configPath, quiet } = {}) {
     r.harnesses[n] = { command, installed: true, off_path: null, signed_in: signed, ...(signed ? {} : { sign_in: signInHint(HARNESSES[n], states[n]) }),
       usage: said(u), usage_source: u.source, usage_class: u.class, usage_note: u.note, ...(u.reason ? { usage_reason: u.reason } : {}),
       // The billing its own sign-in status stated, and where it was read: shown as the usage line (said, above).
-      ...(u.billing ? { usage_billing: u.billing } : {}),
-      // A reader that has failed for over a day, said as a step (usage-failure.mjs).
-      ...(signed && staleReaders([u], { subscriptions: config.subscriptions }).length ? { usage_stale: `${staleReaders([u], { subscriptions: config.subscriptions })[0].warning}. Try reading ${n}'s usage again: routr usage ${n}` } : {}) };
+      ...(u.billing ? { usage_billing: u.billing } : {}), ...(signed ? stale(n, u) : {}) };
+  }
+  // An extra account's sign-in and usage, as its harness's above: `sign_in` names its folder.
+  for (const n of accounts) {
+    const u = usage.find((x) => x.pool === n), signed = states[n] === "yes";
+    (r.accounts ??= {})[n] = { harness: config.subscriptions[n].harness, signed_in: signed, ...(signed ? {} : { sign_in: signInWhy(accountOf(n, config), states[n]) }), usage: said(u), ...(signed ? stale(n, u) : {}) };
   }
   const lists = Object.fromEntries(found.map((n, i) => [n, models[i]]));
   for (const n of found) r.harnesses[n].models = lists[n];
@@ -213,6 +222,8 @@ export async function inspect({ configPath, quiet } = {}) {
   }
   // The one moment a default needs the user's attention: the harness no longer offers it.
   for (const [n, sub] of Object.entries(config.subscriptions)) {
+    // An extra account takes its harness's settings, so its harness's line is the one about them.
+    if (sub.harness) continue;
     if (!sub.default_model) info.push(`subscriptions.${n}: no default_model set; the orchestrator will pick from the harness's live list`);
     else if (lists[n]?.length && !lists[n].includes(sub.default_model) && !HARNESSES[n]?.openList) problems.push(`subscriptions.${n}.default_model "${sub.default_model}" is not in the harness's current model list: routr setup --model ${n}=<id>`);
   }
@@ -288,6 +299,7 @@ export function render(r, { platform = process.platform } = {}) {
     const models = h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${more}` : "";
     line(off ? "absent" : h.installed ? (h.signed_in ? "ok" : r.config.subscriptions.includes(n) ? "need" : "absent") : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${where}${models}`);
   }
+  for (const [n, a] of Object.entries(r.accounts ?? {})) line(a.signed_in ? "ok" : "need", `${n} ${a.harness} account${a.signed_in ? ` · usage ${a.usage}` : `, but ${a.sign_in.replace(/^`[^`]+` /, "it ")}. routr leaves it out until then`}`);
   for (const k of r.decision) {
     const asked = k.asked && k.model !== k.asked ? `, asked as ${k.asked}` : "";
     const measured = k.measured === false ? " · not a model routr has measured (ROUTR_DECISION_MODEL)" : k.unversioned ? " · Cloudflare does not version this name: docs/evidence.md says what was measured" : "";

@@ -116,6 +116,10 @@ request to judge missing readings applies only to true fallback or unavailable u
 - `doctor` JSON has `core`: `path`, where `hc` was found on PATH or null, and `inside_terminal`, true when
   `HC_TERMINAL_ID` is set and `HERDR_ENV` is not. Neither says the Herdr app is running. Herdr's skill is asked for
   when herdr is installed and either the lead is in a herdr session or `hc` was not found.
+- `doctor` JSON has `accounts` when the config has an extra account, turned on, of a harness found here: by name,
+  `harness`, `signed_in`, `sign_in` when not (naming its folder when it is signed out), `usage` (its reading alone:
+  the settings it takes are said on its harness's) and `usage_stale`, each checked afresh with its folder.
+  `next_steps` gives each one signed out its own step.
 - `key set <provider>` keeps the existing owner-only key storage and test output (`ok`, `provider`, `file`, `works`,
   `model`, `ms`, `error` as applicable). For a provider outside the configured list, `note` names that fact and the
   `routr setup --decision ...` command that appends it while retaining existing choices. It changes no settings.
@@ -409,7 +413,8 @@ Own fields:
 - `dispatch` only: `subscriptions` `{ most_room, share_due?, candidates: { normal, fallback }, ranked, excluded, note }`. A ranked
   row: `subscription`, `class` (`included`, `metered`, `unknown`), `use` (`normal` when unset), `reserve`, `hardest_work`, `your_default`?, `usable`, `headroom`, `windows`? (each
   `{ window, used_pct, resets_in_h, left, reserve_now, usable }`), `usage` (`live`, `given`, `unknown`, `metered`),
-  `age_sec`, `note`?, `share`?. An excluded row: `{ subscription, why }`.
+  `age_sec`, `note`?, `share`?. An excluded row: `{ subscription, why }`. A `subscription` may be an extra account's
+  name, `<harness>-<name>` (`accounts` in the config).
 - The launch share: normal metered rows qualify with `usable: null` or `usable > 0`. When at least two qualify and one has a
   `share` setting (one without counts as 1), each of them gets `share` `{ weight, target, used_pct, left, launches, of }`
   and `subscriptions` gets `share_due`. Over the last 7 days of routr's own launches on those accounts (`of` in all,
@@ -461,6 +466,14 @@ Inputs:
 - Required: `--kind`, `--name`; `--model` (real and dry run); `--advice <file>` whenever a task is given (matching
   `dispatch` advice on that exact task; `subagent` advice ranks no accounts and is refused). Refused with `error` before any herdr call when missing or unusable; real launches
   use `state: "failed"`, and dry runs follow the `ok` rule below while still planning.
+- `--kind` also takes an extra account's name (`claude-work`, from `accounts` in the config): the worker starts on
+  that harness with the account's folder in the harness's own variable, and `kind` in the answer is the harness.
+  `start.env` shows that variable as `"<forwarded>"`, or as `null` where it is removed instead (Claude Code's
+  `~/.claude`). Refused with `error`: `--pane` (an existing pane keeps its own shell's environment; the rerun in
+  `next` for a pane this launch split carries `--continue`, routr's own, which is refused without `--pane` and an
+  extra account). An account the config left out is no `--kind`. routr does not check that the pane is the one it
+  split: `--continue` typed by hand on another pane is not refused, and that worker runs on what that pane's shell
+  names.
 - Used when given: `--cwd` (default `.`), `--worktree <branch>`, `--base <ref>` and `--copy <path>` (with `--worktree`),
   `--pane <id>`, `--direction`, `--task` or `--task-file`, `--rules-file` (with a task), `--effort`, `--timeout`,
   `--subagent-model <id>`, `--subagent-effort <level>`, `--dry-run`.
@@ -693,9 +706,9 @@ sign-in answers a harness check keeps, and headless workers' run folders.)
 
 Inputs:
 
-- Required: advice (`--advice <file>`, or JSON on stdin), `--subscription`, `--model`, `--effort`, `--verdict`,
-  `--check`. With `--run-id`, the same advice the run was recorded with. Refused (with `error`) when missing,
-  unreadable, or not matching `--task-file`.
+- Required: advice (`--advice <file>`, or JSON on stdin), `--subscription` (a harness's name or an extra account's,
+  as launch's `next` gives it), `--model`, `--effort`, `--verdict`, `--check`. With `--run-id`, the same advice the run
+  was recorded with. Refused (with `error`) when missing, unreadable, or not matching `--task-file`.
 - Used when given: `--task-file` (compared with the advice before anything is read or written), `--level` (default:
   the advised level; the guides ask for it always), `--report`, `--subagent` (repeatable: `<subtask> → <level> → <model> → <effort>`, the effort optional and kept in the local ledger only), `--seconds`, `--attempts`,
   `--cause` (repeatable), `--run-id`, `--launch`, `--project`, `--note`, `--ledger`.
@@ -1033,7 +1046,8 @@ reassessment of work.
 Inputs:
 
 - Required: none.
-- Used when given: one subscription name (`claude`, `codex`, `agy`, `cursor`, `kiro`); `--level <basic|standard|strong>`
+- Used when given: one subscription name (`claude`, `codex`, `agy`, `cursor`, `kiro`, or an extra account's name,
+  `<harness>-<name>`); `--level <basic|standard|strong>`
   (once, unnamed only, without `--background`); `--config`; `--headroom` (repeatable); `--json` (accepted, changes
   nothing); `--background` (routr's own refresh job, which no one reads, unnamed) with `--claim <token>` (the claim its
   starter marked on each subscription it reads: without it, or once a newer claim has taken a subscription, the job
@@ -1048,7 +1062,7 @@ Inputs:
 |---|---|
 | no name, or `--level`: the view made | true, also when some readings failed (each has a `usage` entry in `unavailable`; ranked `usage` is `live`/`given` with a number, `metered` or `unknown` without one) or a subscription is excluded |
 | the ranking itself failed | false, no `error`; `unavailable` holds routr's `internal_error` entry |
-| named `claude`, `codex` or `agy` | as no name, for that one subscription: these are read on every call, and naming one narrows the view. A failed read is `ok: true` with its entry; a signed-out one is `ok: true` with it in `excluded`. |
+| named `claude`, `codex`, `agy` or an extra account | as no name, for that one subscription: these are read on every call, and naming one narrows the view. A failed read is `ok: true` with its entry; a signed-out one is `ok: true` with it in `excluded`. |
 | named `cursor` or `kiro`: a fresh reading taken and kept | true |
 | named `cursor` or `kiro`: the reading failed | false, no `error`; a `usage` entry in `unavailable` (with the last good reading `kept`, when there is one) and a `next` step to read it by hand |
 | named `cursor` or `kiro`: not signed in | false, no `error`; it is in `subscriptions.excluded` with its `why` (the sign-in command), and nothing is read |
@@ -1071,7 +1085,7 @@ for plain usage, `--level` and a named subscription alike:
 - no subscription is configured: tell the user routr is not set up (`routr setup`), and ask which subscription to use
   meanwhile;
 - a reading failed, live or cached (a `usage` entry in `unavailable`), for a harness with a by-hand way: read it by hand
-  and pass `--headroom <name>=<share left>` (named `cursor` and `kiro` too);
+  and pass `--headroom <name>=<share left>` (named `cursor` and `kiro` too; an extra account's step names its folder);
 - the ranking failed (routr's `internal_error` entry): read capacity yourself before choosing an account;
 - a reader that stopped working: try it again with `routr usage <name>` (run);
 - named `kiro`, when Kiro kept an empty usage session: remove it from Kiro's saved sessions;

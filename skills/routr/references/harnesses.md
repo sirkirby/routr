@@ -21,6 +21,20 @@ choosing a model, when a launch does something you did not expect, or when you a
 dry run still plans the pane launch: the headless command is in that harness's "headless" section below, and a real
 launch shows it in `ran`.
 
+## Extra accounts: the folder a harness signs in from
+
+Extra accounts are configured in `accounts: { "<name>": "<folder>", ... }` under their harness's entry. routr hands
+the folder on in the one variable the harness documents for it, to every process it starts for that account (status
+check, usage read, worker), and uses no other. A harness with no documented variable has one account.
+
+| Harness | Variable, and its default | Source | What was seen |
+|---|---|---|---|
+| Claude Code | `CLAUDE_CONFIG_DIR`, `~/.claude` | Its docs: "If you set `CLAUDE_CONFIG_DIR`, every `~/.claude` path on this page lives under that directory instead" (https://code.claude.com/docs/en/claude-directory, read 2026-11-10) | Measured 2026-11-10, Claude Code 2.1.322, macOS: signed in to `~/.claude`, `claude auth status` said `"loggedIn": true` with the variable unset and `"loggedIn": false` with it set to `~/.claude` (with and without a trailing slash). So for that folder routr removes the variable instead of setting it. The same day, version and system, two signed-in folders (`~/.claude` with the variable unset, and a second folder with it set) each gave its own `/usage` reading and its own signed-in worker, headless and in a herdr pane. Set empty instead (2026-11-11, same version and system), `claude auth status` said `"configDirectory": ""` and `"projectsDirectory": "projects"`: Claude Code would keep its files under the working folder, so a pane's shell is typed a line that removes the variable. Linux and Windows were not measured |
+| Codex | `CODEX_HOME`, `~/.codex` | Its docs: "Codex stores its local state under `CODEX_HOME` (defaults to `~/.codex`)", with `auth.json` there or in the OS keyring (https://developers.openai.com/codex/config-advanced, read 2026-11-10) | Not measured with two accounts. The session-log fallback reads `<folder>/sessions` |
+| Cursor | none | `CURSOR_CONFIG_DIR` holds `cli-config.json`, not the sign-in: launch runs Cursor on a private one and it stays signed in (measured, above) | One account |
+| Antigravity | none | none known; not looked for | One account |
+| Kiro | none | none known; not looked for | One account |
+
 ## Is it signed in? (measured 2026-09-26, signed in and signed out)
 
 routr asks each harness before anything else, and one that is not signed in gets no work (dispatch, launch) and cannot

@@ -101,7 +101,7 @@ export const COMMANDS = {
     description: `start a worker with matching task advice: in a herdr pane; in a herdr-core terminal (the Herdr app), the harness itself in a tab of its own, which you follow with hc; or anywhere else a headless ${list(labels(KINDS), "or")} worker that \`routr wait\` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup`,
     flags: [
       { name: "--lead-session", arg: "<id>", description: "your known session id when routr cannot read it from the harness environment; UUIDv4, UUIDv7 or 16–64 lowercase hex characters; malformed values are ignored with a fixed warning; never invent one", required: false },
-      { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
+      { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")}), or an extra account of one from your config, as <harness>-<name>`, required: true },
       { name: "--name", arg: "<name>", description: `worker agent name (${NAME_RULE})`, required: true },
       { name: "--model", arg: "<id>", description: "model id; model, effort and fallback values refuse PowerShell quote characters (ASCII quotes or U+2018–U+201E) on every path", required: true },
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
@@ -111,6 +111,7 @@ export const COMMANDS = {
       { name: "--rules-file", arg: "<path>", description: "your process rules for the worker (what it may do, how to report, git steps): added after the task, and never read by routr, which judges only the task", required: false },
       { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch refuses unreadable, malformed, nonmatching or `routr subagent` advice; dry runs refuse with ok:false and still plan", required: "required with a task" },
       { name: "--pane", arg: "<id>", description: "existing herdr pane to run in: at a shell prompt, or with an idle agent of --kind already running in --cwd (it is adopted, keeps its model and effort, and is sent the task; one not idle yet is never waited on: run the launch again once it is)", required: false },
+      { name: "--continue", arg: null, description: "routr's own, in the rerun `next` gives for a pane this launch split on an extra account; refused without --pane and an extra account", required: false },
       { name: "--worktree", arg: "<branch>", description: "give the worker its own git worktree on a new branch (the rule for workers): in herdr, opened as a workspace nested under the repo; outside herdr, in the Herdr app too, made by routr under ~/.local/share/routr/worktrees", required: false },
       { name: "--base", arg: "<ref>", description: "the commit the worktree's new branch starts from: a branch, tag, or commit id (stacked work, a reviewer of one commit; with --worktree)", required: false, default: "the checkout's HEAD" },
       { name: "--copy", arg: "<path>", description: "copy an untracked file or folder from the repo into the worktree (repeatable; with --worktree)", required: false, repeatable: true },
@@ -349,7 +350,7 @@ export const COMMANDS = {
     description: "append what you chose and how it turned out to the ledger; next integrates and cleans up only for done with check pass, otherwise sends back or escalates, and always includes a template to revise this run with absolute advice, task and ledger paths",
     flags: [
       { name: "--task-file", arg: "<path>", description: "compare this worker’s task with the advice before appending; omit only for inline tasks, or revisions when the original file is gone (say so in --note)", required: false },
-      { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")})`, required: true },
+      { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")}, or an extra account's name, <harness>-<name>)`, required: true },
       { name: "--model", arg: "<name>", description: "model chosen", required: true },
       { name: "--effort", arg: "<level>", description: `reasoning effort chosen. On ${list(labels(TAKES_EFFORT, "shortLabel"), "and")}, "default" is recorded as your configured default_effort; on ${list(labels(KINDS.filter((n) => !TAKES_EFFORT.includes(n)), "shortLabel"), "and")}, "default" is recorded as the effort word at the end of the model id, or just before a last qualifier (grok-4.7-high, grok-4.6-high-fast). Otherwise it is kept as written; chose.effort_from records which`, required: true },
       { name: "--verdict", arg: "<done|partial|blocked>", description: "worker outcome verdict", required: true },

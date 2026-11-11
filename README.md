@@ -214,6 +214,13 @@ goes stale when models change.
   work; `=fallback` keeps it for when normal accounts cannot suitably take the task. This is independent of billing.
   Without `use`, every account is normal; readings never change this choice.
   `billing` names the kind when the harness cannot show it.
+- `accounts`, under a harness's entry: more accounts of that harness, each a name and the folder it is signed in
+  from, for example `"claude": { "hardest_work": "strong", "reserve": 0.25, "accounts": { "work": "~/.claude-work" } }`.
+  Each is a subscription of its own (`claude-work`) with the harness's settings, its own sign-in and its own usage
+  reading, launched with `--kind claude-work`; `claude` itself stays the account your environment names. Claude Code
+  and Codex only. Sign each folder in first (`CLAUDE_CONFIG_DIR=<folder> claude auth login`;
+  `CODEX_HOME=<folder> codex login`). Measured with two Claude Code accounts on macOS; a second Codex account has not
+  been measured.
 - `prefer`: your standing preference per kind of work, for example `"review": "strong"`.
 
 Usage is read live for Claude Code (from its own `/usage`, with your hooks and MCP servers off for that read; it

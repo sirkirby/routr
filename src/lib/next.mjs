@@ -21,7 +21,7 @@ export const templateCommand = (argv) => argv.map((w, i) => /^<[A-Za-z0-9_| -]+>
 export function recordNext(o, { adopted = false, undelivered = false, launchId = null } = {}) {
   const unknown = adopted || (o.dryRun && o.pane) || !o.model;
   const argv = ["routr", "record", "--advice", o.advice, ...(launchId ? ["--launch", launchId] : []),
-    ...(o["task-file"] ? ["--task-file", o["task-file"]] : []), "--subscription", o.kind,
+    ...(o["task-file"] ? ["--task-file", o["task-file"]] : []), "--subscription", o.subscription ?? o.kind,
     "--model", unknown ? "<model>" : o.model,
     "--effort", unknown ? "<effort>" : o.effort ?? "default",
     "--level", "<level>", "--verdict", undelivered ? "blocked" : "<done|partial|blocked>", "--check", undelivered ? "none" : "<pass|fail|none>"];

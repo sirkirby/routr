@@ -4,7 +4,7 @@
 import { chmodSync, closeSync, existsSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 // The user's home, read when asked: HOME (USERPROFILE on Windows), as Node's os.homedir() reads it. Bun's os.homedir()
 // ignores a HOME changed while it runs (measured 2026-09-26, Bun 1.3.13), so a test's scratch home reached only the CLIs
@@ -41,6 +41,14 @@ export const CLAUDE_SNAPSHOT = () => join(CACHE_DIR(), "claude-usage.json");
 // resolved as written.
 export const realPath = (p) => realpathSync.native(p);
 export const realOr = (p) => { try { return realpathSync.native(p); } catch { return resolve(p); } };
+// The folder an extra account signs in from, as `accounts` in the config names it: a full path, or one under the home
+// folder (`~/…`), made absolute and normalised; null for anything else, or a control character, as worker-env's config
+// locations refuse. Here, not there: `statusline` reads it.
+export const configDirOf = (v) => {
+  if (typeof v !== "string" || !/^[^\0-\x1f\x7f]{1,4096}$/.test(v)) return null;
+  const p = /^~[\\/]/.test(v) ? join(home(), v.slice(2)) : v;
+  return isAbsolute(p) ? resolve(p) : null;
+};
 
 export function ensureParent(file, { mkdir = mkdirSync } = {}) {
   const dir = dirname(resolve(file));

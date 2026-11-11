@@ -4,7 +4,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { LEVELS } from "./questions.mjs";
 import { HARDEST, NO_CONFIG, RESERVE } from "./wording.mjs";
-import { CONFIG_DIR } from "./state-files.mjs";
+import { CONFIG_DIR, configDirOf } from "./state-files.mjs";
+import { HARNESSES } from "./harnesses.mjs";
+import { SUBSCRIPTION } from "./launch-history.mjs";
 import { DEFAULT_PROVIDER, decisionSettings } from "./providers.mjs";
 import { otelSwitch } from "./otel-settings.mjs";
 
@@ -23,6 +25,8 @@ export const DEFAULTS = {
 // `billing` fills a gap when the harness reports no capacity; a measured cap always counts.
 // `use` is the user's choice, independent of any reading; unset means normal.
 // `enabled: false` turns a subscription off without forgetting its settings: routr gives it no work until it is on again.
+// `accounts` lists extra accounts under a harness's own entry (accounts, below). The harness's own entry is the account
+// the environment names, as before there were any.
 export const UPDATE_CHANNELS = ["stable", "beta"];
 export const SUB_DEFAULTS = { enabled: true, hardest_work: "strong", reserve: 0, default_model: null, default_effort: null, billing: null, use: null, share: null };
 const BILLING = ["included", "metered"];
@@ -37,6 +41,27 @@ function launchShare(v, name, notes) {
   if (isShare(v)) return v;
   notes.push(warning("config_choice", `subscriptions.${name}.share: ${JSON.stringify(v)} is not a whole number from 1 to ${SHARE_MAX}, so it is left out`));
   return SUB_DEFAULTS.share;
+}
+
+// The extra accounts under a harness's own entry (subscriptions.<harness>.accounts: <name>: <folder>): each one's
+// harness and folder, by its name. One routr cannot use is left out, with a note saying why.
+function accounts(subs, notes) {
+  const out = {};
+  const leave = (target, why) => notes.push(warning("config_choice", `${target}: ${why}, so it is left out`));
+  for (const [h, s] of Object.entries(subs)) {
+    if (s?.accounts == null) continue;
+    if (typeof s.accounts !== "object" || Array.isArray(s.accounts)) { leave(`subscriptions.${h}.accounts`, "accounts must be an object of <name>: <folder>"); continue; }
+    for (const [short, folder] of Object.entries(s.accounts)) {
+      const name = `${h}-${short}`, target = `subscriptions.${h}.accounts.${short}`, dir = configDirOf(folder);
+      if (!Object.hasOwn(HARNESSES, h)) leave(target, `harness ${JSON.stringify(h)} is not one of ${Object.keys(HARNESSES).join(", ")}`);
+      else if (!HARNESSES[h].folder) leave(target, `${HARNESSES[h].label} has no folder setting routr knows`);
+      else if (!SUBSCRIPTION.test(name)) leave(target, `${name} is not a name routr takes: a-z, 0-9, - and _, 32 characters at most`);
+      else if (Object.hasOwn(subs, name)) leave(target, `${name} is already used by another subscription`);
+      else if (!dir) leave(target, `folder ${JSON.stringify(folder)} is not a full path or one under ~/`);
+      else out[name] = { harness: h, config_dir: dir };
+    }
+  }
+  return out;
 }
 
 // Never throws: a missing or broken config means defaults plus a note, so the router still answers.
@@ -91,6 +116,7 @@ export function loadConfig(path = CONFIG_PATH()) {
       share: launchShare(s?.share, name, notes),
     };
   }
+  for (const [name, rec] of Object.entries(accounts(raw.subscriptions ?? {}, notes))) config.subscriptions[name] = { ...config.subscriptions[rec.harness], ...rec };
   return { config, notes };
 }
 

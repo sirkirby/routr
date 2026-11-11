@@ -5,6 +5,8 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- routr can run more than one Claude Code or Codex account: list each extra one under its harness in your config (`accounts`), and it is checked, read, ranked and launched as its own subscription, `<harness>-<name>`. (#NNN)
+
 ## v0.14.1 — 2026-11-11
 
 [Full notes](docs/releases/v0.14.1.md)

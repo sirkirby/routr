@@ -69,9 +69,10 @@ function outcomesOf(launches, rows, now, inScope) {
 }
 
 // What is kept for `names` (usage-readings.mjs), as rows: no harness is called. `configPath`, the `--config` given, goes
-// to the background refresh, so it reads the subscriptions this config names.
-const keptUsage = (names, { configPath }) => {
-  const { served, refreshing } = usageReadings({ configPath }).kept(names);
+// to the background refresh, so it reads the subscriptions this config names. `config`: the caller's, for its extra
+// accounts (usage-readings.mjs).
+const keptUsage = (names, { config, configPath }) => {
+  const { served, refreshing } = usageReadings({ configPath, config }).kept(names);
   return { rows: served.map((s) => s.row), refreshing };
 };
 // `usage` is keptUsage's seam; `ledger`, `history` and `now` are tests'.
@@ -86,7 +87,7 @@ export async function boardCommand(words, config, { usage = keptUsage, ledger = 
   // When ranking fails, board says so in `unavailable` and leaves `next` alone.
   try {
     const names = Object.keys(config.subscriptions ?? {}).filter((n) => config.subscriptions[n]?.enabled !== false);
-    const { rows } = usage(names, { configPath: configPath ? resolve(configPath) : null });
+    const { rows } = usage(names, { config, configPath: configPath ? resolve(configPath) : null });
     const capacity = capacityView(out.level, rows, config, recentLaunches());
     out.subscriptions = capacity.subscriptions;
     out.unavailable.push(...capacity.unavailable);

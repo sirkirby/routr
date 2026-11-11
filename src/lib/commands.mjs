@@ -48,12 +48,13 @@ export function parseHeadroom(values) {
 // dispatch the subscriptions ranked by usage, read while it answers. An unreachable model still gets an answer: the
 // user's fallback.
 // `read(names, given, { observe })`: each subscription's usage, Served or rows (a test's); by default the usage-readings
-// module's live read, whose background refresh carries the caller's --config.
-const liveRead = (otel) => (names, given, o) => usageReadings({ configPath: otel?.configPath ?? null }).live(names, { given, ...o });
+// module's live read, whose background refresh carries the caller's --config, and which reads the caller's extra
+// accounts (`config`).
+const liveRead = (otel, config) => (names, given, o) => usageReadings({ configPath: otel?.configPath ?? null, config }).live(names, { given, ...o });
 // Rows to rank; anything but a list is left for ranking to refuse (internal_error), as a malformed answer always was.
 const rowsOf = (xs) => (Array.isArray(xs) ? xs.map((x) => servedRow(x).row) : xs);
 async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read, warnings = [], otel } = {}) {
-  read ??= liveRead(otel);
+  read ??= liveRead(otel, config);
   const callWarnings = [...configNotes, ...warnings];
   if (typeof brief !== "string" || !brief.trim()) return refusal("no advice", "empty brief", callWarnings, [doNext("Supply the exact task", `routr ${mode} --task-file <path>`)]);
   const out = { ok: true, warnings: callWarnings, next: [], id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length, unavailable: [] };
@@ -219,7 +220,7 @@ const hasCandidates = (r) => r && [...r.candidates.normal, ...r.candidates.fallb
 // `readings`: the usage-readings module (its named read and background job), reading `sources`; `read` as for
 // dispatch, with `mayRefresh`.
 async function usageCommandBody(words, config, given = {}, { sources = SOURCES, readings, read, warnings = [], otel } = {}) {
-  readings ??= usageReadings({ configPath: otel?.configPath ?? null, readers: usageReaders(sources) });
+  readings ??= usageReadings({ configPath: otel?.configPath ?? null, readers: usageReaders(sources), config });
   read ??= (names, g, o) => readings.live(names, { given: g, ...o });
   words = [...words];
   const at = words.indexOf("--level"), explicit = at !== -1;

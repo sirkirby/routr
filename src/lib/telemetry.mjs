@@ -98,7 +98,7 @@ export function installId(ledger, { create = true } = {}) { const s = state(ledg
 // admits a path, URL, email, or token: no "/", "~", "@", "_" or spaces, and no long unbroken run of letters and digits.
 const LEVELS3 = ["basic", "standard", "strong"];
 const WORK_TYPES = Object.keys(questions.work_type.criteria);
-const SUBSCRIPTIONS = Object.keys(HARNESSES);                            // routr keys a subscription by its harness
+const SUBSCRIPTIONS = Object.keys(HARNESSES);                            // a harness's name; an extra account's is "other"
 const jevVersion = shaped(/^jev-\d+(\.\d+){0,3}$/);
 // A decision model is one routr offers (providers.mjs), or a Jev version the maintainers tried; anything else is "other".
 const decisionModel = (v) => (v == null || v === "" ? null : KNOWN_MODELS.includes(v) ? v : jevVersion(v));

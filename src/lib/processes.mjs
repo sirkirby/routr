@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { envGet, harnessEnv } from "./worker-env.mjs";
+import { accountEnv, envGet, harnessEnv } from "./worker-env.mjs";
 
 // Bun's compiled module lives in its virtual filesystem (1.4.3: /$bunfs on POSIX, B:/~BUN on Windows).
 // The importing script is not routr: smoke:otel's in-process launch exposed argv[1] re-entry, 2026-10-25.
@@ -24,12 +24,16 @@ export const standalone = () => COMPILED;
 export const startOptions = ({ visible = false, ...opts } = {}) => ({ ...opts, windowsHide: !visible });
 // Start a process with those defaults: `start` as node's spawn, `startSync` as spawnSync, the command resolved on
 // Windows as below. `via` and `platform` are test seams.
+// `account`: an extra account's variables, over the environment given (the worker-environment module's accountEnv).
 const prepare = (cmd, args = [], opts = {}, platform = process.platform) => {
   if (platform !== "win32") return [cmd, args, startOptions(opts)];
   const w = windowsCommand(cmd, args, { env: opts.env ?? process.env, cwd: opts.cwd ?? process.cwd() });
   return [w.cmd, w.args, startOptions(w.verbatim ? { ...opts, windowsVerbatimArguments: true } : opts)];
 };
-export const start = (cmd, args, opts, { via = spawn, platform } = {}) => via(...prepare(cmd, args, opts, platform));
+export const start = (cmd, args, opts, { via = spawn, platform, account } = {}) => {
+  if (account) opts = { ...opts, env: accountEnv(opts?.env ?? process.env, account, { platform }) };
+  return via(...prepare(cmd, args, opts, platform));
+};
 export const startSync = (cmd, args, opts, { via = spawnSync, platform } = {}) => via(...prepare(cmd, args, opts, platform));
 
 // Open one file in the default browser. Direct, never through a shell: `open` on macOS, `xdg-open` on Linux,
@@ -238,12 +242,13 @@ export const selfCommand = (args) => (!standalone() && !ROUTR_ENTRY ? null : [pr
 // throw.
 // `status: true` resolves the exit code instead, for a command whose only answer is on stderr. `exitZero: true` resolves
 // null for a command that printed and then exited non-zero: what it printed is not taken as its answer.
-export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, status = false, exitZero = false } = {}) {
+// `account`: as start takes it.
+export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, status = false, exitZero = false, account } = {}) {
   return new Promise((resolve) => {
     let out = "", done = false, exited = false;
     const finish = (v) => { if (done) return; done = true; clearTimeout(timer); if (!exited) stop(child); resolve(v); };
     let child;
-    try { child = start(cmd, args, { stdio: ["pipe", "pipe", "ignore"], env: harnessEnv(), ...(cwd ? { cwd } : {}) }); } catch { return resolve(null); }
+    try { child = start(cmd, args, { stdio: ["pipe", "pipe", "ignore"], env: harnessEnv(), ...(cwd ? { cwd } : {}) }, { account }); } catch { return resolve(null); }
     const timer = setTimeout(() => finish(null), timeoutMs);
     child.on("error", () => finish(null));
     child.on("exit", () => { exited = true; });
@@ -257,11 +262,12 @@ export function run(cmd, args, { input, timeoutMs = 8000, until, cwd, status = f
 // harness's status check, which answers on either stream (measured 2026-09-26: Codex on stderr, Kiro on stdout,
 // Antigravity and Cursor on both). Resolves null when it does not answer in time or cannot start; never throws.
 // `separate: true` keeps stderr out of `out`, in `err`: for output that is parsed (cleanup's `git status -z`).
-export function probe(cmd, args, { timeoutMs = 15000, cwd, separate = false } = {}) {
+// `account`: as start takes it.
+export function probe(cmd, args, { timeoutMs = 15000, cwd, separate = false, account } = {}) {
   return new Promise((resolve) => {
     let out = "", err = "", done = false, exited = false, child;
     const finish = (v) => { if (done) return; done = true; clearTimeout(timer); if (!exited) stop(child); resolve(v); };
-    try { child = start(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env: harnessEnv(), ...(cwd ? { cwd } : {}) }); } catch { return resolve(null); }
+    try { child = start(cmd, args, { stdio: ["ignore", "pipe", "pipe"], env: harnessEnv(), ...(cwd ? { cwd } : {}) }, { account }); } catch { return resolve(null); }
     const timer = setTimeout(() => finish(null), timeoutMs);
     child.on("error", () => finish(null));
     child.on("exit", () => { exited = true; });

@@ -34,7 +34,7 @@ export async function refuseSettings(o, out, { settings, ready, checkListed = as
   const loaded = settings(), config = configOf(loaded);
   out.warnings.push(...(loaded.notes ?? []));
   if (config.subscriptions[o.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[o.kind].label, o.kind));
-  const signedOut = await ready(o.kind);
+  const signedOut = await ready(o.account ?? o.kind);
   if (signedOut) throw new Error(`${HARNESSES[o.kind].label} cannot take work: ${signedOut}`);
   await checkListed();
   return config;

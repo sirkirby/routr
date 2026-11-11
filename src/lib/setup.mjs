@@ -280,8 +280,10 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     for (const [n, s] of Object.entries(old?.subscriptions ?? {})) if (config.subscriptions[n]) {
       if (s?.enabled === false) config.subscriptions[n].enabled = false;
       // A rebuild must not silently change where the person permits routine spending.
-      for (const k of ["use", "billing", "share"]) if (s?.[k] !== undefined) config.subscriptions[n][k] = s[k];
+      for (const k of ["use", "billing", "share", "accounts"]) if (s?.[k] !== undefined) config.subscriptions[n][k] = s[k];
     }
+    // Nor drop the extra accounts written under a harness this rebuild did not find: its entry stays as it was.
+    for (const [n, s] of Object.entries(old?.subscriptions ?? {})) if (!config.subscriptions[n] && s?.accounts != null) config.subscriptions[n] = s;
   }
   else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models).subscriptions[n] };
   // Then every choice onto its subscription, new or old; what changed on an old one is said.

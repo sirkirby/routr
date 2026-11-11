@@ -14,13 +14,14 @@
 // in seconds), `starter` (`start(argv)`: the processes module's spawnSelf), `readers` (by harness: the registry's usage
 // entries) and `signIn` (`state(key, { fresh })` → `{ state, billing }`, `kept(key)`, `why(key, state)`).
 //
-// A key is a source key: today the harness's name, so a later change can key a harness's logins apart ("codex~work").
+// A key is a source key: a harness's name, or an extra account's subscription name (usageReadings' `config`).
+// `harnessOf` still reads a `harness~login` key, which nothing makes.
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CACHE_DIR, ensureParent, lockIsStale, lockToken, olderThan, releaseFileLock, takeLock, whileLockOwned, writeJsonAtomic } from "./state-files.mjs";
 import { spawnSelf } from "./processes.mjs";
-import { HARNESSES, SOURCES, withBilling } from "./harnesses.mjs";
+import { accountOf, HARNESSES, signIn as signInOf, signInWhy, SOURCES, withBilling } from "./harnesses.mjs";
 import { keptSignIn, signInHint, signInState } from "./signin.mjs";
 import { failedUsage, servedRow, summarize } from "./usage.mjs";
 import { usageFailure } from "./usage-failure.mjs";
@@ -284,6 +285,12 @@ const registrySignIn = () => ({
   kept: (key) => (HARNESSES[harnessOf(key)] ? keptSignIn(key) : null),
   why: (key, state) => (HARNESSES[harnessOf(key)] ? signInHint(HARNESSES[harnessOf(key)], state) : "not signed in"),
 });
+// The same, with an extra account (`account(key)`) asked with its folder, and told which to sign in (harnesses' signIn).
+const accountSignIn = (account, harness = registrySignIn()) => ({
+  state: (key, o) => (account(key) ? signInOf(account(key), o) : harness.state(key, o)),
+  kept: (key) => (account(key) ? keptSignIn(key) : harness.kept(key)),
+  why: (key, state) => (account(key) ? signInWhy(account(key), state) : harness.why(key, state)),
+});
 // Tests set ROUTR_NO_REFRESH (test/setup.mjs): a command run in a test starts no detached refresh.
 const selfStarter = () => ({ start: (argv) => (process.env.ROUTR_NO_REFRESH === "1" ? false : spawnSelf(argv)) });
 const realClock = () => ({ now: () => Date.now() / 1000 });
@@ -291,19 +298,24 @@ const realClock = () => ({ now: () => Date.now() / 1000 });
 // ---- the module ------------------------------------------------------------------------------------------------------
 // Created once per command process. `configPath` is required (null: the default config, said explicitly): every refresh
 // this instance starts carries it, so the refresh reads the subscriptions the caller's config names.
-export function usageReadings({ configPath, store, clock, starter, readers, signIn, version = ROUTR_VERSION } = {}) {
+// `config`: the caller's, for its extra accounts (harnesses' accountOf): each key that is one is signed in and read as
+// its harness is, with its account (the reader's `account`), and its row and its kept reading are its own. Optional:
+// without it an extra account's key has no reader and answers `source_missing`, never another account's reading.
+export function usageReadings({ configPath, config: caller = null, store, clock, starter, readers, signIn, version = ROUTR_VERSION } = {}) {
   if (configPath === undefined) throw new TypeError("usageReadings: configPath is required (null for the default config)");
   const config = configPath ? resolve(configPath) : null;
-  store ??= fileStore(); clock ??= realClock(); starter ??= selfStarter(); readers ??= usageReaders(); signIn ??= registrySignIn();
+  const account = (key) => accountOf(key, caller), harness = (key) => account(key)?.kind ?? harnessOf(key);
+  store ??= fileStore(); clock ??= realClock(); starter ??= selfStarter(); readers ??= usageReaders(); signIn ??= accountSignIn(account);
   const now = () => clock.now();
-  const readerOf = (key) => readers[harnessOf(key)] ?? null;
+  const readerOf = (key) => readers[harness(key)] ?? null;
   const sourceOf = (key) => readerOf(key)?.source ?? key;
   const background = (key) => readerOf(key)?.speed === "background";
-  const ctx = (key) => ({ key, harness: harnessOf(key), configPath: config, nowSec: now() });
+  const ctx = (key) => ({ key, harness: harness(key), configPath: config, nowSec: now(), ...(account(key) ? { account: account(key) } : {}) });
   const ask = async (key, o) => { const a = await signIn.state(key, o); return { state: a?.state ?? "no answer", billing: a?.billing ?? null }; };
   const signedOut = (key, state) => servedRow({ ...summarize({ pool: key, source: "sign-in check", note: signIn.why(key, state) }), signedIn: false }, key);
   const put = (key, reading, attempt, o) => { try { return store.put(key, reading, attempt, o); } catch { return false; } };
-  const serve = (key, row, billing) => servedRow(withBilling(harnessOf(key), row, billing), key);
+  // A reader names its harness's pool; an extra account's row is its own.
+  const serve = (key, row, billing) => servedRow(withBilling(harness(key), account(key) && row ? { ...row, pool: key } : row, billing), key);
   // A try, kept: the reading it got (if any), and how it went. A read that worked but could not be kept is a failure here.
   const record = (key, o, token) => put(key, o.reading ?? null, { at: now(), by: version, ...(o.excluded ? { outcome: "excluded" } : o.reading ? { outcome: "ok" }
     : { outcome: "failed", code: o.ok ? "invalid_response" : o.code }) }, { token, wait: true });

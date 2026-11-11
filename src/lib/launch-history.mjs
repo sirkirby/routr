@@ -18,7 +18,7 @@ const WINDOW_MS = HISTORY_DAYS * 86400000;
 const SKEW_MS = 60000;
 // The folder keeps its first name (it held only counts): records written before the decision fields still count.
 export const LAUNCH_HISTORY_DIR = (h = userHome()) => join(STATE_DIR(h), "launch-counts");
-const SUBSCRIPTION = /^[a-z][a-z0-9_-]{0,31}$/;
+export const SUBSCRIPTION = /^[a-z][a-z0-9_-]{0,31}$/;
 const ADVICE_ID = /^[a-f0-9]{8}$/;
 const BACKENDS = ["pane", "terminal", "headless"];
 // A model id or effort word as a harness takes it: letters, digits and the punctuation real ids use, nothing else.

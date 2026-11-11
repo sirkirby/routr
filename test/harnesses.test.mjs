@@ -49,6 +49,8 @@ const FIELDS = {
   helper: [false, strict({ command: plain(fn), children: plain((v) => Array.isArray(v) && v.every((x) => x instanceof RegExp)), left: plain(fn) }, ["command", "children", "left"])],
   // A plain name: it is typed into a pane's shell (herdr.mjs's SHELLS) without quoting.
   privateConfig: [false, strict({ file: plain(str), variable: plain((v) => typeof v === "string" && /^[A-Z_][A-Z0-9_]*$/.test(v)) }, ["file", "variable"])],
+  // The same: an extra account's variable is typed into a pane's shell by its unset line.
+  folder: [false, strict({ variable: plain((v) => typeof v === "string" && /^[A-Z_][A-Z0-9_]*$/.test(v)), unsetAt: plain(str) }, ["variable"])],
 };
 // What one entry gets wrong, as `field` or `field.nested` paths; [] when it is whole. A field read only when another is
 // there is required with it: a fresh read (`usage.check`) keeps `fields`, heads its answer with `used` and is described
@@ -95,6 +97,8 @@ test("an entry missing a field routr reads only in some cases, or with a nested 
     [{ ...kiro, core: { ...kiro.core, interactve: ["chat"] } }, "core.interactve"],
     [{ ...cursor, privateConfig: { file: ".cursor/cli-config.json" } }, "privateConfig.variable"],
     [{ ...cursor, privateConfig: { ...cursor.privateConfig, variable: "A B" } }, "privateConfig.variable"],
+    [{ ...HARNESSES.codex, folder: { ...HARNESSES.codex.folder, variable: "A B" } }, "folder.variable"],
+    [{ ...HARNESSES.claude, folder: { ...HARNESSES.claude.folder, unsetAt: 1 } }, "folder.unsetAt"],
     [without(kiro, "autoEffortMeans"), "autoEffortMeans"],
     [without(kiro, "shortLabel"), "shortLabel"],
     [{ ...HARNESSES.claude, openList: true }, "openList"],

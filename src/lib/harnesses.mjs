@@ -58,6 +58,14 @@
 //   promptFlag: the flag before a first message given as an argument, where it is not a plain
 //     positional (Antigravity's `-i`; measured 2026-11-03 for all five).
 //   noStatus: it reports no status to herdr-core (Cursor 2026.10.22, measured), so only its own `hc send` says it finished.
+//   folder: where it keeps its sign-in, for a harness that takes another folder for it, and so more than one account:
+//     `variable`, the documented variable that names the folder (Claude Code's CLAUDE_CONFIG_DIR, Codex's CODEX_HOME:
+//     references/harnesses.md has each source). `unsetAt`: a folder under the home folder that must not be named in
+//     the variable. Claude Code 2.1.322 on macOS, measured 2026-11-10: `claude auth status` said "loggedIn": true with
+//     CLAUDE_CONFIG_DIR unset and false with it set to ~/.claude. Everything an extra account needs is read from here
+//     (accountAt, below). A harness with no `folder` has one account: none is recorded for Cursor (CURSOR_CONFIG_DIR
+//     holds its settings; launch runs it on a private one and it stays signed in), Antigravity or Kiro. `usage.read`
+//     is handed `{ account }` for an extra account, and passes its `env` to what it starts.
 //   suggested: the settings setup offers for it. usage: `source` names its reader. `read` runs on every call and must be
 //     fast (it returns a row, usage.mjs). A source too slow for that has `check` instead: it takes a fresh reading now
 //     and answers it raw (`routr usage <name>`, and the background refresh), and `reading(raw, at)` turns that raw
@@ -72,8 +80,8 @@
 import { warning } from "./warnings.mjs";
 import { chmodSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { home } from "./state-files.mjs";
-import { run } from "./processes.mjs";
+import { configDirOf, home, realOr } from "./state-files.mjs";
+import { probe, run } from "./processes.mjs";
 import { signInHint, signInState } from "./signin.mjs";
 import { NO_WINDOWS_AFTER_ANSWER, readAgy, readClaude, readCodexLive } from "./usage.mjs";
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -146,6 +154,7 @@ export function claudeBilling(out) {
 
 export const HARNESSES = {
   claude: { label: "Claude Code", executable: "claude", app: "claude-code", installAs: "Claude Code", shortLabel: "Claude", skills: ".claude/skills", otelProvider: "anthropic",
+    folder: { variable: "CLAUDE_CONFIG_DIR", unsetAt: ".claude" },
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
     // Measured 2.1.316, 2026-11-02: plain Agent and /code-review; both explicit spawn settings beat a differing pair.
     subagents: ({ model, effort }) => ({ env: { ...(model ? { CLAUDE_CODE_SUBAGENT_MODEL: model } : {}), ...(effort ? { CLAUDE_CODE_SUBAGENT_EFFORT: effort } : {}) },
@@ -173,6 +182,7 @@ export const HARNESSES = {
       // Its /usage, or its statusline after a prompt, showed no windows: routr does not guess which plan that is.
       unexplainedNoWindows: true } },
   codex: { label: "Codex", executable: "codex", app: "codex", installAs: "Codex", shortLabel: "Codex", otelProvider: "openai", core: { interactive: ["--no-daemon"] },
+    folder: { variable: "CODEX_HOME" },
     // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
     // "Update available" just after herdr reported it ready, and the Enter that submitted the task chose "Update now".
     // `--dangerously-bypass-hook-trust`: a hook the user has not trusted in Codex (new, or changed since) opens "Hooks need
@@ -287,11 +297,37 @@ export const HARNESSES = {
       left: { warning: () => warning("kiro_session_left", "Kiro kept an empty usage session"), next: "Inspect Kiro's saved sessions to remove the empty usage session" } } },
 };
 export const KINDS = Object.keys(HARNESSES);
+// An extra account of a harness: the subscription `name`, on `kind`, signed in from `dir`. `{ name, kind, dir, env }`:
+// `dir` is the folder as a full path. `env` is what every process routr starts for it gets over its own environment
+// (the worker-environment module's accountEnv): the harness's folder variable naming `dir`, or null, which removes
+// it, where the harness must find its default folder unnamed (`unsetAt`). A folder that is not a full path (a
+// record changed since launch) throws: started without it, the worker would run on another account.
+export function accountAt(name, kind, dir) {
+  const f = HARNESSES[kind].folder; dir = configDirOf(dir);
+  if (!dir) throw new Error(`${name}'s folder is not a full path`);
+  const atHome = f.unsetAt && realOr(dir) === realOr(join(home(), f.unsetAt));
+  return { name, kind, dir, env: { [f.variable]: atHome ? null : dir } };
+}
+// The extra account a subscription's name is (config.mjs accounts), or null for a harness's own entry: that one runs on
+// whatever the environment names, and nothing that takes an account treats it differently than before there were any.
+export const accountOf = (name, config) => { const s = config?.subscriptions?.[name]; return s?.harness ? accountAt(name, s.harness, s.config_dir) : null; };
+// What a worker's record keeps of its account, and the account again from a record: every later turn runs on it,
+// whoever sends it. A record without `subscription` is of a harness's own entry.
+export const savedAccount = (a) => (a ? { subscription: a.name, config_dir: a.dir } : {});
+export const workerAccount = (w) => (typeof w?.subscription === "string" ? accountAt(w.subscription, w.kind, w.config_dir) : null);
+// Its sign-in check runs with its folder, and its answer is kept under its name. The step names the folder to sign in
+// with.
+const signInAs = (a, o) => signInState(a.name, HARNESSES[a.kind], { ...o, ask: (cmd, args) => (o?.ask ?? probe)(cmd, args, { account: a.env }) });
+const hintAs = (a, state) => `${signInHint(HARNESSES[a.kind], state)}${state === "no" ? ` ${withFolder(a)}` : ""}`;
+// How a step names an extra account's folder: its variable set to it, or unset.
+export const withFolder = (a) => { const v = HARNESSES[a.kind].folder.variable; return `with ${v} ${a.env[v] === null ? "unset" : `set to ${a.dir}`}`; };
 // Is this harness signed in: `{ state, billing }`, the state "yes", "no", or "no answer", and what the same answer said
 // about billing. Kept in the cache between calls (signin.mjs); `fresh` checks again now. `notReady` says why a harness
 // gets no work, or null when it is signed in.
-export const signIn = (name, o) => signInState(name, HARNESSES[name], o);
-export const notReady = async (name, o) => { const { state } = await signIn(name, o); return state === "yes" ? null : signInHint(HARNESSES[name], state); };
+// Each takes a harness's name, or an extra account (accountOf); `signInWhy` says why one in `state` gets no work.
+export const signIn = (name, o) => (typeof name === "string" ? signInState(name, HARNESSES[name], o) : signInAs(name, o));
+export const signInWhy = (name, state) => (typeof name === "string" ? signInHint(HARNESSES[name], state) : hintAs(name, state));
+export const notReady = async (name, o) => { const { state } = await signIn(name, o); return state === "yes" ? null : signInWhy(name, state); };
 // A slow source's `check` (a person's read now, or the background refresh): a harness's own reading must never start
 // its sign-in, so one that is not signed in is not read, and says why. (A function declaration: the entries above use it.)
 function gated(name, read) { return async (o) => { const why = await notReady(name); return why ? { ok: false, excluded: true, why } : read(o); }; }

@@ -33,7 +33,7 @@ function logCommand(log, text) {
 export const usualShell = () => (process.platform === "win32" ? "powershell" : "posix");
 // A pane worker's environment (worker-env's paneEnv): the carriers this launch holds, and its plan's subagent
 // fallbacks, less the names the harness adapter sets for itself.
-export const paneEnvOf = (o, out, env, p, privateDir) => paneEnv({ pane: o.pane, found: launchCarriers(env), plan: p.env, adapter: configEnv(o.kind, privateDir) }, out);
+export const paneEnvOf = (o, out, env, p, privateDir) => paneEnv({ pane: o.pane, found: launchCarriers(env), plan: p.env, adapter: configEnv(o.kind, privateDir), account: o.account?.env }, out);
 // A harness with a private config folder (the registry's `privateConfig`) is started by the pane's own shell where that
 // shell can remove the folder when it exits (SHELLS' `privateStart`), not by herdr's agent start; herdr then learns its
 // name after (shellStarted). Everywhere else herdr starts it.
@@ -51,15 +51,16 @@ export const panePromptArgs = (prompt, pane, timeout) => ["agent", "prompt", pan
 export function paneDryRunPlan(o, out, { env, p, privateDir, prompt, shell = usualShell() }) {
   const startArgs = (pane, timeout) => paneStartArgs(o, shell, p, privateDir, pane, timeout);
   const promptArgs = (pane, timeout) => panePromptArgs(prompt, pane, timeout);
-  const pane = o.pane ?? "<new-pane>", { carried, extraEnv } = paneEnvOf(o, out, env, p, privateDir);
+  const pane = o.pane ?? "<new-pane>", { carried, extraEnv, split = { shownEnv: extraEnv }, unset = [] } = paneEnvOf(o, out, env, p, privateDir);
   return [
-    ...(o.worktree ? [command(worktreeArgs(out.cwd, o.worktree, o.base)), command(splitArgs("right", "<worktree-path>", carried, { pane: "<root-pane>", shown: true, env: extraEnv })), command(["pane", "close", "<root-pane>"])] : []),
-    ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true, env: extraEnv }))] : []),
+    ...(o.worktree ? [command(worktreeArgs(out.cwd, o.worktree, o.base)), command(splitArgs("right", "<worktree-path>", carried, { pane: "<root-pane>", shown: true, env: split.shownEnv })), command(["pane", "close", "<root-pane>"])] : []),
+    ...(!o.pane && !o.worktree ? [...(!o.direction ? [command(["pane", "current", "--current"]), command(["pane", "layout", "--current"])] : []), command(splitArgs(o.direction ?? "<right-if-wide-else-down>", out.cwd, carried, { shown: true, env: split.shownEnv }))] : []),
     command(["pane", "read", pane, "--source", "visible"]),
     command(["pane", "process-info", "--pane", pane]),
     ...(o.pane ? [command(["pane", "run", pane, SHELLS[shell].cd(out.cwd)]),
       command(["pane", "read", pane, "--source", "visible"]), command(["pane", "process-info", "--pane", pane])] : []),
     ...(paneConfigEnvArgs(o, shell, privateDir, pane) ? [command(paneConfigEnvArgs(o, shell, privateDir, pane))] : []),
+    ...unset.map((name) => command(["pane", "run", pane, SHELLS[shell].unset(name)])),
     command(startArgs(pane, Math.min(o.timeout, 30000))),
     command(["pane", "read", pane, "--source", "visible"]),
     command(["agent", "wait", pane, "--timeout", String(Math.min(1000, o.timeout))]),
@@ -90,10 +91,12 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
   const rerun = () => {
     const keep = [];
     for (let i = 0; i < args.length; i++) {
+      if (args[i] === "--continue") continue;
       if (["--worktree", "--base", "--direction", "--pane", "--cwd", "--copy", "--task"].includes(args[i])) { i++; continue; }
       keep.push(args[i]);
     }
-    const again = ["routr", "launch", ...keep, "--pane", out.pane, "--cwd", out.cwd];
+    // An extra account's rerun carries routr's own --continue: launch refuses --pane for it anywhere else.
+    const again = ["routr", "launch", ...keep, "--pane", out.pane, "--cwd", out.cwd, ...(o.account ? ["--continue"] : [])];
     return o.task != null ? doNext("Repeat the same launch with your --task given again.", templateCommand([...again, "--task", "<your-task>"]))
       : runNext("Continue this launch after resolving the pane's input.", again);
   };
@@ -115,13 +118,13 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
     let shell = usualShell(), fish = false;
     const startArgs = (pane, timeout) => paneStartArgs(o, shell, p, privateDir, pane, timeout);
     const promptArgs = (pane, timeout) => panePromptArgs(prompt, pane, timeout);
-    const { carried, extraEnv, fallbacks: fallbackEnv } = paneEnvOf(o, out, env, p, privateDir);
+    const { carried, extraEnv, fallbacks: fallbackEnv, split = { env: extraEnv }, unset = [] } = paneEnvOf(o, out, env, p, privateDir);
     // The user turned this subscription off: it gets no work, launched by hand or not.
     const loaded = settings(), config = configOf(loaded);
     out.warnings.push(...(loaded.notes ?? []));
     if (config.subscriptions[o.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[o.kind].label, o.kind));
     // A harness that is not signed in would wait at its own sign-in in a pane nobody watches: refuse before any pane.
-    const signedOut = await ready(o.kind);
+    const signedOut = await ready(o.account ?? o.kind);
     if (signedOut) throw new Error(`${HARNESSES[o.kind].label} cannot take work: ${signedOut}`);
     const remaining = deadline(o.timeout, now, "Launch readiness timeout");
     // `shown`: the command as the log may carry it, when it differs from what runs (a split's carriers).
@@ -245,7 +248,7 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
       // The worker gets a pane of launch's own, with its carriers, never the root pane herdr opened (worktreePane);
       // cleanup --worktree finds the workspace whichever pane is left in it.
       let opened;
-      try { opened = await worktreePane(herdrCall, root, out.cwd, carried, { env: extraEnv }); }
+      try { opened = await worktreePane(herdrCall, root, out.cwd, carried, split); }
       catch (e) { throw new Error(`launch created the worktree ${out.cwd} but could not open the worker's pane in it (${e?.message ?? e}); remove the worktree with ${displayCommand(cleanupArgs)}`); }
       out.pane = opened.pane;
       step("split", true, `Created ${out.pane}, right of ${root}, in the worktree`);
@@ -263,7 +266,7 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
         if (!rect) throw new Error("Caller pane geometry is unavailable");
         direction = rect.width > rect.height ? "right" : "down";
       }
-      out.pane = await splitPane(herdrCall, direction, out.cwd, carried, { env: extraEnv });
+      out.pane = await splitPane(herdrCall, direction, out.cwd, carried, split);
       createdPane = true;
       step("split", true, `Created ${out.pane}, ${direction}`);
     }
@@ -293,6 +296,12 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
       await pause();
       stop = await shellReady(out.cwd); if (stop) return stop;
       step("cursor_env", true, `Set ${privateConfig.variable} in the pane's ${shell} shell`);
+    }
+    for (const name of adopted ? [] : unset) {
+      await call(["pane", "run", out.pane, SHELLS[shell].unset(name, fish)]);
+      await pause();
+      stop = await shellReady(out.cwd); if (stop) return stop;
+      step("unset_env", true, `Removed ${name} from the pane's ${shell} shell`);
     }
     // After the start: wait until herdr says the agent is ready, and check it took the model. routr answers no question
     // a harness asks at startup: it passes each harness's own flags so none is asked (the registry), and when one is
