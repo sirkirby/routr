@@ -176,7 +176,7 @@ test("the inventory detects a new or renamed start and a removed filter on every
     expect(filtered(calls(source, "lib/new.mjs")[0])).toBe(false);
     expect(allowed("lib/new.mjs", calls(source, "lib/new.mjs")[0])).toBeUndefined();
   }
-  for (const file of ["processes", "terminal", "headless"]) {
+  for (const file of ["processes", "scratch-terminal", "headless"]) {
     const path = `lib/${file}.mjs`, source = readFileSync(join(import.meta.dir, "../src", path), "utf8");
     const original = calls(source, path).filter(filtered);
     expect(original.length).toBeGreaterThan(0);
