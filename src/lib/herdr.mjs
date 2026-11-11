@@ -159,7 +159,7 @@ export const promptReadArgs = (pane) => ["pane", "read", pane, "--source", "rece
 
 // A pane as routr reads and types into it, through `call` (one herdr command, which throws on failure): its screen,
 // its recent lines unwrapped (promptReadArgs), its processes, and keys. launch drives the user's panes with it,
-// terminal.mjs its private session's.
+// scratch-terminal.mjs its private session's.
 export const paneView = (call, pane) => ({
   read: async () => paneText((await call(["pane", "read", pane, "--source", "visible"])).data),
   unwrapped: async () => paneText((await call(promptReadArgs(pane))).data),
