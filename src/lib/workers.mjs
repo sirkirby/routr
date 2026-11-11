@@ -93,7 +93,7 @@ async function waitCommandBody(args, { now = () => Date.now(), pause = sleep, en
     const running = views.filter(pending);
     out.state = done.length ? "finished" : running.length ? "running" : "idle";
     out.headline = done.length ? `routr: ${done.map(({ v, turns, noticed }) => `${v.name} ${noticed ? v.state : turns.length > 1 ? `finished ${turns.length} turns` : "finished a turn"}`).join("; ")}`
-      : running.length ? `routr: still running: ${running.map((v) => `${v.name}${v.state === "unreadable" ? " (its state could not be read)" : ""}`).join(", ")}` : `routr: nothing running: ${views.map((v) => `${v.name} ${v.state}`).join(", ")}`;
+      : running.length ? `routr: still running: ${running.map((v) => `${v.name}${v.state === "unreadable" ? " (its state could not be read)" : v.state === "starting" && v.backend === "terminal" ? " (it has not started its task yet)" : ""}`).join(", ")}` : `routr: nothing running: ${views.map((v) => `${v.name} ${v.state}`).join(", ")}`;
     for (const { v, turns, next } of done) {
       let terminalNext = false;
       for (const t of turns) {

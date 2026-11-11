@@ -301,8 +301,12 @@ export const terminal = {
     if (wait) {
       const turn = seen.terminal ? turnOf(seen.terminal) : 0;
       const sent = readJsonFile(join(me.dir, SEND_FILE)).value, sentTurn = Number.isSafeInteger(sent?.turn) && sent.turn >= 0 ? sent.turn : null;
+      // At turn 0 with nothing sent, an idle or silent harness has not started its task: once a startup question is
+      // answered, hc reports idle at turn 0 until the harness takes up its prompt. It is waited on as starting, not
+      // reported idle. `blocked` (at a question) stays idle: the lead has to act.
       const state = seen.state === "unknown" ? "unreachable" : seen.state === "gone" ? "lost" : seen.state === "finished" ? "stopped"
-        : status === "working" || (sentTurn != null && turn <= sentTurn) ? "working" : status === "error" ? "failed" : "idle";
+        : status === "working" || (sentTurn != null && turn <= sentTurn) ? "working" : status === "error" ? "failed"
+        : turn === 0 && sentTurn == null && (status === "idle" || status == null) ? "starting" : "idle";
       const next = seen.state === "unknown" ? actionLook(w, "wait") : seen.state === "gone" ? [cleanupStep(w, "gone")]
         : seen.state === "finished" ? [readStep(w), cleanupStep(w, "finished")] : [readStep(w)];
       return { view: { name: w.name, kind: w.kind, model: w.model, effort: w.effort ?? null, cwd: w.cwd, backend: "terminal", terminal: w.terminal ?? null, state, gen: 0, turn,

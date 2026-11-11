@@ -79,7 +79,7 @@ footer li { margin-bottom: 2px; }
     <section class="card"><h2>Where the work went</h2><p class="sub">Recorded runs per week, by account.</p><div class="legend" id="lg-acct"></div><div id="accts"></div><details><summary>As a table</summary><div class="scroll" id="accts-t"></div></details></section>
     <section class="card"><h2>Room and who got the work</h2><p class="sub">The accounts in each run's advice, the usable room they showed then, and the share they got.</p><div class="scroll" id="room"></div><p class="note">Room is not a target: an account can be right with less of it, and this does not say an account suited the work.</p></section>
     <section class="card wide"><h2>What you reached for</h2><p class="sub">Each chosen level, account, model and effort, as you recorded them.</p><div class="scroll" id="choices"></div></section>
-    <section class="card"><h2>Done first time</h2><p class="sub">Share of runs per week: done, check passed, one attempt, no extra work.</p><div id="first"></div><details><summary>As a table</summary><div class="scroll" id="first-t"></div></details></section>
+    <section class="card"><h2>Done first time</h2><p class="sub">Share of recorded runs per week: done, check passed, one attempt, no extra work.</p><div id="first"></div><details><summary>As a table</summary><div class="scroll" id="first-t"></div></details></section>
     <section class="card"><h2>Why work took more</h2><p class="sub">The causes recorded on runs that needed extra work.</p><div class="scroll" id="causes"></div></section>
     <section class="card"><h2>Outcome by the choice's direction</h2><p class="sub">Not cause and effect: harder work may be the reason a level went up.</p><div class="scroll" id="direction"></div></section>
     <section class="card"><h2>What routr read, by project</h2><p class="sub">How often routr was torn between two levels, and called the work high risk.</p><div class="scroll" id="reads"></div></section>
@@ -147,7 +147,7 @@ const projects = [...new Set(ALL.map((r) => r.p).filter(Boolean))].map((p) => [p
 $("project").append(el("option", { value: "", text: "All projects" }), ...projects.map(([p, n]) => el("option", { value: p, text: `${p} (${n})` })));
 if (PROJECT && ![...$("project").options].some((o) => o.value === PROJECT)) $("project").append(el("option", { value: PROJECT, text: `${PROJECT} (0)` }));
 if (PROJECT) $("project").value = PROJECT;
-const said = [unavailable, PROJECT ? null : "Not in a git repository: every project."].filter(Boolean);
+const said = [unavailable, PROJECT ? null : "No project here: every project."].filter(Boolean);
 if (said.length) { const n = $("notice"); n.hidden = false; n.textContent = said.join(" "); }
 
 function render() {
@@ -157,7 +157,7 @@ function render() {
   const wk = weeks(rows);
   $("asof").textContent = `Drawn ${new Date(at).toLocaleString()}`;
   const dirs = rows.map(dirOf), judged = dirs.filter(Boolean).length, same = dirs.filter((d) => d === "same").length, up = dirs.filter((d) => d === "up").length, down = dirs.filter((d) => d === "down").length;
-  const counted = rows.filter((r) => r.attempts != null), first = counted.filter((r) => r.first).length;
+  const counted = rows.filter((r) => r.attempts != null), first = rows.filter((r) => r.first).length;
   const byAcct = new Map(); for (const r of rows) if (r.s) byAcct.set(r.s, (byAcct.get(r.s) ?? 0) + 1);
   const ranked = [...byAcct].sort((a, b) => b[1] - a[1]), top2 = ranked.slice(0, 2).reduce((a, [, n]) => a + n, 0);
   const fails = rows.filter((r) => r.fail).length;
@@ -165,7 +165,7 @@ function render() {
   $("tiles").replaceChildren(
     tile(String(rows.length), "recorded runs"),
     tile(pct(same, judged), `chose the advised level (${up} above, ${down} below)`),
-    tile(pct(first, counted.length), `done first time (${first} of ${counted.length})`),
+    tile(pct(first, rows.length), `done first time (${first} of ${rows.length})`),
     tile(pct(top2, rows.length), `went to ${ranked.slice(0, 2).map(([k]) => name(k)).join(" and ") || "no account"}`),
     tile(String(fails), `failed their check`));
 
@@ -188,11 +188,11 @@ function render() {
   const rr = [...room].sort((a, b) => b[1].got - a[1].got);
   $("room").replaceChildren(table(["Account", "In advice", "Room then", "Got the work", ""], rr.map(([k, e]) => [name(k), e.offered, pct(e.sum, e.offered), `${e.got} (${pct(e.got, e.offered)})`, inlineBar(e.got, e.offered, colour(k))]), [1, 2, 3]));
 
-  const combos = new Map(); for (const r of rows) { const k = [r.c, r.s, r.m, r.f].join("\0"); const e = combos.get(k) ?? { r, n: 0, first: 0, known: 0 }; e.n++; if (r.attempts != null) { e.known++; if (r.first) e.first++; } combos.set(k, e); }
+  const combos = new Map(); for (const r of rows) { const k = [r.c, r.s, r.m, r.f].join("\0"); const e = combos.get(k) ?? { r, n: 0, first: 0 }; e.n++; if (r.first) e.first++; combos.set(k, e); }
   const cs = [...combos.values()].sort((a, b) => b.n - a.n), shown = cs.slice(0, 12), rest = cs.slice(12).reduce((a, e) => a + e.n, 0), csMax = shown[0]?.n ?? 1;
-  $("choices").replaceChildren(table(["Level", "Account", "Model", "Effort", "Runs", "", "First time"], [...shown.map((e) => [e.r.c ?? "–", name(e.r.s), e.r.m ?? "–", e.r.f ?? "–", e.n, inlineBar(e.n, csMax, colour(e.r.s)), e.known ? `${pct(e.first, e.known)} of ${e.known}` : "–"]), ...(rest ? [["", `${cs.length - 12} other choices`, "", "", rest, "", ""]] : [])], [4, 6]));
+  $("choices").replaceChildren(table(["Level", "Account", "Model", "Effort", "Runs", "", "First time"], [...shown.map((e) => [e.r.c ?? "–", name(e.r.s), e.r.m ?? "–", e.r.f ?? "–", e.n, inlineBar(e.n, csMax, colour(e.r.s)), `${pct(e.first, e.n)} of ${e.n}`]), ...(rest ? [["", `${cs.length - 12} other choices`, "", "", rest, "", ""]] : [])], [4, 6]));
 
-  const fv = wk.map((w) => { const rs = counted.filter((r) => weekOf(r.t) === w), a = rs.filter((r) => r.first).length; return rs.length ? { p: 100 * a / rs.length, a, n: rs.length } : null; });
+  const fv = wk.map((w) => { const rs = rows.filter((r) => weekOf(r.t) === w), a = rs.filter((r) => r.first).length; return rs.length ? { p: 100 * a / rs.length, a, n: rs.length } : null; });
   line($("first"), wk, fv);
   $("first-t").replaceChildren(table(["Week", "First time", "Runs"], wk.map((w, i) => [dayLabel(w), fv[i] ? `${Math.round(fv[i].p)}%` : "–", fv[i]?.n ?? 0]), [1, 2]));
 
@@ -200,14 +200,14 @@ function render() {
   const cr = [...causes].sort((a, b) => b[1] - a[1]), cMax = cr[0]?.[1] ?? 1;
   $("causes").replaceChildren(cr.length ? table(["Cause", "Runs", ""], cr.map(([c, n]) => [c, n, inlineBar(n, cMax)]), [1]) : el("p", { class: "note", text: "No causes recorded in this period." }));
 
-  $("direction").replaceChildren(table(["Chosen level", "Runs", "First time", "Mean attempts"], dirSeries.map(([k, l]) => { const rs = counted.filter((r) => dirOf(r) === k); return [l, rs.length, rs.length ? `${pct(rs.filter((r) => r.first).length, rs.length)} (${rs.filter((r) => r.first).length})` : "–", rs.length ? (rs.reduce((a, r) => a + r.attempts, 0) / rs.length).toFixed(1) : "–"]; }), [1, 2, 3]));
+  $("direction").replaceChildren(table(["Chosen level", "Runs", "First time", "Mean attempts"], dirSeries.map(([k, l]) => { const rs = rows.filter((r) => dirOf(r) === k), known = rs.filter((r) => r.attempts != null), f = rs.filter((r) => r.first).length; return [l, rs.length, rs.length ? `${pct(f, rs.length)} (${f})` : "–", known.length ? (known.reduce((a, r) => a + r.attempts, 0) / known.length).toFixed(1) : "–"]; }), [1, 2, 3]));
 
   const per = new Map(); for (const r of rows) { const k = r.p ?? "(no project)"; const e = per.get(k) ?? { n: 0, risk: 0, unsure: 0 }; e.n++; e.risk += r.risk ? 1 : 0; e.unsure += r.unsure ? 1 : 0; per.set(k, e); }
   const pr = [...per].sort((a, b) => b[1].n - a[1].n), prShown = pr.slice(0, 8);
   $("reads").replaceChildren(table(["Project", "Runs", "Torn", "High risk"], prShown.map(([k, e]) => [k, e.n, pct(e.unsure, e.n), pct(e.risk, e.n)]), [1, 2, 3]));
 
   const noAttempts = rows.length - counted.length, noProject = rows.filter((r) => !r.p).length, noRoom = rows.filter((r) => !Object.keys(r.room).length).length;
-  $("gaps").replaceChildren(...[noAttempts && `${noAttempts} runs recorded no attempts, so "done first time" leaves them out.`, noProject && `${noProject} runs have no project.`, noRoom && `${noRoom} runs kept no room reading.`].filter(Boolean).map((t) => el("li", { text: t })));
+  $("gaps").replaceChildren(...[noAttempts && `${noAttempts} runs recorded no attempts: they are not done first time, and mean attempts leaves them out.`, noProject && `${noProject} runs have no project.`, noRoom && `${noRoom} runs kept no room reading.`].filter(Boolean).map((t) => el("li", { text: t })));
 }
 $("project").addEventListener("change", render); $("range").addEventListener("change", render);
 let timer; addEventListener("resize", () => { clearTimeout(timer); timer = setTimeout(render, 120); });

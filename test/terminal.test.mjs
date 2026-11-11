@@ -792,8 +792,27 @@ test("wait notices finished and unreadable terminals and unnamed wait includes a
   expect([u.state, u.workers[0].state, u.next.map((n) => n.argv)]).toEqual(["finished", "unreachable", [["hc", "ls", "--all"], ["routr", "wait", "--name", "w1"]]]);
   expect(JSON.stringify(u)).not.toContain(SECRET);
   rmSync(join(runDir("w1"), "seen.json"), { force: true });
-  const unnamed = await waitCommand(["--timeout", "0"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "idle" }, turn: 0 }] }).run });
+  const unnamed = await waitCommand(["--timeout", "0"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [{ status: { state: "blocked" }, turn: 0 }] }).run });
   expect([unnamed.state, unnamed.workers.map((w) => w.name), unnamed.headline]).toEqual(["idle", ["w1"], "routr: nothing running: w1 idle"]);
+});
+
+test("a terminal worker idle or silent at turn 0 has not started its task: wait holds out to its timeout and says so", async () => {
+  await launched();
+  for (const seen of [{ status: { state: "idle" }, turn: 0 }, { status: null, turn: 0 }]) {
+    let t = 0;
+    const hc = fakeHc({ sees: [seen] });
+    const r = await waitCommand(["--name", "w1", "--timeout", "3000"], { settings: () => cfg(), env: {}, hc: hc.run, now: () => t, pause: async () => { t += 1000; } });
+    expect([r.state, r.workers[0].state, r.headline]).toEqual(["running", "starting", "routr: still running: w1 (it has not started its task yet)"]);
+    expect(t).toBe(3000); // it waited to the timeout, not out at the first idle reading
+    expect(r.next.map((n) => n.argv)).toEqual([["routr", "wait", "--name", "w1"]]);
+  }
+  // Once it has taken a turn, idle is idle; at a question it is idle too, for the lead to answer.
+  for (const [seen, said] of [[{ status: { state: "idle" }, turn: 1 }, "finished a turn"], [{ status: { state: "blocked" }, turn: 0 }, "nothing running: w1 idle"]]) {
+    rmSync(join(runDir("w1"), "seen.json"), { force: true });
+    const r = await waitCommand(["--name", "w1", "--timeout", "3000"], { settings: () => cfg(), env: {}, hc: fakeHc({ sees: [seen] }).run });
+    expect(r.workers[0].state).toBe("idle");
+    expect(r.headline).toContain(said);
+  }
 });
 
 test("Cursor keeps wait's status refusal, while terminal send and stop still act by id", async () => {

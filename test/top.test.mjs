@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 import { columns, decisionKey, renderTop, reselect, span, topCommand, topKey } from "../src/lib/top.mjs";
 import { repositoryName, projectName } from "../src/lib/ledger.mjs";
@@ -94,10 +94,10 @@ test("what board could not read is said, and a missing count is ? (never 0)", ()
   expect(s).toContain("7 days  ? launched · ? recorded · ? done first time");
   expect(draw(null).join("\n")).toContain("reading routr's board…");
   expect(draw(board({ subscriptions: { ranked: [], excluded: [] } })).join("\n")).toContain("no subscription is set up: routr setup");
-  // Outside a repository: every project, and the screen says so; there is no project to switch to.
+  // With no project (only at a filesystem root): every project, and the screen says so; there is no project to switch to.
   const all = draw(board(), { project: null, scope: "all" }).join("\n");
   expect(all).toMatch(/^routr top · all projects/);
-  expect(all).toContain("not in a git repository: every project");
+  expect(all).toContain("no project here: every project");
   expect(all).toContain("⏎ open · u usage");
 });
 
@@ -149,7 +149,7 @@ test("a refresh keeps the pick on the same decision, and closes a detail whose d
   expect(span(30)).toBe("now"); expect(span(7200)).toBe("2h"); expect(span(-5)).toBe(""); expect(span(NaN)).toBe("");
 });
 
-test("a folder's project is its repository's; outside any repository there is none", () => {
+test("a folder's project is its repository's; outside any repository it is the folder's, as board and the ledger name it", () => {
   const dir = scratch("top-repo"), repo = join(dir, "myco"), plain = join(dir, "plain");
   mkdirSync(join(repo, ".git", "worktrees", "x"), { recursive: true }); mkdirSync(join(repo, "src"), { recursive: true }); mkdirSync(plain);
   const wt = join(dir, "myco-wt"); mkdirSync(wt); writeFileSync(join(wt, ".git"), `gitdir: ${join(repo, ".git", "worktrees", "x")}\n`);
@@ -209,8 +209,11 @@ test("a board that cannot be read keeps the last screen and says so; SIGTERM res
 test("piped: one plain snapshot; ACCESSIBLE: a snapshot per line; a bad flag is refused", async () => {
   const pipe = { isTTY: false, text: "", write(s) { this.text += s; } }, calls = [];
   expect(await topCommand([], { ...seams(calls), cwd: scratch("top-pipe"), output: pipe, input: { isTTY: false } })).toBe(0);
-  expect(calls).toEqual([[]]); // outside a repository: every project
-  expect(pipe.text).toMatch(/^routr top · all projects\n not in a git repository/);
+  // Outside a repository the project is the folder's, as board and launch name it.
+  const folder = calls[0]?.[1];
+  expect(calls).toEqual([["--cwd", folder]]);
+  expect(pipe.text.startsWith(`routr top · ${basename(folder)}\n`)).toBe(true);
+  expect(pipe.text).not.toContain("every project");
   expect(pipe.text).not.toContain("\x1b");
 
   const { output } = terminal(), acalls = [];
@@ -221,7 +224,7 @@ test("piped: one plain snapshot; ACCESSIBLE: a snapshot per line; a bad flag is 
   expect(acalls.length).toBe(3);
   expect(output.text).not.toContain("\x1b");
   expect(output.text).toContain("reading usage…");
-  expect(output.text).toContain("Enter: read again, u: read usage now, q: quit");
+  expect(output.text).toContain("Enter: read again, a: all projects, u: read usage now, q: quit"); // every folder has a project to switch from
 
   for (const [args, why] of [[["--cwd"], "takes a folder"], [["--nope"], "unknown flag"], [["--cwd", "/no/such/folder"], "is not a folder"], [["--cwd", ".", "--cwd", "."], "more than once"]]) {
     const err = { text: "", write(s) { this.text += s; } };

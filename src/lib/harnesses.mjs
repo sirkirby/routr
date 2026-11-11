@@ -224,7 +224,7 @@ export const HARNESSES = {
     usage: { source: "cursor /usage", check: gated("cursor", async (o) => (await import("./cursor-usage.mjs")).cursorUsage(o)), reading: async (raw, at) => (await import("./cursor-usage.mjs")).cursorReading(raw, at),
       fields: ["plan", "included_used_pct", "auto_used_pct", "api_used_pct", "headroom"], used: (r) => `Included ${r.included_used_pct}% used`, windows: ["included"],
       byHand: 'run `cursor-agent`, type /usage, read "Included N% used", and pass --headroom cursor=<1 - N/100>',
-      checkHelp: "takes a fresh reading of Cursor's own /usage screen now, in a private herdr session",
+      checkHelp: "takes a fresh reading of Cursor's own /usage screen now, in a terminal of routr's own (a private herdr session on Windows)",
       // Its /usage screen opens in routr's own terminal on macOS and Linux, and in a private herdr session on Windows.
       needsHerdrOn: ["win32"] } },
   // Skills: measured 2026-10-05 on agy 1.2.17: asked to list its skills, it named one placed in ~/.gemini/config/skills
