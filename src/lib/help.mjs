@@ -98,7 +98,7 @@ export const COMMANDS = {
   wait: {
     name: "wait",
     contract: { fields: ["state", "workers"] },
-    description: "outside herdr: wait for headless workers; returns when one finishes a turn (with its report's path), fails, stops or is lost, or at the timeout with the ones still running; changes nothing of yours. A terminal worker is followed with hc, and it says so",
+    description: "wait for headless workers and status-reporting terminal workers; returns when one finishes a turn, fails, stops or is lost, or at the timeout with the ones still running; a headless turn has its report's path, while a terminal turn says to read its tab with hc. Cursor reports no terminal status, so wait says to follow it with hc",
     flags: [
       { name: "--name", arg: "<name>", description: "a worker to wait on (repeatable)", required: false, default: "every worker still running or with a turn not yet reported", repeatable: true },
       { name: "--timeout", arg: "<ms>", description: "how long to wait; in a foreground call, keep it under your own shell tool's command limit (Claude Code's default is 2 minutes)", required: false, default: 90000 },
@@ -107,7 +107,7 @@ export const COMMANDS = {
   send: {
     name: "send",
     contract: { fields: ["state", "name", "message"] },
-    description: "outside herdr: a correction or follow-up for a headless worker, into its running turn where the harness takes it, or as the next turn of the same session; new work is a new launch with its own advice. A terminal worker is followed with hc, and it says so",
+    description: "a correction or follow-up for a worker: through a headless worker's holder, or through hc to a terminal worker using an owner-only message file; new work is a new launch with its own advice",
     flags: [
       { name: "--name", arg: "<name>", description: "the worker", required: true },
       { name: "--task", arg: "<text>", description: "the message (mutually exclusive with --task-file)", required: false },
@@ -123,7 +123,7 @@ export const COMMANDS = {
   stop: {
     name: "stop",
     contract: { fields: ["state", "name"] },
-    description: "outside herdr: stop a headless worker through its own process (macOS and Linux: SIGTERM to the harness's process group, then SIGKILL if the harness has not gone; Windows: taskkill /T); never by a saved process id. A terminal worker is ended with hc, and it says so",
+    description: "stop a headless worker through its own process (macOS and Linux: SIGTERM to the harness's process group, then SIGKILL if the harness has not gone; Windows: taskkill /T), never by a saved process id; stop a terminal worker through hc after checking its id",
     flags: [{ name: "--name", arg: "<name>", description: "the worker", required: true }],
   },
   watch: {

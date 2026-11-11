@@ -1,6 +1,6 @@
 // The commands for workers: `wait`, `send`, `workers` and `stop`, their parsing and what they answer. What each does to a
-// worker is the worker module's, through the adapter for where it runs; a terminal worker is the lead's to follow with
-// hc, and these commands say so. Answers carry report paths, never worker text.
+// worker is the worker module's, through the adapter for where it runs; the terminal adapter follows its worker through
+// hc, except where a harness reports no status. Answers carry report paths, never worker text.
 import { warning } from "./warnings.mjs";
 import { commandTrace } from "./traces.mjs";
 import { existsSync } from "node:fs";
@@ -65,18 +65,18 @@ async function waitCommandBody(args, { now = () => Date.now(), pause = sleep, en
     // A folder that is not a worker of routr's and reads as running is not passed over: the wait says so, as for a name.
     const ws = workersFor({ env, ...opts });
     const asked = o.names.length ? o.names.map((n) => ws.one(n)) : ws.all({ strangers: true }).filter((w) => w.pending(seenOf(w).turn));
-    for (const w of asked) if (!w.record && !w.unreadable) throw new Error(`no headless worker named ${w.name}; routr workers lists them`);
-    // A terminal worker named here is the lead's to wait on with hc: said, and the rest are waited on as usual.
+    for (const w of asked) if (!w.record && !w.unreadable) throw new Error(`no worker named ${w.name}; routr workers lists them`);
+    // A worker whose backend follows wait elsewhere is said; the rest are waited on as usual.
     const elsewhere = asked.map((w) => w.follows("wait")).filter(Boolean), watched = asked.filter((w) => !w.follows("wait"));
     for (const f of elsewhere) { out.warnings.push(warning("terminal_followed", f.why)); out.next.push(...f.next); }
-    if (!watched.length) { out.ok = true; out.state = "none"; out.headline = elsewhere.length ? `routr: ${elsewhere[0].why}${elsewhere.length > 1 ? `, and ${elsewhere.length - 1} more` : ""}` : "routr: no headless worker to wait on"; return answer(out); }
+    if (!watched.length) { out.ok = true; out.state = "none"; out.headline = elsewhere.length ? `routr: ${elsewhere[0].why}${elsewhere.length > 1 ? `, and ${elsewhere.length - 1} more` : ""}` : "routr: no worker to wait on"; return answer(out); }
     const deadline = now() + timeout;
     let views = [], lastCheck = -Infinity;
     for (;;) {
       const check = now() - lastCheck >= 5000;
       if (check) lastCheck = now();
       // Each with the worker it is of: one cleaned up meanwhile has no look, and is left out.
-      views = (await Promise.all(watched.map(async (w) => { const l = await w.look({ check, kept: true }); return { w, v: l?.view, next: l?.next ?? [] }; }))).filter((x) => x.v);
+      views = (await Promise.all(watched.map(async (w) => { const l = await w.look({ check, kept: true, wait: true }); return { w, v: l?.view, next: l?.next ?? [] }; }))).filter((x) => x.v);
       if (views.some(({ w, v }) => isNews(v, seenOf(w))) || !views.some(({ v }) => pending(v)) || now() >= deadline) break;
       await pause(Math.min(500, Math.max(0, deadline - now())));
     }
@@ -95,13 +95,16 @@ async function waitCommandBody(args, { now = () => Date.now(), pause = sleep, en
     out.headline = done.length ? `routr: ${done.map(({ v, turns, noticed }) => `${v.name} ${noticed ? v.state : turns.length > 1 ? `finished ${turns.length} turns` : "finished a turn"}`).join("; ")}`
       : running.length ? `routr: still running: ${running.map((v) => `${v.name}${v.state === "unreadable" ? " (its state could not be read)" : ""}`).join(", ")}` : `routr: nothing running: ${views.map((v) => `${v.name} ${v.state}`).join(", ")}`;
     for (const { v, turns, next } of done) {
+      let terminalNext = false;
       for (const t of turns) {
         if (t.report) out.next.push(doNext(`Read ${v.name}'s report for turn ${t.turn} (its final message; it may be cut at 1 MB), then take a first read of it against the task you gave.`, templateCommand(["routr", "check", "--brief", "<task-file>", "--report", t.report])));
         // A turn with no report file: where its backend says to look, or the worker's own folder.
+        else if (next.length && v.backend === "terminal") { if (!terminalNext) { out.next.push(...next); terminalNext = true; } }
         else if (next.length) out.next.push(...next);
         else out.next.push(doNext(`${v.name}'s turn ${t.turn} ended (${t.outcome}) without a report: look at the worker's folder and its changes yourself.`));
       }
-      if (v.state === "lost") out.next.push(doNext(`${v.name}'s process ended without settling${v.harness_group ? `, and its harness may still be running (process group ${v.harness_group})` : ""}: stop what runs of it, then clean it up.`));
+      if (v.backend === "terminal" && !terminalNext && next.length) out.next.push(...next);
+      if (v.state === "lost" && v.backend !== "terminal") out.next.push(doNext(`${v.name}'s process ended without settling${v.harness_group ? `, and its harness may still be running (process group ${v.harness_group})` : ""}: stop what runs of it, then clean it up.`));
       else if (v.harness_group && !RUNNING.has(v.state)) out.next.push(doNext(`Something ${v.name}'s ${HARNESSES[v.kind]?.label ?? "harness"} started is still running in process group ${v.harness_group}: look at it (${lookAt(v.harness_group)}), stop it if it is the worker's, then clean up.`));
       if (v.tasks) out.next.push(doNext(`${v.name} still has ${v.tasks} background command${v.tasks > 1 ? "s" : ""} running; it may start another turn by itself when ${v.tasks > 1 ? "they end" : "it ends"}.`));
     }
@@ -135,18 +138,18 @@ async function workersCommandBody(args, { env = process.env, ...opts } = {}) {
   const out = { ok: false, headline: "", unavailable: [], warnings: sandboxNote(env), next: [], workers: [] };
   try {
     const o = parseNamed(args, "workers", ["name"]), ws = workersFor({ env, ...opts });
-    const list = o.names.length ? o.names.map((n) => ws.find(n) ?? (() => { throw new Error(`no headless worker named ${n}`); })()) : ws.all();
+    const list = o.names.length ? o.names.map((n) => ws.find(n) ?? (() => { throw new Error(`no worker named ${n}`); })()) : ws.all();
     // Every worker at once, in order: a terminal worker's hc question (each bounded) never holds up the others.
     const looks = await Promise.all(list.map((w) => w.look({ ms: 3000 })));
     // A worker named here that was cleaned up, or replaced, before it was looked at is not there; unnamed, it is left out.
-    if (o.names.length) looks.forEach((l, i) => { if (!l) throw new Error(`no headless worker named ${o.names[i]}`); });
+    if (o.names.length) looks.forEach((l, i) => { if (!l) throw new Error(`no worker named ${o.names[i]}`); });
     for (const l of looks.filter(Boolean)) {
       // What a wait follows turns by is not shown here.
       const row = { ...l.view }; delete row.turns; delete row.gen;
       out.workers.push(row); out.next.push(...l.next);
     }
     out.ok = true;
-    out.headline = out.workers.length ? `routr: ${out.workers.map((v) => `${v.name} ${v.state}`).join(", ")}` : "routr: no headless workers";
+    out.headline = out.workers.length ? `routr: ${out.workers.map((v) => `${v.name} ${v.state}`).join(", ")}` : "routr: no workers";
   } catch (e) { failed(out, e, "workers"); }
   return answer(out);
 }
