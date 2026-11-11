@@ -44,9 +44,9 @@ export async function watchCommand(args, { env = process.env, write = (s) => pro
   let last = null;
   for (;;) {
     // Gone, or another worker launched under this name since: this one is over. A record it cannot read just now is
-    // neither: view shows it as `unreadable`, and it is looked at again. Every look asks the holder, so a lost worker
+    // neither: the look shows it as `unreadable`, and it is looked at again. Every look asks the holder, so a lost worker
     // stays lost: without that, its saved state would read `working` again between checks.
-    const id = it.still(), v = id === "same" || id.unreadable ? (await it.look())?.view : null;
+    const v = (await it.look())?.view;
     if (!v) { write(`${clock(now())}  cleaned up\n`); return 0; }
     for (const l of changes(v, seen, clock(now()))) write(`${l}\n`);
     const report = status ? statusReport(v) : null;

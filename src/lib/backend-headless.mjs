@@ -235,8 +235,9 @@ export const headless = {
   async send(me, message, { env, ready, spawn, store }) {
     const { name, dir, record: w } = me;
     // The worker it was asked for, by its run id: one cleaned up and launched again under that name meanwhile is not it.
-    // Still the worker it was asked for: "replaced" only when its record says so; one it cannot read is said as that.
-    const same = () => { const r = me.still(); if (r.unreadable) throw refusal(unreadableWhy(name, "worker.json", r.unreadable), me.damaged()); return r === "same"; };
+    // Still the worker it was asked for: "replaced" only when its record says so (records with no id, as before, are
+    // taken as the same: `unproven`); one it cannot read is said as that.
+    const same = () => { const r = me.still(); if (r.unreadable) throw refusal(unreadableWhy(name, "worker.json", r.unreadable), me.damaged()); return r === "same" || r === "unproven"; };
     let p = await probe(dir), r;
     const hand = async (op, ms) => {
       if (!same()) throw refusal(`${name} was cleaned up and launched again meanwhile; nothing was sent`);
@@ -262,7 +263,7 @@ export const headless = {
       p = await store.lock(name, async (assertOwned) => {
         const r = me.still();
         if (r.unreadable) return { state: "unreadable", why: unreadableWhy(name, "worker.json", r.unreadable) };
-        if (r !== "same") return { state: "replaced" };
+        if (r !== "same" && r !== "unproven") return { state: "replaced" };
         return becomeHolder(store, name, { spawn, assertOwned });
       });
       if (p.state === "replaced") throw refusal(`${name} was cleaned up and launched again meanwhile; nothing was sent`);

@@ -3,7 +3,7 @@
 // adapter's (the headless adapter's classification is tested at the end, against a stubbed channel); what the commands
 // answer from what an adapter says is tested here.
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { sendCommand, stopCommand, waitCommand, workersCommand } from "../src/lib/workers.mjs";
 import { watchCommand } from "../src/lib/watch.mjs";
@@ -215,6 +215,99 @@ test("a record changed after launch is checked again as a whole, and the module'
   expect(w.still()).toEqual({ unreadable: "not_json" });
   store.write(dir, newRecord({ name: "w1", kind: "claude", model: "m", cwd: "/work" }, { backend: "headless" }));
   expect(w.still()).toBe("replaced");
+});
+
+test("a finish for a worker someone was shown needs an id to bind: none named, or a record with none, finishes nothing", async () => {
+  const root = scratch("worker-expect-id"), { dir } = worker(root), f = fake({ looks: [{ state: "idle" }] });
+  const ws = workers({ root, adapters: { headless: f.adapter } });
+  for (const shown of [{ states: ["idle"] }, { id: undefined, states: ["idle"] }, { id: "", states: ["idle"] }]) {
+    const r = await ws.finish("w1", { expect: shown }, cleanupOut());
+    expect([r.state, r.headline]).toEqual(["refused", "routr: kept w1: its record changed while cleanup waited"]);
+  }
+  // A record written before records had ids: two with none are not provably one worker, so nothing it was shown finishes it.
+  const legacy = { format: 1, name: "w1", kind: "claude", model: "m", cwd: "/work" };
+  writeFileSync(join(dir, "worker.json"), JSON.stringify(legacy));
+  const w = ws.one("w1");
+  expect(w.still()).toBe("unproven");
+  const shown = await ws.finish("w1", { expect: { id: undefined, states: ["idle"] } }, cleanupOut());
+  expect([shown.state, existsSync(dir)]).toEqual(["refused", true]);
+  expect(f.calls.filter((c) => c[0] === "end")).toEqual([]);
+  // cleanup --worker itself finishes it, as it always has.
+  const cli = await ws.finish("w1", {}, cleanupOut());
+  expect([cli.state, existsSync(dir)]).toEqual(["removed", false]);
+});
+
+test("a record's backend picks only the table's own adapters: any other name, an inherited one included, reads as headless", async () => {
+  const root = scratch("worker-dispatch"), store = recordStore(root), f = fake();
+  for (const [name, backend] of [["a1", "constructor"], ["b2", "toString"], ["c3", "__proto__"], ["d4", "pane"]]) {
+    mkdirSync(store.runDir(name), { recursive: true });
+    writeFileSync(join(store.runDir(name), "worker.json"), JSON.stringify({ format: 1, id: name.repeat(16), name, kind: "claude", model: "m", cwd: "/work", backend }));
+  }
+  const r = await workersCommand([], opts(workers({ root, adapters: { headless: f.adapter, terminal: elsewhere } })));
+  expect([r.ok, r.workers.map((w) => [w.name, w.state])]).toEqual([true, [["a1", "working"], ["b2", "working"], ["c3", "working"], ["d4", "working"]]]);
+  expect(f.calls.filter((c) => c[0] === "look").map((c) => c[1])).toEqual(["a1", "b2", "c3", "d4"]);
+});
+
+test("wait points at what a backend's look says for a turn that ended without a report, and at the worker's folder otherwise", async () => {
+  const root = scratch("worker-wait-next");
+  worker(root, "a1"); worker(root, "b2");
+  const ended = { state: "idle", turns: [{ turn: 1, outcome: "finished", report: null, delivered: 0 }] }, f = fake({ looks: [ended] });
+  const adapter = { ...f.adapter, look: async (me, o) => { const l = await f.adapter.look(me, o); return me.name === "a1" ? { ...l, next: [{ why: "read its terminal" }] } : l; } };
+  const r = await waitCommand(["--name", "a1", "--name", "b2", "--timeout", "0"], opts(workers({ root, adapters: { headless: adapter } })));
+  expect(r.state).toBe("finished");
+  expect(r.next.map((n) => n.why)).toEqual(["read its terminal", "b2's turn 1 ended (finished) without a report: look at the worker's folder and its changes yourself."]);
+});
+
+test("workers --name refuses a worker cleaned up or replaced by another's folder before it was looked at; unnamed, it is left out", async () => {
+  const root = scratch("worker-vanished"), f = fake();
+  for (const replace of [(dir) => rmSync(dir, { recursive: true }), (dir) => writeFileSync(join(dir, "worker.json"), JSON.stringify({ format: 2, name: "w1" }))]) {
+    const { dir } = worker(root), real = workers({ root, adapters: { headless: f.adapter } });
+    const ws = { ...real, find: (n) => { const h = real.find(n); replace(dir); return h; }, all: () => { const hs = real.all(); replace(dir); return hs; } };
+    const named = await workersCommand(["--name", "w1"], opts(ws));
+    expect([named.ok, named.error]).toEqual([false, "no headless worker named w1"]);
+    rmSync(dir, { recursive: true, force: true }); worker(root);
+    const unnamed = await workersCommand([], opts(ws));
+    expect([unnamed.ok, unnamed.workers]).toEqual([true, []]);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("an unnamed wait that finds a running folder whose record is not routr's fails as for a name, and passes over one at rest", async () => {
+  const root = scratch("worker-wait-foreign"), store = recordStore(root), dir = store.runDir("w1");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "worker.json"), JSON.stringify({ format: 2, name: "w1" }));
+  writeFileSync(join(dir, "state.json"), JSON.stringify({ state: "working", turn: 1, turns: [{ turn: 1 }] }));
+  // The real adapters: whether a folder runs is read from its holder's state, as a headless worker's is.
+  const r = await waitCommand(["--timeout", "0"], opts(workers({ root })));
+  expect([r.ok, r.state, r.error]).toEqual([false, "failed", "no headless worker named w1; routr workers lists them"]);
+  writeFileSync(join(dir, "state.json"), JSON.stringify({ state: "idle", turn: 1, turns: [{ turn: 1, outcome: "finished" }] }));
+  writeFileSync(join(dir, "seen.json"), JSON.stringify({ turn: 1, notice: null }));
+  const atRest = await waitCommand(["--timeout", "0"], opts(workers({ root })));
+  expect([atRest.ok, atRest.state, atRest.headline]).toEqual([true, "none", "routr: no headless worker to wait on"]);
+});
+
+test("one handle looks through the adapter it picked: a record of another backend or id under its name is another worker", async () => {
+  const root = scratch("worker-one-adapter"), { dir, record, store } = worker(root), h = fake(), t = fake();
+  const ws = workers({ root, adapters: { headless: h.adapter, terminal: { ...elsewhere, look: t.adapter.look } } });
+  const w = ws.one("w1");
+  expect((await w.look()).view.name).toBe("w1");
+  // The same id, now a terminal worker's record: not this worker.
+  store.write(dir, newRecord({ id: record.id, name: "w1", kind: "claude", model: "m", cwd: "/work" }, { backend: "terminal", terminal_name: "w1", config: {} }));
+  expect([w.still(), await w.look(), w.backend]).toEqual(["replaced", null, "headless"]);
+  // Another id, same backend: not this worker either.
+  store.write(dir, newRecord({ name: "w1", kind: "claude", model: "m", cwd: "/work" }, { backend: "headless" }));
+  expect([w.still(), await w.look()]).toEqual(["replaced", null]);
+  expect([h.calls.filter((c) => c[0] === "look").length, t.calls]).toEqual([1, []]);
+  // A wait over it while it is replaced leaves it out, as one cleaned up.
+  const waited = await waitCommand(["--name", "w1", "--timeout", "0"], opts({ ...ws, one: () => w }));
+  expect([waited.state, waited.workers]).toEqual(["idle", []]);
+  // A handle made while its record could not be read takes the first record it reads as its own.
+  writeFileSync(join(dir, "worker.json"), "{");
+  const u = ws.one("w1");
+  expect([u.record, (await u.look()).view.state]).toEqual([null, "unreadable"]);
+  const back = newRecord({ name: "w1", kind: "claude", model: "m", cwd: "/work" }, { backend: "headless" });
+  store.write(dir, back);
+  expect([(await u.look()).view.name, u.record.id, u.still()]).toEqual(["w1", back.id, "same"]);
 });
 
 // ---- the headless adapter's classification, against a stubbed channel ------------------------------------------------

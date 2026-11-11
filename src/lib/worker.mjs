@@ -21,9 +21,10 @@ import { folderId, realOr, STATE_DIR } from "./state-files.mjs";
 
 // Where a worker runs, read from its record, picks the adapter that does what the commands ask of it. The one table.
 // A record that names a backend this routr has no adapter for is read as headless, as every record was before
-// terminal workers.
+// terminal workers; so is a folder that is not routr's when a wait asks whether it runs. The table's own entries only:
+// a record's `backend` is text from a file, and "constructor" or "__proto__" must not reach what an object inherits.
 export const ADAPTERS = { headless, terminal };
-const adapterFor = (adapters, record) => adapters[record.backend] ?? adapters.headless;
+const adapterFor = (adapters, record) => (typeof record.backend === "string" && Object.hasOwn(adapters, record.backend) ? adapters[record.backend] : adapters.headless);
 
 export class Refused extends Error {
   constructor(message, { state = "failed", warnings = [], next = [] } = {}) { super(message); this.name = "Refused"; this.state = state; this.warnings = warnings; this.next = next; }
@@ -49,25 +50,43 @@ export function workers({ root = STATE_DIR(), adapters = ADAPTERS, env = process
   // Every record a command reads is linked to its launch's span, where that command is traced.
   const read = (name) => { const r = store.read(name); if (r.worker) linkWorker(r.worker); return r; };
 
-  const handle = (name, found) => {
-    const dir = store.runDir(name), record = found.worker ?? null, unreadable = found.unreadable ?? null;
-    // With no record to say, the run folder's own markers say whose it is, or nothing does.
-    const backend = record ? record.backend : Object.keys(adapters).find((k) => adapters[k].owns?.(dir)) ?? null;
-    const adapter = record ? adapterFor(adapters, record) : backend ? adapters[backend] : null;
-    const me = { name, dir, record, unreadable, damaged: () => damagedNext(dir, name, record) };
-    // Identity: this worker's record id against the record there now. A name is not an identity.
-    me.still = () => { const r = store.read(name); return r.unreadable ? { unreadable: r.unreadable } : !r.worker ? "gone" : r.worker.id === record?.id ? "same" : "replaced"; };
+  // `found` as the store read it: a record, one that cannot be read, or (`stranger`, for an unnamed wait only) a folder
+  // with no record of routr's, which no command acts on.
+  const handle = (name, found, { stranger = false } = {}) => {
+    const dir = store.runDir(name), unreadable = found.unreadable ?? null;
+    let record = found.worker ?? null, backend, adapter;
+    // The adapter is picked once, here. With no record to say, the run folder's own markers say whose it is, or
+    // nothing does; a stranger is asked only whether it runs, as a headless worker would be.
+    const pick = (r) => { record = r; backend = r.backend; adapter = adapterFor(adapters, r); };
+    if (record) pick(record);
+    else { backend = Object.keys(adapters).find((k) => adapters[k].owns?.(dir)) ?? null; adapter = stranger ? adapters.headless : backend ? adapters[backend] : null; }
+    const me = { name, dir, get record() { return record; }, unreadable, damaged: () => damagedNext(dir, name, record) };
+    // Identity: the record there now against the one this handle has. A name is not an identity, and neither is a
+    // backend: another backend's record is another worker. Two records with no id cannot be told apart: `unproven`, which
+    // the commands treat as the same worker, as they always have, and which nothing that finishes a worker it was
+    // shown accepts. A handle made while its record could not be read has none to compare: the first it reads is its own.
+    const identityOf = (r) => {
+      if (r.unreadable) return { unreadable: r.unreadable };
+      if (!r.worker) return "gone";
+      if (!record) { if (stranger || (backend && backend !== r.worker.backend)) return "replaced"; pick(r.worker); return "same"; }
+      if (r.worker.backend !== record.backend) return "replaced";
+      const a = r.worker.id, b = record.id, has = (id) => typeof id === "string" && id !== "";
+      return has(a) && has(b) ? (a === b ? "same" : "replaced") : !has(a) && !has(b) ? "unproven" : "replaced";
+    };
+    me.still = () => identityOf(store.read(name));
     const follows = (op) => (record ? adapter.follows(me, op) : null);
     const ensure = (op) => { const off = follows(op); if (off) throw new Refused(off.why, { state: "refused", next: off.next }); };
     return {
-      name, dir, record, unreadable, backend, follows, still: me.still,
-      // What it looks like now, read again: { view, next }, or null once it has no record (cleaned up). One whose record
-      // cannot be read is shown, as `unreadable`, never left out as no worker.
+      name, dir, get record() { return record; }, unreadable, get backend() { return backend; }, follows, still: me.still,
+      get adapter() { return adapter; },
+      // What it looks like now, read again, through this handle's adapter: { view, next }, or null once it has no record
+      // of this worker (cleaned up, or another worker launched under its name). One whose record cannot be read is
+      // shown, as `unreadable`, never left out as no worker.
       async look({ check = true, ms } = {}) {
-        const now = read(name);
-        if (now.unreadable) return { view: unreadableView(name), next: [] };
-        if (!now.worker) return null;
-        return adapterFor(adapters, now.worker).look({ ...me, record: now.worker, damaged: () => damagedNext(dir, name, now.worker) }, { check, ms }, ctx);
+        const now = read(name), id = identityOf(now);
+        if (id.unreadable) return { view: unreadableView(name), next: [] };
+        if (id !== "same" && id !== "unproven") return null;
+        return adapter.look({ ...me, record: now.worker, damaged: () => damagedNext(dir, name, now.worker) }, { check, ms }, ctx);
       },
       // Whether a wait with no names watches it. One whose record cannot be read is: it may be running.
       pending: (reported) => (unreadable ? true : Boolean(adapter.pending(me, reported, ctx))),
@@ -102,13 +121,16 @@ export function workers({ root = STATE_DIR(), adapters = ADAPTERS, env = process
     };
   };
   const found = (name) => { const r = read(name); return r.worker || r.unreadable ? handle(name, r) : null; };
+  // A handle that changes nothing for an identity that holds: the same worker, or one no id can tell from it.
+  const isSelf = (id) => id === "same" || id === "unproven";
 
   return {
     // The worker of this name, or Refused when there is none of routr's (one whose record cannot be read is one).
     one: (name) => found(name) ?? (() => { throw new Refused(`no headless worker named ${name}; routr workers lists them`); })(),
     find: found,
-    // Every worker in the store, in name order: a folder that is not one of routr's left out, an unreadable one kept.
-    all: () => store.names().map(found).filter(Boolean),
+    // Every worker in the store, in name order: an unreadable one kept, and a folder that is not one of routr's left out,
+    // or, with `strangers`, kept with no record (for an unnamed wait, which says it is not a worker when it runs).
+    all: ({ strangers = false } = {}) => store.names().map((n) => { const r = read(n); return r.worker || r.unreadable ? handle(n, r) : strangers ? handle(n, r, { stranger: true }) : null; }).filter(Boolean),
     // `cleanup --worker`: removes a worker's run folder (its reports with it) once nothing of it runs, under the lock a
     // new holder is started under. A worktree launch made for it goes first, through cleanup's own checks (nothing
     // uncommitted, no file the worker made, no commit no branch holds), and the run folder stays when cleanup keeps the
@@ -132,13 +154,15 @@ export function workers({ root = STATE_DIR(), adapters = ADAPTERS, env = process
         // Read again under the lock: it may have changed while cleanup waited for it. Still this worker, by its id: one
         // cleaned up and launched again under that name meanwhile is another, and is not finished on this one's checks.
         const again = read(name), w = again.worker, same = it.still();
-        if (!w || same !== "same") return refuse(again.unreadable ? unreadableWhy(name, "worker.json", again.unreadable) : "its record changed while cleanup waited", damagedNext(dir, name));
+        if (!w || !isSelf(same)) return refuse(again.unreadable ? unreadableWhy(name, "worker.json", again.unreadable) : "its record changed while cleanup waited", damagedNext(dir, name));
+        // A finish for a worker someone was shown binds its id: a record with none, or an action that names none, is
+        // never finished by its name and state alone.
         if (expect) {
-          if (expect.id !== w.id) return refuse("its record changed while cleanup waited", damagedNext(dir, name));
+          if (same !== "same" || typeof expect.id !== "string" || !expect.id || expect.id !== w.id) return refuse("its record changed while cleanup waited", damagedNext(dir, name));
           const seen = (await it.look())?.view.state ?? "gone";
           if (!expect.states?.includes(seen)) return refuse(`${name} is ${seen} now, not ${expect.states?.join(" or ")}`, runNext("Look at it.", ["routr", "workers", "--name", name]));
         }
-        const adapter = adapterFor(adapters, w), me = { name, dir, record: w, unreadable: null, still: it.still, damaged: () => damagedNext(dir, name, w) };
+        const adapter = it.adapter, me = { name, dir, record: w, unreadable: null, still: it.still, damaged: () => damagedNext(dir, name, w) };
         const held = await adapter.end(me, { dryRun, out, assertOwned }, ctx);
         if (held) return refuse(held.why, held.next);
         if (w.worktree) {
