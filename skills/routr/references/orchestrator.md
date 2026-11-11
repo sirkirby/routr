@@ -411,8 +411,10 @@ differs:
   longer than the task should take, read its terminal.
 - **Read the report with `hc read <t> --lines <n>`,** save all of it, and run `routr check --brief <file> --report <file>`.
 - **Send back with `routr send`.** It adds the report reminder, writes the message to an owner-only file in the
-  worker's run folder, and gives hc only a pointer to it, so the text does not appear in hc's argv. hc refuses to paste
-  into a program at a question; read and answer that question first, then send again.
+  worker's run folder, and gives hc only a pointer to it, so the text does not appear in hc's argv. It types nothing
+  into a harness that is at a question or has reported no status yet (typed at Claude Code's folder question, Enter
+  picks "No, exit"): it says nothing was sent, and you read the question with `hc read`, answer it with `hc keys`
+  when it is yours to answer, and send again. Never `hc send` into such a worker yourself.
 - **Stop with `routr stop --name <name>`.** It checks the terminal's worker id and ends its program with hc, leaving the
   terminal and run folder for cleanup.
 - **Finish with `routr cleanup --worker <name> [--delete-branch]`,** the step in launch's `next`. It refuses while hc says

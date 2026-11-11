@@ -909,6 +909,12 @@ harness ended before taking it, `harness_refused` when Codex said no or Kiro wou
 task's turn within 30 seconds, or `not_written` when its input would not take it), `unknown` (handed over and no answer came: whether it
 was taken is not known, and it is never sent again on its own; `no_reply` when Codex ended before answering;
 `headline` `routr: whether <name> took the message is not known (<why>)`), `failed` (refused input).
+A terminal worker: `delivered` (`handed_to_harness`: hc typed the pointer to the message file, sent with hc's `--if`
+for the status routr just read when that is idle or working), `refused` with nothing sent and `next` to read and answer
+the question (`hc read`, `hc keys`) when its harness reports status and has reported none yet or reports `blocked`
+(Cursor, which reports none, is not held back), or when hc itself refuses (`blocked`, or `unavailable` while its
+terminal is still starting), and `refused` "nothing was sent" when its terminal could not be looked at, is not this
+worker's, or has ended. `unknown` only when hc was asked to send and its answer did not say.
 
 `ok`: true for `delivered`, `queued`, `resumed`. Own fields: `state`, `name`, `message` `{ code, why? }`. `warnings`
 names each trace-context carrier saved with the worker that is now outside routr's limits, or saved as anything but

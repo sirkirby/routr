@@ -640,7 +640,7 @@ test("send writes an owner-only message file and gives hc only its pointer, clas
     expect(calls.map((c) => c.args[0])).toEqual(["get", "send"]);
     expect(calls[0].args).toEqual(["get", "t9", "--json"]);
     const pointer = calls[1].args[2], match = /^Your message is in (.+)\. Read that whole file now and do what it says\.$/.exec(pointer);
-    expect(calls[1].args).toEqual(["send", "t9", pointer, "--json"]);
+    expect(calls[1].args).toEqual(["send", "t9", pointer, "--if", "working", "--json"]); // typed only while still working
     expect(match).not.toBeNull();
     expect(pointer).not.toContain(SECRET);
     expect(readFileSync(match[1], "utf8")).toBe(`${SECRET}\n\n${CLOSING}`);
@@ -687,6 +687,20 @@ test("wait after send stays pending at the old idle turn until hc advances the t
     pause: async () => { pauses++; now += 500; } });
   expect([r.state, pauses, waitedHc.words()]).toEqual(["finished", 1, ["get", "get"]]);
   expect(r.workers[0]).toMatchObject({ state: "idle", turn: 1, turns: [{ turn: 1, report: null }] });
+});
+
+test("a send hc says did not start keeps no turn for wait; a status hc's --if cannot name is sent without it", async () => {
+  await launched();
+  const notStarted = fakeHc({ sees: [{ status: { state: "idle" }, turn: 2 }], over: { send: { code: 0, out: JSON.stringify({ started: false, status: "idle", turn: 2 }) } } });
+  expect((await sendCommand(["--name", "w1", "--task", "more"], { settings: () => cfg(), env: {}, hc: notStarted.run })).state).toBe("delivered");
+  expect(existsSync(join(runDir("w1"), "send.json"))).toBe(false);
+  expect(notStarted.calls.find((c) => c.args[0] === "send").args).toContain("idle");
+  rmSync(runDir("w1"), { recursive: true, force: true });
+  await launched();
+  const done = fakeHc({ sees: [{ status: { state: "done" }, turn: 1 }], over: { send: { code: 0, out: JSON.stringify({ started: true, status: "working", turn: 1 }) } } });
+  expect((await sendCommand(["--name", "w1", "--task", "more"], { settings: () => cfg(), env: {}, hc: done.run })).state).toBe("delivered");
+  expect(done.calls.find((c) => c.args[0] === "send").args).not.toContain("--if");
+  rmSync(runDir("w1"), { recursive: true, force: true });
 });
 
 test("send says nothing was sent when lookup or identity stops it before hc send", async () => {

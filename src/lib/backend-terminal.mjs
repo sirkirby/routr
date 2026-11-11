@@ -96,12 +96,16 @@ const nothingSent = (w, why, next = [], message = { code: "refused", why: "refus
 // 0.1.19, seen 2026-11-10: a terminal still starting is `unavailable`, "nothing was typed"). A refusal it names typed
 // nothing: refused, never unknown. Only its kind is read; its message and hint are never passed on.
 const REFUSED_KINDS = new Set(["blocked", "unavailable"]);
-async function sendToTerminal(target, pointer, hc) {
-  const r = await hc("hc", ["send", target, pointer, "--json"], 15000);
+// `seen`: the status routr just read. hc's `--if` takes only idle or working, and types nothing when the status has
+// moved on since (a question that came up between the look and the send).
+async function sendToTerminal(target, pointer, hc, seen) {
+  const r = await hc("hc", ["send", target, pointer, ...(seen === "idle" || seen === "working" ? ["--if", seen] : []), "--json"], 15000);
   if (r == null) return { code: "unknown" };
   const parsed = (text) => { try { const v = JSON.parse(text); return v && typeof v === "object" ? v : null; } catch { return null; } };
   const body = parsed(r.out) ?? (r.code !== 0 ? parsed(r.err ?? "") : null);
-  if (r.code === 0 && body && Number.isSafeInteger(body.turn) && body.turn >= 0) return { code: "handed_to_harness", turn: body.turn };
+  // `started`: whether it went working within a few seconds (hc's own answer). One that did not may have been pasted and
+  // not submitted: its turn is not kept, so a wait does not hold out for a turn that may never come.
+  if (r.code === 0 && body && Number.isSafeInteger(body.turn) && body.turn >= 0) return { code: "handed_to_harness", turn: body.started === false ? null : body.turn };
   if (r.code !== 0 && REFUSED_KINDS.has(body?.error?.kind)) return { code: "refused", why: "refused" };
   return { code: "unknown" };
 }
@@ -334,8 +338,9 @@ export const terminal = {
     }
     const file = join(me.dir, `${MESSAGE_FILE}-${randomUUID().replace(/-/g, "")}.md`);
     writeFileSync(file, message, { flag: "wx", mode: 0o600 });
-    const reply = await sendToTerminal(checked.target, nextMessage(file), hc);
-    if (reply.code === "handed_to_harness") writeJsonAtomic(join(me.dir, SEND_FILE), { turn: reply.turn }, { mkdir: false, mode: 0o600 });
+    const reply = await sendToTerminal(checked.target, nextMessage(file), hc, word);
+    // Bookkeeping for wait: a write that fails never turns a delivered message into a failed send.
+    if (reply.code === "handed_to_harness" && reply.turn != null) try { writeJsonAtomic(join(me.dir, SEND_FILE), { turn: reply.turn }, { mkdir: false, mode: 0o600 }); } catch {}
     const sent = sentAs(w.name, w.kind, reply);
     if (reply.code === "refused") sent.next.push(readStep(w), doNext("Read the question and answer it only when it is yours to answer.", templateCommand(["hc", "keys", checked.target, "<keys>"])));
     return sent;
