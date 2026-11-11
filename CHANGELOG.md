@@ -12,8 +12,8 @@ A short history of what changed in each routr release, one line per change. Each
 - `routr wait`, `routr send` and `routr stop` now follow terminal workers in the Herdr app, while their finished reports remain in their tabs to read with `hc`. (#173)
 - `routr watch` in a herdr pane no longer sends the Herdr app's status codes or a terminal title when that pane's session was started from an app terminal. (#165)
 - `routr cleanup --worker` keeps a worker launched again under the same name while it waited, and says its record changed, instead of finishing the new worker. (#170)
-- `routr constructor`, `routr toString` and other names every JavaScript object has are now unknown commands: they print the usage and exit 2, as any unknown word does, instead of exiting 0 with no output (or, with `--help`, printing help for no command). (#TBD)
-- A command line routr refuses as unknown usage, such as `routr --config <path> launch`, no longer records an OpenTelemetry span for a command that never ran. (#TBD)
+- `routr constructor`, `routr toString` and other names every JavaScript object has are now unknown commands: they print the usage and exit 2, as any unknown word does, instead of exiting 0 with no output (or, with `--help`, printing help for no command). (#175)
+- A command line routr refuses as unknown usage, such as `routr --config <path> launch`, no longer records an OpenTelemetry span for a command that never ran. (#175)
 
 ## v0.13.2 — 2026-11-06
 
