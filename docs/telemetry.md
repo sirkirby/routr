@@ -50,7 +50,7 @@ send. Never during a command, and a failed send is retried the next day. Each ro
 
 Attempts are a legacy activity count, not a quality measure. This format still sends `1` when attempts are unknown;
 the local ledger preserves unknown as null. Extra tries can include launch trouble, scope changes or successful
-review follow-ups. Run revisions are still separate telemetry rows. Local `run_id` and `outcome.causes` are excluded
+review follow-ups. Run revisions are still separate telemetry rows. Local `run_id`, `outcome.causes` and `outcome.cause_details` are excluded
 from both telemetry and share output, so these rows alone cannot reconcile revisions or classify rework.
 
 Each send also carries routr's version, your OS and CPU type (`darwin-arm64`), and a random install id created on

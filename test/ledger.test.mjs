@@ -342,7 +342,7 @@ test("assess reports outcomes without treating different tasks and attempts as a
   const struggling = Array.from({ length: 5 }, () => row({ outcome: { verdict: "done", check: "pass", attempts: 2 } }));
   expect(assess(struggling, c)).toContain("5 runs with multiple attempts");
   expect(assess(struggling, c)).not.toContain("stronger default_model");
-  expect(assess(struggling, c)).toContain("unknown 5");
+  expect(assess(struggling, c)).toContain("unknown 0, not recorded 5");
   expect(report).not.toContain("TOO LOW");                                    // the level review is for the lab, not the user
 });
 

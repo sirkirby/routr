@@ -117,3 +117,16 @@ later `record --launch` gives a row. Checked fields only, never the task.
 **Launch index**:
 The OpenTelemetry export's record of each findable launch, under its launch id with its trace's span, kept 30 days and
 written only when export is on: how a `--pane` rerun, cleanup and record link to the launch's span.
+
+## What the ledger keeps
+
+**Cause**:
+Why a run took extra work, from record's fixed list (`execution`, `brief`, `scope`, `review`, `launch`, `unknown`), or
+`none` for no extra work. A run recorded without one is "not recorded", not `unknown`.
+
+**Cause detail**:
+The lead's own short tag for what kind of extra work it was (`copied-existing-code`), beside a cause. routr keeps no list
+of them; it counts them by project and points out one that comes back within `cause_repeat_days`. Local only, like a
+note.
+_Avoid_: cause tag, category (the fixed list is the cause)
+

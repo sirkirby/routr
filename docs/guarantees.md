@@ -62,6 +62,10 @@ a failure.
   escalation before cleanup. Every successful record returns a filled revision template for its own `run_id`.
   Advice, task and ledger paths in that template are absolute, so changing folders still revises the same run.
   An unknown run ID points to the earlier record output and the selected ledger; advice `id` is not a run ID.
+  A `--cause-detail` tag stays in this machine's ledger like a note. `assess` counts it; `record`'s own answer carries
+  it in its revision template and names a tag that came back in the same project within `cause_repeat_days`; no
+  other command shows it. Telemetry and
+  OpenTelemetry never send it. That reminder is advice only: it never refuses a record.
 - `cleanup` removes a worker's worktree (through herdr, or git when no workspace is open) or closes its pane. It
   refuses while anything it can see runs there or when it cannot tell, never uses `--force`, and refuses a worktree
   holding uncommitted changes, files git is told not to check, a commit no branch or tag holds, or untracked files
@@ -262,7 +266,7 @@ writes only:
   attempts, a failed check, causes, and the usable room each account showed. Those fields are scalars: a level only
   when it is one of the three, a string cut to a short length for the page, a boolean or a finite number, and null
   otherwise. The ledger keeps the choice as it was recorded. It
-  holds no nested value, no note, no brief hash or length, no advice id, no run id and no path. Uninstall removes
+  holds no nested value, no note, no cause detail, no brief hash or length, no advice id, no run id and no path. Uninstall removes
   `~/.cache/routr`, and the default file with it;
 - a file at a path you name for that command (`share --out`, `dash --out`, a `--ledger` or `--config` you give);
 - the files `launch --copy` copies into a worker's worktree, in a pane or headless, never through a link and never

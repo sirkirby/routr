@@ -48,6 +48,13 @@ weigh that before you run one.
 On Cursor, give subagents Cursor's own models only (Grok, Composer). Other vendors' models inside Cursor draw on a
 separate, smaller usage pool.
 
+## Before you report
+
+If you changed code, check it once more with one question: find a correct input this change rejects, or a wrong input it
+accepts. Fix what you find. Where the brief names existing code to call, make sure the change calls it and does not
+restate it. A subagent for this check is sized like any other: ask `routr subagent` first. Whether this check
+lowers rework is not measured.
+
 ## Your report
 
 End with a report in this shape. The orchestrator reads it by machine, so keep the labelled lines exact. Make it your
@@ -58,5 +65,6 @@ ends with a report of its own.
     SUMMARY: <what you did, two or three sentences>
     CHECKED: <what you ran to verify it, and the result>
     FILES: <files changed, or "none">
+    REUSED: <existing code the change calls rather than reimplementing, or "none">
     SUBAGENTS: <subtask> → <level advised> → <model chosen> → <effort chosen>      (one line per subagent, or "none"; effort "default" where you set none)
     ROUTR: <advised> → <chosen> because <reason>                  (only where you went against the advice)

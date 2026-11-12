@@ -12,6 +12,10 @@ import { cfg, cliEnv, scratch, SCRIPT, herdrOK } from "./helpers.mjs";
 const MARKER = "PRIVATE_BRIEF_HANDOFF_MARKER_9b98";
 const base = ["--subscription", "claude", "--name", "worker", "--model", "sonnet", "--effort", "low"];
 const recordStep = (r) => r.next.find((n) => n.kind === "do" && n.template?.startsWith("routr record "));
+const CAUSE = "<execution|brief|scope|review|launch|unknown|none>";
+// A record template with its placeholders filled as a lead would, split into words.
+const filled = (template) => template.replace("<done|partial|blocked>", "done").replace("<pass|fail|none>", "pass").replace(CAUSE, "none")
+  .replace("<note>", "rechecked").match(/"[^"]*"|\S+/g).map((w) => w.replace(/^"|"$/g, ""));
 function fixture() {
   const dir = scratch("handoff"), task = join(dir, "task.md"), advice = join(dir, "advice.json"), ledger = join(dir, "ledger.jsonl");
   const text = `Fix ${MARKER} and verify it.\n`;
@@ -62,7 +66,7 @@ test("matching fallback advice yields one worker record template on dry and real
   const args = [...base, "--task-file", f.task, "--advice", f.advice];
   const dry = await launch([...args, "--dry-run"], noCalls);
   expect(recordStep(dry)).toEqual({ kind: "do", why: expect.stringContaining("Verify"), template: expect.stringContaining("routr record --advice ") });
-  for (const part of [templateCommand([resolve(f.advice)]), "--task-file", templateCommand([resolve(f.task)]), "--subscription claude", "--model sonnet", "--effort low", "--level <level>", "--verdict <done|partial|blocked>", "--check <pass|fail|none>"]) expect(recordStep(dry).template).toContain(part);
+  for (const part of [templateCommand([resolve(f.advice)]), "--task-file", templateCommand([resolve(f.task)]), "--subscription claude", "--model sonnet", "--effort low", "--level <level>", "--verdict <done|partial|blocked>", "--check <pass|fail|none>", `--cause ${CAUSE}`]) expect(recordStep(dry).template).toContain(part);
   for (const extra of [["--pane", "w1:p9"], []]) {
     const noModel = args.filter((_, i) => ![base.indexOf("--model"), base.indexOf("--model") + 1].includes(i));
     const r = await launch([...noModel, ...extra, "--dry-run"], noCalls);
@@ -172,9 +176,10 @@ test("record next follows the outcome on new rows and revisions, with a usable r
     for (const [flag, value] of [["advice", f.advice], ["task-file", f.task], ["ledger", f.ledger], ["project", o.project], ["subscription", o.subscription], ["model", o.model], ["effort", "high"], ["level", "strong"], ["run-id", r.run_id]]) {
       expect(step.template).toContain(templateCommand([`--${flag}`, value]));
     }
-    expect(step.template).toContain("--verdict <done|partial|blocked> --check <pass|fail|none> --note <note>");
-    const words = step.template.replace("<done|partial|blocked>", "done").replace("<pass|fail|none>", "pass").replace("<note>", "rechecked").match(/"[^"]*"|\S+/g).map((w) => w.replace(/^"|"$/g, ""));
-    const revised = recordCommand(Object.fromEntries(Array.from({ length: (words.length - 2) / 2 }, (_, i) => [words[2 + i * 2].slice(2).replaceAll("-", "_"), words[3 + i * 2]])), [], config);
+    expect(step.template).toContain(`--verdict <done|partial|blocked> --check <pass|fail|none> --cause ${CAUSE} --note <note>`);
+    const words = filled(step.template);
+    const flags = Object.fromEntries(Array.from({ length: (words.length - 2) / 2 }, (_, i) => [words[2 + i * 2].slice(2).replaceAll("-", "_"), words[3 + i * 2]]));
+    const revised = recordCommand({ ...flags, causes: [flags.cause] }, [], config);
     expect(revised).toMatchObject({ ok: true, run_id: r.run_id });
   }
   const inline = recordCommand({ ...o, task_file: undefined }, [], config);
@@ -191,7 +196,7 @@ test("record revision resolves relative file inputs and works from another folde
   const args = ["--advice", "advice.json", "--task-file", "task.md", "--ledger", "ledger.jsonl", "--subscription", "claude", "--model", "sonnet", "--effort", "low", "--level", "standard", "--verdict", "partial", "--check", "fail"];
   const first = invoke(args, f.dir); expect(first.error).toBeUndefined(); expect(first.ok).toBe(true);
   const template = recordStep(first).template;
-  const words = template.replace("<done|partial|blocked>", "done").replace("<pass|fail|none>", "pass").replace("<note>", "rechecked").match(/"[^"]*"|\S+/g).map((w) => w.replace(/^"|"$/g, ""));
+  const words = filled(template);
   // The child resolves against its own cwd, which can be the real path (macOS /var is /private/var), so compare real paths.
   for (const [flag, file] of [["advice", f.advice], ["task-file", f.task], ["ledger", f.ledger]]) {
     const given = words[words.indexOf(`--${flag}`) + 1];

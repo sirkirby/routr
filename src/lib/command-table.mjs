@@ -362,7 +362,8 @@ export const COMMANDS = {
       { name: "--level", arg: "<level>", description: "actual work level chosen (basic, standard, strong); supply explicitly, even when unchanged. A larger model alone does not change the work level", required: false, default: "advised level" },
       { name: "--seconds", arg: "<n>", description: "elapsed seconds from handoff through verification (or stopping); omit when unknown", required: false },
       { name: "--attempts", arg: "<n>", description: "positive count of worker attempts; activity, not a quality score. Omit when unknown", required: false },
-      { name: "--cause", arg: "<execution|brief|scope|review|launch|unknown|none>", description: "why extra work occurred, including lead corrections; repeatable, local only. none means no extra work and must be used alone", required: false, repeatable: true },
+      { name: "--cause", arg: "<execution|brief|scope|review|launch|unknown|none>", description: "why extra work occurred, including lead corrections; repeatable, local only. none means no extra work and must be used alone. review means a review found it: give the cause it found beside it", required: false, repeatable: true },
+      { name: "--cause-detail", arg: "<tag>", description: "what kind of extra work it was, as a short tag in your own words (copied-existing-code, unchecked-claim): lowercase letters, digits and hyphens. Needs a --cause other than none; repeatable, local only, never sent. assess counts tags by project, and record's next points out a tag seen again in the same project within cause_repeat_days (7)", required: false, repeatable: true },
       { name: "--run-id", arg: "<run_id>", description: "revise an existing run using the run_id field from record's earlier output, not id (the advice id); the row's run_id is also in the ledger. Use next's revision template with the original advice and updated outcome. Omitted note and subagent data are preserved. Otherwise records a new worker run. Local only", required: false },
       { name: "--launch", arg: "<launch_id>", description: "the launch_id from launch's answer (its record template carries it): the row names its launch, and takes that launch's project unless --project is given. A revision keeps its run's launch. Local only", required: false, guard: true },
       { name: "--project", arg: "<name>", description: "label for the row (default: the project of the launch named by --launch, else the git repository's folder name of the folder record runs in; kept local, never shared)", required: false },
@@ -380,7 +381,7 @@ export const COMMANDS = {
       const taskFile = take("--task-file");
       const o = Object.fromEntries(["advice", "subscription", "model", "effort", "level", "verdict", "check", "seconds", "attempts", "note", "ledger", "report", "project"].map((f) => [f, take(`--${f}`)]));
       o.task_file = taskFile ?? (comparing ? "" : undefined);
-      o.run_id = take("--run-id") ?? (revising ? "" : undefined); o.causes = takeAll("--cause");
+      o.run_id = take("--run-id") ?? (revising ? "" : undefined); o.causes = takeAll("--cause"); o.cause_details = takeAll("--cause-detail");
       o.launch = launch; o.launch_repeated = launchFlags > 1;
       // Never blocks the agent; the config resolves a "default" effort.
       return (await commands()).recordCommand(o, takeAll("--subagent"), loaded().config, { warnings: [...loaded().notes, ...notes], otel: { configPath } });

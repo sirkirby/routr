@@ -20,6 +20,7 @@ export const DEFAULTS = {
   auto_update: true,           // check for a new release at most once a day, in the background; applied on the next run
   update_channel: "stable",    // which releases updates follow: "stable", or "beta" (also -beta.N and -rc.N; never alpha)
   telemetry: false,            // opt-in: share anonymous outcomes (never text) once a day to help tune routr; docs/telemetry.md
+  cause_repeat_days: 7,        // record points out a cause detail seen again in one project within this many days; 0 turns it off
   subscriptions: {},
 };
 // `billing` fills a gap when the harness reports no capacity; a measured cap always counts.
@@ -118,7 +119,9 @@ export function loadConfig(path = CONFIG_PATH()) {
   const share = (v, fallback, where) => { if (v === undefined) return fallback; if (typeof v === "number" && v >= 0 && v <= 1) return v; notes.push(warning("config_share", `${where}: ${JSON.stringify(v)} is not a number from 0 to 1, using ${fallback ?? "the decision model's own"}`)); return fallback; };
   const num = (k) => share(raw[k], DEFAULTS[k], k);
   const config = { fallback_level: isLevel(raw.fallback_level) ? raw.fallback_level : DEFAULTS.fallback_level, sure_at: raw.sure_at === null ? null : num("sure_at"), risk_above: num("risk_above"),
-    decision: decisionSetting(raw.decision, notes), auto_update: raw.auto_update !== false, update_channel: DEFAULTS.update_channel, telemetry: raw.telemetry === true, prefer: {}, subscriptions: {} };
+    decision: decisionSetting(raw.decision, notes), auto_update: raw.auto_update !== false, update_channel: DEFAULTS.update_channel, telemetry: raw.telemetry === true, cause_repeat_days: DEFAULTS.cause_repeat_days, prefer: {}, subscriptions: {} };
+  if (Number.isInteger(raw.cause_repeat_days) && raw.cause_repeat_days >= 0 && raw.cause_repeat_days <= 365) config.cause_repeat_days = raw.cause_repeat_days;
+  else if (raw.cause_repeat_days !== undefined) notes.push(warning("config_repeat", `cause_repeat_days: ${JSON.stringify(raw.cause_repeat_days)} is not a whole number of days from 0 to 365, using ${DEFAULTS.cause_repeat_days}`));
   if (UPDATE_CHANNELS.includes(raw.update_channel)) config.update_channel = raw.update_channel;
   else if (raw.update_channel !== undefined) notes.push(warning("config_channel", `update_channel: ${JSON.stringify(raw.update_channel)} is not one of ${UPDATE_CHANNELS.join(", ")}, using stable: routr setup --channel stable|beta`));
   if (raw.otel !== undefined) {

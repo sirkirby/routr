@@ -120,10 +120,10 @@ test("dispatch's classify child exports observed usage, requested and named resp
 test("record projects only its exact resolved outcome fields, using telemetry's checks", () => {
   const x = exporting(), advice = join(x.home, "advice.json");
   writeFileSync(advice, JSON.stringify({ id: "abc12345", brief_sha: "123456789abc", mode: "dispatch", level: "standard" }));
-  const r = recordCommand({ advice, ledger: join(x.home, "ledger.jsonl"), subscription: "codex", model: "MODEL_MARKER", effort: "low", verdict: "NOTE_MARKER", check: "pass", attempts: "2", seconds: "4.5", causes: ["execution"], note: "NOTE_MARKER" }, [], x.config, { env: {}, otel: x.otel });
+  const r = recordCommand({ advice, ledger: join(x.home, "ledger.jsonl"), subscription: "codex", model: "MODEL_MARKER", effort: "low", verdict: "NOTE_MARKER", check: "pass", attempts: "2", seconds: "4.5", causes: ["execution"], cause_details: ["tag-marker-5e2a"], note: "NOTE_MARKER" }, [], x.config, { env: {}, otel: x.otel });
   expect(r.ok).toBe(true);
   expect(attrs(x.spans()[0])).toMatchObject({ "routr.verdict": "other", "routr.check": "pass", "routr.level": "standard", "routr.attempts": 2, "routr.seconds": 4.5, "routr.causes": ["execution"], "routr.subscription": "codex", "routr.effort": "low", "routr.effort_from": "given", "routr.advice.id": "abc12345" });
-  expect(JSON.stringify(x.batches())).not.toMatch(/MODEL_MARKER|NOTE_MARKER/);
+  expect(JSON.stringify(x.batches())).not.toMatch(/MODEL_MARKER|NOTE_MARKER|tag-marker-5e2a/);
 });
 
 test("the provider boundary preserves requested identity separately and never echoes it as a response identity", async () => {
