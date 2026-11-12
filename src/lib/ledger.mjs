@@ -219,22 +219,25 @@ export function latestRuns(entries) {
 
 // How many days back a cause detail counts as a repeat (config `cause_repeat_days`); 0 turns the reminder off.
 export const REPEAT_DAYS = 7;
-const detailsOf = (e) => Array.isArray(e.outcome?.cause_details) ? e.outcome.cause_details.filter((d) => typeof d === "string" && CAUSE_DETAIL.test(d)) : [];
+// A row's cause details as record would have kept them: a hand-edited row's non-list, overlong, malformed or repeated
+// tags are dropped, so every reader counts the same thing.
+export const causeDetailsOf = (e) => Array.isArray(e?.outcome?.cause_details)
+  ? [...new Set(e.outcome.cause_details.filter((d) => typeof d === "string" && d.length <= CAUSE_DETAIL_MAX && CAUSE_DETAIL.test(d)))] : [];
 const projectOf = (e) => e.project ?? "(unlabelled)";
 
 // The other runs in this entry's project, within the window, that carry one of its cause details: a second time is a
 // missing rule, and record says so before the next launch. Counts runs (latest revision once), never this run.
 export function causeRepeats(entries, entry, { days = REPEAT_DAYS, now = Date.now() } = {}) {
-  const tags = detailsOf(entry);
+  const tags = causeDetailsOf(entry);
   if (!tags.length || !(days > 0)) return [];
   const since = now - days * 86400000, recent = latestRuns(entries).filter((e) => e.run_id !== entry.run_id && projectOf(e) === projectOf(entry) && Date.parse(e.ts) >= since);
-  return tags.map((tag) => ({ tag, runs: recent.filter((e) => detailsOf(e).includes(tag)).length })).filter((r) => r.runs > 0);
+  return tags.map((tag) => ({ tag, runs: recent.filter((e) => causeDetailsOf(e).includes(tag)).length })).filter((r) => r.runs > 0);
 }
 
 // assess: the lead's own tags, grouped by project, with how many fell in the repeat window.
 function causeDetails(entries, config) {
   const days = config?.cause_repeat_days ?? REPEAT_DAYS, since = Date.now() - days * 86400000, byProject = new Map();
-  for (const e of entries) for (const tag of detailsOf(e)) {
+  for (const e of entries) for (const tag of causeDetailsOf(e)) {
     const tags = byProject.get(projectOf(e)) ?? new Map(), c = tags.get(tag) ?? { runs: 0, recent: 0 };
     c.runs++; if (Date.parse(e.ts) >= since) c.recent++;
     tags.set(tag, c); byProject.set(projectOf(e), tags);

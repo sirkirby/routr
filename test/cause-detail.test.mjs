@@ -56,8 +56,13 @@ test("a repeat is another run in the same project inside the window, a revised r
   expect(causeRepeats([other, mine], mine, { days: 0 })).toEqual([]);                                  // turned off
   expect(causeRepeats([tagged(1, ["copied-existing-code"], { project: "site" }), mine], mine)).toEqual([]);
   expect(causeRepeats([tagged(1, ["unchecked-claim"]), mine], mine)).toEqual([]);
-  // A hand-edited row with a malformed detail is not counted.
-  expect(causeRepeats([{ ...other, outcome: { ...other.outcome, cause_details: "copied-existing-code" } }, mine], mine)).toEqual([]);
+  // A hand-edited row is read as record would have kept it: a non-list or an overlong tag is not counted, a repeated
+  // one counts once (rework review of #181, 2026-11-12).
+  const edited = (details) => ({ ...other, outcome: { ...other.outcome, cause_details: details } });
+  expect(causeRepeats([edited("copied-existing-code"), mine], mine)).toEqual([]);
+  const long = "a".repeat(41), longMine = { ...mine, outcome: { ...mine.outcome, cause_details: [long] } };
+  expect(causeRepeats([edited([long]), longMine], longMine)).toEqual([]);
+  expect(assess([edited(["copied-existing-code", "copied-existing-code"])], cfg())).toContain("copied-existing-code  1 run,");
 });
 
 test("record points out a tag that comes back before the next launch, once per new tag, and fails open", () => {
@@ -72,10 +77,15 @@ test("record points out a tag that comes back before the next launch, once per n
   expect(second.next.indexOf(reminders(second)[0])).toBe(0);                                           // before integrating
   // Revising the run to say what was added is not reminded again; a tag the revision adds is.
   expect(reminders(recordCommand({ ...base, run_id: second.run_id, cause_details: ["copied-existing-code", "unchecked-claim"], note: "added a brief line" }, [], cfg()))).toEqual([]);
+  // A revised run whose stored details were hand-edited to a string is reminded of the tag, as one with none would be.
+  const edited = recordCommand({ ...base, cause_details: ["copied-existing-code"] }, [], cfg());
+  const rows = read(ledger).map((e) => e.run_id === edited.run_id ? { ...e, outcome: { ...e.outcome, cause_details: "copied-existing-code" } } : e);
+  writeFileSync(ledger, rows.map((e) => JSON.stringify(e)).join("\n") + "\n");
+  expect(reminders(recordCommand({ ...base, run_id: edited.run_id, cause_details: ["copied-existing-code"] }, [], cfg()))).toHaveLength(1);
   const third = recordCommand({ ...base, cause_details: ["unchecked-claim"] }, [], cfg());
   expect(reminders(third)[0].why).toContain("--cause-detail unchecked-claim is now on 2 runs");
   expect(reminders(recordCommand({ ...base, cause_details: ["copied-existing-code"] }, [], cfg({ cause_repeat_days: 0 })))).toEqual([]);
-  expect(latestRuns(read(ledger))).toHaveLength(4);
+  expect(latestRuns(read(ledger))).toHaveLength(5);
   // The revision template carries the run's own causes and details, so following it keeps them.
   const template = second.next.find((n) => n.template?.includes("--run-id")).template;
   expect(template).toContain("--cause brief --cause-detail copied-existing-code --cause-detail unchecked-claim --note <note>");
