@@ -139,12 +139,13 @@ is ready, applies that harness's permissive flags and its model and effort synta
 startup), waits until the agent is ready, wraps your task in the opening and closing lines, and prints one JSON
 object describing what it did.
 
-    routr launch --kind <claude|codex|cursor|agy|kiro> --name <agent-name> \
+    routr launch --subscription <subscription> --name <agent-name> \
         --cwd <repo> --worktree <branch> [--base <ref>] --model <id> [--effort <level>] --task-file <path> \
         [--rules-file <path>] --advice <file> [--dry-run]
 
-`--kind` also takes an extra account's name as dispatch ranks it (`claude-work`). Pass no `--pane` with one, except in
-routr's own rerun: an existing pane keeps its own shell's environment, so the worker would run on another account.
+`--subscription` is the name dispatch ranked: a harness (`claude`, `codex`, `cursor`, `agy`, `kiro`) or an extra
+account of one (`claude-work`). Pass no `--pane` with an extra account, except in routr's own rerun: an existing pane
+keeps its own shell's environment, so the worker would run on another account.
 
 - `--model` is required: never let a harness pick its own default, which may be its largest model. Effort goes in
   `--effort` where the harness takes it separately. On Antigravity the model id already carries it, and routr says so
@@ -435,7 +436,7 @@ differs:
 
 ## Outside herdr: headless workers
 
-Outside herdr and herdr-core, `routr launch --kind claude`, `codex`, `cursor`, `agy` or `kiro` starts the worker without a pane: routr runs the
+Outside herdr and herdr-core, `routr launch --subscription claude`, `codex`, `cursor`, `agy` or `kiro` starts the worker without a pane: routr runs the
 harness's own headless mode (Claude Code's `-p`, Codex's app-server, Cursor's `-p`, one process a turn, Antigravity's `--print`, Kiro's ACP mode) on the user's sign-in, in its worktree (or
 `--cwd` without one), held by a routr process of its own. Dispatch, the task file, `--advice`, the
 model and effort choice, `check` and `record` are as in herdr. What differs:
@@ -554,7 +555,7 @@ Never turn on OpenTelemetry export for the user unasked. The
 other forms; an unreadable file or a flag without a usable value is refused. Unknown flag-led input without a stdin
 brief returns `ok: false`, without a reading, and points to a quoted brief or the file form in `next`. Neither
 command prints the brief.
-`launch` requires `--kind` and `--name`, a model for a real start, and matching `--advice` whenever it sends a task.
+`launch` requires `--subscription` and `--name`, a model for a real start, and matching `--advice` whenever it sends a task.
 Advice files accept UTF-8 (with or without BOM) and UTF-16LE (with or without BOM), including PowerShell 5.1 output.
 No task needs no advice. `record --task-file` compares the task before reports are read or any row is appended:
 unreadable, mismatched or unhashed advice records nothing (`ok: false`). An omitted task file is accepted for an

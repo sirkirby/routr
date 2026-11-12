@@ -48,7 +48,7 @@ test("usage failure logs correlate with their usage child, including a recovered
 });
 test("a launch needing shell input logs only a fixed why code with its completed launch identity", async () => {
   const f = install("http://127.0.0.1:4318"); let time = 0;
-  const r = await launch(["--kind", "claude", "--name", "fixture", "--model", "fixture", "--direction", "right"], { env: { HERDR_ENV: "1" }, otel: f.opts, settings: () => ({ config: f.config }), ready: async () => null, models: async () => null, now: () => time, sleep: async (ms) => { time += ms; }, run: async (a) => {
+  const r = await launch(["--subscription", "claude", "--name", "fixture", "--model", "fixture", "--direction", "right"], { env: { HERDR_ENV: "1" }, otel: f.opts, settings: () => ({ config: f.config }), ready: async () => null, models: async () => null, now: () => time, sleep: async (ms) => { time += ms; }, run: async (a) => {
     const ok = (result) => ({ ok: true, data: { result } });
     if (a[1] === "split") return ok({ pane: { pane_id: "w1:p2" } });
     if (a[1] === "read") return ok({ text: "PRIVATE_SHELL_MARKER Source it? [y/N]" });

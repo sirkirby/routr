@@ -18,7 +18,7 @@ const MARK = "OUTSIDE_TEXT_MARKER_9c61";
 const CARRIER_MARK = "CARRIER_MARKER_3b7e";
 const CARRIED = { TRACEPARENT: `00-${CARRIER_MARK}-tp-01`, TRACESTATE: `k=${CARRIER_MARK},\tz="%x%"`, BAGGAGE: `b=${CARRIER_MARK};p=1,c=d e!&'` };
 const failure = () => ({ ok: false, data: { error: { code: MARK, message: MARK }, other: MARK } });
-const base = ["--kind", "claude", "--name", "worker", "--model", "model"];
+const base = ["--subscription", "claude", "--name", "worker", "--model", "model"];
 const adviceFixture = () => {
   const dir = scratch("contracts"), advice = join(dir, "advice.json"), task = join(dir, "task.txt"), ledger = join(dir, "ledger.jsonl");
   const body = { mode: "dispatch", id: "contract-advice", brief_sha: briefSha(MARK), level: "standard", facts: {} };
@@ -267,7 +267,7 @@ test("every launch record template can be followed, with explicit, default and a
   const f = adviceFixture();
   for (const [kind, model] of [["claude", "sonnet"], ["codex", "model"], ["cursor", "grok-4.7-high"], ["agy", "gemini-3.8-flash-low"], ["kiro", "auto"]]) {
     for (const effort of [undefined, ...(["claude", "codex", "kiro"].includes(kind) ? ["high"] : [])]) for (const adopted of [false, true]) {
-      const r = await launch(["--kind", kind, "--name", "worker", "--model", model, "--advice", f.advice, "--task-file", f.task, "--dry-run", ...(effort ? ["--effort", effort] : []), ...(adopted ? ["--pane", "w1:p9"] : [])]);
+      const r = await launch(["--subscription", kind, "--name", "worker", "--model", model, "--advice", f.advice, "--task-file", f.task, "--dry-run", ...(effort ? ["--effort", effort] : []), ...(adopted ? ["--pane", "w1:p9"] : [])]);
       const template = r.next.find((n) => n.template?.startsWith("routr record ")).template;
       expect(template).toContain(`--effort ${adopted ? "<effort>" : effort ?? "default"}`);
       const filled = template.replace("<model>", model).replace("<effort>", "default").replace("<level>", "standard").replace("<done|partial|blocked>", "done").replace("<pass|fail|none>", "pass");

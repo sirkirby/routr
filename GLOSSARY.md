@@ -20,11 +20,15 @@ _Avoid_: agent, subagent (a subagent is what a worker spawns inside its own harn
 A coding agent CLI the user already has installed and signed in: Claude Code, Codex, Cursor, Antigravity or Kiro.
 _Avoid_: tool, provider (a provider is where a decision model runs)
 
+**Login**:
+A harness and the folder it signs in from: what one sign-in answer and one usage reading belong to. A harness's own
+entry is the login of the folder the environment names, or of its default folder.
+
 **Extra account**:
-Another signed-in account of a harness, listed under that harness's `accounts` in the config. It is a subscription of
-its own, named `<harness>-<name>`, and routr names its folder in the harness's own variable to every process it starts
-for it.
-_Avoid_: profile, login
+Another signed-in account of a harness, listed under that harness's `accounts` in the config with the folder it is
+signed in from. It is a subscription of its own, named `<harness>-<name>`, with its harness's settings but for the
+ones it states, and routr names its folder in the harness's own variable to every process it starts for it.
+_Avoid_: profile
 
 **Harness registry**:
 The one place routr knows a harness: one entry each, with how to start it, read its sign-in and usage, name it in
@@ -54,7 +58,8 @@ named `<name> snapshot` where output says where a reading came from.
 _Avoid_: cache entry
 
 **Source key**:
-What a usage reading is kept, claimed and billed under: a harness's name, or an extra account's subscription name.
+What a login's sign-in answer and usage reading are kept and claimed under: the harness's name for its default
+folder, and the harness with a fingerprint of the folder for any other. Two subscription names on one login share one.
 
 **Refresh claim**:
 The mark a call writes on a subscription whose kept reading is due, under that subscription's lock, before it starts

@@ -186,7 +186,7 @@ test("source CLI: dispatch/check/doctor/setup/key, launch and record preserve ba
   }
   // --task-file advice must be dispatch advice; overwrite the subagent output above.
   writeFileSync(advice, run(["dispatch", "--task-file", brief]));
-  const launched = JSON.parse(run(["launch", "--kind", "codex", "--name", "worker", "--model", "worker", "--effort", "medium", "--task-file", brief, "--advice", advice, "--dry-run"]));
+  const launched = JSON.parse(run(["launch", "--subscription", "codex", "--name", "worker", "--model", "worker", "--effort", "medium", "--task-file", brief, "--advice", advice, "--dry-run"]));
   expect(launched.ok).toBe(true); expect(launched.unavailable).toMatchObject([{ provider: "typesafe", code: "provider_error" }]); expect(launched.warnings.join(" ")).not.toContain("fallback");
   const recorded = JSON.parse(run(["record", "--advice", advice, "--task-file", brief, "--subscription", "codex", "--model", "worker", "--effort", "medium", "--verdict", "done", "--check", "pass", "--ledger", ledger]));
   expect(recorded.ok).toBe(true); const row = JSON.parse(readFileSync(ledger, "utf8")); expect(row).toMatchObject({ provider: "cloudflare", decision_model: "clef", advised: { fallback: false } }); clean(row);

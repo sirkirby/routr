@@ -3,8 +3,7 @@
 // reader asks Claude's own `/usage` (usage.mjs), so setup no longer sets it. It keeps working for anyone who has it.
 // It must never fail or print an error: a broken statusline is visible in every Claude session.
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { CLAUDE_SNAPSHOT, CONFIG_DIR, configDirOf, home, realOr, writeJsonAtomic } from "./state-files.mjs";
+import { CLAUDE_SNAPSHOT, writeJsonAtomic } from "./state-files.mjs";
 
 export function statusline() { try { run(); } catch {} }
 
@@ -25,18 +24,6 @@ export function snapshotFrom(data, previous, ts) {
   return { ts, model: data.model?.id ?? null, rate_limits: data.rate_limits ?? null, answered, seen };
 }
 
-// Is the folder this Claude Code runs with one the config lists under `accounts`? That account is read live, never
-// from the snapshot (usage.mjs), and the snapshot is one file whatever folder Claude ran with: saved from here, it
-// would be read as the usage of the account the environment names. So its renders save nothing. The config is read as
-// it is written, with no other module: this runs on every Claude Code turn. Any failure is "no".
-const ownAccount = () => {
-  try {
-    const mine = realOr(process.env.CLAUDE_CONFIG_DIR || join(home(), ".claude"));
-    const accounts = JSON.parse(readFileSync(join(CONFIG_DIR(), "config.json"), "utf8")).subscriptions?.claude?.accounts ?? {};
-    return Object.values(accounts).some((raw) => configDirOf(raw) && realOr(configDirOf(raw)) === mine);
-  } catch { return false; }
-};
-
 function run() {
   let raw;
   try { raw = readFileSync(0, "utf8"); } catch { return; }
@@ -49,11 +36,11 @@ function run() {
 
   // Every render is written, windows or not: a seat with no quota never sends `rate_limits`, and the usage reader must
   // be able to tell that from a statusline that was never installed.
-  const out = CLAUDE_SNAPSHOT();
+  const out = CLAUDE_SNAPSHOT(process.env.CLAUDE_CONFIG_DIR);
   let previous = null;
   try { previous = JSON.parse(readFileSync(out, "utf8")); } catch {}
   const snap = snapshotFrom(data, previous, Math.floor(Date.now() / 1000));
-  try { if (!ownAccount()) writeJsonAtomic(out, snap); } catch {}
+  try { writeJsonAtomic(out, snap); } catch {}
 
   const parts = [];
   const name = data.model?.display_name;

@@ -57,7 +57,7 @@ const fixture = (kind = "claude", { task = SECRET, extra = [], name = "w1", env 
   const dir = scratch("terminal"), file = join(dir, "task.md"), advice = join(dir, "advice.json");
   writeFileSync(file, task); writeFileSync(advice, JSON.stringify({ mode: "dispatch", id: "abc12345", brief_sha: briefSha(task), fallback: true }));
   let clock = 0;
-  const args = ["--kind", kind, "--name", name, "--model", "m", "--cwd", dir, "--task-file", file, "--advice", advice, ...(timeout ? ["--timeout", String(timeout)] : []), ...extra];
+  const args = ["--subscription", kind, "--name", name, "--model", "m", "--cwd", dir, "--task-file", file, "--advice", advice, ...(timeout ? ["--timeout", String(timeout)] : []), ...extra];
   return { dir, hc, args, go: () => launch(args, { env: { ...LEAD_ENV, ...env }, hc: hc.run, self: SELF, ready: async () => null, settings: () => cfg(), models: async () => ["m"], sleep: async () => {}, now: () => (clock += 100), ...deps }) };
 };
 // A Cursor private copy needs ~/.cursor/cli-config.json, under this run's scratch home.
@@ -331,7 +331,7 @@ test("launch refuses, before anything is written: a pane, no task, a sandbox, a 
   expect(await refused({ env: { SANDBOX_RUNTIME: "1" } })).toContain("Claude Code's Bash sandbox");
   expect(await refused({ settings: () => ({ subscriptions: { claude: { enabled: false } } }) })).toContain("turned off");
   expect(await refused({ ready: async () => "run `claude auth login`" })).toContain("cannot take work");
-  const f = fixture("claude"), noTask = await launch(["--kind", "claude", "--name", "w1", "--model", "m", "--cwd", f.dir], { env: LEAD_ENV, hc: f.hc.run, self: SELF, ready: async () => null, settings: () => cfg() });
+  const f = fixture("claude"), noTask = await launch(["--subscription", "claude", "--name", "w1", "--model", "m", "--cwd", f.dir], { env: LEAD_ENV, hc: f.hc.run, self: SELF, ready: async () => null, settings: () => cfg() });
   expect(noTask.error).toBe("in a herdr-core terminal a worker starts with its task: pass --task-file (or --task) and --advice");
   expect(f.hc.calls).toEqual([]);
   expect(existsSync(runDir("w1"))).toBe(false);

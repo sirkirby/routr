@@ -277,10 +277,9 @@ function removeProjectFolder(folder) {
 // each read's private folder, `projects` Claude's projects folder. It is only called once the usage-readings module's sign-in gate says Claude is signed in. That
 // answer is kept up to 6 hours (signin.mjs, as for every harness), so one read may follow a sign-out; Claude's `-p`
 // does not open a browser sign-in.
-// `account`: an extra account (harnesses' accountAt), read with its folder: Claude is asked with its variables, that
-// folder's `usage` names and `projects` are the ones looked at, and the statusline's snapshot is not used: one file,
-// whichever folder Claude ran with, so not this account's.
-export async function readClaude({ account = null, configDir = account ? account.dir : (process.env.CLAUDE_CONFIG_DIR || join(home(), ".claude")), quiet = [], file = account ? null : CLAUDE_SNAPSHOT(), nowSec = now(), exec = run, tmp = tmpdir(), projects = account ? join(account.dir, "projects") : claudeProjectsDir() } = {}) {
+// `account`: an extra account (harnesses' accountAt), read with its folder: Claude is asked with its variables, and
+// that folder's `usage` names, `projects` and statusline snapshot are the ones looked at.
+export async function readClaude({ account = null, configDir = account ? account.dir : (process.env.CLAUDE_CONFIG_DIR || join(home(), ".claude")), quiet = [], file = CLAUDE_SNAPSHOT(configDir), nowSec = now(), exec = run, tmp = tmpdir(), projects = account ? join(account.dir, "projects") : claudeProjectsDir() } = {}) {
   const snap = readJson(file);
   const fromSnap = snap ? claudeSnapshot(snap, nowSec) : null;
   // A snapshot from the future (a clock set back) is not fresh: its age says nothing.

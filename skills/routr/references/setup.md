@@ -89,9 +89,12 @@ reserve suggestions. Existing choices stand until the user changes them. Then ru
 A person can instead run `routr setup` alone in a terminal: it is a guided screen. The first time it asks which
 subscriptions routr may use, then each one's model (from the harness's live list, typed to filter; for Claude Code a full model name that is not
 listed is offered "as typed", chosen by its number in accessible mode), effort, hardest
-work, reserve, and account use, then, when two or more accounts read metered and are in normal use, each one's launch
+work, reserve, and account use, then whether to add another account of Claude Code or Codex (a second login, signed
+in from its own folder: its harness, a short name and the folder, then its hardest work, reserve and account use),
+then, when two or more accounts read metered and are in normal use, each one's launch
 share (no share, 1 to 5, or another weight up to 99; no share removes it), then lists the changes with Save and exit as the default (nothing is written before it). Run again,
-it shows what is set and a menu to change one thing, turn a subscription on or off, or walk through everything, then
+it shows what is set, extra accounts among the subscriptions, and a menu to change one thing, turn a subscription on or
+off (which then asks whether to add another account), or walk through everything, then
 Save and exit or Exit without saving. Arrow keys choose, Esc goes back,
 Ctrl+C stops without writing. `ACCESSIBLE=1` asks the same questions as numbered lines, for a screen reader. Suggest it
 to a user who would rather click through than tell you each setting; you cannot drive it yourself, because it needs a
@@ -142,17 +145,28 @@ the command that fixes it.
     the account below its target (`share_due`); the lead still chooses model and effort fit first. Guided setup asks
     for it (Launch share) when two or more enabled accounts read metered and are in normal use;
     a metered weight can be configured before room returns. Set it with `--share name=<1-99>`, remove it with `--share name=off`.
-  - `accounts`: more accounts of that harness, `{ "<name>": "<folder>" }`, written in the file by hand (setup keeps
-    it, `--force` too). Each is a subscription named `<harness>-<name>` (`claude-work`) with the harness's settings,
-    signed in from that folder: sign it in once with the tool itself (`CLAUDE_CONFIG_DIR=<folder> claude auth login`;
-    `CODEX_HOME=<folder> codex login`), since routr never signs in. Claude Code's own `~/.claude` is run with the
-    variable unset, which is how Claude Code finds that folder's sign-in. `accounts` takes Claude Code and Codex only.
-    An account routr cannot use (a folder that is not a full path or under `~/`, a name already taken) is left out with
-    a note saying why, which doctor shows, and launch refuses it. The harness's own entry runs on the folder the
-    environment names (Claude Code's `CLAUDE_CONFIG_DIR`, Codex's `CODEX_HOME`), so run routr, and start herdr, from a
-    shell that leaves that variable unset or on the folder you mean the harness's own entry to use. Measured with two
-    Claude Code accounts on macOS; a second Codex account has not been measured.
-    Example: `"claude": { "hardest_work": "strong", "reserve": 0.25, "accounts": { "work": "~/.claude-work" } }`.
+  - `accounts`: more accounts of that harness, each a name and the folder it is signed in from. A person adds one in
+    guided setup (Choose which subscriptions routr uses, then yes to "Add another account of …?": its harness, a short
+    name and its folder, then its hardest work, reserve and account use), and it is then a subscription in the list like any
+    other. An agent adds one with `routr setup --yes --account claude-work=~/.claude-work`: routr checks that folder's sign-in with the harness's own
+    status command and refuses until it is signed in, saying what to run (`CLAUDE_CONFIG_DIR=<folder> claude auth login`;
+    `CODEX_HOME=<folder> codex login`, which needs the folder made first), since routr never signs in. The folder is
+    a harness's whole home, so have the user open the harness in it once, the way routr starts workers
+    (`CLAUDE_CONFIG_DIR=<folder> claude --dangerously-skip-permissions`), and answer its first screens: a worker
+    stops at them otherwise. Then run `routr skill install`, which links routr's skills into the account's folder. Each is a subscription named `<harness>-<name>`
+    (`claude-work`) with the harness's settings, written as its folder alone. Give it a setting of its own with the
+    same flags as any subscription (`--reserve claude-work=10%`, `--use claude-work=fallback`, `--hardest`, `--model`,
+    `--effort`, `--share`, `--enable`, `--disable`): it is then written as `{ "folder": ..., "reserve": 0.1, ... }`,
+    and every setting it leaves out stays its harness's. `null` for its `default_model`, `default_effort` or `share`
+    means it has none where its harness has one (guided setup writes it for "leave it to the lead agent" and "no share"). It is turned on or off on its own: turning the harness off
+    leaves its accounts as they are. `accounts` takes Claude Code and Codex only. An account routr cannot use (a
+    folder that is not a full path or under `~/`, a name already taken, a folder another account lists) is left out
+    with a note saying why, which doctor shows, and launch refuses it. The harness's own entry runs on the folder the
+    environment names (Claude Code's `CLAUDE_CONFIG_DIR`, Codex's `CODEX_HOME`), or on its default. Where that is an
+    extra account's folder, the two are one login and routr ranks it once, as the account. Claude Code's own
+    `~/.claude` is run with the variable unset, which is how Claude Code finds that folder's sign-in. Measured on macOS
+    with two Claude Code and two Codex accounts; not on Linux or Windows.
+    Example: `"claude": { "hardest_work": "strong", "reserve": 0.25, "accounts": { "max2": "~/.claude-max2", "work": { "folder": "~/.claude-work", "use": "fallback", "reserve": 0.1 } } }`.
 - `prefer`: the user's standing preference per kind of work (`implement`, `debug`, `refactor`, `review`, `research`,
   `test_writing`, `docs`), for example `"research": "strong"`. Shown to agents as advice, never forced.
 - `sure_at` (unset: the decision model's own measured bar; Jev 1.14's is 0.7), `risk_above` (0.75), `fallback_level`

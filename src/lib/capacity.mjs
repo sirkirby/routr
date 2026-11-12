@@ -40,7 +40,7 @@ function capacityNext(r, unavailable, level, configured, named, config) {
     // Each harness's own words for reading it by hand: shared by reader diagnostics and these steps, never tucked into a ranked row's note.
     // An extra account's are its harness's, with its folder and its own name.
     const a = accountOf(u.subscription, config), h = a?.kind ?? u.subscription;
-    const byHand = Object.hasOwn(HARNESSES, h) ? HARNESSES[h].usage.byHand.replace(`--headroom ${h}=`, `--headroom ${u.subscription}=`) : null;
+    const byHand = Object.hasOwn(HARNESSES, h) ? HARNESSES[h].usage.byHand(u.subscription) : null;
     if (u.code === "command_shadowed") steps.push(doNext("Rename or remove your own usage skill or command, or pass --headroom from a number you already have", `--headroom ${u.subscription}=<share left>`));
     else if (byHand) steps.push(doNext(`Read ${u.subscription}'s usage by hand${a ? ` ${withFolder(a)}` : ""}: ${byHand}`, `--headroom ${u.subscription}=<share left>`));
   }

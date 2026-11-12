@@ -32,7 +32,9 @@ export const UPDATE_STAMP = () => join(CACHE_DIR(), "update-check");
 export const TELEMETRY_LOG = () => join(CACHE_DIR(), "telemetry.log");
 export const UPDATE_LOCK = () => join(CACHE_DIR(), "update.lock");
 // Written by `routr statusline` on each Claude Code turn, read by the usage reader.
-export const CLAUDE_SNAPSHOT = () => join(CACHE_DIR(), "claude-usage.json");
+// One per folder Claude Code runs with (`dir`: its CLAUDE_CONFIG_DIR, or none), so one account's is never read as
+// another's. The default folder's keeps the name it always had.
+export const CLAUDE_SNAPSHOT = (dir) => join(CACHE_DIR(), !dir || realOr(dir) === realOr(join(home(), ".claude")) ? "claude-usage.json" : `claude-usage-${folderSha(dir)}.json`);
 
 // A path as the file system names it, for comparing two paths. The native call: on Windows it also expands 8.3 short
 // names and folds case, which the JS one leaves as written (measured 2026-10-22, Bun 1.4.3 on Windows 11 x64:

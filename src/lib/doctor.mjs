@@ -5,7 +5,7 @@ import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { inCore } from "./backends.mjs";
 import { delimiter, join, win32 } from "node:path";
 import { CONFIG_PATH, DEFAULTS, enabledSubscriptions, loadConfig } from "./config.mjs";
-import { accountOf, HARNESSES, KINDS, signIn, signInWhy, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
+import { accountOf, accountSkillFolders, HARNESSES, KINDS, signIn, signInWhy, SKILL_FOLDERS, SKILLS, TAKES_EFFORT } from "./harnesses.mjs";
 import { signInHint } from "./signin.mjs";
 import { usageReadings } from "./usage-readings.mjs";
 import { failureMessage, ping, secretsFor } from "./systemone.mjs";
@@ -187,7 +187,7 @@ export async function inspect({ configPath, quiet } = {}) {
   // An extra account's sign-in and usage, as its harness's above: `sign_in` names its folder.
   for (const n of accounts) {
     const u = usage.find((x) => x.pool === n), signed = states[n] === "yes";
-    (r.accounts ??= {})[n] = { harness: config.subscriptions[n].harness, signed_in: signed, ...(signed ? {} : { sign_in: signInWhy(accountOf(n, config), states[n]) }), usage: said(u), ...(signed ? stale(n, u) : {}) };
+    (r.accounts ??= {})[n] = { harness: config.subscriptions[n].harness, signed_in: signed, ...(signed ? {} : { sign_in: signInWhy(accountOf(n, config), states[n]) }), usage: said(u), usage_class: u?.class, ...(signed ? stale(n, u) : {}) };
   }
   const lists = Object.fromEntries(found.map((n, i) => [n, models[i]]));
   for (const n of found) r.harnesses[n].models = lists[n];
@@ -207,7 +207,7 @@ export async function inspect({ configPath, quiet } = {}) {
   }).filter(Boolean);
   // Each harness set up here should have routr's link (or copy) of each skill whose shared copy is routr's: one that
   // is absent (its link failed, or was removed) is a repair. A folder there that is not routr's is reported above.
-  const places = skillPlaces(home());
+  const places = skillPlaces(home(), accountSkillFolders(config));
   r.skill_unlinked = places.filter((p) => p.label && p.set && p.state === "absent" && places.some((s) => s.skill === p.skill && !s.label && s.state === "ours"))
     .map((p) => ({ name: p.skill, where: p.path.replace(home(), "~"), for: p.label }));
   // `problems` are settings that are missing or wrong, each with its fix; `notes` are only for information.
@@ -303,7 +303,7 @@ export function render(r, { platform = process.platform } = {}) {
   }
   for (const [n, a] of Object.entries(r.accounts ?? {})) {
     const off = r.config.off?.includes(n);
-    line(off ? "absent" : a.signed_in ? "ok" : "need", `${n} ${a.harness} account${off ? ` · turned off in your settings (${a.signed_in ? "" : `${a.sign_in}, then `}routr setup --enable ${a.harness})`
+    line(off ? "absent" : a.signed_in ? "ok" : "need", `${n} ${a.harness} account${off ? ` · turned off in your settings (${a.signed_in ? "" : `${a.sign_in}, then `}routr setup --enable ${n})`
       : a.signed_in ? ` · usage ${a.usage}` : `, but ${a.sign_in.replace(/^`[^`]+` /, "it ")}. routr leaves it out until then`}`);
   }
   for (const k of r.decision) {

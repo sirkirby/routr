@@ -33,7 +33,7 @@ export function refuseInputs(o, prompt, { where, runs }) {
 export async function refuseSettings(o, out, { settings, ready, checkListed = async () => {} }) {
   const loaded = settings(), config = configOf(loaded);
   out.warnings.push(...(loaded.notes ?? []));
-  if (config.subscriptions[o.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[o.kind].label, o.kind));
+  if (config.subscriptions[o.subscription ?? o.kind]?.enabled === false) throw new Error(OFF.launch(o.account ? o.subscription : HARNESSES[o.kind].label, o.subscription ?? o.kind));
   const signedOut = await ready(o.account ?? o.kind);
   if (signedOut) throw new Error(`${HARNESSES[o.kind].label} cannot take work: ${signedOut}`);
   await checkListed();

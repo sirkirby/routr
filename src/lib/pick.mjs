@@ -14,9 +14,10 @@ export const levelExcludedWhy = (level) => `the user does not give it ${level} w
 export function rankSubscriptions(level, usage, c, launches = null) {
   const ranked = [], excluded = [];
   for (const [name, s] of Object.entries(c.subscriptions)) {
-    if (s.enabled === false) { excluded.push({ subscription: name, why: OFF.reason(s.harness ?? name) }); continue; }
+    if (s.enabled === false) { excluded.push({ subscription: name, why: OFF.reason(name) }); continue; }
     // A harness that is not signed in cannot take the work; the reading says what to run.
-    const signedOut = usage.find((p) => p.pool === name && p.signedIn === false);
+    // So does a harness's own entry that is, here, the login of one of its extra accounts: ranked once, as the account.
+    const signedOut = usage.find((p) => p.pool === name && (p.signedIn === false || p.sameAs));
     if (signedOut) { excluded.push({ subscription: name, why: signedOut.note }); continue; }
     if (LEVELS.indexOf(s.hardest_work) < LEVELS.indexOf(level)) { excluded.push({ subscription: name, why: levelExcludedWhy(level) }); continue; }
     const u = usage.find((p) => p.pool === name);

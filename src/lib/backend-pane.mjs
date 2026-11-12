@@ -127,7 +127,7 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
     // The user turned this subscription off: it gets no work, launched by hand or not.
     const loaded = settings(), config = configOf(loaded);
     out.warnings.push(...(loaded.notes ?? []));
-    if (config.subscriptions[o.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[o.kind].label, o.kind));
+    if (config.subscriptions[o.subscription ?? o.kind]?.enabled === false) throw new Error(OFF.launch(o.account ? o.subscription : HARNESSES[o.kind].label, o.subscription ?? o.kind));
     // A harness that is not signed in would wait at its own sign-in in a pane nobody watches: refuse before any pane.
     const signedOut = await ready(o.account ?? o.kind);
     if (signedOut) throw new Error(`${HARNESSES[o.kind].label} cannot take work: ${signedOut}`);

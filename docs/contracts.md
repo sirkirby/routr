@@ -117,8 +117,16 @@ request to judge missing readings applies only to true fallback or unavailable u
   `HC_TERMINAL_ID` is set and `HERDR_ENV` is not. Neither says the Herdr app is running. Herdr's skill is asked for
   when herdr is installed and either the lead is in a herdr session or `hc` was not found.
 - `doctor` JSON has `accounts` when the config has an extra account, on or off, of a harness found here: by name,
-  `harness`, `signed_in`, `sign_in` when not (naming its folder when it is signed out), `usage` (its reading alone:
-  the settings it takes are said on its harness's) and `usage_stale`, each checked afresh with its folder.
+  `harness`, `signed_in`, `sign_in` when not (naming its folder when it is signed out), `usage` and `usage_stale`,
+  each checked afresh with its folder.
+- `setup --account <harness>-<name>=<folder>` adds an extra account under its harness's entry, written as its folder.
+  Refused, with nothing written, when the harness has no folder setting routr knows, the folder is not a full path or
+  under `~/`, the harness is not installed, or that folder is not signed in (the error names the command to run).
+  `--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--share`, `--enable` and `--disable` take an extra
+  account's name: the setting is written on the account, which is then `{ folder, ...settings }`; a name the config
+  does not have is refused with the `--account` command that adds it.
+- A usage row of a harness's own entry that is, in this environment, the login of one of its extra accounts has
+  `sameAs`, that account's name, and no reading: `subscriptions.excluded` names it with why.
   `next_steps` gives each one turned on and signed out its own step. A harness signed out on its own lists its `models` through its
   first extra account signed in, in config order, and `setup` then takes its settings.
 - `key set <provider>` keeps the existing owner-only key storage and test output (`ok`, `provider`, `file`, `works`,
@@ -466,10 +474,10 @@ headless worker (both below), and sends it its task.
 
 Inputs:
 
-- Required: `--kind`, `--name`; `--model` (real and dry run); `--advice <file>` whenever a task is given (matching
+- Required: `--subscription`, `--name`; `--model` (real and dry run); `--advice <file>` whenever a task is given (matching
   `dispatch` advice on that exact task; `subagent` advice ranks no accounts and is refused). Refused with `error` before any herdr call when missing or unusable; real launches
   use `state: "failed"`, and dry runs follow the `ok` rule below while still planning.
-- `--kind` also takes an extra account's name (`claude-work`, from `accounts` in the config): the worker starts on
+- `--subscription` is a harness, or an extra account's name (`claude-work`, from `accounts` in the config): the worker starts on
   that harness with the account's folder in the harness's own variable, and `kind` in the answer is the harness.
   `start.env` shows that variable as `"<forwarded>"`, or as `null` where it is removed instead (Claude Code's
   `~/.claude`). Refused with `error`: advice whose dispatch ranked the name from another folder (another `--config`
@@ -477,7 +485,7 @@ Inputs:
   pane keeps its own shell's environment; the rerun in `next` for a pane this launch split carries `--continue`,
   routr's own, which is refused without `--pane` and an extra account; once the harness was started there, `next`
   offers a fresh launch without `--pane` instead); a pane shell other than sh, bash, zsh, fish, PowerShell or cmd, and
-  fish for a removed variable. An account the config left out is no `--kind`. An agent already running in the `--pane` is
+  fish for a removed variable. An account the config left out is no `--subscription`. An agent already running in the `--pane` is
   `needs_input` `wrong_account`, and the task is not sent.
 - Used when given: `--cwd` (default `.`), `--worktree <branch>`, `--base <ref>` and `--copy <path>` (with `--worktree`),
   `--pane <id>`, `--direction`, `--task` or `--task-file`, `--rules-file` (with a task), `--effort`, `--timeout`,
@@ -607,7 +615,7 @@ finishes), and the `--launch` its record template passes. It never depends on wh
 Outside herdr and herdr-core (`HERDR_ENV` is not `1`, and `HC_TERMINAL_ID` is not set), a real launch starts a headless Claude Code, Codex, Cursor, Antigravity or Kiro worker instead of a pane. A dry run
 plans the pane launch as before: it does not check the environment.
 
-- Required, beyond launch's own: `--kind claude`, `codex`, `cursor`, `agy` or `kiro`, a task (`--task-file` or `--task`, at most 3 MB with launch's
+- Required, beyond launch's own: `--subscription claude`, `codex`, `cursor`, `agy` or `kiro`, a task (`--task-file` or `--task`, at most 3 MB with launch's
   wrapping) with its matching `--advice`. Refused (with `error`, `state: "failed"`), before a run folder is written or a
   holder or worker started: `--pane` or `--direction`; no task; a task too large; a lead's sandbox it can
   see (`SANDBOX_RUNTIME`, `CODEX_SANDBOX`); a name whose run folder exists; a home whose socket path would be too long;

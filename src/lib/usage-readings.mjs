@@ -14,15 +14,16 @@
 // in seconds), `starter` (`start(argv)`: the processes module's spawnSelf), `readers` (by harness: the registry's usage
 // entries) and `signIn` (`state(key, { fresh })` → `{ state, billing }`, `kept(key)`, `why(key, state)`).
 //
-// A key is a source key: a harness's name, or an extra account's subscription name (usageReadings' `config`).
-// `harnessOf` still reads a `harness~login` key, which nothing makes.
+// What a caller names is a subscription: a harness, or an extra account of one (usageReadings' `config`). What is kept
+// is kept under its source key (the registry's sourceKey): the harness and the folder it signs in from, so two names
+// that are one login share one reading, and a name pointed at another folder starts with none.
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CACHE_DIR, ensureParent, lockIsStale, lockToken, olderThan, releaseFileLock, takeLock, whileLockOwned, writeJsonAtomic } from "./state-files.mjs";
 import { spawnSelf } from "./processes.mjs";
-import { accountOf, folderOf, HARNESSES, signIn as signInOf, signInWhy, SOURCES, withBilling } from "./harnesses.mjs";
-import { keptSignIn, sameFolder, signInHint, signInState } from "./signin.mjs";
+import { accountOf, HARNESSES, sameLogin, sameLoginWhy, signIn as signInOf, signInWhy, sourceKey, SOURCES, withBilling } from "./harnesses.mjs";
+import { keptSignIn } from "./signin.mjs";
 import { failedUsage, servedRow, summarize } from "./usage.mjs";
 import { usageFailure } from "./usage-failure.mjs";
 import { isVersion, newer, ROUTR_VERSION } from "./version.mjs";
@@ -74,8 +75,7 @@ function cleanAttempt(a) {
 const UNREADABLE = ["invalid_response", "read_failed"];
 const cleanEntry = (e) => {
   if (!e || typeof e !== "object" || Array.isArray(e)) throw new SyntaxError("not an entry");
-  return { reading: cleanReading(e.reading), attempt: cleanAttempt(e.attempt), ...(UNREADABLE.includes(e.unreadable) ? { unreadable: e.unreadable } : {}),
-    ...(typeof e.dir === "string" ? { dir: e.dir, default_folder: e.default_folder === true } : {}) };
+  return { reading: cleanReading(e.reading), attempt: cleanAttempt(e.attempt), ...(UNREADABLE.includes(e.unreadable) ? { unreadable: e.unreadable } : {}) };
 };
 // What a store's get answers for an entry it read: one marked unreadable is still that failure.
 const got = (entry) => (entry.unreadable ? { entry, failure: entry.unreadable } : { entry });
@@ -85,23 +85,23 @@ const got = (entry) => (entry.unreadable ? { entry, failure: entry.unreadable } 
 // completion, or a newer claim, does. A person's try during a refresh is recorded beside it, as its outcome and time,
 // and the refresh's later reading still lands. What to write, or null for nothing. Any write ends what `unreadable`
 // said.
-function putting(was, reading, attempt, token, folder) {
-  was = was && sameFolder(was, folder) ? was : { reading: null, attempt: null };
+function putting(was, reading, attempt, token) {
+  was ??= { reading: null, attempt: null };
   const pending = was.attempt?.pending === true ? was.attempt.token : null;
   const held = !token || pending === token;
   const ours = held && attempt !== undefined;
   const keep = held && reading && replaces(reading, was.reading) ? reading : was.reading;
   const tried = ours && pending && !token ? { ...attempt, pending: true, token: pending } : attempt;
-  return keep === was.reading && !ours ? null : { reading: keep, attempt: ours ? tried : was.attempt, ...folder };
+  return keep === was.reading && !ours ? null : { reading: keep, attempt: ours ? tried : was.attempt };
 }
 // A claim's mark: the try under way, with the last try's outcome kept for the version rule, beside what was there.
-const marking = (found, mark, token, folder) => {
-  const was = found.entry && sameFolder(found.entry, folder) ? found.entry : { reading: null, attempt: null }, unreadable = found.failure ?? was.unreadable;
-  return { reading: was.reading, attempt: { ...(was.attempt ?? {}), ...mark, pending: true, token }, ...(unreadable ? { unreadable } : {}), ...folder };
+const marking = (found, mark, token) => {
+  const was = found.entry ?? { reading: null, attempt: null }, unreadable = found.failure ?? was.unreadable;
+  return { reading: was.reading, attempt: { ...(was.attempt ?? {}), ...mark, pending: true, token }, ...(unreadable ? { unreadable } : {}) };
 };
 // Only a reading the harness gave: not a number the caller passed, not a sign-in refusal, not a failed read (even one
 // carrying an older reading, as a fallback does). Kept before billing settles it: billing settles again when served.
-const keepable = (row) => Boolean(row) && typeof row === "object" && !row.given && row.signedIn !== false && !row.failure && !row.kept;
+const keepable = (row) => Boolean(row) && typeof row === "object" && !row.given && row.signedIn !== false && !row.sameAs && !row.failure && !row.kept;
 const readingOf = (row) => cleanReading({ ...row, windows: (row.windows ?? []).filter((w) => Number.isFinite(w?.usedPct)) });
 // A newer reading replaces the kept one; an older one (a refresh that ran long) never puts back what a later read replaced.
 const replaces = (next, was) => !(Number.isFinite(was?.takenAt) && Number.isFinite(next?.takenAt) && next.takenAt < was.takenAt);
@@ -126,12 +126,10 @@ export function due(entry, periodSec, nowSec, version = ROUTR_VERSION, { slow = 
 
 // ---- stores ----------------------------------------------------------------------------------------------------------
 // Every store: `get(key)` → `{ entry }`, `{}` (none kept) or `{ failure: code }` (unreadable, with `entry` when a claim
-// marked it); `put(key, reading, attempt, { token, wait, folder })` as `putting` says (attempt undefined: left as it is);
-// `claim(keys, token, isDue, mark, start, folder)`: each key `isDue(key, entry)`, checked again under its lock and marked
-// with the token, keeps its lock; then `start(keys)` runs only while every one of those locks is still this caller's,
-// and the locks are released. `{ claimed, started }`. `claimed(token)`: the keys a claim still holds. `folder`: an extra
-// account's (harnesses' folderOf, by key for a claim), written with what is put or marked; an entry kept for another
-// folder is none to them.
+// marked it); `put(key, reading, attempt, { token, wait })` as `putting` says (attempt undefined: left as it is);
+// `claim(keys, token, isDue, mark, start)`: each key `isDue(key, entry)`, checked again under its lock and marked with
+// the token, keeps its lock; then `start(keys)` runs only while every one of those locks is still this caller's, and
+// the locks are released. `{ claimed, started }`. `claimed(token)`: the keys a claim still holds.
 
 // routr's own files from before this store, under its cache folder, each with the rule its old owner used to call its
 // lock abandoned (the snapshot's 120 s; the cache mark's 30 s, or a dead owner), or none (never locked). No reading is
@@ -203,12 +201,12 @@ export function fileStore(dir = join(CACHE_DIR(), "usage"), { legacy = CACHE_DIR
   };
   return {
     get: (key) => read(fileOf(key)),
-    put: (key, reading, attempt, { token, wait = false, folder } = {}) => locked(key, (file) => {
-      const next = putting(read(file).entry, reading, attempt, token, folder);
+    put: (key, reading, attempt, { token, wait = false } = {}) => locked(key, (file) => {
+      const next = putting(read(file).entry, reading, attempt, token);
       if (!next) return false;
       write(file, next);
     }, { wait }),
-    claim: (keys, token, isDue, mark, start, folder) => {
+    claim: (keys, token, isDue, mark, start) => {
       const held = [];
       let started = false;
       try {
@@ -217,7 +215,7 @@ export function fileStore(dir = join(CACHE_DIR(), "usage"), { legacy = CACHE_DIR
           const h = hold(key, false);
           if (!h) continue;
           let marked = false;
-          try { whileLockOwned(h.lock, h.token, () => { const found = read(h.file); if (isDue(key, found.entry ?? null)) { write(h.file, marking(found, mark, token, folder?.(key))); marked = true; } }); } catch {}
+          try { whileLockOwned(h.lock, h.token, () => { const found = read(h.file); if (isDue(key, found.entry ?? null)) { write(h.file, marking(found, mark, token)); marked = true; } }); } catch {}
           if (marked) held.push(h); else releaseFileLock(h.lock, h.token);
         }
         // Started only while every lock it marked under is still its own: a caller paused past the lock's age has
@@ -250,12 +248,12 @@ export function memoryStore({ entries = {}, pause: between = () => {} } = {}) {
   return {
     entries: kept,
     get: read,
-    put: (key, reading, attempt, { token, folder } = {}) => locked(key, () => {
-      const next = putting(read(key).entry, reading, attempt, token, folder);
+    put: (key, reading, attempt, { token } = {}) => locked(key, () => {
+      const next = putting(read(key).entry, reading, attempt, token);
       if (!next) return false;
       kept.set(key, structuredClone(next));
     }),
-    claim: (keys, token, isDue, mark, start, folder) => {
+    claim: (keys, token, isDue, mark, start) => {
       const marked = [];
       let started = false;
       try {
@@ -264,7 +262,7 @@ export function memoryStore({ entries = {}, pause: between = () => {} } = {}) {
           held.add(key);
           between(key);
           const found = read(key);
-          if (isDue(key, found.entry ?? null)) { kept.set(key, structuredClone(marking(found, mark, token, folder?.(key)))); marked.push(key); } else held.delete(key);
+          if (isDue(key, found.entry ?? null)) { kept.set(key, structuredClone(marking(found, mark, token))); marked.push(key); } else held.delete(key);
         }
         if (marked.length) started = Boolean(start(marked));
       } finally { for (const k of marked) held.delete(k); }
@@ -281,19 +279,17 @@ export function memoryStore({ entries = {}, pause: between = () => {} } = {}) {
 export const usageReaders = (sources = SOURCES) => Object.fromEntries(Object.entries(sources).map(([h, u]) => [h, u.check
   ? { source: u.source, speed: "background", check: (ctx) => u.check(ctx), reading: (raw, at) => u.reading(raw, at) }
   : { source: u.source, speed: "inline", read: (ctx) => u.read(ctx), billsBySignIn: Boolean(HARNESSES[h].auth?.billing) }]));
-// Each harness's own status check (signin.mjs), its answer kept by key. A name the registry does not know has no check:
-// it is taken as signed in, as before.
-const registrySignIn = () => ({
-  state: (key, o) => (HARNESSES[harnessOf(key)] ? signInState(key, HARNESSES[harnessOf(key)], o) : Promise.resolve({ state: "yes", billing: null })),
-  kept: (key) => (HARNESSES[harnessOf(key)] ? keptSignIn(key) : null),
-  why: (key, state) => (HARNESSES[harnessOf(key)] ? signInHint(HARNESSES[harnessOf(key)], state) : "not signed in"),
-});
-// The same, with an extra account (`account(key)`) asked with its folder, and told which to sign in (harnesses' signIn).
-const accountSignIn = (account, harness = registrySignIn()) => ({
-  state: (key, o) => (account(key) ? signInOf(account(key), o) : harness.state(key, o)),
-  kept: (key) => (account(key) ? keptSignIn(key, { folder: folderOf(account(key)) }) : harness.kept(key)),
-  why: (key, state) => (account(key) ? signInWhy(account(key), state) : harness.why(key, state)),
-});
+// Each harness's own status check (the registry's signIn), an extra account's with its folder (`account(name)`), its
+// answer kept under the name's source key (`at(name)`). A name the registry does not know has no check: it is taken as
+// signed in, as before.
+const registrySignIn = (account, at) => {
+  const known = (name) => account(name) ?? (Object.hasOwn(HARNESSES, harnessOf(name)) ? harnessOf(name) : null);
+  return {
+    state: (name, o) => (known(name) ? signInOf(known(name), o) : Promise.resolve({ state: "yes", billing: null })),
+    kept: (name) => (known(name) ? keptSignIn(at(name)) : null),
+    why: (name, state) => (known(name) ? signInWhy(known(name), state) : "not signed in"),
+  };
+};
 // Tests set ROUTR_NO_REFRESH (test/setup.mjs): a command run in a test starts no detached refresh.
 const selfStarter = () => ({ start: (argv) => (process.env.ROUTR_NO_REFRESH === "1" ? false : spawnSelf(argv)) });
 const realClock = () => ({ now: () => Date.now() / 1000 });
@@ -301,18 +297,16 @@ const realClock = () => ({ now: () => Date.now() / 1000 });
 // ---- the module ------------------------------------------------------------------------------------------------------
 // Created once per command process. `configPath` is required (null: the default config, said explicitly): every refresh
 // this instance starts carries it, so the refresh reads the subscriptions the caller's config names.
-// `config`: the caller's, for its extra accounts (harnesses' accountOf): each key that is one is signed in and read as
-// its harness is, with its account (the reader's `account`), and its row and its kept reading are its own. Optional:
-// without it an extra account's key has no reader and answers `source_missing`, never another account's reading.
+// `config`: the caller's, for its extra accounts (the registry's accountOf): a name that is one is signed in and read as
+// its harness is, with its account (the reader's `account`), and its row is its own. Optional: without it an extra
+// account's name has no reader and answers `source_missing`, never another account's reading.
 export function usageReadings({ configPath, config: caller = null, store, clock, starter, readers, signIn, version = ROUTR_VERSION } = {}) {
   if (configPath === undefined) throw new TypeError("usageReadings: configPath is required (null for the default config)");
   const config = configPath ? resolve(configPath) : null;
-  const account = (key) => accountOf(key, caller), harness = (key) => account(key)?.kind ?? harnessOf(key);
-  // An extra account's entry is kept with its folder: one kept for another is none (unknown, and due), so a name pointed
-  // elsewhere, or with its variable now removed or set, is read again, and a refresh for the old folder writes nothing.
-  const folder = (key) => (account(key) ? folderOf(account(key)) : undefined);
-  const get = (key) => { const g = store.get(key); return g.entry && !sameFolder(g.entry, folder(key)) ? {} : g; };
-  store ??= fileStore(); clock ??= realClock(); starter ??= selfStarter(); readers ??= usageReaders(); signIn ??= accountSignIn(account);
+  const account = (name) => accountOf(name, caller), harness = (name) => account(name)?.kind ?? harnessOf(name);
+  // Where a name's reading is kept: its source key, worked out once per name.
+  const sourceKeys = new Map(), keyOf = (name) => { if (!sourceKeys.has(name)) sourceKeys.set(name, safe(() => sourceKey(name, caller), name)); return sourceKeys.get(name); };
+  store ??= fileStore(); clock ??= realClock(); starter ??= selfStarter(); readers ??= usageReaders(); signIn ??= registrySignIn(account, keyOf);
   const now = () => clock.now();
   const readerOf = (key) => readers[harness(key)] ?? null;
   const sourceOf = (key) => readerOf(key)?.source ?? key;
@@ -320,7 +314,11 @@ export function usageReadings({ configPath, config: caller = null, store, clock,
   const ctx = (key) => ({ key, harness: harness(key), configPath: config, nowSec: now(), ...(account(key) ? { account: account(key) } : {}) });
   const ask = async (key, o) => { const a = await signIn.state(key, o); return { state: a?.state ?? "no answer", billing: a?.billing ?? null }; };
   const signedOut = (key, state) => servedRow({ ...summarize({ pool: key, source: "sign-in check", note: signIn.why(key, state) }), signedIn: false }, key);
-  const put = (key, reading, attempt, o) => { try { return store.put(key, reading, attempt, { ...o, folder: folder(key) }); } catch { return false; } };
+  // A harness's own entry that is, in this environment, the login of one of the caller's extra accounts: that account's
+  // row is the login's, and this one says so (`sameAs`), with no check and no read of its own.
+  const sameAs = (key) => { const other = safe(() => sameLogin(key, caller), null); return other ? servedRow({ ...summarize({ pool: key, source: "routr config", note: sameLoginWhy(key, caller) }), sameAs: other }, key) : null; };
+  const get = (key) => store.get(keyOf(key));
+  const put = (key, reading, attempt, o) => { try { return store.put(keyOf(key), reading, attempt, o); } catch { return false; } };
   // A reader names its harness's pool; an extra account's row is its own.
   const serve = (key, row, billing) => servedRow(withBilling(harness(key), account(key) && row ? { ...row, pool: key } : row, billing), key);
   // A try, kept: the reading it got (if any), and how it went. A read that worked but could not be kept is a failure here.
@@ -334,9 +332,11 @@ export function usageReadings({ configPath, config: caller = null, store, clock,
   const claimDue = (keys) => {
     if (!keys.length) return new Set();
     const at = now(), token = randomUUID();
-    const isDue = (key, entry) => due(entry && sameFolder(entry, folder(key)) ? entry : null, background(key) ? CLOCKS.backgroundRefreshSec : CLOCKS.inlineRefreshSec, at, version, { slow: background(key) });
+    // Claimed by source key, once for two names that are one login; the names of what started are the answer.
+    const named = new Map(); for (const k of keys) if (!named.has(keyOf(k))) named.set(keyOf(k), k);
+    const isDue = (source, entry) => { const key = named.get(source); return due(entry, background(key) ? CLOCKS.backgroundRefreshSec : CLOCKS.inlineRefreshSec, at, version, { slow: background(key) }); };
     const start = () => { try { return starter.start(["usage", "--background", "--claim", token, ...(config ? ["--config", config] : [])]); } catch { return false; } };
-    try { const r = store.claim(keys, token, isDue, { at, by: version }, start, folder); return r.started ? new Set(r.claimed) : new Set(); } catch { return new Set(); }
+    try { const r = store.claim([...named.keys()], token, isDue, { at, by: version }, start); return r.started ? new Set(keys.filter((k) => r.claimed.includes(keyOf(k)))) : new Set(); } catch { return new Set(); }
   };
 
   // A slow source served live from what is kept, as `routr usage` has always said it: its age, the try under way, and
@@ -390,6 +390,8 @@ export function usageReadings({ configPath, config: caller = null, store, clock,
       const one = async (key) => {
         const reader = readerOf(key), slowKey = background(key);
         try {
+          const same = sameAs(key);
+          if (same) return same;
           const fresh = Boolean(signIns && Object.hasOwn(signIns, key));
           const answer = fresh ? { state: signIns[key]?.state ?? "no answer", billing: signIns[key]?.billing ?? null } : await ask(key);
           if (answer.state !== "yes") return signedOut(key, answer.state);
@@ -427,6 +429,8 @@ export function usageReadings({ configPath, config: caller = null, store, clock,
       const started = claimDue(keys.filter((k) => mayRefresh.includes(k)));
       const served = keys.map((key) => {
         try {
+          const same = sameAs(key);
+          if (same) return same;
           const answer = safe(() => signIn.kept(key), null);
           if (answer?.state && answer.state !== "yes") return signedOut(key, answer.state);
           const r = safe(() => get(key).entry?.reading, null);
@@ -453,7 +457,12 @@ export function usageReadings({ configPath, config: caller = null, store, clock,
     // each as it lands. A token no claim holds (unknown, or a newer claim took the key) reads nothing.
     async refreshClaimed(token) {
       if (typeof token !== "string" || !token) return;
-      const keys = safe(() => store.claimed(token), []);
+      // A claimed source key, as a name to read it by: a subscription of the caller's config, a harness, or the key
+      // itself. One no name here is kept under (the config changed since the claim) is not read: read by another
+      // name, it would be another login's reading.
+      const names = [...Object.keys(caller?.subscriptions ?? {}), ...Object.keys(HARNESSES)];
+      const made = (source) => source !== harnessOf(source) && Boolean(HARNESSES[harnessOf(source)]?.folder);
+      const keys = safe(() => store.claimed(token), []).map((source) => names.find((n) => keyOf(n) === source) ?? (made(source) ? null : source)).filter((key, i, all) => key != null && all.indexOf(key) === i);
       await Promise.all(keys.map(async (key) => {
         let answer; try { answer = await ask(key); } catch { answer = { state: "no answer" }; }
         record(key, answer.state === "yes" ? await readOne(key) : { ok: false, excluded: true }, token);

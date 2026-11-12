@@ -6,7 +6,7 @@ Flags change between releases: before relying on one, run the harness's `--help`
 through `herdr agent start <name> --kind <kind> --pane <id> -- <flags>` (interactive sessions, 2026-09-20: each
 worker edited two files, ran a command, and reported). The last column was *measured* in earlier headless evals.
 
-| Harness (`--kind`) | Permissive launch | What goes wrong (*measured*) |
+| Harness (`--subscription`) | Permissive launch | What goes wrong (*measured*) |
 |---|---|---|
 | Claude Code (`claude`) | `--dangerously-skip-permissions` (measured). Model and effort: `--model <alias or id> --effort <level>`; `claude --help` names the current aliases (fable, opus, sonnet on 2.1.283) and routr reads them from there, and the same help says `--model` also takes a model's full name (e.g. `claude-fable-5`; not measured by routr), so routr accepts an id Claude does not list | **Folder-trust dialog** in any directory that is not under a trusted one; default answer is "No, exit"; herdr reports `agent_not_ready`, then `blocked`. Its wording changes between releases (2.1.284, 2026-09-28: unnumbered options, "No, exit" first). A git worktree counts as its main repository (measured 2.1.284, 2026-09-28: a worktree in `~/.herdr/worktrees` of a repository under a trusted folder was not asked), so once the user has trusted the repository in Claude, no worker in its worktrees is asked. Headless without a permission mode **silently refuses edits** and exits 0. `--allowedTools` does not restrict anything when the user's default mode is bypass. Quits on Ctrl+C twice. Twice (2026-09-26, v2.1.283): herdr answered a prompt with `agent_prompt_stalled` while Claude sat idle with an empty input line and the prompt nowhere on screen; `routr launch` no longer resends (see the rule on prompts below): it reports `needs_input`. |
 | Codex (`codex`) | `--yolo --dangerously-bypass-hook-trust -c check_for_update_on_startup=false` (`--yolo` measured: full permissions, the user's choice for worker panes; the update check off because on 2026-09-28 Codex showed "Update available" just after herdr reported it ready, and the Enter that submitted a worker's task chose "Update now": Codex upgraded itself through Homebrew and exited; hook trust bypassed because of the hooks review below. Cost: a worker runs every enabled hook, a repository's own `.codex/hooks.json` included, without review, so rule 6 below matters more). Scoped alternative, also measured: `-s workspace-write -a never -c sandbox_workspace_write.network_access=true`. Model and effort: `-m <model> -c model_reasoning_effort=<effort>`; list with `codex debug models` | **Folder-trust dialog** ("Folder access … Trust this folder?") even with `--yolo` in a folder that is not under a trusted one (measured 0.160.0, 2026-10-08; 0.157.1 did not ask, 2026-09-28); herdr reads it as `blocked` (`trust_directory`) and `routr launch` hands it back. Trust given in a worktree applies to its repository's root, so later worktrees of that repository are not asked (measured 0.160.0, 2026-10-08). Codex has no trust flag, so `routr launch` gives its `projects` setting whole for that run, naming only the worker's folder: `-c "projects={'<folder>'={trust_level=\"trusted\"}}"`, the folder a TOML literal string so no backslash is doubled for a shell to collapse (fish does, inside single quotes), or a basic string when it holds a `'`. Measured 0.166.0, 2026-11-04, in a core terminal: a new repository, and a worktree of one, started at the input box with either string form, and `~/.codex/config.toml` was unchanged; the dotted form `projects."<folder>".trust_level` still asked. For that run Codex reads no other folder's trust entry. **Hooks need review**: when any enabled hook is new or changed since the user trusted it (measured: a repository's `.codex/hooks.json` never reviewed in Codex; not measured: a tool such as myco rewriting `~/.codex/hooks.json`. A worktree's project hooks are read from its repository's root, measured 0.161.0: its own copy was ignored), Codex opens this at startup with "Review hooks" selected, and herdr reads it as `idle` (rules 2026.10.01.1). Without `--dangerously-bypass-hook-trust` the Enter that submitted a worker's task opened Codex's hooks panel, herdr then said `working`, and launch reported a worker that never got its task (0.160.0 and 0.161.0, 2026-10-08). With the flag Codex starts at its input box and warns that enabled hooks may run without review. The flag is in `codex --help` of every npm release checked, 0.135.0 to 0.161.0; older releases not checked. Without network access routr answers with its fallback. `codex exec` hangs unless stdin is `< /dev/null`. While its MCP servers start, herdr already reports it `idle`; a task sent then is held (`› [Pasted Content 3102 chars]` above `Waiting for startup`) and Codex starts it by itself once ready (2026-09-28, twice). herdr calls that prompt stalled; `routr launch` waits on the agent's state and sends nothing again. |
@@ -17,7 +17,7 @@ worker edited two files, ran a command, and reported). The last column was *meas
 `routr launch` encodes this table: it applies the permissive flags, the model and effort syntax, and the
 work-arounds below for the harness you name, so an ordinary launch needs none of this detail. Read here when you are
 choosing a model, when a launch does something you did not expect, or when you are launching by hand. In herdr,
-`routr launch --kind <k> --model <m> --dry-run` prints the exact flags a pane gets, and costs nothing. Outside herdr a
+`routr launch --subscription <name> --model <m> --dry-run` prints the exact flags a pane gets, and costs nothing. Outside herdr a
 dry run still plans the pane launch: the headless command is in that harness's "headless" section below, and a real
 launch shows it in `ran`.
 
@@ -30,7 +30,7 @@ check, usage read, worker), and uses no other. A harness with no documented vari
 | Harness | Variable, and its default | Source | What was seen |
 |---|---|---|---|
 | Claude Code | `CLAUDE_CONFIG_DIR`, `~/.claude` | Its docs: "If you set `CLAUDE_CONFIG_DIR`, every `~/.claude` path on this page lives under that directory instead" (https://code.claude.com/docs/en/claude-directory, read 2026-11-10) | Measured 2026-11-10, Claude Code 2.1.322, macOS: signed in to `~/.claude`, `claude auth status` said `"loggedIn": true` with the variable unset and `"loggedIn": false` with it set to `~/.claude` (with and without a trailing slash). So for that folder routr removes the variable instead of setting it. The same day, version and system, two signed-in folders (`~/.claude` with the variable unset, and a second folder with it set) each gave its own `/usage` reading and its own signed-in worker, headless and in a herdr pane. Set empty instead (2026-11-11, same version and system), `claude auth status` said `"configDirectory": ""` and `"projectsDirectory": "projects"`: Claude Code would keep its files under the working folder, so a pane's shell is typed a line that removes the variable. Linux and Windows were not measured |
-| Codex | `CODEX_HOME`, `~/.codex` | Its docs: "Codex stores its local state under `CODEX_HOME` (defaults to `~/.codex`)", with `auth.json` there or in the OS keyring (https://developers.openai.com/codex/config-advanced, read 2026-11-10) | Not measured with two accounts. The session-log fallback reads `<folder>/sessions` |
+| Codex | `CODEX_HOME`, `~/.codex` | Its docs: "Codex stores its local state under `CODEX_HOME` (defaults to `~/.codex`)", with `auth.json` there or in the OS keyring (https://developers.openai.com/codex/config-advanced, read 2026-11-10) | Measured 2026-11-12, codex-cli 0.167.0, macOS: `codex login` refuses a `CODEX_HOME` that does not exist, so the folder is made first. A second account signed in from `~/.codex-work` read its own usage and ran a worker whose session file was under that folder, none under `~/.codex`; it found routr's skill in the shared `~/.agents/skills`. The session-log fallback reads `<folder>/sessions` |
 | Cursor | none | `CURSOR_CONFIG_DIR` holds `cli-config.json`, not the sign-in: launch runs Cursor on a private one and it stays signed in (measured, above) | One account |
 | Antigravity | none | none known; not looked for | One account |
 | Kiro | none | none known; not looked for | One account |
@@ -421,7 +421,7 @@ What `routr launch` outside herdr relies on: `claude -p --input-format stream-js
 
 ## Codex headless, outside herdr (measured 2026-10-22, codex-cli 0.163.0)
 
-What `routr launch --kind codex` outside herdr relies on: `codex app-server -c check_for_update_on_startup=false`,
+What `routr launch --subscription codex` outside herdr relies on: `codex app-server -c check_for_update_on_startup=false`,
 its JSON-RPC protocol on stdin and stdout (`codex app-server generate-json-schema` prints it).
 
 - `initialize`, then `thread/start` with the folder, the model, `approvalPolicy: "never"` and `sandbox:
@@ -443,7 +443,7 @@ its JSON-RPC protocol on stdin and stdout (`codex app-server generate-json-schem
 
 ## Antigravity headless, outside herdr (measured 2026-10-22, agy 1.4.5)
 
-What `routr launch --kind agy` outside herdr relies on: `agy --print= --input-format stream-json --output-format
+What `routr launch --subscription agy` outside herdr relies on: `agy --print= --input-format stream-json --output-format
 stream-json` with the pane's `--dangerously-skip-permissions`, `--add-dir <folder>` and `--model <id>`.
 
 - `--print=` with the empty value: a bare `-p` takes the next word as its prompt.
@@ -463,7 +463,7 @@ stream-json` with the pane's `--dangerously-skip-permissions`, `--add-dir <folde
 
 ## Kiro headless, outside herdr (its protocol measured directly 2026-10-22, kiro-cli 2.33.1; the loop through routr not yet run with a real Kiro)
 
-What `routr launch --kind kiro` outside herdr relies on: `kiro-cli acp` with `--trust-tools=*`, `--model`
+What `routr launch --subscription kiro` outside herdr relies on: `kiro-cli acp` with `--trust-tools=*`, `--model`
 and `--effort`, speaking the Agent Client Protocol (JSON-RPC on stdin and stdout). Measured with `--model auto` only (no
 effort flag passed); an explicit model id and `--effort` on `acp` are not measured.
 
@@ -483,7 +483,7 @@ effort flag passed); an explicit model id and `--effort` on `acp` are not measur
 
 ## Cursor headless, outside herdr (measured 2026-10-22, cursor-agent 2026.10.22-27dcf5f)
 
-What `routr launch --kind cursor` outside herdr relies on: `cursor-agent -p --output-format stream-json` with the pane's
+What `routr launch --subscription cursor` outside herdr relies on: `cursor-agent -p --output-format stream-json` with the pane's
 `--yolo`, `--trust` and `--model <id>`, on a private copy of `~/.cursor/cli-config.json` (`CURSOR_CONFIG_DIR`), as a
 pane gets.
 

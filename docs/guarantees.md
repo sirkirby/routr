@@ -154,10 +154,16 @@ with that account's folder.
 ## More than one account of a harness
 
 Extra accounts listed under a harness's own entry in `accounts` are subscriptions of their own, named
-`<harness>-<name>`. The harness's own entry is not one: everything on this page holds for it as it did before, and a
-config without `accounts` behaves as it did. Started from inside an extra account's environment (one of its workers, or
-a shell that sets `CLAUDE_CONFIG_DIR` or `CODEX_HOME` to its folder), the harness's own entry runs on that account.
+`<harness>-<name>`. Each has its harness's settings but for the ones it states itself, and is turned on or off on its
+own. The harness's own entry is not one: it runs on the folder your environment names (`CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`), or on the harness's default, and a config without `accounts` behaves as it did.
 
+- **One login, one subscription.** A login is a harness and the folder it signs in from. Where your environment names
+  an extra account's folder (inside one of its workers, or a shell that sets the variable to it), or names none and an
+  account lists the default folder, the harness's own entry is that account's login: it is checked and read once, as
+  the account, and `dispatch`, `usage` and `board` leave the harness's own entry out, saying which account it is.
+  Two accounts listed on one folder are one account: the second is left out with a note. routr cannot tell that two
+  folders are signed in to the same account; it then counts that account's room twice.
 - **What it is given.** Every process routr starts for it gets the folder in the one variable its harness documents
   (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), over routr's own environment and over the same name in any case on Windows: its
   sign-in check, its usage read, and its worker in a pane routr splits, in a herdr-core terminal and headless. Where
@@ -179,20 +185,26 @@ a shell that sets `CLAUDE_CONFIG_DIR` or `CODEX_HOME` to its folder), the harnes
   never hands an account's task to an agent already running in a pane. routr does not check that a pane holding a
   shell is the one it split: `--continue` typed by hand on another such pane is not refused, and its shell is given
   the folder.
-- **Kept apart.** Its sign-in answer and its usage reading are kept under its own name, so one name's are never
-  served for another. A name pointed at another folder, or at the same one with its variable now removed or set, is
-  asked and read again. The statusline snapshot is one file whatever folder Claude Code ran with, so an account is
-  always read from Claude's own `/usage`, and `routr statusline`, run by a Claude Code on an account's folder, saves
-  nothing. It reads the default config file for that, as it is written, on every render; with `--config` elsewhere it
-  cannot know, and saves as before.
-- **Its name stays here.** Telemetry and OpenTelemetry send a harness's name or `other`, and no usage reading of an
-  extra account.
+- **Kept apart.** A sign-in answer and a usage reading are kept under their login: the harness's name for its default
+  folder, and the harness with a fingerprint of the folder for any other, never the path. So one login's are never
+  served for another, a name pointed at another folder starts with none, and a refresh claimed for a folder no name is
+  on any more reads nothing. `routr statusline` saves one snapshot per folder Claude Code runs with, and an account is
+  read from its own folder's.
+- **A folder of its own.** An account's folder is a harness's whole home: its sign-in, its first-run screens, the
+  folders it trusts and its skills are that folder's, not the default one's. A worker on a folder never opened stops
+  at the harness's first screen, and routr says it needs input (measured 2026-11-12, Claude Code 2.1.322: the theme
+  picker, then folder trust, then the bypass-permissions notice). `routr skill install` links routr's skills into an
+  account's skills folder where its harness reads skills from its own folder; a Codex account read the shared folder
+  (measured the same day, codex-cli 0.167.0). routr does not check that the models it lists for a harness are the ones
+  an extra account may use.
+- **Its name stays here.** Telemetry sends an extra account as its harness (`claude-work` as `claude`).
+  OpenTelemetry sends a harness's name or `other`, and no usage reading of an extra account.
 
 ## Skills: what install and uninstall touch
 
 `skills/` holds exactly what is installed for agents (the `routr` skill with its guides, and the user-invoked
 `routr-orchestrate`) and no code. Every skill is installed the same way: written to `~/.agents/skills`, and linked
-into each harness's own skills folder, or copied there on Windows, where a link is refused, or where linking fails
+into each harness's own skills folder, and an extra account's where its harness reads skills from its own folder, or copied there on Windows, where a link is refused, or where linking fails
 (a copy routr made stays a copy).
 
 Install and uninstall touch only what is provably routr's, by structure: a folder holding routr's manifest
@@ -318,7 +330,7 @@ display only, with prompt lengths instead of prompt text.
 
 ## Headless workers
 
-Outside herdr, `routr launch --kind claude`, `codex`, `cursor`, `agy` or `kiro` starts the worker headless: Claude Code's own `-p`
+Outside herdr, `routr launch --subscription claude`, `codex`, `cursor`, `agy` or `kiro` starts the worker headless: Claude Code's own `-p`
 stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one process a turn), Antigravity's `--print` stream-json mode, or Kiro's ACP mode, on your sign-in, held by one routr process of its own (its holder).
 `--pane` and `--direction` are refused outside herdr. In a herdr-core terminal launch runs the harness interactively
 instead (next section). What a headless worker means on your machine:

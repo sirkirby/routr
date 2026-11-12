@@ -82,8 +82,8 @@ shape), and real values getting LOST (a value seen in real rows arriving as "oth
    what the code now does; a test covers `share` in each state.
 4. The end-to-end test against a mock endpoint keeps passing: it is what proves a row arrives as sent.
 5. Before release, on a machine that has opted in: `bun run smoke:telemetry`. It reads the real ledger, sends nothing,
-   and fails on any value that would arrive as "other" or any string the endpoint would refuse. An extra account's
-   name is sent as "other" by design, and is not counted.
+   and fails on any value that would arrive as "other" or any string the endpoint would refuse. An extra account is
+   sent as its harness (`claude-work` as `claude`), never by its name.
 
 ## Usage readers
 

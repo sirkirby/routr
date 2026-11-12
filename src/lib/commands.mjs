@@ -98,7 +98,7 @@ async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] 
   out.next = [...out.next, ...ADVICE_STEPS[mode].map((s) => doNext(s)),
     ...(mode === "dispatch" ? readingNext(out) : []),
     ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Choose a suitable model and effort from normal candidates first; use fallback when none suitably takes the work. State the advised and chosen level, model, effort and account with separate reasons for model and effort")] : []),
-    ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Launch with this saved advice on the exact task; record from launch's template.", "routr launch --kind <subscription> --name <name> --model <model> --effort <effort> --task-file <task-file> --advice <advice-file>")] : [])];
+    ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Launch with this saved advice on the exact task; record from launch's template.", "routr launch --subscription <subscription> --name <name> --model <model> --effort <effort> --task-file <task-file> --advice <advice-file>")] : [])];
   return answer(out);
 }
 
