@@ -118,7 +118,7 @@ export function workers({ root = STATE_DIR(), adapters = ADAPTERS, env = process
           if (big) throw new Error(big);
           const loaded = settings(), config = configOf(loaded);
           warnings.push(...(loaded.notes ?? []));
-          if (config.subscriptions[record.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[record.kind].label, record.kind));
+          if (config.subscriptions[record.subscription ?? record.kind]?.enabled === false) throw new Error(OFF.launch(record.subscription ?? HARNESSES[record.kind].label, record.subscription ?? record.kind));
           const r = await adapter.send(me, full, ctx);
           return { ...r, warnings: [...warnings, ...(r.warnings ?? [])] };
         } catch (e) { throw refusedWith(e, warnings); }

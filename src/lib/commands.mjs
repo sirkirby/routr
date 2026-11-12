@@ -15,7 +15,7 @@ import { ask } from "./systemone.mjs";
 import { DecisionError, decisionTarget, failedReading, readingModel } from "./providers.mjs";
 import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, RunIdError, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
-import { ensureParent } from "./state-files.mjs";
+import { ensureParent, folderSha } from "./state-files.mjs";
 import { standalone } from "./processes.mjs";
 import { CHECK_VERSION, checkQuestions, LEVELS, MEANING, questions, VERSION } from "./questions.mjs";
 import { ADVICE_STEPS, count } from "./wording.mjs";
@@ -48,12 +48,13 @@ export function parseHeadroom(values) {
 // dispatch the subscriptions ranked by usage, read while it answers. An unreachable model still gets an answer: the
 // user's fallback.
 // `read(names, given, { observe })`: each subscription's usage, Served or rows (a test's); by default the usage-readings
-// module's live read, whose background refresh carries the caller's --config.
-const liveRead = (otel) => (names, given, o) => usageReadings({ configPath: otel?.configPath ?? null }).live(names, { given, ...o });
+// module's live read, whose background refresh carries the caller's --config, and which reads the caller's extra
+// accounts (`config`).
+const liveRead = (otel, config) => (names, given, o) => usageReadings({ configPath: otel?.configPath ?? null, config }).live(names, { given, ...o });
 // Rows to rank; anything but a list is left for ranking to refuse (internal_error), as a malformed answer always was.
 const rowsOf = (xs) => (Array.isArray(xs) ? xs.map((x) => servedRow(x).row) : xs);
 async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] }, given = {}, { askFn = ask, read, warnings = [], otel } = {}) {
-  read ??= liveRead(otel);
+  read ??= liveRead(otel, config);
   const callWarnings = [...configNotes, ...warnings];
   if (typeof brief !== "string" || !brief.trim()) return refusal("no advice", "empty brief", callWarnings, [doNext("Supply the exact task", `routr ${mode} --task-file <path>`)]);
   const out = { ok: true, warnings: callWarnings, next: [], id: randomUUID().slice(0, 8), ts: new Date().toISOString(), mode, question_set: VERSION, brief_sha: briefSha(brief), brief_chars: brief.length, unavailable: [] };
@@ -85,6 +86,10 @@ async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] 
     try { capacity = capacityView(advice.level, usage, config, recentLaunches()); }
     catch { const { failure, next } = capacityFailure(); capacity = { subscriptions: emptyRanking(failure.why), unavailable: [failure], next: [next], stale: [] }; }
     out.subscriptions = capacity.subscriptions;
+    // Each extra account's folder as this config named it, as a fingerprint: launch reads the default config, and
+    // refuses a name that is another folder there (advice-file.mjs matchAccount). Absent without extra accounts.
+    const accounts = Object.entries(config.subscriptions).filter(([, s]) => s.harness).map(([name, s]) => [name, folderSha(s.config_dir)]);
+    if (accounts.length) out.accounts = Object.fromEntries(accounts);
     out.unavailable.push(...capacity.unavailable);
     out.warnings.push(...capacity.stale.map((s) => s.warning));
     // Capacity steps first, then the advice's own; a stopped reader's retry after them.
@@ -93,7 +98,7 @@ async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] 
   out.next = [...out.next, ...ADVICE_STEPS[mode].map((s) => doNext(s)),
     ...(mode === "dispatch" ? readingNext(out) : []),
     ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Choose a suitable model and effort from normal candidates first; use fallback when none suitably takes the work. State the advised and chosen level, model, effort and account with separate reasons for model and effort")] : []),
-    ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Launch with this saved advice on the exact task; record from launch's template.", "routr launch --kind <subscription> --name <name> --model <model> --effort <effort> --task-file <task-file> --advice <advice-file>")] : [])];
+    ...(mode === "dispatch" && hasCandidates(out.subscriptions) ? [doNext("Launch with this saved advice on the exact task; record from launch's template.", "routr launch --subscription <subscription> --name <name> --model <model> --effort <effort> --task-file <task-file> --advice <advice-file>")] : [])];
   return answer(out);
 }
 
@@ -219,7 +224,7 @@ const hasCandidates = (r) => r && [...r.candidates.normal, ...r.candidates.fallb
 // `readings`: the usage-readings module (its named read and background job), reading `sources`; `read` as for
 // dispatch, with `mayRefresh`.
 async function usageCommandBody(words, config, given = {}, { sources = SOURCES, readings, read, warnings = [], otel } = {}) {
-  readings ??= usageReadings({ configPath: otel?.configPath ?? null, readers: usageReaders(sources) });
+  readings ??= usageReadings({ configPath: otel?.configPath ?? null, readers: usageReaders(sources), config });
   read ??= (names, g, o) => readings.live(names, { given: g, ...o });
   words = [...words];
   const at = words.indexOf("--level"), explicit = at !== -1;

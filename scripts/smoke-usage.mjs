@@ -5,18 +5,18 @@
 //   bun run smoke:usage
 // Reads only, writes nothing of routr's (each reader cleans up after itself), and reads only a subscription that is
 // turned on and signed in (asking a signed-out harness can open its sign-in). Exits 1 when a reader could not read.
+// After the harnesses, each extra account (`accounts` in the config), read as its harness is, with its folder.
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig } from "../src/lib/config.mjs";
-import { HARNESSES, notReady, signIn, withBilling } from "../src/lib/harnesses.mjs";
-import { signInHint } from "../src/lib/signin.mjs";
+import { accountOf, HARNESSES, notReady, signIn, signInWhy, withBilling } from "../src/lib/harnesses.mjs";
 import { readAgy, readClaude, readCodexLive } from "../src/lib/usage.mjs";
 import { cursorUsage } from "../src/lib/cursor-usage.mjs";
 import { kiroUsage } from "../src/lib/kiro-usage.mjs";
 
 const LIVE = {
-  claude: () => readClaude({ quiet: HARNESSES.claude.quiet, file: join(tmpdir(), "routr-smoke-no-snapshot.json") }),
-  codex: () => readCodexLive({ fallback: () => null }),
+  claude: (account) => readClaude({ account, quiet: HARNESSES.claude.quiet, file: join(tmpdir(), "routr-smoke-no-snapshot.json") }),
+  codex: (account) => readCodexLive({ account, fallback: () => null }),
   cursor: () => cursorUsage(),
   kiro: () => kiroUsage(),
   agy: () => readAgy(),
@@ -28,27 +28,28 @@ const said = (r, billing) => (!r ? "FAILED (no reading)" : r.ok === false ? `FAI
   : r.ok === true && r.note ? `FAILED (cleanup: ${r.note})`
   : r.headroom != null ? `ok: ${Math.round(r.headroom * 100)}% left` : r.class === "metered" || billing === "metered" ? "ok: metered" : "FAILED (no reading)");
 // What the harness's sign-in status says about billing: `{ billing, not }`, from the answer `ready` has just asked
-// afresh (one answer carries both), and `not` saying why it is not signed in now.
+// afresh (one answer carries both), and `not` saying why it is not signed in now. `name`: a harness's, or an extra
+// account.
 const signInBilling = async (name) => {
   const { state, billing } = await signIn(name);
-  return state === "yes" ? { billing, not: null } : { billing: null, not: signInHint(HARNESSES[name], state) };
+  return state === "yes" ? { billing, not: null } : { billing: null, not: signInWhy(name, state) };
 };
 // The check itself, its seams given (the tests give fakes): one line per subscription, and how many could not read.
 export async function smokeUsage({ config = loadConfig().config, live = LIVE, ready = notReady, billing = signInBilling, log = console.log } = {}) {
   let failed = 0;
-  for (const name of Object.keys(live)) {
-    const s = config.subscriptions?.[name];
+  for (const name of [...Object.keys(live), ...Object.keys(config.subscriptions ?? {}).filter((n) => config.subscriptions[n]?.harness)]) {
+    const s = config.subscriptions?.[name], a = accountOf(name, config), kind = a?.kind ?? name;
     if (!s) { log(`${name}: not set up, not read`); continue; }
     if (s.enabled === false) { log(`${name}: turned off, not read`); continue; }
     // Asked now, not the answer kept for hours: a harness signed out since must not be read.
-    const why = await ready(name, { fresh: true });
+    const why = await ready(a ?? name, { fresh: true });
     if (why) { log(`${name}: ${why}, not read`); continue; }
     const t = performance.now();
-    let r; try { r = await live[name](); } catch { r = { ok: false, code: "read_failed" }; }
-    if (r && r.ok === undefined) { const b = await billing(name, { fresh: r.headroom == null }); if (b.not) { log(`${name}: ${b.not}, not read`); continue; } r = withBilling(name, r, b.billing); }
+    let r; try { r = await live[kind](a); } catch { r = { ok: false, code: "read_failed" }; }
+    if (r && r.ok === undefined) { const b = await billing(a ?? name, { fresh: r.headroom == null }); if (b.not) { log(`${name}: ${b.not}, not read`); continue; } r = withBilling(kind, r, b.billing); }
     const line = said(r, s.billing);
     if (line.startsWith("FAILED")) failed++;
-    log(`${name}: ${line} (${HARNESSES[name].usage.source}, ${((performance.now() - t) / 1000).toFixed(1)} s)`);
+    log(`${name}: ${line} (${HARNESSES[kind].usage.source}, ${((performance.now() - t) / 1000).toFixed(1)} s)`);
   }
   return failed;
 }

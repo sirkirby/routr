@@ -11,7 +11,7 @@ const kiroPlan = (p) => ["KIRO FREE", "KIRO PRO", "KIRO PRO+", "KIRO POWER"].inc
 // credits: "Estimated Usage | resets on 2026-10-01 | KIRO FREE" / "Credits (0.00 of 50 covered in plan), 0.0%"
 // (measured on a Free plan, 2026-09-26). Every model draws on those credits, so there is one pool. Other lines are
 // counted, never copied: their text can contain account details or prompts.
-export const KIRO_BY_HAND = HARNESSES.kiro.usage.byHand;
+export const KIRO_BY_HAND = HARNESSES.kiro.usage.byHand();
 export function parseKiroUsage(text) {
   const t = String(text ?? "");
   const m = t.match(/Credits\s*\(\s*([\d.,]+)\s+of\s+([\d.,]+)\s+covered in plan\s*\)/i);

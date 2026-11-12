@@ -277,7 +277,9 @@ function removeProjectFolder(folder) {
 // each read's private folder, `projects` Claude's projects folder. It is only called once the usage-readings module's sign-in gate says Claude is signed in. That
 // answer is kept up to 6 hours (signin.mjs, as for every harness), so one read may follow a sign-out; Claude's `-p`
 // does not open a browser sign-in.
-export async function readClaude({ configDir = process.env.CLAUDE_CONFIG_DIR || join(home(), ".claude"), quiet = [], file = CLAUDE_SNAPSHOT(), nowSec = now(), exec = run, tmp = tmpdir(), projects = claudeProjectsDir() } = {}) {
+// `account`: an extra account (harnesses' accountAt), read with its folder: Claude is asked with its variables, and
+// that folder's `usage` names, `projects` and statusline snapshot are the ones looked at.
+export async function readClaude({ account = null, configDir = account ? account.dir : (process.env.CLAUDE_CONFIG_DIR || join(home(), ".claude")), quiet = [], file = CLAUDE_SNAPSHOT(configDir), nowSec = now(), exec = run, tmp = tmpdir(), projects = account ? join(account.dir, "projects") : claudeProjectsDir() } = {}) {
   const snap = readJson(file);
   const fromSnap = snap ? claudeSnapshot(snap, nowSec) : null;
   // A snapshot from the future (a clock set back) is not fresh: its age says nothing.
@@ -299,7 +301,7 @@ export async function readClaude({ configDir = process.env.CLAUDE_CONFIG_DIR || 
     try {
       // Claude Code 2.1.317, 2026-11-03: a usage folder replaces /usage and spends. Check names only.
       if (["skills/usage", "commands/usage.md"].some((p) => existsSync(join(configDir, p)))) code = "command_shadowed";
-      else out = await exec("claude", claudeUsageArgs(quiet), { cwd: priv.cwd, timeoutMs: CLAUDE_TIMEOUT_MS, exitZero: true });
+      else out = await exec("claude", claudeUsageArgs(quiet), { cwd: priv.cwd, timeoutMs: CLAUDE_TIMEOUT_MS, exitZero: true, ...(account ? { account: account.env } : {}) });
     }
     catch { code = "read_failed"; }
     finally {
@@ -335,14 +337,16 @@ export async function readClaude({ configDir = process.env.CLAUDE_CONFIG_DIR || 
 
 // Codex: the CLI's own app server answers account/rateLimits/read live (~0.4 s, no tokens). It is marked experimental,
 // so the session-log reader stays as the fallback.
-export async function readCodexLive({ exec = run, fallback = readCodex, nowSec = now() } = {}) {
+// `account`: an extra account (harnesses' accountAt): the app server is started with its variables, and the session
+// log is its folder's.
+export async function readCodexLive({ account = null, exec = run, fallback = account ? () => readCodex({ sessions: join(account.dir, "sessions") }) : readCodex, nowSec = now() } = {}) {
   const msgs = [
     { jsonrpc: "2.0", id: 1, method: "initialize", params: { clientInfo: { name: "routr", version: "0" } } },
     { jsonrpc: "2.0", method: "initialized", params: {} },
     { jsonrpc: "2.0", id: 2, method: "account/rateLimits/read", params: {} },
   ];
   let out, code;
-  try { out = await exec("codex", ["app-server"], { input: msgs.map((m) => JSON.stringify(m)).join("\n") + "\n", timeoutMs: 6000, until: (o) => /"id":2[,}][^\n]*\n/.test(o) }); }
+  try { out = await exec("codex", ["app-server"], { input: msgs.map((m) => JSON.stringify(m)).join("\n") + "\n", timeoutMs: 6000, until: (o) => /"id":2[,}][^\n]*\n/.test(o), ...(account ? { account: account.env } : {}) }); }
   catch { code = "read_failed"; } // wait for the whole line, not the first bytes of it
   for (const line of (out ?? "").split("\n")) {
     try {

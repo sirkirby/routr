@@ -56,7 +56,7 @@ test("agy rejects separate effort, even when it agrees with the model suffix", (
 test("a model is required except when only planning; unknown kinds are rejected", () => {
   expect(() => plan({ kind: "claude" })).toThrow("--model is required");
   expect(plan({ kind: "claude", dryRun: true }).warnings).toHaveLength(1);
-  expect(() => plan({ kind: "toString", model: "x" })).toThrow("--kind must be claude, codex, cursor, agy, or kiro");
+  expect(() => plan({ kind: "toString", model: "x" })).toThrow("--subscription must be claude, codex, cursor, agy, or kiro");
 });
 
 test("launch prompt preserves the required opening, task with verification, and closing verbatim", () => {
@@ -139,7 +139,7 @@ test("launch --advice refuses when the advice was given on a different text than
 });
 
 test("launch options are validated before any pane operation", () => {
-  const base = ["--kind", "claude", "--name", "worker"];
+  const base = ["--subscription", "claude", "--name", "worker"];
   for (const extra of [["--timeout", "0"], ["--timeout", "NaN"], ["--trust", "yes"], ["--direction", "left"], ["--task", "a", "--task-file", "b"], ["--model"], ["--bogus"], ["--name", "duplicate"]])
     expect(() => parseLaunchArgs([...base, ...extra])).toThrow();
   expect(parseLaunchArgs(base)).toMatchObject({ timeout: 120000, dryRun: false });
@@ -149,7 +149,7 @@ test("launch options are validated before any pane operation", () => {
 test("subagent flags use the same argument validation as model and effort, with no allow-list", () => {
   const value = `odd model ; & | < > ^ $() \`x\` % ! \u201f`;
   for (const flag of ["--model", "--effort", "--subagent-model", "--subagent-effort"]) {
-    const base = ["--kind", "claude", "--name", "worker"];
+    const base = ["--subscription", "claude", "--name", "worker"];
     for (const v of ["", " ", "--other", "-x", "a\0b"]) expect(() => parseLaunchArgs([...base, flag, v])).toThrow();
     expect(() => parseLaunchArgs([...base, flag])).toThrow("requires a value");
     expect(() => parseLaunchArgs([...base, flag, "a", flag, "b"])).toThrow("Repeated");
@@ -162,7 +162,7 @@ test("all four launch choices refuse PowerShell's complete quote set before any 
   const quotes = ["'", '\"', ...Array.from({ length: 7 }, (_, i) => String.fromCodePoint(0x2018 + i))];
   for (const kind of ["claude", "codex", "cursor", "agy", "kiro"]) for (const flag of ["--model", "--effort", "--subagent-model", "--subagent-effort"]) for (const q of quotes) for (const dry of [[], ["--dry-run"]]) {
     const calls = [], no = async () => { calls.push("called"); throw new Error("must not call"); };
-    const args = ["--kind", kind, "--name", "quote", "--worktree", "unused", ...(flag === "--model" ? [] : ["--model", "worker"]), flag, `child${q}s-model`, ...dry];
+    const args = ["--subscription", kind, "--name", "quote", "--worktree", "unused", ...(flag === "--model" ? [] : ["--model", "worker"]), flag, `child${q}s-model`, ...dry];
     for (const env of [{}, { HERDR_ENV: "1", SHELL: "zsh" }, { HERDR_ENV: "1", SHELL: "powershell.exe" }, { HERDR_ENV: "1", SHELL: "cmd.exe" }]) {
       const r = await launch(args, { env, run: no, ready: no, models: no, spawn: no });
       expect(r.ok).toBe(false); expect(r.error).toBe(`${flag} must not contain quote characters recognized by PowerShell (ASCII quotes or U+2018–U+201E)`);
@@ -200,7 +200,7 @@ test("registry subagent defaults are optional and independent, identical on pane
 test("unsupported subagent defaults refuse before any harness, pane or worktree call, even on dry runs", async () => {
   for (const kind of ["cursor", "agy", "kiro"]) for (const env of [{ HERDR_ENV: "1" }, {}]) for (const flag of ["--subagent-model", "--subagent-effort"]) for (const dry of [[], ["--dry-run"]]) {
     const calls = [], no = async () => { calls.push("called"); throw new Error("must not call"); };
-    const r = await launch(["--kind", kind, "--name", "defaults", "--model", "worker", "--worktree", "unused", flag, "child", ...dry], { env, run: no, ready: no, models: no, spawn: no });
+    const r = await launch(["--subscription", kind, "--name", "defaults", "--model", "worker", "--worktree", "unused", flag, "child", ...dry], { env, run: no, ready: no, models: no, spawn: no });
     expect(r.ok).toBe(false); expect(r.error).toContain(kind); expect(r.error).toContain("has no setting for all subagents");
     expect(calls).toEqual([]); expect(r.ran).toEqual([]); expect(r.worker).toBeUndefined();
   }
@@ -244,12 +244,12 @@ function fakeHerdr({ kind = "claude", trust = null, notReady = false, foreground
   return { calls, deps };
 }
 
-const launchArgs = ["--kind", "claude", "--name", "worker", "--model", "sonnet"];
+const launchArgs = ["--subscription", "claude", "--name", "worker", "--model", "sonnet"];
 
 test("pane launches apply the registry defaults and dry runs show them", async () => {
   for (const kind of ["claude", "codex", "cursor", "agy", "kiro"]) {
     const root = scratch("subagent-pane"), source = join(root, "cli-config.json"); writeFileSync(source, "{}");
-    const base = ["--kind", kind, "--name", "worker", "--model", "worker-model"];
+    const base = ["--subscription", kind, "--name", "worker", "--model", "worker-model"];
     const cases = [[], ...(["claude", "codex"].includes(kind) ? [["--subagent-model", "child"], ["--subagent-effort", "low"], ["--subagent-model", "child", "--subagent-effort", "low"]] : [])];
     for (const flags of cases) {
       const f = fakeHerdr({ kind });
@@ -298,7 +298,7 @@ test("subagent environment values cross the split boundary literally on every sh
   }
   const p = plan({ kind: "codex", model: "worker", subagentModel: full, subagentEffort: full });
   const f = fakeHerdr({ kind: "codex" });
-  const c = await launch(["--kind", "codex", "--name", "worker", "--model", "worker", "--subagent-model", full, "--subagent-effort", full], f.deps);
+  const c = await launch(["--subscription", "codex", "--name", "worker", "--model", "worker", "--subagent-model", full, "--subagent-effort", full], f.deps);
   expect(c.state).toBe("ready");
   expect(f.calls.find((a) => a[1] === "start").slice(-4)).toEqual(p.argv.slice(-4));
   for (const arg of p.argv.filter((a) => a.startsWith("agents.default_subagent"))) {
@@ -314,7 +314,7 @@ test("subagent environment values cross the split boundary literally on every sh
 
 test("existing shells keep their environment fallback, while argv fallbacks apply only to the new process", async () => {
   for (const kind of ["claude", "codex"]) for (const flags of [["--subagent-model", "child"], ["--subagent-effort", "low"], ["--subagent-model", "child", "--subagent-effort", "low"]]) {
-    const f = fakeHerdr({ kind }), args = ["--kind", kind, "--name", "worker", "--model", "worker", "--pane", "w1:p9", ...flags];
+    const f = fakeHerdr({ kind }), args = ["--subscription", kind, "--name", "worker", "--model", "worker", "--pane", "w1:p9", ...flags];
     const dry = await launch([...args, "--dry-run"], f.deps);
     expect(dry.ok).toBe(true); expect(f.calls).toEqual([]);
     const r = await launch(args, f.deps);
@@ -341,7 +341,7 @@ test("cmd's user@host prompt reaches agent start while unrelated lines ending in
     expect(shellPrompt(line)).toBe("unrecognized");
   const f = fakeHerdr({ kind: "codex", reply: (a) => a[1] === "read" ? herdrOK({ text: prompt })
     : a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "cmd.exe", cwd: here }] } }) : undefined });
-  const r = await launch(["--kind", "codex", "--name", "fixture", "--model", "gpt-6-luna", "--pane", "w1:p9", "--subagent-model", "child model", "--subagent-effort", "low"], f.deps);
+  const r = await launch(["--subscription", "codex", "--name", "fixture", "--model", "gpt-6-luna", "--pane", "w1:p9", "--subagent-model", "child model", "--subagent-effort", "low"], f.deps);
   expect([r.state, r.error]).toEqual(["ready", undefined]);
   expect(f.calls.find((a) => a[1] === "start")).toContain('agents.default_subagent_model="child model"');
 });
@@ -351,7 +351,7 @@ test("needs_input retries preserve the original fallback without typing into a r
     const task = join(scratch("fallback-retry"), "task.md"); writeFileSync(task, "Check x.js");
     const f = fakeHerdr({ kind, ...(at === "shell" ? { dotenv: true } : { trust: "Continue? [y/N]", notReady: true }) });
     const flags = ["--subagent-model", "child", "--subagent-effort", "low"];
-    const first = await launch(["--kind", kind, "--name", "worker", "--model", "worker", ...flags, "--task-file", task], f.deps);
+    const first = await launch(["--subscription", kind, "--name", "worker", "--model", "worker", ...flags, "--task-file", task], f.deps);
     expect(first.state).toBe("needs_input");
     if (kind === "claude") expect(f.calls.find((a) => a[1] === "split")).toContain("CLAUDE_CODE_SUBAGENT_MODEL=child");
     const next = first.next.find((n) => n.kind === "run" && n.argv[1] === "launch");
@@ -508,7 +508,7 @@ test("startup timeout fails without ever prompting or closing the pane", async (
 
 test("dry runs perform no transport calls, including for Cursor isolation", async () => {
   for (const [kind, model] of [["claude", "sonnet"], ["codex", "gpt-5.6-sol"], ["cursor", "composer-2.5"], ["agy", "gemini-3.8-flash-low"]]) {
-    const r = await launch(["--kind", kind, "--name", "t", "--model", model, "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); } });
+    const r = await launch(["--subscription", kind, "--name", "t", "--model", model, "--dry-run"], { run: () => { throw new Error("Dry run called Herdr"); } });
     expect(r).toMatchObject({ ok: true, state: "planned", pane: null, ran: [] });
     expect(r.would_run.length).toBeGreaterThan(0);
     if (kind === "cursor") expect(existsSync(r.start.env.CURSOR_CONFIG_DIR)).toBe(false);
@@ -534,10 +534,10 @@ test("launch CLI emits one JSON object for invalid input and preserves --version
   expect(version.stdout.toString().trim()).toBe(JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
 });
 
-test("launch rejects missing kinds, flag values, empty values, NUL, and every repeated option", () => {
-  for (const args of [[], ["--name", "worker"], ["--kind", "toString", "--name", "worker"], ["--kind", "claude"]])
+test("launch rejects missing subscriptions, flag values, empty values, NUL, and every repeated option", () => {
+  for (const args of [[], ["--name", "worker"], ["--subscription", "toString", "--name", "worker"], ["--subscription", "claude"]])
     expect(() => parseLaunchArgs(args)).toThrow();
-  for (const option of ["kind", "name", "cwd", "model", "effort", "pane", "direction", "task", "task-file", "timeout"]) {
+  for (const option of ["subscription", "name", "cwd", "model", "effort", "pane", "direction", "task", "task-file", "timeout"]) {
     for (const value of ["-h", "--bogus", "", "  ", "a\0b"])
       expect(() => parseLaunchArgs([`--${option}`, value, ...launchArgs])).toThrow();
     expect(() => parseLaunchArgs([`--${option}`, "value", `--${option}`, "again", ...launchArgs])).toThrow("Repeated");
@@ -550,7 +550,7 @@ test("launch rejects missing kinds, flag values, empty values, NUL, and every re
 
 test("preflight failures never read an adopted pane, even for dry runs or outside Herdr", async () => {
   for (const args of [
-    ["--kind", "claude", "--name", "worker"],
+    ["--subscription", "claude", "--name", "worker"],
     [...launchArgs, "--cwd", "/does-not-exist", "--dry-run"],
     [...launchArgs, "--task-file", "/does-not-exist", "--dry-run"],
     [...launchArgs],
@@ -759,7 +759,7 @@ test("--pane adopts only an idle agent of the kind asked for, in --cwd; anything
   expect(instructions(u)).toContain("Address this worker by its pane, w1:p9");
   // Cursor too: its later rename (for one launch started) is not repeated for an adopted agent.
   const cursor = fakeHerdr({ kind: "cursor", reply: taking((a) => (a[1] === "get" && a[2] === "w1:p9" ? herdrOK({ agent: { agent: "cursor", agent_status: "idle", cwd: here } }) : a[1] === "rename" ? herdrError("name_taken") : undefined)) });
-  const c = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--pane", "w1:p9", "--cwd", here, "--task", "Task"], cursor.deps);
+  const c = await launch(["--subscription", "cursor", "--name", "worker", "--model", "composer-2.5", "--pane", "w1:p9", "--cwd", here, "--task", "Task"], cursor.deps);
   expect(c.state).toBe("prompted");
   expect(cursor.calls.filter((a) => a[1] === "rename")).toHaveLength(1);
 });
@@ -783,12 +783,12 @@ const codexPane = (gets, explains, { cost = 0, reads } = {}) => {
   } });
   return f;
 };
-const adoptArgs = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task", "--pane", "w1:p2", "--cwd", process.cwd()];
+const adoptArgs = ["--subscription", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task", "--pane", "w1:p2", "--cwd", process.cwd()];
 
 test("the `next` of a startup question adopts the agent at once when herdr's live reading is idle, and never waits on it", async () => {
   const dir = scratch("adopt-ready"), task = join(dir, "task.md");
   writeFileSync(task, "Review the parser for hidden state.\n");
-  const codex = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--effort", "high", "--task-file", task];
+  const codex = ["--subscription", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--effort", "high", "--task-file", task];
   // 1. The first launch stops at the trust question: herdr reads it blocked, by trust_directory.
   const first = fakeHerdr({ kind: "codex", trust: codexTrust, notReady: true, reply: (a) => (a[1] === "explain" ? explained("blocked", "trust_directory") : undefined) });
   const stopped = await launch(codex, first.deps);
@@ -862,7 +862,7 @@ test("an adopted agent that herdr does not read idle is refused from one reading
 // explain idle) is not a question, and if the two readings still disagree when the time runs out, wherever it
 // runs out (inside a call, with each command taking time), the block is reported, not a timeout.
 test("for an agent launch started, a stale block is waited through, and a disagreement at the deadline is needs_input", async () => {
-  const codex = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task"];
+  const codex = ["--subscription", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task"];
   for (const gets of [["blocked", "idle"], ["working", "working", "idle"]]) {
     const f = codexPane(gets, [explained("idle", "osc_title_idle")]);
     const r = await launch(codex, f.deps);
@@ -889,7 +889,7 @@ test("for an agent launch started, a stale block is waited through, and a disagr
 // The saved disagreement (get blocked, explain idle) was cleared only when an agent was read, so an agent that
 // then vanished left it standing, and the deadline reported a block nobody saw any more as needs_input.
 test("an agent that vanishes after a stale block lets the readiness timeout fail, not report the old block", async () => {
-  const codex = ["--kind", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task", "--timeout", "6000"];
+  const codex = ["--subscription", "codex", "--name", "review", "--model", "gpt-6.1-sol", "--task", "Task", "--timeout", "6000"];
   let gets = 0;
   const f = fakeHerdr({ kind: "codex", reply: async (a) => {
     if (a[1] === "get" && a[2] === "w1:p2") return ++gets === 1 ? herdrOK({ agent: { agent: "codex", agent_status: "blocked", cwd: process.cwd() } }) : herdrError("agent_not_found");
@@ -937,7 +937,7 @@ function fakeKiro({ model = "glm-5", shown = model } = {}) {
 }
 
 test("Kiro in a pane starts on V2, whose questions herdr's rules read: V3 read as ready, and launch's Enter answered its folder trust", async () => {
-  const f = fakeKiro(), r = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...f.deps, models: async () => ["glm-5"] });
+  const f = fakeKiro(), r = await launch(["--subscription", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...f.deps, models: async () => ["glm-5"] });
   const start = f.calls.find((c) => c[1] === "start"), argv = start.slice(start.indexOf("--") + 1);
   expect(argv).toEqual(["--v2", "chat", "--trust-tools=*", "--model", "glm-5"]);
   expect(r.start.argv).toEqual(argv);
@@ -947,15 +947,15 @@ test("Kiro in a pane starts on V2, whose questions herdr's rules read: V3 read a
 test("Kiro: a model id it does not list is refused before any pane, from its own list, not its screen", async () => {
   const f = fakeKiro();
   const listed = { ...f.deps, models: async () => ["auto", "glm-5"] };
-  const r = await launch(["--kind", "kiro", "--name", "worker", "--model", "not-a-model", "--task", "Task"], listed);
+  const r = await launch(["--subscription", "kiro", "--name", "worker", "--model", "not-a-model", "--task", "Task"], listed);
   expect(r).toMatchObject({ ok: false, state: "failed" });
   expect(r.steps.at(-1).detail).toContain("does not list --model not-a-model");
   expect(r.steps.at(-1).detail).toContain("kiro-cli chat --list-models");
   expect(f.calls).toHaveLength(0); // no pane, no worktree
-  const ok = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...fakeKiro().deps, models: async () => ["auto", "glm-5"] });
+  const ok = await launch(["--subscription", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...fakeKiro().deps, models: async () => ["auto", "glm-5"] });
   expect(ok).toMatchObject({ ok: true, state: "prompted" });
   // A list that cannot be read is said, never passed over in silence.
-  const unread = await launch(["--kind", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...fakeKiro().deps, models: async () => null });
+  const unread = await launch(["--subscription", "kiro", "--name", "worker", "--model", "glm-5", "--task", "Task"], { ...fakeKiro().deps, models: async () => null });
   expect(unread.unavailable).toContainEqual(expect.objectContaining({ part: "model list", subscription: "kiro" }));
 });
 
@@ -992,7 +992,7 @@ for (const readiness of [undefined, null, false]) test(`Cursor idle readiness ${
       if (a[1] === "get") return herdrOK({ agent: { agent: "cursor", agent_status: "idle",
         ...(readiness === undefined ? {} : { interactive_ready: readiness }) } });
     } });
-    const r = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--timeout", "4000", "--task", "Task"],
+    const r = await launch(["--subscription", "cursor", "--name", "worker", "--model", "composer-2.5", "--timeout", "4000", "--task", "Task"],
       { ...f.deps, cursorConfigSource: source, tempRoot: root });
     const ready = readiness !== false;
     expect(started).toBe(true);
@@ -1097,7 +1097,7 @@ unixOnly("Cursor removes configs on pre-start failure and on worker exit without
   const root = scratch("cursor-launch");
   const source = join(root, "source.json");
   writeFileSync(source, '{"model":"original"}');
-  const args = ["--kind", "cursor", "--name", "worker", "--model", "composer-2.5"];
+  const args = ["--subscription", "cursor", "--name", "worker", "--model", "composer-2.5"];
   try {
     for (const missing of [true, false]) {
       const f = fakeHerdr({ reply: (a) => a[1] === "split" ? herdrError("split_failed") : undefined });
@@ -1190,7 +1190,7 @@ test("through the transport, typing into a pane succeeds on exit 0 with no outpu
 
 test("launch --copy is repeatable, needs --worktree, and refuses paths outside the repository", async () => {
   const { parseLaunchArgs } = await import("./contract.mjs");
-  const base = ["--kind", "codex", "--name", "w", "--model", "m"];
+  const base = ["--subscription", "codex", "--name", "w", "--model", "m"];
   expect(parseLaunchArgs([...base, "--worktree", "b", "--copy", ".env.test", "--copy", "fixtures"]).copy).toEqual([".env.test", "fixtures"]);
   expect(() => parseLaunchArgs([...base, "--copy", "x"])).toThrow("--worktree");
   expect(() => parseLaunchArgs([...base, "--worktree", "b", "--copy", "../secrets"])).toThrow("inside the repository");
@@ -1198,7 +1198,7 @@ test("launch --copy is repeatable, needs --worktree, and refuses paths outside t
 });
 
 test("launch --base starts the worktree's branch at that commit, and every launch says how to clean it up", async () => {
-  const base = ["--kind", "codex", "--name", "w", "--model", "m"];
+  const base = ["--subscription", "codex", "--name", "w", "--model", "m"];
   expect(parseLaunchArgs([...base, "--worktree", "review-x", "--base", "main~2"]).base).toBe("main~2");
   expect(() => parseLaunchArgs([...base, "--base", "main"])).toThrow("goes with --worktree");
   for (const bad of ["--upload-pack=x", "-x", "a..b", "a b", "main:x", "HEAD^@", "HEAD^-1", "HEAD^!"]) expect(() => parseLaunchArgs([...base, "--worktree", "b", "--base", bad])).toThrow();
@@ -1231,7 +1231,7 @@ test("Windows shell prompts count as ready; a bare continuation prompt still doe
 test("launch never puts the brief in its result: not in the command log, not in a dry run", async () => {
   const { launch } = await import("./contract.mjs");
   const secret = "REFACTOR-THE-PAYMENTS-LEDGER-7731";
-  const r = await launch(["--kind", "codex", "--name", "w", "--cwd", process.cwd(), "--worktree", "b", "--model", "m", "--task", `Do this: ${secret}`, "--dry-run"]);
+  const r = await launch(["--subscription", "codex", "--name", "w", "--cwd", process.cwd(), "--worktree", "b", "--model", "m", "--task", `Do this: ${secret}`, "--dry-run"]);
   expect(r.prompt_chars).toBeGreaterThan(secret.length);
   expect(JSON.stringify(r)).not.toContain(secret);
   expect(r.would_run.join("\n")).toContain("<prompt: ");
@@ -1356,7 +1356,7 @@ test("launch refuses a cmd pane before typing anything when a folder it would ty
   const root = scratch("cmd-bang!"), source = join(root, "source.json");
   writeFileSync(source, '{"model":"original"}');
   const c = fakeHerdr({ kind: "cursor", reply: cmdShell(process.cwd()) });
-  const rc = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--task", "Task"], { ...c.deps, cursorConfigSource: source, tempRoot: root });
+  const rc = await launch(["--subscription", "cursor", "--name", "worker", "--model", "composer-2.5", "--task", "Task"], { ...c.deps, cursorConfigSource: source, tempRoot: root });
   expect(rc).toMatchObject({ ok: false, state: "failed", error: CMD_PATH });
   expect(c.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
   expect(c.calls.some((a) => a[1] === "close")).toBe(true); // the unused pane goes
@@ -1367,7 +1367,7 @@ test("launch refuses a cmd pane before typing anything when a folder it would ty
     const temp = scratch(name), config = join(temp, "source.json");
     writeFileSync(config, '{"model":"original"}');
     const p = fakeHerdr({ kind: "cursor", reply: cmdShell(SCRATCH) });
-    const rp = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--pane", "w1:p1", "--cwd", process.cwd(), "--task", "Task"],
+    const rp = await launch(["--subscription", "cursor", "--name", "worker", "--model", "composer-2.5", "--pane", "w1:p1", "--cwd", process.cwd(), "--task", "Task"],
       { ...p.deps, cursorConfigSource: config, tempRoot: temp });
     expect(rp).toMatchObject({ ok: false, state: "failed", error: CMD_PATH, pane: "w1:p1" });
     expect(p.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt", "close"].includes(a[1]))).toBe(false);
@@ -1381,7 +1381,7 @@ test("launch refuses a PowerShell or cmd pane before typing anything when herdr 
   // Codex's trust names its folder, and Antigravity's --add-dir does: either breaks herdr's line in that pane.
   for (const [kind, model, shellName] of [["codex", "gpt-6.1-sol", "pwsh.exe"], ["agy", "gemini-3.8-flash-low", "cmd.exe"]]) {
     const work = scratch("Chris’s"), reply = (a) => a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: shellName, cwd: work }] } }) : undefined;
-    const f = fakeHerdr({ kind, reply }), r = await launch(["--kind", kind, "--name", "worker", "--model", model, "--pane", "w1:p1", "--cwd", work, "--task", "Task"], f.deps);
+    const f = fakeHerdr({ kind, reply }), r = await launch(["--subscription", kind, "--name", "worker", "--model", model, "--pane", "w1:p1", "--cwd", work, "--task", "Task"], f.deps);
     expect(r).toMatchObject({ ok: false, state: "failed", error: HERDR_PS_QUOTE });
     expect(f.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
   }
@@ -1395,12 +1395,12 @@ test("launch refuses a fish pane before typing anything when a word would reach 
   const reply = (cwd) => (a) => a[1] === "process-info" ? herdrOK({ process_info: { shell_pid: 1, foreground_processes: [{ pid: 1, name: "fish", cwd }] } }) : undefined;
   // Codex's trusted folder with a ' and a backslash goes as a basic string, its backslash doubled: refused in fish.
   const bad = scratch("it's\\q"), f = fakeHerdr({ kind: "codex", reply: reply(bad) });
-  const r = await launch(["--kind", "codex", "--name", "worker", "--model", "gpt-6.1-sol", "--pane", "w1:p1", "--cwd", bad, "--task", "Task"], f.deps);
+  const r = await launch(["--subscription", "codex", "--name", "worker", "--model", "gpt-6.1-sol", "--pane", "w1:p1", "--cwd", bad, "--task", "Task"], f.deps);
   expect(r).toMatchObject({ ok: false, state: "failed", error: FISH_PATH });
   expect(f.calls.some((a) => ["run", "send-text", "send-keys", "start", "prompt"].includes(a[1]))).toBe(false);
   // One backslash alone goes as a literal string, unchanged by fish: not refused.
   const fine = scratch("a\\b"), g = fakeHerdr({ kind: "codex", reply: reply(fine) });
-  const ok = await launch(["--kind", "codex", "--name", "worker", "--model", "gpt-6.1-sol", "--pane", "w1:p1", "--cwd", fine, "--task", "Task"], g.deps);
+  const ok = await launch(["--subscription", "codex", "--name", "worker", "--model", "gpt-6.1-sol", "--pane", "w1:p1", "--cwd", fine, "--task", "Task"], g.deps);
   expect(ok.error ?? null).not.toBe(FISH_PATH);
 });
 
@@ -1427,7 +1427,7 @@ test("waitForShell: ready at a settled prompt; stops at any question, a busy ado
 
 test("launch refuses a harness that is not signed in, before any herdr call", async () => {
   const f = fakeHerdr({ kind: "kiro" });
-  const r = await launch(["--kind", "kiro", "--name", "worker", "--model", "auto", "--task", "Task"], { ...f.deps, ready: async () => "not signed in: kiro-cli login" });
+  const r = await launch(["--subscription", "kiro", "--name", "worker", "--model", "auto", "--task", "Task"], { ...f.deps, ready: async () => "not signed in: kiro-cli login" });
   expect(r).toMatchObject({ ok: false, state: "failed" });
   expect(r.steps.at(-1).detail).toBe("Kiro cannot take work: not signed in: kiro-cli login");
   expect(f.calls).toEqual([]);
@@ -1436,7 +1436,7 @@ test("launch refuses a harness that is not signed in, before any herdr call", as
 
 test("launch refuses a subscription the user turned off, before any herdr call", async () => {
   const f = fakeHerdr({ kind: "codex" });
-  const r = await launch(["--kind", "codex", "--name", "worker", "--model", "m", "--task", "Task"], { ...f.deps, settings: () => ({ subscriptions: { codex: { enabled: false } } }) });
+  const r = await launch(["--subscription", "codex", "--name", "worker", "--model", "m", "--task", "Task"], { ...f.deps, settings: () => ({ subscriptions: { codex: { enabled: false } } }) });
   expect(r.steps.at(-1).detail).toBe("Codex is turned off in your settings: turn it on with routr setup --enable codex");
   expect(f.calls).toEqual([]);
   expect(r.next.some((n) => n.template?.startsWith("routr record "))).toBe(false);
@@ -1520,7 +1520,7 @@ test("a prompt herdr says stalled is never sent again: launch waits on the agent
       if (a[1] === "wait" && prompts) { waited = a; return after === "never" ? herdrError("timeout") : herdrOK({ agent: { agent_status: after } }); }
       if (a[1] === "get" && prompts) return herdrOK({ agent: { agent: kind, agent_status: after === "never" ? "idle" : after, interactive_ready: true } });
     } });
-    const r = await launch(["--kind", kind, "--name", "worker", "--model", kind === "codex" ? "gpt-6-sol" : "sonnet", "--task", "Task"], f.deps);
+    const r = await launch(["--subscription", kind, "--name", "worker", "--model", kind === "codex" ? "gpt-6-sol" : "sonnet", "--task", "Task"], f.deps);
     return { r, prompts, keys, waited };
   };
   const late = await drive("working"); // queued behind its startup, then started on its own
@@ -1543,7 +1543,7 @@ test("a worker seen starting counts even if it is done by the status read; the w
     if (a[1] === "wait" && prompts) return herdrOK({ agent: { agent_status: "working" } });
     if (a[1] === "get" && prompts) return herdrOK({ agent: { agent: "codex", agent_status: "done", interactive_ready: true } });
   } });
-  expect(await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--task", "Task"], quick.deps)).toMatchObject({ ok: true, state: "prompted" });
+  expect(await launch(["--subscription", "codex", "--name", "w", "--model", "gpt-6-sol", "--task", "Task"], quick.deps)).toMatchObject({ ok: true, state: "prompted" });
   // A wait that uses all the time it is given: launch still reads the state and the pane, and ends as needs_input.
   const brief = "Rotate the production signing key in vault/prod";
   let sent = false, given = null, left = null, paneRead = false;
@@ -1554,7 +1554,7 @@ test("a worker seen starting counts even if it is done by the status read; the w
     if (a[1] === "get" && sent) { await slow.deps.sleep(Math.min(ms, 1500)); return herdrOK({ agent: { agent: "codex", agent_status: "idle", interactive_ready: true } }); }
     if (a[1] === "read" && sent) { paneRead = true; return herdrOK({ text: `› ${brief}\n  Waiting for startup` }); }
   } });
-  const r = await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--timeout", "30000", "--task", brief], slow.deps);
+  const r = await launch(["--subscription", "codex", "--name", "w", "--model", "gpt-6-sol", "--timeout", "30000", "--task", brief], slow.deps);
   expect(given).toBeLessThanOrEqual(left); // the wait never gets more than is left
   expect(r).toMatchObject({ ok: false, state: "needs_input" });
   expect(JSON.stringify(r)).not.toContain(brief); // the pane showed the brief; the output does not
@@ -1567,7 +1567,7 @@ test("a worker seen starting counts even if it is done by the status read; the w
     if (a[1] === "get" && posted) return herdrError("server_error");
     if (a[1] === "read" && posted) { readAfter = true; return herdrOK({ text: brief }); }
   } });
-  const b = await launch(["--kind", "codex", "--name", "w", "--model", "gpt-6-sol", "--task", brief], broken.deps);
+  const b = await launch(["--subscription", "codex", "--name", "w", "--model", "gpt-6-sol", "--task", brief], broken.deps);
   expect(b.state).toBe("failed");
   expect(readAfter).toBe(false);
   expect(JSON.stringify(b)).not.toContain(brief);
@@ -1760,7 +1760,7 @@ test("a worktree launch opens the worker's pane itself: split of the root pane i
   // Cursor (started with pane run, not agent start) gets the same pane.
   const src = join(scratch("wt-cursor"), "source.json"); writeFileSync(src, "{}");
   const c = worktreeHerdr(path, { kind: "cursor", also: (a) => (a[1] === "get" && c.calls.some((x) => x[1] === "run") ? herdrOK({ agent: { agent: "cursor", agent_status: "idle" } }) : undefined) });
-  const cr = await launch(["--kind", "cursor", "--name", "worker", "--model", "composer-2.5", "--cwd", repo, "--worktree", "c"], { ...c.deps, cursorConfigSource: src, tempRoot: scratch("wt-cursor-tmp") });
+  const cr = await launch(["--subscription", "cursor", "--name", "worker", "--model", "composer-2.5", "--cwd", repo, "--worktree", "c"], { ...c.deps, cursorConfigSource: src, tempRoot: scratch("wt-cursor-tmp") });
   expect(cr).toMatchObject({ ok: true, pane: "w5:p2" });
   expect(c.calls.filter((a) => a[1] === "run").map((a) => a[2])).toEqual(["w5:p2"]);
   expect(c.calls.slice(3).filter((a) => a.includes("w5:p1"))).toEqual([]);
@@ -1864,7 +1864,7 @@ test.skipIf(process.platform === "win32")("--copy of a POSIX file name holding a
 test("Antigravity launched into a worktree is given the worktree, never the main checkout (issue #22)", async () => {
   const repo = scratch("wt-agy-repo"), path = scratch("wt-agy-tree");
   const f = worktreeHerdr(path, { kind: "agy" });
-  const args = ["--kind", "agy", "--name", "worker", "--model", "gemini-3.8-flash-low", "--cwd", repo, "--worktree", "b"];
+  const args = ["--subscription", "agy", "--name", "worker", "--model", "gemini-3.8-flash-low", "--cwd", repo, "--worktree", "b"];
   const r = await launch(args, f.deps);
   expect(r).toMatchObject({ ok: true, cwd: path });
   const start = f.calls.find((a) => a[1] === "start"), argv = start.slice(start.indexOf("--") + 1);

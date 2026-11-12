@@ -14,12 +14,12 @@ import { sentAs } from "./backend-headless.mjs";
 import { amend, newRecord, readRecordAt, recordStore, runDir, WORKER_LABEL } from "./worker-record.mjs";
 import { planWorktree } from "./worktree.mjs";
 import { makePrivateConfig, refuseInputs, refuseSandbox, refuseSettings, refuseTaken, takeRun, worktreeRecord } from "./worker-start.mjs";
-import { HARNESSES, privateConfigDir, subagentDefaults, terminalPlan } from "./harnesses.mjs";
+import { HARNESSES, privateConfigDir, savedAccount, subagentDefaults, terminalPlan, workerAccount } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { launchFailed, STARTUP_INPUT } from "./launch-answer.mjs";
 import { actHc, client, getTerminal, isAddress, isFinished, statusKind, statusWord, turnOf } from "./hc.mjs";
 import { leadTerminal, openTerminal } from "./core-tab.mjs";
-import { configLocations, FORWARDED, launchCarrierWarnings, terminalEnv } from "./worker-env.mjs";
+import { accountShownEnv, configLocations, FORWARDED, launchCarrierWarnings, terminalEnv } from "./worker-env.mjs";
 import { processAlive, readJsonFile, writeJsonAtomic } from "./state-files.mjs";
 import { start } from "./processes.mjs";
 
@@ -152,12 +152,12 @@ async function startTerminal(o, out, { prompt, env, settings, ready, checkListed
     const launchTrace = currentLaunch(config, env);
     out.warnings.push(...launchCarrierWarnings(found));
     shown = terminalPlan(planOf({ kind: o.kind, model: o.model, effort: o.effort ?? null, cwd: out.cwd, subagent_model: o["subagent-model"], subagent_effort: o["subagent-effort"] }, dir), firstMessage(file));
-    out.start = { executable: h.executable, argv: shown.argv, env: { ...subagentDefaults(defaults).env, ...Object.fromEntries([...Object.keys(found.carriers), ...Object.keys(locations)].map((k) => [k, FORWARDED])) } };
+    out.start = { executable: h.executable, argv: shown.argv, env: { ...subagentDefaults(defaults).env, ...Object.fromEntries([...Object.keys(found.carriers), ...Object.keys(locations)].map((k) => [k, FORWARDED])), ...accountShownEnv(o.account?.env) } };
     out.ran.push(displayCommand([h.executable, ...shown.argv]));
     out.prompt_chars = text.length;
     writeFileSync(file, text, { flag: "wx", mode: 0o600 });
     makePrivateConfig(o.kind, dir);
-    w = newRecord({ id, name: o.name, kind: o.kind, model: o.model, effort: o.effort, cwd: out.cwd, carriers: found.carriers,
+    w = newRecord({ id, name: o.name, kind: o.kind, model: o.model, effort: o.effort, cwd: out.cwd, carriers: found.carriers, ...savedAccount(o.account),
       subagent_model: o["subagent-model"] || null, subagent_effort: o["subagent-effort"] || null, launch: launchTrace, worktree: worktreeRecord(wt).worktree },
     { backend: "terminal", terminal_name: o.name, config: locations });
     save({});
@@ -221,6 +221,7 @@ export const runRecord = (name, dir = runDir(name)) => readJsonFile(join(dir, RU
 export async function runWorker(dir, id, { env = process.env, begin = start, say = (s) => process.stderr.write(`${s}\n`), on = (sig, fn) => process.on(sig, fn), now = () => new Date().toISOString() } = {}) {
   const w = readRecordAt(dir);
   if (w?.backend !== "terminal" || w.id !== id) { say(`routr: ${dir} does not hold the terminal worker launch started; nothing was started`); return 2; }
+  let account; try { account = workerAccount(w)?.env; } catch (e) { say(`routr: ${e.message}; nothing was started`); return 2; }
   const name = w.name, file = join(dir, RUN_FILE), began = { pid: process.pid, started_at: now() };
   // One runner per worker: a second start of it would be a second harness on the same work.
   try { writeFileSync(file, JSON.stringify(began) + "\n", { flag: "wx", mode: 0o600 }); }
@@ -231,7 +232,8 @@ export async function runWorker(dir, id, { env = process.env, begin = start, say
   try {
     const p = terminalPlan(planOf(w, dir), firstMessage(join(dir, PROMPT_FILE)));
     // The terminal is the harness's: on Windows a hidden start would take its console from it.
-    child = begin(p.executable, p.argv, { stdio: "inherit", cwd: w.cwd, env: terminalEnv({ carriers: w.carriers, config: w.config, adapter: p.env }, env), visible: true });
+    // Its extra account, as launch saved it: its folder, whatever the caller's or the core's is.
+    child = begin(p.executable, p.argv, { stdio: "inherit", cwd: w.cwd, env: terminalEnv({ carriers: w.carriers, config: w.config, adapter: p.env, account }, env), visible: true });
   } catch (e) { return notStarted(typeof e?.code === "string" ? e.code : "start_failed"); }
   if (Number.isInteger(child.pid)) { began.harness_pid = child.pid; record({}); }
   // `hc kill` is hangup, then terminate, then kill: this process stays until the harness has had each. An interrupt

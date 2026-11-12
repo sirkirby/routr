@@ -10,7 +10,7 @@ import { cleanup } from "./contract.mjs";
 import { cfg, cliEnv, scratch, SCRIPT, herdrOK } from "./helpers.mjs";
 
 const MARKER = "PRIVATE_BRIEF_HANDOFF_MARKER_9b98";
-const base = ["--kind", "claude", "--name", "worker", "--model", "sonnet", "--effort", "low"];
+const base = ["--subscription", "claude", "--name", "worker", "--model", "sonnet", "--effort", "low"];
 const recordStep = (r) => r.next.find((n) => n.kind === "do" && n.template?.startsWith("routr record "));
 function fixture() {
   const dir = scratch("handoff"), task = join(dir, "task.md"), advice = join(dir, "advice.json"), ledger = join(dir, "ledger.jsonl");

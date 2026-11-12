@@ -5,6 +5,9 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- routr can run more than one Claude Code or Codex account: add each extra one in `routr setup`, or with `routr setup --account <harness>-<name>=<folder>`, and it is checked, read, ranked and launched as its own subscription, with its harness's settings or its own. (#180)
+- `routr launch` takes `--subscription <name>`, the name `dispatch` ranks and `record` takes, in place of `--kind`. (#180)
+
 ## v0.14.1 — 2026-11-11
 
 [Full notes](docs/releases/v0.14.1.md)

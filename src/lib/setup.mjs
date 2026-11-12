@@ -10,18 +10,33 @@ import { LEVELS } from "./questions.mjs";
 import { settingSummary } from "./wording.mjs";
 import { envOff, setTelemetry } from "./telemetry.mjs";
 import { inspect, paint, render, skillsIncomplete, skillsMissing, starterConfig } from "./doctor.mjs";
-import { HARNESSES } from "./harnesses.mjs";
+import { accountAt, accountName, accountSkillFolder, accountSkillFolders, HARNESSES, signIn, signInWhy } from "./harnesses.mjs";
 import { setKey } from "./key.mjs";
 import { standalone } from "./processes.mjs";
-import { writeJsonAtomic } from "./state-files.mjs";
+import { configDirOf, realOr, writeJsonAtomic } from "./state-files.mjs";
 import { updatesOff } from "./update.mjs";
 import { installSkill } from "./skill-install.mjs";
-import { askDecision, decisionLabel, guided } from "./setup-guided.mjs";
+import { askDecision, decisionLabel, guided, takesSettings } from "./setup-guided.mjs";
 import { decisionTarget, decisionTargets, decisionSettings, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
 import { secretsFor } from "./systemone.mjs";
 import { CANCEL, createUI } from "./tui.mjs";
 import { baseVersion, ROUTR_VERSION } from "./version.mjs";
 import { newOtelConsent, otelEndpoint, otelStatus, otelSwitch, prepareOtel, startOtelSender } from "./otel.mjs";
+
+const named = (name) => Object.hasOwn(HARNESSES, name) || Boolean(accountName(name));
+const NAMES = `one of: ${Object.keys(HARNESSES).join(", ")}, or an extra account's name (<harness>-<name>)`;
+// `--account claude-work=~/.claude-work`: another account of a harness, signed in from that folder (repeatable).
+export function parseAccounts(args) {
+  const out = {};
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== "--account") continue;
+    const at = (args[i + 1] ?? "").indexOf("="), name = (args[i + 1] ?? "").slice(0, Math.max(at, 0)), folder = (args[i + 1] ?? "").slice(at + 1), dir = configDirOf(folder);
+    if (at < 1 || !accountName(name)) throw new Error(`--account takes <harness>-<name>=<folder>, on ${Object.keys(HARNESSES).filter((k) => HARNESSES[k].folder).map((k) => HARNESSES[k].label).join(" or ")} (claude-work=~/.claude-work): a-z, 0-9, - and _, 32 characters at most`);
+    if (!dir) throw new Error(`--account ${name}=…: the folder must be a full path or one under ~/`);
+    out[name] = { ...accountName(name), folder, dir };
+  }
+  return out;
+}
 
 // `--model claude=sonnet --model codex=<id>`: repeatable name=id pairs.
 export function parseModels(args) {
@@ -29,7 +44,7 @@ export function parseModels(args) {
   for (let i = 0; i < args.length; i++) {
     if (args[i] !== "--model") continue;
     const [name, id] = (args[i + 1] ?? "").split("=");
-    if (!HARNESSES[name] || !id) throw new Error(`--model takes <subscription>=<model id>, with one of: ${Object.keys(HARNESSES).join(", ")}`);
+    if (!named(name) || !id) throw new Error(`--model takes <subscription>=<model id>, with ${NAMES}`);
     models[name] = id;
   }
   return models;
@@ -46,7 +61,7 @@ function parsePairs(args, flag, parse, what) {
     if (args[i] !== flag) continue;
     const [name, v, extra] = (args[i + 1] ?? "").split("=");
     const value = extra === undefined ? parse(v) : null;
-    if (!HARNESSES[name] || value == null) throw new Error(`${flag} takes <subscription>=${what}, with one of: ${Object.keys(HARNESSES).join(", ")}`);
+    if (!named(name) || value == null) throw new Error(`${flag} takes <subscription>=${what}, with ${NAMES}`);
     out[name] = value;
   }
   return out;
@@ -63,7 +78,7 @@ export function parseSwitches(args) {
   for (let i = 0; i < args.length; i++) {
     if (args[i] !== "--enable" && args[i] !== "--disable") continue;
     const name = args[i + 1];
-    if (!HARNESSES[name]) throw new Error(`${args[i]} takes a subscription name: one of ${Object.keys(HARNESSES).join(", ")}`);
+    if (!named(name)) throw new Error(`${args[i]} takes a subscription name: ${NAMES}`);
     out[name] = args[i] === "--enable";
   }
   return out;
@@ -112,7 +127,7 @@ export function channelNote(channel, running = ROUTR_VERSION, isStandalone = sta
 // in the tui's accessible mode, or `ui`, a ready-made tui), each harness's effort levels (`efforts`), and each step that
 // writes outside the config (the skill, the telemetry state, the key), and whether a provider's key is saved (`hasKey`).
 export async function setup(args, { inspect: look = inspect, question, interactive: tty = Boolean(process.stdin.isTTY), env = process.env,
-  install = installSkill, share: shareOn = setTelemetry, key = setKey, hasKey = (provider) => { try { secretsFor(provider, { env }); return true; } catch { return false; } }, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), ui: makeUI, isStandalone = standalone, otelStart = startOtelSender, otelHome, writeConfig = writeJsonAtomic } = {}) {
+  install = installSkill, share: shareOn = setTelemetry, key = setKey, hasKey = (provider) => { try { secretsFor(provider, { env }); return true; } catch { return false; } }, print = console.log, efforts: levelsOf = (n, model) => HARNESSES[n].efforts?.(model), accountSignIn = (a) => signIn(a, { fresh: true }), ui: makeUI, isStandalone = standalone, otelStart = startOtelSender, otelHome, writeConfig = writeJsonAtomic } = {}) {
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--fix") continue; // doctor --fix forwards its arguments here
     const option = COMMANDS.setup.flags.find((f) => f.name === args[i]);
@@ -134,10 +149,10 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const otelOff = args.includes("--otel-off"), otelSet = args.includes("--otel-endpoint");
   if (otelOff && otelSet) return { ok: false, error: "choose --otel-endpoint or --otel-off, not both" };
   if (otelSet) try { otelEndpointValue = otelEndpoint(flag("--otel-endpoint")); } catch (e) { return { ok: false, error: e.message }; }
-  let models, hardest, reserves, efforts, switches, uses, launchShares, channel, decision;
-  try { models = parseModels(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); launchShares = parseLaunchShare(args); channel = parseChannel(args); decision = parseDecision(args, skipped); } catch (e) { return { ok: false, error: e.message }; }
+  let models, hardest, reserves, efforts, switches, uses, launchShares, channel, decision, adds;
+  try { adds = parseAccounts(args); models = parseModels(args); hardest = parseHardest(args); reserves = parseReserve(args); efforts = parseEffort(args); switches = parseSwitches(args); uses = parseUse(args); launchShares = parseLaunchShare(args); channel = parseChannel(args); decision = parseDecision(args, skipped); } catch (e) { return { ok: false, error: e.message }; }
   // Whether any setting flag was given, read once here, before a guided run adds its choices to the same maps.
-  const flagged = Object.keys({ ...models, ...hardest, ...reserves, ...efforts, ...switches, ...uses, ...launchShares }).length > 0 || channel !== undefined || decision !== undefined || otelSet || otelOff;
+  const flagged = Object.keys({ ...adds, ...models, ...hardest, ...reserves, ...efforts, ...switches, ...uses, ...launchShares }).length > 0 || channel !== undefined || decision !== undefined || otelSet || otelOff;
   // --show only reads: with a change flag beside it, an agent could take the settings printed for the change made.
   if (args.includes("--show")) return flagged || args.includes("--force")
     ? { ok: false, error: "--show only reads your settings: run the change without it, then --show again to see it" } : showSettings(path, { home: otelHome, env });
@@ -156,21 +171,47 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     say("Looking at what is installed…");
     r = await look({ configPath: path, quiet: args.includes("--json") });
   }
-  // Only a harness that is installed AND signed in can be set up: one signed out gets no work until the user signs in.
-  const found = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && r.harnesses[n].signed_in);
+  // Only a harness that is installed AND signed in, or has an extra account that is (takesSettings), can be set up:
+  // one signed out gets no work until the user signs in.
+  const found = Object.keys(r.harnesses).filter((n) => takesSettings(r, n));
   // Installed but not signed in, and not set up (--force sets up nothing that was): said in every kind of run (--json
   // too), so an agent can tell the person.
   const kept = args.includes("--force") ? [] : r.config.subscriptions;
-  const leftOut = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && !r.harnesses[n].signed_in && !kept.includes(n))
+  const leftOut = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && !found.includes(n) && !kept.includes(n))
     .map((n) => `${HARNESSES[n]?.label ?? n} left out: ${r.harnesses[n].sign_in}, then routr setup again`);
+  // An extra account: one this run adds must be on an installed harness and signed in from its folder, as a harness
+  // must be; routr says what to run and never signs in. A setting named for one is for an account the config has, or
+  // one added now. From here on a flag's name is checked as its harness (`of`).
+  const isAccount = (n) => !Object.hasOwn(HARNESSES, n), of = (n) => (isAccount(n) ? accountName(n).harness : n);
+  // Why an account cannot be added, or null: the same check for a flag and for the guided flow (`again`: what to do
+  // once the folder is signed in).
+  // `pending`: accounts the guided flow has accepted in this run, not yet written: a later one may not take their folder.
+  const pending = {};
+  const cannotAdd = async (n, a, again) => {
+    if (!r.harnesses[a.harness]?.installed) return `\`${HARNESSES[a.harness].executable}\` was not found on this machine`;
+    if (r.config.subscriptions.includes(n) && r.accounts?.[n] === undefined) return `${n} is already a subscription of its own in your config`;
+    // One folder is one account: the config loader would leave a second name on it out, so it is refused here.
+    const same = [...Object.entries(loadConfig(path).config.subscriptions).filter(([, x]) => x.harness === a.harness).map(([x, v]) => [x, v.config_dir]), ...Object.entries({ ...adds, ...pending }).filter(([, x]) => x.harness === a.harness).map(([x, v]) => [x, v.dir])]
+      .find(([x, dir]) => x !== n && realOr(dir) === realOr(a.dir));
+    if (same) return `its folder is ${same[0]}'s too, and one folder is one account`;
+    const account = accountAt(n, a.harness, a.dir), { state } = await accountSignIn(account);
+    return state === "yes" ? null : `${signInWhy(account, state)}, then ${again}`;
+  };
+  for (const [n, a] of Object.entries(adds)) { const why = await cannotAdd(n, a, `routr setup --account ${n}=${a.folder} again`); if (why) return { ok: false, error: `--account ${n}=…: ${why}` }; }
+  const known = (n) => !isAccount(n) || Object.hasOwn(adds, n) || r.accounts?.[n] !== undefined;
+  for (const [flagName, set] of [["--model", models], ["--effort", efforts], ["--hardest", hardest], ["--reserve", reserves], ["--use", uses], ["--share", launchShares], ["--enable/--disable", switches]])
+    for (const n of Object.keys(set)) if (!known(n)) return { ok: false, error: `${flagName} ${n}: ${n} is not an account in your config; add it first: routr setup --account ${n}=<folder>` };
   for (const [n, id] of Object.entries(models)) {
+    if (isAccount(n)) { const list = r.harnesses[of(n)]?.models; if (list?.length && !list.includes(id) && !HARNESSES[of(n)].openList) return { ok: false, error: `--model ${n}=${id}: not in the harness's current list (${list.join(", ")})` }; continue; }
     if (!found.includes(n)) return { ok: false, error: `--model ${n}=…: ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
     const list = r.harnesses[n].models;
     if (list?.length && !list.includes(id) && !HARNESSES[n].openList) return { ok: false, error: `--model ${n}=${id}: not in the harness's current list (${list.join(", ")})` };
   }
   for (const [flagName, set] of [["--hardest", hardest], ["--reserve", reserves], ["--use", uses], ["--share", launchShares]])
-    for (const n of Object.keys(set)) if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `${flagName} ${n}=…: ${n} is not configured and ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
+    for (const n of Object.keys(set)) if (!isAccount(n) && !found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `${flagName} ${n}=…: ${n} is not configured and ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
   for (const [n, on] of Object.entries(switches)) {
+    // An extra account is turned on only once it is signed in, as a harness is; one added now was just checked.
+    if (isAccount(n)) { if (on && r.accounts?.[n]?.signed_in === false) return { ok: false, error: `--enable ${n}: ${r.accounts[n].sign_in}` }; continue; }
     // Set up, it keeps its settings on or off; one turned off is turned on again only once it is signed in.
     if (r.config.subscriptions.includes(n) && (!on || found.includes(n) || !r.config.off?.includes(n))) continue;
     // A harness found now is added in this run, so it can be added turned off ("set up, but keep agy off").
@@ -180,7 +221,10 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // An effort must be one the harness takes for the model it will run: the one given now, or the one already set.
   let current = {}; try { current = JSON.parse(readFileSync(path, "utf8")).subscriptions ?? {}; } catch {}
   for (const [n, level] of Object.entries(efforts)) {
-    if (!HARNESSES[n].effort) return { ok: false, error: `--effort ${n}=…: ${HARNESSES[n].noEffort}` };
+    if (!HARNESSES[of(n)].effort) return { ok: false, error: `--effort ${n}=…: ${HARNESSES[of(n)].noEffort}` };
+    if (isAccount(n)) { const own = current[of(n)]?.accounts?.[accountName(n).short], // its own model, none included (null), else its harness's
+      model = models[n] !== undefined ? models[n] : own && typeof own === "object" && own.default_model !== undefined ? own.default_model : models[of(n)] ?? current[of(n)]?.default_model, levels = await levelsOf(of(n), model);
+      if (levels?.length && !levels.includes(level)) return { ok: false, error: `--effort ${n}=${level}: ${HARNESSES[of(n)].label} takes ${levels.join(", ")}${model ? ` for ${model}` : ""}` }; continue; }
     if (!found.includes(n) && !r.config.subscriptions.includes(n)) return { ok: false, error: `--effort ${n}=…: ${n} is not configured and ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };
     const levels = found.includes(n) ? await levelsOf(n, models[n] ?? current[n]?.default_model) : null;
     if (levels?.length && !levels.includes(level)) return { ok: false, error: `--effort ${n}=${level}: ${HARNESSES[n].label} takes ${levels.join(", ")}${models[n] ?? current[n]?.default_model ? ` for ${models[n] ?? current[n]?.default_model}` : ""}` };
@@ -192,13 +236,16 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   const skillStep = () => {
     const base = baseVersion(ROUTR_VERSION), ours = r.skill.filter((k) => k.ours !== false);
     const gaps = [...skillsMissing(r).map((n) => `${n} is missing`), ...skillsIncomplete(r).map((k) => `${k.where} lacks ${k.missing.join(", ")}`)];
-    if (!gaps.length && !(isStandalone() && ours.some((k) => baseVersion(k.version) !== base))) return false;
+    // An account added in this run has no link in its folder yet: the same step makes it.
+    if (!gaps.length && !Object.keys(adds).length && !(isStandalone() && ours.some((k) => baseVersion(k.version) !== base))) return false;
     if (!isStandalone() && ours.some((k) => baseVersion(k.version) !== base)) {
       skipped.push(`routr's skills need repair (${gaps.join("; ")}), but this routr runs from a source checkout and the installed skills come from a release: run the installed routr's \`routr skill install\` (usually ~/.local/bin/routr skill install)`);
       return false;
     }
     // Only what was installed is said; a step that failed makes the whole run unsuccessful (`failure` below).
-    const out = install(), failed = out?.failed ?? [];
+    // Each extra account's skills folder is a place like a harness's own: those in the config, and those added now.
+    const places = [...accountSkillFolders(loadConfig(path).config), ...Object.entries(adds).flatMap(([n, a]) => accountSkillFolder(n, a.harness, a.dir))];
+    const out = install({ accounts: places.filter((x, i) => places.findIndex((y) => y.path === x.path) === i) }), failed = out?.failed ?? [];
     if (!failed.length) did.push(`installed the routr skills ${base} for your agents`);
     else if (out.installed?.length) did.push(`installed the routr skills ${base} at ${out.installed.map((x) => x.where).join(", ")}`);
     skillFailures.push(...failed.map((f) => `${f.where}: ${f.error}`));
@@ -239,7 +286,8 @@ export async function setup(args, { inspect: look = inspect, question, interacti
       if (d === CANCEL) { return stopped(); }
       if (Array.isArray(d)) { decision = d; for (const entry of d) await keyFor(entry); }
     }
-    choices = await guided({ ui, r, config, efforts: levelsOf, telemetry: !telemetryAsked && !envOff(env), decided: decision ?? null });
+    choices = await guided({ ui, r, config, efforts: levelsOf, telemetry: !telemetryAsked && !envOff(env), decided: decision ?? null,
+      addAccount: async (n, folder) => { const a = { ...accountName(n), folder, dir: configDirOf(folder) }, why = await cannotAdd(n, a, "add it here again"); if (!why) pending[n] = a; return why; } });
     if (choices === CANCEL) { return stopped(); }
     if (!choices.write) {
       repairQueue(config);
@@ -247,6 +295,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
       ui.outro("Your settings did not change."); ui.close();
       return { ok: true, did, skipped: [...skipped, ...leftOut, "nothing changed"], config: path, next_steps: r.next_steps, ...failure() };
     }
+    for (const [n, folder] of Object.entries(choices.accounts ?? {})) adds[n] = { ...accountName(n), folder, dir: configDirOf(folder) };
     Object.assign(models, choices.models); Object.assign(efforts, choices.efforts); Object.assign(hardest, choices.hardest);
     Object.assign(reserves, choices.reserves); Object.assign(switches, choices.switches);
     Object.assign(uses, choices.uses);
@@ -280,8 +329,10 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     for (const [n, s] of Object.entries(old?.subscriptions ?? {})) if (config.subscriptions[n]) {
       if (s?.enabled === false) config.subscriptions[n].enabled = false;
       // A rebuild must not silently change where the person permits routine spending.
-      for (const k of ["use", "billing", "share"]) if (s?.[k] !== undefined) config.subscriptions[n][k] = s[k];
+      for (const k of ["use", "billing", "share", "accounts"]) if (s?.[k] !== undefined) config.subscriptions[n][k] = s[k];
     }
+    // Nor drop the extra accounts written under a harness this rebuild did not find: its entry stays as it was.
+    for (const [n, s] of Object.entries(old?.subscriptions ?? {})) if (!config.subscriptions[n] && s?.accounts != null) config.subscriptions[n] = s;
   }
   else for (const n of fresh) config.subscriptions = { ...config.subscriptions, [n]: starterConfig([n], models).subscriptions[n] };
   // Then every choice onto its subscription, new or old; what changed on an old one is said.
@@ -292,20 +343,40 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     else config.otel = { endpoint: otelEndpointValue, consent: newOtelConsent() };
     changed.push(`OpenTelemetry export ${otelOff ? "off" : "on"}`);
   }
+  // The accounts this run adds, under their harness's entry: a new one as its folder, one already there pointed at the
+  // folder given, its own settings kept. A harness with no entry yet (signed out on its own) gets the suggested one.
+  for (const [n, a] of Object.entries(adds)) {
+    if (!config.subscriptions[a.harness]) config.subscriptions[a.harness] = starterConfig([a.harness], models).subscriptions[a.harness];
+    const list = (config.subscriptions[a.harness].accounts ??= {}), was = list[a.short];
+    if (was && typeof was === "object") { if (was.folder !== a.folder) { changed.push(`${n}'s folder ${JSON.stringify(was.folder)} → ${JSON.stringify(a.folder)}`); was.folder = a.folder; } }
+    else if (was !== a.folder) { changed.push(was === undefined ? `added ${n}, signed in from ${a.folder}, with ${HARNESSES[a.harness].label}'s settings` : `${n}'s folder ${JSON.stringify(was)} → ${JSON.stringify(a.folder)}`); list[a.short] = a.folder; }
+  }
+  // Where a subscription's settings are written: its own entry, or for an extra account its entry under its harness's
+  // `accounts`, written as its folder alone until it has a setting of its own.
+  const entryOf = (n, write) => {
+    if (!isAccount(n)) return config.subscriptions[n];
+    const a = accountName(n), list = config.subscriptions[a.harness]?.accounts;
+    if (!list || list[a.short] === undefined) return null;
+    if (typeof list[a.short] === "string") { if (!write) return {}; list[a.short] = { folder: list[a.short] }; }
+    return list[a.short];
+  };
   const put = (n, k, v) => {
-    const sub = config.subscriptions[n];
-    if (!sub || v === undefined || sub[k] === v) return;
+    if (!entryOf(n) || v === undefined || entryOf(n)[k] === v) return;
+    if (v === null && entryOf(n)[k] === undefined && isAccount(n) && config.subscriptions[of(n)]?.[k] == null) return; // none already, as its harness
+    const sub = entryOf(n, true);
     if (!fresh.includes(n) && r.config.exists && !args.includes("--force")) changed.push(`${n}.${k} ${sub[k] === undefined ? "set to" : `${JSON.stringify(sub[k])} →`} ${JSON.stringify(v)}`);
-    if (v === null) delete sub[k]; else sub[k] = v;
+    // Nothing of its own: the key goes. For an account whose harness has that setting, null is written, which is how
+    // it has none where its harness has one (config.mjs).
+    if (v === null && !(isAccount(n) && config.subscriptions[of(n)]?.[k] != null)) delete sub[k]; else sub[k] = v;
   };
   for (const [n, s] of Object.entries(settings)) { put(n, "hardest_work", s.hardest_work); put(n, "reserve", s.reserve); }
   for (const [n, id] of Object.entries(models)) put(n, "default_model", id);
   for (const [n, level] of Object.entries(efforts)) put(n, "default_effort", level);
   // A new model may not take the effort already set: it is reset to one it takes (medium where it can), and said.
   for (const [n, id] of Object.entries(models)) {
-    const sub = config.subscriptions[n];
-    if (!id || efforts[n] || !sub?.default_effort || !HARNESSES[n].effort) continue;
-    const levels = await levelsOf(n, id);
+    const sub = entryOf(n);
+    if (!id || efforts[n] || !sub?.default_effort || !HARNESSES[of(n)].effort) continue;
+    const levels = await levelsOf(of(n), id);
     if (!levels?.length || levels.includes(sub.default_effort)) continue;
     const to = levels.includes("medium") ? "medium" : levels[0];
     changed.push(`${n}.default_effort ${JSON.stringify(sub.default_effort)} → ${JSON.stringify(to)} (${id} does not take ${sub.default_effort})`);
@@ -313,7 +384,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   }
   for (const [n, on] of Object.entries(switches)) put(n, "enabled", on);
   for (const [n, use] of Object.entries(uses)) put(n, "use", use);
-  for (const [n, w] of Object.entries(launchShares)) if (w !== "off" || config.subscriptions[n]?.share !== undefined) put(n, "share", w === "off" ? null : w);
+  for (const [n, w] of Object.entries(launchShares)) if (w !== "off" || entryOf(n)?.share !== undefined || (isAccount(n) && config.subscriptions[of(n)]?.share != null)) put(n, "share", w === "off" ? null : w);
   // The update channel is one setting for the whole file. An invalid value reads as stable, so it is replaced either way.
   // Asking for the channel already in effect writes nothing, unless the file holds a value routr cannot read.
   const channelWas = UPDATE_CHANNELS.includes(config.update_channel) ? config.update_channel : "stable";

@@ -51,7 +51,7 @@ test("launch hands its sampled span to panes, drops orphan tracestate, and leave
     const x = exporting(env);
     if (mode === "off") { delete x.config.otel; writeFileSync(x.otel.configPath, JSON.stringify(x.config)); }
     let split;
-    const r = await launch(["--kind", "claude", "--name", "fixture", "--model", "sonnet", ...(target === "worktree" ? ["--worktree", "branch"] : ["--direction", "right"])], {
+    const r = await launch(["--subscription", "claude", "--name", "fixture", "--model", "sonnet", ...(target === "worktree" ? ["--worktree", "branch"] : ["--direction", "right"])], {
       env, settings: () => ({ config: x.config }), ready: async () => null, models: async () => null, otel: x.otel,
       run: async (args) => {
         if (args[0] === "worktree" && args[1] === "create") return { ok: true, data: { result: { root_pane: { pane_id: "w1:p1" }, worktree: { path: x.home }, workspace: { workspace_id: "w1" } } } };
@@ -79,7 +79,7 @@ test("launch hands its sampled span to panes, drops orphan tracestate, and leave
 
 test("launch warnings distinguish its own span from inherited context", async () => {
   const x = exporting({ HERDR_ENV: "1" }), opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), models: async () => null };
-  const base = ["--kind", "claude", "--name", "fixture", "--model", "fixture", "--dry-run"];
+  const base = ["--subscription", "claude", "--name", "fixture", "--model", "fixture", "--dry-run"];
   const existing = await launch([...base, "--pane", "w1:p2"], opts);
   expect(existing.warnings.join(" ")).toContain("routr launch span");
   expect(existing.warnings.join(" ")).not.toContain("passed none of TRACEPARENT");
@@ -90,7 +90,7 @@ test("launch warnings distinguish its own span from inherited context", async ()
 
 test("a pane screen redacts the generated launch carrier as well as inherited carrier values", async () => {
   const x = exporting({ HERDR_ENV: "1", TRACEPARENT: parent }); let generated, ticks = 0;
-  const r = await launch(["--kind", "claude", "--name", "fixture", "--model", "fixture", "--direction", "right"], { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), ready: async () => null, models: async () => null, now: () => ticks, sleep: async (ms) => { ticks += ms; }, run: async (a) => {
+  const r = await launch(["--subscription", "claude", "--name", "fixture", "--model", "fixture", "--direction", "right"], { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), ready: async () => null, models: async () => null, now: () => ticks, sleep: async (ms) => { ticks += ms; }, run: async (a) => {
     const ok = (result) => ({ ok: true, data: { result } });
     if (a[1] === "split") { generated = a.find((v) => v.startsWith("TRACEPARENT=")).slice(12); return ok({ pane: { pane_id: "w1:p2" } }); }
     if (a[1] === "read") return ok({ text: generated + "\nSource it? [y/N]" });
@@ -200,7 +200,7 @@ test("a terminal launch reports its backend, keeps its index entry, and cleanup 
     return cmd === "herdr-app" ? answer({}) : a[0] === "get" && a[1] === "t3" ? answer({ address: "t3", labels: {} })
       : a[0] === "get" ? answer({ address: "t9", name: "traced", state: "live", labels: { "routr.worker": label }, status: { state: "done" }, turn: 1 }) : a[0] === "run" ? answer({ address: "t9" }) : answer({}); };
   const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), hc, self: (a) => ["/bin/routr", ...a], models: async () => null, ready: async () => null, sleep: async () => {} };
-  const r = await launch(["--kind", "claude", "--name", "traced", "--model", "sonnet", "--task", task, "--advice", advice], opts);
+  const r = await launch(["--subscription", "claude", "--name", "traced", "--model", "sonnet", "--task", task, "--advice", advice], opts);
   expect([r.state, r.worker.backend]).toEqual(["prompted", "terminal"]);
   const s = x.spans().find((v) => v.name === "routr launch"), a = attrs(s);
   expect(a).toMatchObject({ "routr.kind": "claude", "routr.backend": "terminal", "routr.launch.state": "prompted", "gen_ai.agent.name": "traced" });
@@ -228,7 +228,7 @@ test("a pane launch records identity, session and immutable index; cleanup and l
     return ok({});
   };
   const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), run, models: async () => null, ready: async () => null, now: () => ticks, sleep: async (ms) => { ticks += ms; } };
-  const index = new LaunchIndex({ home: x.home }), args = ["--kind", "claude", "--name", "fixture", "--model", "sonnet", "--direction", "right", "--task", task, "--advice", advice];
+  const index = new LaunchIndex({ home: x.home }), args = ["--subscription", "claude", "--name", "fixture", "--model", "sonnet", "--direction", "right", "--task", task, "--advice", advice];
   expect((await launch([...args, "--dry-run"], opts)).state).toBe("planned");
   expect(index.entries()).toEqual([]);
   expect((await launch(args, { ...opts, run: async () => ({ ok: false }) })).state).toBe("failed");
@@ -243,11 +243,11 @@ test("a pane launch records identity, session and immutable index; cleanup and l
   expect(entry).toMatchObject({ traceId: s.traceId, spanId: s.spanId, pane_id: "w1:p2", terminal_id: "term-1", launch_id: a["routr.launch.id"] });
   // A rerun turned away (the worker busy) delivered nothing: no launch, and the original's entry stays as it was.
   busy = true;
-  const turned = await launch(["--kind", "claude", "--name", "fixture", "--model", "sonnet", "--pane", "w1:p2", "--task", task, "--advice", advice], opts);
+  const turned = await launch(["--subscription", "claude", "--name", "fixture", "--model", "sonnet", "--pane", "w1:p2", "--task", task, "--advice", advice], opts);
   busy = false;
   expect([turned.state, turned.launch_id]).toEqual(["needs_input", null]);
   expect(index.entries().map((e) => [e.launch_id, Boolean(e.finished_at)])).toEqual([[r.launch_id, false]]);
-  const rerun = await launch(["--kind", "claude", "--name", "fixture", "--model", "sonnet", "--pane", "w1:p2", "--task", task, "--advice", advice], opts);
+  const rerun = await launch(["--subscription", "claude", "--name", "fixture", "--model", "sonnet", "--pane", "w1:p2", "--task", task, "--advice", advice], opts);
   expect(rerun.state).toBe("prompted");
   // A recovery rerun is its own launch: its own id in its answer and span, whatever is exported, linked to the original.
   expect([r.launch_id, rerun.launch_id]).toEqual([a["routr.launch.id"], expect.any(String)]);
@@ -343,7 +343,7 @@ test("malformed lead ids remain in inline advice while launch drops them with a 
       expect(r.warnings).toContain(`--lead-session looks like a flag routr ${mode} does not take; read as part of the brief`);
       expect(child.stdout.toString()).not.toContain("PRIVATE_INVALID_ID");
     }
-    const r = await launch(["--kind", "claude", "--name", "fixture", "--model", "fixture", "--lead-session", "PRIVATE_INVALID_ID", "--dry-run"], { env: {}, otel: x.otel, settings: () => ({ config: x.config }) });
+    const r = await launch(["--subscription", "claude", "--name", "fixture", "--model", "fixture", "--lead-session", "PRIVATE_INVALID_ID", "--dry-run"], { env: {}, otel: x.otel, settings: () => ({ config: x.config }) });
     expect(r.ok).toBe(true); expect(r.state).toBe("planned");
     expect(r.warnings).toContain("--lead-session was ignored: no valid session id was supplied");
     expect(JSON.stringify(r)).not.toContain("PRIVATE_INVALID_ID");
@@ -465,14 +465,14 @@ test("tracing setup failures run the command once, untraced, without swallowing 
   expect(() => commandTrace("usage", { config: x.config, env: {}, otel: x.otel }, () => { business++; throw new Error("command failed"); })).toThrow("command failed");
   expect(business).toBe(1);
   const opts = { env: {}, settings: () => { throw new Error("private settings failure"); } };
-  for (const [fn, args] of [[workersCommand, []], [waitCommand, ["--timeout", "0"]], [sendCommand, []], [stopCommand, []], [cleanup, ["--unknown"]], [launch, ["--kind", "claude", "--name", "fixture", "--model", "fixture", "--dry-run"]]])
+  for (const [fn, args] of [[workersCommand, []], [waitCommand, ["--timeout", "0"]], [sendCommand, []], [stopCommand, []], [cleanup, ["--unknown"]], [launch, ["--subscription", "claude", "--name", "fixture", "--model", "fixture", "--dry-run"]]])
     expect(await fn(args, opts)).toHaveProperty("ok");
 });
 
 test("a null config cannot crash commands which only read it for tracing", () => {
   const home = scratch("trace-null-config"), dir = join(home, ".config/routr"); mkdirSync(dir, { recursive: true }); writeFileSync(join(dir, "config.json"), "null");
   const env = cliEnv(home, { PATH: home });
-  for (const args of [["workers"], ["wait", "--timeout", "0"], ["send"], ["stop"], ["cleanup", "--unknown"], ["launch", "--kind", "claude", "--name", "fixture", "--model", "fixture", "--dry-run"]]) {
+  for (const args of [["workers"], ["wait", "--timeout", "0"], ["send"], ["stop"], ["cleanup", "--unknown"], ["launch", "--subscription", "claude", "--name", "fixture", "--model", "fixture", "--dry-run"]]) {
     const child = Bun.spawnSync([process.execPath, SCRIPT, ...args], { env });
     expect(JSON.parse(child.stdout.toString())).toHaveProperty("ok");
     expect(child.stderr.toString()).not.toContain("TypeError");
@@ -501,7 +501,7 @@ test("every command's queue, launch index and worker metadata exclude content an
   await checked(() => usageCommand([], x.config, {}, opts));
   await checked(() => recordCommand({ advice, ledger: join(x.home, "ledger"), subscription: markers[1], model: markers[6], effort: markers[2], verdict: markers[4], check: markers[4], note: markers[4] }, [], x.config, opts));
   let tick = 0;
-  await checked(() => launch(["--kind", "claude", "--name", "fixture", "--model", markers[6], "--direction", "right"], { ...opts, env: { ...x.env, HERDR_ENV: "1" }, ready: async () => null, models: async () => null, now: () => tick, sleep: async (ms) => { tick += ms; }, run: async (a) => ({ ok: true, data: { result: a[1] === "split" ? { pane: { pane_id: "w1:p2" } } : a[1] === "read" ? { text: markers[5] + "\nSource it? [y/N]" } : a[1] === "process-info" ? { process_info: { shell_pid: 1, foreground_processes: [{ pid: 1 }] } } : a[1] === "get" ? { pane: { pane_id: "w1:p2", terminal_id: "term-1" } } : {} } }) }));
+  await checked(() => launch(["--subscription", "claude", "--name", "fixture", "--model", markers[6], "--direction", "right"], { ...opts, env: { ...x.env, HERDR_ENV: "1" }, ready: async () => null, models: async () => null, now: () => tick, sleep: async (ms) => { tick += ms; }, run: async (a) => ({ ok: true, data: { result: a[1] === "split" ? { pane: { pane_id: "w1:p2" } } : a[1] === "read" ? { text: markers[5] + "\nSource it? [y/N]" } : a[1] === "process-info" ? { process_info: { shell_pid: 1, foreground_processes: [{ pid: 1 }] } } : a[1] === "get" ? { pane: { pane_id: "w1:p2", terminal_id: "term-1" } } : {} } }) }));
   await checked(() => sendCommand(["--task", markers[0]], opts)); await checked(() => waitCommand(["--timeout", "0"], opts));
   await checked(() => workersCommand([], opts)); await checked(() => stopCommand([], opts)); await checked(() => cleanup(["--unknown"], opts));
   for (const signal of ["logs", "metrics"]) expect(readdirSync(join(x.home, ".cache/routr/otel", signal)).length).toBeGreaterThan(0);
@@ -517,7 +517,7 @@ test("every command's queue, launch index and worker metadata exclude content an
   try {
     // Windows CI, PR #115: home() reads USERPROFILE; HOME alone reserved metadata in the wrong home.
     process.env.HOME = process.env.USERPROFILE = x.home;
-    const r = await checked(() => launch(["--kind", "claude", "--name", "metadata", "--model", "fixture", "--cwd", x.home, "--subagent-model", "PRIVATE_SUBAGENT_MODEL", "--subagent-effort", "PRIVATE_SUBAGENT_EFFORT", "--task-file", brief, "--advice", advice], { ...opts, ready: async () => null, spawn: () => {
+    const r = await checked(() => launch(["--subscription", "claude", "--name", "metadata", "--model", "fixture", "--cwd", x.home, "--subagent-model", "PRIVATE_SUBAGENT_MODEL", "--subagent-effort", "PRIVATE_SUBAGENT_EFFORT", "--task-file", brief, "--advice", advice], { ...opts, ready: async () => null, spawn: () => {
       saved = JSON.parse(readFileSync(join(x.home, ".local/state/routr/workers/metadata/worker.json"), "utf8")); return false;
     } }));
     expect(r.ok).toBe(false); expect(saved).toBeDefined();
@@ -567,7 +567,7 @@ test("off commands stay inert; unsampled commands without usage readings create 
     await adviseCommand("dispatch", "PRIVATE_MARKER", { config: x.config }, {}, opts); await adviseCommand("subagent", "PRIVATE_MARKER", { config: x.config }, {}, opts);
     await checkCommand({}, { ...opts, config: x.config }); await usageCommand([], x.config, {}, opts);
     recordCommand({}, [], x.config, opts);
-    await launch(["--kind", "claude", "--name", "fixture", "--model", "fixture", "--dry-run"], opts);
+    await launch(["--subscription", "claude", "--name", "fixture", "--model", "fixture", "--dry-run"], opts);
     for (const f of [sendCommand, stopCommand, workersCommand]) await f([], opts);
     await waitCommand(["--timeout", "0"], opts); await cleanup(["--unknown"], opts);
     expect(x.batches()).toEqual([]); expect(x.spawned).toEqual([]);

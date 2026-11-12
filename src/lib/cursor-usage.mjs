@@ -42,7 +42,7 @@ const cursorUiReady = (text) => {
 };
 
 // What to do when routr cannot open the screen itself: said with every failed read.
-export const CURSOR_BY_HAND = HARNESSES.cursor.usage.byHand;
+export const CURSOR_BY_HAND = HARNESSES.cursor.usage.byHand();
 
 // Cursor writes to its config folder as it runs (its `privateConfig`), so the read runs on a private copy, as `launch`
 // does, removed when the read ends. `cursorConfig`: the file copied, when not Cursor's own.

@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { configOf, loadConfig, oneReading } from "./config.mjs";
-import { HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesses.mjs";
-import { dispatchAdvice, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
+import { accountOf, HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesses.mjs";
+import { dispatchAdvice, matchAccount, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
 import { doNext, launchNext, runNext } from "./next.mjs";
 import { CLOSING } from "./wording.mjs";
 import { BRANCH, runHerdr } from "./herdr.mjs";
@@ -23,6 +23,7 @@ import { client } from "./hc.mjs";
 import { home } from "./state-files.mjs";
 import { NAME_RULE, WORKER_NAME } from "./worker-record.mjs";
 import { selfCommand, spawnSelf } from "./processes.mjs";
+import { accountShownEnv } from "./worker-env.mjs";
 
 // The worker guide a launch prompt points at. From source it sits beside this file; a compiled binary has no files
 // around it, so it points at the installed skill (written by the installer or `routr skill install`).
@@ -37,16 +38,20 @@ export function composePrompt(task, guide = WORKER_GUIDE(), rules = null) {
   return `${PROMPT_OPENING} Your first action, before any other tool call, is to read the routr worker guide at ${guide}. It is mandatory for this task: it says how to size each subagent before you spawn it and the exact report format the orchestrator parses.\n\n${task}${rules ? `\n\n${rules.trim()}` : ""}\n\n${CLOSING}`;
 }
 
-export function parseLaunchArgs(args) {
+// `--subscription` names where the work goes, as dispatch ranks it and record takes it: a harness, or an extra account
+// of one. `account(name)`: the extra account it names, when it names one (harnesses' accountOf). `o.kind` is the
+// harness it runs on, and `o.account` what an extra account's processes carry.
+export function parseLaunchArgs(args, account = () => null) {
   const lead = takeLeadSession(args); args = lead.args;
   const o = { timeout: 120000, dryRun: false, ...(lead.lead ? { "lead-session": lead.lead } : {}), ...(lead.warnings.length ? { leadWarnings: lead.warnings } : {}) };
-  const values = ["kind", "name", "cwd", "model", "effort", "subagent-model", "subagent-effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "timeout", "advice"];
+  const values = ["subscription", "name", "cwd", "model", "effort", "subagent-model", "subagent-effort", "pane", "worktree", "base", "direction", "task", "task-file", "rules-file", "timeout", "advice"];
   // PowerShell's IsSingleQuote/IsDoubleQuote (CharTraits.cs): ASCII quotes and U+2018–U+201E, but not U+201F.
   // Herdr encodes the command for the pane's shell; refuse these on all paths so the same launch stays portable.
   const choices = ["model", "effort", "subagent-model", "subagent-effort"];
   const seen = new Set();
   for (let i = 0; i < args.length; i++) {
     const key = args[i].replace(/^--/, "");
+    if (args[i] === "--continue" && args.includes("--pane") && account(args[args.indexOf("--subscription") + 1])) { o.continue = true; continue; } // routr's own, on an extra account's --pane rerun
     if (!args[i].startsWith("--") || (!values.includes(key) && key !== "dry-run" && key !== "copy")) throw new Error(`Unknown launch option: ${args[i]}`);
     if (key === "copy") {
       if (!args[i + 1]?.trim() || /^-\S/.test(args[i + 1])) throw new Error("--copy requires a path");
@@ -60,8 +65,12 @@ export function parseLaunchArgs(args) {
     if (choices.includes(key) && /['"\u2018-\u201e]/.test(args[i + 1])) throw new Error(`--${key} must not contain quote characters recognized by PowerShell (ASCII quotes or U+2018–U+201E)`);
     o[key] = args[++i];
   }
+  const a = account(o.subscription);
+  Object.assign(o, a ? { kind: a.kind, account: a } : { kind: o.subscription });
   if (!Object.hasOwn(HARNESSES, o.kind)) throw kindError();
   if (o.worktree && o.pane) throw new Error("--worktree creates its own pane; do not pass --pane with it");
+  // A worker in an existing pane would run on another account than the one checked, read and recorded: refused.
+  if (o.pane && o.account && !o.continue) throw new Error(`--pane cannot be used with ${o.subscription}: an existing pane keeps its own shell's environment. Leave --pane off, and routr splits a pane with it`);
   if (o.copy && !o.worktree) throw new Error("--copy only makes sense with --worktree");
   if (o.base && !o.worktree) throw new Error("--base goes with --worktree: it is the commit the worktree's branch starts from");
   for (const c of o.copy ?? []) if (isAbsolute(c) || c.split(/[\\/]/).includes("..")) throw new Error("--copy takes paths inside the repository, relative to --cwd");
@@ -85,16 +94,17 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     ran: [], next: [], start: { executable: null, argv: [], env: {} }, steps: [], warnings: [], prompt_chars: null, unavailable: [] };
   const step = (step, ok, detail) => out.steps.push({ step, ok, detail });
   // Where this launch runs (backends.mjs): what the trace says, whatever becomes of the launch, a refusal of its arguments too.
-  let backend = executionFor(env), outcome = { attempted: false, submitted: false, adopted: false, cleanup: null }, recordOptions = null, planned = false, advised = null;
+  let backend = executionFor(env), outcome = { attempted: false, submitted: false, adopted: false, cleanup: null }, recordOptions = null, planned = false, advised = null, subscription = null;
   // `next` is built once the launch has its identity (launch, below): its record template carries it.
   const finish = (launchId) => {
     out.next = launchNext(out.next, { record: recordOptions, cleanup: outcome.cleanup, adopted: outcome.adopted, launchId,
       attempted: outcome.attempted, planned, submitted: outcome.submitted, failed: out.state === "failed" });
   };
-  const done = () => ({ out, backend, finish, adopted: outcome.adopted, advised });
+  const done = () => ({ out, backend, finish, adopted: outcome.adopted, advised, subscription });
   try {
-    const o = parseLaunchArgs(args);
+    const o = parseLaunchArgs(args, (name) => accountOf(name, configOf(settings())));
     out.warnings.push(...(o.leadWarnings ?? []));
+    subscription = o.subscription;
     Object.assign(out, { kind: o.kind ?? null, name: o.name, pane: o.pane ?? null, cwd: resolve(o.cwd ?? "."), model: o.model ?? null, effort: o.effort ?? null });
     if (!statSync(out.cwd).isDirectory()) throw new Error("--cwd must be a directory");
     // A harness's private config folder for this launch (its `privateConfig`): named for every launch, made only for one with it.
@@ -104,7 +114,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
     // where a worker launched into its own worktree would have written).
     const planFor = (cwd) => plan({ ...o, cwd, cursorConfigDir: privateDir, subagentModel: o["subagent-model"], subagentEffort: o["subagent-effort"] });
     const p = planFor(o.worktree ? "<worktree-path>" : out.cwd);
-    Object.assign(out, { start: { executable: p.executable, argv: p.argv, env: p.env }, warnings: [...out.warnings, ...p.warnings.filter((w) => !w.startsWith("Plan only:"))] });
+    Object.assign(out, { start: { executable: p.executable, argv: p.argv, env: { ...p.env, ...accountShownEnv(o.account?.env) } }, warnings: [...out.warnings, ...p.warnings.filter((w) => !w.startsWith("Plan only:"))] });
     if (!o.model) out.next.push(doNext("Choose --model before launching"));
     // A harness that keeps an explicit effort as the user's default (Kiro): the lead checks the effort in force.
     const h = HARNESSES[o.kind];
@@ -125,6 +135,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         const advice = dispatchAdvice(readAdvice(resolve(o.advice)));
         out.advice = { file: o.advice, matches: false };
         matchAdvice(advice, task);
+        if (o.account) matchAccount(advice, o.account);
         out.advice.matches = true; adviceForLaunch(advice.id); advised = advice;
         out.unavailable.push(...savedDecisionFailures(advice));
         recordOptions = { ...o, advice: resolve(o.advice), ...(o["task-file"] ? { "task-file": resolve(o["task-file"]) } : {}) };
@@ -186,7 +197,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
 export function launch(args, opts = {}) {
   const lead = takeLeadSession(args); args = [...lead.args, ...(lead.lead ? ["--lead-session", lead.lead] : [])];
   const settings = oneReading(opts.settings), made = openLaunchId() ?? newLaunchId();
-  return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead, launchId: made }), async () => { const { out: r, backend, finish, adopted, advised } = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings);
+  return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead, launchId: made }), async () => { const { out: r, backend, finish, adopted, advised, subscription } = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings);
     // Whether it counts toward the user's launch share, and so gets its launch_id and history record (launch-identity.mjs).
     const took = countsTowardShare({ state: r.state, backend });
     try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane"), backend }); } catch {}
@@ -195,7 +206,7 @@ export function launch(args, opts = {}) {
     r.launch_id = null;
     if (took) {
       r.launch_id = made;
-      recordLaunch(r.launch_id, { subscription: r.kind, model: adopted ? null : r.model, effort: adopted ? null : r.effort,
+      recordLaunch(r.launch_id, { subscription, model: adopted ? null : r.model, effort: adopted ? null : r.effort,
         id: advised?.id, advised: advised && { level: advised.level, sure: advised.sure, between: advised.between, work_type: advised.work_type, high_risk: advised.high_risk, fallback: fallbackAdvice(advised),
           facts: Object.fromEntries(Object.entries(advised.facts ?? {}).map(([k, f]) => [k, f?.p])) },
         project: projectName(r.worktree?.path ?? r.cwd), backend, name: r.name }, { home: opts.home });

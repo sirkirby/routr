@@ -3,7 +3,8 @@
 // `--yes` run uses, and the two can never disagree. Nothing is written here; the review screen comes before any write.
 // First run: which subscriptions routr may use, then one screen of settings for each. Run again: a summary of what is
 // set and a menu to change one thing (aws configure's "Enter keeps the current value"), or to walk everything.
-import { HARNESSES, TAKES_EFFORT } from "./harnesses.mjs";
+import { accountName, HARNESSES, TAKES_EFFORT } from "./harnesses.mjs";
+import { configDirOf } from "./state-files.mjs";
 import { LEVELS } from "./questions.mjs";
 import { BACK, CANCEL } from "./tui.mjs";
 import { NOTICE } from "./telemetry.mjs";
@@ -36,15 +37,44 @@ export async function askDecision(ui, now) {
 export const describe = (n, s) => (s.enabled === false ? "off (settings kept)"
   : `${s.default_model || "model left to the lead agent"}${s.default_effort ? ` @ ${s.default_effort}` : ""} · ${s.hardest_work} work · reserve ${pct(s.reserve ?? 0)}${s.use ? ` · ${s.use} use` : ""}${s.share != null ? ` · share ${s.share}` : ""}`);
 
+// A harness setup can take settings for: installed and signed in, or signed out on its own with an extra account signed
+// in, which takes its settings.
+export const takesSettings = (r, n) => r.harnesses[n]?.installed && (r.harnesses[n].signed_in || Object.values(r.accounts ?? {}).some((a) => a.harness === n && a.signed_in));
 // `r` is doctor's inspection, `config` the file as it is (null on a first run). `efforts(n, model)` lists a harness's
 // levels for a model. Returns the choices, or CANCEL when the person quits without writing.
-export async function guided({ ui, r, config, efforts, telemetry = false, decided = null }) {
-  const current = config?.subscriptions ?? {};
-  const signedIn = (n) => r.harnesses[n]?.installed && r.harnesses[n]?.signed_in;
-  const candidates = Object.keys(HARNESSES).filter((n) => signedIn(n) || current[n]);
+export async function guided({ ui, r, config, efforts, telemetry = false, decided = null, addAccount = null }) {
+  const file = config?.subscriptions ?? {};
+  // An extra account is a subscription here like any other, named <harness>-<name> and asked the same questions. What
+  // it has now is its harness's settings with its own over them, as the config is read, so only a setting the person
+  // makes differ from its harness's is written for it. `accountsAdded`: accounts added in this run, with their folder.
+  const of = (n) => (Object.hasOwn(HARNESSES, n) ? n : accountName(n).harness), H = (n) => HARNESSES[of(n)];
+  const label = (n) => (Object.hasOwn(HARNESSES, n) ? HARNESSES[n].label : `${H(n).label} · ${accountName(n).short}`);
+  const without = (o, keys) => Object.fromEntries(Object.entries(o ?? {}).filter(([k]) => !keys.includes(k)));
+  const inherited = (h) => without(file[h], ["accounts", "enabled"]);
+  const current = { ...file }, accountsAdded = {};
+  for (const h of Object.keys(HARNESSES)) for (const [short, e] of Object.entries(file[h]?.accounts ?? {})) {
+    if (!r.accounts?.[`${h}-${short}`]) continue; // one routr left out (doctor says why) is not offered
+    current[`${h}-${short}`] = { ...inherited(h), ...without(e && typeof e === "object" ? e : {}, ["folder"]) };
+  }
+  const isAccount = (n) => !Object.hasOwn(HARNESSES, n);
+  // What an account states itself, and what the person answered for it in this run (`touched`). Every other setting
+  // of its is its harness's as it stands NOW, changes made to the harness in this run included (`sync`), so the
+  // lists and the review show what will be read back, and an answer that matches the harness's old value is kept
+  // when the harness moves.
+  const KEYS = ["default_model", "default_effort", "hardest_work", "reserve", "use", "share"];
+  const ownOf = (n) => { const a = accountName(n), e = file[a.harness]?.accounts?.[a.short]; return e && typeof e === "object" ? e : {}; };
+  const touched = {}, stated = (n, k) => touched[n]?.has(k) || Object.hasOwn(ownOf(n), k);
+  // A harness with no entry yet (signed out on its default folder) gets the starter one when its account is saved:
+  // the account is shown and compared against that.
+  const starter = (h) => ({ ...HARNESSES[h].suggested, ...(TAKES_EFFORT.includes(h) ? { default_effort: HARNESSES[h].suggested.default_effort ?? "medium" } : {}) });
+  const harnessNow = (n, k) => (draft[of(n)] ?? file[of(n)] ?? starter(of(n)))[k];
+  const sync = () => { for (const n of candidates) if (isAccount(n)) for (const k of KEYS) if (!stated(n, k)) draft[n][k] = harnessNow(n, k) ?? (k === "hardest_work" || k === "reserve" ? H(n).suggested[k] : undefined); };
+  const signedIn = (n) => (isAccount(n) ? Boolean(accountsAdded[n]) || r.accounts?.[n]?.signed_in === true : takesSettings(r, n));
+  // Each harness, then its accounts.
+  const candidates = Object.keys(HARNESSES).flatMap((n) => [...(signedIn(n) || current[n] ? [n] : []), ...Object.keys(current).filter((x) => isAccount(x) && of(x) === n)]);
   // Installed but not signed in, and not set up: listed with what to run, never offered until the sign-in is done.
   const waiting = Object.keys(HARNESSES).filter((n) => r.harnesses[n]?.installed && !signedIn(n) && !current[n]);
-  const signInOf = (n) => (r.harnesses[n]?.installed ? r.harnesses[n].sign_in ?? "not signed in" : `\`${HARNESSES[n].executable}\` was not found on this machine`);
+  const signInOf = (n) => (isAccount(n) ? r.accounts?.[n]?.sign_in ?? "not signed in" : r.harnesses[n]?.installed ? r.harnesses[n].sign_in ?? "not signed in" : `\`${H(n).executable}\` was not found on this machine`);
   // One set up but not signed in (or not installed) keeps its settings and can be turned off, but not turned on, and
   // its settings are not walked: the model list and the effort levels come from the harness, and asking a harness that
   // is not signed in can open its sign-in (signin.mjs).
@@ -52,42 +82,42 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   // The working copy: what is set now, or the suggestions for a harness routr has not set up yet.
   // An existing subscription is drafted as it is (no effort suggested where none is set: that would be a change the
   // person did not make); `enabled` is computed last, the way loadConfig reads it.
-  const draft = Object.fromEntries(candidates.map((n) => [n, { ...(current[n] ? { hardest_work: HARNESSES[n].suggested.hardest_work, reserve: HARNESSES[n].suggested.reserve, ...current[n] }
-    : { ...HARNESSES[n].suggested, ...(TAKES_EFFORT.includes(n) ? { default_effort: HARNESSES[n].suggested.default_effort ?? "medium" } : {}) }),
+  const draft = Object.fromEntries(candidates.map((n) => [n, { ...(current[n] ? { hardest_work: H(n).suggested.hardest_work, reserve: H(n).suggested.reserve, ...current[n] }
+    : starter(n)),
     enabled: current[n] ? current[n].enabled !== false : true }]));
   const answers = {};
 
   // Each field is its own question; each returns BACK or CANCEL as the tui does.
   const ask = {
     model: async (n) => {
-      const list = r.harnesses[n]?.models ?? [];
+      const list = r.harnesses[of(n)]?.models ?? [];
       const options = list.map((id) => ({ value: id, label: id }));
       const now = draft[n].default_model ?? LEAVE;
       // A list that is only a sample (Claude Code's aliases) does not mean an id off it has gone.
-      if (now && !list.includes(now)) options.unshift({ value: now, label: now, hint: HARNESSES[n].openList ? "current" : "current, not in the harness's list now" });
-      const v = await ui.search({ message: `${HARNESSES[n].label}: everyday model ${ui.style.dim("(your agents start here and go up or down with the work)")}`,
-        options, initial: now, pinned: [{ value: LEAVE, label: "leave it to the lead agent", hint: "no default" }], typed: Boolean(HARNESSES[n].openList) });
+      if (now && !list.includes(now)) options.unshift({ value: now, label: now, hint: H(n).openList ? "current" : "current, not in the harness's list now" });
+      const v = await ui.search({ message: `${label(n)}: everyday model ${ui.style.dim("(your agents start here and go up or down with the work)")}`,
+        options, initial: now, pinned: [{ value: LEAVE, label: "leave it to the lead agent", hint: "no default" }], typed: Boolean(H(n).openList) });
       if (typeof v === "string") {
         draft[n].default_model = v || null;
         // A model that does not take the effort set gets one it does (medium where it can), before the list of changes is
         // shown: the same rule setup applies to --model, so what is shown is what is saved.
-        const levels = v && TAKES_EFFORT.includes(n) && draft[n].default_effort ? await efforts(n, v) : null;
+        const levels = v && TAKES_EFFORT.includes(of(n)) && draft[n].default_effort ? await efforts(of(n), v) : null;
         if (levels?.length && !levels.includes(draft[n].default_effort)) draft[n].default_effort = levels.includes("medium") ? "medium" : levels[0];
       }
       return v;
     },
     effort: async (n) => {
-      if (!TAKES_EFFORT.includes(n)) return "skip";
-      const levels = await efforts(n, draft[n].default_model);
+      if (!TAKES_EFFORT.includes(of(n))) return "skip";
+      const levels = await efforts(of(n), draft[n].default_model);
       if (!levels?.length) return "skip";
       const now = levels.includes(draft[n].default_effort) ? draft[n].default_effort : levels.includes("medium") ? "medium" : levels[0];
-      const v = await ui.select({ message: `${HARNESSES[n].label}: everyday effort`, initial: now,
-        options: levels.map((l) => ({ value: l, label: l, hint: l === HARNESSES[n].autoEffort ? HARNESSES[n].autoEffortMeans : undefined })) });
+      const v = await ui.select({ message: `${label(n)}: everyday effort`, initial: now,
+        options: levels.map((l) => ({ value: l, label: l, hint: l === H(n).autoEffort ? H(n).autoEffortMeans : undefined })) });
       if (typeof v === "string") draft[n].default_effort = v;
       return v;
     },
     hardest: async (n) => {
-      const v = await ui.select({ message: `${HARNESSES[n].label}: the hardest work routr may send there`, initial: draft[n].hardest_work,
+      const v = await ui.select({ message: `${label(n)}: the hardest work routr may send there`, initial: draft[n].hardest_work,
         options: LEVELS.map((l) => ({ value: l, label: l, hint: LEVEL_MEANING[l] })) });
       if (typeof v === "string") draft[n].hardest_work = v;
       return v;
@@ -95,8 +125,8 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
     reserve: async (n) => {
       const now = draft[n].reserve ?? 0;
       const options = [...new Set([...PRESETS, now])].sort((a, b) => a - b).map((x) => ({ value: x, label: pct(x), hint: x === 0 ? "hold nothing back" : undefined }));
-      let v = await ui.select({ message: `${HARNESSES[n].label}: reserve ${ui.style.dim(`(${RESERVE.rule})`)}`, initial: now, options: [...options, { value: "other", label: "another share…" }] });
-      if (v === "other") v = await ui.text({ message: `${HARNESSES[n].label}: reserve, 0 to 100%`, initial: pct(now),
+      let v = await ui.select({ message: `${label(n)}: reserve ${ui.style.dim(`(${RESERVE.rule})`)}`, initial: now, options: [...options, { value: "other", label: "another share…" }] });
+      if (v === "other") v = await ui.text({ message: `${label(n)}: reserve, 0 to 100%`, initial: pct(now),
         parse: (t) => { const s = String(t).trim(), x = s.endsWith("%") ? Number(s.slice(0, -1)) / 100 : Number(s) > 1 ? Number(s) / 100 : Number(s); if (!s || !Number.isFinite(x) || x < 0 || x > 1) throw new Error("a share from 0% to 100%"); return Math.round(x * 100) / 100; } });
       if (typeof v === "number") draft[n].reserve = v;
       return v;
@@ -104,7 +134,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   };
   const useOf = (n) => draft[n].use ?? "normal";
   ask.use = async (n) => {
-    const v = await ui.select({ message: `${HARNESSES[n].label}: how may routr use this account?`, initial: useOf(n), options: [
+    const v = await ui.select({ message: `${label(n)}: how may routr use this account?`, initial: useOf(n), options: [
       { value: "normal", label: "Normal use", hint: "consider it for everyday work, including funded enterprise usage" },
       { value: "fallback", label: "Fallback", hint: "use when normal accounts cannot suitably take the work" }] });
     // Visiting this setting is an explicit choice, even when it matches the default.
@@ -115,21 +145,32 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   // Inspection gives the class, not usable room: a weight can be configured before room returns.
   // Setup keeps an included reading; otherwise billing, then the observed class. A billing correction can hide
   // a metered budget here; ranking still counts its window.
-  const reads = (n) => { const seen = r.harnesses[n]?.usage_class; return seen === "included" ? seen : draft[n].billing ?? seen; };
-  const sharer = (x) => draft[x].enabled && reads(x) === "metered" && useOf(x) === "normal";
-  const shares = (n) => sharer(n) && candidates.filter(sharer).length >= 2;
+  const reads = (n) => { const seen = (isAccount(n) ? r.accounts?.[n] : r.harnesses[n])?.usage_class; return seen === "included" ? seen : draft[n].billing ?? seen; };
+  // An account added in this run was not read by the inspection, so its class is not known: it is asked its share
+  // beside another metered account, and ranking counts the weight only once it reads metered.
+  const sharer = (x) => draft[x].enabled && (reads(x) === "metered" || Boolean(accountsAdded[x])) && useOf(x) === "normal";
+  const shares = (n) => sharer(n) && candidates.filter(sharer).length >= 2 && candidates.some((x) => sharer(x) && !accountsAdded[x]);
   ask.share = async (n) => {
     const now = draft[n].share ?? NO_SHARE;
     const options = [...new Set([1, 2, 3, 4, 5, ...(now === NO_SHARE ? [] : [now])])].sort((a, b) => a - b).map((x) => ({ value: x, label: String(x) }));
-    let v = await ui.select({ message: `${HARNESSES[n].label}: launch share ${ui.style.dim("(its weight in how you split launches between these accounts: 3 here and 1 on another is about three for every one)")}`,
+    let v = await ui.select({ message: `${label(n)}: launch share ${ui.style.dim("(its weight in how you split launches between these accounts: 3 here and 1 on another is about three for every one)")}`,
       initial: now, options: [{ value: NO_SHARE, label: "no share", hint: "counts as 1 when another account in the ratio has one" }, ...options, { value: "other", label: "another weight…" }] });
-    if (v === "other") v = await ui.text({ message: `${HARNESSES[n].label}: launch share, 1 to ${SHARE_MAX}`, initial: now === NO_SHARE ? "" : String(now),
+    if (v === "other") v = await ui.text({ message: `${label(n)}: launch share, 1 to ${SHARE_MAX}`, initial: now === NO_SHARE ? "" : String(now),
       parse: (t) => { const x = Number(String(t).trim()); if (!/^\d+$/.test(String(t).trim()) || !isShare(x)) throw new Error(`a whole number from 1 to ${SHARE_MAX}`); return x; } });
     if (v === NO_SHARE) draft[n].share = null;
     else if (typeof v === "number") draft[n].share = v;
     return v;
   };
-  const fieldsOf = (n) => Object.keys(FIELDS).filter((k) => (k !== "effort" || TAKES_EFFORT.includes(n)) && (k !== "share" || shares(n)));
+  // An answer for an account is its own from then on, whatever its harness's value is or becomes. A model answer can
+  // move its effort too.
+  const FIELD_KEY = { model: "default_model", effort: "default_effort", hardest: "hardest_work", reserve: "reserve", use: "use", share: "share" };
+  for (const f of Object.keys(FIELD_KEY)) { const inner = ask[f]; ask[f] = async (n) => {
+    const effort = draft[n].default_effort, v = await inner(n);
+    if (isAccount(n) && v !== BACK && v !== CANCEL && v !== "skip") { (touched[n] ??= new Set()).add(FIELD_KEY[f]); if (draft[n].default_effort !== effort) touched[n].add("default_effort"); }
+    sync();
+    return v;
+  }; }
+  const fieldsOf = (n) => Object.keys(FIELDS).filter((k) => (k !== "effort" || TAKES_EFFORT.includes(of(n))) && (k !== "share" || shares(n)));
   // Walking an account's settings asks the share last and separately (askShares): whether it applies depends on every
   // account's use, and a new metered account only becomes normal use when its own Account use is answered.
   const walkFields = (n) => fieldsOf(n).filter((k) => k !== "share");
@@ -159,14 +200,15 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   // A harness not signed in says so on its own line of the list, so going back to this question does not repeat it.
   const choose = async () => {
     if (!candidates.length) {
-      for (const n of waiting) ui.line(`${HARNESSES[n].label}: ${signInOf(n)}`, { dim: true });
-      ui.line("No harness is installed and signed in yet: sign in to one, then run routr setup again.");
-      return "none";
+      for (const n of waiting) ui.line(`${label(n)}: ${signInOf(n)}`, { dim: true });
+      // A harness signed out on its default folder can still have another folder signed in: that account is offered.
+      if (addAccount && multi.length) { const a = await askAccounts(); if (a === CANCEL) return CANCEL; }
+      if (!candidates.length) { ui.line("No harness is installed and signed in yet: sign in to one, then run routr setup again."); return "none"; }
     }
     const v = await ui.multiselect({ message: "Which subscriptions may routr hand work to?", min: 1,
-      options: Object.keys(HARNESSES).filter((n) => candidates.includes(n) || waiting.includes(n)).map((n) => (waiting.includes(n) || locked(n)
-        ? { value: n, label: HARNESSES[n].label, disabled: signInOf(n) }
-        : { value: n, label: HARNESSES[n].label, hint: [current[n] ? describe(n, draft[n]) : "new", ...(signedIn(n) ? [] : [signInOf(n)])].join(" · ") })),
+      options: [...candidates, ...waiting].map((n) => (waiting.includes(n) || locked(n)
+        ? { value: n, label: label(n), disabled: signInOf(n) }
+        : { value: n, label: label(n), hint: [current[n] ? describe(n, draft[n]) : "new", ...(signedIn(n) ? [] : [signInOf(n)])].join(" · ") })),
       initial: candidates.filter((n) => draft[n].enabled) });
     if (Array.isArray(v)) for (const n of candidates) draft[n].enabled = v.includes(n);
     return v;
@@ -203,16 +245,57 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
     return endpoint;
   };
 
+  // Another account of a harness: which harness, a short name, and the folder it is signed in from. setup checks the
+  // folder's sign-in with the harness's own status command (`addAccount`) and says what to run where it is not signed
+  // in; routr never signs in. Added, it is asked its settings like a new subscription, starting from its harness's.
+  const multi = Object.keys(HARNESSES).filter((h) => HARNESSES[h].folder && r.harnesses[h]?.installed);
+  const askAccount = async () => {
+    if (!addAccount || !multi.length) { ui.line(`An extra account needs ${Object.keys(HARNESSES).filter((h) => HARNESSES[h].folder).map((h) => HARNESSES[h].label).join(" or ")} installed.`, { dim: true }); return "none"; }
+    const h = await ui.select({ message: "Another account of which harness?", initial: multi[0], options: [...multi.map((x) => ({ value: x, label: HARNESSES[x].label })), { value: BACK, label: "Back" }] });
+    if (h === CANCEL || h === BACK) return h;
+    const short = await ui.text({ message: `A short name for it ${ui.style.dim(`(it becomes the subscription ${h}-<name>, for example work)`)}`, initial: "",
+      parse: (t) => { const v = String(t).trim(), n = `${h}-${v}`; if (!/^[a-z0-9][a-z0-9_-]*$/.test(v) || n.length > 32) throw new Error("a-z, 0-9, - and _, and 32 characters at most with the harness's name"); if (current[n] || Object.hasOwn(HARNESSES, n)) throw new Error(`${n} is already a subscription`); return v; } });
+    if (typeof short !== "string") return short;
+    const n = `${h}-${short}`, folder = await ui.text({ message: `The folder ${n} is signed in from ${ui.style.dim(`(its own ${HARNESSES[h].folder.variable}, for example ~/.${HARNESSES[h].executable}-${short})`)}`, initial: `~/.${HARNESSES[h].executable}-${short}`,
+      parse: (t) => { const v = String(t).trim(); if (!configDirOf(v)) throw new Error("a full path, or one under ~/"); return v; } });
+    if (typeof folder !== "string") return folder;
+    const why = await addAccount(n, folder);
+    if (why) { ui.line(`${label(n)}: ${why}`); return "none"; }
+    accountsAdded[n] = folder; current[n] = { ...inherited(h), ...Object.fromEntries(["default_model", "default_effort", "hardest_work", "reserve", "use", "share"].filter((k) => draft[h]?.[k] !== undefined).map((k) => [k, draft[h][k]])) };
+    draft[n] = { ...current[n], hardest_work: current[n].hardest_work ?? HARNESSES[h].suggested.hardest_work, reserve: current[n].reserve ?? HARNESSES[h].suggested.reserve, enabled: true };
+    candidates.splice(Math.max(candidates.indexOf(h), ...candidates.map((x, i) => (isAccount(x) && of(x) === h ? i : -1))) + 1, 0, n);
+    ui.line(`${label(n)} is signed in from ${folder}. It starts with ${HARNESSES[h].label}'s settings, model and effort included: change those from the menu.`, { dim: true });
+    // Asked now: what usually differs between two accounts of one harness. Its model and effort stay its harness's
+    // until changed from the menu, so answering nothing writes nothing of its own.
+    const v = await fields(n, ["hardest", "reserve", "use"]);
+    return v === CANCEL ? CANCEL : n;
+  };
+  // A first run offers it once per account, after the subscriptions are chosen.
+  const askAccounts = async () => {
+    if (!addAccount || !multi.length) return "done";
+    for (;;) {
+      const v = await ui.confirm({ message: `Add another account of ${multi.map((h) => HARNESSES[h].label).join(" or ")}? ${ui.style.dim("(a second login, signed in from its own folder)")}`, initial: false });
+      if (v === CANCEL || v === BACK) return v;
+      if (!v) return "done";
+      if (await askAccount() === CANCEL) return CANCEL;
+    }
+  };
+
   // What would change, one line each: the review, and the count on the menu.
   const changes = () => {
     const out = [];
     for (const n of candidates) {
-      const was = current[n], now = draft[n];
-      if (!was) { out.push(`${HARNESSES[n].label}: ${now.enabled ? `added · ${describe(n, now)}` : "added, turned off"}`); continue; }
-      if ((was.enabled !== false) !== now.enabled) out.push(`${HARNESSES[n].label}: ${now.enabled ? "turned on" : "turned off (settings kept)"}`);
-      for (const [k, label] of [["default_model", "model"], ["default_effort", "effort"], ["hardest_work", "hardest work"], ["reserve", "reserve"], ["use", "account use"], ["share", "launch share"]]) {
+      // An account is compared with what it would read without this run's answers for it: its own settings, else its
+      // harness's as they now stand.
+      const now = draft[n], was = isAccount(n) && current[n] ? { ...current[n], ...Object.fromEntries(KEYS.filter((k) => !Object.hasOwn(ownOf(n), k)).map((k) => [k, harnessNow(n, k)])) } : current[n];
+      // Its harness with no entry yet gets one, which the account's unanswered settings are read from: said, with them.
+      if (accountsAdded[n] && !file[of(n)] && !draft[of(n)] && !out.some((l) => l.startsWith(`${H(n).label}: `))) out.push(`${H(n).label}: added for its account · ${describe(of(n), { ...starter(of(n)), enabled: true })}`);
+      if (accountsAdded[n]) out.push(`${label(n)}: added, signed in from ${accountsAdded[n]}`);
+      if (!was) { out.push(`${label(n)}: ${now.enabled ? `added · ${describe(n, now)}` : "added, turned off"}`); continue; }
+      if ((was.enabled !== false) !== now.enabled) out.push(`${label(n)}: ${now.enabled ? "turned on" : "turned off (settings kept)"}`);
+      for (const [k, what] of [["default_model", "model"], ["default_effort", "effort"], ["hardest_work", "hardest work"], ["reserve", "reserve"], ["use", "account use"], ["share", "launch share"]]) {
         const a = was[k] ?? null, b = now[k] ?? null;
-        if (a !== b) out.push(`${HARNESSES[n].label}: ${label} ${k === "reserve" ? pct(a ?? 0) : a ?? "none"} ${ui.glyphs.arrow} ${k === "reserve" ? pct(b ?? 0) : b ?? "none"}`);
+        if (a !== b) out.push(`${label(n)}: ${what} ${k === "reserve" ? pct(a ?? 0) : a ?? "none"} ${ui.glyphs.arrow} ${k === "reserve" ? pct(b ?? 0) : b ?? "none"}`);
       }
     }
     if (answers.telemetry !== undefined) out.push(`telemetry: ${answers.telemetry ? "on" : "off"}`);
@@ -233,14 +316,15 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
 
   // First run: every step in order; Esc steps back.
   const full = async () => {
-    const steps = ["choose", "settings", "shares", "extras", "finish"];
+    const steps = ["choose", "settings", "accounts", "shares", "extras", "finish"];
     for (let s = 0; s < steps.length;) {
       let v;
       if (steps[s] === "choose") v = await choose();
       else if (steps[s] === "settings") {
         v = "done";
-        for (const n of candidates.filter((x) => draft[x].enabled && signedIn(x))) { v = await fields(n, walkFields(n)); if (v !== "done") break; }
-      } else if (steps[s] === "shares") v = await askShares(candidates.filter((x) => signedIn(x)));
+        for (const n of candidates.filter((x) => draft[x].enabled && signedIn(x) && !accountsAdded[x])) { v = await fields(n, walkFields(n)); if (v !== "done") break; } // an account added in this run was asked its settings then
+      } else if (steps[s] === "accounts") v = await askAccounts();
+      else if (steps[s] === "shares") v = await askShares(candidates.filter((x) => signedIn(x)));
       else if (steps[s] === "extras") v = await extras();
       else { v = await finish(); if (v === "back") { s = 0; continue; } if (v === "quit") return CANCEL; if (v === "write" || v === "nothing") return v; }
       if (v === CANCEL) return CANCEL;
@@ -253,13 +337,14 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
 
   // Run again: what is set, then a menu, until the person writes or leaves.
   const menu = async () => {
-    ui.note("Your settings", [...candidates.map((n) => `${HARNESSES[n].label.padEnd(12)} ${current[n] ? describe(n, draft[n]) : "detected, not set up yet"}${signedIn(n) ? "" : ` · ${signInOf(n)}`}`),
-      ...waiting.map((n) => `${HARNESSES[n].label.padEnd(12)} ${signInOf(n)}`), `${"Decisions".padEnd(12)} ${decisionLabel(answers.decision ?? decisionNow)}${answers.decision && decisionLabel(answers.decision) !== decisionLabel(decisionNow) ? " (not saved yet)" : ""}`, `${"Updates".padEnd(12)} ${channelNow} channel`]);
+    const wide = Math.max(12, ...candidates.map((n) => label(n).length));
+    ui.note("Your settings", [...candidates.map((n) => `${label(n).padEnd(wide)} ${current[n] ? describe(n, draft[n]) : "detected, not set up yet"}${signedIn(n) ? "" : ` · ${signInOf(n)}`}`),
+      ...waiting.map((n) => `${label(n).padEnd(wide)} ${signInOf(n)}`), `${"Decisions".padEnd(wide)} ${decisionLabel(answers.decision ?? decisionNow)}${answers.decision && decisionLabel(answers.decision) !== decisionLabel(decisionNow) ? " (not saved yet)" : ""}`, `${"Updates".padEnd(wide)} ${channelNow} channel`]);
     for (;;) {
       const pending = changes().length;
       const v = await ui.select({ message: "What would you like to do?", initial: "one", options: [
         { value: "one", label: "Change one subscription's settings", hint: "model, effort, hardest work, reserve, account use, launch share" },
-        { value: "choose", label: "Choose which subscriptions routr uses", hint: "turn one on or off" },
+        { value: "choose", label: "Choose which subscriptions routr uses", hint: addAccount && multi.length ? "turn one on or off, or add another account of a harness" : "turn one on or off" },
         ...(telemetry ? [{ value: "extras", label: "Anonymous outcomes (telemetry)" }] : []),
         { value: "channel", label: "Update channel", hint: `${answers.channel ?? channelNow}: stable releases, or beta builds too` },
         { value: "decision", label: "Decision model", hint: decisionLabel(answers.decision ?? decisionNow) },
@@ -272,7 +357,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       if (v === "save") { ui.note("Saving", changes()); return "write"; }
       // Esc with changes not saved: the same way out as at the end of a first run, so nothing is lost by accident.
       if (v === BACK) { const w = await finish(); if (w === "write") return "write"; if (w === "quit" || w === CANCEL) return CANCEL; continue; }
-      if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) { const added = c.filter((x) => !current[x]); for (const n of added) if (await fields(n, walkFields(n)) === CANCEL) return CANCEL; if (await askShares(added) === CANCEL) return CANCEL; } continue; }
+      if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) { const added = c.filter((x) => !current[x]); for (const n of added) if (await fields(n, walkFields(n)) === CANCEL) return CANCEL; if (await askShares(added) === CANCEL) return CANCEL; const before = Object.keys(accountsAdded); if (await askAccounts() === CANCEL) return CANCEL; if (await askShares(Object.keys(accountsAdded).filter((x) => !before.includes(x))) === CANCEL) return CANCEL; } continue; }
       if (v === "extras") { if (await extras() === CANCEL) return CANCEL; continue; }
       if (v === "otel") { if (await askOtel() === CANCEL) return CANCEL; continue; }
       if (v === "channel") { if (await askChannel() === CANCEL) return CANCEL; continue; }
@@ -283,15 +368,15 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       let n = candidates[0];
       for (;;) {
         const picked = await ui.select({ message: "Which subscription?", initial: n, options: [
-          ...candidates.map((x) => ({ value: x, label: HARNESSES[x].label, hint: signedIn(x) ? describe(x, draft[x]) : `${describe(x, draft[x])} · ${signInOf(x)}` })), { value: BACK, label: "Back" }] });
+          ...candidates.map((x) => ({ value: x, label: label(x), hint: signedIn(x) ? describe(x, draft[x]) : `${describe(x, draft[x])} · ${signInOf(x)}` })), { value: BACK, label: "Back" }] });
         if (picked === CANCEL) return CANCEL;
         if (picked === BACK) break;
         n = picked;
-        if (!signedIn(n)) { ui.line(`${HARNESSES[n].label}: ${signInOf(n)}, then change its settings here.`, { dim: true }); continue; }
+        if (!signedIn(n)) { ui.line(`${label(n)}: ${signInOf(n)}, then change its settings here.`, { dim: true }); continue; }
         let f = "model";
         for (;;) {
           const now = { model: draft[n].default_model || "left to the lead agent", effort: draft[n].default_effort ?? "not set", hardest: draft[n].hardest_work, reserve: pct(draft[n].reserve ?? 0), use: useOf(n), share: draft[n].share ?? "none" };
-          f = await ui.select({ message: `${HARNESSES[n].label}: which setting?`, initial: f, options: [
+          f = await ui.select({ message: `${label(n)}: which setting?`, initial: f, options: [
             ...fieldsOf(n).map((k) => ({ value: k, label: FIELDS[k], hint: now[k] })),
             { value: BACK, label: "Back" }] });
           if (f === CANCEL) return CANCEL;
@@ -305,11 +390,25 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   const outcome = config ? await menu() : await full();
   if (outcome === CANCEL) return CANCEL;
   // In the flags' shape, so setup applies them as it applies --model, --effort, --hardest, --reserve, --enable/--disable.
-  const out = { models: {}, efforts: {}, hardest: {}, reserves: {}, switches: {}, uses: {}, shares: {}, ...answers, write: outcome === "write" };
+  const out = { models: {}, efforts: {}, hardest: {}, reserves: {}, switches: {}, uses: {}, shares: {}, accounts: { ...accountsAdded }, ...answers, write: outcome === "write" };
   if (out.channel === channelNow) delete out.channel; // as --channel: only a change is applied
   if (out.decision && decisionLabel(out.decision) === decisionLabel(decisionNow)) delete out.decision; // as --decision
+  sync();
   for (const n of candidates) {
-    const was = current[n] ?? {}, d = draft[n];
+    const d = draft[n];
+    if (isAccount(n)) {
+      // Only what the person answered, and only where it differs from what the account would read anyway.
+      const base = (k) => (Object.hasOwn(ownOf(n), k) ? ownOf(n)[k] : harnessNow(n, k) ?? (k === "hardest_work" || k === "reserve" ? H(n).suggested[k] : null)) ?? null, differs = (k) => touched[n]?.has(k) && (d[k] ?? null) !== (k === "use" ? base(k) ?? "normal" : base(k));
+      if (differs("default_model")) out.models[n] = d.default_model || null;
+      if (differs("default_effort") && d.default_effort) out.efforts[n] = d.default_effort;
+      if (differs("hardest_work")) out.hardest[n] = d.hardest_work;
+      if (differs("reserve")) out.reserves[n] = d.reserve;
+      if (differs("use")) out.uses[n] = d.use;
+      if (differs("share")) out.shares[n] = d.share ?? "off";
+      if ((current[n].enabled !== false) !== d.enabled) out.switches[n] = d.enabled;
+      continue;
+    }
+    const was = current[n] ?? {};
     if (d.default_model !== (was.default_model ?? undefined) && d.default_model) out.models[n] = d.default_model;
     if (d.default_model === null && was.default_model) out.models[n] = null;
     if (TAKES_EFFORT.includes(n) && d.default_effort && d.default_effort !== was.default_effort) out.efforts[n] = d.default_effort;

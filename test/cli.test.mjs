@@ -49,7 +49,7 @@ test("the command table gives every command its help and writes out every dispat
 
   // launch flags match parseLaunchArgs options
   const launchFlags = COMMANDS.launch.flags.map((f) => f.name.replace(/^--/, ""));
-  for (const opt of ["kind", "name", "cwd", "model", "effort", "pane", "direction", "task", "task-file", "timeout", "dry-run"]) {
+  for (const opt of ["subscription", "name", "cwd", "model", "effort", "pane", "direction", "task", "task-file", "timeout", "dry-run"]) {
     expect(launchFlags).toContain(opt);
   }
   expect(COMMANDS.launch.flags.find((f) => f.name === "--model").required).toBe(true);
@@ -168,7 +168,7 @@ test("command help prints usage for each command and exits 0", () => {
   expect(launchRes.exitCode).toBe(0);
   expect(launchRes.stderr.toString()).toBe("");
   expect(launchRes.stdout.toString()).toContain("routr launch: start a worker");
-  expect(launchRes.stdout.toString()).toContain("--kind <kind>");
+  expect(launchRes.stdout.toString()).toContain("--subscription <name>");
   expect(launchRes.stdout.toString()).toContain("--model <id>");
   expect(launchRes.stdout.toString()).not.toContain("required unless --dry-run");
 

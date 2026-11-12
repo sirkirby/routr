@@ -82,7 +82,8 @@ shape), and real values getting LOST (a value seen in real rows arriving as "oth
    what the code now does; a test covers `share` in each state.
 4. The end-to-end test against a mock endpoint keeps passing: it is what proves a row arrives as sent.
 5. Before release, on a machine that has opted in: `bun run smoke:telemetry`. It reads the real ledger, sends nothing,
-   and fails on any value that would arrive as "other" or any string the endpoint would refuse.
+   and fails on any value that would arrive as "other" or any string the endpoint would refuse. An extra account is
+   sent as its harness (`claude-work` as `claude`), never by its name.
 
 ## Usage readers
 
@@ -90,17 +91,19 @@ A reader reads a harness's own screen or answer, which an update of the harness 
 (herdr 0.9.5 stopped answering when it types into a pane, and Cursor's reader failed for days). After changing a
 reader, and after updating a harness or herdr on a machine signed in to them: `bun run smoke:usage`. It takes a live
 reading from each subscription that is on and signed in, by its own path (no kept snapshot, no fallback), and fails
-when one cannot read.
+when one cannot read. Each extra account is read after the harnesses, as its harness is, with its folder.
 
 ## Worker environment
 
 A headless worker's process starts with an environment built in one place: the harness environment (no lead session
-or herdr pane variables), plus the trace-context carriers saved at launch. A pane worker is not given that: it
-inherits its pane shell's environment, which herdr's server starts, and routr sets only the carriers, on a pane it
+or herdr pane variables), plus the trace-context carriers saved at launch and an extra account's folder variable. A pane worker is not given that: it
+inherits its pane shell's environment, which herdr's server starts, and routr sets only the carriers and that variable, on a pane it
 splits (`--env`, empty for one it does not pass, so the server's own does not show through), a worktree's included. herdr carries those into the pane, and an update to herdr could change how. After changing worker environment handling, and after updating herdr, from a pane of
 a herdr session: `bun run smoke:carriers`. It splits a pane with routr's own split code and hostile but valid carriers,
 checks they reach that pane's shell byte for byte, and on macOS and Linux checks they reach a Claude Code that herdr
-starts there with no task. It then opens a worktree pane with launch's own worktree steps in a throwaway repository it
+starts there with no task. For an extra account it checks that a hostile but valid folder reaches the pane's shell
+byte for byte, and that the default folder's unset line leaves the variable absent. It then opens a worktree pane
+with launch's own worktree steps in a throwaway repository it
 creates, checks the carriers arrive exactly and one left out arrives empty, and removes the worktree, any workspace
 herdr opened on that repository, and the repository. It spends no subscription.
 
@@ -120,6 +123,8 @@ sets it apart, as properties named for the reason (it rewrites its own config as
 the user's default, its usage read needs herdr on Windows). Doctor, setup, launch, usage, help, OpenTelemetry export,
 `routr dash`, skill install and uninstall all build from the registry, and the registry test fails until the entry
 declares every field routr needs, in the shape routr reads it, including the fields one property brings with it.
+A harness that documents a variable naming the folder it signs in from declares it as `folder`, which gives it extra
+accounts.
 Beside the entry: its row in `references/harnesses.md` (the launch table and the sign-in table), its status output
 both ways in the usage tests' sign-in table, its name in the telemetry test's seen values, its colour in both themes
 of the `routr dash` page, its headless adapter (measured against the harness first, as the others' were) with a fake

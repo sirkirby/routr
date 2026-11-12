@@ -13,6 +13,8 @@ import { CACHE_DIR, CONFIG_DIR, DATA_DIR, folderId, lockIsStale, home as userHom
 import { standalone, start } from "./processes.mjs";
 import { recordStore } from "./worker-record.mjs";
 import { isOurStatusline } from "./statusline.mjs";
+import { accountSkillFolders } from "./harnesses.mjs";
+import { CONFIG_PATH, loadConfig } from "./config.mjs";
 import { otelSenderRunning } from "./otel.mjs";
 
 
@@ -54,12 +56,12 @@ export function blockedBy({ workers, unknown = [], worktrees, unreadable = [] },
 }
 
 // What would be removed, as data: a test can check the plan without touching a disk.
-export function uninstallPlan({ home = userHome(), purge = false, binary = null } = {}) {
+export function uninstallPlan({ home = userHome(), purge = false, binary = null, accounts = [] } = {}) {
   const remove = [], keep = [], notOurs = [];
   if (binary) remove.push({ path: binary, what: "the routr binary", binary: true });
   // Each of routr's skills: each harness's link first, then the folder the links point at. Only routr's own: a link to
   // anything but routr's copy, or a folder of the same name routr did not write, stays (skill-install.mjs, `owner`).
-  for (const p of skillPlaces(home)) {
+  for (const p of skillPlaces(home, accounts)) {
     if (p.state === "ours") remove.push({ path: p.path, what: `the ${p.skill} skill`, skill: p.skill });
     else if (p.state === "theirs") notOurs.push({ path: p.path, what: p.why });
   }
@@ -81,7 +83,9 @@ export function uninstallPlan({ home = userHome(), purge = false, binary = null 
 const removePath = (p) => { if (lstatSync(p).isSymbolicLink()) unlinkSync(p); else rmSync(p, { recursive: true, force: true }); };
 
 const keepBinary = (entry, platform, senderRunning) => platform === "win32" && senderRunning && (entry.binary || entry.path === process.execPath);
-export async function uninstall(args, { home = userHome(), platform = process.platform, senderStatus = otelSenderRunning, binary = standalone() ? process.execPath : null, print = console.log } = {}) {
+export async function uninstall(args, { home = userHome(), platform = process.platform, senderStatus = otelSenderRunning, binary = standalone() ? process.execPath : null, print = console.log,
+  // Each extra account's skills folder, from the config as it is before anything is removed: routr's links there go too.
+  accounts = (() => { try { return accountSkillFolders(loadConfig(CONFIG_PATH(home)).config); } catch { return []; } })() } = {}) {
   const json = args.includes("--json"), dry = args.includes("--dry-run");
   const say = (s) => { if (!json) print(s); };
   const interactive = Boolean(process.stdin.isTTY) && !args.includes("--yes");
@@ -89,13 +93,13 @@ export async function uninstall(args, { home = userHome(), platform = process.pl
   if (!interactive && !args.includes("--yes") && !dry) return { ok: false, error: "routr uninstall needs a terminal to ask, or --yes. Add --purge to remove your config, key, and ledger as well; --dry-run shows the plan" };
 
   // From a source checkout there is no installed binary of ours to remove: the launcher is the developer's own.
-  let plan = uninstallPlan({ home, purge, binary });
+  let plan = uninstallPlan({ home, purge, binary, accounts });
   if (plan.blocked) return { ok: false, error: plan.blocked };
   if (interactive) {
     const rl = createInterface({ input: process.stdin, output: process.stdout });
     const show = (p) => { say("\nThis removes:"); for (const x of p.remove) say(`  ${x.path}   (${x.what})`); if (p.statusline) say("  the `routr statusline` entry in ~/.claude/settings.json (a backup is kept)"); if (p.keep.length || p.not_ours.length) { say("and keeps:"); for (const x of [...p.keep, ...p.not_ours]) say(`  ${x.path}   (${x.what})`); } };
     if (!purge && plan.keep.length && /^y/i.test((await rl.question("Also remove your config, decision provider keys, and ledger? [y/N] ")).trim())) {
-      purge = true; plan = uninstallPlan({ home, purge, binary });
+      purge = true; plan = uninstallPlan({ home, purge, binary, accounts });
       if (plan.blocked) { rl.close(); return { ok: false, error: plan.blocked }; }
     }
     show(plan);

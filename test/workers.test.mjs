@@ -332,7 +332,7 @@ function world(over = {}) {
   };
   const task = (text, name = "task.md") => { const f = join(inputs, name); writeFileSync(f, text); return f; };
   const advise = (file) => { const a = join(home, `${file.split(/[\\/]/).pop()}.advice.json`); writeFileSync(a, JSON.stringify(run(["dispatch", "--task-file", file]))); return a; };
-  const launchW = (name, file, more = [], extra, kind = "claude", model) => run(["launch", "--kind", kind, "--name", name, "--model", model ?? { codex: "gpt-6-luna", agy: "gemini-3.8-flash-low", kiro: "auto", cursor: "grok-4.7-medium-fast" }[kind] ?? "haiku", "--task-file", file, "--advice", advise(file), ...more], extra);
+  const launchW = (name, file, more = [], extra, kind = "claude", model) => run(["launch", "--subscription", kind, "--name", name, "--model", model ?? { codex: "gpt-6-luna", agy: "gemini-3.8-flash-low", kiro: "auto", cursor: "grok-4.7-medium-fast" }[kind] ?? "haiku", "--task-file", file, "--advice", advise(file), ...more], extra);
   const runDir = (name) => join(home, ".local", "state", "routr", "workers", name);
   const state = (n) => { try { return JSON.parse(readFileSync(join(runDir(n), "state.json"), "utf8")); } catch { return {}; } };
   const settled = (n) => until(() => !["working", "waiting", "starting"].includes(state(n).state));
@@ -538,7 +538,7 @@ test("Codex: a question it asks is declined and the turn goes on; a model it lac
   w.run(["wait", "--name", "c2", "--timeout", "20000"]);
   await w.settled("c2");
   expect(w.state("c2").turns.map((t) => t.outcome)).toEqual(["finished"]);
-  const bad = w.run(["launch", "--kind", "codex", "--name", "c3", "--model", "nosuch", "--task-file", w.task(BRIEF, "b.md"), "--advice", w.advise(w.task(BRIEF, "b.md"))]);
+  const bad = w.run(["launch", "--subscription", "codex", "--name", "c3", "--model", "nosuch", "--task-file", w.task(BRIEF, "b.md"), "--advice", w.advise(w.task(BRIEF, "b.md"))]);
   expect([bad.ok, bad.state, bad.error]).toEqual([false, "failed", "Launch failed after prompt submission: Codex refused the task (harness_refused)"]);
   await w.settled("c3");
   expect(w.state("c3")).toMatchObject({ state: "failed", turns: [expect.objectContaining({ outcome: "failed" })] });
@@ -735,7 +735,7 @@ test("Kiro: a message sent while a resumed process starts runs after the ones he
 test("Kiro: a correction queued while its first start fails is not lost: it gets a turn of its own, not started", async () => {
   // The fake answers session/new never, and exits 1.5 s in: no session is ever named. The launch runs meanwhile.
   const w = world({ FAKE_NEW_DIE: "1" }), file = w.task(BRIEF);
-  const p = Bun.spawn([process.execPath, SCRIPT, "launch", "--kind", "kiro", "--name", "k8", "--model", "auto", "--task-file", file, "--advice", w.advise(file)], { cwd: w.work, env: w.env, stdout: "pipe", stderr: "pipe" });
+  const p = Bun.spawn([process.execPath, SCRIPT, "launch", "--subscription", "kiro", "--name", "k8", "--model", "auto", "--task-file", file, "--advice", w.advise(file)], { cwd: w.work, env: w.env, stdout: "pipe", stderr: "pipe" });
   expect(await until(() => w.state("k8").state === "working")).toBe(true);
   expect(w.run(["send", "--name", "k8", "--task", `${SENT} TAG-early`]).state).toBe("queued");
   await p.exited;
@@ -1013,7 +1013,7 @@ test("a launch that stops before its worker starts removes the worktree and bran
   const saved = [process.env.HOME, process.env.USERPROFILE];
   process.env.HOME = process.env.USERPROFILE = w.home;
   try {
-    const r = await launch(["--kind", "claude", "--name", "t3", "--model", "m", "--task-file", file, "--advice", advice, "--cwd", w.work, "--worktree", "work/t3", "--copy", ".env.local"],
+    const r = await launch(["--subscription", "claude", "--name", "t3", "--model", "m", "--task-file", file, "--advice", advice, "--cwd", w.work, "--worktree", "work/t3", "--copy", ".env.local"],
       { env: {}, settings: () => cfg(), ready: async () => null, spawn: () => false });
     expect([r.state, r.error, r.worker, r.warnings]).toEqual(["failed", "the worker's process did not start (not_started)", null, []]);
   } finally { [process.env.HOME, process.env.USERPROFILE] = saved; }
@@ -1027,7 +1027,7 @@ test("a launch that stops early takes back a copied folder too, and never copies
   mkdirSync(join(w.work, "fixtures", "empty", "deeper"), { recursive: true });
   const saved = [process.env.HOME, process.env.USERPROFILE], here = process.cwd();
   process.env.HOME = process.env.USERPROFILE = w.home;
-  const go = (branch, more) => launch(["--kind", "claude", "--name", "c1", "--model", "m", "--task-file", file, "--advice", advice, "--cwd", w.work, "--worktree", branch, ...more],
+  const go = (branch, more) => launch(["--subscription", "claude", "--name", "c1", "--model", "m", "--task-file", file, "--advice", advice, "--cwd", w.work, "--worktree", branch, ...more],
     { env: {}, settings: () => cfg(), ready: async () => null, spawn: () => false });
   try {
     // Run from the source checkout: the folders it took back are the worktree's, never the same names here.
@@ -1154,16 +1154,16 @@ test("a harness that ends before its session leaves a failed worker that send wi
 test("outside herdr, launch refuses what a headless worker cannot do, before it writes or starts anything", async () => {
   const w = world(), file = w.task(BRIEF), advice = w.advise(file);
   const go = (args, extra) => w.run(["launch", "--name", "r1", "--model", "m", "--task-file", file, "--advice", advice, ...args], extra);
-  expect(go(["--kind", "claude", "--pane", "w1:p1"]).error).toBe("--pane needs herdr; outside herdr a worker runs headless, with no pane");
-  expect(go(["--kind", "claude", "--worktree", "b"]).error).toStartWith("--worktree needs a git repository: git found none at");
-  expect(w.run(["launch", "--kind", "claude", "--name", "r1", "--model", "m"]).error).toBe("outside herdr a worker starts with its task: pass --task-file (or --task) and --advice");
-  for (const [k, which] of [["SANDBOX_RUNTIME", "Claude Code's Bash sandbox"], ["CODEX_SANDBOX", "Codex's sandbox"]]) expect(go(["--kind", "claude"], { [k]: "1" }).error).toStartWith(`this command runs inside ${which}`);
+  expect(go(["--subscription", "claude", "--pane", "w1:p1"]).error).toBe("--pane needs herdr; outside herdr a worker runs headless, with no pane");
+  expect(go(["--subscription", "claude", "--worktree", "b"]).error).toStartWith("--worktree needs a git repository: git found none at");
+  expect(w.run(["launch", "--subscription", "claude", "--name", "r1", "--model", "m"]).error).toBe("outside herdr a worker starts with its task: pass --task-file (or --task) and --advice");
+  for (const [k, which] of [["SANDBOX_RUNTIME", "Claude Code's Bash sandbox"], ["CODEX_SANDBOX", "Codex's sandbox"]]) expect(go(["--subscription", "claude"], { [k]: "1" }).error).toStartWith(`this command runs inside ${which}`);
   expect(w.run(["workers"], { SANDBOX_RUNTIME: "1" }).warnings[0]).toStartWith("this command runs inside Claude Code's Bash sandbox, which may keep it from reaching");
   // Called in-process for the seams: signed out, the subscription off, and a holder that never starts.
   const saved = [process.env.HOME, process.env.USERPROFILE];
   process.env.HOME = process.env.USERPROFILE = w.home;
   try {
-    const args = ["--kind", "claude", "--name", "r2", "--model", "m", "--task-file", file, "--advice", advice, "--cwd", w.work];
+    const args = ["--subscription", "claude", "--name", "r2", "--model", "m", "--task-file", file, "--advice", advice, "--cwd", w.work];
     const deps = { env: {}, settings: () => cfg(), ready: async () => null, spawn: () => false };
     expect((await launch(args, { ...deps, ready: async () => "not signed in: run `claude auth login`" })).error).toBe("Claude Code cannot take work: not signed in: run `claude auth login`");
     expect((await launch(args, { ...deps, settings: () => cfg({ subscriptions: { claude: { enabled: false } } }) })).error).toContain("turned off");
@@ -1174,7 +1174,7 @@ test("outside herdr, launch refuses what a headless worker cannot do, before it 
     const never = await launch(args, deps);
     expect([never.state, never.error, never.worker]).toEqual(["failed", "the worker's process did not start (not_started)", null]);
     // Kiro's model list is read only once it is on and signed in: asking a signed-out harness can open its sign-in.
-    const kiro = ["--kind", "kiro", "--name", "r3", "--model", "auto", "--task-file", file, "--advice", advice, "--cwd", w.work];
+    const kiro = ["--subscription", "kiro", "--name", "r3", "--model", "auto", "--task-file", file, "--advice", advice, "--cwd", w.work];
     let asked = 0; const models = async () => { asked++; return ["auto"]; };
     await launch(kiro, { ...deps, models, ready: async () => "not signed in: run `kiro-cli login`" });
     await launch(kiro, { ...deps, models, settings: () => cfg({ subscriptions: { kiro: { enabled: false } } }) });

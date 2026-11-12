@@ -80,14 +80,28 @@ export const herdrTypable = (shell, argv) => !["powershell", "cmd"].includes(she
 export const FISH_PATH = "fish reads a backslash before another backslash or a quote as an escape even inside quotes, so a folder path holding one, or ending in a backslash, would reach it changed. Use a folder whose path has none, or a pane running another shell.";
 export const fishTypable = (...words) => !words.some((w) => /\\\\|\\'|\\$/.test(String(w)));
 const cmdq = (s) => { if (!cmdTypable(s)) throw new Error(CMD_PATH); return `"${String(s).replaceAll('"', '""')}"`; };
+// `unset(name)`: the shell drops a variable the worker must not have (an extra account's). The name is a registry's,
+// typed as it is. Set empty is not removed: Claude Code 2.1.322 on macOS, measured 2026-11-11, then keeps its files
+// under the working folder (`claude auth status` said "configDirectory": "" and "projectsDirectory": "projects").
+// `set(name, dir)`: the shell takes an extra account's folder.
+// They are typed only into a shell process-boundary's list names: one it calls "shell" may be csh, tcsh or xonsh,
+// which take neither line, and nushell takes neither either, so an extra account is refused in any other, before
+// anything is typed. So is one whose variable is removed in fish: removing the global the pane inherited leaves an
+// exported universal of that name, which reaches the harness (fish 4.9.3, measured).
+export const ACCOUNT_SHELL = "routr gives an extra account its folder only in a pane running sh, bash, zsh, PowerShell or cmd, or fish for an account whose folder is set. Use a pane running one of those, or launch it headless or in the Herdr app, which work from any shell.";
+export const accountTypable = (name) => /^(?:bash|zsh|fish|sh|pwsh|powershell|cmd)(?:\.exe)?$/i.test(String(name ?? ""));
 export const SHELLS = {
   posix: {
     cd: (dir) => `cd -- ${quote(dir)}`,
+    unset: (name) => `unset ${name}`,
+    set: (name, dir, fish) => (fish ? `set -gx ${name} ${quote(dir)}` : `export ${name}=${quote(dir)}`),
     privateStart: (variable, dir, exe, argv) => ["env", `${variable}=${dir}`, "sh", "-c",
       `trap 'rm -rf -- "$${variable}"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; ${[exe, ...argv].map(quote).join(" ")}`].map(quote).join(" "),
   },
   powershell: {
     cd: (dir) => `Set-Location -LiteralPath ${psq(dir)}`,
+    unset: (name) => `Remove-Item -LiteralPath Env:${name} -ErrorAction SilentlyContinue`,
+    set: (name, dir) => `$env:${name}=${psq(dir)}`,
     // A watcher removes the folder once the pane's shell is gone, however it went: an exit hook in the shell itself did
     // not fire when herdr closed the pane, and a watcher started as the shell's child made herdr call the pane busy
     // (both seen on Windows 11). Created through WMI, the watcher is nobody's child. The command line is built by
@@ -99,6 +113,8 @@ export const SHELLS = {
   },
   cmd: {
     cd: (dir) => `cd /d ${cmdq(dir)}`,
+    unset: (name) => `set ${name}=`,
+    set: (name, dir) => `set ${cmdq(`${name}=${dir}`)}`,
     privateEnv: (variable, dir) => `set ${cmdq(`${variable}=${dir}`)}`,
   },
 };

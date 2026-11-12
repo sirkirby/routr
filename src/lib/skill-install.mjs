@@ -145,10 +145,12 @@ export function removeOwned(dir, skill) {
   return { left, failed };
 }
 // Every place a skill of routr's can be, harness folders first (links before the folder they point at), each with its
-// owner. `set`: that harness is set up on this machine (the folder above its skills folder exists).
-export function skillPlaces(home = userHome()) {
+// owner. `set`: that harness is set up on this machine (the folder above its skills folder exists). `accounts`: the
+// skills folder of each extra account (accountSkillFolders), a place like a harness's own, named by the account.
+export function skillPlaces(home = userHome(), accounts = []) {
   return SKILLS.flatMap((skill) => [
     ...Object.entries(LINKED).map(([label, rel]) => ({ skill, label, path: join(home, rel, skill), set: existsSync(dirname(join(home, rel))) })),
+    ...accounts.map((a) => ({ skill, label: a.label, path: join(a.path, skill), set: existsSync(dirname(a.path)) })),
     { skill, label: null, path: sharedPath(home, skill), set: true },
   ].map((p) => { const state = owner(home, skill, p.path); return { ...p, state, ...(state === "theirs" ? { why: notOursWhy(home, skill, p.path) } : {}) }; }));
 }
@@ -171,10 +173,10 @@ const extrasIn = (path, skill) => { try { return lstatSync(path).isDirectory() ?
 // Each skill the same way: written to ~/.agents/skills/<name>, then linked (copied on Windows) into each harness's folder
 // that is set up. Only what is absent or routr's (and holds nothing else) is written; the rest is reported in `kept`,
 // a failure in `failed`.
-export function installSkill({ home = userHome(), dryRun = false } = {}) {
+export function installSkill({ home = userHome(), dryRun = false, accounts = [] } = {}) {
   const done = [], kept = [], failed = [];
   for (const skill of SKILLS) {
-    const places = skillPlaces(home).filter((p) => p.skill === skill), shared = places.at(-1);
+    const places = skillPlaces(home, accounts).filter((p) => p.skill === skill), shared = places.at(-1);
     if (shared.state === "theirs") { kept.push({ skill, where: shared.path, why: shared.why }); continue; } // nothing to link to
     const extra = shared.state === "ours" ? extrasIn(shared.path, skill) : [];
     if (extra.length) { kept.push({ skill, where: shared.path, why: hasExtras(shared.path, extra) }); continue; }

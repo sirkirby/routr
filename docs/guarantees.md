@@ -148,13 +148,63 @@ How usage is ranked: [ranking.md](ranking.md). A reserve is never offered.
 
 A harness is used only once its own status command says it is signed in. One that is not gets no model list, no usage
 read, no refresh, and no launch, because asking it anything else can open its sign-in in your browser. routr never
-starts a harness's sign-in; it says what to run.
+starts a harness's sign-in; it says what to run. Where an extra account of it is signed in, its model list is read
+with that account's folder.
+
+## More than one account of a harness
+
+Extra accounts listed under a harness's own entry in `accounts` are subscriptions of their own, named
+`<harness>-<name>`. Each has its harness's settings but for the ones it states itself, and is turned on or off on its
+own. The harness's own entry is not one: it runs on the folder your environment names (`CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`), or on the harness's default, and a config without `accounts` behaves as it did.
+
+- **One login, one subscription.** A login is a harness and the folder it signs in from. Where your environment names
+  an extra account's folder (inside one of its workers, or a shell that sets the variable to it), or names none and an
+  account lists the default folder, the harness's own entry is that account's login: it is checked and read once, as
+  the account, and `dispatch`, `usage` and `board` leave the harness's own entry out, saying which account it is.
+  Two accounts listed on one folder are one account: the second is left out with a note. routr cannot tell that two
+  folders are signed in to the same account; it then counts that account's room twice.
+- **What it is given.** Every process routr starts for it gets the folder in the one variable its harness documents
+  (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), over routr's own environment and over the same name in any case on Windows: its
+  sign-in check, its usage read, and its worker in a pane routr splits, in a herdr-core terminal and headless. Where
+  the harness must find its default folder unnamed (Claude Code's `~/.claude`), the variable is removed instead, your
+  own value too. In a pane routr splits, a line typed into that pane's shell before the harness starts sets or removes
+  it. A shell other than sh, bash, zsh, fish, PowerShell or cmd is refused, and so is fish where the variable must be
+  removed (an exported universal of that name would still reach the harness). Nothing
+  else of the environment changes, and no other variable is ever set for an account. Which
+  variable, and where each was read or measured, is in the [harness reference](../skills/routr/references/harnesses.md).
+- **Kept with the worker.** A headless or terminal worker's record holds the subscription's name, its folder and
+  whether its variable was removed, and every later turn is started with them, whoever sends the next message and from
+  whatever environment; one with the variable removed is refused where the home folder's default is another folder.
+  The folder shows as `<forwarded>` in launch's `start.env`.
+- **Never another account.** An account routr cannot use (a harness with no such variable, a folder that is not a
+  full path or under `~/`, a name routr cannot take or one already taken) is left out with a note, so `launch`
+  refuses its name. `launch` reads the default config, so it refuses a name its advice ranked from another folder
+  (`dispatch --config` another file, or `accounts` changed since). An existing pane keeps the environment it started
+  with, so `launch` refuses `--pane` for an account, except in the rerun it offers itself for a pane it split, and it
+  never hands an account's task to an agent already running in a pane. routr does not check that a pane holding a
+  shell is the one it split: `--continue` typed by hand on another such pane is not refused, and its shell is given
+  the folder.
+- **Kept apart.** A sign-in answer and a usage reading are kept under their login: the harness's name for its default
+  folder, and the harness with a fingerprint of the folder for any other, never the path. So one login's are never
+  served for another, a name pointed at another folder starts with none, and a refresh claimed for a folder no name is
+  on any more reads nothing. `routr statusline` saves one snapshot per folder Claude Code runs with, and an account is
+  read from its own folder's.
+- **A folder of its own.** An account's folder is a harness's whole home: its sign-in, its first-run screens, the
+  folders it trusts and its skills are that folder's, not the default one's. A worker on a folder never opened stops
+  at the harness's first screen, and routr says it needs input (measured 2026-11-12, Claude Code 2.1.322: the theme
+  picker, then folder trust, then the bypass-permissions notice). `routr skill install` links routr's skills into an
+  account's skills folder where its harness reads skills from its own folder; a Codex account read the shared folder
+  (measured the same day, codex-cli 0.167.0). routr does not check that the models it lists for a harness are the ones
+  an extra account may use.
+- **Its name stays here.** Telemetry sends an extra account as its harness (`claude-work` as `claude`).
+  OpenTelemetry sends a harness's name or `other`, and no usage reading of an extra account.
 
 ## Skills: what install and uninstall touch
 
 `skills/` holds exactly what is installed for agents (the `routr` skill with its guides, and the user-invoked
 `routr-orchestrate`) and no code. Every skill is installed the same way: written to `~/.agents/skills`, and linked
-into each harness's own skills folder, or copied there on Windows, where a link is refused, or where linking fails
+into each harness's own skills folder, and an extra account's where its harness reads skills from its own folder, or copied there on Windows, where a link is refused, or where linking fails
 (a copy routr made stays a copy).
 
 Install and uninstall touch only what is provably routr's, by structure: a folder holding routr's manifest
@@ -263,7 +313,7 @@ Harness reads, headless turns and the private herdr server each supply the share
 herdr's pane variables, herdr-core's terminal variables, the harness lead session names in the
 [harness reference](../skills/routr/references/harnesses.md#rules-that-hold-for-every-harness) and the trace-context
 carriers, preserving sign-in, provider and configuration settings; a headless turn then gets back only the carriers
-saved at launch ("Trace context", below). A terminal worker's runner supplies the same filter first. A test inventories process starts: each supplies that filter or names an exact
+saved at launch ("Trace context", below) and, for an extra account, its folder variable ("More than one account of a harness", above). A terminal worker's runner supplies the same filter first. A test inventories process starts: each supplies that filter or names an exact
 exception for a non-harness process. Herdr clients and routr's `hc` and `herdr-app` calls keep their environment to find
 their session.
 In a pane, routr types commands for that pane's own shell (POSIX `sh`, PowerShell or cmd), as you would. A folder
@@ -280,7 +330,7 @@ display only, with prompt lengths instead of prompt text.
 
 ## Headless workers
 
-Outside herdr, `routr launch --kind claude`, `codex`, `cursor`, `agy` or `kiro` starts the worker headless: Claude Code's own `-p`
+Outside herdr, `routr launch --subscription claude`, `codex`, `cursor`, `agy` or `kiro` starts the worker headless: Claude Code's own `-p`
 stream-json mode, Codex's app-server, Cursor's `-p` stream-json mode (one process a turn), Antigravity's `--print` stream-json mode, or Kiro's ACP mode, on your sign-in, held by one routr process of its own (its holder).
 `--pane` and `--direction` are refused outside herdr. In a herdr-core terminal launch runs the harness interactively
 instead (next section). What a headless worker means on your machine:
@@ -431,7 +481,7 @@ Windows is not measured. What that means on your machine:
   terminal's own `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET` and `HC_SCOPE`, so the harness's `hc send` names it. Then only what
   launch saved: the checked trace-context carriers; exactly `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `CURSOR_CONFIG_DIR`,
   `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME` when your lead has them set (they choose which
-  sign-in a harness uses; each is checked again on load, and shown as `<forwarded>`, never its path); and the adapter's
+  sign-in a harness uses; each is checked again on load, and shown as `<forwarded>`, never its path); an extra account's folder variable, in place of your lead's ("More than one account of a harness", above); and the adapter's
   variables, which win: Cursor's private config folder, subagent defaults. Nothing else of your lead's reaches it, and no
   key or token is saved. Keys and tokens a worker uses come from the core's environment, as a pane's do from herdr's
   server. A config location the core has and your lead does not set stays the core's, and so does `HOME`: a harness finds

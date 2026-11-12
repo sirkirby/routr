@@ -5,7 +5,7 @@ import { cleanup, launch, adviseCommand, checkCommand, usageCommand, contract, n
 import { cfg, scratch, herdrOK, herdrError, shellInfo, cliEnv, fakeExecutable, SCRIPT, live } from "./helpers.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
 import { processFailure } from "../src/lib/process-boundary.mjs";
-const base = ["--kind", "claude", "--name", "worker", "--model", "model"];
+const base = ["--subscription", "claude", "--name", "worker", "--model", "model"];
 const text = (r) => r.next.map((n) => n.why).join(" ");
 const fixture = () => {
   const dir = scratch("review-contracts"), advice = join(dir, "advice.json"), task = join(dir, "task.txt");
@@ -35,7 +35,7 @@ test("unranked views explain actual exclusions and never lower basic", async () 
 });
 
 test("model-less dry runs refuse with a plan and model next step", async () => {
-  const r = await launch(["--kind", "claude", "--name", "worker", "--dry-run"]);
+  const r = await launch(["--subscription", "claude", "--name", "worker", "--dry-run"]);
   expect(r.ok).toBe(false); expect(r.error).toContain("--model is required"); expect(r.would_run.length).toBeGreaterThan(0); expect(text(r)).toContain("Choose --model");
 });
 
@@ -150,7 +150,7 @@ else yes({});`);
   expect(unconfigured.headline).toContain("kiro is not configured"); expect(unconfigured.subscriptions.note).not.toContain("no configured subscription takes");
   const signedOut = invoke("usage", ["cursor"]).out;
   expect(signedOut.subscriptions.note).toContain("not signed in"); expect(text(signedOut)).not.toContain("lower level");
-  const dry = invoke("launch", ["--kind", "claude", "--name", "worker", "--dry-run"]);
+  const dry = invoke("launch", ["--subscription", "claude", "--name", "worker", "--dry-run"]);
   expect(dry.code).toBe(1); expect(dry.out.error).toContain("--model is required"); expect(dry.out.would_run.length).toBeGreaterThan(0);
   for (const mode of ["refs-fail", "refs-bad", "dirty", "untracked"]) {
     const out = invoke("cleanup", ["--cwd", repo, "--worktree", "worker"], mode).out;

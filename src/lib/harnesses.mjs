@@ -58,10 +58,20 @@
 //   promptFlag: the flag before a first message given as an argument, where it is not a plain
 //     positional (Antigravity's `-i`; measured 2026-11-03 for all five).
 //   noStatus: it reports no status to herdr-core (Cursor 2026.10.22, measured), so only its own `hc send` says it finished.
+//   folder: where it keeps its sign-in, for a harness that takes another folder for it, and so more than one account:
+//     `variable`, the documented variable that names the folder (Claude Code's CLAUDE_CONFIG_DIR, Codex's CODEX_HOME:
+//     references/harnesses.md has each source), and `default`, the folder under the home folder it uses with the
+//     variable unset. `unnamed: true`: the default folder must not be named in the variable. Claude Code 2.1.322 on
+//     macOS, measured 2026-11-10: `claude auth status` said "loggedIn": true with CLAUDE_CONFIG_DIR unset and false with
+//     it set to ~/.claude. A login is a harness and a folder: its source key (sourceKey, below) is what its sign-in
+//     answer and usage reading are kept under. A harness with no `folder` has one account: none is recorded for Cursor
+//     (CURSOR_CONFIG_DIR holds its settings; launch runs it on a private one and it stays signed in), Antigravity or
+//     Kiro. `usage.read` is handed `{ account }` for an extra account, and passes its `env` to what it starts; so is
+//     `models`, for a harness signed out on its own (doctor).
 //   suggested: the settings setup offers for it. usage: `source` names its reader. `read` runs on every call and must be
 //     fast (it returns a row, usage.mjs). A source too slow for that has `check` instead: it takes a fresh reading now
 //     and answers it raw (`routr usage <name>`, and the background refresh), and `reading(raw, at)` turns that raw
-//     answer into the reading routr keeps (usage-readings.mjs keeps it and refreshes it in the background). `byHand`: how a person reads its
+//     answer into the reading routr keeps (usage-readings.mjs keeps it and refreshes it in the background). `byHand(name)`: how a person reads its
 //     usage when routr cannot (said with a failed read, and as a next step). `windows`: the names of the windows its
 //     reader produces, the only ones OpenTelemetry export sends. `readHelp`, `checkHelp`: what help says of how it is
 //     read, and of what `check` does. `needsHerdrOn`: the platforms where its reader needs herdr, which doctor asks for.
@@ -71,9 +81,10 @@
 //     usage stay light. (Literal import paths, so the compiled binary still bundles them.)
 import { warning } from "./warnings.mjs";
 import { chmodSync, copyFileSync, mkdirSync, rmSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
-import { home } from "./state-files.mjs";
-import { run } from "./processes.mjs";
+import { basename, dirname, join, relative } from "node:path";
+import { configDirOf, folderSha, home, realOr } from "./state-files.mjs";
+import { envGet } from "./worker-env.mjs";
+import { probe, run } from "./processes.mjs";
 import { signInHint, signInState } from "./signin.mjs";
 import { NO_WINDOWS_AFTER_ANSWER, readAgy, readClaude, readCodexLive } from "./usage.mjs";
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -96,10 +107,10 @@ export const modelsInHelp = (help) => {
 };
 // `claude --help`, read once per run: its model aliases and its effort levels come from the same text.
 let claudeHelp = null;
-const readClaudeHelp = () => (claudeHelp ??= run("claude", ["--help"], { timeoutMs: 10000 }));
+const readClaudeHelp = ({ account } = {}) => (claudeHelp ??= run("claude", ["--help"], { timeoutMs: 10000, account: account?.env }));
 // `codex debug models`, read once per run: the model list and each model's own effort levels come from the same answer.
 let codexModels = null;
-const readCodexModels = () => (codexModels ??= run("codex", ["debug", "models"], { timeoutMs: 15000 }).then((out) => { try { const o = JSON.parse(out); return o.models ?? o; } catch { return null; } }));
+const readCodexModels = ({ account } = {}) => (codexModels ??= run("codex", ["debug", "models"], { timeoutMs: 15000, account: account?.env }).then((out) => { try { const o = JSON.parse(out); return o.models ?? o; } catch { return null; } }));
 const lines = async (cmd, args, pattern) => ((await run(cmd, args, { timeoutMs: 20000 })) ?? "").split("\n").map((l) => l.match(pattern)?.[1]).filter(Boolean);
 
 // What `claude auth status` says about billing (Claude's `auth.billing`). Measured 2026-10-07 (Claude Code,
@@ -146,6 +157,7 @@ export function claudeBilling(out) {
 
 export const HARNESSES = {
   claude: { label: "Claude Code", executable: "claude", app: "claude-code", installAs: "Claude Code", shortLabel: "Claude", skills: ".claude/skills", otelProvider: "anthropic",
+    folder: { variable: "CLAUDE_CONFIG_DIR", default: ".claude", unnamed: true },
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
     // Measured 2.1.316, 2026-11-02: plain Agent and /code-review; both explicit spawn settings beat a differing pair.
     subagents: ({ model, effort }) => ({ env: { ...(model ? { CLAUDE_CODE_SUBAGENT_MODEL: model } : {}), ...(effort ? { CLAUDE_CODE_SUBAGENT_EFFORT: effort } : {}) },
@@ -153,7 +165,7 @@ export const HARNESSES = {
     // `"loggedIn": false` and exit 1 when signed out.
     auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`", billing: (out) => claudeBilling(out) },
     // Its help names the latest aliases (fable, opus, sonnet on 2.1.283); its help says `--model` also takes a model's full name.
-    models: async () => modelsInHelp(await readClaudeHelp()), openList: "takes a model's full name, which it does not list",
+    models: async (o) => modelsInHelp(await readClaudeHelp(o)), openList: "takes a model's full name, which it does not list",
     efforts: async () => effortsInHelp(await readClaudeHelp()),
     // Measured 2.1.284, 2026-09-28: it asks whether to trust a folder not under one already trusted (herdr: blocked at
     // startup), and a git worktree counts as its main repository: a worktree in ~/.herdr/worktrees of a repository under
@@ -168,11 +180,12 @@ export const HARNESSES = {
     quiet: ["--settings", '{"disableAllHooks":true}', "--strict-mcp-config"],
     usage: { source: "claude /usage", read: (o) => readClaude({ ...o, quiet: HARNESSES.claude.quiet }),
       // Its /usage lines and its statusline's rate_limits (usage.mjs); `spend_limit` behind a Claude apps gateway.
-      windows: ["five_hour", "seven_day", "spend_limit"], byHand: "open Claude Code and read /usage, then pass --headroom claude=<share left>",
+      windows: ["five_hour", "seven_day", "spend_limit"], byHand: (n = "claude") => `open Claude Code and read /usage, then pass --headroom ${n}=<share left>`,
       readHelp: "Claude Code's is read from its own /usage (hooks and MCP servers off), or from `routr statusline`'s snapshot when one is under 5 minutes old.",
       // Its /usage, or its statusline after a prompt, showed no windows: routr does not guess which plan that is.
       unexplainedNoWindows: true } },
   codex: { label: "Codex", executable: "codex", app: "codex", installAs: "Codex", shortLabel: "Codex", otelProvider: "openai", core: { interactive: ["--no-daemon"] },
+    folder: { variable: "CODEX_HOME", default: ".codex" },
     // `-c check_for_update_on_startup=false` (its own config key, for this run only): 2026-09-28 a worker's Codex showed
     // "Update available" just after herdr reported it ready, and the Enter that submitted the task chose "Update now".
     // `--dangerously-bypass-hook-trust`: a hook the user has not trusted in Codex (new, or changed since) opens "Hooks need
@@ -196,12 +209,12 @@ export const HARNESSES = {
     // "Logged in using ChatGPT" / "Not logged in" (exit 1), both on stderr.
     auth: { check: ["login", "status"], signedIn: (out, code) => code === 0 && /^\s*Logged in\b/m.test(out), signIn: "run `codex login`" },
     // Only the models Codex lists (visibility "list"); each carries its own levels (gpt-5.5 stops at xhigh, measured).
-    models: async () => (await readCodexModels())?.filter((m) => m.visibility !== "hide").map((m) => m.slug ?? m.id).filter(Boolean) ?? null,
+    models: async (o) => (await readCodexModels(o))?.filter((m) => m.visibility !== "hide").map((m) => m.slug ?? m.id).filter(Boolean) ?? null,
     efforts: async (model) => (await readCodexModels())?.find((m) => (m.slug ?? m.id) === model)?.supported_reasoning_levels?.map((e) => e.effort ?? e) ?? null,
     suggested: { hardest_work: "strong", reserve: 0.2 },
     // Its rate limits' primary and secondary, a member's monthly cap, and a spend control's stop (codexSnapshot).
     usage: { source: "app-server", read: readCodexLive, windows: ["primary", "secondary", "monthly_cap", "spend_limit"],
-      byHand: "open Codex and read /status, then pass --headroom codex=<share left>" } },
+      byHand: (n = "codex") => `open Codex and read /status, then pass --headroom ${n}=<share left>` } },
   cursor: { label: "Cursor", executable: "cursor-agent", app: "cursor", installAs: "Cursor (cursor-agent)", shortLabel: "Cursor", noStatus: true, otelProvider: "cursor",
     permissions: ["--yolo", "--trust"], model: "--model", list: "cursor-agent models",
     noEffort: "cursor has no separate --effort flag; choose a model id with the desired effort",
@@ -223,7 +236,7 @@ export const HARNESSES = {
     // `check`: `routr usage cursor` reads it now; `fields` are what that answer's `reading` keeps, `used` its headline.
     usage: { source: "cursor /usage", check: gated("cursor", async (o) => (await import("./cursor-usage.mjs")).cursorUsage(o)), reading: async (raw, at) => (await import("./cursor-usage.mjs")).cursorReading(raw, at),
       fields: ["plan", "included_used_pct", "auto_used_pct", "api_used_pct", "headroom"], used: (r) => `Included ${r.included_used_pct}% used`, windows: ["included"],
-      byHand: 'run `cursor-agent`, type /usage, read "Included N% used", and pass --headroom cursor=<1 - N/100>',
+      byHand: (n = "cursor") => `run \`cursor-agent\`, type /usage, read "Included N% used", and pass --headroom ${n}=<1 - N/100>`,
       checkHelp: "takes a fresh reading of Cursor's own /usage screen now, in a terminal of routr's own (a private herdr session on Windows)",
       // Its /usage screen opens in routr's own terminal on macOS and Linux, and in a private herdr session on Windows.
       needsHerdrOn: ["win32"] } },
@@ -241,7 +254,7 @@ export const HARNESSES = {
     models: () => lines("agy", ["models"], /^([a-z0-9][\w.-]+)\t/i),
     suggested: { hardest_work: "standard", reserve: 0.1 },
     // Its Gemini pool's buckets (readAgy); a bucket it names otherwise is `unknown`, never sent.
-    usage: { source: "agy /usage", read: readAgy, windows: ["5h", "weekly"], byHand: "run `agy` and read /usage, then pass --headroom agy=<share left>" } },
+    usage: { source: "agy /usage", read: readAgy, windows: ["5h", "weekly"], byHand: (n = "agy") => `run \`agy\` and read /usage, then pass --headroom ${n}=<share left>` } },
   // A pane stays on V2, `--v2 chat --trust-tools=*`: `--trust-tools=*` allows every built-in tool (its /tools list: all 14
   // "allowed") and asks nothing (Kiro CLI 2.24.1, measured 2026-09-28; MCP tools not measured; `--v2` from its docs, not yet
   // measured). herdr's rules do not read V3's questions: measured 2026-11-04 (kiro-cli 3.0.0, herdr 0.9.5), herdr read V3's
@@ -282,20 +295,79 @@ export const HARNESSES = {
     // A read that leaves its usage session behind says so in `note`: `left` is the warning and the step for it.
     usage: { source: "kiro /usage", check: gated("kiro", async (o) => (await import("./kiro-usage.mjs")).kiroUsage(o)), reading: async (raw, at) => (await import("./kiro-usage.mjs")).kiroReading(raw, at),
       fields: ["plan", "credits_used", "credits_limit", "used_pct", "resets_at", "unrecognized_lines", "headroom"], used: (r) => `${r.used_pct}% used`, windows: ["monthly_credits"],
-      byHand: 'run `kiro-cli chat --no-interactive /usage`, read "Credits (X of Y covered in plan)", and pass --headroom kiro=<1 - X/Y>',
+      byHand: (n = "kiro") => `run \`kiro-cli chat --no-interactive /usage\`, read "Credits (X of Y covered in plan)", and pass --headroom ${n}=<1 - X/Y>`,
       checkHelp: "runs Kiro's /usage now and deletes the empty session it leaves",
       left: { warning: () => warning("kiro_session_left", "Kiro kept an empty usage session"), next: "Inspect Kiro's saved sessions to remove the empty usage session" } } },
 };
 export const KINDS = Object.keys(HARNESSES);
+// An extra account of a harness: the subscription `name`, on `kind`, signed in from `dir`. `{ name, kind, dir, env }`:
+// `dir` is the folder as a full path. `env` is what every process routr starts for it gets over its own environment
+// (the worker-environment module's accountEnv): the harness's folder variable naming `dir`, or null, which removes
+// it, where the harness must find its default folder unnamed (`unnamed`). A folder that is not a full path (a
+// record changed since launch) throws: started without it, the worker would run on another account. `saved`: that
+// choice as launch made it (a worker's record); removed, where this home folder's default is another, it throws too.
+const atDefault = (kind, dir) => realOr(dir) === realOr(join(home(), HARNESSES[kind].folder.default));
+export function accountAt(name, kind, dir, saved) {
+  const f = HARNESSES[kind].folder; dir = configDirOf(dir);
+  if (!dir) throw new Error(`${name}'s folder is not a full path`);
+  const atHome = Boolean(f.unnamed) && atDefault(kind, dir);
+  if (saved && !atHome) throw new Error(`${name}'s folder ${dir} was its harness's default when it was launched, and here the default, ${join(home(), f.default)}, is another folder: this worker runs only where the default is still ${dir}`);
+  return { name, kind, dir, env: { [f.variable]: (saved ?? atHome) ? null : dir } };
+}
+// An extra account's name read as one (`claude-work`): its harness and its short name, or null. The shape alone, for
+// where no config says (a flag before the config is read, a ledger line sent later): launch takes only a harness or an
+// extra account, so a subscription named this way in the ledger is one.
+export const accountName = (name) => { const h = KINDS.find((k) => HARNESSES[k].folder && String(name ?? "").startsWith(`${k}-`) && /^[a-z][a-z0-9_-]{0,31}$/.test(String(name))); return h ? { harness: h, short: String(name).slice(h.length + 1) } : null; };
+// The extra account a subscription's name is (config.mjs accounts), or null for a harness's own entry: that one runs on
+// whatever the environment names, and nothing that takes an account treats it differently than before there were any.
+export const accountOf = (name, config) => { const s = config?.subscriptions?.[name]; return s?.harness ? accountAt(name, s.harness, s.config_dir) : null; };
+// What a worker's record keeps of its account, and the account again from a record: every later turn runs on it,
+// whoever sends it. A record without `subscription` is of a harness's own entry.
+export const savedAccount = (a) => (a ? { subscription: a.name, config_dir: a.dir, default_folder: a.env[HARNESSES[a.kind].folder.variable] === null } : {});
+export const workerAccount = (w) => (typeof w?.subscription === "string" ? accountAt(w.subscription, w.kind, w.config_dir, w.default_folder) : null);
+// The source key of a login: what its sign-in answer and its usage reading are kept under. The harness's name for its
+// default folder, as before there were accounts, and the harness with a fingerprint of the folder for any other, so
+// two logins never share an answer, and a name pointed at another folder starts with none. `named`: the variable names
+// the folder; where the default must go unnamed, the default named is another login (it reads as signed out).
+const keyAt = (kind, dir, named) => (atDefault(kind, dir) && !(HARNESSES[kind].folder.unnamed && named) ? kind : `${kind}~${folderSha(dir)}`);
+const accountKey = (a) => keyAt(a.kind, a.dir, a.env[HARNESSES[a.kind].folder.variable] !== null);
+// The source key of a subscription's name: an extra account's folder is its config's; a harness's own entry is on the
+// folder the environment names, or its default, so in an environment that names an extra account's folder the two are
+// one login, with one key (sameLogin, below). Anything else (a harness with one account, a name routr does not
+// know) is its own key.
+export const sourceKey = (name, config, env = process.env) => {
+  const a = accountOf(name, config);
+  if (a) return accountKey(a);
+  const f = Object.hasOwn(HARNESSES, name) ? HARNESSES[name].folder : null, named = f ? configDirOf(envGet(env, f.variable)) : null;
+  return f ? keyAt(name, named ?? join(home(), f.default), Boolean(named)) : name;
+};
+// The extra account a harness's own entry is the same login as, here: the environment names that account's folder, or
+// names none and the account lists the default. Its name, or null. `sameLoginWhy` says so where the harness's own entry
+// is left out of a ranking: the login is ranked once, as the account, whose settings are written for it. An account
+// turned off stands in for nothing: the harness's own entry is then the login's one name, and is ranked.
+export const sameLogin = (name, config, env = process.env) => (Object.hasOwn(HARNESSES, name) && HARNESSES[name].folder
+  ? Object.keys(config?.subscriptions ?? {}).find((n) => config.subscriptions[n].harness === name && config.subscriptions[n].enabled !== false && sourceKey(n, config, env) === sourceKey(name, config, env)) ?? null : null);
+export const sameLoginWhy = (name, config, env = process.env) => {
+  const other = sameLogin(name, config, env), v = other && HARNESSES[name].folder.variable;
+  return other ? `the same account as ${other} here: ${configDirOf(envGet(env, v)) ? `${v} names its folder` : `${v} is unset, and its folder is ${HARNESSES[name].label}'s default`}` : null;
+};
+// Its sign-in check runs with its folder, and its answer is kept under its source key. The step names the folder to
+// sign in with.
+const signInAs = (a, o) => signInState(accountKey(a), HARNESSES[a.kind], { ...o, ask: (cmd, args) => (o?.ask ?? probe)(cmd, args, { account: a.env }) });
+const hintAs = (a, state) => `${signInHint(HARNESSES[a.kind], state)}${state === "no" ? ` ${withFolder(a)}` : ""}`;
+// How a step names an extra account's folder: its variable set to it, or unset.
+export const withFolder = (a) => { const v = HARNESSES[a.kind].folder.variable; return `with ${v} ${a.env[v] === null ? "unset" : `set to ${a.dir}`}`; };
 // Is this harness signed in: `{ state, billing }`, the state "yes", "no", or "no answer", and what the same answer said
 // about billing. Kept in the cache between calls (signin.mjs); `fresh` checks again now. `notReady` says why a harness
 // gets no work, or null when it is signed in.
-export const signIn = (name, o) => signInState(name, HARNESSES[name], o);
-export const notReady = async (name, o) => { const { state } = await signIn(name, o); return state === "yes" ? null : signInHint(HARNESSES[name], state); };
+// Each takes a harness's name, or an extra account (accountOf); `signInWhy` says why one in `state` gets no work.
+export const signIn = (name, o) => (typeof name === "string" ? signInState(sourceKey(name), HARNESSES[name], o) : signInAs(name, o));
+export const signInWhy = (name, state) => (typeof name === "string" ? signInHint(HARNESSES[name], state) : hintAs(name, state));
+export const notReady = async (name, o) => { const { state } = await signIn(name, o); return state === "yes" ? null : signInWhy(name, state); };
 // A slow source's `check` (a person's read now, or the background refresh): a harness's own reading must never start
 // its sign-in, so one that is not signed in is not read, and says why. (A function declaration: the entries above use it.)
 function gated(name, read) { return async (o) => { const why = await notReady(name); return why ? { ok: false, excluded: true, why } : read(o); }; }
-const KIND_ERROR = `--kind must be ${KINDS.slice(0, -1).join(", ")}, or ${KINDS.at(-1)}`;
+const KIND_ERROR = `--subscription must be ${KINDS.slice(0, -1).join(", ")}, or ${KINDS.at(-1)}, or an extra account of one in your config (<harness>-<name>)`;
 export const kindError = () => new Error(KIND_ERROR);
 // The harnesses that take a reasoning effort of their own; Cursor and Antigravity model ids carry it.
 export const TAKES_EFFORT = KINDS.filter((n) => HARNESSES[n].effort);
@@ -318,6 +390,14 @@ export function privateConfigCopy(kind, dir, { from = join(home(), HARNESSES[kin
 }
 // Where routr's skills are installed: the shared folder, then each harness's own.
 export const SKILL_FOLDERS = [".agents/skills", ...KINDS.map((n) => HARNESSES[n].skills).filter(Boolean)];
+// The skills folder of each extra account whose harness reads skills from its own folder: the same place inside the
+// account's folder as inside the harness's default one, so routr's skills are linked there as they are for the harness.
+// An account on the default folder has the harness's place already. A folder that is not a full path is left out.
+export const accountSkillFolder = (name, harness, folder) => {
+  const h = HARNESSES[harness], dir = h?.skills && h.folder && configDirOf(folder);
+  return dir && !atDefault(harness, dir) ? [{ label: name, path: join(dir, relative(h.folder.default, h.skills)) }] : [];
+};
+export const accountSkillFolders = (config) => Object.entries(config?.subscriptions ?? {}).flatMap(([name, s]) => (s?.harness ? accountSkillFolder(name, s.harness, s.config_dir) : []));
 // The skills routr installs, each a folder under skills/ in this repository: the routr skill, and routr-orchestrate,
 // which only the user starts (`/routr-orchestrate <plan>`).
 export const SKILLS = ["routr", "routr-orchestrate"];

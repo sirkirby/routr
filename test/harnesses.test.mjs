@@ -29,7 +29,7 @@ const strict = (spec, required = []) => (o) => {
     ...Object.keys(o).filter((k) => !Object.hasOwn(spec, k)), ...need(o, required)];
 };
 const PLATFORMS = ["aix", "darwin", "freebsd", "linux", "openbsd", "sunos", "win32"];
-const USAGE = strict({ source: plain(str), read: plain(fn), byHand: plain(str), windows: plain((v) => strs(v) && v.length > 0),
+const USAGE = strict({ source: plain(str), read: plain(fn), byHand: plain(fn), windows: plain((v) => strs(v) && v.length > 0),
   check: plain(fn), reading: plain(fn), fields: plain(strs), used: plain(fn), checkHelp: plain(str), readHelp: plain(str),
   // What `routr usage <name>` says when a fresh read leaves something behind: its warning, and the step for it.
   left: strict({ warning: plain(fn), next: plain(str) }, ["warning", "next"]),
@@ -49,6 +49,8 @@ const FIELDS = {
   helper: [false, strict({ command: plain(fn), children: plain((v) => Array.isArray(v) && v.every((x) => x instanceof RegExp)), left: plain(fn) }, ["command", "children", "left"])],
   // A plain name: it is typed into a pane's shell (herdr.mjs's SHELLS) without quoting.
   privateConfig: [false, strict({ file: plain(str), variable: plain((v) => typeof v === "string" && /^[A-Z_][A-Z0-9_]*$/.test(v)) }, ["file", "variable"])],
+  // The same: an extra account's variable is typed into a pane's shell by its set or unset line.
+  folder: [false, strict({ variable: plain((v) => typeof v === "string" && /^[A-Z_][A-Z0-9_]*$/.test(v)), default: plain(str), unnamed: plain(bool) }, ["variable", "default"])],
 };
 // What one entry gets wrong, as `field` or `field.nested` paths; [] when it is whole. A field read only when another is
 // there is required with it: a fresh read (`usage.check`) keeps `fields`, heads its answer with `used` and is described
@@ -95,6 +97,8 @@ test("an entry missing a field routr reads only in some cases, or with a nested 
     [{ ...kiro, core: { ...kiro.core, interactve: ["chat"] } }, "core.interactve"],
     [{ ...cursor, privateConfig: { file: ".cursor/cli-config.json" } }, "privateConfig.variable"],
     [{ ...cursor, privateConfig: { ...cursor.privateConfig, variable: "A B" } }, "privateConfig.variable"],
+    [{ ...HARNESSES.codex, folder: { ...HARNESSES.codex.folder, variable: "A B" } }, "folder.variable"],
+    [{ ...HARNESSES.claude, folder: { ...HARNESSES.claude.folder, default: 1 } }, "folder.default"],
     [without(kiro, "autoEffortMeans"), "autoEffortMeans"],
     [without(kiro, "shortLabel"), "shortLabel"],
     [{ ...HARNESSES.claude, openList: true }, "openList"],

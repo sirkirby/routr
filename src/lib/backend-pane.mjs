@@ -9,10 +9,10 @@ import { configOf } from "./config.mjs";
 import { configEnv, HARNESSES, privateConfigCopy } from "./harnesses.mjs";
 import { displayCommand, doNext, runNext, templateCommand } from "./next.mjs";
 import { OFF } from "./wording.mjs";
-import { clean, CMD_PATH, cmdTypable, FISH_PATH, fishTypable, HERDR_PS_QUOTE, herdrTypable, deadline, paneText, paneView, promptReadArgs, SHELLS, shellFamily, splitArgs, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
+import { ACCOUNT_SHELL, accountTypable, clean, CMD_PATH, cmdTypable, FISH_PATH, fishTypable, HERDR_PS_QUOTE, herdrTypable, deadline, paneText, paneView, promptReadArgs, SHELLS, shellFamily, splitArgs, splitPane, waitForShell, worktreeArgs, worktreePane } from "./herdr.mjs";
 import { callHerdr, processError, processSteps, stateWords } from "./process-boundary.mjs";
 import { launchFailed, STARTUP_INPUT } from "./launch-answer.mjs";
-import { carrierValues, paneEnv, redactCarriers } from "./worker-env.mjs";
+import { carrierValues, FORWARDED, paneEnv, redactCarriers } from "./worker-env.mjs";
 import { realPath } from "./state-files.mjs";
 
 export const command = (args) => displayCommand(["herdr", ...args]);
@@ -31,6 +31,8 @@ function logCommand(log, text) {
 
 // Known once the pane's shell has been seen; until then, this platform's usual shell.
 export const usualShell = () => (process.platform === "win32" ? "powershell" : "posix");
+// The line that gives an extra account's variable (`dir`, or null to remove it) to a pane's shell.
+const accountLine = (shell, fish, name, dir) => (dir === null ? SHELLS[shell].unset(name) : SHELLS[shell].set(name, dir, fish));
 // A pane worker's environment (worker-env's paneEnv): the carriers this launch holds, and its plan's subagent
 // fallbacks, less the names the harness adapter sets for itself.
 export const paneEnvOf = (o, out, env, p, privateDir) => paneEnv({ pane: o.pane, found: launchCarriers(env), plan: p.env, adapter: configEnv(o.kind, privateDir) }, out);
@@ -60,6 +62,7 @@ export function paneDryRunPlan(o, out, { env, p, privateDir, prompt, shell = usu
     ...(o.pane ? [command(["pane", "run", pane, SHELLS[shell].cd(out.cwd)]),
       command(["pane", "read", pane, "--source", "visible"]), command(["pane", "process-info", "--pane", pane])] : []),
     ...(paneConfigEnvArgs(o, shell, privateDir, pane) ? [command(paneConfigEnvArgs(o, shell, privateDir, pane))] : []),
+    ...Object.entries(o.account?.env ?? {}).map(([name, dir]) => command(["pane", "run", pane, accountLine(shell, false, name, dir && FORWARDED)])),
     command(startArgs(pane, Math.min(o.timeout, 30000))),
     command(["pane", "read", pane, "--source", "visible"]),
     command(["agent", "wait", pane, "--timeout", String(Math.min(1000, o.timeout))]),
@@ -90,12 +93,17 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
   const rerun = () => {
     const keep = [];
     for (let i = 0; i < args.length; i++) {
+      if (args[i] === "--continue") continue;
       if (["--worktree", "--base", "--direction", "--pane", "--cwd", "--copy", "--task"].includes(args[i])) { i++; continue; }
       keep.push(args[i]);
     }
-    const again = ["routr", "launch", ...keep, "--pane", out.pane, "--cwd", out.cwd];
+    // An extra account's rerun carries routr's own --continue: launch refuses --pane for it anywhere else. Once its
+    // harness was started in the pane, a rerun there would hand the task to that agent, which launch refuses: a fresh
+    // launch instead, in a pane of its own.
+    const fresh = o.account && startAttempted;
+    const again = ["routr", "launch", ...keep, ...(fresh ? [] : ["--pane", out.pane]), "--cwd", out.cwd, ...(o.account && !fresh ? ["--continue"] : [])];
     return o.task != null ? doNext("Repeat the same launch with your --task given again.", templateCommand([...again, "--task", "<your-task>"]))
-      : runNext("Continue this launch after resolving the pane's input.", again);
+      : runNext(fresh ? "Launch again once the pane's question is answered: a fresh worker, in a pane of its own (a folder trust answered there is kept)." : "Continue this launch after resolving the pane's input.", again);
   };
   const resumeSteps = () => out.pane ? [doNext(STARTUP_INPUT, templateCommand(["herdr", "pane", "send-keys", out.pane, "<keys>"])), rerun()] : [];
   // Something in the pane needs an answer that routr does not give: a shell's own question, a harness's startup
@@ -112,16 +120,16 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
     step("needs_input", false, why); return out;
   };
   const lifecycle = async () => {
-    let shell = usualShell(), fish = false;
+    let shell = usualShell(), fish = false, shellName = null;
     const startArgs = (pane, timeout) => paneStartArgs(o, shell, p, privateDir, pane, timeout);
     const promptArgs = (pane, timeout) => panePromptArgs(prompt, pane, timeout);
     const { carried, extraEnv, fallbacks: fallbackEnv } = paneEnvOf(o, out, env, p, privateDir);
     // The user turned this subscription off: it gets no work, launched by hand or not.
     const loaded = settings(), config = configOf(loaded);
     out.warnings.push(...(loaded.notes ?? []));
-    if (config.subscriptions[o.kind]?.enabled === false) throw new Error(OFF.launch(HARNESSES[o.kind].label, o.kind));
+    if (config.subscriptions[o.subscription ?? o.kind]?.enabled === false) throw new Error(OFF.launch(o.account ? o.subscription : HARNESSES[o.kind].label, o.subscription ?? o.kind));
     // A harness that is not signed in would wait at its own sign-in in a pane nobody watches: refuse before any pane.
-    const signedOut = await ready(o.kind);
+    const signedOut = await ready(o.account ?? o.kind);
     if (signedOut) throw new Error(`${HARNESSES[o.kind].label} cannot take work: ${signedOut}`);
     const remaining = deadline(o.timeout, now, "Launch readiness timeout");
     // `shown`: the command as the log may carry it, when it differs from what runs (a split's carriers).
@@ -140,7 +148,7 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
     let shellCwd = null;
     const shellReady = async (expectedCwd) => {
       const r = await waitForShell({ ...pane(), read: readPane, unwrapped: readLines }, { sleep, now, remaining, cwd: expectedCwd, refuseBusy: Boolean(o.pane && !expectedCwd),
-        onShell: (name) => { shell = shellFamily(name); fish = /^fish(\.exe)?$/i.test(String(name ?? "")); } });
+        onShell: (name) => { shell = shellFamily(name); fish = /^fish(\.exe)?$/i.test(String(name ?? "")); shellName = name; } });
       if (!r.ok) return needsInput("shell_not_ready", r.why, r.text);
       shellCwd = r.cwd;
       step("shell_ready", true, `Interactive ${shell} shell in ${r.cwd}`); return null;
@@ -187,6 +195,8 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
         const where = occupant.foreground_cwd ?? occupant.cwd;
         const same = (() => { try { return realPath(where) === realPath(out.cwd); } catch { return false; } })();
         if (!same) return needsInput("wrong_folder", `The ${o.kind} in the pane works in ${where ?? "a folder herdr does not report"}, not ${out.cwd}`, await screen(), other);
+        // It runs on the account it started with, which launch cannot tell is this one.
+        if (o.account) return needsInput("wrong_account", `The ${o.kind} in the pane runs on the account it started with, not one launch can tell is ${o.subscription}`, await screen(), other);
         let status = occupant.agent_status ?? "unknown";
         if (status === "blocked") {
           // herdr's state may be stale (above): its live reading decides, once. Idle (or done) is a block already answered.
@@ -271,11 +281,13 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
     cleanupArgs ??= ["routr", "cleanup", "--pane", out.pane];
     // Every folder this launch will type into a cmd shell is checked as soon as the shell is known, so a refusal comes
     // before anything is typed, not between a `cd` and the variable.
+    const accountDirs = Object.values(o.account?.env ?? {}).filter((dir) => dir !== null);
     const typable = () => {
-      if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(privateConfig ? [privateDir] : []))) throw new Error(CMD_PATH);
+      if (o.account && (!accountTypable(shellName) || (fish && Object.values(o.account.env).includes(null)))) throw new Error(ACCOUNT_SHELL);
+      if (shell === "cmd" && !cmdTypable(...(o.pane ? [out.cwd] : []), ...(privateConfig ? [privateDir] : []), ...accountDirs)) throw new Error(CMD_PATH);
       // What herdr types for us: the harness's command, as planned for this worker's folder (`agent start`).
       if (!shellStarted(o, shell) && !herdrTypable(shell, p.argv)) throw new Error(HERDR_PS_QUOTE);
-      if (fish && !fishTypable(...(o.pane ? [out.cwd] : []), ...(privateConfig ? [privateDir] : []), ...p.argv)) throw new Error(FISH_PATH);
+      if (fish && !fishTypable(...(o.pane ? [out.cwd] : []), ...(privateConfig ? [privateDir] : []), ...accountDirs, ...p.argv)) throw new Error(FISH_PATH);
     };
     // A pane we split already opened in --cwd; one adopted from the caller must be checked before we type `cd`.
     if (o.pane && !adopted) {
@@ -293,6 +305,14 @@ export async function launchPane(args, o, out, { run, sleep, now, env, ready, se
       await pause();
       stop = await shellReady(out.cwd); if (stop) return stop;
       step("cursor_env", true, `Set ${privateConfig.variable} in the pane's ${shell} shell`);
+    }
+    // An extra account's variable, typed once the shell's startup files have run, so none of them replaces it.
+    for (const [name, dir] of Object.entries(o.account?.env ?? {})) {
+      const typed = (shown) => ["pane", "run", out.pane, accountLine(shell, fish, name, shown)];
+      await call(typed(dir), false, typed(dir && FORWARDED));
+      await pause();
+      stop = await shellReady(out.cwd); if (stop) return stop;
+      step(dir === null ? "unset_env" : "set_env", true, dir === null ? `Removed ${name} from the pane's ${shell} shell` : `Set ${name} in the pane's ${shell} shell`);
     }
     // After the start: wait until herdr says the agent is ready, and check it took the model. routr answers no question
     // a harness asks at startup: it passes each harness's own flags so none is asked (the registry), and when one is

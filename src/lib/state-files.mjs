@@ -4,7 +4,7 @@
 import { chmodSync, closeSync, existsSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readlinkSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 // The user's home, read when asked: HOME (USERPROFILE on Windows), as Node's os.homedir() reads it. Bun's os.homedir()
 // ignores a HOME changed while it runs (measured 2026-09-26, Bun 1.3.13), so a test's scratch home reached only the CLIs
@@ -32,7 +32,9 @@ export const UPDATE_STAMP = () => join(CACHE_DIR(), "update-check");
 export const TELEMETRY_LOG = () => join(CACHE_DIR(), "telemetry.log");
 export const UPDATE_LOCK = () => join(CACHE_DIR(), "update.lock");
 // Written by `routr statusline` on each Claude Code turn, read by the usage reader.
-export const CLAUDE_SNAPSHOT = () => join(CACHE_DIR(), "claude-usage.json");
+// One per folder Claude Code runs with (`dir`: its CLAUDE_CONFIG_DIR, or none), so one account's is never read as
+// another's. The default folder's keeps the name it always had.
+export const CLAUDE_SNAPSHOT = (dir) => join(CACHE_DIR(), !dir || realOr(dir) === realOr(join(home(), ".claude")) ? "claude-usage.json" : `claude-usage-${folderSha(dir)}.json`);
 
 // A path as the file system names it, for comparing two paths. The native call: on Windows it also expands 8.3 short
 // names and folds case, which the JS one leaves as written (measured 2026-10-22, Bun 1.4.3 on Windows 11 x64:
@@ -41,6 +43,16 @@ export const CLAUDE_SNAPSHOT = () => join(CACHE_DIR(), "claude-usage.json");
 // resolved as written.
 export const realPath = (p) => realpathSync.native(p);
 export const realOr = (p) => { try { return realpathSync.native(p); } catch { return resolve(p); } };
+// The folder an extra account signs in from, as `accounts` in the config names it: a full path, or one under the home
+// folder (`~/…`), made absolute and normalised; null for anything else, or a control character, as worker-env's config
+// locations refuse. Here, not there: `statusline` reads it.
+export const configDirOf = (v) => {
+  if (typeof v !== "string" || !/^[^\0-\x1f\x7f]{1,4096}$/.test(v)) return null;
+  const p = /^~[\\/]/.test(v) ? join(home(), v.slice(2)) : v;
+  return isAbsolute(p) ? resolve(p) : null;
+};
+// What dispatch advice keeps of an extra account's folder, for launch to compare (advice-file.mjs): never the path.
+export const folderSha = (dir) => createHash("sha256").update(realOr(dir)).digest("hex").slice(0, 12);
 
 export function ensureParent(file, { mkdir = mkdirSync } = {}) {
   const dir = dirname(resolve(file));

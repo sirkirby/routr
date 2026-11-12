@@ -12,7 +12,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { CONFIG_PATH } from "./config.mjs";
-import { HARNESSES } from "./harnesses.mjs";
+import { accountName, HARNESSES } from "./harnesses.mjs";
 import { decisionOf, LEDGER_PATH, read } from "./ledger.mjs";
 import { KNOWN_MODELS, PROVIDER_NAMES } from "./providers.mjs";
 import { FACTS, questions } from "./questions.mjs";
@@ -98,7 +98,7 @@ export function installId(ledger, { create = true } = {}) { const s = state(ledg
 // admits a path, URL, email, or token: no "/", "~", "@", "_" or spaces, and no long unbroken run of letters and digits.
 const LEVELS3 = ["basic", "standard", "strong"];
 const WORK_TYPES = Object.keys(questions.work_type.criteria);
-const SUBSCRIPTIONS = Object.keys(HARNESSES);                            // routr keys a subscription by its harness
+const SUBSCRIPTIONS = Object.keys(HARNESSES);                            // a harness's name; an extra account is sent as its harness's
 const jevVersion = shaped(/^jev-\d+(\.\d+){0,3}$/);
 // A decision model is one routr offers (providers.mjs), or a Jev version the maintainers tried; anything else is "other".
 const decisionModel = (v) => (v == null || v === "" ? null : KNOWN_MODELS.includes(v) ? v : jevVersion(v));
@@ -121,7 +121,7 @@ export function telemetryRows(entries, install) {
       advised: { level: pick(a.level, LEVELS3), sure: !!a.sure, between: Array.isArray(a.between) ? a.between.map((l) => pick(l, LEVELS3)) : null,
         work_type: pick(a.work_type, WORK_TYPES), high_risk: !!a.high_risk, fallback: !!a.fallback,
         facts: Object.fromEntries(Object.entries(a.facts ?? {}).filter(([k, p]) => k in FACTS && Number.isFinite(p))) },
-      chose: { subscription: pick(e.chose.subscription, SUBSCRIPTIONS), model: model(e.chose.model), effort: pick(e.chose.effort, EFFORTS), level: pick(e.chose.level, LEVELS3) },
+      chose: { subscription: pick(accountName(e.chose.subscription)?.harness ?? e.chose.subscription, SUBSCRIPTIONS), model: model(e.chose.model), effort: pick(e.chose.effort, EFFORTS), level: pick(e.chose.level, LEVELS3) },
       outcome: { verdict: pick(e.outcome.verdict, VERDICTS), check: pick(e.outcome.check, CHECK_RESULTS),
         attempts: num(e.outcome.attempts) ?? 1, seconds: num(e.outcome.seconds) },
       subagents: (e.subagents ?? []).slice(0, 20).map((x) => ({ advised: pick(x?.advised, LEVELS3), model: model(x?.model) })),

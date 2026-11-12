@@ -27,7 +27,7 @@
 // too), with the entry's `refusal`: { headline, tail, extra, indent, beforeUpdate } for a JSON answer, or "screen" for
 // text on stderr and exit 2. `indent` is how the entry's JSON answer is printed.
 import { HARDEST, list, RESERVE } from "./wording.mjs";
-import { HARNESSES, KINDS, TAKES_EFFORT } from "./harnesses.mjs";
+import { accountSkillFolders, HARNESSES, KINDS, TAKES_EFFORT } from "./harnesses.mjs";
 import { NAME_RULE } from "./worker-record.mjs";
 // What help says of the harnesses comes from the registry: which ones have a property, and what it says of itself.
 const having = (test) => KINDS.filter((n) => test(HARNESSES[n]));
@@ -63,7 +63,7 @@ export const COMMANDS = {
   },
   dispatch: {
     name: "dispatch",
-    contract: { fields: ["id", "ts", "mode", "question_set", "brief_sha", "brief_chars", "provider", "decision_model", "unmeasured", "ms", "answers", "level", "sure", "between", "work_type", "high_risk", "worker", "facts", "notes", "meaning", "subscriptions"] },
+    contract: { fields: ["id", "ts", "mode", "question_set", "brief_sha", "brief_chars", "provider", "decision_model", "unmeasured", "ms", "answers", "level", "sure", "between", "work_type", "high_risk", "worker", "facts", "notes", "meaning", "subscriptions", "accounts"] },
     description: "an orchestrator is about to launch a worker → work assessment plus eligible subscriptions and headroom; choose for quality, then compare capacity among suitable options; unavailable names failed decision-model and usage readings, with recovery actions; fresh usable readings stay available",
     args: [
       { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); unknown flag-led input without a stdin brief is refused; quote a multi-word inline brief containing flags", required: true },
@@ -101,7 +101,7 @@ export const COMMANDS = {
     description: `start a worker with matching task advice: in a herdr pane; in a herdr-core terminal (the Herdr app), the harness itself in a tab of its own, which you follow with hc; or anywhere else a headless ${list(labels(KINDS), "or")} worker that \`routr wait\` follows; unavailable carries the saved decision-model entries and recovery action (older advice names no attempted model); follow next for recovery, recording and cleanup`,
     flags: [
       { name: "--lead-session", arg: "<id>", description: "your known session id when routr cannot read it from the harness environment; UUIDv4, UUIDv7 or 16–64 lowercase hex characters; malformed values are ignored with a fixed warning; never invent one", required: false },
-      { name: "--kind", arg: "<kind>", description: `harness kind (${KINDS.join(", ")})`, required: true },
+      { name: "--subscription", arg: "<name>", description: `the subscription the worker runs on, as dispatch ranks it and record takes it (${KINDS.join(", ")}, or an extra account's name, <harness>-<name>)`, required: true },
       { name: "--name", arg: "<name>", description: `worker agent name (${NAME_RULE})`, required: true },
       { name: "--model", arg: "<id>", description: "model id; model, effort and fallback values refuse PowerShell quote characters (ASCII quotes or U+2018–U+201E) on every path", required: true },
       { name: "--cwd", arg: "<path>", description: "working directory", required: false, default: "." },
@@ -110,7 +110,8 @@ export const COMMANDS = {
       { name: "--subagent-effort", arg: "<level>", description: `opt-in fallback for a spawn that names no effort (${SUBAGENT_DEFAULTS}); leave off unless this worker needs it; independent of --subagent-model; Anthropic's changelog dates it to 2.1.316, earlier versions untested; existing panes get no environment fallback, existing agents keep their settings, with a warning`, required: false },
       { name: "--rules-file", arg: "<path>", description: "your process rules for the worker (what it may do, how to report, git steps): added after the task, and never read by routr, which judges only the task", required: false },
       { name: "--advice", arg: "<file>", description: "the advice file from `routr dispatch`: launch refuses unreadable, malformed, nonmatching or `routr subagent` advice; dry runs refuse with ok:false and still plan", required: "required with a task" },
-      { name: "--pane", arg: "<id>", description: "existing herdr pane to run in: at a shell prompt, or with an idle agent of --kind already running in --cwd (it is adopted, keeps its model and effort, and is sent the task; one not idle yet is never waited on: run the launch again once it is)", required: false },
+      { name: "--pane", arg: "<id>", description: "existing herdr pane to run in: at a shell prompt, or with an idle agent of the subscription's harness already running in --cwd (it is adopted, keeps its model and effort, and is sent the task; one not idle yet is never waited on: run the launch again once it is)", required: false },
+      { name: "--continue", arg: null, description: "routr's own, in the rerun `next` gives for a pane this launch split on an extra account; refused without --pane and an extra account", required: false },
       { name: "--worktree", arg: "<branch>", description: "give the worker its own git worktree on a new branch (the rule for workers): in herdr, opened as a workspace nested under the repo; outside herdr, in the Herdr app too, made by routr under ~/.local/share/routr/worktrees", required: false },
       { name: "--base", arg: "<ref>", description: "the commit the worktree's new branch starts from: a branch, tag, or commit id (stacked work, a reviewer of one commit; with --worktree)", required: false, default: "the checkout's HEAD" },
       { name: "--copy", arg: "<path>", description: "copy an untracked file or folder from the repo into the worktree (repeatable; with --worktree)", required: false, repeatable: true },
@@ -253,11 +254,11 @@ export const COMMANDS = {
   },
   skill: {
     name: "skill",
-    description: `\`routr skill install\` writes routr's two skills into ~/.agents/skills (read by ${list(labels(having((h) => !h.skills)), "and")}) and links them into the skills folder of each other harness set up here (${OWN_SKILL_FOLDERS}): the routr skill, and routr-orchestrate, which you type to start a session as the orchestrator (\`/routr-orchestrate <plan>\`; \`$routr-orchestrate\` in Codex). It replaces only routr's own copies: a skill or link of the same name that routr did not write is kept, and listed`,
+    description: `\`routr skill install\` writes routr's two skills into ~/.agents/skills (read by ${list(labels(having((h) => !h.skills)), "and")}) and links them into the skills folder of each other harness set up here (${OWN_SKILL_FOLDERS}), and of each extra account of one: the routr skill, and routr-orchestrate, which you type to start a session as the orchestrator (\`/routr-orchestrate <plan>\`; \`$routr-orchestrate\` in Codex). It replaces only routr's own copies: a skill or link of the same name that routr did not write is kept, and listed`,
     args: [{ name: "install", description: "install or update the skills", required: true }],
     flags: [{ name: "--dry-run", description: "show where it would be written", required: false }],
     reach: "first", word: "install", exit: "ok", indent: 1, trace: NOT_TRACED, autoUpdate: false, decisionModel: null, advice: false,
-    run: async ({ args }) => (await import("./skill-install.mjs")).installSkill({ dryRun: args.includes("--dry-run") }),
+    run: async ({ args, loadConfig }) => (await import("./skill-install.mjs")).installSkill({ dryRun: args.includes("--dry-run"), accounts: accountSkillFolders(loadConfig().config) }),
   },
   key: {
     name: "key",
@@ -278,6 +279,7 @@ export const COMMANDS = {
     flags: [
       { name: "--yes", description: "ask nothing: take the defaults and the flags given (the way an agent runs it)", required: false },
       { name: "--model", arg: "<subscription>=<model id>", description: `your everyday model on a subscription, from the harness's live list (${having((h) => h.openList).map((n) => `${HARNESSES[n].label} also ${HARNESSES[n].openList}`).join("; ")}); repeatable. Also changes it on an existing config`, required: false, repeatable: true },
+      { name: "--account", arg: "<harness>-<name>=<folder>", description: `another account of a harness, signed in from that folder (claude-work=~/.claude-work): a subscription of its own with its harness's settings, until you give it its own with the flags here (--reserve claude-work=10%, --use claude-work=fallback, --disable claude-work). ${KINDS.filter((k) => HARNESSES[k].folder).map((k) => HARNESSES[k].label).join(" and ")} only. Refused until that folder is signed in, with the command to run; repeatable`, required: false, repeatable: true },
       { name: "--use", arg: "<subscription>=normal|fallback", description: "normal: consider for everyday work; fallback: when normal accounts cannot suitably take it. Independent of billing; repeatable", required: false, repeatable: true },
       { name: "--share", arg: "<subscription>=<1-99>|off", description: "this account's weight in your ratio of launches between normal metered accounts with room (claude=3 and codex=1: about three workers on claude for every one on codex); advice, never enforced; off removes it; repeatable", required: false, repeatable: true },
       { name: "--hardest", arg: "<subscription>=basic|standard|strong", description: `${HARDEST.flag}: basic, standard, or strong; repeatable. Also changes it on an existing config`, required: false, repeatable: true },
@@ -349,7 +351,7 @@ export const COMMANDS = {
     description: "append what you chose and how it turned out to the ledger; next integrates and cleans up only for done with check pass, otherwise sends back or escalates, and always includes a template to revise this run with absolute advice, task and ledger paths",
     flags: [
       { name: "--task-file", arg: "<path>", description: "compare this worker’s task with the advice before appending; omit only for inline tasks, or revisions when the original file is gone (say so in --note)", required: false },
-      { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")})`, required: true },
+      { name: "--subscription", arg: "<name>", description: `subscription used (${KINDS.join(", ")}, or an extra account's name, <harness>-<name>)`, required: true },
       { name: "--model", arg: "<name>", description: "model chosen", required: true },
       { name: "--effort", arg: "<level>", description: `reasoning effort chosen. On ${list(labels(TAKES_EFFORT, "shortLabel"), "and")}, "default" is recorded as your configured default_effort; on ${list(labels(KINDS.filter((n) => !TAKES_EFFORT.includes(n)), "shortLabel"), "and")}, "default" is recorded as the effort word at the end of the model id, or just before a last qualifier (grok-4.7-high, grok-4.6-high-fast). Otherwise it is kept as written; chose.effort_from records which`, required: true },
       { name: "--verdict", arg: "<done|partial|blocked>", description: "worker outcome verdict", required: true },

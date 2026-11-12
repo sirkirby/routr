@@ -43,7 +43,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claim, endpointFor, markReady, markReleased, probe, removeEndpoint, serve } from "./channel.mjs";
 import { FORMAT, readWorker, runDir } from "./worker-record.mjs";
-import { configEnv, HARNESSES, plan, privateConfigDir, subagentDefaults } from "./harnesses.mjs";
+import { configEnv, HARNESSES, plan, privateConfigDir, subagentDefaults, workerAccount } from "./harnesses.mjs";
 import { CARRIERS, savedCarriers, workerEnv } from "./worker-env.mjs";
 import { installedAt, probe as collect, start, stop } from "./processes.mjs";
 import { readJsonFile, writeJsonAtomic } from "./state-files.mjs";
@@ -533,8 +533,9 @@ export async function hold(name, { run = start, noTaskMs = 30000, startMs = 3000
       let c, h;
       try {
         const defaults = { kind: w.kind, subagentModel: w.subagent_model, subagentEffort: w.subagent_effort };
+        // Its extra account, as launch saved it: the same on every turn, whoever sends it.
         c = run(HARNESSES[w.kind].executable, headlessArgv({ ...defaults, model: w.model, effort: w.effort, session, cwd: w.cwd }),
-          { cwd: w.cwd, env: workerEnv(processCarriers, { ...configEnv(w.kind, privateConfigDir(w.kind, dir)), ...subagentDefaults(defaults).env }), stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
+          { cwd: w.cwd, env: workerEnv(processCarriers, { ...configEnv(w.kind, privateConfigDir(w.kind, dir)), ...subagentDefaults(defaults).env }, process.env, workerAccount(w)?.env), stdio: ["pipe", "pipe", "ignore"], detached: process.platform !== "win32" });
       } catch { endTurn("not_started", null); answer({ code: "failed", why: "harness_not_started" }); return settle(); }
       child = c;
       // What it says, as events: bound to this process, and ignored once it has finished.

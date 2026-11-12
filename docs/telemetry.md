@@ -43,7 +43,7 @@ send. Never during a command, and a failed send is retried the next day. Each ro
 | `provider`, `decision_model` | `cloudflare`, `clef` | which decision model read the brief, and where it ran (`typesafe`, `cloudflare` or `ollama`): only the models routr offers, or a Jev version, are named; anything else is `"other"` |
 | `brief_chars` | `1975` | the brief's length, never its text |
 | `advised` | level, sure, between, work type, high risk, fallback, facts | what routr read: its level (and the two it was torn between), whether the decision model answered, and yes/no probabilities for its fixed questions |
-| `chose` | `codex`, `gpt-5.6-terra`, `high`, `strong` | the subscription, model, effort, and level the agent chose. The effort is the one the run had: an agent's "default" or none is sent as your configured default, or as the effort in the model id (Cursor, Antigravity); where it came from stays in your ledger and is not sent |
+| `chose` | `codex`, `gpt-5.6-terra`, `high`, `strong` | the subscription, model, effort, and level the agent chose; an extra account (`accounts` in your config) is sent as its harness (`claude-work` as `claude`), never by its own name. The effort is the one the run had: an agent's "default" or none is sent as your configured default, or as the effort in the model id (Cursor, Antigravity); where it came from stays in your ledger and is not sent |
 | `outcome` | `done`, `pass`, attempts `1`, seconds `420` | how the work turned out |
 | `subagents` | `[{ advised: "basic", model: "…" }]` | the level advised and the model used for each subagent |
 | `row_key` | 32 hex characters | a hash of your install id and the row, so a resend is harmless |

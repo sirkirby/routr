@@ -84,7 +84,7 @@ test("a failed live Codex read reports its metered session-log fallback, includi
 
 test("launch rebuilds every saved recovery action and HTTP status without trusting saved prose", async () => {
   const dir = scratch("launch-actions"), file = join(dir, "advice");
-  const args = ["--kind", "claude", "--name", "worker", "--model", "sonnet", "--task", marker, "--advice", file, "--dry-run"];
+  const args = ["--subscription", "claude", "--name", "worker", "--model", "sonnet", "--task", marker, "--advice", file, "--dry-run"];
   for (const [provider, code, status] of [
     ["typesafe", "no_key"], ["typesafe", "key_refused"], ["typesafe", "secrets_unreadable"],
     ["cloudflare", "daily_allowance"], ["cloudflare", "provider_error", 429], ["typesafe", "provider_error", 500],
@@ -293,7 +293,7 @@ test("matching fallback launch preserves dispatch's attempted model through sett
     if (args[1] === "rename") return herdrOK();
     throw new Error("unexpected herdr call");
   } };
-  const args = ["--kind", "claude", "--name", "worker", "--model", "sonnet", "--task", marker, "--advice", adviceFile, "--pane", "w1:p9"];
+  const args = ["--subscription", "claude", "--name", "worker", "--model", "sonnet", "--task", marker, "--advice", adviceFile, "--pane", "w1:p9"];
   const real = await launch(args, deps);
   expect(real).toMatchObject({ ok: true, state: "prompted" }); expect(prompted).toBe(true);
   expect(real.unavailable).toEqual(advice.unavailable); expect(real.warnings).toEqual([]); clean(real);

@@ -123,7 +123,7 @@ const paneHerdr = (s) => async (a) => {
   return ok({});
 };
 const paneOpts = (s) => { let ticks = 0; return { env: { HERDR_ENV: "1" }, run: paneHerdr(s), now: () => ticks, sleep: async (ms) => { ticks += ms; } }; };
-const paneArgs = ["--kind", "claude", "--name", "worker", "--model", "sonnet"], newPane = [...paneArgs, "--direction", "right"], rerunPane = [...paneArgs, "--pane", "w1:p2", "--cwd", process.cwd()];
+const paneArgs = ["--subscription", "claude", "--name", "worker", "--model", "sonnet"], newPane = [...paneArgs, "--direction", "right"], rerunPane = [...paneArgs, "--pane", "w1:p2", "--cwd", process.cwd()];
 
 test("planned and failed launches have no id, no history and no index entry, on every backend", async () => {
   const w = world();
@@ -195,8 +195,8 @@ const terminalHc = (status) => {
 };
 test("a terminal launch counts and is findable whether it took its task or stopped at a question", async () => {
   const w = world(), opts = (status) => ({ env: { HC_TERMINAL_ID: "t3" }, hc: terminalHc(status), self: (a) => ["/bin/routr", ...a], sleep: async () => {} });
-  const p = await w.go(["--kind", "claude", "--name", "traced", "--model", "sonnet", ...w.task()], opts({ state: "done" }));
-  const q = await w.go(["--kind", "claude", "--name", "asking", "--model", "sonnet", ...w.task()], opts({ state: "blocked", kind: "question" }));
+  const p = await w.go(["--subscription", "claude", "--name", "traced", "--model", "sonnet", ...w.task()], opts({ state: "done" }));
+  const q = await w.go(["--subscription", "claude", "--name", "asking", "--model", "sonnet", ...w.task()], opts({ state: "blocked", kind: "question" }));
   expect([p.r.state, q.r.state]).toEqual(["prompted", "needs_input"]);
   for (const o of [p, q]) {
     expect(isLaunchId(o.r.launch_id)).toBe(true);

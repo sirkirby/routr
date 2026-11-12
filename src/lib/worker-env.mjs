@@ -77,7 +77,8 @@ export function redactCarriers(text, values) {
 export const harnessEnv = (env = process.env) => Object.fromEntries(Object.entries(env).filter(([k]) => !LEAD_SESSION.test(k) && !CARRIER.test(k)));
 // A worker's environment: the harness environment, the carriers it was given (checked again here, so nothing unchecked
 // is ever spread into it), then the adapter's own variables, which win for their keys.
-export const workerEnv = (carriers, extra = {}, env = process.env) => ({ ...harnessEnv(env), ...savedCarriers(carriers).carriers, ...extra });
+// `account`: an extra account's variables, over all of that (accountEnv).
+export const workerEnv = (carriers, extra = {}, env = process.env, account = null) => accountEnv({ ...harnessEnv(env), ...savedCarriers(carriers).carriers, ...extra }, account);
 
 // Where a harness finds its sign-in and settings. A worker in a herdr-core terminal starts from the core's environment,
 // not its lead's (measured 2026-11-03, hc 0.1.17: variables set on the `hc run` client did not arrive), so a lead on a
@@ -89,24 +90,33 @@ const locations = (get) => Object.fromEntries(CONFIG_LOCATIONS.map((n) => [n, ge
 export const configLocations = (env = process.env, { platform = process.platform } = {}) => locations((n) => carrierIn(env, n, platform));
 export const savedConfigLocations = (saved) => locations((n) => (own(saved, n) ? saved[n] : undefined));
 // A later layer wins its name; on Windows names differ only by case, so the name it replaces goes too.
+// A name a layer holds as null is removed, and nothing put in its place: the process must not have it (an extra
+// account's).
 const layered = (platform, ...layers) => {
   const out = {}, names = new Map();
   for (const layer of layers) for (const [k, v] of Object.entries(layer)) {
     const key = platform === "win32" ? k.toUpperCase() : k;
     if (names.has(key)) delete out[names.get(key)];
+    if (v === null) continue;
     names.set(key, k); out[k] = v;
   }
   return out;
 };
+// An extra account's variables (harnesses' accountAt) over an environment: its folder variable in place of the same
+// name in any case on Windows, or that name removed. Without one, the environment given, untouched.
+export const accountEnv = (env, account, { platform = process.platform } = {}) => (account ? layered(platform, env, account) : env);
+// Those variables as output shows them: a folder as FORWARDED, a removed name as null.
+export const accountShownEnv = (account) => Object.fromEntries(Object.entries(account ?? {}).map(([k, v]) => [k, v === null ? null : FORWARDED]));
 // A terminal worker's environment, as its runner builds it inside the terminal. The terminal's own, through harnessEnv,
 // so a lead's identity a core picked up from the shell it started in is gone. Then the runner's own terminal names put
 // back: they are this terminal's, not the lead's, and the harness's `hc send` names it by them. Then only what launch saved: the
 // checked carriers, the config locations, and the adapter's variables (`adapter`), which win for their keys, so Cursor's
 // private config folder beats a caller's CURSOR_CONFIG_DIR. Nothing else of the caller's reaches it.
+// An extra account's variables (`account`) come after the config locations, so its folder wins over the caller's.
 const TERMINAL_OWN = ["HC_TERMINAL_ID", "HC_TERMINAL_SOCKET", "HC_SCOPE"];
-export const terminalEnv = ({ carriers, config, adapter = {} }, env = process.env, { platform = process.platform } = {}) => {
+export const terminalEnv = ({ carriers, config, adapter = {}, account = {} }, env = process.env, { platform = process.platform } = {}) => {
   const mine = Object.fromEntries(TERMINAL_OWN.map((n) => [n, carrierIn(env, n, platform)]).filter(([, v]) => typeof v === "string" && v !== ""));
-  return layered(platform, harnessEnv(env), mine, savedCarriers(carriers).carriers, savedConfigLocations(config), adapter);
+  return layered(platform, harnessEnv(env), mine, savedCarriers(carriers).carriers, savedConfigLocations(config), account, adapter);
 };
 
 // The warnings for carriers a launch could not hand on: each withheld carrier by name and limit, never its value. A

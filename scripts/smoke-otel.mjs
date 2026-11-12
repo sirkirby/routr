@@ -312,7 +312,7 @@ async function runSmoke({ env: original, log }) {
     writeFileSync(join(home, ".config/routr/env"), `ROUTR_OTEL_HEADERS=Authorization=${never[4]}\n`);
     const advice = join(home, "advice.json"), task = join(home, "task.md");
     writeFileSync(task, never[0]); writeFileSync(advice, JSON.stringify({ mode: "dispatch", id: "abc12345", level: "standard", brief_sha: briefSha(never[0]), fallback: true }));
-    const base = ["--kind", "claude", "--model", "fixture", "--cwd", home];
+    const base = ["--subscription", "claude", "--model", "fixture", "--cwd", home];
     await cli(["launch", ...base, "--name", "planned", "--dry-run"]);
     const launched = await cli(["launch", ...base, "--name", "fixture", "--task-file", task, "--advice", advice]); check(launched.ok, "fixture launch");
     await cli(["wait", "--name", "fixture"]); await until(holderReleased, "first fixture holder release");
