@@ -14,6 +14,7 @@ import { workers as workersOf } from "../src/lib/worker.mjs";
 import { newRecord, recordStore } from "../src/lib/worker-record.mjs";
 
 const MARK = "OUTSIDE_TEXT_MARKER_9c61";
+const TAG_MARK = "lead-tag-marker-9c61"; // a cause detail is a slug, so it cannot carry MARK
 // Trace-context carriers in routr's environment: handed on, never shown, logged or stored (docs/guarantees.md).
 const CARRIER_MARK = "CARRIER_MARKER_3b7e";
 const CARRIED = { TRACEPARENT: `00-${CARRIER_MARK}-tp-01`, TRACESTATE: `k=${CARRIER_MARK},\tz="%x%"`, BAGGAGE: `b=${CARRIER_MARK};p=1,c=d e!&'` };
@@ -368,10 +369,12 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
     if (args[0] === "cursor") { expect(r.ok).toBe(false); expect(r.unavailable.some((u) => u.subscription === "cursor")).toBe(true); }
     if (args[0] === "kiro") expect(r.reading).toMatchObject({ credits_used: 20, credits_limit: 50, used_pct: 40 });
   }
-  // board: a run recorded to the default ledger with the private marker as its note; the note never reaches board.
-  invoke("record", ["--advice", f.advice, "--subscription", "claude", "--model", "model", "--effort", "default", "--task-file", f.task, "--verdict", "done", "--check", "pass", "--note", MARK]);
+  // board: a run recorded to the default ledger with the private marker as its note and a cause detail; neither the
+  // note nor the lead's tag reaches board, top or dash.
+  invoke("record", ["--advice", f.advice, "--subscription", "claude", "--model", "model", "--effort", "default", "--task-file", f.task, "--verdict", "done", "--check", "pass", "--note", MARK, "--cause", "review", "--cause-detail", TAG_MARK]);
   const board = invoke("board").r; // every project: the row is labelled with the folder record ran in
-  expect([board.ok, board.decisions.length, board.decisions[0].outcome]).toEqual([true, 1, { verdict: "done", check: "pass", attempts: null, causes: null, seconds: null }]);
+  expect([board.ok, board.decisions.length, board.decisions[0].outcome]).toEqual([true, 1, { verdict: "done", check: "pass", attempts: null, causes: ["review"], seconds: null }]);
+  expect(JSON.stringify(board)).not.toContain(TAG_MARK);
   expect(invoke("board", ["--cwd", join(f.dir, "no-such-folder")]).r).toMatchObject({ ok: false, error: expect.stringContaining("is not a folder") });
   const dash = invoke("dash", ["--no-open"]).r;
   expect([dash.ok, dash.opened, dash.runs > 0, dash.file.endsWith("dash.html")]).toEqual([true, false, true, true]);
@@ -386,12 +389,12 @@ else if (mode === 'branch-kept' && a[0] === 'branch') { console.error(${JSON.str
     const result = Bun.spawnSync([process.execPath, SCRIPT, command, ...args], { env });
     if (COMMANDS[command].contract?.text) invoked.add(command);
     const text = result.stdout.toString() + result.stderr.toString();
-    expect([command, result.exitCode, text.includes(MARK)]).toEqual([command, 0, false]);
+    expect([command, result.exitCode, text.includes(MARK), text.includes(TAG_MARK)]).toEqual([command, 0, false, false]);
     if (command === "dash") expect(JSON.parse(result.stdout.toString()).runs).toBe(2);
   }
   const page = readFileSync(dash.file, "utf8");
   expect(page).toContain(DASH_PAGE);
-  expect(page).not.toContain(MARK);
+  expect(page).not.toContain(MARK); expect(page).not.toContain(TAG_MARK);
   const recordArgs = ["--advice", f.advice, "--ledger", f.ledger, "--subscription", "claude", "--model", "model", "--effort", "default", "--task-file", f.task];
   const recorded = invoke("record", [...recordArgs, "--verdict", "done", "--check", "pass"]).r;
   expect(recorded.id).toBe(f.body.id);

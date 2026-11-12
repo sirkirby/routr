@@ -3,7 +3,7 @@ export const WARNING_CODES = Object.freeze({
   config_missing: "No config; defaults used", config_unreadable: "Config unreadable; defaults used",
   config_share: "Invalid share; default used", config_channel: "Invalid update channel", config_otel: "Invalid export setting",
   config_prefer: "Invalid preferred level", config_hardest: "Missing or invalid hardest work", config_reserve: "Missing or invalid reserve",
-  config_choice: "Invalid subscription choice", config_enabled: "Invalid enabled setting", decision_dropped: "Invalid or duplicate decision entry dropped",
+  config_choice: "Invalid subscription choice", config_enabled: "Invalid enabled setting", config_repeat: "Invalid cause repeat window", decision_dropped: "Invalid or duplicate decision entry dropped",
   headroom_ignored: "Invalid headroom input ignored", lead_session_ignored: "Invalid lead session ignored", brief_flag: "Flag-like brief input",
   report_short: "Report is very short", advice_unchecked: "Advice not checked against a task", usage_stale: "Usage reader has stopped working",
   kiro_session_left: "Kiro kept an empty usage session", subscription_unconfigured: "Subscription is not configured",

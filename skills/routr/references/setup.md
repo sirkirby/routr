@@ -171,6 +171,8 @@ the command that fixes it.
   `test_writing`, `docs`), for example `"research": "strong"`. Shown to agents as advice, never forced.
 - `sure_at` (unset: the decision model's own measured bar; Jev 1.14's is 0.7), `risk_above` (0.75), `fallback_level`
   (`standard`): leave at the defaults unless asked. A `sure_at` set by hand applies to every decision model.
+- `cause_repeat_days` (`7`): how many days back `record` looks for the same `--cause-detail` in a project before
+  saying it came back; `0` turns that off. Leave it at the default unless asked.
 - `auto_update` (`true`): routr checks for a new release in the background at most once a day and uses it from the
   next run. Set it to `false` if the user wants to update only by hand with `routr update`. `routr doctor` reports a
   newer release only from that daily check (it asks GitHub nothing itself); with it off, `routr update --check` looks.

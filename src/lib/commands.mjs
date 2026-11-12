@@ -13,7 +13,7 @@ import { advise, headline } from "./advise.mjs";
 import { readReport } from "./check.mjs";
 import { ask } from "./systemone.mjs";
 import { DecisionError, decisionTarget, failedReading, readingModel } from "./providers.mjs";
-import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, RunIdError, toEntry } from "./ledger.mjs";
+import { append, assess, briefSha, causeRepeats, LEDGER_PATH, parseReportSubagents, read, REPEAT_DAYS, RunIdError, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
 import { ensureParent, folderSha } from "./state-files.mjs";
 import { standalone } from "./processes.mjs";
@@ -182,9 +182,17 @@ function recordCommandBody(o, subagentFlags = [], config = null, { warnings = []
     const { project, launch_id } = rowIdentity(o, advice, ledger, warnings = [...warnings]);
     const entry = append(toEntry(advice, { ...o, subagents, project, launch_id }, config), ledger, { revision: o.run_id != null });
     recordSpan(entry);
+    // A cause detail seen again in this project: the second time is a missing rule, cheapest to add before the next
+    // launch. Advice only, after the row is written: a ledger that cannot be read again costs the reminder, not the row.
+    const days = config?.cause_repeat_days ?? REPEAT_DAYS;
+    let repeats = [];
+    // A revision is reminded only of a tag it adds: the lead revising to say what it added has had this reminder.
+    try { const rows = read(ledger), before = o.run_id != null ? rows.slice(0, -1).findLast((e) => e.run_id === entry.run_id) : null;
+      repeats = causeRepeats(rows, entry, { days }).filter(({ tag }) => !before?.outcome?.cause_details?.includes?.(tag)); } catch {}
     return answer({ ok: true, headline: `routr: recorded run ${entry.run_id} (advice ${advice.id}) in ${ledger}`, id: advice.id, run_id: entry.run_id, ledger,
       warnings: [...warnings, ...(o.task_file == null ? [warning("advice_unchecked", "The advice was not checked against a task.")] : [])],
-      next: [doNext(entry.outcome.verdict === "done" && entry.outcome.check === "pass"
+      next: [...repeats.map(({ tag, runs }) => doNext(`--cause-detail ${tag} is now on ${runs + 1} runs in ${entry.project} in the last ${days} days. A repeat is usually a rule the briefs are missing: before the next launch, add what would have caught it (a line in your brief template, or a check in the repository), then revise this row with --run-id and say which in --note.`)),
+        doNext(entry.outcome.verdict === "done" && entry.outcome.check === "pass"
         ? "Integrate the verified result, then follow launch’s cleanup step when this worker is finished."
         : "Send the work back or escalate, then verify and revise this row; no cleanup yet."),
       ...(o.task_file == null ? [doNext("If this task came from a file, revise this row with --run-id and --task-file; otherwise say why in --note")] : []), recordRevisionNext(o, entry, ledger)] });

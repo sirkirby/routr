@@ -124,6 +124,12 @@ fourth; you write the second and third.
    change and asks for tests, but says none of what the result must satisfy, can pass both brief facts: on one of
    three tasks measured, such a brief read `standalone` yes and `states_check` unclear, and every worker given it made
    the same mistakes, whichever model ran it (`docs/evidence.md`).
+   Name the existing code the work must call rather than copy (a storage adapter, a rule function, a schema), and
+   check it against the other briefs still running: two that change the same code at once each write it their own
+   way, and only meet at merge. Run them in sequence, or give that code to one of them. Check every claim the
+   brief makes about the code (a limit, what may be removed) against the code before launch; a grep is cheaper
+   than a review round. Finding that code is research: hand it to a read-only worker when it is more than a
+   lookup. Whether this lowers rework is not measured; `--cause-detail` tags in your ledger can show it.
 3. How to verify it (the command to run), so the worker can check its own work.
 
 Parts 2 and 3 are the work, and they go in `--task-file`: it is what you ask routr about. Your rules for how the
@@ -299,7 +305,7 @@ ledger.
     routr record --advice <file> --task-file <this worker’s task file> --subscription <s> --model <m> --effort <e> \
         --level <the level you settled on> --verdict <done|partial|blocked> \
         --check <pass|fail|none> [--report <file>] [--subagent "<subtask> → <level> → <model> → <effort>"] \
-        [--attempts <n>] [--seconds <n>] [--cause <cause>] [--run-id <id>] [--launch <launch_id>] \
+        [--attempts <n>] [--seconds <n>] --cause <cause> [--cause-detail <tag>] [--run-id <id>] [--launch <launch_id>] \
         [--note "<reasons for the model, effort and account; what happened>"]
 
 Launch's record template fills `--launch` with its `launch_id`: keep it. The row then takes that launch's project,
@@ -319,11 +325,21 @@ does not establish a count. Omit it when unknown.
 `--seconds` is elapsed time from handoff through your verification, including waiting and corrections, or until the
 run stops. Omit it when unknown. A pass means you verified and accepted the result.
 
-Classify extra work with repeatable `--cause`: `execution` for correcting work against the agreed brief (including
-fixes you made yourself); `brief` for missing or ambiguous context; `scope` for requirements added later; `review`
-for a successful review finding issues and checking their fixes; `launch` for trouble starting or delivering the
-prompt; `unknown` when the cause is not established. Several may apply. Use `--cause none` alone when no extra work
-occurred. Attempts alone never establish model failure.
+Classify extra work with repeatable `--cause`, on every record: launch's template carries it. `execution` for
+correcting work against the agreed brief (including fixes you made yourself); `brief` for missing or ambiguous
+context; `scope` for requirements added later; `review` for a successful review finding issues and checking their
+fixes; `launch` for trouble starting or delivering the prompt; `unknown` when the cause is not established. Several
+may apply. `review` says where a problem was found, not where it came from, so give the cause it found beside it
+(`--cause review --cause brief`). Use `--cause none` alone when no extra work occurred. Attempts alone never
+establish model failure.
+
+Name what kind of extra work it was with repeatable `--cause-detail <tag>`: a short tag in your own words, lowercase
+with hyphens (`copied-existing-code`, `unchecked-claim`, `parallel-briefs-same-rule`). Reuse the same tag for the
+same kind, so `routr assess` counts them together by project. When a tag comes back in the same project within
+`cause_repeat_days` (7), record's `next` says so: a second time is usually a rule your briefs are missing. Add it
+before the next launch (a line in your brief template, or a check in the repository), then revise the row with
+`--run-id` and say which in `--note`. Tags stay on this machine like notes; telemetry and OpenTelemetry never send
+them.
 
 Record each worker separately, including failed start attempts and workers replaced during escalation. A preflight
 refusal starts no worker and has no record template. Each new record returns a new `run_id`; a revision keeps it. Advice must belong to
@@ -347,7 +363,7 @@ the new note or report/subagent list; an empty note clears the note, and `--suba
 from attempt counts. A failure can justify immediate recovery; repeated comparable verified outcomes can inform
 future choices. Review the actual work and correction causes before generalizing. Session evidence and the local
 ledger support judgment, not a model ranking or automatic learning across sessions. Persistent changes to the user's
-configured preferences remain explicit. Run IDs, notes and causes stay local. If the user turned telemetry on, recorded
+configured preferences remain explicit. Run IDs, notes, causes and cause details stay local. If the user turned telemetry on, recorded
 rows also reach routr's maintainers (anonymous, never text; `routr share` shows exactly what).
 When you finish a long run, mention `routr assess`, and that `routr feedback "<text>"` sends the maintainers a note.
 

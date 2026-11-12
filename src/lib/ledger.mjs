@@ -136,14 +136,22 @@ export function projectChose(c) {
 }
 
 export const OUTCOME_CAUSES = ["execution", "brief", "scope", "review", "launch", "unknown"];
+// A cause detail is the lead's own short tag for what kind of extra work it was (copied-existing-code): routr keeps no
+// taxonomy of them, it only counts them. A slug, so the same words group together. Local only, like a note.
+export const CAUSE_DETAIL = /^[a-z0-9]+(?:-[a-z0-9]+)*$/, CAUSE_DETAIL_MAX = 40;
 const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 export class RunIdError extends Error {}
-export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, causes, run_id, note, subagents, project, launch_id }, config = null) {
+export function toEntry(advice, { subscription, model, effort, level, verdict, check, seconds, attempts, causes, cause_details, run_id, note, subagents, project, launch_id }, config = null) {
   if (launch_id != null && !isLaunchId(launch_id)) throw new Error("--launch takes the launch_id field from launch's answer (its record template carries it)");
   if (run_id != null && !RUN_ID.test(run_id)) throw new RunIdError("--run-id takes the run_id field from record's earlier output, not id; it must name an existing run in this ledger");
   if (attempts != null && (!/^[1-9]\d*$/.test(String(attempts)) || !Number.isSafeInteger(+attempts))) throw new Error("--attempts must be a positive whole number; omit it when unknown");
   if (seconds != null && (String(seconds).trim() === "" || !Number.isFinite(+seconds) || +seconds < 0)) throw new Error("--seconds must be a nonnegative duration; omit it when unknown");
   if (causes != null && (!Array.isArray(causes) || causes.some((c) => ![...OUTCOME_CAUSES, "none"].includes(c)) || (causes.includes("none") && causes.length !== 1))) throw new Error(`--cause takes ${OUTCOME_CAUSES.join("|")}|none; none must be used alone`);
+  if (cause_details?.length) {
+    if (!Array.isArray(cause_details) || cause_details.some((d) => typeof d !== "string" || d.length > CAUSE_DETAIL_MAX || !CAUSE_DETAIL.test(d)))
+      throw new Error(`--cause-detail takes a short tag in your own words: lowercase letters, digits and hyphens, at most ${CAUSE_DETAIL_MAX} characters (copied-existing-code)`);
+    if (!causes?.length || causes.includes("none")) throw new Error("--cause-detail describes extra work: give it with a --cause other than none");
+  }
   return {
     ts: new Date().toISOString(), run_id: run_id ?? randomUUID(), launch_id: launch_id ?? null, project: project ?? projectName(), id: advice.id, asked_at: advice.ts, mode: advice.mode, question_set: advice.question_set,
     // The decision model that answered and its provider: a new model is compared on real work. A row written before
@@ -159,6 +167,7 @@ export function toEntry(advice, { subscription, model, effort, level, verdict, c
     // The choice is stored as record validated it. The display cap is projectChose, on the way out only.
     chose: { subscription: subscription ?? null, model: model ?? null, ...resolveEffort({ subscription, model, effort }, config), level: LEVELS.includes(level) ? level : asLevel(advice.level) },
     outcome: { verdict: verdict ?? "unknown", check: check ?? "none", seconds: seconds == null ? null : +seconds, attempts: attempts == null ? null : +attempts, causes: causes?.length ? [...new Set(causes)].filter((c) => c !== "none") : null,
+      cause_details: cause_details?.length ? [...new Set(cause_details)] : null,
       ...(run_id && note === undefined ? {} : { note: note ?? null }) },
     ...(run_id && subagents === undefined ? {} : { subagents: (subagents ?? []).map(parseSubagent).filter(Boolean) }),
   };
@@ -208,6 +217,39 @@ export function latestRuns(entries) {
   return out;
 }
 
+// How many days back a cause detail counts as a repeat (config `cause_repeat_days`); 0 turns the reminder off.
+export const REPEAT_DAYS = 7;
+const detailsOf = (e) => Array.isArray(e.outcome?.cause_details) ? e.outcome.cause_details.filter((d) => typeof d === "string" && CAUSE_DETAIL.test(d)) : [];
+const projectOf = (e) => e.project ?? "(unlabelled)";
+
+// The other runs in this entry's project, within the window, that carry one of its cause details: a second time is a
+// missing rule, and record says so before the next launch. Counts runs (latest revision once), never this run.
+export function causeRepeats(entries, entry, { days = REPEAT_DAYS, now = Date.now() } = {}) {
+  const tags = detailsOf(entry);
+  if (!tags.length || !(days > 0)) return [];
+  const since = now - days * 86400000, recent = latestRuns(entries).filter((e) => e.run_id !== entry.run_id && projectOf(e) === projectOf(entry) && Date.parse(e.ts) >= since);
+  return tags.map((tag) => ({ tag, runs: recent.filter((e) => detailsOf(e).includes(tag)).length })).filter((r) => r.runs > 0);
+}
+
+// assess: the lead's own tags, grouped by project, with how many fell in the repeat window.
+function causeDetails(entries, config) {
+  const days = config?.cause_repeat_days ?? REPEAT_DAYS, since = Date.now() - days * 86400000, byProject = new Map();
+  for (const e of entries) for (const tag of detailsOf(e)) {
+    const tags = byProject.get(projectOf(e)) ?? new Map(), c = tags.get(tag) ?? { runs: 0, recent: 0 };
+    c.runs++; if (Date.parse(e.ts) >= since) c.recent++;
+    tags.set(tag, c); byProject.set(projectOf(e), tags);
+  }
+  if (!byProject.size) return [];
+  const out = ["cause details (your own tags), by project:"];
+  const width = Math.max(...[...byProject.values()].flatMap((tags) => [...tags.keys()].map((t) => t.length)));
+  for (const [project, tags] of [...byProject].sort((a, b) => a[0].localeCompare(b[0]))) {
+    out.push(`  ${project}`);
+    for (const [tag, c] of [...tags].sort((a, b) => b[1].runs - a[1].runs || a[0].localeCompare(b[0])))
+      out.push(`    ${tag.padEnd(width)}  ${c.runs === 1 ? "1 run" : `${c.runs} runs`}${days > 0 ? `, ${c.recent} in the last ${days} days` : ""}`);
+  }
+  return out;
+}
+
 // Attempts describe activity, not the cause of trouble or comparative model quality. Keep causes explicit.
 // Pure: entries (+ the user's config, when there is one) → report text.
 export function assess(entries, config = null) {
@@ -217,7 +259,7 @@ export function assess(entries, config = null) {
   const out = [], suggestions = [];
   const delivered = entries.filter(good), corrected = (e) => e.outcome.causes?.includes("execution");
   out.push(`${entries.length} recorded runs (${rowCount} rows) · ${delivered.length} verified accepted · ${entries.filter(firstTime).length} accepted first pass · ${entries.filter(corrected).length} execution corrections · ${entries.length - delivered.length} not verified accepted`);
-  out.push("First pass requires done, check pass, attempts 1 and cause none. Missing attempts or causes stay unknown. Execution corrections include fixes made by the lead; review follow-ups and launch trouble are separate.");
+  out.push("First pass requires done, check pass, attempts 1 and cause none. Missing attempts or causes stay unknown, and a run with no --cause counts as not recorded. Execution corrections include fixes made by the lead; review follow-ups and launch trouble are separate.");
 
   // Where the work went, and how it did there: this is what `hardest_work` and `default_model` are about.
   out.push("\nwhere your work went            runs  accepted  execution corrections  not verified accepted");
@@ -240,7 +282,10 @@ export function assess(entries, config = null) {
     if (g.length) out.push(`  ${L.padEnd(11)} ${String(g.length).padStart(4)}   ${g.filter(good).length}/${g.length}${few(g.length)}`);
   }
   out.push(`\nattempts: ${entries.filter((e) => e.outcome.attempts > 1).length} runs with multiple attempts; ${entries.filter((e) => e.outcome.attempts == null).length} unknown. Multiple attempts alone do not establish execution corrections.`);
-  out.push("causes (a run may have several): " + OUTCOME_CAUSES.map((c) => `${c} ${entries.filter((e) => c === "unknown" ? !e.outcome.causes || e.outcome.causes.includes(c) : e.outcome.causes?.includes(c)).length}`).join(", "));
+  // "not recorded" is apart from unknown: a lead that gave no --cause said nothing, which is not "not established".
+  out.push("causes (a run may have several): " + OUTCOME_CAUSES.map((c) => `${c} ${entries.filter((e) => e.outcome.causes?.includes(c)).length}`).join(", ")
+    + `, not recorded ${entries.filter((e) => !Array.isArray(e.outcome.causes)).length}`);
+  out.push(...causeDetails(entries, config));
   out.push(`\nroutr was torn between two levels on ${entries.filter((e) => !e.advised.sure).length}/${entries.length}; your agents settled on a different level than advised on ${entries.filter((e) => e.chose.level !== e.advised.level).length}.`);
 
   out.push("\nThese outcomes are observations of different tasks, not a model comparison. Review the task and correction evidence before changing model, effort or work-level preferences.");

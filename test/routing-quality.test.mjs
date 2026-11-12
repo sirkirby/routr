@@ -207,7 +207,7 @@ test("unknown attempts, successful reviews and launch trouble cannot masquerade 
   const report = assess(outcomes);
   expect(report).toContain("4 verified accepted · 1 accepted first pass · 1 execution corrections · 2 not verified accepted");
   expect(report).toContain("2 runs with multiple attempts; 1 unknown");
-  expect(report).toContain("execution 1, brief 0, scope 0, review 1, launch 1, unknown 1");
+  expect(report).toContain("execution 1, brief 0, scope 0, review 1, launch 1, unknown 0, not recorded 1");
   expect(outcomes.at(-1).outcome).toMatchObject({ attempts: null, causes: null });
   for (const bad of [0, -1, 1.5, "", "2x", Infinity]) expect(() => toEntry(advice, { attempts: bad })).toThrow("--attempts");
   for (const bad of [-1, "", "forever", Infinity]) expect(() => toEntry(advice, { seconds: bad })).toThrow("--seconds");

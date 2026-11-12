@@ -301,7 +301,7 @@ input and reasoning counts part of output; no total token attribute is emitted.
 
 `record` projects exactly verdict, check, level, attempts, seconds, causes, subscription, resolved effort,
 `effort_from` and advice id, alongside identity and command state. It shares anonymous telemetry's pick/shape
-helpers: unknown enum values become `other`. No record model, note, report, subagent text, run id or ledger path
+helpers: unknown enum values become `other`. No record model, note, cause detail, report, subagent text, run id or ledger path
 is sent. A worker verdict of partial or blocked is data about the run, not failure of a successful record command.
 
 ### Launch index
@@ -495,6 +495,7 @@ producer, including config and input notes forwarded into `warnings`.
 | `config_reserve` | Missing or invalid reserve. |
 | `config_choice` | Invalid subscription choice. |
 | `config_enabled` | Invalid enabled setting. |
+| `config_repeat` | Invalid cause repeat window. |
 | `decision_dropped` | Invalid or duplicate decision entry dropped. |
 | `headroom_ignored` | Invalid headroom input ignored. |
 | `lead_session_ignored` | Invalid lead session ignored. |
