@@ -80,19 +80,28 @@ export const herdrTypable = (shell, argv) => !["powershell", "cmd"].includes(she
 export const FISH_PATH = "fish reads a backslash before another backslash or a quote as an escape even inside quotes, so a folder path holding one, or ending in a backslash, would reach it changed. Use a folder whose path has none, or a pane running another shell.";
 export const fishTypable = (...words) => !words.some((w) => /\\\\|\\'|\\$/.test(String(w)));
 const cmdq = (s) => { if (!cmdTypable(s)) throw new Error(CMD_PATH); return `"${String(s).replaceAll('"', '""')}"`; };
-// `unset(name)`: the shell drops a variable the worker must not have (an extra account's: worker-env's paneEnv). The
-// name is a registry's, typed as it is; fish, a posix shell here, has its own word for it, for the global the pane
-// inherited only: unscoped, it erases a universal variable of that name, the user's own (fish 4.9.3, measured).
+// `unset(name)`: the shell drops a variable the worker must not have (an extra account's). The name is a registry's,
+// typed as it is. Set empty is not removed: Claude Code 2.1.322 on macOS, measured 2026-11-11, then keeps its files
+// under the working folder (`claude auth status` said "configDirectory": "" and "projectsDirectory": "projects").
+// `set(name, dir)`: the shell takes an extra account's folder.
+// They are typed only into a shell process-boundary's list names: one it calls "shell" may be csh, tcsh or xonsh,
+// which take neither line, and nushell takes neither either, so an extra account is refused in any other, before
+// anything is typed. So is one whose variable is removed in fish: removing the global the pane inherited leaves an
+// exported universal of that name, which reaches the harness (fish 4.9.3, measured).
+export const ACCOUNT_SHELL = "routr gives an extra account its folder only in a pane running sh, bash, zsh, PowerShell or cmd, or fish for an account whose folder is set. Use a pane running one of those, or launch it headless or in the Herdr app, which work from any shell.";
+export const accountTypable = (name) => /^(?:bash|zsh|fish|sh|pwsh|powershell|cmd)(?:\.exe)?$/i.test(String(name ?? ""));
 export const SHELLS = {
   posix: {
     cd: (dir) => `cd -- ${quote(dir)}`,
-    unset: (name, fish) => (fish ? `set -e -g ${name}` : `unset ${name}`),
+    unset: (name) => `unset ${name}`,
+    set: (name, dir, fish) => (fish ? `set -gx ${name} ${quote(dir)}` : `export ${name}=${quote(dir)}`),
     privateStart: (variable, dir, exe, argv) => ["env", `${variable}=${dir}`, "sh", "-c",
       `trap 'rm -rf -- "$${variable}"' EXIT; trap 'exit 129' HUP; trap 'exit 130' INT; trap 'exit 143' TERM; ${[exe, ...argv].map(quote).join(" ")}`].map(quote).join(" "),
   },
   powershell: {
     cd: (dir) => `Set-Location -LiteralPath ${psq(dir)}`,
     unset: (name) => `Remove-Item -LiteralPath Env:${name} -ErrorAction SilentlyContinue`,
+    set: (name, dir) => `$env:${name}=${psq(dir)}`,
     // A watcher removes the folder once the pane's shell is gone, however it went: an exit hook in the shell itself did
     // not fire when herdr closed the pane, and a watcher started as the shell's child made herdr call the pane busy
     // (both seen on Windows 11). Created through WMI, the watcher is nobody's child. The command line is built by
@@ -105,6 +114,7 @@ export const SHELLS = {
   cmd: {
     cd: (dir) => `cd /d ${cmdq(dir)}`,
     unset: (name) => `set ${name}=`,
+    set: (name, dir) => `set ${cmdq(`${name}=${dir}`)}`,
     privateEnv: (variable, dir) => `set ${cmdq(`${variable}=${dir}`)}`,
   },
 };
@@ -191,10 +201,8 @@ export const splitArgs = (direction, cwd, carriers = {}, { shown = false, pane =
 
 // One split through `call(args, shown, tolerate)` (one herdr command, which throws on failure unless `tolerate`; `shown`
 // is the command as output may carry it): the new pane's id.
-// `shownEnv`: `env` as the log shows it, where a value shows as FORWARDED (an extra account's folder, as a config
-// location does).
-export async function splitPane(call, direction, cwd, carriers, { pane = null, env = {}, shownEnv = env } = {}) {
-  const r = await call(splitArgs(direction, cwd, carriers, { pane, env }), splitArgs(direction, cwd, carriers, { pane, env: shownEnv, shown: true }));
+export async function splitPane(call, direction, cwd, carriers, { pane = null, env = {} } = {}) {
+  const r = await call(splitArgs(direction, cwd, carriers, { pane, env }), splitArgs(direction, cwd, carriers, { pane, env, shown: true }));
   const id = r.data?.result?.pane?.pane_id;
   if (typeof id !== "string" || !id) throw new Error("Herdr split returned no pane id");
   return id;
@@ -211,8 +219,8 @@ export const worktreeArgs = (cwd, branch, base = null) => ["worktree", "create",
 // fails; a close that fails leaves an extra shell pane and is returned, not thrown, for the caller to decide (launch
 // ends there; smoke:carriers fails its check): { pane, closed }.
 // `call` as splitPane's. smoke:carriers runs this too.
-export async function worktreePane(call, root, cwd, carriers, { env = {}, shownEnv = env } = {}) {
-  const pane = await splitPane(call, "right", cwd, carriers, { pane: root, env, shownEnv });
+export async function worktreePane(call, root, cwd, carriers, { env = {} } = {}) {
+  const pane = await splitPane(call, "right", cwd, carriers, { pane: root, env });
   const close = ["pane", "close", root];
   let closed = null; try { closed = await call(close, close, true); } catch {}
   return { pane, closed: closed?.ok === true };

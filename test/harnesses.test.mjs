@@ -49,7 +49,7 @@ const FIELDS = {
   helper: [false, strict({ command: plain(fn), children: plain((v) => Array.isArray(v) && v.every((x) => x instanceof RegExp)), left: plain(fn) }, ["command", "children", "left"])],
   // A plain name: it is typed into a pane's shell (herdr.mjs's SHELLS) without quoting.
   privateConfig: [false, strict({ file: plain(str), variable: plain((v) => typeof v === "string" && /^[A-Z_][A-Z0-9_]*$/.test(v)) }, ["file", "variable"])],
-  // The same: an extra account's variable is typed into a pane's shell by its unset line.
+  // The same: an extra account's variable is typed into a pane's shell by its set or unset line.
   folder: [false, strict({ variable: plain((v) => typeof v === "string" && /^[A-Z_][A-Z0-9_]*$/.test(v)), unsetAt: plain(str) }, ["variable"])],
 };
 // What one entry gets wrong, as `field` or `field.nested` paths; [] when it is whole. A field read only when another is

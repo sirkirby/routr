@@ -221,6 +221,7 @@ export const runRecord = (name, dir = runDir(name)) => readJsonFile(join(dir, RU
 export async function runWorker(dir, id, { env = process.env, begin = start, say = (s) => process.stderr.write(`${s}\n`), on = (sig, fn) => process.on(sig, fn), now = () => new Date().toISOString() } = {}) {
   const w = readRecordAt(dir);
   if (w?.backend !== "terminal" || w.id !== id) { say(`routr: ${dir} does not hold the terminal worker launch started; nothing was started`); return 2; }
+  let account; try { account = workerAccount(w)?.env; } catch (e) { say(`routr: ${e.message}; nothing was started`); return 2; }
   const name = w.name, file = join(dir, RUN_FILE), began = { pid: process.pid, started_at: now() };
   // One runner per worker: a second start of it would be a second harness on the same work.
   try { writeFileSync(file, JSON.stringify(began) + "\n", { flag: "wx", mode: 0o600 }); }
@@ -232,7 +233,7 @@ export async function runWorker(dir, id, { env = process.env, begin = start, say
     const p = terminalPlan(planOf(w, dir), firstMessage(join(dir, PROMPT_FILE)));
     // The terminal is the harness's: on Windows a hidden start would take its console from it.
     // Its extra account, as launch saved it: its folder, whatever the caller's or the core's is.
-    child = begin(p.executable, p.argv, { stdio: "inherit", cwd: w.cwd, env: terminalEnv({ carriers: w.carriers, config: w.config, adapter: p.env, account: workerAccount(w)?.env }, env), visible: true });
+    child = begin(p.executable, p.argv, { stdio: "inherit", cwd: w.cwd, env: terminalEnv({ carriers: w.carriers, config: w.config, adapter: p.env, account }, env), visible: true });
   } catch (e) { return notStarted(typeof e?.code === "string" ? e.code : "start_failed"); }
   if (Number.isInteger(child.pid)) { began.harness_pid = child.pid; record({}); }
   // `hc kill` is hangup, then terminate, then kill: this process stays until the harness has had each. An interrupt

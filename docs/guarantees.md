@@ -148,7 +148,8 @@ How usage is ranked: [ranking.md](ranking.md). A reserve is never offered.
 
 A harness is used only once its own status command says it is signed in. One that is not gets no model list, no usage
 read, no refresh, and no launch, because asking it anything else can open its sign-in in your browser. routr never
-starts a harness's sign-in; it says what to run.
+starts a harness's sign-in; it says what to run. Where an extra account of it is signed in, its model list is read
+with that account's folder.
 
 ## More than one account of a harness
 
@@ -161,24 +162,26 @@ a shell that sets `CLAUDE_CONFIG_DIR` or `CODEX_HOME` to its folder), the harnes
   (`CLAUDE_CONFIG_DIR`, `CODEX_HOME`), over routr's own environment and over the same name in any case on Windows: its
   sign-in check, its usage read, and its worker in a pane routr splits, in a herdr-core terminal and headless. Where
   the harness must find its default folder unnamed (Claude Code's `~/.claude`), the variable is removed instead, your
-  own value too; in a pane routr splits, by a line typed into that pane's shell before the harness starts. In fish
-  that line leaves a universal variable as it is: an exported one of the same name still reaches the harness, and
-  routr cannot see that. A pane routr splits is handed the folder as its shell starts: a shell startup file that sets
-  the same variable replaces it, and routr cannot see that. Nothing else of the environment changes, and no other
-  variable is ever set for an account. Which variable, and where each was read or measured, is in the
-  [harness reference](../skills/routr/references/harnesses.md).
-- **Kept with the worker.** A headless or terminal worker's record holds the subscription's name and its folder, and
-  every later turn is started with them, whoever sends the next message and from whatever environment. The folder
-  shows as `<forwarded>` in launch's `start.env`.
+  own value too. In a pane routr splits, a line typed into that pane's shell before the harness starts sets or removes
+  it. A shell other than sh, bash, zsh, fish, PowerShell or cmd is refused, and so is fish where the variable must be
+  removed (an exported universal of that name would still reach the harness). Nothing
+  else of the environment changes, and no other variable is ever set for an account. Which
+  variable, and where each was read or measured, is in the [harness reference](../skills/routr/references/harnesses.md).
+- **Kept with the worker.** A headless or terminal worker's record holds the subscription's name, its folder and
+  whether its variable was removed, and every later turn is started with them, whoever sends the next message and from
+  whatever environment; one with the variable removed is refused where the home folder's default is another folder.
+  The folder shows as `<forwarded>` in launch's `start.env`.
 - **Never another account.** An account routr cannot use (a harness with no such variable, a folder that is not a
   full path or under `~/`, a name routr cannot take or one already taken) is left out with a note, so `launch`
-  refuses its name. An existing pane keeps the environment it started with, so `launch` refuses `--pane` for an
-  account, except in the rerun it offers itself for a pane it split. routr does not check that the pane is the one it
-  split: `--continue` typed by hand on another pane is not refused, and that worker runs on what that pane's shell
-  names.
+  refuses its name. `launch` reads the default config, so it refuses a name its advice ranked from another folder
+  (`dispatch --config` another file, or `accounts` changed since). An existing pane keeps the environment it started
+  with, so `launch` refuses `--pane` for an account, except in the rerun it offers itself for a pane it split, and it
+  never hands an account's task to an agent already running in a pane. routr does not check that a pane holding a
+  shell is the one it split: `--continue` typed by hand on another such pane is not refused, and its shell is given
+  the folder.
 - **Kept apart.** Its sign-in answer and its usage reading are kept under its own name, so one name's are never
-  served for another; a name pointed at another folder keeps the old folder's answer until it is next asked (up to 6
-  hours for a sign-in). The statusline snapshot is one file whatever folder Claude Code ran with, so an account is
+  served for another. A name pointed at another folder, or at the same one with its variable now removed or set, is
+  asked and read again. The statusline snapshot is one file whatever folder Claude Code ran with, so an account is
   always read from Claude's own `/usage`, and `routr statusline`, run by a Claude Code on an account's folder, saves
   nothing. It reads the default config file for that, as it is written, on every render; with `--config` elsewhere it
   cannot know, and saves as before.

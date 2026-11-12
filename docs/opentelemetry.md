@@ -458,7 +458,7 @@ shape checks as spans. There is no warning text, why text, harness output or exc
 
 | Attribute | Type | Values |
 |---|---|---|
-| `routr.needs_input.why` | `string` | `shell_not_ready`, `startup_question`, `worker_busy`, `wrong_harness`, `wrong_folder`, `identity_unknown`, `worker_question`, `start_unconfirmed`. |
+| `routr.needs_input.why` | `string` | `shell_not_ready`, `startup_question`, `worker_busy`, `wrong_harness`, `wrong_folder`, `wrong_account`, `identity_unknown`, `worker_question`, `start_unconfirmed`. |
 | `routr.warning.code` | `string` | One code from the warning table below, assigned where the warning is made. |
 | `routr.worker.state.from` | `string` | Previous holder state: `starting`, `working`, `waiting`, `idle`, `failed`, `stopped`, `no_task`. |
 | `routr.worker.state.to` | `string` | New holder state, from the same list. Equal states emit nothing. |

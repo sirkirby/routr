@@ -26,7 +26,7 @@ export const LOG_EVENTS = Object.freeze({
   "routr.usage.failed": { severityNumber: 13, severityText: "WARN", attributes: { "error.type": "string", "routr.subscription": "string" } },
   "routr.worker.state": { severityNumber: 9, severityText: "INFO", attributes: { "routr.worker.state.from": "string", "routr.worker.state.to": "string" } },
 });
-export const NEEDS_INPUT_CODES = Object.freeze(["shell_not_ready", "startup_question", "worker_busy", "wrong_harness", "wrong_folder", "identity_unknown", "worker_question", "start_unconfirmed"]);
+export const NEEDS_INPUT_CODES = Object.freeze(["shell_not_ready", "startup_question", "worker_busy", "wrong_harness", "wrong_folder", "wrong_account", "identity_unknown", "worker_question", "start_unconfirmed"]);
 
 export const OTEL_ATTRIBUTES = Object.freeze({ ...TRACE_ATTRIBUTES, ...Object.assign({}, ...Object.values(LOG_EVENTS).map((v) => v.attributes)), "routr.usage.window": "string" });
 export const IDENTITY_ATTRIBUTES = Object.freeze(["vcs.repository.url.full", "vcs.ref.head.name", "routr.cwd", "routr.worktree", "routr.lead.session_id", "routr.kind", "routr.backend", "routr.launch.id", "gen_ai.agent.name", "gen_ai.conversation.id", "routr.turn"]);

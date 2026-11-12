@@ -14,6 +14,8 @@ import { probe } from "./processes.mjs";
 export const SIGNED_IN_FILE = () => join(CACHE_DIR(), "signed-in.json");
 const KEEP_SEC = { true: 6 * 3600, false: 10 * 60 };
 const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return {}; } };
+// Is what is kept for `f`: an extra account's `{ dir, default_folder }` (harnesses' folderOf), or a harness's own (none).
+export const sameFolder = (kept, f) => kept?.dir === f?.dir && kept?.default_folder === f?.default_folder;
 
 // What the same answer said about billing (the registry's `auth.billing`), kept beside the state with the same
 // lifetime and returned with it: one answer, so no reader of billing depends on which check ran first in a process.
@@ -25,22 +27,24 @@ const billingOf = (b) => (b?.billing === "metered" && typeof b.why === "string" 
 
 // `harness` is the registry entry. `{ state, billing }`: the state is "yes", "no", or "no answer" (not installed, or it
 // hung): only "yes" gets work, and each other state says what to do about it. `billing` is what the same answer said
-// about billing, or null (always null beside a state that is not "yes").
-export async function signInState(name, harness, { fresh = false, nowSec = Date.now() / 1000, file = SIGNED_IN_FILE(), ask = probe } = {}) {
+// about billing, or null (always null beside a state that is not "yes"). `folder`: an extra account's, kept beside its
+// answer: one kept for another is none, so a name pointed elsewhere, or with its variable now removed or set, is asked
+// again.
+export async function signInState(name, harness, { fresh = false, nowSec = Date.now() / 1000, file = SIGNED_IN_FILE(), ask = probe, folder } = {}) {
   const kept = readJson(file)[name];
-  if (!fresh && kept?.state && nowSec - kept.ts < KEEP_SEC[kept.state === "yes"]) return { state: kept.state, billing: kept.state === "yes" ? billingOf(kept.billing) : null };
+  if (!fresh && kept?.state && sameFolder(kept, folder) && nowSec - kept.ts < KEEP_SEC[kept.state === "yes"]) return { state: kept.state, billing: kept.state === "yes" ? billingOf(kept.billing) : null };
   const r = await ask(harness.executable, harness.auth.check);
   const state = !r ? "no answer" : harness.auth.signedIn(r.out, r.code) ? "yes" : "no";
   let billing = null;
   if (state === "yes") try { billing = billingOf(harness.auth.billing?.(r.out, r.code)); } catch {}
-  try { writeJsonAtomic(file, { ...readJson(file), [name]: { ts: nowSec, state, ...(billing ? { billing } : {}) } }); } catch {}
+  try { writeJsonAtomic(file, { ...readJson(file), [name]: { ts: nowSec, state, ...folder, ...(billing ? { billing } : {}) } }); } catch {}
   return { state, billing };
 }
 export const signedIn = async (name, harness, o) => (await signInState(name, harness, o)).state === "yes";
 // The kept answer alone, however old, or null: for a read that must not run a harness (the usage-readings module's
 // kept readings). `{ state, billing }`, as signInState returns it.
-export const keptSignIn = (name, { file = SIGNED_IN_FILE() } = {}) => {
-  const kept = readJson(file)[name], state = kept?.state;
+export const keptSignIn = (name, { file = SIGNED_IN_FILE(), folder } = {}) => {
+  const kept = readJson(file)[name], state = sameFolder(kept, folder) ? kept?.state : null;
   return ["yes", "no", "no answer"].includes(state) ? { state, billing: state === "yes" ? billingOf(kept.billing) : null } : null;
 };
 // What to tell the user about a harness that is not ready.

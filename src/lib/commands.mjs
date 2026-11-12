@@ -15,7 +15,7 @@ import { ask } from "./systemone.mjs";
 import { DecisionError, decisionTarget, failedReading, readingModel } from "./providers.mjs";
 import { append, assess, briefSha, LEDGER_PATH, parseReportSubagents, read, RunIdError, toEntry } from "./ledger.mjs";
 import { installId, pendingCount, telemetryRows, telemetryState, telemetryStatus } from "./telemetry.mjs";
-import { ensureParent } from "./state-files.mjs";
+import { ensureParent, folderSha } from "./state-files.mjs";
 import { standalone } from "./processes.mjs";
 import { CHECK_VERSION, checkQuestions, LEVELS, MEANING, questions, VERSION } from "./questions.mjs";
 import { ADVICE_STEPS, count } from "./wording.mjs";
@@ -86,6 +86,10 @@ async function adviseCommandBody(mode, brief, { config, notes: configNotes = [] 
     try { capacity = capacityView(advice.level, usage, config, recentLaunches()); }
     catch { const { failure, next } = capacityFailure(); capacity = { subscriptions: emptyRanking(failure.why), unavailable: [failure], next: [next], stale: [] }; }
     out.subscriptions = capacity.subscriptions;
+    // Each extra account's folder as this config named it, as a fingerprint: launch reads the default config, and
+    // refuses a name that is another folder there (advice-file.mjs matchAccount). Absent without extra accounts.
+    const accounts = Object.entries(config.subscriptions).filter(([, s]) => s.harness).map(([name, s]) => [name, folderSha(s.config_dir)]);
+    if (accounts.length) out.accounts = Object.fromEntries(accounts);
     out.unavailable.push(...capacity.unavailable);
     out.warnings.push(...capacity.stale.map((s) => s.warning));
     // Capacity steps first, then the advice's own; a stopped reader's retry after them.

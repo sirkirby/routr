@@ -49,6 +49,8 @@ export const configDirOf = (v) => {
   const p = /^~[\\/]/.test(v) ? join(home(), v.slice(2)) : v;
   return isAbsolute(p) ? resolve(p) : null;
 };
+// What dispatch advice keeps of an extra account's folder, for launch to compare (advice-file.mjs): never the path.
+export const folderSha = (dir) => createHash("sha256").update(realOr(dir)).digest("hex").slice(0, 12);
 
 export function ensureParent(file, { mkdir = mkdirSync } = {}) {
   const dir = dirname(resolve(file));

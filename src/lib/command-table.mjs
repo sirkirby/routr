@@ -63,7 +63,7 @@ export const COMMANDS = {
   },
   dispatch: {
     name: "dispatch",
-    contract: { fields: ["id", "ts", "mode", "question_set", "brief_sha", "brief_chars", "provider", "decision_model", "unmeasured", "ms", "answers", "level", "sure", "between", "work_type", "high_risk", "worker", "facts", "notes", "meaning", "subscriptions"] },
+    contract: { fields: ["id", "ts", "mode", "question_set", "brief_sha", "brief_chars", "provider", "decision_model", "unmeasured", "ms", "answers", "level", "sure", "between", "work_type", "high_risk", "worker", "facts", "notes", "meaning", "subscriptions", "accounts"] },
     description: "an orchestrator is about to launch a worker → work assessment plus eligible subscriptions and headroom; choose for quality, then compare capacity among suitable options; unavailable names failed decision-model and usage readings, with recovery actions; fresh usable readings stay available",
     args: [
       { name: '"<brief>"', description: "task brief, word for word what the worker will get (or pipe it on stdin or pass --task-file); unknown flag-led input without a stdin brief is refused; quote a multi-word inline brief containing flags", required: true },

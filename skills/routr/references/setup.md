@@ -25,7 +25,8 @@ irm https://raw.githubusercontent.com/sirkirby/routr/main/install.ps1 | iex
 It changes nothing. It reports which harnesses are installed and signed in, which have a live usage source, whether
 each decision-list entry answers, and whether a config exists. A harness that is installed but not signed in gets no work
 (dispatch, launch) until the user signs in, and setup neither adds it, turns it on, nor asks it for models or effort
-levels; one already on can still be turned off. Setup shows the command to run beside it (greyed when it cannot be
+levels, unless one of its extra accounts is signed in; one already on can still be turned off. Setup shows the
+command to run beside it (greyed when it cannot be
 chosen), `setup --yes` notes each one it did not add ("<name> left out: …"), doctor names the command, and routr never
 starts a sign-in itself. Lines marked `!!` need fixing, and it ends with a numbered list of what to
 do next. `routr setup` does the writing (step 3). A person can run it alone in a terminal and answer its

@@ -89,7 +89,7 @@ export function nextSteps(r, { platform = process.platform } = {}) {
   for (const n of r.config.subscriptions ?? []) if (!r.config.off?.includes(n) && (r.harnesses[n] ?? r.accounts?.[n])?.usage_stale) steps.push((r.harnesses[n] ?? r.accounts[n]).usage_stale);
   // A subscription the user set up whose harness is signed out gets no work until they sign in again.
   for (const n of r.config.subscriptions ?? []) if (!r.config.off?.includes(n) && r.harnesses[n]?.installed && !r.harnesses[n].signed_in) steps.push(`${HARNESSES[n].label} is set up in routr but gets no work: ${r.harnesses[n].sign_in}`);
-  for (const [n, a] of Object.entries(r.accounts ?? {})) if (!a.signed_in) steps.push(`${n} is set up in routr but gets no work: ${a.sign_in}`);
+  for (const [n, a] of Object.entries(r.accounts ?? {})) if (!r.config.off?.includes(n) && !a.signed_in) steps.push(`${n} is set up in routr but gets no work: ${a.sign_in}`);
   if (!Object.values(r.harnesses).some((h) => h.installed)) steps.push(`Install and log in to at least one harness: ${KINDS.slice(0, -1).map((n) => HARNESSES[n].installAs).join(", ")}, or ${HARNESSES[KINDS.at(-1)].installAs}`);
   // A harness whose reader answered with no windows for a reason routr cannot tell (its `usage.unexplainedNoWindows`:
   // Claude's /usage, or its statusline after a prompt): a seat with no quota, or a plan routr has not seen send them.
@@ -132,9 +132,9 @@ export async function inspect({ configPath, quiet } = {}) {
   const step = async (label, p) => { try { return await p; } finally { if (tty) process.stderr.write(`  checked ${label}\n`); } };
   const path = configPath ?? CONFIG_PATH();
   const { config, notes } = loadConfig(path); // read once: the usage step and the config report use the same reading
-  // An extra account of a harness found here, turned on, is asked and read as its harness is, with its folder: its
+  // An extra account of a harness found here, on or off, is asked and read as its harness is, with its folder: its
   // harness signed in says nothing of it.
-  const accounts = enabledSubscriptions(config).filter((n) => found.includes(config.subscriptions[n].harness)), keys = [...found, ...accounts];
+  const accounts = Object.keys(config.subscriptions).filter((n) => found.includes(config.subscriptions[n].harness)), keys = [...found, ...accounts];
   const targets = decisionTargets(config);
   if (tty) process.stderr.write(`Checking ${["the decision models", ...found.map((n) => `\`${HARNESSES[n].executable}\``)].join(" and ")}${found.length ? " (a harness can take up to 20 s to answer)" : ""}…\n`);
   const keyCheck = async () => {
@@ -165,7 +165,9 @@ export async function inspect({ configPath, quiet } = {}) {
       .then((served) => served.map((x) => x.row))), // a turned-off one is never refreshed
     step("the decision models", keyCheck()),
     statesP,
-    ...found.map((n) => statesP.then((st) => (st[n] !== "yes" ? null : step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.()).then((l) => l || null, () => null))))),
+    // One signed out on its own lists them through its first extra account signed in: models are a harness's setting.
+    ...found.map((n) => statesP.then((st) => { const by = st[n] === "yes" ? n : accounts.find((a) => config.subscriptions[a].harness === n && st[a] === "yes");
+      return !by ? null : step(`${n}'s models`, Promise.resolve(HARNESSES[n].models?.({ account: accountOf(by, config) })).then((l) => l || null, () => null)); })),
   ]);
   // How a reading reads in one line: a number, a billed seat's note, or why there is none.
   const said = (u) => (u.headroom != null ? `live: ${Math.round(u.headroom * 100)}% left (${u.source}, ${u.ageSec}s old)`
@@ -299,7 +301,11 @@ export function render(r, { platform = process.platform } = {}) {
     const models = h.models?.length ? `\n            models: ${h.models.slice(0, MODELS_SHOWN).join(", ")}${more}` : "";
     line(off ? "absent" : h.installed ? (h.signed_in ? "ok" : r.config.subscriptions.includes(n) ? "need" : "absent") : h.off_path || !any ? "need" : "absent", `${n.padEnd(7)} ${where}${models}`);
   }
-  for (const [n, a] of Object.entries(r.accounts ?? {})) line(a.signed_in ? "ok" : "need", `${n} ${a.harness} account${a.signed_in ? ` · usage ${a.usage}` : `, but ${a.sign_in.replace(/^`[^`]+` /, "it ")}. routr leaves it out until then`}`);
+  for (const [n, a] of Object.entries(r.accounts ?? {})) {
+    const off = r.config.off?.includes(n);
+    line(off ? "absent" : a.signed_in ? "ok" : "need", `${n} ${a.harness} account${off ? ` · turned off in your settings (${a.signed_in ? "" : `${a.sign_in}, then `}routr setup --enable ${a.harness})`
+      : a.signed_in ? ` · usage ${a.usage}` : `, but ${a.sign_in.replace(/^`[^`]+` /, "it ")}. routr leaves it out until then`}`);
+  }
   for (const k of r.decision) {
     const asked = k.asked && k.model !== k.asked ? `, asked as ${k.asked}` : "";
     const measured = k.measured === false ? " · not a model routr has measured (ROUTR_DECISION_MODEL)" : k.unversioned ? " · Cloudflare does not version this name: docs/evidence.md says what was measured" : "";

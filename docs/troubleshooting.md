@@ -83,8 +83,9 @@ unknown capacity otherwise. You do not need `routr statusline`; setup no longer 
 ## A subscription is left out: "not signed in"
 
 routr asks each harness whether it is signed in before it asks it anything else, and one that is not gets no work:
-dispatch lists it under `excluded` with the command to run, doctor says the same, and setup and launch skip it. Sign
-in with that command; routr sees it within 10 minutes, or at once with `routr doctor`. routr never opens a sign-in
+dispatch lists it under `excluded` with the command to run, doctor says the same, and launch skips it, as setup does
+unless one of its extra accounts is signed in. Sign in with that command; routr sees it within 10 minutes, or at once
+with `routr doctor`. routr never opens a sign-in
 itself. "Did not answer its sign-in check" means the command is missing from PATH or hung.
 
 ## Cursor's usage is "unknown"

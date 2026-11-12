@@ -7,7 +7,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { configOf, loadConfig, oneReading } from "./config.mjs";
 import { accountOf, HARNESSES, kindError, notReady, plan, MODEL_REQUIRED } from "./harnesses.mjs";
-import { dispatchAdvice, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
+import { dispatchAdvice, matchAccount, matchAdvice, readAdvice, readTask, savedDecisionFailures } from "./advice-file.mjs";
 import { doNext, launchNext, runNext } from "./next.mjs";
 import { CLOSING } from "./wording.mjs";
 import { BRANCH, runHerdr } from "./herdr.mjs";
@@ -134,6 +134,7 @@ async function launchBody(args, { run = runHerdr, sleep = (ms) => Bun.sleep(ms),
         const advice = dispatchAdvice(readAdvice(resolve(o.advice)));
         out.advice = { file: o.advice, matches: false };
         matchAdvice(advice, task);
+        if (o.account) matchAccount(advice, o.account);
         out.advice.matches = true; adviceForLaunch(advice.id); advised = advice;
         out.unavailable.push(...savedDecisionFailures(advice));
         recordOptions = { ...o, advice: resolve(o.advice), ...(o["task-file"] ? { "task-file": resolve(o["task-file"]) } : {}) };

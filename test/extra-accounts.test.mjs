@@ -3,20 +3,21 @@
 // in the registry. The first harness here is the test's own, so nothing can lean on Claude Code or Codex; theirs follow.
 // A harness entry with no `accounts` is the account the environment names.
 import { afterAll, afterEach, beforeEach, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, join, resolve } from "node:path";
 import { enabledSubscriptions, loadConfig } from "../src/lib/config.mjs";
-import { accountAt, accountOf, HARNESSES, KINDS, notReady, signIn, SOURCES, workerAccount } from "../src/lib/harnesses.mjs";
+import { accountAt, accountOf, folderOf, HARNESSES, KINDS, notReady, savedAccount, signIn, SOURCES, workerAccount } from "../src/lib/harnesses.mjs";
 import { runWorker } from "../src/lib/backend-terminal.mjs";
-import { SHELLS } from "../src/lib/herdr.mjs";
+import { keptSignIn } from "../src/lib/signin.mjs";
+import { FISH_PATH, SHELLS } from "../src/lib/herdr.mjs";
 import { readHistory } from "../src/lib/launch-history.mjs";
 import { assess, briefSha, resolveEffort } from "../src/lib/ledger.mjs";
 import { rankSubscriptions } from "../src/lib/pick.mjs";
-import { CLAUDE_SNAPSHOT, configDirOf, home } from "../src/lib/state-files.mjs";
+import { CLAUDE_SNAPSHOT, configDirOf, folderSha, home } from "../src/lib/state-files.mjs";
 import { capacityView } from "../src/lib/capacity.mjs";
 import { run, start } from "../src/lib/processes.mjs";
-import { carriersFrom, paneEnv, terminalEnv, workerEnv } from "../src/lib/worker-env.mjs";
+import { terminalEnv, workerEnv } from "../src/lib/worker-env.mjs";
 import { COMMANDS } from "../src/lib/command-table.mjs";
 import { commandTrace, usageSpans } from "../src/lib/traces.mjs";
 import { fileStore, memoryStore, usageReaders, usageReadings } from "../src/lib/usage-readings.mjs";
@@ -135,6 +136,19 @@ test("an account is its harness's folder entry and nothing else: the variable na
   expect(() => workerAccount({ kind: "codex", subscription: "codex-b", config_dir: "relative" })).toThrow("not a full path");
 });
 
+test("a worker's record keeps whether its folder variable was removed: a later turn from another home folder is refused", () => {
+  const dflt = join(home(), ".testy"), was = [process.env.HOME, process.env.USERPROFILE];
+  const w = { kind: "testy", ...savedAccount(accountAt("testy-home", "testy", "~/.testy")) }, b = { kind: "testy", ...savedAccount(accountAt("testy-b", "testy", B)) };
+  let there; process.env.HOME = process.env.USERPROFILE = scratch("accounts-other-home");
+  try {
+    there = { kind: "testy", ...savedAccount(accountAt("testy-home", "testy", dflt)) };
+    expect(() => workerAccount(w)).toThrow(`testy-home's folder ${dflt} was its harness's default when it was launched, and here the default, ${join(home(), ".testy")}, is another folder: this worker runs only where the default is still ${dflt}`);
+    expect(workerAccount(b).env).toEqual({ TESTY_HOME: B });
+    expect(workerAccount({ kind: "testy", subscription: "testy-home", config_dir: dflt }).env).toEqual({ TESTY_HOME: dflt });
+  } finally { [process.env.HOME, process.env.USERPROFILE] = was; }
+  expect(workerAccount(there).env).toEqual({ TESTY_HOME: dflt }); // launched where it was not the default: set here too
+});
+
 test("two and three accounts under one harness work from entry alone: config, sign-in, usage, kept readings, ranking", async () => withRefresh(async () => {
   const THREE = { testy: sub({ accounts: { b: B, home: "~/.testy", "3": OUT } }) };
   const { config, notes } = loadConfig(configFile(THREE));
@@ -162,7 +176,7 @@ test("two and three accounts under one harness work from entry alone: config, si
   const dryB = await launch(["--kind", "testy-b", "--name", "tb", ...taskFiles().flags, "--direction", "right", "--dry-run"], { env: { HERDR_ENV: "1" }, settings: () => ({ config }) });
   expect(dryB.ok).toBe(true);
   expect(dryB.start.env).toEqual({ TESTY_HOME: "<forwarded>" });
-  expect(dryB.would_run.find((c) => c.includes("pane split"))).toContain('--env "TESTY_HOME=<forwarded>"');
+  expect(dryB.would_run.find((c) => c.includes("pane run"))).toContain("TESTY_HOME=");
   const dryHome = await launch(["--kind", "testy-home", "--name", "th", ...taskFiles().flags, "--direction", "right", "--dry-run"], { env: { HERDR_ENV: "1" }, settings: () => ({ config }) });
   expect(dryHome.ok).toBe(true);
   expect(dryHome.start.env).toEqual({ TESTY_HOME: null });
@@ -176,7 +190,7 @@ test("sign-in answers of two accounts are kept apart: neither is served for the 
   const b = accountAt("testy-b", "testy", B), out = accountAt("testy-out", "testy", OUT);
   expect([await signIn("testy", { file, ask, nowSec: T }), await signIn(b, { file, ask, nowSec: T }), await signIn(out, { file, ask, nowSec: T })].map((a) => a.state)).toEqual(["yes", "yes", "no"]);
   expect(asked).toEqual(["the environment's", { TESTY_HOME: B }, { TESTY_HOME: OUT }]);
-  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ testy: { ts: T, state: "yes" }, "testy-b": { ts: T, state: "yes" }, "testy-out": { ts: T, state: "no" } });
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ testy: { ts: T, state: "yes" }, "testy-b": { ts: T, state: "yes", dir: B, default_folder: false }, "testy-out": { ts: T, state: "no", dir: OUT, default_folder: false } });
   asked.length = 0;
   expect((await signIn(b, { file, ask, nowSec: T + 60 })).state).toBe("yes");
   expect(asked).toEqual([]);
@@ -184,6 +198,54 @@ test("sign-in answers of two accounts are kept apart: neither is served for the 
   expect(await notReady(accountAt("testy-h", "testy", "~/.testy"), { file, nowSec: T, ask: async () => ({ out: "signed out", code: 1 }) })).toBe("not signed in: run `testy login` with TESTY_HOME unset");
   expect(await notReady(b, { file, fresh: true, ask: async () => null })).toBe("`testy` did not answer its sign-in check (not installed, or it hung)");
 }));
+
+test("a name pointed at another folder is asked again: its kept answer counts only for the folder it was asked with", async () => {
+  const file = join(scratch("accounts-moved"), "signed-in.json"), asked = [];
+  const ask = async (cmd, args, o) => { asked.push(o.account.TESTY_HOME); return { out: o.account.TESTY_HOME === OUT ? "signed out" : "signed in", code: o.account.TESTY_HOME === OUT ? 1 : 0 }; };
+  expect(await notReady(accountAt("testy-b", "testy", B), { file, ask, nowSec: T })).toBeNull();
+  // The same name on a signed-out folder (a typo fixed, an account swapped, another config file's), within the 6 hours.
+  expect(await notReady(accountAt("testy-b", "testy", OUT), { file, ask, nowSec: T + 60 })).toBe(`not signed in: run \`testy login\` with TESTY_HOME set to ${OUT}`);
+  expect([asked, keptSignIn("testy-b", { file, folder: { dir: B, default_folder: false } })]).toEqual([[B, OUT], null]);
+});
+
+test("a kept sign-in counts only with the account's variable as it was asked: set and removed are asked apart", async () => {
+  const file = join(scratch("accounts-modes"), "signed-in.json"), dir = join(home(), ".testy"), asked = [];
+  const ask = async (cmd, args, o) => { asked.push(o.account.TESTY_HOME); return o.account.TESTY_HOME === null ? { out: "signed in", code: 0 } : { out: "signed out", code: 1 }; };
+  expect((await signIn(accountAt("testy-h", "testy", dir), { file, ask, nowSec: T })).state).toBe("yes");
+  expect((await signIn(accountAt("testy-h", "testy", dir, false), { file, ask, nowSec: T + 1 })).state).toBe("no");
+  expect(asked).toEqual([null, dir]);
+});
+
+
+test("a name pointed at another folder has no kept reading: unknown, never the old folder's number, which a late refresh does not put back", async () => {
+  const store = memoryStore(), C = resolve("/acct/c"), claims = [], keys = ["testy-b"];
+  let now = T;
+  const at = (b) => usageReadings({ configPath: null, config: loadConfig(configFile({ testy: sub({ accounts: { b } }) })).config, store, clock: { now: () => now },
+    starter: { start: (argv) => claims.push(argv[argv.indexOf("--claim") + 1]) }, signIn: { state: async () => ({ state: "yes" }), kept: () => null, why: () => "no" } });
+  const room = (r) => r.kept(keys, { mayRefresh: [] }).served[0].row.headroom;
+  await at(B).live(keys);
+  now += 3600; at(B).kept(keys); // B's refresh is claimed, and runs late
+  expect([room(at(B)), room(at(C))]).toEqual([0.8, null]);
+  await at(C).live(keys); await at(B).refreshClaimed(claims[0]);
+  expect(room(at(C))).toBeCloseTo(0.3);
+  at(C).kept(keys); expect(at(B).kept(keys).served[0].row.headroom).toBeNull(); // pointed back while C's refresh is under way
+  await at(B).refreshClaimed(claims[2]);
+  expect([claims.length, room(at(B)), room(at(C))]).toEqual([3, 0.8, null]);
+});
+
+test.skipIf(process.platform === "win32")("a folder named through a link is kept as its target: pointed elsewhere, its kept sign-in and kept reading are none", async () => {
+  const root = scratch("accounts-link"), a = join(root, "a"), b = join(root, "b"), seat = join(root, "seat"), file = join(root, "signed-in.json"), asked = [];
+  for (const d of [a, b]) mkdirSync(d);
+  symlinkSync(a, seat);
+  const ask = async (cmd, args, o) => { asked.push(realpathSync(o.account.TESTY_HOME)); return { out: "signed in", code: 0 }; };
+  const store = memoryStore(), readings = () => usageReadings({ configPath: null, config: loadConfig(configFile({ testy: sub({ accounts: { b: seat } }) })).config, store, clock: { now: () => T },
+    signIn: { state: async () => ({ state: "yes" }), kept: () => null, why: () => "no" } });
+  await notReady(accountAt("testy-b", "testy", seat), { file, ask, nowSec: T });
+  await readings().live(["testy-b"]);
+  rmSync(seat); symlinkSync(b, seat);
+  await notReady(accountAt("testy-b", "testy", seat), { file, ask, nowSec: T + 60 });
+  expect([asked, readings().kept(["testy-b"], { mayRefresh: [] }).served[0].row.headroom]).toEqual([[realpathSync(a), realpathSync(b)], null]);
+});
 
 test("Claude Code and Codex read an account with its folder: its variables, its own files, and never the statusline's one snapshot", async () => {
   const dir = scratch("accounts-readers"), calls = [];
@@ -225,8 +287,7 @@ test("every process start can be handed an account: its variables replace the ca
   // Over the lead's own folder that the worker saved, and over a headless turn's environment.
   expect(terminalEnv({ carriers: {}, config: { CLAUDE_CONFIG_DIR: "/lead" }, account: { CLAUDE_CONFIG_DIR: null } }, { PATH: "/bin" })).toEqual({ PATH: "/bin" });
   expect(workerEnv({}, { A: "1" }, { PATH: "/bin", TESTY_HOME: "/caller" }, { TESTY_HOME: B })).toEqual({ PATH: "/bin", A: "1", TESTY_HOME: B });
-  expect(paneEnv({ found: carriersFrom({}), plan: { X: "y" }, account: { TESTY_HOME: B } }, { warnings: [], start: { env: {} } }).split).toEqual({ env: { TESTY_HOME: B, X: "y" }, shownEnv: { TESTY_HOME: "<forwarded>", X: "y" } });
-  expect([SHELLS.posix.unset("X"), SHELLS.posix.unset("X", true), SHELLS.powershell.unset("X"), SHELLS.cmd.unset("X")]).toEqual(["unset X", "set -e -g X", "Remove-Item -LiteralPath Env:X -ErrorAction SilentlyContinue", "set X="]);
+  expect([SHELLS.posix.unset("X"), SHELLS.powershell.unset("X"), SHELLS.cmd.unset("X")]).toEqual(["unset X", "Remove-Item -LiteralPath Env:X -ErrorAction SilentlyContinue", "set X="]);
 });
 
 test("launch --kind takes the account's name: a pane routr splits is given its folder, or has the variable dropped in its shell, and an existing pane is refused", async () => {
@@ -235,18 +296,15 @@ test("launch --kind takes the account's name: a pane routr splits is given its f
   const go = async (kind, more = [], shellName) => { const f = fakeHerdr(t.dir, "testy", shellName); const r = await launch(["--kind", kind, "--name", "p1", ...t.flags, ...more], { env: { HERDR_ENV: "1" }, settings, run: f.run, now: f.now, sleep: f.sleep, home: scratch("accounts-history") }); return { r, f }; };
   const b = await go("testy-b", ["--direction", "right"]);
   expect([b.r.ok, b.r.state, b.r.kind, b.r.start.env, b.r.headline]).toEqual([true, "prompted", "testy", { TESTY_HOME: "<forwarded>" }, "routr: p1 (testy) took its task in pane w1:p2"]);
-  expect(b.r.ran.find((c) => c.includes("pane split"))).toContain('--env "TESTY_HOME=<forwarded>"');
   expect(b.r.next.find((n) => n.template?.startsWith("routr record")).template).toContain("--subscription testy-b");
-  expect(b.f.calls.find((a) => a[1] === "split")).toContain(`TESTY_HOME=${B}`);
   const tree = await go("testy-b", ["--worktree", "wt-b"]);
-  expect([tree.r.state, tree.f.calls.find((a) => a[1] === "split")]).toEqual(["prompted", expect.arrayContaining([`TESTY_HOME=${B}`])]);
-  expect(tree.r.ran.find((c) => c.includes("pane split"))).toContain('--env "TESTY_HOME=<forwarded>"');
+  expect([tree.r.state, tree.f.text()]).toEqual(["prompted", expect.arrayContaining([`pane run w1:p2 ${SHELLS[SHELL].set("TESTY_HOME", B)}`])]);
   const homeLaunch = await go("testy-home", ["--direction", "right"]);
   expect(homeLaunch.r.start.env).toEqual({ TESTY_HOME: null });
   expect(homeLaunch.f.calls.find((a) => a[1] === "split")).not.toContain("TESTY_HOME");
   expect(homeLaunch.f.text().some((c) => c.includes("pane run") && c.includes(SHELLS[SHELL].unset("TESTY_HOME")))).toBe(true);
   expect(homeLaunch.r.steps).toContainEqual({ step: "unset_env", ok: true, detail: `Removed TESTY_HOME from the pane's ${SHELL} shell` });
-  if (process.platform !== "win32") expect((await go("testy-home", ["--direction", "right"], "fish")).f.text().some((c) => c.includes("pane run") && c.includes("set -e -g TESTY_HOME"))).toBe(true);
+  if (process.platform !== "win32") expect((await go("testy-home", ["--direction", "right"], "fish")).r.error).toContain("or fish for an account whose folder is set");
   const existing = await go("testy-b", ["--pane", "w1:p1"]);
   expect(existing.r.ok).toBe(false);
   expect(existing.r.error).toContain("--pane cannot be used with testy-b: an existing pane keeps its own shell's environment. Leave --pane off, and routr splits a pane with it");
@@ -274,21 +332,26 @@ test("a launch counts toward its own subscription, and a turned-off or signed-ou
   expect(readHistory({ home: history }).records.map((r) => [r.subscription, r.model, r.effort, r.project, r.backend, r.name])).toEqual([["testy-b", "model-a", null, basename(t.dir), "pane", "p1"]]);
 });
 
-test("in the Herdr app, the worker's record keeps its account, and its runner starts the harness with it over the caller's and the core's", async () => {
-  const { config } = loadConfig(configFile(TESTY)), t = taskFiles(), seen = {};
+test("in the Herdr app, the worker's record keeps its account, and its runner starts the harness with it over the caller's and the core's, or refuses where the home folder's default is another folder", async () => {
+  const { config } = loadConfig(configFile(TESTY)), t = taskFiles(), seen = {}, at = {};
   let clock = 0;
   for (const [kind, name] of [["testy-b", "tb"], ["testy-home", "th"], ["testy", "tp"]]) {
     const r = await launch(["--kind", kind, "--name", name, ...t.flags], { env: { ...CORE, TESTY_HOME: "/caller/testy" }, settings: () => ({ config }), hc: fakeHc(name), self: (a) => ["/bin/routr", ...a], now: () => (clock += 100), home: scratch("accounts-history") });
     expect([name, r.ok, r.error]).toEqual([name, true, undefined]);
     const dir = r.worker.run, w = JSON.parse(readFileSync(join(dir, "worker.json"), "utf8"));
-    seen[name] = { start: r.start.env, subscription: w.subscription, config_dir: w.config_dir };
+    seen[name] = { start: r.start.env, subscription: w.subscription, config_dir: w.config_dir, default_folder: w.default_folder }; at[name] = [dir, w.id];
     rmSync(LOG, { force: true });
     const code = await runWorker(dir, w.id, { env: { ...process.env, TESTY_HOME: "/core/testy" }, say: () => {}, on: () => {}, begin: (cmd, args, opts, seams) => start(cmd, ["whoami"], { ...opts, stdio: "ignore" }, seams) });
     seen[name].ran = [code, started().map((s) => s.dir)];
   }
-  expect(seen.tb).toEqual({ start: { TESTY_HOME: "<forwarded>" }, subscription: "testy-b", config_dir: B, ran: [0, [B]] });
-  expect(seen.th).toEqual({ start: { TESTY_HOME: null }, subscription: "testy-home", config_dir: join(home(), ".testy"), ran: [0, [null]] });
-  expect(seen.tp).toEqual({ start: {}, subscription: undefined, config_dir: undefined, ran: [0, ["/core/testy"]] });
+  expect(seen.tb).toEqual({ start: { TESTY_HOME: "<forwarded>" }, subscription: "testy-b", config_dir: B, default_folder: false, ran: [0, [B]] });
+  expect(seen.th).toEqual({ start: { TESTY_HOME: null }, subscription: "testy-home", config_dir: join(home(), ".testy"), default_folder: true, ran: [0, [null]] });
+  expect(seen.tp).toEqual({ start: {}, subscription: undefined, config_dir: undefined, default_folder: undefined, ran: [0, ["/core/testy"]] });
+  // Its runner in a core whose home folder is another: the refusal, said, and nothing started.
+  const was = [process.env.HOME, process.env.USERPROFILE], said = [];
+  process.env.HOME = process.env.USERPROFILE = scratch("accounts-other-home");
+  try { expect(await runWorker(...at.th, { say: (s) => said.push(s), on: () => {}, begin: () => { throw new Error("started"); } })).toBe(2); } finally { [process.env.HOME, process.env.USERPROFILE] = was; }
+  expect(said).toEqual([expect.stringMatching(/^routr: testy-home's folder .+ was its harness's default when it was launched, .+; nothing was started$/)]);
 });
 
 const FAKE_CLAUDE = `
@@ -339,6 +402,46 @@ test("outside herdr, every turn of a worker runs on its account, whoever sends t
   } finally { for (const kind of ["claude-team", "claude-mine", "claude"]) { cli(["stop", "--name", `w-${kind}`]); cli(["cleanup", "--worker", `w-${kind}`]); } rmSync(root, { recursive: true, force: true }); }
 }, 120000);
 
+test("launch refuses an account's name that its advice ranked from another folder: dispatch --config another file, or accounts changed since", () => {
+  const root = mkdtempSync(join(process.platform === "darwin" ? "/tmp" : tmpdir(), "rs-")), bin = join(root, "bin"), work = join(root, "work"), started = join(root, "started.jsonl");
+  for (const d of [bin, work, join(root, ".config", "routr")]) mkdirSync(d, { recursive: true });
+  fakeExecutable(bin, "claude", FAKE_CLAUDE);
+  const file = (name, folder, over = {}) => { const path = join(root, name); writeFileSync(path, JSON.stringify({ subscriptions: { claude: sub({ accounts: { work: folder }, ...over }) } })); return path; };
+  const DEFAULT = join(".config", "routr", "config.json"), other = file("other.json", B), tuned = file("tuned.json", WORK, { reserve: 0.3 });
+  writeFileSync(join(root, "none.json"), JSON.stringify({ subscriptions: { claude: sub() } }));
+  file(DEFAULT, WORK);
+  const task = join(root, "task.md"); writeFileSync(task, "Rename foo to bar in x.js.");
+  const env = cliEnv(root, { PATH: [bin, dirname(process.execPath)].join(delimiter), ROUTR_NO_UPDATE: "1", FAKE_LOG: started });
+  for (const k of Object.keys(env)) if (/^(HERDR_|HC_|CLAUDECODE$|CLAUDE_CODE_|CLAUDE_CONFIG_DIR$|SANDBOX_RUNTIME$|CODEX_|TRACEPARENT$|TRACESTATE$|BAGGAGE$)/i.test(k)) delete env[k];
+  const cli = (args) => { const r = Bun.spawnSync([process.execPath, SCRIPT, ...args], { cwd: work, env, stdin: "ignore" }); return { r: JSON.parse(r.stdout.toString()), code: r.exitCode }; };
+  const save = (name, advice) => { const path = join(root, `${name}.advice.json`); writeFileSync(path, JSON.stringify(advice)); return path; };
+  const advised = (name, ...config) => { const { r } = cli(["dispatch", ...config, "--task-file", task]); return { r, path: save(name, r) }; };
+  const go = (kind, advice, ...more) => cli(["launch", "--kind", kind, "--name", "w1", "--model", "haiku", "--task-file", task, "--advice", advice, ...more]);
+  const REFUSED = "--advice ranked claude-work from a different folder than this launch would start; dispatch the exact task again, without --config";
+  try {
+    const mine = advised("mine"), others = advised("others", "--config", other), same = advised("same", "--config", tuned);
+    // Advice names each extra account's folder as a fingerprint, never its path.
+    expect([mine.r.accounts, same.r.accounts, others.r.accounts]).toEqual([{ "claude-work": folderSha(WORK) }, { "claude-work": folderSha(WORK) }, { "claude-work": folderSha(B) }]);
+    const real = join(root, "acct"), link = join(root, "acct-link"); mkdirSync(real); symlinkSync(real, link, "junction");
+    expect(folderSha(link)).toBe(folderSha(real));
+    expect([folderSha(B), Object.hasOwn(advised("none", "--config", join(root, "none.json")).r, "accounts"), COMMANDS.dispatch.contract.fields.includes("accounts")]).toEqual([expect.stringMatching(/^[a-f0-9]{12}$/), false, true]);
+    const refused = go("claude-work", others.path);
+    expect([refused.code, refused.r.ok, refused.r.state, refused.r.error, refused.r.advice]).toEqual([1, false, "failed", REFUSED, { file: others.path, matches: false }]);
+    expect(refused.r.next.map((n) => n.argv)).toEqual([["routr", "dispatch", "--task-file", task]]); // the step every advice refusal gives: dispatch again, on the default config
+    expect([existsSync(started), existsSync(join(root, ".local", "state", "routr", "workers", "w1"))]).toEqual([false, false]);
+    expect(go("claude-work", others.path, "--dry-run").r).toMatchObject({ ok: false, state: "planned", error: REFUSED });
+    // Taken as before: the same folder from another file, the harness's own entry, and advice that names no folder for it (an older routr's).
+    const older = save("older", { ...others.r, accounts: undefined });
+    for (const [kind, advice] of [["claude-work", mine.path], ["claude-work", same.path], ["claude", others.path], ["claude-work", older]]) expect([kind, advice, go(kind, advice, "--dry-run").r.error]).toEqual([kind, advice, undefined]);
+    // The default file's own accounts changed since dispatch: the name is another folder now.
+    file(DEFAULT, B);
+    expect([go("claude-work", mine.path, "--dry-run").r.error, go("claude-work", others.path, "--dry-run").r.error]).toEqual([REFUSED, undefined]);
+    // record takes the same advice and keeps none of it.
+    expect(cli(["record", "--advice", others.path, "--task-file", task, "--subscription", "claude-work", "--model", "haiku", "--effort", "default", "--verdict", "blocked", "--check", "none"]).r.ok).toBe(true);
+    expect(readFileSync(join(root, ".local", "share", "routr", "ledger.jsonl"), "utf8")).not.toContain(folderSha(B));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+}, 60000);
+
 test("a subscription name of the user's own never leaves the machine: telemetry and OpenTelemetry send a harness's name or other, and no reading of it; its effort is read from its harness's settings", async () => {
   const { telemetryRows } = await import("../src/lib/telemetry.mjs");
   const [sent] = telemetryRows([row({ chose: { subscription: "claude-team", model: "m", effort: "high", level: "standard" }, headroom: { "claude-team": { usable: 0.3, usage: "live" } } })], "install-a");
@@ -382,25 +485,24 @@ test("routr statusline saves no snapshot for a folder the config gives an accoun
   expect([runWith(WORK), runWith(undefined), runWith(join(dir, ".claude-other"))]).toEqual([false, false, true]);
 });
 
-test("a pane launch for an account that stops at needs_input is continued by the --pane rerun it offers", async () => {
+test("a pane launch for an account that stops at a startup question offers a fresh launch, and hands no task to the agent in the pane", async () => {
   const { config } = loadConfig(configFile(TESTY)), t = taskFiles(), f = fakeHerdr(t.dir, "testy"), o = { env: { HERDR_ENV: "1" }, settings: () => ({ config }), now: f.now, sleep: f.sleep, home: scratch("accounts-history") };
   let gets = 0;
   o.run = async (a) => (a[0] === "agent" && a[1] === "get" ? { ok: true, data: { result: { agent: { agent: "testy", agent_status: gets++ ? "idle" : "blocked", cwd: t.dir } } } }
     : a[0] === "agent" && a[1] === "explain" ? { ok: true, data: { result: { state: "blocked", matched_rule: { id: "trust_folder" } } } } : f.run(a));
-  const first = await launch(["--kind", "testy-home", "--name", "p1", ...t.flags, "--direction", "right"], o);
-  const rerun = first.next.find((n) => n.kind === "run" && n.argv.includes("--pane")).argv;
-  expect([first.state, rerun.slice(-5)]).toEqual(["needs_input", ["--pane", first.pane, "--cwd", t.dir, "--continue"]]);
-  expect(await launch(rerun.slice(2), o)).toMatchObject({ ok: true, state: "prompted", kind: "testy", start: { env: { TESTY_HOME: null } } });
-  expect(f.text().filter((c) => c.includes(SHELLS[SHELL].unset("TESTY_HOME")))).toHaveLength(1); // typed once, into the shell: never at the agent the rerun finds there
-  gets = 0; // stopped again: the rerun it offers carries routr's --continue once
-  expect((await launch(rerun.slice(2), o)).next.find((n) => n.kind === "run" && n.argv.includes("--pane")).argv.filter((a) => a === "--continue")).toEqual(["--continue"]);
+  const stop = async (kind) => { gets = 0; const r = await launch(["--kind", kind, "--name", "p1", ...t.flags, "--direction", "right"], o); return { r, again: r.next.find((n) => n.kind === "run" && n.argv[1] === "launch").argv }; };
+  const own = await stop("testy"), first = await stop("testy-home");
+  expect([own.r.state, own.again.slice(-4)]).toEqual(["needs_input", ["--pane", own.r.pane, "--cwd", t.dir]]); // a harness's own: the rerun into its pane, as before
+  expect([first.r.state, first.again.filter((a) => ["--pane", "--continue"].includes(a)), first.again.slice(-2)]).toEqual(["needs_input", [], ["--cwd", t.dir]]);
+  expect(await launch([...first.again.slice(2), "--pane", first.r.pane, "--continue"], o)).toMatchObject({ ok: false, state: "needs_input", needs_input: { why: expect.stringContaining("not one launch can tell is testy-home") } });
+  expect([f.text().filter((c) => c.includes("agent prompt")), readHistory({ home: o.home }).records]).toEqual([[], []]);
 });
 
 test("routr board ranks an account from its kept reading, and leaves a signed-out one out by its harness's step", async () => {
   const { boardCommand } = await import("../src/lib/board.mjs");
   const { config } = loadConfig(configFile({ testy: sub({ accounts: { b: B, out: OUT } }) })), dir = scratch("accounts-board");
   // Kept as a live read keeps them: each sign-in answer and reading under its own name, in routr's own cache.
-  for (const n of ["testy", "testy-b", "testy-out"]) { await signIn(accountOf(n, config) ?? n, { fresh: true }); fileStore().put(n, { source: "testy usage", takenAt: Date.now() / 1000, windows: [{ name: "week", usedPct: 20 }] }); }
+  for (const n of ["testy", "testy-b", "testy-out"]) { const a = accountOf(n, config); await signIn(a ?? n, { fresh: true }); fileStore().put(n, { source: "testy usage", takenAt: Date.now() / 1000, windows: [{ name: "week", usedPct: 20 }] }, undefined, { folder: a && folderOf(a) }); }
   const b = await boardCommand([], config, { ledger: join(dir, "ledger.jsonl") });
   expect([b.subscriptions.ranked.map((r) => r.subscription), b.subscriptions.excluded]).toEqual([["testy", "testy-b"], [{ subscription: "testy-out", why: `not signed in: run \`testy login\` with TESTY_HOME set to ${OUT}` }]]);
 });
@@ -439,6 +541,28 @@ test("doctor asks each extra account afresh with its folder: a signed-in harness
   expect(doc.next_steps).toContain(`claude-work is set up in routr but gets no work: not signed in: run \`claude auth login\` with CLAUDE_CONFIG_DIR set to ${WORK}`);
 });
 
+test("a harness signed out on its own lists its models through its first signed-in account, so doctor shows them and setup takes its settings, turned off too", async () => {
+  const dir = scratch("accounts-doctor"), path = configFile({ claude: sub({ enabled: false, accounts: { work: WORK, out: OUT } }), codex: sub({ accounts: { b: CODEX_B, c: OUT } }) });
+  fakeExecutable(dir, "codex", `const a = process.argv.slice(2), b = process.env.CODEX_HOME === ${JSON.stringify(CODEX_B)}, c = process.env.CODEX_HOME === ${JSON.stringify(OUT)};
+if (a[0] === "login") { console.log(b || c ? "Logged in using ChatGPT" : "Not logged in"); process.exit(b || c ? 0 : 1); }
+a[0] === "debug" ? console.log(JSON.stringify({ models: [{ slug: b ? "m-b" : c ? "m-c" : "m-own" }] })) : process.exit(1);`);
+  fakeExecutable(dir, "claude", `const a = process.argv.slice(2), w = process.env.CLAUDE_CONFIG_DIR === ${JSON.stringify(WORK)};
+a[0] === "auth" ? console.log(JSON.stringify({ loggedIn: w })) : a[0] === "--help" ? console.log("  --model <model>  an alias for the latest model (e.g. '" + (w ? "m-work" : "m-own") + "')") : process.exit(1);`);
+  const doc = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json", "--config", path], { env: cliEnv(dir, { PATH: dir, ROUTR_NO_UPDATE: "1" }) }).stdout.toString());
+  expect(["claude", "codex"].map((n) => [doc.harnesses[n].signed_in, doc.harnesses[n].models])).toEqual([[false, ["m-work"]], [false, ["m-b"]]]);
+  expect([doc.accounts["claude-out"].signed_in, doc.next_steps.filter((s) => s.startsWith("claude-out"))]).toEqual([false, []]); // turned off: no step of its own
+  const text = Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--config", path], { env: cliEnv(dir, { PATH: dir, ROUTR_NO_UPDATE: "1" }) }).stdout.toString();
+  expect(text.split("\n").filter((l) => /claude-(work|out) /.test(l)).map((l) => l.trim().split(" · ")[0].slice(0, 2) + " " + l.includes("turned off in your settings"))).toEqual(["-- true", "-- true"]);
+  const { guided } = await import("../src/lib/setup-guided.mjs"), offered = [];
+  await guided({ ui: { style: { dim: (s) => s }, glyphs: { arrow: "→" }, line() {}, note() {}, multiselect: async (q) => { offered.push(...q.options); return ["codex"]; }, search: async () => "", select: async (q) => q.initial,
+    confirm: async () => false, text: async () => "" }, r: doc, config: null, efforts: async () => null });
+  expect(offered.filter((o) => !o.disabled).map((o) => o.value)).toContain("codex");
+  const { setup } = await import("../src/lib/setup.mjs");
+  const r = await setup(["--config", path, "--yes", "--force", "--model", "codex=m-b", "--enable", "claude"], { inspect: async () => doc, install: () => {}, share: () => {}, key: async () => ({ ok: true }), hasKey: () => true, print: () => {} });
+  const saved = JSON.parse(readFileSync(path, "utf8")).subscriptions;
+  expect([r.ok, r.error, r.skipped.filter((x) => x.includes("left out")), saved.codex, saved.claude.enabled]).toEqual([true, undefined, [], expect.objectContaining({ default_model: "m-b", accounts: { b: CODEX_B, c: OUT } }), true]);
+});
+
 test("doctor gives each extra account a line of its own, and its own step when its reader has failed for over a day, naming its harness as what an update may have changed", () => {
   const dir = scratch("accounts-doctor"), stopped = join(dir, "stopped"), log = join(stopped, "sessions", "2026", "11", "10");
   // Codex is signed in and its app server does not answer; one account's session log last held limits 30 hours ago, with no number.
@@ -461,4 +585,32 @@ test("a failed read of an extra account's usage gives its harness's step by hand
 test("assess points an extra account's reserve suggestion at its harness's reserve, the setting it takes", () => {
   const { config } = loadConfig(configFile({ claude: sub({ accounts: { work: WORK } }) }));
   expect(assess(Array.from({ length: 5 }, () => row({ headroom: { "claude-work": { usable: 0 } } })), config)).toContain("subscriptions.claude.reserve: it was at its reserve in 5 of 5 dispatches");
+});
+
+// A pane launch for an account, from a fake herdr whose shell is `shellName` (`run` over its own for an agent there).
+const teamLaunch = async (folder, more, shellName = SHELL_NAME, run = null) => {
+  const { config } = loadConfig(configFile({ testy: sub({ accounts: { team: folder } }) })), t = taskFiles(), f = fakeHerdr(t.dir, "testy", shellName);
+  const r = await launch(["--kind", folder ? "testy-team" : "testy", "--name", "p1", ...t.flags, ...more], { env: { HERDR_ENV: "1" }, settings: () => ({ config }), run: run?.(f, t) ?? f.run, now: f.now, sleep: f.sleep, home: scratch("accounts-history") });
+  return { r, f };
+};
+
+test("a pane routr splits for an account sets its folder in the shell once it is ready", async () => {
+  expect([SHELLS.posix.set("X", "/a b"), SHELLS.posix.set("X", "/a", true), SHELLS.powershell.set("X", "C:\\a'b"), SHELLS.cmd.set("X", "C:\\a b")]).toEqual(["export X='/a b'", "set -gx X /a", "$env:X='C:\\a''b'", 'set "X=C:\\a b"']);
+  const { r, f } = await teamLaunch(B, ["--direction", "right"]);
+  expect([r.state, f.text().filter((c) => c.startsWith("pane run") && c.includes("TESTY_HOME")), r.ran.filter((c) => c.includes("pane run") && c.includes("TESTY_HOME") && !c.includes(B))])
+    .toEqual(["prompted", [`pane run w1:p2 ${SHELLS[SHELL].set("TESTY_HOME", B)}`], [expect.stringContaining("<forwarded>")]]);
+  expect(r.steps).toContainEqual({ step: "set_env", ok: true, detail: `Set TESTY_HOME in the pane's ${SHELL} shell` });
+  const typed = f.text(); expect(typed.findIndex((c) => c.startsWith("pane run") && c.includes("TESTY_HOME"))).toBeLessThan(typed.findIndex((c) => c.startsWith("agent start")));
+  if (process.platform !== "win32") expect((await teamLaunch(B, ["--direction", "right"], "fish")).f.text()).toContain(`pane run w1:p2 set -gx TESTY_HOME ${B}`);
+});
+
+test("an account launch is refused before anything is typed in a shell routr does not know", async () => {
+  // Any name herdr gives that process-boundary does not list reaches launch as "shell": tcsh, dash, a login shell.
+  for (const shellName of ["nu", "tcsh", "-zsh", "dash", null]) {
+    const { r, f } = await teamLaunch("~/.testy", ["--direction", "right"], shellName);
+    expect([shellName, r.ok, r.error, f.calls.filter((a) => a[1] === "run")]).toEqual([shellName, false, expect.stringContaining("routr gives an extra account its folder only in a pane running sh, bash, zsh, PowerShell or cmd"), []]);
+  }
+  for (const shellName of ["bash", "zsh"]) expect([shellName, (await teamLaunch("~/.testy", ["--direction", "right"], shellName)).r.state]).toEqual([shellName, "prompted"]);
+  if (process.platform !== "win32") expect((await teamLaunch(B + "\\", ["--direction", "right"], "fish")).r.error).toBe(FISH_PATH);
+  expect((await teamLaunch(null, ["--direction", "right"], "tcsh")).r.state).toBe("prompted"); // no account: as before
 });

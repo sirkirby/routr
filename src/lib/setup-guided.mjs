@@ -36,11 +36,14 @@ export async function askDecision(ui, now) {
 export const describe = (n, s) => (s.enabled === false ? "off (settings kept)"
   : `${s.default_model || "model left to the lead agent"}${s.default_effort ? ` @ ${s.default_effort}` : ""} · ${s.hardest_work} work · reserve ${pct(s.reserve ?? 0)}${s.use ? ` · ${s.use} use` : ""}${s.share != null ? ` · share ${s.share}` : ""}`);
 
+// A harness setup can take settings for: installed and signed in, or signed out on its own with an extra account signed
+// in, which takes its settings.
+export const takesSettings = (r, n) => r.harnesses[n]?.installed && (r.harnesses[n].signed_in || Object.values(r.accounts ?? {}).some((a) => a.harness === n && a.signed_in));
 // `r` is doctor's inspection, `config` the file as it is (null on a first run). `efforts(n, model)` lists a harness's
 // levels for a model. Returns the choices, or CANCEL when the person quits without writing.
 export async function guided({ ui, r, config, efforts, telemetry = false, decided = null }) {
   const current = config?.subscriptions ?? {};
-  const signedIn = (n) => r.harnesses[n]?.installed && r.harnesses[n]?.signed_in;
+  const signedIn = (n) => takesSettings(r, n);
   const candidates = Object.keys(HARNESSES).filter((n) => signedIn(n) || current[n]);
   // Installed but not signed in, and not set up: listed with what to run, never offered until the sign-in is done.
   const waiting = Object.keys(HARNESSES).filter((n) => r.harnesses[n]?.installed && !signedIn(n) && !current[n]);

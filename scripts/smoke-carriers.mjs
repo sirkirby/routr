@@ -5,9 +5,8 @@
 // 1. Splits a pane with routr's own split code, its carriers hostile but valid (`%` `"` `&` `!` `;` `,` `=` TAB and
 //    spaces, each value exactly at routr's limit), starts a small fixture in that pane's shell that writes its
 //    environment to a file, checks each value arrived byte for byte, and closes the pane.
-//    Then two panes for an extra account: one split as routr splits it for an account whose folder is hostile but
-//    valid, its folder checked byte for byte, and one split with the variable set, where the default folder's unset
-//    line leaves it absent.
+//    Then a pane for an extra account, split with the variable set: routr's typed set line replaces it with the
+//    account's folder, and its unset line, for a default folder, leaves it absent (not in fish, which routr refuses).
 // 2. macOS and Linux: splits another pane, its carriers short markers, and `herdr agent start`s the installed Claude
 //    Code there with no task, reads that agent's own environment (`ps eww -o command= -p <pid>` on macOS,
 //    /proc/<pid>/environ on Linux), looks for each NAME=value whole, and closes the pane. There is no ordinary way to
@@ -37,11 +36,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync,
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, posix, win32 } from "node:path";
 import { deadline, paneView, quote, runHerdr, SHELLS, splitArgs, waitForShell, worktreeArgs, worktreePane } from "../src/lib/herdr.mjs";
-import { accountAt, HARNESSES } from "../src/lib/harnesses.mjs";
+import { HARNESSES } from "../src/lib/harnesses.mjs";
 import { worktreesFromGit } from "../src/lib/cleanup.mjs";
 import { displayCommand } from "../src/lib/next.mjs";
 import { processError } from "../src/lib/process-boundary.mjs";
-import { CARRIERS, carriersFrom, paneEnv } from "../src/lib/worker-env.mjs";
+import { CARRIERS, carriersFrom } from "../src/lib/worker-env.mjs";
 import { installedAt, probe } from "../src/lib/processes.mjs";
 import { realOr } from "../src/lib/state-files.mjs";
 
@@ -163,16 +162,16 @@ export async function smokeCarriers({ herdr = runHerdr, git = gitIn, env = proce
       say(`split pane, ${shell} shell`, got ? missingIn(got, sent) : CARRIERS);
     }
     {
-      // An extra account's folder holds no TAB: routr takes no control character in one.
-      const v = HARNESSES.claude.folder.variable, folder = join(dir, HOSTILE.replace("\t", ""));
-      const account = (path) => paneEnv({ found: carriersFrom({}), plan: {}, account: accountAt("claude-smoke", "claude", path).env }, { warnings: [], start: { env: {} } });
+      const v = HARNESSES.claude.folder.variable, folder = join(dir, "account");
       const check = (what, ok) => { if (!ok) failed++; log(`${what}: ${ok ? "ok" : "FAILED"}`); };
-      let { pane, shell } = await split({}, account(folder).split.env);
-      check(`account pane, ${shell} shell, ${v} arrived exactly`, (await envIn(pane, shell, "account"))?.[v] === folder);
-      ({ pane, shell } = await split({}, { [v]: "routr-smoke-set" }));
-      for (const name of account("~/.claude").unset) await call(["pane", "run", pane, SHELLS[shell].unset(name, fishPanes.has(pane))]);
-      const got = await envIn(pane, shell, "unset");
-      check(`default-folder pane, ${shell} shell, ${v} removed`, got != null && !Object.hasOwn(got, v));
+      const { pane, shell } = await split({}, { [v]: "routr-smoke-set" });
+      await call(["pane", "run", pane, SHELLS[shell].set(v, folder, fishPanes.has(pane))]);
+      check(`account pane, ${shell} shell, ${v} set over the one it started with`, (await envIn(pane, shell, "set"))?.[v] === folder);
+      if (!fishPanes.has(pane)) { // fish is refused for a default-folder account
+        await call(["pane", "run", pane, SHELLS[shell].unset(v)]);
+        const got = await envIn(pane, shell, "unset");
+        check(`default-folder pane, ${shell} shell, ${v} removed`, got != null && !Object.hasOwn(got, v));
+      }
     }
     if (process.platform === "win32") log("agent: not checked on Windows (another process's environment cannot be read there)");
     else {

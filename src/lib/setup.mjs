@@ -16,7 +16,7 @@ import { standalone } from "./processes.mjs";
 import { writeJsonAtomic } from "./state-files.mjs";
 import { updatesOff } from "./update.mjs";
 import { installSkill } from "./skill-install.mjs";
-import { askDecision, decisionLabel, guided } from "./setup-guided.mjs";
+import { askDecision, decisionLabel, guided, takesSettings } from "./setup-guided.mjs";
 import { decisionTarget, decisionTargets, decisionSettings, PROVIDER_NAMES, PROVIDERS } from "./providers.mjs";
 import { secretsFor } from "./systemone.mjs";
 import { CANCEL, createUI } from "./tui.mjs";
@@ -156,12 +156,13 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     say("Looking at what is installed…");
     r = await look({ configPath: path, quiet: args.includes("--json") });
   }
-  // Only a harness that is installed AND signed in can be set up: one signed out gets no work until the user signs in.
-  const found = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && r.harnesses[n].signed_in);
+  // Only a harness that is installed AND signed in, or has an extra account that is (takesSettings), can be set up:
+  // one signed out gets no work until the user signs in.
+  const found = Object.keys(r.harnesses).filter((n) => takesSettings(r, n));
   // Installed but not signed in, and not set up (--force sets up nothing that was): said in every kind of run (--json
   // too), so an agent can tell the person.
   const kept = args.includes("--force") ? [] : r.config.subscriptions;
-  const leftOut = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && !r.harnesses[n].signed_in && !kept.includes(n))
+  const leftOut = Object.keys(r.harnesses).filter((n) => r.harnesses[n].installed && !found.includes(n) && !kept.includes(n))
     .map((n) => `${HARNESSES[n]?.label ?? n} left out: ${r.harnesses[n].sign_in}, then routr setup again`);
   for (const [n, id] of Object.entries(models)) {
     if (!found.includes(n)) return { ok: false, error: `--model ${n}=…: ${r.harnesses[n]?.installed ? r.harnesses[n].sign_in : `\`${HARNESSES[n].executable}\` was not found on this machine`}` };

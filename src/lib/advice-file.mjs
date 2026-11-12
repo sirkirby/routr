@@ -3,6 +3,7 @@ import { fallbackAdvice } from "./output.mjs";
 import { readFileSync } from "node:fs";
 import { briefSha } from "./ledger.mjs";
 import { DECISION_CODES, DecisionError, decisionUnavailable, isProvider } from "./providers.mjs";
+import { folderSha } from "./state-files.mjs";
 
 // Every file a lead hands routr (advice, task) is read the same way. PowerShell 5.1's > writes UTF-16LE;
 // Set-Content -Encoding utf8 writes a UTF-8 BOM. A BOM-less UTF-16 file of text starts with an ASCII character
@@ -37,6 +38,13 @@ export function matchAdvice(advice, task) {
   usableAdvice(advice);
   if (typeof advice?.brief_sha !== "string" || !advice.brief_sha) throw new Error("--advice: missing brief_sha; dispatch the exact task again");
   if (advice.brief_sha !== briefSha(task)) throw new Error("--advice was given on a different text than this task; dispatch the exact task again");
+}
+// An extra account's name is a folder only in one config file, as it reads now: advice that ranked the name from
+// another folder (dispatch --config, or `accounts` changed since) is not advice on the account launch would start.
+// Advice that says nothing of the name is taken as it always was.
+export function matchAccount(advice, account) {
+  const ranked = advice.accounts?.[account.name];
+  if (ranked !== undefined && ranked !== folderSha(account.dir)) throw new Error(`--advice ranked ${account.name} from a different folder than this launch would start; dispatch the exact task again, without --config`);
 }
 // Saved advice is an outside boundary too: project known fields and regenerate the sentence from its code. A
 // missing/invalid identity stays unknown; today's config must never fill in yesterday's attempted model.

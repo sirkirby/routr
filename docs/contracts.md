@@ -116,10 +116,11 @@ request to judge missing readings applies only to true fallback or unavailable u
 - `doctor` JSON has `core`: `path`, where `hc` was found on PATH or null, and `inside_terminal`, true when
   `HC_TERMINAL_ID` is set and `HERDR_ENV` is not. Neither says the Herdr app is running. Herdr's skill is asked for
   when herdr is installed and either the lead is in a herdr session or `hc` was not found.
-- `doctor` JSON has `accounts` when the config has an extra account, turned on, of a harness found here: by name,
+- `doctor` JSON has `accounts` when the config has an extra account, on or off, of a harness found here: by name,
   `harness`, `signed_in`, `sign_in` when not (naming its folder when it is signed out), `usage` (its reading alone:
   the settings it takes are said on its harness's) and `usage_stale`, each checked afresh with its folder.
-  `next_steps` gives each one signed out its own step.
+  `next_steps` gives each one turned on and signed out its own step. A harness signed out on its own lists its `models` through its
+  first extra account signed in, in config order, and `setup` then takes its settings.
 - `key set <provider>` keeps the existing owner-only key storage and test output (`ok`, `provider`, `file`, `works`,
   `model`, `ms`, `error` as applicable). For a provider outside the configured list, `note` names that fact and the
   `routr setup --decision ...` command that appends it while retaining existing choices. It changes no settings.
@@ -415,6 +416,8 @@ Own fields:
   `{ window, used_pct, resets_in_h, left, reserve_now, usable }`), `usage` (`live`, `given`, `unknown`, `metered`),
   `age_sec`, `note`?, `share`?. An excluded row: `{ subscription, why }`. A `subscription` may be an extra account's
   name, `<harness>-<name>` (`accounts` in the config).
+- `dispatch` only, when the config has extra accounts: `accounts`, each one's folder as a 12-character fingerprint by
+  its name, never the path; read by `launch`.
 - The launch share: normal metered rows qualify with `usable: null` or `usable > 0`. When at least two qualify and one has a
   `share` setting (one without counts as 1), each of them gets `share` `{ weight, target, used_pct, left, launches, of }`
   and `subscriptions` gets `share_due`. Over the last 7 days of routr's own launches on those accounts (`of` in all,
@@ -469,11 +472,13 @@ Inputs:
 - `--kind` also takes an extra account's name (`claude-work`, from `accounts` in the config): the worker starts on
   that harness with the account's folder in the harness's own variable, and `kind` in the answer is the harness.
   `start.env` shows that variable as `"<forwarded>"`, or as `null` where it is removed instead (Claude Code's
-  `~/.claude`). Refused with `error`: `--pane` (an existing pane keeps its own shell's environment; the rerun in
-  `next` for a pane this launch split carries `--continue`, routr's own, which is refused without `--pane` and an
-  extra account). An account the config left out is no `--kind`. routr does not check that the pane is the one it
-  split: `--continue` typed by hand on another pane is not refused, and that worker runs on what that pane's shell
-  names.
+  `~/.claude`). Refused with `error`: advice whose dispatch ranked the name from another folder (another `--config`
+  file, or `accounts` changed since; advice with no entry for the name is taken as before); `--pane` (an existing
+  pane keeps its own shell's environment; the rerun in `next` for a pane this launch split carries `--continue`,
+  routr's own, which is refused without `--pane` and an extra account; once the harness was started there, `next`
+  offers a fresh launch without `--pane` instead); a pane shell other than sh, bash, zsh, fish, PowerShell or cmd, and
+  fish for a removed variable. An account the config left out is no `--kind`. An agent already running in the `--pane` is
+  `needs_input` `wrong_account`, and the task is not sent.
 - Used when given: `--cwd` (default `.`), `--worktree <branch>`, `--base <ref>` and `--copy <path>` (with `--worktree`),
   `--pane <id>`, `--direction`, `--task` or `--task-file`, `--rules-file` (with a task), `--effort`, `--timeout`,
   `--subagent-model <id>`, `--subagent-effort <level>`, `--dry-run`.

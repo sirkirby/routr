@@ -160,17 +160,7 @@ const paneCarriers = (pane, out, found) => {
 // names the harness adapter sets for itself). Both are empty for an existing pane (`pane`, launch --pane); `fallbacks`
 // is what the plan had to give either way. Fills `out`, launch's answer: its warnings, and in `out.start.env` each
 // carrier shown as FORWARDED.
-export const paneEnv = ({ pane, found, plan, adapter = {}, account = null }, out) => {
+export const paneEnv = ({ pane, found, plan, adapter = {} }, out) => {
   const fallbackEnv = fallbacksOf(plan, adapter);
-  return paneAccount({ carried: paneCarriers(pane, out, found), extraEnv: paneFallbacks(pane, out, fallbackEnv), fallbacks: fallbackEnv }, account);
-};
-// An extra account (`account`, its variables) adds `split`, what the split that makes its pane sets and how output
-// shows it, and `unset`, the names its pane's shell drops before the harness starts: the pane's shell starts from
-// herdr's server's environment, and a split can set a variable but not remove one. Set empty is not removed: Claude
-// Code 2.1.322 on macOS, measured 2026-11-11, then keeps its files under the working folder (`claude auth status`
-// said "configDirectory": "" and "projectsDirectory": "projects").
-const paneAccount = (made, account) => {
-  if (!account) return made;
-  const set = Object.fromEntries(Object.entries(account).filter(([, v]) => v !== null));
-  return { ...made, split: { env: { ...set, ...made.extraEnv }, shownEnv: { ...accountShownEnv(set), ...made.extraEnv } }, unset: Object.keys(account).filter((k) => account[k] === null) };
+  return { carried: paneCarriers(pane, out, found), extraEnv: paneFallbacks(pane, out, fallbackEnv), fallbacks: fallbackEnv };
 };
