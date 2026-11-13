@@ -28,7 +28,7 @@ each decision-list entry answers, and whether a config exists. A harness that is
 levels, unless one of its extra accounts is signed in; one already on can still be turned off. Setup shows the
 command to run beside it (greyed when it cannot be
 chosen), `setup --yes` notes each one it did not add ("<name> left out: …"), doctor names the command, and routr never
-starts a sign-in itself (the guided screen offers one only for an extra account the person is adding). Lines marked `!!` need fixing, and it ends with a numbered list of what to
+starts a sign-in itself (the guided screen offers one only for an extra account the person is adding, or one in its list that is not signed in). Lines marked `!!` need fixing, and it ends with a numbered list of what to
 do next. `routr setup` does the writing (step 3). A person can run it alone in a terminal and answer its
 questions; you run it with `--yes` and the choices you settled with the user. `routr doctor --fix` is the same
 command. It is safe to run again: it fills in what is missing (a skill left behind by an older routr, a harness

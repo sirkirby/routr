@@ -312,16 +312,23 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     choices = await guided({ ui, r, config, efforts: levelsOf, telemetry: !telemetryAsked && !envOff(env), decided: decision ?? null,
       accounts: {
         check: async (n, folder) => cannotAdd(n, { ...accountName(n), folder, dir: configDirOf(folder) }, "add it again"),
-        keep: (n, folder) => { pending[n] = { ...accountName(n), folder, dir: configDirOf(folder) }; },
+        keep: (n, folder) => { pending[n] = { ...accountName(n), folder, dir: configDirOf(folder) }; released.delete(n); },
         drop: (n) => { delete pending[n]; released.add(n); },
         // What the harness did is done whatever becomes of the settings: said, however the run ends.
-        signIn: async (n, folder) => { did.push(`ran ${HARNESSES[accountName(n).harness].label}'s sign-in for ${folder}: that folder and what it signed in stay`); return accountLogin(accountAt(n, accountName(n).harness, configDirOf(folder))); },
+        // Once for a folder, and only when the harness did start.
+        signIn: async (n, folder) => {
+          const code = await accountLogin(accountAt(n, accountName(n).harness, configDirOf(folder))), ran = `ran ${HARNESSES[accountName(n).harness].label}'s sign-in for ${folder}: that folder and what it signed in stay`;
+          if (code !== null && !did.includes(ran)) did.push(ran);
+          return code;
+        },
         open: async (n, folder) => accountOpen(accountAt(n, accountName(n).harness, configDirOf(folder))),
       } });
     if (choices === CANCEL) { return stopped(); }
     if (!choices.write) {
       repairQueue(config);
-      if (skillStep()) { if (did.length) ui.note("Done", did); if (skillFailures.length) ui.note("Failed", skillFailures); }
+      skillStep();
+      if (did.length) ui.note("Done", did); // a sign-in run from the screen is said here too, with no setting changed
+      if (skillFailures.length) ui.note("Failed", skillFailures);
       ui.outro("Your settings did not change."); ui.close();
       return { ok: true, did, skipped: [...skipped, ...leftOut, "nothing changed"], config: path, next_steps: r.next_steps, ...failure() };
     }

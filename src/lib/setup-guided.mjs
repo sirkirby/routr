@@ -279,8 +279,10 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
     if (no) { ui.line(`${HARNESSES[h].label} · ${short}: ${no.why}`); return "none"; }
     if (fresh && HARNESSES[h].folder.firstRun && acct.open) {
       const go = await ui.confirm({ message: `Open ${HARNESSES[h].label} in it once now? ${ui.style.dim(`(a new folder asks its first-run questions, and a worker stops at them: answer them, then quit ${HARNESSES[h].label} to come back here)`)}`, initial: true });
-      if (go === CANCEL || go === BACK) return go;
-      if (go) await handOff(() => acct.open(n, folder));
+      if (go === CANCEL) return CANCEL;
+      // Back or no: it is signed in and is added all the same, with what is left to do said.
+      if (go === true) await handOff(() => acct.open(n, folder));
+      else ui.line(`${HARNESSES[h].label} · ${short}: not opened. A worker there stops at ${HARNESSES[h].label}'s first-run questions until someone answers them once.`);
     }
     acct.keep?.(n, folder); // from here it is this run's: its folder is taken until it is saved or removed
     accountsAdded[n] = folder; current[n] = { ...inherited(h), ...Object.fromEntries(["default_model", "default_effort", "hardest_work", "reserve", "use", "share"].filter((k) => draft[h]?.[k] !== undefined).map((k) => [k, draft[h][k]])) };

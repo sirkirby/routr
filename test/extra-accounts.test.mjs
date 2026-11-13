@@ -739,13 +739,13 @@ test("`routr skill install` reads the accounts from the config and links into th
 });
 
 // Guided setup with accounts, each scenario driven as a person would: scripted answers on a fake machine.
-async function guidedRun({ config = null, answers, signedIn = true, classes = {}, loginWorks = true, signedOut = [] }) {
+async function guidedRun({ config = null, answers, signedIn = true, classes = {}, loginWorks = true, signedOut = [], skill = [] }) {
   const dir = scratch("accounts-guided-run"), path = join(dir, "config.json"), { setup } = await import("../src/lib/setup.mjs");
   if (config) writeFileSync(path, JSON.stringify(config));
   const said = [], asked = [], installs = [], queue = [...answers], logins = [], opens = [], signedNow = new Set();
   const inspect = async () => { const subs = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")).subscriptions : {}, accounts = Object.fromEntries(Object.keys(subs.claude?.accounts ?? {}).map((k) => [`claude-${k}`, { harness: "claude", signed_in: !signedOut.includes(`claude-${k}`), ...(signedOut.includes(`claude-${k}`) ? { sign_in: "not signed in" } : {}), usage_class: classes[`claude-${k}`] ?? "included" }]));
     return { harnesses: { claude: { installed: true, signed_in: signedIn, ...(signedIn ? {} : { sign_in: "not signed in: run `claude auth login`" }), models: ["m-own", "m2"], usage_class: classes.claude ?? "included" } }, accounts,
-      config: { path, exists: existsSync(path), subscriptions: [...Object.keys(subs), ...Object.keys(accounts)], off: [] }, skill: [], decision: [{ works: true }], next_steps: [] }; };
+      config: { path, exists: existsSync(path), subscriptions: [...Object.keys(subs), ...Object.keys(accounts)], off: [] }, skill, decision: [{ works: true }], next_steps: [] }; };
   const r = await setup(["--config", path, "--json"], { inspect, interactive: true, env: {}, install: (o) => { installs.push(o); return {}; }, share: () => {}, key: async () => ({ ok: true }), hasKey: () => true, print: (t) => said.push(t), efforts: async () => ["low", "medium"],
     question: async (q) => { asked.push(q.trim().split("\n")[0]); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); }, accountSignIn: async (a) => ({ state: a.dir === OUT && !signedNow.has(a.dir) ? "no" : "yes" }),
     // The harness's own sign-in and first run, as setup would start them in the terminal: recorded, never started.
@@ -898,4 +898,21 @@ test("the terminal UI hands the keyboard to another program: raw mode off and in
   input.emit("keypress", "n", { name: "n" });
   expect(await next).toBe(false);
   ui.close();
+});
+
+test("guided setup: a name removed and added again keeps its folder to itself, a sign-in is said on a plain Exit, and Esc at the first-run question still adds the account", async () => {
+  const config = { subscriptions: { claude: { ...BASE } } };
+  // Add tmp, remove it, add tmp again on the same folder, then another name on that folder: refused.
+  const guard = await guidedRun({ config, answers: ["1", "2", "tmp", WORK, "", "", "", "2", "6", "y", "2", "tmp", WORK, "", "", "", "3", "other", WORK, "b", "8"] });
+  expect([guard.r.ok, guard.left, guard.saved.claude.accounts]).toEqual([true, 0, { tmp: WORK }]);
+  expect(guard.said).toContain("Claude Code · other: its folder is claude-tmp's too, and one folder is one account");
+  // A sign-in that did not take, then Exit with routr's skills already complete: the screen still says a sign-in ran, once.
+  const complete = ["routr", "routr-orchestrate"].map((name) => ({ name, where: `~/.agents/skills/${name}`, version: "0.0.0-dev", ours: true, missing: [], extra: [] }));
+  const exit = await guidedRun({ config, loginWorks: false, skill: complete, answers: ["1", "2", "max2", OUT, "y", "2", "max2", OUT, "y", "b", "8"] });
+  expect([exit.r.ok, exit.left, exit.saved]).toEqual([true, 0, config.subscriptions]);
+  expect(exit.said.split(`ran Claude Code's sign-in for ${OUT}`).length - 1).toBe(1);
+  // Signed in, then Esc at "Open Claude Code in it once now?": added, not opened, and what that leaves is said.
+  const esc = await guidedRun({ config, answers: ["1", "2", "max2", OUT, "y", "b", "", "", "", "b", "8"] });
+  expect([esc.r.ok, esc.left, esc.opens, esc.saved.claude.accounts]).toEqual([true, 0, [], { max2: OUT }]);
+  expect(esc.said).toContain("Claude Code · max2: not opened. A worker there stops at Claude Code's first-run questions until someone answers them once.");
 });

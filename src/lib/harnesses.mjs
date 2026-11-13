@@ -39,7 +39,7 @@
 //   auth: how to tell it is signed in (signin.mjs): `check` is its own status command, which never starts a sign-in,
 //     `signedIn(out, code)` reads the answer (stdout and stderr together), `signIn` says how the user signs in.
 //     `login`, where it has `folder`: its own sign-in command, which guided setup runs in the person's terminal for an
-//     account they are adding, on their yes, and routr runs nowhere else.
+//     extra account they are adding or have listed, when they choose it, and routr runs nowhere else.
 //     Measured signed in and signed out, 2026-09-26; each parser matches the text both ways, not the exit code alone.
 //     `billing(out, code)`, optional: what that same answer says about billing: `{ billing: "metered", why }` when
 //     it states per-token billing, else null (the usage windows decide, as before). No further call: it is read from

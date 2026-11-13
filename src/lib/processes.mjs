@@ -278,7 +278,7 @@ export function probe(cmd, args, { timeoutMs = 15000, cwd, separate = false, acc
 }
 
 // A harness's own command run in the person's terminal, for them to answer: its sign-in, or its first-run screens
-// (guided setup, for an account the person is adding, on their yes). Its input and output are the terminal's, routr
+// (guided setup, for an extra account the person is adding or has listed, when they choose it). Its input and output are the terminal's, routr
 // waits however long it takes, and Ctrl+C goes to the harness, not to routr. Resolves its exit code, or null when it
 // could not start. `account`: as start takes it.
 export function attended(cmd, args, { account, cwd } = {}) {
