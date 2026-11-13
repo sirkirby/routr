@@ -58,7 +58,13 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
   // Accessible mode reads a line at a time: from the caller, or from the terminal itself.
   let reader = null;
   // Each question resumes input first: the key prompt pauses it when it is done, which left the next question unanswered.
-  if (accessible && !ask) { reader = createInterface({ input, output, terminal: false }); ask = (q) => new Promise((done) => { input.resume?.(); reader.question(q, done); }); }
+  if (accessible && !ask) { reader = createInterface({ input, output, terminal: false }); ask = (q) => new Promise((done) => {
+    // Ctrl+C at a question cancels the run as it does at a drawn prompt, so what the run did so far is still said:
+    // read a line at a time, the terminal sends it to the process, and unhandled it ends routr with nothing said.
+    // The line is listened for here, not with readline's question: a question left pending would swallow the next one.
+    const line = (a) => { process.off("SIGINT", stop); done(a); }, stop = () => { reader.off("line", line); write("\n"); done(CANCEL); };
+    input.resume?.(); process.once("SIGINT", stop); write(q); reader.once("line", line);
+  }); }
   // Raw mode off first: a terminal left in raw mode is the worst way to leave, so nothing that can throw comes before it.
   const restore = () => {
     if (rawOn) { try { input.setRawMode(false); } catch {} rawOn = false; }
@@ -112,7 +118,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
 
   // Help lines are written with ↑/↓ and · and shown with the glyph table's words, so ASCII terminals get plain ones.
   const help = (s) => c.dim(s.replaceAll("↑/↓", g.updown).replaceAll("←/→", g.leftright).replaceAll(" · ", g.sep));
-  const plain = async (question) => (await ask(question)).trim();
+  const plain = async (question) => { const a = await ask(question); return a === CANCEL ? CANCEL : a.trim(); };
   const listed = (opts, current) => opts.map((o, i) => `  ${String(i + 1).padStart(2)}. ${o.label}${o.hint ? ` (${o.hint})` : ""}${o.value === current ? " [current]" : ""}`).join("\n");
 
   const ui = {
@@ -141,6 +147,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
         for (;;) {
           const cur = options.findIndex((o) => o.value === initial);
           const a = await plain(`${message}\n${listed(options, initial)}\nNumber${cur >= 0 ? ` [Enter = ${cur + 1}]` : ""} (b = back): `);
+          if (a === CANCEL) return CANCEL;
           if (!a && cur >= 0) return options[cur].value;
           if (/^b(ack)?$/i.test(a)) return BACK;
           if (/^\d+$/.test(a) && options[Number(a) - 1]) return options[Number(a) - 1].value;
@@ -168,6 +175,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
         const chosen = new Set(initial);
         for (;;) {
           const a = await plain(`${message}\n${options.map((o, i) => `  ${String(i + 1).padStart(2)}. [${o.disabled ? "-" : chosen.has(o.value) ? "x" : " "}] ${o.label}${o.disabled ? ` (${o.disabled})` : o.hint ? ` (${o.hint})` : ""}`).join("\n")}\nNumbers to switch on or off, Enter when done (b = back): `);
+          if (a === CANCEL) return CANCEL;
           if (/^b(ack)?$/i.test(a)) return BACK;
           if (!a) { if (chosen.size >= min) return options.filter((o) => chosen.has(o.value)).map((o) => o.value); write(`  ${need}\n`); continue; }
           for (const n of a.split(/[\s,]+/)) { const o = options[Number(n) - 1]; if (o?.disabled) write(`  ${why(o)}\n`); else if (o) chosen.has(o.value) ? chosen.delete(o.value) : chosen.add(o.value); }
@@ -199,6 +207,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
         for (;;) {
           const cur = initial != null ? ` [Enter = ${all.find((o) => o.value === initial)?.label ?? initial}]` : "";
           const a = await plain(`${message}${shown.length ? `\n${listed(shown, initial)}` : ` (${all.length} to choose from)`}\n${shown.length ? "Number, or" : ""} text to search${cur} (b = back): `);
+          if (a === CANCEL) return CANCEL;
           if (!a && initial != null) return initial;
           if (/^b(ack)?$/i.test(a)) return BACK;
           if (/^\d+$/.test(a) && shown[Number(a) - 1]) return shown[Number(a) - 1].value;
@@ -239,6 +248,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
       if (accessible) {
         for (;;) {
           const a = await plain(`${message} ${initial ? "[Y/n]" : "[y/N]"} (b = back): `);
+          if (a === CANCEL) return CANCEL;
           if (!a) return initial;
           if (/^b(ack)?$/i.test(a)) return BACK;
           if (/^y/i.test(a)) return true;
@@ -257,6 +267,7 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
       if (accessible) {
         for (;;) {
           const a = await plain(`${message}${initial ? ` [Enter = ${initial}]` : ""} (b = back): `);
+          if (a === CANCEL) return CANCEL;
           if (/^b(ack)?$/i.test(a)) return BACK;
           try { return parse(a || initial); } catch (e) { write(`  ${e.message}\n`); }
         }

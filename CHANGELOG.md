@@ -12,6 +12,8 @@ A short history of what changed in each routr release, one line per change. Each
 - Launch's record template now asks for `--cause`, a revision's template keeps the run's causes, and `routr assess` counts runs recorded with no cause as "not recorded" rather than `unknown`. (#182)
 - The worker guide adds a `REUSED:` line to the report and a last self-check before reporting; the orchestrator guide asks briefs to name the existing code to call, not copy, and to check claims about the code before launch. (#182)
 
+- Fixes to adding an account in `routr setup`: a sign-in ended with Ctrl+C is still reported when setup ends, Ctrl+C in `ACCESSIBLE=1` stops setup with its usual summary, "Sign in now" on a listed account offers Claude Code's first-run opening too, and an account whose harness was uninstalled can still be removed. (#184)
+
 ## v0.14.1 — 2026-11-11
 
 [Full notes](docs/releases/v0.14.1.md)

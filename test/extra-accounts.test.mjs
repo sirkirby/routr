@@ -739,17 +739,17 @@ test("`routr skill install` reads the accounts from the config and links into th
 });
 
 // Guided setup with accounts, each scenario driven as a person would: scripted answers on a fake machine.
-async function guidedRun({ config = null, answers, signedIn = true, classes = {}, loginWorks = true, signedOut = [], skill = [] }) {
+async function guidedRun({ config = null, answers, signedIn = true, classes = {}, loginWorks = true, signedOut = [], skill = [], installed = true }) {
   const dir = scratch("accounts-guided-run"), path = join(dir, "config.json"), { setup } = await import("../src/lib/setup.mjs");
   if (config) writeFileSync(path, JSON.stringify(config));
   const said = [], asked = [], installs = [], queue = [...answers], logins = [], opens = [], signedNow = new Set();
-  const inspect = async () => { const subs = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")).subscriptions : {}, accounts = Object.fromEntries(Object.keys(subs.claude?.accounts ?? {}).map((k) => [`claude-${k}`, { harness: "claude", signed_in: !signedOut.includes(`claude-${k}`), ...(signedOut.includes(`claude-${k}`) ? { sign_in: "not signed in" } : {}), usage_class: classes[`claude-${k}`] ?? "included" }]));
-    return { harnesses: { claude: { installed: true, signed_in: signedIn, ...(signedIn ? {} : { sign_in: "not signed in: run `claude auth login`" }), models: ["m-own", "m2"], usage_class: classes.claude ?? "included" } }, accounts,
+  const inspect = async () => { const subs = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")).subscriptions : {}, accounts = Object.fromEntries(Object.keys(subs.claude?.accounts ?? {}).map((k) => [`claude-${k}`, !installed ? { harness: "claude", signed_in: false, sign_in: "`claude` was not found on this machine" } : { harness: "claude", signed_in: !signedOut.includes(`claude-${k}`), ...(signedOut.includes(`claude-${k}`) ? { sign_in: "not signed in" } : {}), usage_class: classes[`claude-${k}`] ?? "included" }]));
+    return { harnesses: { claude: { installed, signed_in: installed && signedIn, ...(signedIn ? {} : { sign_in: "not signed in: run `claude auth login`" }), models: ["m-own", "m2"], usage_class: classes.claude ?? "included" } }, accounts,
       config: { path, exists: existsSync(path), subscriptions: [...Object.keys(subs), ...Object.keys(accounts)], off: [] }, skill, decision: [{ works: true }], next_steps: [] }; };
   const r = await setup(["--config", path, "--json"], { inspect, interactive: true, env: {}, install: (o) => { installs.push(o); return {}; }, share: () => {}, key: async () => ({ ok: true }), hasKey: () => true, print: (t) => said.push(t), efforts: async () => ["low", "medium"],
-    question: async (q) => { asked.push(q.trim().split("\n")[0]); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); }, accountSignIn: async (a) => ({ state: a.dir === OUT && !signedNow.has(a.dir) ? "no" : "yes" }),
+    question: async (q) => { asked.push(q.trim().split("\n")[0]); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); }, accountSignIn: async (a) => ({ state: resolve(a.dir) === OUT && !signedNow.has(resolve(a.dir)) ? "no" : "yes" }),
     // The harness's own sign-in and first run, as setup would start them in the terminal: recorded, never started.
-    accountLogin: async (a) => { logins.push(a.env); if (loginWorks) signedNow.add(a.dir); return 0; }, accountOpen: async (a) => { opens.push(a.dir); return 0; } });
+    accountLogin: async (a) => { logins.push(a.env); if (loginWorks) signedNow.add(resolve(a.dir)); return 0; }, accountOpen: async (a) => { opens.push(a.dir); return 0; } });
   return { r, asked, installs, logins, opens, left: queue.length, said: said.join("\n").replace(/\n[│|]\s+/g, " "), saved: existsSync(path) ? JSON.parse(readFileSync(path, "utf8")).subscriptions : null };
 }
 const BASE = { hardest_work: "strong", reserve: 0.1, default_model: "m-own" };
@@ -850,6 +850,10 @@ test("a harness command run in the person's terminal gets the account's folder, 
   const code = await attended(process.execPath, ["-e", `require("node:fs").writeFileSync(${JSON.stringify(out)}, String(process.env.TESTY_HOME)); process.exit(3);`], { account: { TESTY_HOME: WORK } });
   expect([code, readFileSync(out, "utf8")]).toEqual([3, WORK]);
   expect(await attended(join(dir, "no-such-command"), [])).toBeNull();
+  // One ended by a signal did start: a number, never the null that means it could not (128 + SIGTERM's 15 off Windows).
+  const killed = await attended(process.execPath, ["-e", `process.kill(process.pid, "SIGTERM"); setTimeout(() => {}, 30000);`]);
+  expect(typeof killed).toBe("number");
+  if (process.platform !== "win32") expect(killed).toBe(143);
 });
 
 test("guided setup: a removed account frees its name and folder in the same run, and nothing is written in its folder", async () => {
@@ -869,8 +873,12 @@ test("guided setup: a removed account frees its name and folder in the same run,
 
 test("guided setup: an account that is not signed in can be signed in from the list, or removed", async () => {
   const config = { subscriptions: { claude: { ...BASE, accounts: { out: OUT } } } };
-  const fix = await guidedRun({ config, signedOut: ["claude-out"], answers: ["1", "2", "1", "2", "3", "1", "b", "b", "8"] }); // Sign in now, then its settings open: hardest work, basic
-  expect([fix.r.ok, fix.left, fix.logins, fix.saved.claude.accounts.out]).toEqual([true, 0, [{ CLAUDE_CONFIG_DIR: OUT }], { folder: OUT, hardest_work: "basic" }]);
+  const fix = await guidedRun({ config, signedOut: ["claude-out"], answers: ["1", "2", "1", "y", "2", "3", "1", "b", "b", "8"] }); // Sign in now, open it once, then its settings open: hardest work, basic
+  // Signed in from the list, it is offered its first run as one being added is.
+  expect([fix.r.ok, fix.left, fix.logins, fix.opens, fix.saved.claude.accounts.out]).toEqual([true, 0, [{ CLAUDE_CONFIG_DIR: OUT }], [OUT], { folder: OUT, hardest_work: "basic" }]);
+  const shut = await guidedRun({ config, signedOut: ["claude-out"], answers: ["1", "2", "1", "n", "b", "8"] });
+  expect([shut.left, shut.opens]).toEqual([0, []]);
+  expect(shut.said).toContain("Claude Code · out: not opened. A worker there stops at Claude Code's first-run questions until someone answers them once.");
   const drop = await guidedRun({ config, signedOut: ["claude-out"], answers: ["1", "2", "2", "y", "b", "8"] }); // Remove this account, yes
   expect([drop.r.ok, drop.left, drop.logins, drop.saved.claude]).toEqual([true, 0, [], BASE]);
 });
@@ -916,3 +924,45 @@ test("guided setup: a name removed and added again keeps its folder to itself, a
   expect([esc.r.ok, esc.left, esc.opens, esc.saved.claude.accounts]).toEqual([true, 0, [], { max2: OUT }]);
   expect(esc.said).toContain("Claude Code · max2: not opened. A worker there stops at Claude Code's first-run questions until someone answers them once.");
 });
+
+test("from a source checkout beside a release's skills, an added account's note names what is missing: the skills in its folder", async () => {
+  const release = ["routr", "routr-orchestrate"].map((name) => ({ name, where: `~/.agents/skills/${name}`, version: "0.5.0", ours: true, missing: [], extra: [] }));
+  const g = await guidedRun({ config: { subscriptions: { claude: { ...BASE } } }, skill: release, answers: ["1", "2", "work", WORK, "", "", "", "b", "8"] });
+  expect([g.r.ok, g.left, g.installs, g.saved.claude.accounts]).toEqual([true, 0, [], { work: WORK }]);
+  expect(g.r.skipped.join(" ")).toContain("routr's skills need repair (claude-work's folder has no routr skills yet), but this routr runs from a source checkout");
+});
+
+test("a sign-in run twice for one folder, spelled two ways, is said once", async () => {
+  const config = { subscriptions: { claude: { ...BASE } } };
+  const twice = await guidedRun({ config, loginWorks: false, answers: ["1", "2", "max2", OUT, "y", "2", "max2", `${OUT}/.`, "y", "b", "8"] });
+  expect([twice.left, twice.logins.length]).toEqual([0, 2]);
+  expect(twice.said.split("ran Claude Code's sign-in for ").length - 1).toBe(1);
+});
+
+test("Ctrl+C at an accessible-mode question cancels the run as it does at a drawn prompt", async () => {
+  const { createUI, CANCEL } = await import("../src/lib/tui.mjs"), { PassThrough } = await import("node:stream");
+  const before = process.listenerCount("SIGINT"), input = new PassThrough();
+  const ui = createUI({ input, output: { write() {}, columns: 80, rows: 24, on() {}, removeListener() {} }, env: {}, accessible: true });
+  const asked = ui.confirm({ message: "go?", initial: true });
+  await new Promise((r) => setTimeout(r, 10));
+  expect(process.listenerCount("SIGINT")).toBe(before + 1);
+  process.emit("SIGINT");
+  expect(await asked).toBe(CANCEL);
+  // An answered question leaves nothing listening.
+  const next = ui.confirm({ message: "again?", initial: true });
+  await new Promise((r) => setTimeout(r, 10)); input.write("n\n");
+  expect([await next, process.listenerCount("SIGINT")]).toEqual([false, before]);
+  ui.close();
+});
+
+test("an account whose harness is no longer on this machine is still in doctor's answer, and can be taken out", async () => {
+  const dir = scratch("accounts-gone"), path = configFile({ claude: sub({ accounts: { work: WORK } }) }), env = cliEnv(dir, { PATH: dir, ROUTR_NO_UPDATE: "1" });
+  const doc = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "doctor", "--json", "--config", path], { env }).stdout.toString());
+  expect(doc.accounts["claude-work"]).toEqual({ harness: "claude", signed_in: false, sign_in: "`claude` was not found on this machine" });
+  const out = JSON.parse(Bun.spawnSync([process.execPath, SCRIPT, "setup", "--yes", "--json", "--config", path, "--remove-account", "claude-work"], { env }).stdout.toString());
+  expect([out.ok, JSON.parse(readFileSync(path, "utf8")).subscriptions.claude.accounts]).toEqual([true, undefined]);
+  // In the guided list it is shown with why, and offered removal, never a sign-in.
+  const g = await guidedRun({ config: { subscriptions: { claude: { ...BASE, accounts: { work: WORK } } } }, installed: false, answers: ["1", "2", "1", "y", "b", "8"] });
+  expect([g.r.ok, g.left, g.logins, g.saved.claude.accounts]).toEqual([true, 0, [], undefined]);
+  expect(g.asked).toContain("Claude Code · work: `claude` was not found on this machine");
+}, 60_000); // starts doctor and setup, each a process with harness probes: slow on Windows

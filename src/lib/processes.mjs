@@ -4,6 +4,7 @@
 // `start` / `startSync`. What environment each one gets is the worker-environment module's.
 import { spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
+import { constants as osConstants } from "node:os";
 import { join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { accountEnv, envGet, harnessEnv } from "./worker-env.mjs";
@@ -280,7 +281,8 @@ export function probe(cmd, args, { timeoutMs = 15000, cwd, separate = false, acc
 // A harness's own command run in the person's terminal, for them to answer: its sign-in, or its first-run screens
 // (guided setup, for an extra account the person is adding or has listed, when they choose it). Its input and output are the terminal's, routr
 // waits however long it takes, and Ctrl+C goes to the harness, not to routr. Resolves its exit code, or null when it
-// could not start. `account`: as start takes it.
+// could not start. One ended by a signal (Codex's sign-in at Ctrl+C, seen on macOS) has no exit code and did start:
+// it resolves 128 plus the signal's number, as a shell reports it. `account`: as start takes it.
 export function attended(cmd, args, { account, cwd } = {}) {
   return new Promise((resolve) => {
     const hold = () => {}; let child;
@@ -288,6 +290,6 @@ export function attended(cmd, args, { account, cwd } = {}) {
     process.on("SIGINT", hold);
     try { child = start(cmd, args, { stdio: "inherit", env: harnessEnv(), ...(cwd ? { cwd } : {}) }, { account }); } catch { return done(null); }
     child.on("error", () => done(null));
-    child.on("close", (code) => done(code));
+    child.on("close", (code, signal) => done(code ?? (signal ? 128 + (osConstants.signals[signal] ?? 0) : null)));
   });
 }

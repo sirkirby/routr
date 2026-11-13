@@ -201,6 +201,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // Why an account cannot be added, or null: the same check for a flag and for the guided flow (`again`: what to do
   // once the folder is signed in).
   // `pending`: accounts the guided flow has accepted in this run, not yet written: a later one may not take their folder.
+  const ranFor = new Set(); // the folders a harness's sign-in was run for in this run, each said once however it is spelled
   const pending = {}, released = new Set(); // `released`: accounts being removed in this run, whose folder is free again
   // `{ why }`, with `signedOut: true` when the only thing wrong is that the folder is not signed in.
   const cannotAdd = async (n, a, again) => {
@@ -257,9 +258,9 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // release's skills already there are left alone, and the person is told what to run instead.
   const skillStep = () => {
     const base = baseVersion(ROUTR_VERSION), ours = r.skill.filter((k) => k.ours !== false);
-    const gaps = [...skillsMissing(r).map((n) => `${n} is missing`), ...skillsIncomplete(r).map((k) => `${k.where} lacks ${k.missing.join(", ")}`)];
     // An account added in this run has no link in its folder yet: the same step makes it.
-    if (!gaps.length && !Object.keys(adds).length && !(isStandalone() && ours.some((k) => baseVersion(k.version) !== base))) return false;
+    const gaps = [...skillsMissing(r).map((n) => `${n} is missing`), ...skillsIncomplete(r).map((k) => `${k.where} lacks ${k.missing.join(", ")}`), ...Object.keys(adds).map((n) => `${n}'s folder has no routr skills yet`)];
+    if (!gaps.length && !(isStandalone() && ours.some((k) => baseVersion(k.version) !== base))) return false;
     if (!isStandalone() && ours.some((k) => baseVersion(k.version) !== base)) {
       skipped.push(`routr's skills need repair (${gaps.join("; ")}), but this routr runs from a source checkout and the installed skills come from a release: run the installed routr's \`routr skill install\` (usually ~/.local/bin/routr skill install)`);
       return false;
@@ -317,8 +318,8 @@ export async function setup(args, { inspect: look = inspect, question, interacti
         // What the harness did is done whatever becomes of the settings: said, however the run ends.
         // Once for a folder, and only when the harness did start.
         signIn: async (n, folder) => {
-          const code = await accountLogin(accountAt(n, accountName(n).harness, configDirOf(folder))), ran = `ran ${HARNESSES[accountName(n).harness].label}'s sign-in for ${folder}: that folder and what it signed in stay`;
-          if (code !== null && !did.includes(ran)) did.push(ran);
+          const h = accountName(n).harness, dir = configDirOf(folder), code = await accountLogin(accountAt(n, h, dir)), key = `${h} ${realOr(dir)}`;
+          if (code !== null && !ranFor.has(key)) { ranFor.add(key); did.push(`ran ${HARNESSES[h].label}'s sign-in for ${folder}: that folder and what it signed in stay`); }
           return code;
         },
         open: async (n, folder) => accountOpen(accountAt(n, accountName(n).harness, configDirOf(folder))),

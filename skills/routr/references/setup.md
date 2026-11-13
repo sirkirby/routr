@@ -150,9 +150,9 @@ the command that fixes it.
     guided setup, without leaving it: Subscriptions, then "+ Add another Claude Code account" (or Codex). It asks a
     name and suggests the folder (`~/.claude-<name>`); where that folder is not signed in it offers to run the
     harness's own sign-in there and then, and for Claude Code to open it once for its first-run screens; then its
-    hardest work, reserve and account use. It is then a subscription in the list like any other; one that is not signed in offers "Sign in now" there; and "Remove this
+    hardest work, reserve and account use. It is then a subscription in the list like any other; one that is not signed in offers "Sign in now" there, then the same first-run opening; and "Remove this
     account from routr" takes it out (`--remove-account <name>` by flag), leaving its folder and
-    sign-in as they are. An agent never signs in for the user: it adds one with `routr setup --yes --account claude-work=~/.claude-work`: routr checks that folder's sign-in with the harness's own
+    sign-in as they are. An account whose harness is no longer installed stays in the list, with why, and can be removed either way. An agent never signs in for the user: it adds one with `routr setup --yes --account claude-work=~/.claude-work`: routr checks that folder's sign-in with the harness's own
     status command and refuses until it is signed in, saying what to run (`CLAUDE_CONFIG_DIR=<folder> claude auth login`;
     `CODEX_HOME=<folder> codex login`, which needs the folder made first), since only the guided screen runs a sign-in, and only when the person says yes. The folder is
     a harness's whole home, so have the user open the harness in it once, the way routr starts workers
