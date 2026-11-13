@@ -5,13 +5,16 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+## v0.15.0 — 2026-11-12
+
+[Full notes](docs/releases/v0.15.0.md)
+
 - routr can run more than one Claude Code or Codex account: add each extra one in `routr setup`, or with `routr setup --account <harness>-<name>=<folder>`, and it is checked, read, ranked and launched as its own subscription, with its harness's settings or its own. (#180)
 - `routr setup` adds another Claude Code or Codex account from its Subscriptions list without leaving setup: it suggests the folder, offers to run the harness's own sign-in and to open Claude Code once for its first-run screens. An account that is not signed in can be signed in from the list, and any account removed again (`--remove-account` by flag). (#183)
 - `routr launch` takes `--subscription <name>`, the name `dispatch` ranks and `record` takes, in place of `--kind`. (#180)
 - `routr record --cause-detail <tag>` names what kind of extra work a run took in your own words; `routr assess` counts the tags by project, and `record` points out a tag that comes back in the same project within 7 days (`cause_repeat_days`). Tags stay on your machine. (#182)
 - Launch's record template now asks for `--cause`, a revision's template keeps the run's causes, and `routr assess` counts runs recorded with no cause as "not recorded" rather than `unknown`. (#182)
 - The worker guide adds a `REUSED:` line to the report and a last self-check before reporting; the orchestrator guide asks briefs to name the existing code to call, not copy, and to check claims about the code before launch. (#182)
-
 - Fixes to adding an account in `routr setup`: a sign-in ended with Ctrl+C is still reported when setup ends, Ctrl+C in `ACCESSIBLE=1` stops setup with its usual summary, "Sign in now" on a listed account offers Claude Code's first-run opening too, and an account whose harness was uninstalled can still be removed. (#184)
 
 ## v0.14.1 — 2026-11-11
