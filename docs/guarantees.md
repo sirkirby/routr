@@ -156,7 +156,9 @@ starts a harness's sign-in on its own; it says what to run. The one place it run
 for an extra account the person is adding there: it asks first, runs the harness's own sign-in command with the
 account's folder (making the folder if it is not there), checks the folder again when the command ends, and adds
 nothing if it is still not signed in. For a harness that asks first-run questions in a new folder it then offers to
-open the harness there once. Neither is done for a flag, for an agent's `--yes` run, or by any other command. Where an extra account of it is signed in, its model list is read
+open the harness there once. While either runs the terminal is the harness's, and setup takes it back when the
+harness exits. What the harness wrote (the folder, its sign-in) stays whether or not the settings are saved, and
+setup says it ran one however the run ends. Neither is done for a flag, for an agent's `--yes` run, or by any other command. Where an extra account of it is signed in, its model list is read
 with that account's folder.
 
 ## More than one account of a harness

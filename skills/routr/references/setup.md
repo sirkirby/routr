@@ -92,7 +92,7 @@ listed is offered "as typed", chosen by its number in accessible mode), effort, 
 work, reserve, and account use, then whether they have another Claude Code or Codex subscription to use too (a list:
 "No, carry on" first, then "+ Add another … account" for each),
 then, when two or more accounts read metered and are in normal use, each one's launch
-share (no share, 1 to 5, or another weight up to 99; no share removes it), then lists the changes with Save and exit as the default (nothing is written before it). Run again,
+share (no share, 1 to 5, or another weight up to 99; no share removes it), then lists the changes with Save and exit as the default (none of routr's settings is written before it; a sign-in the person ran from the screen has already happened, and setup says so however the run ends). Run again,
 it shows what is set, extra accounts among the subscriptions, and a menu: Subscriptions (each one with its settings, an
 extra account with its folder beside it, and "+ Add another … account" lines), turning subscriptions on or off, or
 walking through everything, then
@@ -150,8 +150,8 @@ the command that fixes it.
     guided setup, without leaving it: Subscriptions, then "+ Add another Claude Code account" (or Codex). It asks a
     name and suggests the folder (`~/.claude-<name>`); where that folder is not signed in it offers to run the
     harness's own sign-in there and then, and for Claude Code to open it once for its first-run screens; then its
-    hardest work, reserve and account use. It is then a subscription in the list like any other, and "Remove this
-    account from routr" in its settings takes it out (`--remove-account <name>` by flag), leaving its folder and
+    hardest work, reserve and account use. It is then a subscription in the list like any other; one that is not signed in offers "Sign in now" there; and "Remove this
+    account from routr" takes it out (`--remove-account <name>` by flag), leaving its folder and
     sign-in as they are. An agent never signs in for the user: it adds one with `routr setup --yes --account claude-work=~/.claude-work`: routr checks that folder's sign-in with the harness's own
     status command and refuses until it is signed in, saying what to run (`CLAUDE_CONFIG_DIR=<folder> claude auth login`;
     `CODEX_HOME=<folder> codex login`, which needs the folder made first), since only the guided screen runs a sign-in, and only when the person says yes. The folder is

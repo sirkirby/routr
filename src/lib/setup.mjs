@@ -201,14 +201,14 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // Why an account cannot be added, or null: the same check for a flag and for the guided flow (`again`: what to do
   // once the folder is signed in).
   // `pending`: accounts the guided flow has accepted in this run, not yet written: a later one may not take their folder.
-  const pending = {};
+  const pending = {}, released = new Set(); // `released`: accounts being removed in this run, whose folder is free again
   // `{ why }`, with `signedOut: true` when the only thing wrong is that the folder is not signed in.
   const cannotAdd = async (n, a, again) => {
     if (!r.harnesses[a.harness]?.installed) return { why: `\`${HARNESSES[a.harness].executable}\` was not found on this machine` };
     if (r.config.subscriptions.includes(n) && r.accounts?.[n] === undefined) return { why: `${n} is already a subscription of its own in your config` };
     // One folder is one account: the config loader would leave a second name on it out, so it is refused here.
     const same = [...Object.entries(loadConfig(path).config.subscriptions).filter(([, x]) => x.harness === a.harness).map(([x, v]) => [x, v.config_dir]), ...Object.entries({ ...adds, ...pending }).filter(([, x]) => x.harness === a.harness).map(([x, v]) => [x, v.dir])]
-      .find(([x, dir]) => x !== n && realOr(dir) === realOr(a.dir));
+      .find(([x, dir]) => x !== n && !released.has(x) && !removes.includes(x) && realOr(dir) === realOr(a.dir));
     if (same) return { why: `its folder is ${same[0]}'s too, and one folder is one account` };
     const account = accountAt(n, a.harness, a.dir), { state } = await accountSignIn(account);
     return state === "yes" ? null : { why: `${signInWhy(account, state)}, then ${again}`, signedOut: state === "no" };
@@ -217,6 +217,8 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   for (const n of removes) {
     if (Object.hasOwn(adds, n)) return { ok: false, error: `--remove-account ${n}: it is added by --account in the same run` };
     if (r.accounts?.[n] === undefined) return { ok: false, error: `--remove-account ${n}: ${n} is not an account in your config` };
+    const flag = [["--model", models], ["--effort", efforts], ["--hardest", hardest], ["--reserve", reserves], ["--use", uses], ["--share", launchShares], ["--enable/--disable", switches]].find(([, set]) => Object.hasOwn(set, n));
+    if (flag) return { ok: false, error: `--remove-account ${n}: ${flag[0]} ${n} is given in the same run, and a removed account has no settings` };
   }
   const known = (n) => !isAccount(n) || Object.hasOwn(adds, n) || r.accounts?.[n] !== undefined;
   for (const [flagName, set] of [["--model", models], ["--effort", efforts], ["--hardest", hardest], ["--reserve", reserves], ["--use", uses], ["--share", launchShares], ["--enable/--disable", switches]])
@@ -264,7 +266,8 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     }
     // Only what was installed is said; a step that failed makes the whole run unsuccessful (`failure` below).
     // Each extra account's skills folder is a place like a harness's own: those in the config, and those added now.
-    const places = [...accountSkillFolders(loadConfig(path).config), ...Object.entries(adds).flatMap(([n, a]) => accountSkillFolder(n, a.harness, a.dir))];
+    // One being removed in this run is no place of routr's any more: nothing is written in its folder.
+    const places = [...accountSkillFolders(loadConfig(path).config).filter((x) => !removes.includes(x.label)), ...Object.entries(adds).flatMap(([n, a]) => accountSkillFolder(n, a.harness, a.dir))];
     const out = install({ accounts: places.filter((x, i) => places.findIndex((y) => y.path === x.path) === i) }), failed = out?.failed ?? [];
     if (!failed.length) did.push(`installed the routr skills ${base} for your agents`);
     else if (out.installed?.length) did.push(`installed the routr skills ${base} at ${out.installed.map((x) => x.where).join(", ")}`);
@@ -284,7 +287,7 @@ export async function setup(args, { inspect: look = inspect, question, interacti
   // one, whether it is ready. Once per provider in a run: a model changed on the same provider asks nothing again.
   const handled = new Set();
   // Stopping before the review writes no settings; a key typed on the way was saved when it was typed, and is said.
-  const stopped = () => { const kept = did.filter((d) => d.startsWith("saved the")); const said = `setup stopped: your settings were not changed${kept.length ? ` (${kept.join("; ")})` : ", and nothing was written"}`;
+  const stopped = () => { const kept = did.filter((d) => d.startsWith("saved the") || d.startsWith("ran ")); const said = `setup stopped: your settings were not changed${kept.length ? ` (${kept.join("; ")})` : ", and nothing was written"}`;
     ui.cancel(said[0].toUpperCase() + said.slice(1) + "."); ui.close(); return { ok: false, cancelled: true, error: said, did, skipped }; };
   const keyFor = async ({ provider, model }) => {
     const P = PROVIDERS[provider];
@@ -308,8 +311,11 @@ export async function setup(args, { inspect: look = inspect, question, interacti
     }
     choices = await guided({ ui, r, config, efforts: levelsOf, telemetry: !telemetryAsked && !envOff(env), decided: decision ?? null,
       accounts: {
-        check: async (n, folder) => { const a = { ...accountName(n), folder, dir: configDirOf(folder) }, why = await cannotAdd(n, a, "add it again"); if (!why) pending[n] = a; return why; },
-        signIn: async (n, folder) => accountLogin(accountAt(n, accountName(n).harness, configDirOf(folder))),
+        check: async (n, folder) => cannotAdd(n, { ...accountName(n), folder, dir: configDirOf(folder) }, "add it again"),
+        keep: (n, folder) => { pending[n] = { ...accountName(n), folder, dir: configDirOf(folder) }; },
+        drop: (n) => { delete pending[n]; released.add(n); },
+        // What the harness did is done whatever becomes of the settings: said, however the run ends.
+        signIn: async (n, folder) => { did.push(`ran ${HARNESSES[accountName(n).harness].label}'s sign-in for ${folder}: that folder and what it signed in stay`); return accountLogin(accountAt(n, accountName(n).harness, configDirOf(folder))); },
         open: async (n, folder) => accountOpen(accountAt(n, accountName(n).harness, configDirOf(folder))),
       } });
     if (choices === CANCEL) { return stopped(); }

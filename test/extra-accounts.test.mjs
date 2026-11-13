@@ -640,6 +640,7 @@ a[0] === "auth" ? console.log(JSON.stringify({ loggedIn: w })) : a[0] === "--hel
   // Taken out by name: its entry goes and nothing else; a name that is not an account is refused.
   expect((await run(["--remove-account", "claude-nope"])).error).toBe("--remove-account claude-nope: claude-nope is not an account in your config");
   expect((await run(["--remove-account", "claude"])).error).toContain("--remove-account takes an extra account's name");
+  expect((await run(["--remove-account", "claude-work", "--reserve", "claude-work=0.2"])).error).toBe("--remove-account claude-work: --reserve claude-work is given in the same run, and a removed account has no settings");
   expect((await run(["--remove-account", "claude-work"])).ok).toBe(true);
   expect([saved().accounts, Object.keys(loadConfig(path).config.subscriptions)]).toEqual([undefined, ["claude"]]);
 }, 60_000); // it starts doctor a dozen times, each a process: slow on Windows
@@ -738,11 +739,11 @@ test("`routr skill install` reads the accounts from the config and links into th
 });
 
 // Guided setup with accounts, each scenario driven as a person would: scripted answers on a fake machine.
-async function guidedRun({ config = null, answers, signedIn = true, classes = {}, loginWorks = true }) {
+async function guidedRun({ config = null, answers, signedIn = true, classes = {}, loginWorks = true, signedOut = [] }) {
   const dir = scratch("accounts-guided-run"), path = join(dir, "config.json"), { setup } = await import("../src/lib/setup.mjs");
   if (config) writeFileSync(path, JSON.stringify(config));
   const said = [], asked = [], installs = [], queue = [...answers], logins = [], opens = [], signedNow = new Set();
-  const inspect = async () => { const subs = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")).subscriptions : {}, accounts = Object.fromEntries(Object.keys(subs.claude?.accounts ?? {}).map((k) => [`claude-${k}`, { harness: "claude", signed_in: true, usage_class: classes[`claude-${k}`] ?? "included" }]));
+  const inspect = async () => { const subs = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")).subscriptions : {}, accounts = Object.fromEntries(Object.keys(subs.claude?.accounts ?? {}).map((k) => [`claude-${k}`, { harness: "claude", signed_in: !signedOut.includes(`claude-${k}`), ...(signedOut.includes(`claude-${k}`) ? { sign_in: "not signed in" } : {}), usage_class: classes[`claude-${k}`] ?? "included" }]));
     return { harnesses: { claude: { installed: true, signed_in: signedIn, ...(signedIn ? {} : { sign_in: "not signed in: run `claude auth login`" }), models: ["m-own", "m2"], usage_class: classes.claude ?? "included" } }, accounts,
       config: { path, exists: existsSync(path), subscriptions: [...Object.keys(subs), ...Object.keys(accounts)], off: [] }, skill: [], decision: [{ works: true }], next_steps: [] }; };
   const r = await setup(["--config", path, "--json"], { inspect, interactive: true, env: {}, install: (o) => { installs.push(o); return {}; }, share: () => {}, key: async () => ({ ok: true }), hasKey: () => true, print: (t) => said.push(t), efforts: async () => ["low", "medium"],
@@ -849,4 +850,52 @@ test("a harness command run in the person's terminal gets the account's folder, 
   const code = await attended(process.execPath, ["-e", `require("node:fs").writeFileSync(${JSON.stringify(out)}, String(process.env.TESTY_HOME)); process.exit(3);`], { account: { TESTY_HOME: WORK } });
   expect([code, readFileSync(out, "utf8")]).toEqual([3, WORK]);
   expect(await attended(join(dir, "no-such-command"), [])).toBeNull();
+});
+
+test("guided setup: a removed account frees its name and folder in the same run, and nothing is written in its folder", async () => {
+  const config = { subscriptions: { claude: { ...BASE, accounts: { work: WORK } } } };
+  // Remove work, then add another account on its folder: accepted, and the skills step leaves work's folder alone.
+  const reuse = await guidedRun({ config, answers: ["1", "2", "6", "y", "2", "next", WORK, "", "", "", "b", "8"] });
+  expect([reuse.r.ok, reuse.left, reuse.saved.claude.accounts]).toEqual([true, 0, { next: WORK }]);
+  expect(reuse.installs.at(-1).accounts.map((a) => a.label)).toEqual(["claude-next"]);
+  // Its own name again waits for the save, and says so.
+  const again = await guidedRun({ config, answers: ["1", "2", "6", "y", "2", "work", "b", "b", "8"] });
+  expect([again.r.ok, again.left, again.saved.claude.accounts]).toEqual([true, 0, undefined]);
+  expect(again.said).toContain("claude-work is being removed in this run: save, then add it again");
+  // One added and removed in the same run leaves nothing, and its name and folder are free at once.
+  const undo = await guidedRun({ config: { subscriptions: { claude: { ...BASE } } }, answers: ["1", "2", "tmp", WORK, "", "", "", "2", "6", "y", "2", "tmp", WORK, "", "", "", "b", "8"] });
+  expect([undo.r.ok, undo.left, undo.saved.claude.accounts]).toEqual([true, 0, { tmp: WORK }]);
+});
+
+test("guided setup: an account that is not signed in can be signed in from the list, or removed", async () => {
+  const config = { subscriptions: { claude: { ...BASE, accounts: { out: OUT } } } };
+  const fix = await guidedRun({ config, signedOut: ["claude-out"], answers: ["1", "2", "1", "2", "3", "1", "b", "b", "8"] }); // Sign in now, then its settings open: hardest work, basic
+  expect([fix.r.ok, fix.left, fix.logins, fix.saved.claude.accounts.out]).toEqual([true, 0, [{ CLAUDE_CONFIG_DIR: OUT }], { folder: OUT, hardest_work: "basic" }]);
+  const drop = await guidedRun({ config, signedOut: ["claude-out"], answers: ["1", "2", "2", "y", "b", "8"] }); // Remove this account, yes
+  expect([drop.r.ok, drop.left, drop.logins, drop.saved.claude]).toEqual([true, 0, [], BASE]);
+});
+
+test("after a sign-in run from guided setup, leaving without saving says the sign-in happened", async () => {
+  const config = { subscriptions: { claude: { ...BASE } } };
+  const quit = await guidedRun({ config, answers: ["1", "2", "max2", OUT, "y", "n", "", "", "", "b", "9"] }); // signed in, not opened, then Exit without saving
+  expect([quit.r.ok, quit.r.cancelled, quit.left, quit.saved]).toEqual([false, true, 0, config.subscriptions]);
+  expect(quit.r.error).toBe(`setup stopped: your settings were not changed (ran Claude Code's sign-in for ${OUT}: that folder and what it signed in stay)`);
+});
+
+test("the terminal UI hands the keyboard to another program: raw mode off and input paused while it runs", async () => {
+  const { createUI } = await import("../src/lib/tui.mjs"), { EventEmitter } = await import("node:events");
+  const input = Object.assign(new EventEmitter(), { isRaw: false, paused: false, setRawMode(on) { this.isRaw = on; }, pause() { this.paused = true; }, resume() { this.paused = false; }, read() {} });
+  const ui = createUI({ input, output: { write() {}, columns: 80, rows: 24, on() {}, removeListener() {} }, env: {} });
+  const asked = ui.confirm({ message: "go?", initial: true });
+  expect([input.isRaw, input.paused, input.listenerCount("keypress")]).toEqual([true, false, 1]);
+  input.emit("keypress", "y", { name: "y" });
+  expect(await asked).toBe(true);
+  const during = await ui.handOff(async () => [input.isRaw, input.paused, input.listenerCount("keypress")]);
+  expect(during).toEqual([false, true, 0]);
+  // The next question takes the terminal back.
+  const next = ui.confirm({ message: "again?", initial: true });
+  expect([input.isRaw, input.paused]).toEqual([true, false]);
+  input.emit("keypress", "n", { name: "n" });
+  expect(await next).toBe(false);
+  ui.close();
 });

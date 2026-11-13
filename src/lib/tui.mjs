@@ -272,6 +272,12 @@ export function createUI({ input = process.stdin, output = process.stderr, env =
         answer: (v) => String(v) });
     },
 
+    // Give the terminal to another program for a while (a harness's own sign-in): raw mode off, the cursor back, and
+    // nothing of this UI reading the keyboard while it runs. The next question takes the terminal back as it needs it.
+    handOff: async (run) => {
+      restore(); reader?.pause(); input.pause?.();
+      try { return await run(); } finally { reader?.resume(); }
+    },
     close: () => { restore(); reader?.close(); output.removeListener?.("resize", onResize); input.pause?.(); process.removeListener?.("exit", restore); },
   };
   return ui;
