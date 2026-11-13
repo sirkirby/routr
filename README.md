@@ -97,7 +97,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `feedback "<text>"` | Send the maintainers a note in your own words. |
 | `key set [typesafe\|cloudflare]` | Store your decision model's key (TypeSafe's API key, or a Cloudflare API token and account ID): typed without echo, saved readable only by you, then tested. Ollama needs none. |
 | `update` | Update to the newest release on your update channel now (routr also does this by itself in the background, at most once a day). |
-| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use, another account of Claude Code or Codex if you have one, and a launch share for metered accounts in normal use; run again, a menu to change one thing or add an account. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--share`, `--enable`, `--disable`, `--account`, `--channel`, `--decision`) and reads them first with `--show`. |
+| `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use, another account of Claude Code or Codex if you have one, and a launch share for metered accounts in normal use; run again, a menu to change one thing or add an account. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--share`, `--enable`, `--disable`, `--account`, `--remove-account`, `--channel`, `--decision`) and reads them first with `--show`. |
 | `uninstall` | Remove routr: the binary, its two skills, the cache and its own state, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, keys, and ledger; `--purge` removes those too. It removes nothing while a headless worker is still there (`cleanup --worker` finishes it), nor with `--purge` while a worktree a headless launch made is. |
 | `doctor` | Check the setup: harnesses found, live usage, every decision-list entry in order, config, each harness's current model list (for Claude Code, its aliases), and what to do next. Changes nothing. |
 
@@ -215,10 +215,11 @@ goes stale when models change.
   Without `use`, every account is normal; readings never change this choice.
   `billing` names the kind when the harness cannot show it.
 - `accounts`, under a harness's entry: more accounts of that harness, each a name and the folder it is signed in
-  from. Sign the folder in first (`CLAUDE_CONFIG_DIR=<folder> claude auth login`; `mkdir -p <folder>` then
-  `CODEX_HOME=<folder> codex login`) and open the harness in it once to answer its first screens, then
-  add it in `routr setup` (Choose which subscriptions routr uses, then yes to "Add another account of …?"), or with
-  `routr setup --account claude-work=~/.claude-work`, and run `routr skill install`. Each is a subscription of its own (`claude-work`) with its
+  from. Add one in `routr setup`: Subscriptions, then "+ Add another Claude Code account". It asks a name, suggests the
+  folder, offers to run the harness's sign-in for it there and to open Claude Code once for its first-run screens, and
+  takes its settings. By flag, sign the folder in yourself first (`CLAUDE_CONFIG_DIR=<folder> claude auth login`;
+  `mkdir -p <folder>` then `CODEX_HOME=<folder> codex login`), then `routr setup --account claude-work=~/.claude-work`
+  and `routr skill install`; `--remove-account claude-work` takes it out again. Each is a subscription of its own (`claude-work`) with its
   own sign-in and usage reading, launched with `--subscription claude-work`. It has the harness's settings until you
   give it its own (`routr setup --use claude-work=fallback --reserve claude-work=10%`), and is turned on or off on its
   own. `claude` itself stays the account your environment names. Claude Code and Codex only. Measured 2026-11-12 on

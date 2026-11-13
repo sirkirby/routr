@@ -38,6 +38,8 @@
 //     not say (a harness without `effort` has none: its model ids carry it).
 //   auth: how to tell it is signed in (signin.mjs): `check` is its own status command, which never starts a sign-in,
 //     `signedIn(out, code)` reads the answer (stdout and stderr together), `signIn` says how the user signs in.
+//     `login`, where it has `folder`: its own sign-in command, which guided setup runs in the person's terminal for an
+//     extra account they are adding or have listed, when they choose it, and routr runs nowhere else.
 //     Measured signed in and signed out, 2026-09-26; each parser matches the text both ways, not the exit code alone.
 //     `billing(out, code)`, optional: what that same answer says about billing: `{ billing: "metered", why }` when
 //     it states per-token billing, else null (the usage windows decide, as before). No further call: it is read from
@@ -61,7 +63,9 @@
 //   folder: where it keeps its sign-in, for a harness that takes another folder for it, and so more than one account:
 //     `variable`, the documented variable that names the folder (Claude Code's CLAUDE_CONFIG_DIR, Codex's CODEX_HOME:
 //     references/harnesses.md has each source), and `default`, the folder under the home folder it uses with the
-//     variable unset. `unnamed: true`: the default folder must not be named in the variable. Claude Code 2.1.322 on
+//     variable unset. `firstRun: true`: opened in a folder it has not seen, it asks first-run questions a worker
+//     stops at (measured 2026-11-12, Claude Code 2.1.322: the theme, folder trust, the bypass-permissions notice),
+//     so guided setup offers to open it there once. `unnamed: true`: the default folder must not be named in the variable. Claude Code 2.1.322 on
 //     macOS, measured 2026-11-10: `claude auth status` said "loggedIn": true with CLAUDE_CONFIG_DIR unset and false with
 //     it set to ~/.claude. A login is a harness and a folder: its source key (sourceKey, below) is what its sign-in
 //     answer and usage reading are kept under. A harness with no `folder` has one account: none is recorded for Cursor
@@ -157,13 +161,13 @@ export function claudeBilling(out) {
 
 export const HARNESSES = {
   claude: { label: "Claude Code", executable: "claude", app: "claude-code", installAs: "Claude Code", shortLabel: "Claude", skills: ".claude/skills", otelProvider: "anthropic",
-    folder: { variable: "CLAUDE_CONFIG_DIR", default: ".claude", unnamed: true },
+    folder: { variable: "CLAUDE_CONFIG_DIR", default: ".claude", unnamed: true, firstRun: true },
     permissions: ["--dangerously-skip-permissions"], model: "--model", effort: "--effort",
     // Measured 2.1.316, 2026-11-02: plain Agent and /code-review; both explicit spawn settings beat a differing pair.
     subagents: ({ model, effort }) => ({ env: { ...(model ? { CLAUDE_CODE_SUBAGENT_MODEL: model } : {}), ...(effort ? { CLAUDE_CODE_SUBAGENT_EFFORT: effort } : {}) },
       warnings: effort ? [warning("subagent_effort_version", "Anthropic's 2.1.316 changelog says CLAUDE_CODE_SUBAGENT_EFFORT was added there; earlier versions were not tested.")] : [] }),
     // `"loggedIn": false` and exit 1 when signed out.
-    auth: { check: ["auth", "status"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`", billing: (out) => claudeBilling(out) },
+    auth: { check: ["auth", "status"], login: ["auth", "login"], signedIn: (out) => /"loggedIn"\s*:\s*true/.test(out), signIn: "run `claude auth login`", billing: (out) => claudeBilling(out) },
     // Its help names the latest aliases (fable, opus, sonnet on 2.1.283); its help says `--model` also takes a model's full name.
     models: async (o) => modelsInHelp(await readClaudeHelp(o)), openList: "takes a model's full name, which it does not list",
     efforts: async () => effortsInHelp(await readClaudeHelp()),
@@ -207,7 +211,7 @@ export const HARNESSES = {
     subagents: ({ model, effort }) => ({ argv: [...(model ? ["-c", `agents.default_subagent_model=${tomlString(model)}`] : []),
       ...(effort ? ["-c", `agents.default_subagent_reasoning_effort=${tomlString(effort)}`] : [])] }),
     // "Logged in using ChatGPT" / "Not logged in" (exit 1), both on stderr.
-    auth: { check: ["login", "status"], signedIn: (out, code) => code === 0 && /^\s*Logged in\b/m.test(out), signIn: "run `codex login`" },
+    auth: { check: ["login", "status"], login: ["login"], signedIn: (out, code) => code === 0 && /^\s*Logged in\b/m.test(out), signIn: "run `codex login`" },
     // Only the models Codex lists (visibility "list"); each carries its own levels (gpt-5.5 stops at xhigh, measured).
     models: async (o) => (await readCodexModels(o))?.filter((m) => m.visibility !== "hide").map((m) => m.slug ?? m.id).filter(Boolean) ?? null,
     efforts: async (model) => (await readCodexModels())?.find((m) => (m.slug ?? m.id) === model)?.supported_reasoning_levels?.map((e) => e.effort ?? e) ?? null,

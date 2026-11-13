@@ -28,7 +28,7 @@ each decision-list entry answers, and whether a config exists. A harness that is
 levels, unless one of its extra accounts is signed in; one already on can still be turned off. Setup shows the
 command to run beside it (greyed when it cannot be
 chosen), `setup --yes` notes each one it did not add ("<name> left out: …"), doctor names the command, and routr never
-starts a sign-in itself. Lines marked `!!` need fixing, and it ends with a numbered list of what to
+starts a sign-in itself (the guided screen offers one only for an extra account the person is adding, or one in its list that is not signed in). Lines marked `!!` need fixing, and it ends with a numbered list of what to
 do next. `routr setup` does the writing (step 3). A person can run it alone in a terminal and answer its
 questions; you run it with `--yes` and the choices you settled with the user. `routr doctor --fix` is the same
 command. It is safe to run again: it fills in what is missing (a skill left behind by an older routr, a harness
@@ -89,12 +89,13 @@ reserve suggestions. Existing choices stand until the user changes them. Then ru
 A person can instead run `routr setup` alone in a terminal: it is a guided screen. The first time it asks which
 subscriptions routr may use, then each one's model (from the harness's live list, typed to filter; for Claude Code a full model name that is not
 listed is offered "as typed", chosen by its number in accessible mode), effort, hardest
-work, reserve, and account use, then whether to add another account of Claude Code or Codex (a second login, signed
-in from its own folder: its harness, a short name and the folder, then its hardest work, reserve and account use),
+work, reserve, and account use, then whether they have another Claude Code or Codex subscription to use too (a list:
+"No, carry on" first, then "+ Add another … account" for each),
 then, when two or more accounts read metered and are in normal use, each one's launch
-share (no share, 1 to 5, or another weight up to 99; no share removes it), then lists the changes with Save and exit as the default (nothing is written before it). Run again,
-it shows what is set, extra accounts among the subscriptions, and a menu to change one thing, turn a subscription on or
-off (which then asks whether to add another account), or walk through everything, then
+share (no share, 1 to 5, or another weight up to 99; no share removes it), then lists the changes with Save and exit as the default (none of routr's settings is written before it; a sign-in the person ran from the screen has already happened, and setup says so however the run ends). Run again,
+it shows what is set, extra accounts among the subscriptions, and a menu: Subscriptions (each one with its settings, an
+extra account with its folder beside it, and "+ Add another … account" lines), turning subscriptions on or off, or
+walking through everything, then
 Save and exit or Exit without saving. Arrow keys choose, Esc goes back,
 Ctrl+C stops without writing. `ACCESSIBLE=1` asks the same questions as numbered lines, for a screen reader. Suggest it
 to a user who would rather click through than tell you each setting; you cannot drive it yourself, because it needs a
@@ -146,11 +147,14 @@ the command that fixes it.
     for it (Launch share) when two or more enabled accounts read metered and are in normal use;
     a metered weight can be configured before room returns. Set it with `--share name=<1-99>`, remove it with `--share name=off`.
   - `accounts`: more accounts of that harness, each a name and the folder it is signed in from. A person adds one in
-    guided setup (Choose which subscriptions routr uses, then yes to "Add another account of …?": its harness, a short
-    name and its folder, then its hardest work, reserve and account use), and it is then a subscription in the list like any
-    other. An agent adds one with `routr setup --yes --account claude-work=~/.claude-work`: routr checks that folder's sign-in with the harness's own
+    guided setup, without leaving it: Subscriptions, then "+ Add another Claude Code account" (or Codex). It asks a
+    name and suggests the folder (`~/.claude-<name>`); where that folder is not signed in it offers to run the
+    harness's own sign-in there and then, and for Claude Code to open it once for its first-run screens; then its
+    hardest work, reserve and account use. It is then a subscription in the list like any other; one that is not signed in offers "Sign in now" there; and "Remove this
+    account from routr" takes it out (`--remove-account <name>` by flag), leaving its folder and
+    sign-in as they are. An agent never signs in for the user: it adds one with `routr setup --yes --account claude-work=~/.claude-work`: routr checks that folder's sign-in with the harness's own
     status command and refuses until it is signed in, saying what to run (`CLAUDE_CONFIG_DIR=<folder> claude auth login`;
-    `CODEX_HOME=<folder> codex login`, which needs the folder made first), since routr never signs in. The folder is
+    `CODEX_HOME=<folder> codex login`, which needs the folder made first), since only the guided screen runs a sign-in, and only when the person says yes. The folder is
     a harness's whole home, so have the user open the harness in it once, the way routr starts workers
     (`CLAUDE_CONFIG_DIR=<folder> claude --dangerously-skip-permissions`), and answer its first screens: a worker
     stops at them otherwise. Then run `routr skill install`, which links routr's skills into the account's folder. Each is a subscription named `<harness>-<name>`

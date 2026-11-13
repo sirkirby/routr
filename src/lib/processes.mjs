@@ -276,3 +276,18 @@ export function probe(cmd, args, { timeoutMs = 15000, cwd, separate = false, acc
     child.on("close", (code) => finish(separate ? { out, err, code } : { out, code }));
   });
 }
+
+// A harness's own command run in the person's terminal, for them to answer: its sign-in, or its first-run screens
+// (guided setup, for an extra account the person is adding or has listed, when they choose it). Its input and output are the terminal's, routr
+// waits however long it takes, and Ctrl+C goes to the harness, not to routr. Resolves its exit code, or null when it
+// could not start. `account`: as start takes it.
+export function attended(cmd, args, { account, cwd } = {}) {
+  return new Promise((resolve) => {
+    const hold = () => {}; let child;
+    const done = (v) => { process.off("SIGINT", hold); resolve(v); };
+    process.on("SIGINT", hold);
+    try { child = start(cmd, args, { stdio: "inherit", env: harnessEnv(), ...(cwd ? { cwd } : {}) }, { account }); } catch { return done(null); }
+    child.on("error", () => done(null));
+    child.on("close", (code) => done(code));
+  });
+}
