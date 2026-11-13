@@ -189,6 +189,9 @@ export async function inspect({ configPath, quiet } = {}) {
     const u = usage.find((x) => x.pool === n), signed = states[n] === "yes";
     (r.accounts ??= {})[n] = { harness: config.subscriptions[n].harness, signed_in: signed, ...(signed ? {} : { sign_in: signInWhy(accountOf(n, config), states[n]) }), usage: said(u), usage_class: u?.class, ...(signed ? stale(n, u) : {}) };
   }
+  // One whose harness is not on this machine is an account of the config all the same: said, never asked, and
+  // setup can still change it or take it out.
+  for (const [n, s] of Object.entries(config.subscriptions)) if (s.harness && !found.includes(s.harness)) (r.accounts ??= {})[n] = { harness: s.harness, signed_in: false, sign_in: `\`${HARNESSES[s.harness].executable}\` was not found on this machine` };
   const lists = Object.fromEntries(found.map((n, i) => [n, models[i]]));
   for (const n of found) r.harnesses[n].models = lists[n];
   // The installer writes the skill and the binary together, but a skill copied by hand or left behind by an older

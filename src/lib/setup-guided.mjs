@@ -259,6 +259,17 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   // folder cannot be added (`signedOut`: only because it is not signed in), `signIn` and `open` run the harness in this
   // terminal and come back when it exits. routr starts a sign-in nowhere else, and only on that yes.
   const handOff = (run) => (ui.handOff ? ui.handOff(run) : run());
+  // After a sign-in run here, for a harness whose new folder asks first-run questions: wherever the sign-in was run
+  // from. Back or no leaves it signed in, with what is left to do said.
+  const offerOpen = async (n, name, folder) => {
+    const h = of(n);
+    if (!HARNESSES[h].folder.firstRun || !acct.open) return null;
+    const go = await ui.confirm({ message: `Open ${HARNESSES[h].label} in it once now? ${ui.style.dim(`(a new folder asks its first-run questions, and a worker stops at them: answer them, then quit ${HARNESSES[h].label} to come back here)`)}`, initial: true });
+    if (go === CANCEL) return CANCEL;
+    if (go === true) await handOff(() => acct.open(n, folder));
+    else ui.line(`${name}: not opened. A worker there stops at ${HARNESSES[h].label}'s first-run questions until someone answers them once.`);
+    return null;
+  };
   const askAccount = async (h) => {
     const short = await ui.text({ message: `${HARNESSES[h].label}: a name for this account ${ui.style.dim(`(for example work or personal2: routr calls it ${h}-<name>)`)}`, initial: "",
       parse: (t) => { const v = String(t).trim(), n = `${h}-${v}`; if (!/^[a-z0-9][a-z0-9_-]*$/.test(v) || n.length > 32) throw new Error("a-z, 0-9, - and _, and 32 characters at most with the harness's name"); if (removed.includes(n)) throw new Error(`${n} is being removed in this run: save, then add it again`); if (current[n] || Object.hasOwn(HARNESSES, n)) throw new Error(`${n} is already a subscription`); return v; } });
@@ -277,13 +288,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       }
     }
     if (no) { ui.line(`${HARNESSES[h].label} · ${short}: ${no.why}`); return "none"; }
-    if (fresh && HARNESSES[h].folder.firstRun && acct.open) {
-      const go = await ui.confirm({ message: `Open ${HARNESSES[h].label} in it once now? ${ui.style.dim(`(a new folder asks its first-run questions, and a worker stops at them: answer them, then quit ${HARNESSES[h].label} to come back here)`)}`, initial: true });
-      if (go === CANCEL) return CANCEL;
-      // Back or no: it is signed in and is added all the same, with what is left to do said.
-      if (go === true) await handOff(() => acct.open(n, folder));
-      else ui.line(`${HARNESSES[h].label} · ${short}: not opened. A worker there stops at ${HARNESSES[h].label}'s first-run questions until someone answers them once.`);
-    }
+    if (fresh && await offerOpen(n, `${HARNESSES[h].label} · ${short}`, folder) === CANCEL) return CANCEL;
     acct.keep?.(n, folder); // from here it is this run's: its folder is taken until it is saved or removed
     accountsAdded[n] = folder; current[n] = { ...inherited(h), ...Object.fromEntries(["default_model", "default_effort", "hardest_work", "reserve", "use", "share"].filter((k) => draft[h]?.[k] !== undefined).map((k) => [k, draft[h][k]])) };
     draft[n] = { ...current[n], hardest_work: current[n].hardest_work ?? HARNESSES[h].suggested.hardest_work, reserve: current[n].reserve ?? HARNESSES[h].suggested.reserve, enabled: true };
@@ -417,15 +422,16 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
         n = picked;
         if (!signedIn(n) && isAccount(n) && acct) {
           // An account that is not signed in has no settings to walk, and can still be signed in here or taken out.
-          const what = await ui.select({ message: `${label(n)} is not signed in`, initial: acct.signIn ? "signin" : BACK, options: [
-            ...(acct.signIn ? [{ value: "signin", label: "Sign in now", hint: `${H(n).label}'s own sign-in runs here, for ${folderOf(n)}` }] : []),
+          const here = r.harnesses[of(n)]?.installed && acct.signIn;
+          const what = await ui.select({ message: r.harnesses[of(n)]?.installed ? `${label(n)} is not signed in` : `${label(n)}: ${signInOf(n)}`, initial: here ? "signin" : BACK, options: [
+            ...(here ? [{ value: "signin", label: "Sign in now", hint: `${H(n).label}'s own sign-in runs here, for ${folderOf(n)}` }] : []),
             { value: "remove", label: "Remove this account from routr", hint: "its folder stays as it is" }, { value: BACK, label: "Back" }] });
           if (what === CANCEL) return CANCEL;
           if (what === "remove") { if (await removeAccount(n) === CANCEL) return CANCEL; }
           else if (what === "signin") {
             await handOff(() => acct.signIn(n, folderOf(n))); ui.line("");
             const no = await acct.check(n, folderOf(n));
-            if (no) ui.line(`${label(n)}: ${no.signedOut ? `${folderOf(n)} is still not signed in` : no.why}`); else { signedNow.add(n); ui.line(`${label(n)} is signed in.`, { dim: true }); }
+            if (no) ui.line(`${label(n)}: ${no.signedOut ? `${folderOf(n)} is still not signed in` : no.why}`); else { signedNow.add(n); ui.line(`${label(n)} is signed in.`, { dim: true }); if (await offerOpen(n, label(n), folderOf(n)) === CANCEL) return CANCEL; }
           }
           continue;
         }

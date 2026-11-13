@@ -116,9 +116,11 @@ request to judge missing readings applies only to true fallback or unavailable u
 - `doctor` JSON has `core`: `path`, where `hc` was found on PATH or null, and `inside_terminal`, true when
   `HC_TERMINAL_ID` is set and `HERDR_ENV` is not. Neither says the Herdr app is running. Herdr's skill is asked for
   when herdr is installed and either the lead is in a herdr session or `hc` was not found.
-- `doctor` JSON has `accounts` when the config has an extra account, on or off, of a harness found here: by name,
+- `doctor` JSON has `accounts` when the config has an extra account, on or off: by name,
   `harness`, `signed_in`, `sign_in` when not (naming its folder when it is signed out), `usage` and `usage_stale`,
-  each checked afresh with its folder.
+  each checked afresh with its folder. One whose harness is not on this machine is there too, never asked: `harness`,
+  `signed_in: false` and a `sign_in` saying the harness's command was not found. It gets no work, and setup can still
+  take it out.
 - `setup --account <harness>-<name>=<folder>` adds an extra account under its harness's entry, written as its folder.
   Refused, with nothing written, when the harness has no folder setting routr knows, the folder is not a full path or
   under `~/`, the harness is not installed, another account lists that folder, or that folder is not signed in (the

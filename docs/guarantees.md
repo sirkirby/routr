@@ -157,9 +157,9 @@ for an extra account the person is adding there, or one in its list that is not 
 "Sign in now": it asks first, runs the harness's own sign-in command with the
 account's folder (making the folder if it is not there), checks the folder again when the command ends, and adds
 nothing if it is still not signed in. For a harness that asks first-run questions in a new folder it then offers to
-open the harness there once. While either runs the terminal is the harness's, and setup takes it back when the
+open the harness there once, after either of those sign-ins. While either runs the terminal is the harness's, and setup takes it back when the
 harness exits. What the harness wrote (the folder, its sign-in) stays whether or not the settings are saved, and
-setup says it ran one however the run ends. Neither is done for a flag, for an agent's `--yes` run, or by any other command. Where an extra account of it is signed in, its model list is read
+setup says it ran one, once for a folder, however the run ends: saved, left without saving, or stopped with Ctrl+C (in `ACCESSIBLE=1` too), and also when the sign-in itself was ended with Ctrl+C. Neither is done for a flag, for an agent's `--yes` run, or by any other command. Where an extra account of it is signed in, its model list is read
 with that account's folder.
 
 ## More than one account of a harness
