@@ -37,7 +37,7 @@ const USAGE = strict({ source: plain(str), read: plain(fn), byHand: plain(fn), w
 const FIELDS = {
   label: [true, plain(str)], executable: [true, plain(str)], app: [true, plain(str)], installAs: [true, plain(str)], shortLabel: [true, plain(str)],
   otelProvider: [true, plain(str)], permissions: [true, plain(strs)], model: [true, plain(str)], models: [true, plain(fn)],
-  auth: [true, strict({ check: plain(strs), signedIn: plain(fn), signIn: plain(str), billing: plain(fn) }, ["check", "signedIn", "signIn"])],
+  auth: [true, strict({ check: plain(strs), login: plain(strs), signedIn: plain(fn), signIn: plain(str), billing: plain(fn) }, ["check", "signedIn", "signIn"])],
   suggested: [true, (s) => is(obj(s) && ["basic", "standard", "strong"].includes(s.hardest_work) && typeof s.reserve === "number")],
   usage: [true, USAGE],
   skills: [false, plain(str)], effort: [false, plain(str)], effortValue: [false, plain(fn)], autoEffort: [false, plain(str)], autoEffortMeans: [false, plain(str)],
@@ -50,7 +50,7 @@ const FIELDS = {
   // A plain name: it is typed into a pane's shell (herdr.mjs's SHELLS) without quoting.
   privateConfig: [false, strict({ file: plain(str), variable: plain((v) => typeof v === "string" && /^[A-Z_][A-Z0-9_]*$/.test(v)) }, ["file", "variable"])],
   // The same: an extra account's variable is typed into a pane's shell by its set or unset line.
-  folder: [false, strict({ variable: plain((v) => typeof v === "string" && /^[A-Z_][A-Z0-9_]*$/.test(v)), default: plain(str), unnamed: plain(bool) }, ["variable", "default"])],
+  folder: [false, strict({ variable: plain((v) => typeof v === "string" && /^[A-Z_][A-Z0-9_]*$/.test(v)), default: plain(str), unnamed: plain(bool), firstRun: plain(bool) }, ["variable", "default"])],
 };
 // What one entry gets wrong, as `field` or `field.nested` paths; [] when it is whole. A field read only when another is
 // there is required with it: a fresh read (`usage.check`) keeps `fields`, heads its answer with `used` and is described

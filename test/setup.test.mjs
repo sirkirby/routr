@@ -212,7 +212,7 @@ async function runSetup({ config, args = [], answers = [], found = ["agy", "curs
   const queue = [...answers];
   // These scenarios keep export off; the exporter tests drive its new consent question separately. They add no extra
   // account either: the account tests drive that question.
-  const question = async (q) => { asked.push(q.trim()); if (q.startsWith("Export OpenTelemetry to your own endpoint?")) return "n"; if (q.startsWith("Add another account of")) return "n"; if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); };
+  const question = async (q) => { asked.push(q.trim()); if (q.startsWith("Export OpenTelemetry to your own endpoint?")) return "n"; if (q.startsWith("Do you have another")) return ""; if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); };
   const r = await setup(["--config", path, "--json", ...args], { inspect, question, interactive: true, env,
     install: () => installs.push(1), share: (on) => shared.push(on), key: async () => { keys.push(1); return { ok: false, error: "none given" }; }, hasKey: (p) => keysSaved.includes(p), print, efforts, ...(isStandalone ? { isStandalone } : {}) });
   const saved = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : null;
@@ -285,11 +285,11 @@ test("one set up but signed out is never asked anything and is not turned on, an
   expect(called.filter((n) => n !== "cursor")).toEqual([]);
   expect(x.saved).toEqual(config);
   expect(x.r.skipped).toEqual(["nothing changed"]); // both are set up: nothing was left out
-  // "Change one subscription's settings" on one signed out says what to run and opens nothing.
+  // "Subscriptions" on one signed out says what to run and opens nothing.
   const said = [];
-  const one = await runSetup({ config, found: ["cursor"], signedOut: ["kiro", "codex"], efforts, answers: ["", "1", "4", "7"], print: (t) => said.push(t) }); // Codex, told, Back, Exit
+  const one = await runSetup({ config, found: ["cursor"], signedOut: ["kiro", "codex"], efforts, answers: ["", "1", "b", "7"], print: (t) => said.push(t) }); // Codex, told, back, Exit
   expect(one.left).toBe(0);
-  expect(one.asked.find((a) => a.startsWith("Which subscription?"))).toContain("Codex (model left to the lead agent · strong work · reserve 20% · not signed in: run `codex-cli login`)");
+  expect(one.asked.find((a) => a.startsWith("Subscriptions"))).toContain("Codex (model left to the lead agent · strong work · reserve 20% · not signed in: run `codex-cli login`)");
   expect(said.join("\n")).toContain("Codex: not signed in: run `codex-cli login`, then change its settings here.");
   expect(one.asked.some((a) => a.startsWith("Codex: which setting?"))).toBe(false);
   // An agent cannot turn it on either; it can still turn one off, or change a setting that asks nothing of the harness.

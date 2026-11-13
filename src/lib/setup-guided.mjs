@@ -42,7 +42,7 @@ export const describe = (n, s) => (s.enabled === false ? "off (settings kept)"
 export const takesSettings = (r, n) => r.harnesses[n]?.installed && (r.harnesses[n].signed_in || Object.values(r.accounts ?? {}).some((a) => a.harness === n && a.signed_in));
 // `r` is doctor's inspection, `config` the file as it is (null on a first run). `efforts(n, model)` lists a harness's
 // levels for a model. Returns the choices, or CANCEL when the person quits without writing.
-export async function guided({ ui, r, config, efforts, telemetry = false, decided = null, addAccount = null }) {
+export async function guided({ ui, r, config, efforts, telemetry = false, decided = null, accounts: acct = null }) {
   const file = config?.subscriptions ?? {};
   // An extra account is a subscription here like any other, named <harness>-<name> and asked the same questions. What
   // it has now is its harness's settings with its own over them, as the config is read, so only a setting the person
@@ -202,13 +202,13 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
     if (!candidates.length) {
       for (const n of waiting) ui.line(`${label(n)}: ${signInOf(n)}`, { dim: true });
       // A harness signed out on its default folder can still have another folder signed in: that account is offered.
-      if (addAccount && multi.length) { const a = await askAccounts(); if (a === CANCEL) return CANCEL; }
+      if (acct && multi.length) { const a = await askAccounts(); if (a === CANCEL) return CANCEL; }
       if (!candidates.length) { ui.line("No harness is installed and signed in yet: sign in to one, then run routr setup again."); return "none"; }
     }
     const v = await ui.multiselect({ message: "Which subscriptions may routr hand work to?", min: 1,
       options: [...candidates, ...waiting].map((n) => (waiting.includes(n) || locked(n)
         ? { value: n, label: label(n), disabled: signInOf(n) }
-        : { value: n, label: label(n), hint: [current[n] ? describe(n, draft[n]) : "new", ...(signedIn(n) ? [] : [signInOf(n)])].join(" · ") })),
+        : { value: n, label: listed(n), hint: [current[n] ? describe(n, draft[n]) : "new", ...(signedIn(n) ? [] : [signInOf(n)])].join(" · ") })),
       initial: candidates.filter((n) => draft[n].enabled) });
     if (Array.isArray(v)) for (const n of candidates) draft[n].enabled = v.includes(n);
     return v;
@@ -245,39 +245,70 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
     return endpoint;
   };
 
-  // Another account of a harness: which harness, a short name, and the folder it is signed in from. setup checks the
-  // folder's sign-in with the harness's own status command (`addAccount`) and says what to run where it is not signed
-  // in; routr never signs in. Added, it is asked its settings like a new subscription, starting from its harness's.
+  // The harnesses that can have another account: one with a folder setting, installed here.
   const multi = Object.keys(HARNESSES).filter((h) => HARNESSES[h].folder && r.harnesses[h]?.installed);
-  const askAccount = async () => {
-    if (!addAccount || !multi.length) { ui.line(`An extra account needs ${Object.keys(HARNESSES).filter((h) => HARNESSES[h].folder).map((h) => HARNESSES[h].label).join(" or ")} installed.`, { dim: true }); return "none"; }
-    const h = await ui.select({ message: "Another account of which harness?", initial: multi[0], options: [...multi.map((x) => ({ value: x, label: HARNESSES[x].label })), { value: BACK, label: "Back" }] });
-    if (h === CANCEL || h === BACK) return h;
-    const short = await ui.text({ message: `A short name for it ${ui.style.dim(`(it becomes the subscription ${h}-<name>, for example work)`)}`, initial: "",
+  // The folder an account is signed in from, as written: one added in this run, or the config's.
+  const folderOf = (n) => { if (accountsAdded[n]) return accountsAdded[n]; const a = accountName(n), e = file[a.harness]?.accounts?.[a.short]; return e && typeof e === "object" ? e.folder : e; };
+  // An account's line in a list: its folder beside its name, so two accounts of one harness can be told apart at a glance.
+  const listed = (n) => (isAccount(n) && folderOf(n) ? `${label(n)} ${ui.style.dim(`(${folderOf(n)})`)}` : label(n));
+  const addLabel = (h) => `+ Add another ${HARNESSES[h].label} account`;
+  // Adding one, start to finish, without leaving setup: its name, its folder (suggested from the name), the harness's
+  // own sign-in run here when the folder is not signed in and the person says yes, the harness opened once where a new
+  // folder asks first-run questions, then the settings that usually differ. `acct` is setup's: `check` says why a
+  // folder cannot be added (`signedOut`: only because it is not signed in), `signIn` and `open` run the harness in this
+  // terminal and come back when it exits. routr starts a sign-in nowhere else, and only on that yes.
+  const askAccount = async (h) => {
+    const short = await ui.text({ message: `${HARNESSES[h].label}: a name for this account ${ui.style.dim(`(for example work or personal2: routr calls it ${h}-<name>)`)}`, initial: "",
       parse: (t) => { const v = String(t).trim(), n = `${h}-${v}`; if (!/^[a-z0-9][a-z0-9_-]*$/.test(v) || n.length > 32) throw new Error("a-z, 0-9, - and _, and 32 characters at most with the harness's name"); if (current[n] || Object.hasOwn(HARNESSES, n)) throw new Error(`${n} is already a subscription`); return v; } });
     if (typeof short !== "string") return short;
-    const n = `${h}-${short}`, folder = await ui.text({ message: `The folder ${n} is signed in from ${ui.style.dim(`(its own ${HARNESSES[h].folder.variable}, for example ~/.${HARNESSES[h].executable}-${short})`)}`, initial: `~/.${HARNESSES[h].executable}-${short}`,
+    const n = `${h}-${short}`, folder = await ui.text({ message: `Its folder ${ui.style.dim(`(where ${HARNESSES[h].label} keeps this login, apart from your others: Enter takes the one shown, or give one already signed in)`)}`, initial: `~/${HARNESSES[h].folder.default}-${short}`,
       parse: (t) => { const v = String(t).trim(); if (!configDirOf(v)) throw new Error("a full path, or one under ~/"); return v; } });
     if (typeof folder !== "string") return folder;
-    const why = await addAccount(n, folder);
-    if (why) { ui.line(`${label(n)}: ${why}`); return "none"; }
+    let no = await acct.check(n, folder), fresh = false;
+    if (no?.signedOut && acct.signIn) {
+      const go = await ui.confirm({ message: `${folder} is not signed in yet. Sign in now? ${ui.style.dim(`(${HARNESSES[h].label}'s own sign-in runs here: sign in with the account this is for, and setup carries on when it is done)`)}`, initial: true });
+      if (go === CANCEL || go === BACK) return go;
+      if (go) {
+        fresh = true; await acct.signIn(n, folder); no = await acct.check(n, folder);
+        ui.line(""); // the harness's last line is its own: what setup says next starts on a line of its own
+        if (no?.signedOut) { ui.line(`${HARNESSES[h].label} · ${short}: ${folder} is still not signed in, so it was not added. Choose "${addLabel(h)}" again to try once more.`); return "none"; }
+      }
+    }
+    if (no) { ui.line(`${HARNESSES[h].label} · ${short}: ${no.why}`); return "none"; }
+    if (fresh && HARNESSES[h].folder.firstRun && acct.open) {
+      const go = await ui.confirm({ message: `Open ${HARNESSES[h].label} in it once now? ${ui.style.dim(`(a new folder asks its first-run questions, and a worker stops at them: answer them, then quit ${HARNESSES[h].label} to come back here)`)}`, initial: true });
+      if (go === CANCEL || go === BACK) return go;
+      if (go) await acct.open(n, folder);
+    }
     accountsAdded[n] = folder; current[n] = { ...inherited(h), ...Object.fromEntries(["default_model", "default_effort", "hardest_work", "reserve", "use", "share"].filter((k) => draft[h]?.[k] !== undefined).map((k) => [k, draft[h][k]])) };
     draft[n] = { ...current[n], hardest_work: current[n].hardest_work ?? HARNESSES[h].suggested.hardest_work, reserve: current[n].reserve ?? HARNESSES[h].suggested.reserve, enabled: true };
     candidates.splice(Math.max(candidates.indexOf(h), ...candidates.map((x, i) => (isAccount(x) && of(x) === h ? i : -1))) + 1, 0, n);
-    ui.line(`${label(n)} is signed in from ${folder}. It starts with ${HARNESSES[h].label}'s settings, model and effort included: change those from the menu.`, { dim: true });
+    ui.line(`${label(n)} is signed in from ${folder}. It starts with ${HARNESSES[h].label}'s settings, model and effort included: change those under Subscriptions.`, { dim: true });
     // Asked now: what usually differs between two accounts of one harness. Its model and effort stay its harness's
-    // until changed from the menu, so answering nothing writes nothing of its own.
+    // until changed, so answering nothing writes nothing of its own.
     const v = await fields(n, ["hardest", "reserve", "use"]);
     return v === CANCEL ? CANCEL : n;
   };
-  // A first run offers it once per account, after the subscriptions are chosen.
+  // Taking an account out of routr: its entry goes, and its folder and sign-in stay as they are. One added in this run
+  // is simply not written.
+  const removed = [];
+  const removeAccount = async (n) => {
+    const go = await ui.confirm({ message: `Remove ${label(n)} from routr? ${ui.style.dim(`(routr stops using it: ${folderOf(n)} and its sign-in stay as they are)`)}`, initial: false });
+    if (go !== true) return go;
+    candidates.splice(candidates.indexOf(n), 1);
+    if (accountsAdded[n]) delete accountsAdded[n]; else removed.push(n);
+    return true;
+  };
+  // A first run offers it after the subscriptions are chosen, as a list with "no" first: one line per harness that can
+  // have another account.
   const askAccounts = async () => {
-    if (!addAccount || !multi.length) return "done";
+    if (!acct || !multi.length) return "done";
     for (;;) {
-      const v = await ui.confirm({ message: `Add another account of ${multi.map((h) => HARNESSES[h].label).join(" or ")}? ${ui.style.dim("(a second login, signed in from its own folder)")}`, initial: false });
+      const v = await ui.select({ message: `Do you have another ${multi.map((h) => HARNESSES[h].label).join(" or ")} subscription to use too? ${ui.style.dim("(a second login of the same harness, kept in a folder of its own)")}`, initial: "no",
+        options: [{ value: "no", label: "No, carry on" }, ...multi.map((h) => ({ value: h, label: addLabel(h) }))] });
       if (v === CANCEL || v === BACK) return v;
-      if (!v) return "done";
-      if (await askAccount() === CANCEL) return CANCEL;
+      if (v === "no") return "done";
+      if (await askAccount(v) === CANCEL) return CANCEL;
     }
   };
 
@@ -298,6 +329,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
         if (a !== b) out.push(`${label(n)}: ${what} ${k === "reserve" ? pct(a ?? 0) : a ?? "none"} ${ui.glyphs.arrow} ${k === "reserve" ? pct(b ?? 0) : b ?? "none"}`);
       }
     }
+    for (const n of removed) out.push(`${H(n).label} · ${accountName(n).short}: removed from routr (its folder ${folderOf(n)} is left as it is)`);
     if (answers.telemetry !== undefined) out.push(`telemetry: ${answers.telemetry ? "on" : "off"}`);
     if (answers.otelEndpoint !== undefined) out.push("OpenTelemetry export: on");
     if (answers.channel && answers.channel !== channelNow) out.push(`update channel: ${channelNow} ${ui.glyphs.arrow} ${answers.channel}`);
@@ -343,8 +375,8 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
     for (;;) {
       const pending = changes().length;
       const v = await ui.select({ message: "What would you like to do?", initial: "one", options: [
-        { value: "one", label: "Change one subscription's settings", hint: "model, effort, hardest work, reserve, account use, launch share" },
-        { value: "choose", label: "Choose which subscriptions routr uses", hint: addAccount && multi.length ? "turn one on or off, or add another account of a harness" : "turn one on or off" },
+        { value: "one", label: "Subscriptions", hint: acct && multi.length ? `change one's settings, or add another ${multi.map((h) => HARNESSES[h].label).join(" or ")} account` : "change one's model, effort, hardest work, reserve, account use, launch share" },
+        { value: "choose", label: "Choose which subscriptions routr uses", hint: "turn one on or off" },
         ...(telemetry ? [{ value: "extras", label: "Anonymous outcomes (telemetry)" }] : []),
         { value: "channel", label: "Update channel", hint: `${answers.channel ?? channelNow}: stable releases, or beta builds too` },
         { value: "decision", label: "Decision model", hint: decisionLabel(answers.decision ?? decisionNow) },
@@ -357,7 +389,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       if (v === "save") { ui.note("Saving", changes()); return "write"; }
       // Esc with changes not saved: the same way out as at the end of a first run, so nothing is lost by accident.
       if (v === BACK) { const w = await finish(); if (w === "write") return "write"; if (w === "quit" || w === CANCEL) return CANCEL; continue; }
-      if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) { const added = c.filter((x) => !current[x]); for (const n of added) if (await fields(n, walkFields(n)) === CANCEL) return CANCEL; if (await askShares(added) === CANCEL) return CANCEL; const before = Object.keys(accountsAdded); if (await askAccounts() === CANCEL) return CANCEL; if (await askShares(Object.keys(accountsAdded).filter((x) => !before.includes(x))) === CANCEL) return CANCEL; } continue; }
+      if (v === "choose") { const c = await choose(); if (c === CANCEL) return CANCEL; if (Array.isArray(c)) { const added = c.filter((x) => !current[x]); for (const n of added) if (await fields(n, walkFields(n)) === CANCEL) return CANCEL; if (await askShares(added) === CANCEL) return CANCEL; } continue; }
       if (v === "extras") { if (await extras() === CANCEL) return CANCEL; continue; }
       if (v === "otel") { if (await askOtel() === CANCEL) return CANCEL; continue; }
       if (v === "channel") { if (await askChannel() === CANCEL) return CANCEL; continue; }
@@ -367,10 +399,13 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
       // back to the same list with the new value; Back (or Esc) goes up one level, to the subscriptions, then the menu.
       let n = candidates[0];
       for (;;) {
-        const picked = await ui.select({ message: "Which subscription?", initial: n, options: [
-          ...candidates.map((x) => ({ value: x, label: label(x), hint: signedIn(x) ? describe(x, draft[x]) : `${describe(x, draft[x])} · ${signInOf(x)}` })), { value: BACK, label: "Back" }] });
+        // The list is where an account is added too: one line per harness that can have another, after the subscriptions.
+        const adds = acct ? multi.map((h) => ({ value: `+${h}`, label: addLabel(h), hint: "another subscription of it, signed in from a folder of its own" })) : [];
+        const picked = await ui.select({ message: "Subscriptions", initial: candidates.includes(n) ? n : candidates[0], options: [
+          ...candidates.map((x) => ({ value: x, label: listed(x), hint: signedIn(x) ? describe(x, draft[x]) : `${describe(x, draft[x])} · ${signInOf(x)}` })), ...adds, { value: BACK, label: "Back" }] });
         if (picked === CANCEL) return CANCEL;
         if (picked === BACK) break;
+        if (picked.startsWith("+")) { const a = await askAccount(picked.slice(1)); if (a === CANCEL) return CANCEL; if (accountsAdded[a]) { if (await askShares([a]) === CANCEL) return CANCEL; n = a; } continue; }
         n = picked;
         if (!signedIn(n)) { ui.line(`${label(n)}: ${signInOf(n)}, then change its settings here.`, { dim: true }); continue; }
         let f = "model";
@@ -378,9 +413,11 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
           const now = { model: draft[n].default_model || "left to the lead agent", effort: draft[n].default_effort ?? "not set", hardest: draft[n].hardest_work, reserve: pct(draft[n].reserve ?? 0), use: useOf(n), share: draft[n].share ?? "none" };
           f = await ui.select({ message: `${label(n)}: which setting?`, initial: f, options: [
             ...fieldsOf(n).map((k) => ({ value: k, label: FIELDS[k], hint: now[k] })),
+            ...(isAccount(n) ? [{ value: "remove", label: "Remove this account from routr", hint: "its folder and sign-in stay as they are" }] : []),
             { value: BACK, label: "Back" }] });
           if (f === CANCEL) return CANCEL;
           if (f === BACK) break;
+          if (f === "remove") { const gone = await removeAccount(n); if (gone === CANCEL) return CANCEL; if (gone === true) break; f = "model"; continue; }
           if (await ask[f](n) === CANCEL) return CANCEL; // Esc inside a setting keeps its value and comes back here
         }
       }
@@ -390,7 +427,7 @@ export async function guided({ ui, r, config, efforts, telemetry = false, decide
   const outcome = config ? await menu() : await full();
   if (outcome === CANCEL) return CANCEL;
   // In the flags' shape, so setup applies them as it applies --model, --effort, --hardest, --reserve, --enable/--disable.
-  const out = { models: {}, efforts: {}, hardest: {}, reserves: {}, switches: {}, uses: {}, shares: {}, accounts: { ...accountsAdded }, ...answers, write: outcome === "write" };
+  const out = { models: {}, efforts: {}, hardest: {}, reserves: {}, switches: {}, uses: {}, shares: {}, accounts: { ...accountsAdded }, removeAccounts: [...removed], ...answers, write: outcome === "write" };
   if (out.channel === channelNow) delete out.channel; // as --channel: only a change is applied
   if (out.decision && decisionLabel(out.decision) === decisionLabel(decisionNow)) delete out.decision; // as --decision
   sync();

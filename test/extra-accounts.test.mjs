@@ -637,32 +637,12 @@ a[0] === "auth" ? console.log(JSON.stringify({ loggedIn: w })) : a[0] === "--hel
   expect(saved().accounts.work.enabled).toBe(true);
   // One folder is one account: a second name on it is refused, where the config loader would leave it out.
   expect((await run(["--account", `claude-again=${WORK}`])).error).toBe("--account claude-again=…: its folder is claude-work's too, and one folder is one account");
+  // Taken out by name: its entry goes and nothing else; a name that is not an account is refused.
+  expect((await run(["--remove-account", "claude-nope"])).error).toBe("--remove-account claude-nope: claude-nope is not an account in your config");
+  expect((await run(["--remove-account", "claude"])).error).toContain("--remove-account takes an extra account's name");
+  expect((await run(["--remove-account", "claude-work"])).ok).toBe(true);
+  expect([saved().accounts, Object.keys(loadConfig(path).config.subscriptions)]).toEqual([undefined, ["claude"]]);
 }, 60_000); // it starts doctor a dozen times, each a process: slow on Windows
-
-test("guided setup adds an account by asking its harness, name and folder, refuses a folder not signed in, and lists the account to change later", async () => {
-  const dir = scratch("accounts-guided"), path = join(dir, "config.json"), { setup } = await import("../src/lib/setup.mjs");
-  writeFileSync(path, JSON.stringify({ subscriptions: { claude: { hardest_work: "strong", reserve: 0.1, default_model: "m-own" } } }));
-  const said = [];
-  const inspect = async () => { const subs = JSON.parse(readFileSync(path, "utf8")).subscriptions, accounts = Object.fromEntries(Object.keys(subs.claude.accounts ?? {}).map((k) => [`claude-${k}`, { harness: "claude", signed_in: true, usage_class: "metered" }]));
-    return { harnesses: { claude: { installed: true, signed_in: true, models: ["m-own"], usage_class: "included" } }, accounts, config: { path, exists: true, subscriptions: ["claude", ...Object.keys(accounts)], off: [] }, skill: [], decision: [{ works: true }], next_steps: [] }; };
-  const drive = async (answers) => { const asked = [], queue = [...answers];
-    const r = await setup(["--config", path, "--json"], { inspect, interactive: true, env: {}, install: () => {}, share: () => {}, key: async () => ({ ok: true }), hasKey: () => true, print: (t) => said.push(t), efforts: async () => ["low", "medium"],
-      question: async (q) => { asked.push(q.trim().split("\n")[0]); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); },
-      accountSignIn: async (a) => ({ state: a.dir === WORK ? "yes" : "no" }) });
-    return { r, asked, left: queue.length }; };
-  // The menu's choose step, then: yes, Claude Code, "out", its folder (not signed in: said, nothing added); yes again,
-  // "work", its folder; hardest kept, reserve 25%, fallback; no more; save.
-  const first = await drive(["2", "", "y", "", "out", OUT, "y", "", "work", WORK, "", "4", "2", "n", "8"]);
-  expect([first.r.ok, first.left]).toEqual([true, 0]);
-  expect(said.join("\n").replace(/\n[│|]\s+/g, " ")).toContain(`Claude Code · out: not signed in: run \`claude auth login\` with CLAUDE_CONFIG_DIR set to ${OUT}, then add it here again`);
-  expect(first.asked.filter((q) => q.startsWith("Claude Code · work"))).toEqual(["Claude Code · work: the hardest work routr may send there", expect.stringContaining("Claude Code · work: reserve"), "Claude Code · work: how may routr use this account?"]);
-  // Only what the person made differ is the account's own; its model stays its harness's.
-  expect(JSON.parse(readFileSync(path, "utf8")).subscriptions.claude).toEqual({ hardest_work: "strong", reserve: 0.1, default_model: "m-own", accounts: { work: { folder: WORK, reserve: 0.25, use: "fallback" } } });
-  // Run again: the account is a subscription in the list, and one setting changed there is written under it.
-  const again = await drive(["1", "2", "3", "1", "b", "b", "8"]);
-  expect([again.r.ok, again.left, again.asked[2]]).toEqual([true, 0, "Claude Code · work: which setting?"]);
-  expect(JSON.parse(readFileSync(path, "utf8")).subscriptions.claude.accounts.work).toEqual({ folder: WORK, reserve: 0.25, use: "fallback", hardest_work: "basic" });
-});
 
 test("doctor gives each extra account a line of its own, and its own step when its reader has failed for over a day, naming its harness as what an update may have changed", () => {
   const dir = scratch("accounts-doctor"), stopped = join(dir, "stopped"), log = join(stopped, "sessions", "2026", "11", "10");
@@ -758,21 +738,23 @@ test("`routr skill install` reads the accounts from the config and links into th
 });
 
 // Guided setup with accounts, each scenario driven as a person would: scripted answers on a fake machine.
-async function guidedRun({ config = null, answers, signedIn = true, classes = {} }) {
+async function guidedRun({ config = null, answers, signedIn = true, classes = {}, loginWorks = true }) {
   const dir = scratch("accounts-guided-run"), path = join(dir, "config.json"), { setup } = await import("../src/lib/setup.mjs");
   if (config) writeFileSync(path, JSON.stringify(config));
-  const said = [], asked = [], installs = [], queue = [...answers];
+  const said = [], asked = [], installs = [], queue = [...answers], logins = [], opens = [], signedNow = new Set();
   const inspect = async () => { const subs = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")).subscriptions : {}, accounts = Object.fromEntries(Object.keys(subs.claude?.accounts ?? {}).map((k) => [`claude-${k}`, { harness: "claude", signed_in: true, usage_class: classes[`claude-${k}`] ?? "included" }]));
     return { harnesses: { claude: { installed: true, signed_in: signedIn, ...(signedIn ? {} : { sign_in: "not signed in: run `claude auth login`" }), models: ["m-own", "m2"], usage_class: classes.claude ?? "included" } }, accounts,
       config: { path, exists: existsSync(path), subscriptions: [...Object.keys(subs), ...Object.keys(accounts)], off: [] }, skill: [], decision: [{ works: true }], next_steps: [] }; };
   const r = await setup(["--config", path, "--json"], { inspect, interactive: true, env: {}, install: (o) => { installs.push(o); return {}; }, share: () => {}, key: async () => ({ ok: true }), hasKey: () => true, print: (t) => said.push(t), efforts: async () => ["low", "medium"],
-    question: async (q) => { asked.push(q.trim().split("\n")[0]); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); }, accountSignIn: async (a) => ({ state: a.dir === OUT ? "no" : "yes" }) });
-  return { r, asked, installs, left: queue.length, said: said.join("\n").replace(/\n[│|]\s+/g, " "), saved: existsSync(path) ? JSON.parse(readFileSync(path, "utf8")).subscriptions : null };
+    question: async (q) => { asked.push(q.trim().split("\n")[0]); if (!queue.length) throw new Error(`unexpected question: ${q.trim()}`); return queue.shift(); }, accountSignIn: async (a) => ({ state: a.dir === OUT && !signedNow.has(a.dir) ? "no" : "yes" }),
+    // The harness's own sign-in and first run, as setup would start them in the terminal: recorded, never started.
+    accountLogin: async (a) => { logins.push(a.env); if (loginWorks) signedNow.add(a.dir); return 0; }, accountOpen: async (a) => { opens.push(a.dir); return 0; } });
+  return { r, asked, installs, logins, opens, left: queue.length, said: said.join("\n").replace(/\n[│|]\s+/g, " "), saved: existsSync(path) ? JSON.parse(readFileSync(path, "utf8")).subscriptions : null };
 }
 const BASE = { hardest_work: "strong", reserve: 0.1, default_model: "m-own" };
 
 test("guided setup, first run: with the harness signed out on its default folder, an account signed in from another folder is still offered and added", async () => {
-  const g = await guidedRun({ signedIn: false, answers: ["y", "", "work", WORK, "", "", "", "n", "", "n", "n", "", ""] });
+  const g = await guidedRun({ signedIn: false, answers: ["2", "work", WORK, "", "", "", "", "", "", "n", "", ""] }); // + Add, its name and folder, three settings kept, no more, then the rest of a first run
   expect([g.r.ok, g.left]).toEqual([true, 0]);
   expect(g.asked.filter((q) => q.startsWith("Claude Code · work")).length).toBe(3); // asked once, when added: not walked again
   expect(g.saved.claude.accounts).toEqual({ work: WORK }); // nothing answered differs from its harness's
@@ -793,18 +775,62 @@ test("guided setup: an account can have no model where its harness has one, and 
 
 test("guided setup: a new account beside a metered one is asked its launch share, a folder another account lists is refused, and leaving without saving writes nothing", async () => {
   const config = { subscriptions: { claude: { hardest_work: "strong", reserve: 0.1, share: 3, accounts: { work: WORK } } } };
-  const quit = await guidedRun({ config, classes: { claude: "metered", "claude-work": "metered" }, answers: ["2", "", "y", "", "w2", "/acct/w2", "", "", "", "n", "", "9"] });
+  // Subscriptions, + Add (after Claude Code and its account), name, folder, three settings, its share, back, Exit without saving.
+  const quit = await guidedRun({ config, classes: { claude: "metered", "claude-work": "metered" }, answers: ["1", "3", "w2", "/acct/w2", "", "", "", "", "b", "9"] });
   expect([quit.r.ok, quit.r.cancelled, quit.left, quit.saved]).toEqual([false, true, 0, config.subscriptions]);
   expect(quit.asked).toContainEqual(expect.stringContaining("Claude Code · w2: launch share"));
-  const same = await guidedRun({ config, answers: ["2", "", "y", "", "w2", WORK, "n", "8"] });
+  const same = await guidedRun({ config, answers: ["1", "3", "w2", WORK, "b", "8"] });
   expect([same.r.ok, same.left, same.saved]).toEqual([true, 0, config.subscriptions]);
   expect(same.said).toContain("Claude Code · w2: its folder is claude-work's too, and one folder is one account");
   // Two added in one run may not share a folder either: the second is refused, and only the first is written.
-  const twice = await guidedRun({ config, answers: ["2", "", "y", "", "one", "/acct/same", "", "", "", "y", "", "two", "/acct/same", "n", "8"] });
+  const twice = await guidedRun({ config, answers: ["1", "3", "one", "/acct/same", "", "", "", "4", "two", "/acct/same", "b", "8"] });
   expect([twice.r.ok, twice.left, twice.saved.claude.accounts]).toEqual([true, 0, { work: WORK, one: "/acct/same" }]);
   expect(twice.said).toContain("Claude Code · two: its folder is claude-one's too, and one folder is one account");
 });
 
+test("guided setup's Subscriptions list is where an account is added, changed and removed, with its folder beside it", async () => {
+  const config = { subscriptions: { claude: { ...BASE } } };
+  // Subscriptions, + Add another Claude Code account, name, folder (signed in already: no sign-in is offered), hardest
+  // kept, reserve 25%, fallback, back, save.
+  const add = await guidedRun({ config, answers: ["1", "2", "work", WORK, "", "4", "2", "b", "8"] });
+  expect([add.r.ok, add.left, add.logins, add.opens]).toEqual([true, 0, [], []]);
+  expect(add.asked).toContainEqual(expect.stringContaining("Claude Code: a name for this account"));
+  expect(add.asked.filter((q) => q.startsWith("Claude Code · work"))).toEqual(["Claude Code · work: the hardest work routr may send there", expect.stringContaining("Claude Code · work: reserve"), "Claude Code · work: how may routr use this account?"]);
+  expect(add.saved.claude).toEqual({ ...BASE, accounts: { work: { folder: WORK, reserve: 0.25, use: "fallback" } } }); // only what was made to differ is its own
+  // Run again: it is a line of the list with its folder, a setting changed there is written under it, and it can be removed.
+  const withWork = { subscriptions: add.saved };
+  const change = await guidedRun({ config: withWork, answers: ["1", "2", "3", "1", "b", "b", "8"] });
+  expect([change.r.ok, change.left, change.saved.claude.accounts.work]).toEqual([true, 0, { folder: WORK, reserve: 0.25, use: "fallback", hardest_work: "basic" }]);
+  const list = await guidedRun({ config: withWork, answers: ["1"] }).catch((e) => String(e.message));
+  expect(list).toContain(`2. Claude Code · work (${WORK}) (`);
+  expect(list).toContain("3. + Add another Claude Code account");
+  const gone = await guidedRun({ config: withWork, answers: ["1", "2", "6", "y", "b", "8"] }); // its settings, Remove this account, yes
+  expect([gone.r.ok, gone.left, gone.saved.claude]).toEqual([true, 0, BASE]);
+  expect(gone.said).toContain(`Claude Code · work: removed from routr (its folder ${WORK} is left as it is)`);
+});
+
+test("guided setup signs a new account in and opens its harness once, in the terminal, only on the person's yes", async () => {
+  const config = { subscriptions: { claude: { ...BASE } } };
+  // The folder is not signed in: yes to signing in, yes to opening Claude Code once, then its settings.
+  const yes = await guidedRun({ config, answers: ["1", "2", "max2", OUT, "y", "y", "", "", "", "b", "8"] });
+  expect([yes.r.ok, yes.left, yes.logins, yes.opens]).toEqual([true, 0, [{ CLAUDE_CONFIG_DIR: OUT }], [OUT]]);
+  expect(yes.saved.claude.accounts).toEqual({ max2: OUT });
+  // No to signing in: nothing is started, the command is said, and nothing is added.
+  const no = await guidedRun({ config, answers: ["1", "2", "max2", OUT, "n", "b", "8"] });
+  expect([no.r.ok, no.left, no.logins, no.opens, no.saved]).toEqual([true, 0, [], [], config.subscriptions]);
+  expect(no.said).toContain(`Claude Code · max2: not signed in: run \`claude auth login\` with CLAUDE_CONFIG_DIR set to ${OUT}, then add it again`);
+  // A sign-in that did not take (closed, or another account's): checked again, refused the same way, never opened.
+  const failed = await guidedRun({ config, loginWorks: false, answers: ["1", "2", "max2", OUT, "y", "b", "8"] });
+  expect([failed.r.ok, failed.left, failed.logins.length, failed.opens, failed.saved]).toEqual([true, 0, 1, [], config.subscriptions]);
+  expect(failed.said).toContain(`Claude Code · max2: ${OUT} is still not signed in, so it was not added. Choose "+ Add another Claude Code account" again to try once more.`);
+  // A flag run never signs in: it refuses with the command.
+  const { setup } = await import("../src/lib/setup.mjs");
+  const started = [], dir = scratch("accounts-nosignin"), path = join(dir, "config.json");
+  writeFileSync(path, JSON.stringify(config));
+  const r = await setup(["--config", path, "--yes", "--json", "--account", `claude-max2=${OUT}`], { inspect: async () => ({ harnesses: { claude: { installed: true, signed_in: true, models: [] } }, accounts: {}, config: { path, exists: true, subscriptions: ["claude"], off: [] }, skill: [], decision: [{ works: true }], next_steps: [] }),
+    install: () => ({}), share: () => {}, key: async () => ({ ok: true }), hasKey: () => true, print: () => {}, accountSignIn: async () => ({ state: "no" }), accountLogin: async () => { started.push("login"); }, accountOpen: async () => { started.push("open"); } });
+  expect([r.ok, started]).toEqual([false, []]);
+});
 test("an effort for an account with no model of its own is checked against no model, not its harness's", async () => {
   const dir = scratch("accounts-effort"), path = join(dir, "config.json"), { setup } = await import("../src/lib/setup.mjs");
   writeFileSync(path, JSON.stringify({ subscriptions: { claude: { ...BASE, accounts: { work: { folder: WORK, default_model: null }, same: OUT } } } }));
@@ -814,4 +840,13 @@ test("an effort for an account with no model of its own is checked against no mo
     efforts: async (n, model) => (model === "m-own" ? ["medium", "high"] : ["low", "medium"]) });
   expect((await run(["--effort", "claude-work=low"])).ok).toBe(true); // no model: the levels for none
   expect((await run(["--effort", "claude-same=low"])).error).toBe("--effort claude-same=low: Claude Code takes medium, high for m-own"); // its harness's model
+});
+
+test("a harness command run in the person's terminal gets the account's folder, and routr waits for it and takes its exit code", async () => {
+  const { attended } = await import("../src/lib/processes.mjs");
+  const dir = scratch("accounts-attended"), out = join(dir, "seen");
+  // The child writes what it was given to a file: its output is the terminal's, so nothing of it is captured here.
+  const code = await attended(process.execPath, ["-e", `require("node:fs").writeFileSync(${JSON.stringify(out)}, String(process.env.TESTY_HOME)); process.exit(3);`], { account: { TESTY_HOME: WORK } });
+  expect([code, readFileSync(out, "utf8")]).toEqual([3, WORK]);
+  expect(await attended(join(dir, "no-such-command"), [])).toBeNull();
 });

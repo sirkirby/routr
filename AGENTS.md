@@ -35,7 +35,8 @@ page and its tests in the same PR.
   it cannot tell, it stops and says what to do; it never forces.
 - Nothing waits on background work: the updater and slow usage refreshes run detached, and a command never waits for
   them or makes a network call for them. It may report what they last did.
-- A harness is used only once its own status command says it is signed in. routr never starts a sign-in.
+- A harness is used only once its own status command says it is signed in. routr never starts a sign-in on its own:
+  only guided setup does, in the person's terminal, for an account they are adding, when they say yes.
 - routr gets what it needs from a harness through standard mechanisms (skills, prompts, the harness's own CLI). It
   never takes over a harness feature (a statusline slot, a hook) and depends on no private internals beyond what
   `references/harnesses.md` records as observed.

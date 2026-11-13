@@ -121,7 +121,11 @@ request to judge missing readings applies only to true fallback or unavailable u
   each checked afresh with its folder.
 - `setup --account <harness>-<name>=<folder>` adds an extra account under its harness's entry, written as its folder.
   Refused, with nothing written, when the harness has no folder setting routr knows, the folder is not a full path or
-  under `~/`, the harness is not installed, or that folder is not signed in (the error names the command to run).
+  under `~/`, the harness is not installed, another account lists that folder, or that folder is not signed in (the
+  error names the command to run; a flag run never signs in). `setup --remove-account <harness>-<name>` takes one out:
+  its entry goes, and its folder, its sign-in and routr's skills linked there stay; a name that is not an account in
+  the config is refused. The guided screen adds and removes one too, and alone may run the harness's sign-in for an
+  account being added, on the person's yes.
   `--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--share`, `--enable` and `--disable` take an extra
   account's name: the setting is written on the account, which is then `{ folder, ...settings }`; a name the config
   does not have is refused with the `--account` command that adds it.
