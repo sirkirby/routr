@@ -1,8 +1,9 @@
 // The System One providers routr can ask, and the decision models it has measured on each. One registry, the way
 // harnesses.mjs holds the harnesses: everything that differs between providers is here (where to send, how to sign the
-// request, how the answer comes back, what "ready" means), and systemone.mjs is the one client that uses it. All three
+// request, how the answer comes back, what "ready" means), and systemone.mjs is the one client that uses it. Three
 // speak TypeSafe's System One contract (state + typed questions → typed answers); what differs is the envelope around it
 // and how each computes `confidence`, which systemone.mjs normalizes, so advise.mjs reads every provider the same way.
+// OpenAI's Decisions API asks the same typed questions in its own shape, which its `wrap` and `unwrap` translate.
 //
 // A model is offered only with a PROFILE measured on routr's saved items (routr-lab's gate, CONTRIBUTING.md): its own
 // sure_at, and the numbers the "torn" note quotes. Profiles describe routr's instrument, never a worker model: nothing
@@ -54,6 +55,7 @@ export const PROVIDERS = {
     keysUrl: "https://console.typesafe.ai/keys",
     get: "Create an API key at https://console.typesafe.ai/keys, then run: routr key set typesafe",
     request: (model, s) => ({ url: "https://api.typesafe.ai/v1/systemone", headers: { Authorization: `Bearer ${s.TYPESAFE_API_KEY}` } }),
+    wrap: (b) => b,
     unwrap: (j) => j,
     identity: (model) => typeof model === "string" && /^jev-\d+\.\d+\.\d+$/.test(model),
     nativeConfidence: true, // TypeSafe's own definition: kept as sent (its probabilities arrive rounded to 0.01)
@@ -80,6 +82,7 @@ export const PROVIDERS = {
     get: "Create an API token with Workers AI Read (Account > Workers AI > Read) at https://dash.cloudflare.com/profile/api-tokens, then run: routr key set cloudflare (it also asks for your account ID)",
     request: (model, s) => ({ url: `https://api.cloudflare.com/client/v4/accounts/${s.CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/cloudflare/${model}`, headers: { Authorization: `Bearer ${s.CLOUDFLARE_API_TOKEN}` } }),
     // The REST API wraps the System One answer: { success, errors: [{ code, message }], messages, result }.
+    wrap: (b) => b,
     unwrap: (j) => {
       if (j?.success === false || !j?.result?.answers) return null;
       return j.result;
@@ -101,6 +104,38 @@ export const PROVIDERS = {
         hint: "your Cloudflare account, a smaller and faster Clef · 74 of 104 levels right, more often too low" },
     },
   },
+  openai: {
+    label: "OpenAI",
+    // OpenAI's own name, so a person who has it set needs nothing more.
+    secrets: [{ name: "OPENAI_API_KEY", label: "OpenAI API key", hidden: true }],
+    get: "Create an API key at https://platform.openai.com/api-keys, then run: routr key set openai",
+    request: (model, s) => ({ url: "https://api.openai.com/v1/decisions", headers: { Authorization: `Bearer ${s.OPENAI_API_KEY}` } }),
+    // One input, named questions. The state is JSON text. Every yes/no question is a predicate, with criteria appended
+    // to its instructions; score levels are labelled by number.
+    wrap: ({ state, model, questions }) => ({ model, input: JSON.stringify(state), questions: Object.entries(questions).map(([name, { type, instructions, criteria }]) =>
+      type === "score" ? { type, name, instructions, levels: criteria.map((description, i) => ({ label: String(i), description })) }
+        : type === "choice" ? { type, name, instructions, choices: Object.entries(criteria).map(([value, description]) => ({ value, description })) }
+          : { type: "predicate", name, instructions: criteria ? `${instructions}\n${Object.entries(criteria).map(([value, description]) => `${value}: ${description}`).join("\n")}` : instructions }) }),
+    // Named answers and spreads become System One's objects; readAnswers checks them against the request.
+    // As with JSON object keys, the last repeated name or probability value wins. A refusal means no reading.
+    unwrap: (j) => {
+      try {
+        if (j.answers.some((a) => a.type === "refusal")) return null;
+        return { ...j, answers: Object.fromEntries(j.answers.map((a) => [a.name, a.type === "predicate"
+          ? { type: "noul", noul: a.probability }
+          : { ...a, probabilities: a.probabilities && Object.fromEntries(a.probabilities.map((x) => [x.value, x.probability])) }])) };
+      } catch { return null; }
+    },
+    errorCode: (j) => Array.isArray(j?.answers) && j.answers.some((a) => a?.type === "refusal") ? "declined" : null,
+    identity: (model) => isModel("openai", model),
+    deadlineMs: 10000,
+    models: {
+      // OpenAI's GPT-6 Luna: a contributor's placeholder from their own briefs, not the maintainers' gate; replace with
+      // the gate's result.
+      "gpt-6-luna": { sure_at: 0.8, torn: { right: 28, of: 39, low: 11, high: 0 },
+        hint: "needs an OpenAI API key · 28 of 39 levels right, more often too low" },
+    },
+  },
   ollama: {
     label: "Ollama (local)",
     secrets: [],
@@ -108,6 +143,7 @@ export const PROVIDERS = {
     // keep_alive is Ollama's own field: the model stays loaded between briefs, so only the first call of a session waits
     // for it to load (Clef Flash: 5 to 17 s on an M4 Max, measured).
     request: (model, s, env) => ({ url: `${ollamaHost(env)}/v1/systemone`, headers: {}, body: { keep_alive: "15m" } }),
+    wrap: (b) => b,
     unwrap: (j) => j,
     identity: (model) => isModel("ollama", model),
     host: ollamaHost,
@@ -239,6 +275,7 @@ const DECISION_MESSAGES = {
   provider_error: ({ http, action }) => `the provider returned HTTP ${http}. ${action}`,
   invalid_response: () => "the provider returned a reply routr cannot read. Try again; if it persists, check the decision provider.",
   daily_allowance: () => "the daily free allowance is used up. Wait for the daily reset or enable the Workers Paid plan in Cloudflare.",
+  declined: () => "the model declined to answer. If no backup decision model answered, add one with routr setup.",
   internal_error: () => "routr: an internal error stopped the decision check. Run routr doctor; if it persists, report it to routr.",
   attempt_unknown: () => "The saved fallback advice does not name the attempted decision model and its failure.",
 };

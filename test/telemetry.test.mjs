@@ -255,6 +255,37 @@ test("one client asks every provider: its endpoint, its key, its envelope, and c
   expect(confidence("score", { 0: 1 / 3, 1: 1 / 3, 2: 1 / 3 })).toBe(0);
 });
 
+test("OpenAI's Decisions API is asked in its own shape and its answers read as System One's", async () => {
+  const { ask } = await import("../src/lib/systemone.mjs");
+  const state = { task: { brief: "Fix a typo in README.md" } }, sent = [];
+  const requested = {
+    t: { type: "noul", instructions: "T" }, b: { type: "noul", instructions: "B", criteria: { true: "yes", false: "no" } },
+    level: { type: "score", instructions: "L", criteria: ["basic", "standard", "strong"] },
+    kind: { type: "choice", instructions: "K", criteria: { docs: "prose", debug: "a fault" } },
+  };
+  const b = { type: "predicate", name: "b", probability: 0.1 };
+  const level = { type: "score", name: "level", score: 0.92, confidence: 0.75, probabilities: [{ value: 0, label: "0", probability: 0.08 }, { value: 1, label: "1", probability: 0.92 }, { value: 2, label: "2", probability: 0 }] };
+  const kind = { type: "choice", name: "kind", choice: "docs", confidence: 0.5, probabilities: [{ value: "docs", probability: 0.9 }, { value: "debug", probability: 0.1 }] };
+  const t = { type: "predicate", name: "t", probability: 0.9 };
+  const reply = (yesNo, score = level) => ({ config: { decision: { provider: "openai" } }, env: { OPENAI_API_KEY: "oa_test_1234567890" }, fetchFn: async (url, init) => {
+    sent.push({ url, auth: init.headers.Authorization, body: JSON.parse(init.body) });
+    return Response.json({ model: "gpt-6-luna", answers: [t, yesNo, score, kind], usage: { input_tokens: 3400 } });
+  } });
+  const r = await ask(state, requested, reply(b));
+  expect(sent[0]).toEqual({ url: "https://api.openai.com/v1/decisions", auth: "Bearer oa_test_1234567890", body: { model: "gpt-6-luna", input: JSON.stringify(state), questions: [
+    { type: "predicate", name: "t", instructions: "T" },
+    { type: "predicate", name: "b", instructions: "B\ntrue: yes\nfalse: no" },
+    { type: "score", name: "level", instructions: "L", levels: [{ label: "0", description: "basic" }, { label: "1", description: "standard" }, { label: "2", description: "strong" }] },
+    { type: "choice", name: "kind", instructions: "K", choices: [{ value: "docs", description: "prose" }, { value: "debug", description: "a fault" }] }] } });
+  expect(r).toMatchObject({ provider: "openai", model: "gpt-6-luna", usage: { input_tokens: 3400 } });
+  expect(r.answers.t).toEqual({ type: "noul", noul: 0.9 }); expect(r.answers.b).toEqual({ type: "noul", noul: 0.1 });
+  expect(r.answers.level).toMatchObject({ type: "score", score: 0.92, probabilities: { 0: 0.08, 1: 0.92, 2: 0 }, provider_confidence: 0.75 });
+  expect(r.answers.level.confidence).toBeCloseTo(0.88, 2);                        // recomputed on TypeSafe's scale
+  expect(r.answers.kind).toEqual({ type: "choice", choice: "docs", probabilities: { docs: 0.9, debug: 0.1 }, confidence: 0.8, provider_confidence: 0.5 });
+  expect((await ask(state, requested, reply(b, { ...level, probabilities: undefined }))).answers.level).toEqual({ type: "score", score: 0.92, confidence: 0.75 }); // a spread is optional, as for every provider
+  await expect(ask(state, requested, reply({ type: "refusal", name: "b" }))).rejects.toThrow("OpenAI: the model declined to answer. If no backup decision model answered, add one with routr setup.");
+});
+
 // ---- Telemetry: data must not be LOST either. Leak tests above check that text cannot get out; these check that real
 // values survive, that what routr says about sending matches what it does, and that the disclosure page lists every field.
 test("every value seen in real rows, and every value routr documents, survives telemetry as itself", async () => {

@@ -45,7 +45,7 @@ reread the installed routr skill and its orchestration guide, or start a new ses
 No decision-list entry answered, or a refused key or unreadable reply stopped the list. There may be no key or
 network, or (with Ollama) the server is not running or the model is not pulled. `routr doctor` tests each entry and shows why, and the command that fixes it: a key is
 stored with `routr key set` (TypeSafe's from https://console.typesafe.ai/keys; Cloudflare's token, with
-Workers AI Read, and account ID), and a local model is fetched with `ollama pull <the tag doctor names>`. routr keeps
+Workers AI Read, and account ID; OpenAI's from https://platform.openai.com/api-keys), and a local model is fetched with `ollama pull <the tag doctor names>`. routr keeps
 answering without a reading, but only with your fallback level. An earlier failure beside a later model's answer is
 ordinary advice; its headline names the model that answered.
 
@@ -56,6 +56,10 @@ project's `.env` is not seen.
 A Cloudflare token in your shell (`CLOUDFLARE_API_TOKEN`, as wrangler uses) wins over the one `routr key set` saved.
 If doctor says the key was refused, that token may lack the Workers AI permission: unset it for routr, or give it
 Workers AI Read.
+
+An OpenAI key in your shell (`OPENAI_API_KEY`, as OpenAI's own tools use) wins over the one `routr key set` saved,
+and the harnesses routr starts from that shell inherit it too (what Codex does with it beside its own sign-in is not
+measured). To keep a key to routr, save it with `routr key set openai` and leave the variable unset.
 
 With Ollama, the first brief after the model was unloaded waits for it to load (5 to 17 s for Clef Flash on an M4
 Max, about 5 s on an NVIDIA laptop GPU); routr keeps it loaded for 15 minutes after each brief. `the local model is

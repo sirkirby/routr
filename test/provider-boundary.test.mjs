@@ -13,8 +13,8 @@ import { COMMANDS } from "../src/lib/command-table.mjs";
 const reading = ([c]) => ["assessment", "check"].includes(COMMANDS[c].decisionModel);
 const briefed = ([c]) => COMMANDS[c].reach === "brief";
 
-const providers = ["typesafe", "cloudflare", "ollama"];
-const credentials = { TYPESAFE_API_KEY: KEY_MARKER, CLOUDFLARE_API_TOKEN: KEY_MARKER, CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef" };
+const providers = ["typesafe", "cloudflare", "openai", "ollama"];
+const credentials = { TYPESAFE_API_KEY: KEY_MARKER, OPENAI_API_KEY: KEY_MARKER, CLOUDFLARE_API_TOKEN: KEY_MARKER, CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef" };
 const clean = (value) => { const text = typeof value === "string" ? value : JSON.stringify(value); expect(text).not.toContain(BRIEF_MARKER); expect(text).not.toContain(KEY_MARKER); expect(text).not.toContain(PROVIDER_MARKER); };
 const expected = (provider, code, status, details = {}) => new DecisionError(decisionTarget({ decision: { provider } }, {}), code, status, details).message;
 const cases = (provider) => [
@@ -26,6 +26,7 @@ const cases = (provider) => [
   ["network", "unreachable"], ["timeout", "timeout"], ["json", "invalid_response"],
   ["missing_answers", "invalid_response"], ["missing_question", "invalid_response"], ["answers", "invalid_response"],
   ["confidence", "invalid_response"], ["probability", "invalid_response"],
+  ...(provider === "openai" ? [["refusal", "declined"]] : []),
   ...(provider === "cloudflare" ? [["envelope", "invalid_response"], ["allowance", "daily_allowance"], ["allowance200", "daily_allowance"], ["string_code", "provider_error", 429], ["unknown_code", "provider_error", 429]] : []),
 ];
 
@@ -187,7 +188,13 @@ for (const provider of providers) test(`${provider}: declared choices, numbers a
   const config = { decision: { provider } }, fetchValid = replyFetch(provider, "valid");
   const modify = (change) => async (url, init) => {
     const j = await (await fetchValid(url, init)).json(), result = provider === "cloudflare" ? j.result : j;
-    change(result.answers); return Response.json(j);
+    if (provider === "openai") {
+      const answers = Object.fromEntries(result.answers.map((a) => [a.name, a.type === "predicate" ? { ...a, noul: a.probability } : a]));
+      change(answers);
+      result.answers = Object.entries(answers).map(([name, a]) => a?.type === "predicate" ? { ...a, name, probability: a.noul }
+        : a && { ...a, name, probabilities: Array.isArray(a.probabilities) ? a.probabilities : Object.entries(a.probabilities).map(([value, probability]) => ({ value, probability })) });
+    } else change(result.answers);
+    return Response.json(j);
   };
   const mutations = [
     (a) => { a.work_type.choice = BRIEF_MARKER; }, (a) => { a.verdict.choice = KEY_MARKER; },
@@ -224,7 +231,7 @@ test("model identities resolve aliases and expose pin mismatches only through ea
 
 test("missing secrets name routr's own secret and variable; unreadable files are distinct and never send a request", async () => {
   const dir = scratch("unreadable-secrets"), file = join(dir, "env"); mkdirSync(file);
-  for (const provider of ["typesafe", "cloudflare"]) {
+  for (const provider of ["typesafe", "cloudflare", "openai"]) {
     const config = { decision: { provider } };
     for (const secret of PROVIDERS[provider].secrets) {
       const env = { ...credentials }; delete env[secret.name];
@@ -312,7 +319,7 @@ test("HTTP families and Cloudflare's numeric allowance code give different actio
   }
 });
 
-for (const provider of ["typesafe", "cloudflare"]) test(`${provider}: setup's real key step displays classified failures without markers`, () => {
+for (const provider of ["typesafe", "cloudflare", "openai"]) test(`${provider}: setup's real key step displays classified failures without markers`, () => {
   const home = scratch("setup-provider-key"), folder = join(home, ".config/routr"); mkdirSync(folder, { recursive: true });
   writeFileSync(join(folder, "config.json"), JSON.stringify({ decision: { provider }, subscriptions: {}, telemetry: false, auto_update: false }));
   const scenarios = ["http500", "http401", "json", "network", "timeout", ...(provider === "cloudflare" ? ["envelope", "allowance"] : [])];

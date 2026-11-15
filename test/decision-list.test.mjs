@@ -14,10 +14,10 @@ import { BRIEF_MARKER, KEY_MARKER, PROVIDER_MARKER, replyFetch } from "./fixture
 import { cfg, cliEnv, scratch, SCRIPT } from "./helpers.mjs";
 
 const ts = { provider: "typesafe", model: "jev-1.14.0" }, cf = { provider: "cloudflare", model: "clef" };
-const local = { provider: "ollama", model: "clef-flash:9b-q8_0" };
-const credentials = { TYPESAFE_API_KEY: KEY_MARKER, CLOUDFLARE_API_TOKEN: KEY_MARKER, CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef" };
+const local = { provider: "ollama", model: "clef-flash:9b-q8_0" }, oa = { provider: "openai", model: "gpt-6-luna" };
+const credentials = { TYPESAFE_API_KEY: KEY_MARKER, OPENAI_API_KEY: KEY_MARKER, CLOUDFLARE_API_TOKEN: KEY_MARKER, CLOUDFLARE_ACCOUNT_ID: "0123456789abcdef0123456789abcdef" };
 const clean = (value) => { const text = typeof value === "string" ? value : JSON.stringify(value); for (const marker of [KEY_MARKER, BRIEF_MARKER, PROVIDER_MARKER]) expect(text).not.toContain(marker); };
-const providerOf = (url) => url.includes("api.cloudflare.com") ? "cloudflare" : url.includes("api.typesafe.ai") ? "typesafe" : "ollama";
+const providerOf = (url) => url.includes("api.cloudflare.com") ? "cloudflare" : url.includes("api.typesafe.ai") ? "typesafe" : url.includes("api.openai.com") ? "openai" : "ollama";
 function fetches(replies, seen = []) {
   return (url, init) => { const provider = providerOf(url); seen.push([provider, JSON.parse(init.body).model]); return replyFetch(provider, replies[provider] ?? "valid")(url, init); };
 }
@@ -53,8 +53,8 @@ test("backup confidence and torn notes use the answering model's measured profil
   }
 });
 
-for (const [reply, code] of [["network", "unreachable"], ["timeout", "timeout"], ["http500", "provider_error"], ["allowance", "daily_allowance"]]) test(`${code} moves on without provider prose`, async () => {
-  const decision = reply === "allowance" ? [cf, ts] : [ts, cf], seen = [];
+for (const [reply, code] of [["network", "unreachable"], ["timeout", "timeout"], ["http500", "provider_error"], ["allowance", "daily_allowance"], ["refusal", "declined"]]) test(`${code} moves on without provider prose`, async () => {
+  const decision = reply === "allowance" ? [cf, ts] : reply === "refusal" ? [oa, ts] : [ts, cf], seen = [];
   const r = await ask({}, questions, options(decision, { [decision[0].provider]: reply }, seen));
   expect(seen.map(([p]) => p)).toEqual(decision.map((d) => d.provider));
   expect(r.unavailable).toMatchObject([{ code }]); expect(r.model).toBe(decision[1].model); clean(r);

@@ -8,7 +8,7 @@ metadata:
 # routr
 
 routr gives you a quick, calibrated read at the moment you hand out work. The first answering decision model in
-the user's ordered list (TypeSafe's Jev by default, or Cloudflare's Clef) reads the brief you are about to give and
+the user's ordered list (TypeSafe's Jev by default, Cloudflare's Clef, or OpenAI's GPT-6 Luna) reads the brief you are about to give and
 answers a fixed set of questions: facts about
 what the brief says, what kind of work it is, how costly a mistake would be, and an overall level. Code adds the
 live usage of each subscription. **You make the decision**: how much intelligence and reasoning the work needs, and

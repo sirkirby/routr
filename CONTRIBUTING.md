@@ -31,7 +31,7 @@ design or debug a question. Users of routr do not need it: routr calls the API i
 ## Decision models and their pins
 
 routr asks one decision model per brief, from one of the providers in `src/lib/providers.mjs` (TypeSafe, Cloudflare
-Workers AI, Ollama). Everything that differs between providers lives there: the endpoint, the key, the envelope around
+Workers AI, OpenAI, Ollama). Everything that differs between providers lives there: the endpoint, the key, the envelope around
 the answer, and what "ready" means. `src/lib/systemone.mjs` is the one client, and it puts every provider's
 `confidence` on TypeSafe's scale, so the rest of routr reads them all the same way.
 

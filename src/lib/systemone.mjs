@@ -129,7 +129,7 @@ async function askOne(state, questions, { config, deadlineMs, env = process.env,
   const t = target ?? decisionTarget(config, env), P = PROVIDERS[t.provider];
   const secrets = secretsFor(t.provider, { env, file, target: t });
   let request, payload;
-  try { request = P.request(t.model, secrets, env); payload = JSON.stringify({ ...request.body, state, model: t.model, questions }); }
+  try { request = P.request(t.model, secrets, env); payload = JSON.stringify(P.wrap({ ...request.body, state, model: t.model, questions })); }
   catch { throw new DecisionError(t, "internal_error"); }
   const { url, headers } = request;
   const budget = deadlineMs ?? P.deadlineMs, stopAt = clock.now() + budget;
@@ -152,7 +152,8 @@ async function askOne(state, questions, { config, deadlineMs, env = process.env,
     }
     const latencyMs = clock.now() - t0, wait = 500 * 2 ** attempt;
     if (!res.ok) {
-      // Local bodies may select a known pattern. Hosted envelopes supply only numeric error codes, never wording.
+      // Local bodies may select a known pattern. Hosted replies supply only a numeric error code or an answer's type,
+      // never wording.
       let code;
       if (P.failure) { try { code = P.failure(res.status, await res.text()); } catch (e) { throw transportError(e); } }
       if (P.errorCode) {
@@ -195,7 +196,7 @@ export async function ask(state, questions, opts = {}) {
     } catch (e) {
       const error = e instanceof DecisionError ? e : new DecisionError(target, "internal_error");
       errors.push(error);
-      if (!["timeout", "unreachable", "provider_error", "daily_allowance", "no_key", "model_missing", "model_unsupported"].includes(error.code)) break;
+      if (!["timeout", "unreachable", "provider_error", "daily_allowance", "declined", "no_key", "model_missing", "model_unsupported"].includes(error.code)) break;
     }
   }
   throw new DecisionListError(errors);

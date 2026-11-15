@@ -95,7 +95,7 @@ model, and goes higher only when a fact calls for it. When it settles on somethi
 | `share` | Write exactly what telemetry sends to a file you can read. Sends nothing. |
 | `telemetry on\|off\|status\|send` | Share anonymous outcomes once a day; off unless you turn it on ([details](docs/telemetry.md)). |
 | `feedback "<text>"` | Send the maintainers a note in your own words. |
-| `key set [typesafe\|cloudflare]` | Store your decision model's key (TypeSafe's API key, or a Cloudflare API token and account ID): typed without echo, saved readable only by you, then tested. Ollama needs none. |
+| `key set [typesafe\|cloudflare\|openai]` | Store your decision model's key (TypeSafe's API key, a Cloudflare API token and account ID, or an OpenAI API key): typed without echo, saved readable only by you, then tested. Ollama needs none. |
 | `update` | Update to the newest release on your update channel now (routr also does this by itself in the background, at most once a day). |
 | `setup` | Your settings. At a terminal, a guided screen: which subscriptions routr uses, then each one's model, effort, hardest work, reserve and account use, another account of Claude Code or Codex if you have one, and a launch share for metered accounts in normal use; run again, a menu to change one thing or add an account. An agent changes a setting with a flag (`--model`, `--effort`, `--hardest`, `--reserve`, `--use`, `--share`, `--enable`, `--disable`, `--account`, `--remove-account`, `--channel`, `--decision`) and reads them first with `--show`. |
 | `uninstall` | Remove routr: the binary, its two skills, the cache and its own state, and a `routr statusline` entry in Claude Code's settings (an older routr's setup set one). Keeps your config, keys, and ledger; `--purge` removes those too. It removes nothing while a headless worker is still there (`cleanup --worker` finishes it), nor with `--purge` while a worktree a headless launch made is. |
@@ -137,6 +137,7 @@ never shown); run again, its menu's "Decision model" changes it:
 - **Cloudflare's Clef** on Workers AI: an [API token](https://dash.cloudflare.com/profile/api-tokens) with
   Workers AI Read (the only permission routr needs), and your account ID. What Workers AI's free allowance covers is in
   [the evidence](docs/evidence.md#decision-models).
+- **OpenAI's GPT-6 Luna**: an [API key](https://platform.openai.com/api-keys).
 - **Clef Flash on your own machine**, free: [Ollama](https://ollama.com) 0.40.1 or later and
   `ollama pull clef-flash:9b-mxfp8` on Apple Silicon (12 GB; 5-7 s a brief on an M4 Max), or
   `ollama pull clef-flash:9b-q8_0` elsewhere (11 GB; under a second on an NVIDIA RTX 5090 laptop GPU). It needs a GPU

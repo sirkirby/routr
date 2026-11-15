@@ -48,7 +48,7 @@ test("the decision model is a setting: a provider routr knows and a model it has
   expect(at({ provider: "cloudflare", model: "clef-flash" }).config.decision).toEqual([{ provider: "cloudflare", model: "clef-flash" }]);
   const unknown = at({ provider: "openrouter" });
   expect(unknown.config.decision).toEqual([{ provider: "typesafe", model: null }]);
-  expect(unknown.notes.join(" ")).toContain('provider "openrouter" is not one of typesafe, cloudflare, ollama');
+  expect(unknown.notes.join(" ")).toContain('provider "openrouter" is not one of typesafe, cloudflare, openai, ollama');
   const unmeasured = at({ provider: "cloudflare", model: "clef-omni" });
   expect(unmeasured.config.decision).toEqual([{ provider: "typesafe", model: null }]);
   expect(unmeasured.notes.join(" ")).toContain('"clef-omni" is not one routr has measured on cloudflare');

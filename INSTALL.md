@@ -34,8 +34,8 @@ is not signed in gets no work until the user signs in; doctor names the command)
 decision model answers, each signed-in harness's current model list (for Claude Code, its aliases; its help says it also takes a model's full name), and a numbered list of what is left to do.
 
 **3. Set up.** Read `~/.agents/skills/routr/references/setup.md` and follow it with the user: which decision model
-reads the briefs (TypeSafe's Jev by default, with a key from https://console.typesafe.ai/keys; or Cloudflare's Clef,
-on their Cloudflare account or free on their machine through Ollama), its key if it needs one (they store it
+reads the briefs (TypeSafe's Jev by default, with a key from https://console.typesafe.ai/keys; Cloudflare's Clef,
+on their Cloudflare account; OpenAI's GPT-6 Luna, with a key from https://platform.openai.com/api-keys; or Clef Flash free on their machine through Ollama), its key if it needs one (they store it
 themselves with `routr key set`, so it never passes through you), and the config with `routr setup --yes --model <subscription>=<id> --reserve <subscription>=<share> --use <subscription>=normal ...`
 (a default model and effort, the hardest work, reserve and normal/fallback account use per subscription, settled with the user; never edit the file by
 hand), and, if they want workers in herdr panes, herdr and herdr's agent skill (the Herdr app needs neither, and shows

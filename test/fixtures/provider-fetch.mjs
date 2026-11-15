@@ -18,7 +18,11 @@ export const replyFetch = (provider, scenario) => async (url, init) => {
   if (scenario === "json") return new Response(`{ ${text}`);
   if (scenario === "envelope") return Response.json({ success: false, errors: [{ code: text, message: text }], messages: [text], result: { answers: text } });
   if (["allowance", "allowance200", "string_code", "unknown_code"].includes(scenario)) return Response.json({ success: false, errors: [{ code: scenario === "string_code" ? "3036" : scenario === "unknown_code" ? 987654 : 3036, message: text }], messages: [text], result: { answers: text } }, { status: scenario === "allowance200" ? 200 : 429 });
-  const { questions } = JSON.parse(init.body);
+  const asked = JSON.parse(init.body).questions;
+  const questions = provider === "openai" ? Object.fromEntries(asked.map((q) => [q.name, q.type === "score"
+    ? { type: "score", criteria: q.levels.map((l) => l.description) }
+    : q.type === "choice" ? { type: "choice", criteria: Object.fromEntries(q.choices.map((c) => [c.value, c.description])) }
+      : { type: "noul" }])) : asked;
   const answers = Object.fromEntries(Object.entries(questions).map(([k, q]) => [k, q.type === "choice"
     ? { type: "choice", choice: Object.keys(q.criteria)[0], confidence: 1, probabilities: { [Object.keys(q.criteria)[0]]: 1 }, extra: text }
     : q.type === "score" ? { type: "score", score: 1, confidence: 1, probabilities: { 0: 0, 1: 1, 2: 0 }, extra: text }
@@ -30,6 +34,14 @@ export const replyFetch = (provider, scenario) => async (url, init) => {
   if (scenario === "missing_question") delete answers[Object.keys(questions)[0]];
   const result = { model: scenario === "identity" ? "jev-1.15.0" : text, answers: scenario === "answers" ? text : answers, usage: { input_tokens: 10, output_tokens: text, extra: text }, extra: text };
   if (scenario === "missing_answers") delete result.answers;
+  if (provider === "openai" && result.answers === answers) {
+    result.answers = Object.entries(answers).map(([name, a]) => {
+      const q = asked.find((q) => q.name === name);
+      return q.type === "predicate" ? { type: "predicate", name, probability: ["confidence", "probability"].includes(scenario) ? text : a.noul, extra: text }
+          : { ...a, name, probabilities: Object.entries(a.probabilities).map(([value, probability]) => ({ value, probability })) };
+    });
+    if (scenario === "refusal") result.answers[0] = { type: "refusal", name: result.answers[0].name };
+  }
   return Response.json(provider === "cloudflare" ? { success: true, result, errors: [{ message: text }], messages: [text] } : result);
 };
 
