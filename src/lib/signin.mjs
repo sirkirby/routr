@@ -3,16 +3,19 @@
 // for a code; `kiro-cli chat --list-models` opened Kiro's). So each harness first answers its own status check, which
 // never starts a sign-in (measured logged in and logged out, 2026-09-26), and one that is not signed in is left out:
 // no model list, no usage read, no launch. The check is the registry's `auth` (harnesses.mjs).
-// The answer is kept in the cache, so a dispatch rarely pays for it: a sign-out is rare, so "signed in" is kept 6 hours;
-// a sign-in the user has just done should count soon, so "not signed in" is kept 10 minutes. doctor and setup always
-// check afresh.
+// The answer is kept in the cache, so a dispatch rarely pays for it: a sign-out is rare, so "signed in" is kept 6 hours.
+// "Not signed in" is never kept: a sign-in the user has just done counts the next time routr asks (2026-11-19: kept
+// for 10 minutes, it left Cursor out of `routr usage` after the user had signed in again), and a harness left signed
+// out costs one quick check per command (0.3 to 3.4 s, in parallel with the others). "No answer" (not installed, or
+// hung) is kept 10 minutes, so a check that hangs does not cost its whole timeout on every command. doctor and setup
+// always check afresh.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CACHE_DIR, writeJsonAtomic } from "./state-files.mjs";
 import { probe } from "./processes.mjs";
 
 export const SIGNED_IN_FILE = () => join(CACHE_DIR(), "signed-in.json");
-const KEEP_SEC = { true: 6 * 3600, false: 10 * 60 };
+const KEEP_SEC = { yes: 6 * 3600, "no answer": 10 * 60 };
 const readJson = (file) => { try { return JSON.parse(readFileSync(file, "utf8")); } catch { return {}; } };
 
 // What the same answer said about billing (the registry's `auth.billing`), kept beside the state with the same
@@ -28,7 +31,7 @@ const billingOf = (b) => (b?.billing === "metered" && typeof b.why === "string" 
 // about billing, or null (always null beside a state that is not "yes").
 export async function signInState(name, harness, { fresh = false, nowSec = Date.now() / 1000, file = SIGNED_IN_FILE(), ask = probe } = {}) {
   const kept = readJson(file)[name];
-  if (!fresh && kept?.state && nowSec - kept.ts < KEEP_SEC[kept.state === "yes"]) return { state: kept.state, billing: kept.state === "yes" ? billingOf(kept.billing) : null };
+  if (!fresh && Object.hasOwn(KEEP_SEC, kept?.state ?? "") && nowSec - kept.ts < KEEP_SEC[kept.state]) return { state: kept.state, billing: kept.state === "yes" ? billingOf(kept.billing) : null };
   const r = await ask(harness.executable, harness.auth.check);
   const state = !r ? "no answer" : harness.auth.signedIn(r.out, r.code) ? "yes" : "no";
   let billing = null;

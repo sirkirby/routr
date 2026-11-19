@@ -13,7 +13,7 @@ import { usageFailure } from "../src/lib/usage-failure.mjs";
 import { briefSha, toEntry } from "../src/lib/ledger.mjs";
 import { telemetryRows } from "../src/lib/telemetry.mjs";
 import { BRIEF_MARKER, KEY_MARKER } from "./fixtures/provider-fetch.mjs";
-import { ans, cfg, cliEnv, fact, herdrOK, scratch, SCRIPT } from "./helpers.mjs";
+import { ans, cfg, cliEnv, fact, fakeExecutable, herdrOK, scratch, SCRIPT } from "./helpers.mjs";
 
 const marker = `${BRIEF_MARKER} ${KEY_MARKER}`;
 const clean = (value) => {
@@ -170,6 +170,8 @@ test("CLI distinguishes failed reads, stale snapshots with age, valid metered un
   const keep = (age) => { const at = Date.now() / 1000 - age; writeFileSync(snapshot, JSON.stringify({ reading: { ...cursorReading({ included_used_pct: 40 }, at), trustedUntil: at + 86400 }, attempt: { at, by: null, outcome: "ok" } })); };
   const subscriptions = Object.fromEntries(["codex", "cursor", "kiro", "agy"].map((n) => [n, { hardest_work: "strong", enabled: n !== "agy" }]));
   writeFileSync(join(dir, "config.json"), JSON.stringify({ subscriptions, auto_update: false }));
+  // A kept "not signed in" is asked again (signin.mjs), so the codex on this PATH answers signed out.
+  fakeExecutable(home, "codex", "console.log('Not logged in'); process.exit(1);");
   const run = (scenario, signedIn = true) => {
     writeFileSync(join(cache, "signed-in.json"), JSON.stringify(Object.fromEntries(["codex", "cursor", "kiro"].map((n) => [n, { state: n === "codex" && !signedIn ? "no" : "yes", ts: Date.now() / 1000 }]))));
     const p = Bun.spawnSync([process.execPath, "--preload", join(import.meta.dir, "fixtures/provider-fetch.mjs"), "--preload", join(import.meta.dir, "fixtures/usage-sources.mjs"), SCRIPT, "dispatch", marker], {

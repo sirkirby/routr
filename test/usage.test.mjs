@@ -603,7 +603,7 @@ test("every harness says whether it is signed in, read from its own status text,
     expect([n, HARNESSES[n].auth.signedIn(no[0], 0)]).toEqual([n, false]); // the text alone says signed out, whatever the exit code
   }
 });
-test("the sign-in answer is kept: signed in for hours, signed out for minutes, and no answer is not signed in", async () => {
+test("the sign-in answer is kept: signed in for hours, no answer for minutes, signed out never, and no answer is not signed in", async () => {
   const { signInState } = await import("../src/lib/signin.mjs");
   const file = join(scratch("signin"), "signed-in.json"), T = 1_800_000_000;
   const asked = [];
@@ -615,9 +615,16 @@ test("the sign-in answer is kept: signed in for hours, signed out for minutes, a
   expect(await state("kiro", kiro, o(null, T + 5 * 3600))).toBe("yes"); // kept: not asked again
   expect(asked).toHaveLength(1);
   expect(await state("kiro", kiro, o({ out: STATUS.kiro.no[0], code: 1 }, T + 7 * 3600))).toBe("no"); // past 6 h: asked
-  expect(await state("kiro", kiro, o({ out: STATUS.kiro.yes[0], code: 0 }, T + 7 * 3600 + 11 * 60))).toBe("yes"); // "no" lasts 10 min
-  expect(await signInState("kiro", kiro, o(null, T + 7 * 3600 + 12 * 60, { fresh: true }))).toEqual({ state: "no answer", billing: null }); // fresh always asks
+  // Signed out is not kept: a sign-in the user has just done counts at the next ask, a second later.
+  expect(await state("kiro", kiro, o({ out: STATUS.kiro.yes[0], code: 0 }, T + 7 * 3600 + 1))).toBe("yes");
+  expect(asked).toHaveLength(3);
+  expect(await signInState("kiro", kiro, o(null, T + 7 * 3600 + 2, { fresh: true }))).toEqual({ state: "no answer", billing: null }); // fresh always asks
   expect(asked).toHaveLength(4);
+  // No answer (not installed, or hung) is kept 10 minutes, so a hung check does not cost its timeout on every command.
+  expect(await state("kiro", kiro, o({ out: STATUS.kiro.yes[0], code: 0 }, T + 7 * 3600 + 9 * 60))).toBe("no answer");
+  expect(asked).toHaveLength(4);
+  expect(await state("kiro", kiro, o({ out: STATUS.kiro.yes[0], code: 0 }, T + 7 * 3600 + 11 * 60))).toBe("yes");
+  expect(asked).toHaveLength(5);
 });
 // `claude auth status`, measured 2026-10-07 (macOS): an API key login and a Max login. The email, organisation and ids
 // are made up here, and must never reach the cache.
