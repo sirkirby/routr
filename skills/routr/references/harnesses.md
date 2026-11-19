@@ -50,8 +50,8 @@ waits for a code, and any Kiro `chat` command opens Kiro's.
 | Antigravity | `agy models` (it has no status command) | `Please sign in to view available models`, exit 1 | run `agy` and sign in |
 | Kiro | `kiro-cli whoami --format json` | `{"account":null}`, exit 1 | `kiro-cli login` |
 
-Each takes 0.3 to 3.4 s. The answer is kept in `~/.cache/routr/signed-in.json` (signed in: 6 hours; not: 10 minutes),
-so a dispatch rarely pays for it; doctor and setup always ask again.
+Each takes 0.3 to 3.4 s. The answer is kept in `~/.cache/routr/signed-in.json` (signed in: 6 hours; no answer: 10 minutes;
+not signed in: not kept, so a sign-in counts at once), so a dispatch rarely pays for it; doctor and setup always ask again.
 
 **What the same answer says about billing (Claude Code, measured 2026-10-07, macOS).** `claude auth status` prints
 JSON, and how the login is billed is in it:

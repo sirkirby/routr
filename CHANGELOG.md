@@ -5,6 +5,8 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- routr sees a harness you have just signed in to the next time it asks, instead of leaving it out as "not signed in" for up to 10 minutes.
+
 ## v0.15.0 — 2026-11-12
 
 [Full notes](docs/releases/v0.15.0.md)
