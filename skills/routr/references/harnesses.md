@@ -51,7 +51,8 @@ waits for a code, and any Kiro `chat` command opens Kiro's.
 | Kiro | `kiro-cli whoami --format json` | `{"account":null}`, exit 1 | `kiro-cli login` |
 
 Each takes 0.3 to 3.4 s. The answer is kept in `~/.cache/routr/signed-in.json` (signed in: 6 hours; no answer: 10 minutes;
-not signed in: not kept, so a sign-in counts at once), so a dispatch rarely pays for it; doctor and setup always ask again.
+not signed in: never reused, so a sign-in counts at the next check), so a dispatch rarely pays for it; doctor and setup always ask again.
+`routr board` and `top` run no check: they show the last answer, a sign-out included, until the next `routr usage`, dispatch or launch.
 
 **What the same answer says about billing (Claude Code, measured 2026-10-07, macOS).** `claude auth status` prints
 JSON, and how the login is billed is in it:
