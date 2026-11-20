@@ -6,7 +6,7 @@ import { COMMANDS } from "./command-table.mjs";
 export const SCHEMA_URL = "https://opentelemetry.io/schemas/1.44.0";
 // The GenAI token counts a span may carry, as gen_ai.usage.<key>. A dotted one (a part of another) is sent only when above 0.
 export const TOKEN_USAGE = Object.freeze(["input_tokens", "output_tokens", "cache_read.input_tokens", "cache_write.input_tokens", "reasoning.output_tokens"]);
-export const TRACE_ATTRIBUTES = Object.freeze({ "routr.lead.session_id": "string", "routr.question_set.version": "string", "routr.candidates": "string[]", "routr.unavailable": "string[]",
+export const TRACE_ATTRIBUTES = Object.freeze({ "routr.question_set.version": "string", "routr.candidates": "string[]", "routr.unavailable": "string[]",
   "vcs.repository.url.full": "string", "vcs.ref.head.name": "string", "routr.cwd": "string", "routr.worktree": "string",
   "routr.kind": "string", "routr.backend": "string", "routr.launch.id": "string", "gen_ai.agent.name": "string", "gen_ai.conversation.id": "string", "routr.model": "string", "routr.advice.matched": "boolean", "routr.carriers.forwarded": "string[]",
   ...Object.fromEntries([...Object.keys(FACTS), "level", "high_blast_radius"].map((k) => [`routr.assessment.${k}`, "double"])), "routr.assessment.work_type": "string",
@@ -29,7 +29,7 @@ export const LOG_EVENTS = Object.freeze({
 export const NEEDS_INPUT_CODES = Object.freeze(["shell_not_ready", "startup_question", "worker_busy", "wrong_harness", "wrong_folder", "wrong_account", "identity_unknown", "worker_question", "start_unconfirmed"]);
 
 export const OTEL_ATTRIBUTES = Object.freeze({ ...TRACE_ATTRIBUTES, ...Object.assign({}, ...Object.values(LOG_EVENTS).map((v) => v.attributes)), "routr.usage.window": "string" });
-export const IDENTITY_ATTRIBUTES = Object.freeze(["vcs.repository.url.full", "vcs.ref.head.name", "routr.cwd", "routr.worktree", "routr.lead.session_id", "routr.kind", "routr.backend", "routr.launch.id", "gen_ai.agent.name", "gen_ai.conversation.id", "routr.turn"]);
+export const IDENTITY_ATTRIBUTES = Object.freeze(["vcs.repository.url.full", "vcs.ref.head.name", "routr.cwd", "routr.worktree", "routr.kind", "routr.backend", "routr.launch.id", "gen_ai.agent.name", "gen_ai.conversation.id", "routr.turn"]);
 // A subscription here is a harness's name; an extra account's is left out or sent as other. A window is one its usage
 // reader names (the registry's `usage.windows`).
 export const USAGE_WINDOWS = Object.freeze([...new Set(KINDS.flatMap((k) => HARNESSES[k].usage.windows))]);

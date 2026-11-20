@@ -178,7 +178,7 @@ no oldest age and zero totals.
 routr emits traces from `dispatch`, `subagent`, `check`, `usage`, `launch`, `send`, `wait`, `workers`, `stop`,
 `cleanup` and `record`. `statusline` and housekeeping commands (setup, doctor, key, update, uninstall, telemetry,
 share, assess, feedback and skill installation) and detached `usage --background` refreshes emit nothing.
-Headless holders emit one `invoke_agent` span per completed turn, with structured lifecycle logs. Commands also queue structured logs and fresh usage-window observations.
+Headless holders emit one `invoke_agent` span per completed turn, with structured lifecycle logs; a pane or terminal worker's launch and a terminal worker's send emit one for the instruction the worker took. Commands also queue structured logs and fresh usage-window observations.
 
 The GenAI convention is pinned to `open-telemetry/semantic-conventions-genai`
 `9ffc7e00c639be7712e544e3e54331e885dccf84` (2026-10-21), whose manifest depends on core semantic conventions
@@ -249,14 +249,22 @@ these fields on other methods, including `turn/start` and `session/prompt`, is u
 because it would spend usage. Codex reading the request context is established by source research; Kiro does
 not read context, per the binary research. Routr's fixture tests verify the channels it writes. Each
 harness reads inherited context differently, by mode: [measured harness reference](../skills/routr/references/harnesses.md#trace-context-each-harness-reads).
-Routr does not enable or configure a harness's telemetry. Pane workers have no turn span in routr: their launch
-places them by repository, branch and worktree, which a receiver can join to that harness's session. At launch end
-and cleanup, routr reads herdr's `agent_session` once; a validated non-null `id` becomes `gen_ai.conversation.id` on
-that command. The hook can lag or report null; routr never waits for an id.
+Routr does not enable or configure a harness's telemetry. Pane and terminal workers have no turn spans in routr:
+routr sees only the instructions it hands them. A pane or terminal `launch` whose worker took its task
+(`prompted`), and a terminal `send` whose message the worker took (`delivered`), record a
+CLIENT child `invoke_agent {gen_ai.agent.name}`. It starts when routr hands the instruction over (submits a pane's
+prompt, opens a terminal with its task, or sends a terminal its message) and ends when the command has its answer.
+It carries the worker's repository, branch, cwd and worktree, so a receiver can join it to that harness's session
+by repository, branch and time. A lead follows a pane worker through herdr itself, so routr never sees those later
+instructions. At launch end, routr reads herdr's `agent_session` once; a validated non-null `id` becomes that
+child's `gen_ai.conversation.id`. The hook can lag or report null; routr never waits for an id. A terminal worker's
+conversation is never known. Cleanup reads no conversation; it links to the launch.
 
-`routr.lead.session_id` is the lead's id, separate from the worker's conversation. Routr checks the measured
-Claude Code, Codex, Cursor and Antigravity environment sources first. If none is valid, `--lead-session` on
-`dispatch`, `subagent` or `launch` can supply a known UUIDv4, UUIDv7 or lowercase hexadecimal id of 16–64 characters.
+Command spans of `dispatch`, `subagent`, `launch` and `send` carry the lead's id as `gen_ai.conversation.id`: the
+command runs in the lead's conversation. A worker's own conversation is only ever on an `invoke_agent` span below
+it. Routr checks the measured Claude Code, Codex, Cursor and Antigravity environment sources first. If none is
+valid, `--lead-session` on `dispatch`, `subagent` or `launch` can supply a known UUIDv4, UUIDv7 or lowercase
+hexadecimal id of 16–64 characters; `send` reads only the environment.
 In inline advice, only a valid id is consumed; otherwise the flag and following words stay in the brief with a
 flag-like note. Launch and file-based advice ignore malformed values with a fixed warning. An absent id is omitted;
 no session id is invented. Kiro has no measured ambient source. Formats and measurement dates are in the harness
@@ -264,7 +272,7 @@ reference.
 
 ### Spans
 
-All command spans are INTERNAL (kind 1); decision calls and headless turns are CLIENT (kind 3). A successful operation leaves status
+All command spans are INTERNAL (kind 1); decision calls and worker invocations are CLIENT (kind 3). A successful operation leaves status
 unset. Exported spans carry no `traceState`; inherited `TRACESTATE` is forwarded only to workers. A final failure
 sets ERROR (code 2) and a classified `error.type`; retries or an earlier failed provider
 recovered by a backup do not mark the recovered operation as failed. No exception or provider wording is exported.
@@ -276,18 +284,19 @@ protocol; it is not an upstream measurement of local IPC.
 
 | Span | Kind | Parent / links | Attributes beyond identity |
 |---|---|---|---|
-| `routr dispatch`, `routr subagent` | INTERNAL | inherited or new root | question-set version; assessment probabilities, level score and work type; candidate subscription names; unavailable codes; lead session id |
+| `routr dispatch`, `routr subagent` | INTERNAL | inherited or new root | question-set version; assessment probabilities, level score and work type; candidate subscription names; unavailable codes; lead's `gen_ai.conversation.id` |
 | `classify {gen_ai.request.model}` | CLIENT | decision command | operation `classify` (a custom operation: System One is not a chat-completion API), provider, requested model, reply-named model, observed token usage, final error type |
 | `routr check` | INTERNAL | inherited or new root; classify child | question-set version; check probabilities; flag codes; unavailable codes |
 | `routr usage` | INTERNAL | inherited or new root | level only when explicitly given; per-subscription reading children |
 | `routr usage {subscription}` | INTERNAL | reading command | subscription, usage state and source; final error type |
-| `routr launch` | INTERNAL | inherited or new root; recovery rerun links to original launch | kind, backend, launch state and id, worker name, model as given, effort, advice match, lead session, forwarded carrier names, available pane conversation id |
-| `invoke_agent {gen_ai.agent.name}` | CLIENT | saved `routr launch`; otherwise saved sampled parent, or a new root without a valid parent | `vcs.repository.url.full`, `vcs.ref.head.name`, `routr.cwd`, `routr.worktree`; `gen_ai.operation.name=invoke_agent`, `gen_ai.provider.name`, `gen_ai.agent.name`, available `gen_ai.conversation.id`; `routr.kind`, `routr.backend=headless`, available `routr.launch.id`, `routr.model`, `routr.effort`, `routr.turn`, `routr.turn.outcome`, `routr.turn.messages`; final `error.type`; classified observed `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_write.input_tokens`, `gen_ai.usage.reasoning.output_tokens` only (current adapters expose none). |
-| `routr send` | INTERNAL | inherited or new root; matched launch link | send state |
+| `routr launch` | INTERNAL | inherited or new root; recovery rerun links to original launch | kind, backend, launch state and id, worker name, model as given, effort, advice match, lead's `gen_ai.conversation.id`, forwarded carrier names; `invoke_agent` child when a pane or terminal worker took its task |
+| `invoke_agent {gen_ai.agent.name}` (pane, terminal) | CLIENT | `routr launch`, or terminal `routr send` | `vcs.repository.url.full`, `vcs.ref.head.name`, `routr.cwd`, `routr.worktree` of the worker; `gen_ai.operation.name=invoke_agent`, `gen_ai.provider.name`, `gen_ai.agent.name`, the pane's available `gen_ai.conversation.id`; `routr.kind`, `routr.backend`, `routr.launch.id`, `routr.model` and `routr.effort` as given (omitted for an agent a `--pane` rerun adopted, which kept its own) |
+| `invoke_agent {gen_ai.agent.name}` (headless) | CLIENT | saved `routr launch`; otherwise saved sampled parent, or a new root without a valid parent | `vcs.repository.url.full`, `vcs.ref.head.name`, `routr.cwd`, `routr.worktree`; `gen_ai.operation.name=invoke_agent`, `gen_ai.provider.name`, `gen_ai.agent.name`, available `gen_ai.conversation.id`; `routr.kind`, `routr.backend=headless`, available `routr.launch.id`, `routr.model`, `routr.effort`, `routr.turn`, `routr.turn.outcome`, `routr.turn.messages`; final `error.type`; classified observed `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_write.input_tokens`, `gen_ai.usage.reasoning.output_tokens` only (current adapters expose none). |
+| `routr send` | INTERNAL | inherited or new root; matched launch link | send state; lead's `gen_ai.conversation.id`; terminal `invoke_agent` child when the worker took the message |
 | `routr wait` | INTERNAL | inherited or new root; link per matched launch | wait state |
 | `routr workers` | INTERNAL | inherited or new root; link per matched launch | workers state |
 | `routr stop` | INTERNAL | inherited or new root; matched launch link | stop state |
-| `routr cleanup` | INTERNAL | inherited or new root; matched launch link | cleanup state; available pane conversation id |
+| `routr cleanup` | INTERNAL | inherited or new root; matched launch link | cleanup state |
 | `routr record` | INTERNAL | inherited or new root; unique advice launch link | record state; exact outcome projection below |
 
 `gen_ai.request.model` belongs only to the classify span. The launch and turn model selector is `routr.model`, shape-checked as a
@@ -346,7 +355,6 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `os.type` | `string` | OpenTelemetry OS name: `darwin`, `linux`, `windows`, `freebsd`, `openbsd`, `solaris`, `aix` or `unknown`. |
 | `service.instance.id` | `string` | Traces/logs: random UUIDv4 per process, only in memory. Gauge: UUIDv5 derived from the per-install id. |
 | `routr.otel.schema` | `string` | `genai@9ffc7e00;semconv@1.44.0;routr@1`. |
-| `routr.lead.session_id` | `string` | Validated lead UUIDv4, UUIDv7 or 16–64 lowercase hex characters; measured environment source before explicit flag. |
 | `routr.question_set.version` | `string` | Question-set version: `r` or `c` followed by 1–3 digits; invalid values become `other`. |
 | `routr.candidates` | `string[]` | Candidate subscription names: `claude`, `codex`, `cursor`, `agy`, `kiro`; unknown names become `other`. |
 | `routr.unavailable` | `string[]` | Classified failure codes from the Span error codes list below; unknown values become `other`. |
@@ -358,7 +366,7 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `routr.backend` | `string` | `pane`, `headless` or `terminal`. |
 | `routr.launch.id` | `string` | UUIDv4 identifying a sampled launch: when the launch counts, the launch's `launch_id`, as its answer, its launch-history record and its `record --launch` carry it (a pane launch stopped at a question has this id in its trace and the launch index, with `launch_id` null and no history record). A recovery rerun has its own and links to the launch it finishes. |
 | `gen_ai.agent.name` | `string` | Worker name matching `[a-z][a-z0-9_-]{0,31}`; invalid names omitted. |
-| `gen_ai.conversation.id` | `string` | On commands, herdr agent_session of kind `id`, validated as UUIDv4, UUIDv7 or 16–64 lowercase hex characters; on turns, the harness UUID the adapter already reads; omitted when unavailable. |
+| `gen_ai.conversation.id` | `string` | On commands, the lead's session id: measured environment source before explicit flag, validated as UUIDv4, UUIDv7 or 16–64 lowercase hex characters. On a pane worker's `invoke_agent`, herdr agent_session of kind `id`, validated the same way; on headless turns, the harness UUID the adapter already reads. Omitted when unavailable. |
 | `routr.model` | `string` | Worker model, 1–48 characters matching `[A-Za-z0-9][A-Za-z0-9.:[\]-]*`, without 17 consecutive alphanumerics; invalid becomes `other`. |
 | `routr.turn` | `int` | Headless turn number, starting at 1. |
 | `routr.turn.outcome` | `string` | `finished`, `failed`, `not_started`, `no_finish`, `stopped`; unknown becomes `other`. |
@@ -385,7 +393,7 @@ send them. Model/effort and outcome fields typed by a lead are projected through
 | `routr.check.symptom_patch` | `double` | Probability, 0–1, for the fixed `symptom_patch` question. |
 | `routr.check.out_of_scope` | `double` | Probability, 0–1, for the fixed `out_of_scope` question. |
 | `routr.check.flags` | `string[]` | Question names `states_verification`, `covers_brief`, `admits_gaps`, `symptom_patch`, `out_of_scope` when flagged; also `verdict_partial`, `verdict_blocked`, `verdict_unstated`. |
-| `gen_ai.operation.name` | `string` | `classify`, routr’s custom System One operation, or `invoke_agent` for a headless turn. |
+| `gen_ai.operation.name` | `string` | `classify`, routr’s custom System One operation, or `invoke_agent` for a headless turn or an instruction a pane or terminal worker took. |
 | `gen_ai.provider.name` | `string` | Decision platform: `typesafe`, `cloudflare`, `ollama`; worker platform: `anthropic`, `openai`, `cursor`, `gcp.gen_ai`, `kiro`; unknown becomes `other`. |
 | `gen_ai.request.model` | `string` | Requested decision model from the provider registry, or the shared worker-model shape; invalid becomes `other`. |
 | `gen_ai.response.model` | `string` | Model explicitly named by the provider reply, checked against the registry or shared model shape; absent unless observed, invalid becomes `other`. |
@@ -432,7 +440,7 @@ Assessment fact and check probabilities range from 0 to 1; the assessment level 
 types and flags come from routr's fixed question set. Check flag codes are the check question names in the table,
 plus `verdict_partial`, `verdict_blocked` and `verdict_unstated` for a report that does not claim done. Candidates and subscription are harness registry names.
 Usage state is `excluded`, `kept`, `given`, `live` or `unknown`; source is a registered usage source, `sign-in check`,
-`given by caller`, `statusline`, `session log`, `none` or `other`. Backend is `pane` or `headless`. Command states come from their documented
+`given by caller`, `statusline`, `session log`, `none` or `other`. Backend is `pane`, `headless` or `terminal`. Command states come from their documented
 outcomes, with `done`/`failed` when the command has no separate state. Effort and outcome enum values match
 [anonymous telemetry's projection](telemetry.md), with causes from record's contract and effort origin `given`,
 `model id` or `config default`. IDs are format-checked. Missing optional attributes are omitted.
@@ -444,7 +452,7 @@ Each custom event is one OTLP LogRecord sent to `/v1/logs` in an `ExportLogsServ
 identify the span where it happened; `timeUnixNano` and `observedTimeUnixNano` are equal decimal-string timestamps,
 and `flags` comes from that span. Logs share the process resource,
 scope and identity projection with spans. Identity attributes, when available, are repository, branch, relative cwd,
-worktree, lead session, harness kind, backend, launch id, agent name, conversation id and turn number, with the same
+worktree, harness kind, backend, launch id, agent name, conversation id and turn number, with the same
 shape checks as spans. There is no warning text, why text, harness output or exception message.
 
 <!-- log-events -->

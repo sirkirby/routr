@@ -5,6 +5,7 @@ A short history of what changed in each routr release, one line per change. Each
 
 ## Unreleased
 
+- OpenTelemetry export: `dispatch`, `subagent`, `launch` and `send` spans carry the lead's session as `gen_ai.conversation.id`, replacing `routr.lead.session_id`; a pane or terminal worker's task, and a message a terminal worker takes, get an `invoke_agent` span with the worker's repository, branch and (in a pane) conversation. (#189)
 - routr sees a harness you have just signed in to the next time it asks, instead of leaving it out as "not signed in" for up to 10 minutes. (#188)
 
 ## v0.15.0 — 2026-11-12

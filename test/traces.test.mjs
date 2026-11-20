@@ -16,7 +16,7 @@ import * as channel from "../src/lib/channel.mjs";
 import { LaunchIndex } from "../src/lib/launch-index.mjs";
 import { traceIdentity } from "../src/lib/trace-identity.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
-import { OTEL_ATTRIBUTES, ERROR_CODES, workerTurn, commandTrace, linkWorker, usageSpans, decisionSpan } from "../src/lib/traces.mjs";
+import { OTEL_ATTRIBUTES, ERROR_CODES, workerTurn, commandTrace, linkWorker, usageSpans, decisionSpan, handingOver, delivered } from "../src/lib/traces.mjs";
 import { summarize } from "../src/lib/usage.mjs";
 import { warningCode } from "../src/lib/warnings.mjs";
 import { memoryStore, usageReadings } from "../src/lib/usage-readings.mjs";
@@ -198,13 +198,30 @@ test("a terminal launch reports its backend, keeps its index entry, and cleanup 
   let label = null;
   const hc = async (cmd, a) => { if (a[0] === "run") label = a.find((v) => v.startsWith("routr.worker="))?.slice("routr.worker=".length);
     return cmd === "herdr-app" ? answer({}) : a[0] === "get" && a[1] === "t3" ? answer({ address: "t3", labels: {} })
-      : a[0] === "get" ? answer({ address: "t9", name: "traced", state: "live", labels: { "routr.worker": label }, status: { state: "done" }, turn: 1 }) : a[0] === "run" ? answer({ address: "t9" }) : answer({}); };
+      : a[0] === "get" ? answer({ address: "t9", name: "traced", state: "live", labels: { "routr.worker": label }, status: { state: "done" }, turn: 1 }) : a[0] === "run" ? answer({ address: "t9" })
+      : a[0] === "send" ? answer({ turn: 2, started: true }) : answer({}); };
   const opts = { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), hc, self: (a) => ["/bin/routr", ...a], models: async () => null, ready: async () => null, sleep: async () => {} };
   const r = await launch(["--subscription", "claude", "--name", "traced", "--model", "sonnet", "--task", task, "--advice", advice], opts);
   expect([r.state, r.worker.backend]).toEqual(["prompted", "terminal"]);
   const s = x.spans().find((v) => v.name === "routr launch"), a = attrs(s);
   expect(a).toMatchObject({ "routr.kind": "claude", "routr.backend": "terminal", "routr.launch.state": "prompted", "gen_ai.agent.name": "traced" });
+  // The task the worker took: a CLIENT child of the launch, with no conversation id (a terminal worker's is never known).
+  const handed = x.spans().filter((v) => v.name === "invoke_agent traced");
+  expect(handed).toHaveLength(1);
+  expect(handed[0]).toMatchObject({ kind: 3, traceId: s.traceId, parentSpanId: s.spanId });
+  expect(attrs(handed[0])).toMatchObject({ "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": "anthropic", "gen_ai.agent.name": "traced", "routr.backend": "terminal", "routr.launch.id": a["routr.launch.id"], "routr.model": "sonnet" });
+  expect(attrs(handed[0])).not.toHaveProperty("gen_ai.conversation.id");
+  expect(BigInt(handed[0].startTimeUnixNano) >= BigInt(s.startTimeUnixNano) && BigInt(handed[0].endTimeUnixNano) <= BigInt(s.endTimeUnixNano)).toBe(true);
+  // A message it took: the send span carries the lead's conversation, and its child the delivery, linked to the launch.
+  const lead = "12345678-1234-4123-8123-123456789abd";
+  expect((await sendCommand(["--name", "traced", "--task", "MESSAGE_MARKER"], { ...opts, env: { ...x.env, CLAUDE_CODE_SESSION_ID: lead } })).state).toBe("delivered");
+  const sent = x.spans().find((v) => v.name === "routr send"), child = x.spans().filter((v) => v.name === "invoke_agent traced").at(-1);
+  expect(attrs(sent)).toMatchObject({ "gen_ai.conversation.id": lead, "routr.send.state": "delivered" });
+  expect(sent.links).toEqual([{ traceId: s.traceId, spanId: s.spanId, attributes: [] }]);
+  expect(child).toMatchObject({ kind: 3, traceId: sent.traceId, parentSpanId: sent.spanId });
+  expect(attrs(child)).toMatchObject({ "gen_ai.agent.name": "traced", "routr.backend": "terminal", "routr.launch.id": a["routr.launch.id"] });
   expect(JSON.stringify(x.spans())).not.toContain("BRIEF_MARKER");
+  expect(JSON.stringify(x.spans())).not.toContain("MESSAGE_MARKER");
   const index = new LaunchIndex({ home: x.home }), entry = index.match({ advice_id: "abc12345" });
   expect(entry).toMatchObject({ backend: "terminal", traceId: s.traceId, spanId: s.spanId, pane_id: null, launch_id: a["routr.launch.id"] });
   expect((await cleanup(["--worker", "traced"], { env: x.env, otel: x.otel, settings: () => ({ config: x.config }), hc })).state).toBe("removed");
@@ -236,8 +253,15 @@ test("a pane launch records identity, session and immutable index; cleanup and l
   const r = await launch(args, opts);
   expect(r.state).toBe("prompted");
   const s = x.spans().find((s) => s.name === "routr launch" && attrs(s)["routr.launch.state"] === "prompted"), a = attrs(s);
-  expect(a).toMatchObject({ "routr.kind": "claude", "routr.backend": "pane", "routr.launch.state": "prompted", "gen_ai.agent.name": "fixture", "routr.model": "sonnet", "routr.advice.matched": true, "gen_ai.conversation.id": session, "routr.lead.session_id": x.env.CODEX_THREAD_ID, "routr.cwd": "." });
+  expect(a).toMatchObject({ "routr.kind": "claude", "routr.backend": "pane", "routr.launch.state": "prompted", "gen_ai.agent.name": "fixture", "routr.model": "sonnet", "routr.advice.matched": true, "gen_ai.conversation.id": x.env.CODEX_THREAD_ID, "routr.cwd": "." });
   expect(a).not.toHaveProperty("gen_ai.request.model");
+  // The launch runs in the lead's conversation; the worker's, as herdr reports it, is on the task it took.
+  const handed = x.spans().find((v) => v.name === "invoke_agent fixture" && v.parentSpanId === s.spanId);
+  expect(handed).toMatchObject({ kind: 3, traceId: s.traceId });
+  expect(attrs(handed)).toMatchObject({ "gen_ai.operation.name": "invoke_agent", "gen_ai.provider.name": "anthropic", "gen_ai.agent.name": "fixture", "gen_ai.conversation.id": session,
+    "routr.backend": "pane", "routr.launch.id": a["routr.launch.id"], "routr.cwd": "." });
+  // A dry run and a failed launch handed nothing over.
+  expect(x.spans().filter((v) => v.name === "invoke_agent fixture")).toHaveLength(1);
   const entry = index.match({ advice_id: "abc12345" });
   expect(entry).not.toHaveProperty("worker_id");
   expect(entry).toMatchObject({ traceId: s.traceId, spanId: s.spanId, pane_id: "w1:p2", terminal_id: "term-1", launch_id: a["routr.launch.id"] });
@@ -253,6 +277,10 @@ test("a pane launch records identity, session and immutable index; cleanup and l
   expect([r.launch_id, rerun.launch_id]).toEqual([a["routr.launch.id"], expect.any(String)]);
   expect(rerun.launch_id).not.toBe(r.launch_id);
   const rs = x.spans().filter((sp) => sp.name === "routr launch" && attrs(sp)["routr.launch.id"] === rerun.launch_id)[0];
+  // The rerun adopted the agent already in the pane, which kept its own model and effort: its task's span names neither.
+  const adopted = attrs(x.spans().find((v) => v.name === "invoke_agent fixture" && v.parentSpanId === rs.spanId));
+  expect(adopted).toMatchObject({ "routr.backend": "pane", "routr.launch.id": rerun.launch_id, "gen_ai.conversation.id": session });
+  expect(Object.keys(adopted).filter((k) => ["routr.model", "routr.effort"].includes(k))).toEqual([]);
   expect([attrs(rs)["routr.launch.id"], rs.links]).toEqual([rerun.launch_id, [{ traceId: s.traceId, spanId: s.spanId, attributes: [] }]]);
   // The rerun takes over the pane: the original entry ends, and the rerun's own is the active one.
   expect(index.entries().map((e) => [e.launch_id, Boolean(e.finished_at)])).toEqual(expect.arrayContaining([[r.launch_id, true], [rerun.launch_id, false]]));
@@ -260,7 +288,8 @@ test("a pane launch records identity, session and immutable index; cleanup and l
   expect((await cleanup(["--pane", "w1:p2"], opts)).state).toBe("closed");
   const c = x.spans().find((s) => s.name === "routr cleanup");
   expect(c.links).toContainEqual({ traceId: rs.traceId, spanId: rs.spanId, attributes: [] });
-  expect(attrs(c)["gen_ai.conversation.id"]).toBe(session);
+  // Cleanup carries neither conversation: no lead id is read there, and the worker's is on the launch's child.
+  expect(attrs(c)).not.toHaveProperty("gen_ai.conversation.id");
   expect(index.entries().every((e) => e.finished_at)).toBe(true);
   // Its record names the rerun's launch, and links to its span; by advice alone, two launches used it: no link.
   recordCommand({ advice, ledger: join(x.home, "ledger.jsonl"), subscription: "claude", model: "sonnet", effort: "low", verdict: "done", check: "pass", launch: rerun.launch_id }, [], x.config, { env: {}, otel: x.otel });
@@ -303,7 +332,7 @@ test("the real CLI consumes --lead-session independently of the brief and queues
   const result = JSON.parse(r.stdout.toString());
   expect(result.ok).toBe(true); expect(result.brief_chars).toBe(12);
   expect(x.spans().find((s) => s.name === "routr dispatch")).toBeDefined();
-  expect(attrs(x.spans().find((s) => s.name === "routr dispatch"))["routr.lead.session_id"]).toBe(id);
+  expect(attrs(x.spans().find((s) => s.name === "routr dispatch"))["gen_ai.conversation.id"]).toBe(id);
   const refused = Bun.spawnSync([process.execPath, SCRIPT, "dispatch", "--config", x.otel.configPath, "--task-file", join(x.home, "missing")], { env });
   expect(JSON.parse(refused.stdout.toString()).ok).toBe(false);
   expect(x.spans().filter((s) => s.name === "routr dispatch")).toHaveLength(2);
@@ -554,6 +583,8 @@ test("headless commands link validated worker.json context and ignore malformed 
     const opts = { env: {}, otel: x.otel, settings: () => ({ config: x.config }) };
     await workersCommand(["--name", name], opts); await waitCommand(["--name", name, "--timeout", "0"], opts); await sendCommand(["--name", name, "--task", "BRIEF_MARKER"], opts);
     for (const s of x.spans()) expect(s.links).toContainEqual({ traceId: launch.traceId, spanId: launch.spanId, attributes: [] });
+    // A headless worker's turns are its holder's spans: a send adds no invocation of its own.
+    expect(x.spans().filter((s) => s.name.startsWith("invoke_agent"))).toEqual([]);
     writeFileSync(join(dir, "worker.json"), JSON.stringify({ ...worker, launch: { ...launch, traceId: "PRIVATE_MARKER" } }));
     await workersCommand(["--name", name], opts);
     expect(x.spans().at(-1).links).toBeUndefined();
@@ -731,7 +762,11 @@ test("span durations and their log times follow a monotonic clock when the wall 
       await usageCommand(["cursor"], x.config, {}, { env: {}, otel: x.otel, sources: { cursor: { source: "cursor /usage", check: async () => { at(); return { ok: true }; } } }, read: async () => [{ pool: "cursor", source: "statusline", ageSec: 0, headroom: 0.8, windows: [] }] }); shift = 0;
       const turn = workerTurn(tracedWorker(x), 1, { env: {}, otel: x.otel });
       turn.state("idle", "working"); at(); turn.state("working", "waiting"); turn.end("finished", 1); shift = 0;
+      // A message handed to a terminal worker after the clock jumped: its child stays inside the send span.
+      await commandTrace("send", { config: x.config, env: {}, otel: x.otel }, () => { at(); handingOver(); delivered({ ...tracedWorker(x), backend: "terminal" }); return { ok: true, state: "delivered" }; }); shift = 0;
       const ended = realNow(), spans = x.spans();
+      const send = spans.find((v) => v.name === "routr send"), handed = spans.find((v) => v.parentSpanId === send.spanId);
+      expect([jump, BigInt(handed.startTimeUnixNano) >= BigInt(send.startTimeUnixNano) && BigInt(handed.endTimeUnixNano) <= BigInt(send.endTimeUnixNano)]).toEqual([jump, true]);
       for (const name of ["routr record", "classify jev", "routr usage codex", "routr usage cursor", "invoke_agent fixture"]) {
         const s = spans.find((v) => v.name.startsWith(name.split(" jev")[0]) && (name !== "classify jev" || v.name.startsWith("classify")));
         expect([jump, name, Boolean(s)]).toEqual([jump, name, true]);

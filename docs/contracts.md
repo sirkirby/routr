@@ -1573,7 +1573,7 @@ otherwise both remain in the brief, with the usual looks-like-a-flag note. Launc
 or malformed values with the fixed warning `--lead-session was ignored: no valid session id was supplied`.
 Repeated valid ids are dropped with that same warning. These optional identity checks never refuse the command.
 A valid measured environment source takes precedence. The flag changes no command result field except warnings:
-it supplies `routr.lead.session_id` only when OpenTelemetry export is on and the command records a span. The
+it supplies the command span's `gen_ai.conversation.id` only when OpenTelemetry export is on and the command records a span. The
 [published schema](opentelemetry.md#signals) lists the environment sources, lineage, launch index and every sent
 attribute. Export-off command behavior and carrier forwarding are unchanged.
 

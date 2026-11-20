@@ -171,8 +171,9 @@ installed binary strings [bin]; no session was started. Fixture tests verify rou
 | Antigravity | Process environment | No reader found: its own telemetry is not joined | [bin] agy 1.4.7 |
 | Kiro | Environment; ACP reserved `_meta.traceparent`, `_meta.tracestate`, `_meta.baggage` on `session/prompt` for the turn, on `session/new`/`session/load` for the process | No reader in environment or ACP found: its own telemetry is not joined. ACP reserves these keys; session/new acceptance is measured below, session/prompt acceptance is unmeasured | [bin] kiro-cli 2.34.0; [doc] kiro.dev/docs/cli/acp; agentclientprotocol.com/protocol/extensibility |
 
-No researched harness reads `BAGGAGE`. Pane workers have no turn spans and get launch context in a new pane's
-environment; neither Claude nor Codex reads it in interactive mode. Export off or a persisted unsampled launch
+No researched harness reads `BAGGAGE`. Pane and terminal workers have no turn spans in routr (only an
+`invoke_agent` span for the task they took, or a message a terminal worker took), and pane workers get launch context
+in a new pane's environment; neither Claude nor Codex reads it in interactive mode. Export off or a persisted unsampled launch
 decision preserves saved carrier values unchanged. An off launch saves no launch context, but a valid saved
 parent retains its sampling decision after opt-in: unsampled stays silent; sampled parents the turns directly.
 Only no valid inherited parent starts root turns.
@@ -575,8 +576,9 @@ Measured 2026-10-25 against each harness's own record (Stage 2 probes):
 Each environment source is checked against its harness's format. When none matches, `--lead-session` can supply a
 known UUIDv4/UUIDv7 or a strict 16–64 character lowercase hex id; routr never invents one. Herdr's `agent_session`
 comes from harness hooks: Claude, Codex and Cursor at session start, Antigravity at first invocation, Kiro never.
-The value can lag or be null (Codex was null in the probe). Launch and cleanup read it once and accept only a
-format-checked non-null value of kind `id`. A pane/terminal match establishes terminal continuity only: shell
+The value can lag or be null (Codex was null in the probe). Launch reads it once at its end and accepts only a
+format-checked non-null value of kind `id`, for the `invoke_agent` span of the task the worker took; cleanup reads
+none. A pane/terminal match establishes terminal continuity only: shell
 respawn can retain that terminal id and restore allocates a new one. It does not prove agent or conversation
 continuity.
 
