@@ -401,4 +401,6 @@ test("a harness answer is bounded: more output than maxBytes is no answer, and t
   // Prints its answer and stays (Cursor's create-chat in a fresh config folder): taken at its first line.
   const lingers = "process.stdout.write('8d997247-4335-4a7b-8a2e-d883ab27799f\\n'); setTimeout(() => {}, 60000);";
   expect(await run(process.execPath, ["-e", lingers], { timeoutMs: 15000, maxBytes: 4096, until: (s) => s.includes("\n") })).toBe("8d997247-4335-4a7b-8a2e-d883ab27799f\n");
+  // Counted in bytes: 3000 two-byte characters are 6000 bytes, over a 4096 cap.
+  expect(await run(process.execPath, ["-e", "process.stdout.write('é'.repeat(3000))"], { timeoutMs: 15000, maxBytes: 4096 })).toBeNull();
 }, 20000);

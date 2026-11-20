@@ -430,6 +430,15 @@ test("a worker's id is only ever its own launch's: another record's runner or ke
   writeFileSync(join(day, "rollout-new.jsonl"), line(V7, firstMessage(promptFile(dir, me.id))));
   expect(await look()).toMatchObject({ session: V7 });
   expect(JSON.parse(readFileSync(join(dir, "session.json"), "utf8"))).toEqual({ id: me.id, session: V7 });
+  // A lookup for a worker since replaced keeps nothing in the new one's folder.
+  rmSync(join(dir, "session.json"));
+  const replaced = join(dir, "worker.json"), mine = readFileSync(replaced, "utf8");
+  writeFileSync(replaced, JSON.stringify({ ...me, id: "b".repeat(32) }));
+  const { sessionNow } = await import("../src/lib/backend-terminal.mjs");
+  expect(await sessionNow(me, dir)).toEqual({ session: V7 });
+  expect(existsSync(join(dir, "session.json"))).toBe(false);
+  writeFileSync(replaced, mine);
+  expect(await look()).toMatchObject({ session: V7 });
   // Kept: the rollout is not read again. Two sessions with its first message are not told apart: neither is named.
   rmSync(join(day, "rollout-new.jsonl"));
   expect(await look()).toMatchObject({ session: V7 });

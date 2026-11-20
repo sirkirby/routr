@@ -492,7 +492,8 @@ Windows is not measured. What that means on your machine:
   private Cursor config folder, and passes its id with `--resume`. For Codex and Antigravity routr reads the harness's
   own session files to find the one session holding the worker's first message (a Codex rollout's head, at most 2 MB of
   each written since the runner started; Antigravity's transcripts' first lines), and keeps only that id, in
-  `session.json` in the run folder. Nothing of what it reads there is printed, logged or sent.
+  `session.json` in the run folder. Of what it reads there, only that session id is ever shown (`session`) or exported
+  (`gen_ai.conversation.id`); no message text is printed, logged or sent.
 - **Its environment.** The base is the terminal's own, which is the core server's, not your lead's, through the same
   filter as every harness start, so a lead's identity a core picked up from the shell it started in is removed. Then the
   terminal's own `HC_TERMINAL_ID`, `HC_TERMINAL_SOCKET` and `HC_SCOPE`, so the harness's `hc send` names it. Then only what

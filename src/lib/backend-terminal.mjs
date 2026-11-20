@@ -152,8 +152,9 @@ export async function sessionNow(w, dir, { wait = 0, sleep, now } = {}) {
   if (kept?.id === w.id && sessionId(kept.session)) return { session: kept.session };
   const read = runRecord(w.name, dir).value, ran = read?.id === w.id ? read : null;
   const got = await workerSession(w, { assigned: ran, message: firstMessage(promptFile(dir, w.id)), since: Date.parse(ran?.started_at), wait, sleep, now });
-  // Its folder is never made again here: one cleanup removed stays removed.
-  if (got.session && !sessionSource(w.kind)?.assign) try { writeJsonAtomic(join(dir, SESSION_FILE), { id: w.id, session: got.session }, { mkdir: false, mode: 0o600 }); } catch {}
+  // Its folder is never made again here: one cleanup removed stays removed. Kept only while the folder is still this
+  // worker's: a lookup that ended after a cleanup and a new launch of the name writes nothing into the new one's.
+  if (got.session && !sessionSource(w.kind)?.assign && readRecordAt(dir)?.id === w.id) try { writeJsonAtomic(join(dir, SESSION_FILE), { id: w.id, session: got.session }, { mkdir: false, mode: 0o600 }); } catch {}
   return got;
 }
 async function startTerminal(o, out, { prompt, env, settings, ready, checkListed, hc = client, self, sleep = pausing, now = () => Date.now() }, seen) {
