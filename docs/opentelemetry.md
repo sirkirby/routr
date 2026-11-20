@@ -251,7 +251,7 @@ not read context, per the binary research. Routr's fixture tests verify the chan
 harness reads inherited context differently, by mode: [measured harness reference](../skills/routr/references/harnesses.md#trace-context-each-harness-reads).
 Routr does not enable or configure a harness's telemetry. Pane and terminal workers have no turn spans in routr:
 routr sees only the instructions it hands them. A pane or terminal `launch` whose worker took its task
-(`prompted`), and a terminal `send` whose message the worker took (`delivered`, `queued` or `resumed`), record a
+(`prompted`), and a terminal `send` whose message the worker took (`delivered`), record a
 CLIENT child `invoke_agent {gen_ai.agent.name}`. It starts when routr hands the instruction over (submits a pane's
 prompt, opens a terminal with its task, or sends a terminal its message) and ends when the command has its answer.
 It carries the worker's repository, branch, cwd and worktree, so a receiver can join it to that harness's session
@@ -290,7 +290,7 @@ protocol; it is not an upstream measurement of local IPC.
 | `routr usage` | INTERNAL | inherited or new root | level only when explicitly given; per-subscription reading children |
 | `routr usage {subscription}` | INTERNAL | reading command | subscription, usage state and source; final error type |
 | `routr launch` | INTERNAL | inherited or new root; recovery rerun links to original launch | kind, backend, launch state and id, worker name, model as given, effort, advice match, lead's `gen_ai.conversation.id`, forwarded carrier names; `invoke_agent` child when a pane or terminal worker took its task |
-| `invoke_agent {gen_ai.agent.name}` (pane, terminal) | CLIENT | `routr launch`, or terminal `routr send` | `vcs.repository.url.full`, `vcs.ref.head.name`, `routr.cwd`, `routr.worktree` of the worker; `gen_ai.operation.name=invoke_agent`, `gen_ai.provider.name`, `gen_ai.agent.name`, the pane's available `gen_ai.conversation.id`; `routr.kind`, `routr.backend`, `routr.launch.id`, `routr.model`, `routr.effort` |
+| `invoke_agent {gen_ai.agent.name}` (pane, terminal) | CLIENT | `routr launch`, or terminal `routr send` | `vcs.repository.url.full`, `vcs.ref.head.name`, `routr.cwd`, `routr.worktree` of the worker; `gen_ai.operation.name=invoke_agent`, `gen_ai.provider.name`, `gen_ai.agent.name`, the pane's available `gen_ai.conversation.id`; `routr.kind`, `routr.backend`, `routr.launch.id`, `routr.model` and `routr.effort` as given (omitted for an agent a `--pane` rerun adopted, which kept its own) |
 | `invoke_agent {gen_ai.agent.name}` (headless) | CLIENT | saved `routr launch`; otherwise saved sampled parent, or a new root without a valid parent | `vcs.repository.url.full`, `vcs.ref.head.name`, `routr.cwd`, `routr.worktree`; `gen_ai.operation.name=invoke_agent`, `gen_ai.provider.name`, `gen_ai.agent.name`, available `gen_ai.conversation.id`; `routr.kind`, `routr.backend=headless`, available `routr.launch.id`, `routr.model`, `routr.effort`, `routr.turn`, `routr.turn.outcome`, `routr.turn.messages`; final `error.type`; classified observed `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_write.input_tokens`, `gen_ai.usage.reasoning.output_tokens` only (current adapters expose none). |
 | `routr send` | INTERNAL | inherited or new root; matched launch link | send state; lead's `gen_ai.conversation.id`; terminal `invoke_agent` child when the worker took the message |
 | `routr wait` | INTERNAL | inherited or new root; link per matched launch | wait state |
@@ -440,7 +440,7 @@ Assessment fact and check probabilities range from 0 to 1; the assessment level 
 types and flags come from routr's fixed question set. Check flag codes are the check question names in the table,
 plus `verdict_partial`, `verdict_blocked` and `verdict_unstated` for a report that does not claim done. Candidates and subscription are harness registry names.
 Usage state is `excluded`, `kept`, `given`, `live` or `unknown`; source is a registered usage source, `sign-in check`,
-`given by caller`, `statusline`, `session log`, `none` or `other`. Backend is `pane` or `headless`. Command states come from their documented
+`given by caller`, `statusline`, `session log`, `none` or `other`. Backend is `pane`, `headless` or `terminal`. Command states come from their documented
 outcomes, with `done`/`failed` when the command has no separate state. Effort and outcome enum values match
 [anonymous telemetry's projection](telemetry.md), with causes from record's contract and effort origin `given`,
 `model id` or `config default`. IDs are format-checked. Missing optional attributes are omitted.

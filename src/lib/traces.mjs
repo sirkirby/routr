@@ -98,7 +98,8 @@ const invocable = (w) => Object.hasOwn(HARNESSES, w?.kind) && WORKER_NAME.test(w
 // turns instead. The command span carries the lead's conversation; this child carries the worker's, only when known (a
 // pane's herdr agent_session; a terminal worker's is never known), and always the worker's repository and branch, which
 // a receiver can join to that harness's session.
-export function handingOver() { try { const c = context.getStore(); if (c?.span) c.handover ??= spanClock(); } catch {} }
+// Timed on the command's own clock (spanNow), so a wall-clock change mid-command cannot put the child outside it.
+export function handingOver() { try { const c = context.getStore(); if (c?.span) c.handover ??= { start: spanNow(c.span), now: () => spanNow(c.span) }; } catch {} }
 function invocation(c, w, { backend, launchId, identity, conversation = null }) {
   if (!c?.span || !c.handover || !invocable(w)) return;
   const span = started({ name: `invoke_agent ${w.name}`, kind: 3, traceId: c.span.traceId, spanId: randomBytes(8).toString("hex"), parentSpanId: c.span.spanId, flags: 1, attributes: {} }, c.handover);
@@ -122,13 +123,14 @@ export async function cleanupLink(o, run) {
     }
   } catch {} // Index or pane observation failure never changes cleanup.
 }
-export async function completeLaunch(r, run, { rerun = false, backend } = {}) {
+export async function completeLaunch(r, run, { rerun = false, backend, adopted = false } = {}) {
   const c = context.getStore(); if (!c?.span || c.command !== "launch") return;
   const identity = traceIdentity(r.cwd), facts = r.pane && r.state !== "planned" ? await paneFacts(r.pane, run) : null;
   put(c.span, identity.attributes);
   // The task, as the worker took it. The id herdr reports goes on that child, never on the launch span: the launch runs
-  // in the lead's conversation.
-  if (r.state === "prompted" && ["pane", "terminal"].includes(backend)) invocation(c, r, { backend, launchId: c.launchId, identity: identity.attributes, conversation: paneConversation(facts) });
+  // in the lead's conversation. An adopted pane's agent kept its own model and effort, which launch cannot know (as its
+  // history record has it): the child names neither.
+  if (r.state === "prompted" && ["pane", "terminal"].includes(backend)) invocation(c, adopted ? { ...r, model: null, effort: null } : r, { backend, launchId: c.launchId, identity: identity.attributes, conversation: paneConversation(facts) });
   const reused = rerun && c.adviceId && facts?.terminal_id ? c.index.recovery({ advice_id: c.adviceId, pane_id: r.pane, terminal_id: facts.terminal_id }) : null;
   // A recovery rerun is its own launch, with its own id (launch's, as its history record has it whether or not anything is
   // exported), linked to the launch it finishes. Whether it takes the pane over, and whether this launch is indexed,

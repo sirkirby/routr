@@ -200,7 +200,7 @@ export function launch(args, opts = {}) {
   return commandTrace("launch", () => ({ config: configOf(settings()), ...opts, cwd: args.includes("--cwd") ? args[args.indexOf("--cwd") + 1] : undefined, lead: lead.lead, launchId: made }), async () => { const { out: r, backend, finish, adopted, advised, subscription } = await launchBody(args, { ...opts, settings }); r.warnings.push(...lead.warnings);
     // Whether it counts toward the user's launch share, and so gets its launch_id and history record (launch-identity.mjs).
     const took = countsTowardShare({ state: r.state, backend });
-    try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane"), backend }); } catch {}
+    try { await completeLaunch(r, opts.run ?? runHerdr, { rerun: args.includes("--pane"), backend, adopted }); } catch {}
     // Its history record: the decision as checked fields, never the task. An adopted pane's agent kept its own model and
     // effort, which launch cannot know. The project is the repository the worker's folder is in (its worktree's).
     r.launch_id = null;

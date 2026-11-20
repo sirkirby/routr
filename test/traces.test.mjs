@@ -16,7 +16,7 @@ import * as channel from "../src/lib/channel.mjs";
 import { LaunchIndex } from "../src/lib/launch-index.mjs";
 import { traceIdentity } from "../src/lib/trace-identity.mjs";
 import { briefSha } from "../src/lib/ledger.mjs";
-import { OTEL_ATTRIBUTES, ERROR_CODES, workerTurn, commandTrace, linkWorker, usageSpans, decisionSpan } from "../src/lib/traces.mjs";
+import { OTEL_ATTRIBUTES, ERROR_CODES, workerTurn, commandTrace, linkWorker, usageSpans, decisionSpan, handingOver, delivered } from "../src/lib/traces.mjs";
 import { summarize } from "../src/lib/usage.mjs";
 import { warningCode } from "../src/lib/warnings.mjs";
 import { memoryStore, usageReadings } from "../src/lib/usage-readings.mjs";
@@ -277,6 +277,10 @@ test("a pane launch records identity, session and immutable index; cleanup and l
   expect([r.launch_id, rerun.launch_id]).toEqual([a["routr.launch.id"], expect.any(String)]);
   expect(rerun.launch_id).not.toBe(r.launch_id);
   const rs = x.spans().filter((sp) => sp.name === "routr launch" && attrs(sp)["routr.launch.id"] === rerun.launch_id)[0];
+  // The rerun adopted the agent already in the pane, which kept its own model and effort: its task's span names neither.
+  const adopted = attrs(x.spans().find((v) => v.name === "invoke_agent fixture" && v.parentSpanId === rs.spanId));
+  expect(adopted).toMatchObject({ "routr.backend": "pane", "routr.launch.id": rerun.launch_id, "gen_ai.conversation.id": session });
+  expect(Object.keys(adopted).filter((k) => ["routr.model", "routr.effort"].includes(k))).toEqual([]);
   expect([attrs(rs)["routr.launch.id"], rs.links]).toEqual([rerun.launch_id, [{ traceId: s.traceId, spanId: s.spanId, attributes: [] }]]);
   // The rerun takes over the pane: the original entry ends, and the rerun's own is the active one.
   expect(index.entries().map((e) => [e.launch_id, Boolean(e.finished_at)])).toEqual(expect.arrayContaining([[r.launch_id, true], [rerun.launch_id, false]]));
@@ -758,7 +762,11 @@ test("span durations and their log times follow a monotonic clock when the wall 
       await usageCommand(["cursor"], x.config, {}, { env: {}, otel: x.otel, sources: { cursor: { source: "cursor /usage", check: async () => { at(); return { ok: true }; } } }, read: async () => [{ pool: "cursor", source: "statusline", ageSec: 0, headroom: 0.8, windows: [] }] }); shift = 0;
       const turn = workerTurn(tracedWorker(x), 1, { env: {}, otel: x.otel });
       turn.state("idle", "working"); at(); turn.state("working", "waiting"); turn.end("finished", 1); shift = 0;
+      // A message handed to a terminal worker after the clock jumped: its child stays inside the send span.
+      await commandTrace("send", { config: x.config, env: {}, otel: x.otel }, () => { at(); handingOver(); delivered({ ...tracedWorker(x), backend: "terminal" }); return { ok: true, state: "delivered" }; }); shift = 0;
       const ended = realNow(), spans = x.spans();
+      const send = spans.find((v) => v.name === "routr send"), handed = spans.find((v) => v.parentSpanId === send.spanId);
+      expect([jump, BigInt(handed.startTimeUnixNano) >= BigInt(send.startTimeUnixNano) && BigInt(handed.endTimeUnixNano) <= BigInt(send.endTimeUnixNano)]).toEqual([jump, true]);
       for (const name of ["routr record", "classify jev", "routr usage codex", "routr usage cursor", "invoke_agent fixture"]) {
         const s = spans.find((v) => v.name.startsWith(name.split(" jev")[0]) && (name !== "classify jev" || v.name.startsWith("classify")));
         expect([jump, name, Boolean(s)]).toEqual([jump, name, true]);
